@@ -24,8 +24,8 @@
  *  - each wrapper ships `hidden`, exactly as the hand-written shell did, and
  *    the router unhides the wrappers of exactly one page. That is the
  *    SECTION-ROUTING hidden.
- *  - #wallet-section, #settings-language-section, #settings-usernode-section
- *    and #settings-admin-section carry a SECOND, inner `hidden`. That one is
+ *  - #wallet-section, #settings-usernode-section and #settings-admin-section
+ *    carry a SECOND, inner `hidden`. That one is
  *    a CAPABILITY GATE, owned by settings.js and read back by
  *    Settings._visibleSections() to decide menu membership. The two concepts
  *    are deliberately separate — collapsing them would make an ungated
@@ -43,7 +43,7 @@ import { ApiKeySection } from './api-key';
 import { AppAiSection } from './app-ai';
 import { AppPermissionsSection } from './app-permissions';
 import { CliSection } from './cli';
-import { BuildVenueSection, ConnectorsSection, LinkedAccountsSection } from './connectors';
+import { ConnectorsSection, LinkedAccountsSection } from './connectors';
 import { DevConsoleSection } from './dev-console';
 import { ExperimentalSection } from './experimental';
 import { GlobalChatSettingsSection } from './global-chat';
@@ -87,7 +87,6 @@ export function SettingsSections() {
       <OpenRouterSection />
       <ApiKeySection />
       <ConnectorsSection />
-      <BuildVenueSection />
       <CliSection />
       <AgentFilesSection />
       <GlobalChatSettingsSection />

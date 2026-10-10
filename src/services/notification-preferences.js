@@ -118,13 +118,21 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     //
     // `mention` is deliberately NOT here. Being named by somebody is a
     // direct address rather than app activity, and muting it per app is a
-    // surprise nobody asked for; it stays account-level.
+    // surprise nobody asked for; it stays account-level. #3952's
+    // `issue_mention` (named in a request's text) is a mention too, and is
+    // not here for the same reason.
     //
     // #2387 adds `thread_reply`: somebody answered in a reply thread you
     // started or joined in this app's chat. That is this category's promise
     // word for word — a reply to your message on this app — so the one
     // switch governs both, and createThreadReplyNotifications checks it.
-    kinds: Object.freeze(['reply', 'thread_reply']),
+    //
+    // #4535 adds `issue_thread_reply`: somebody posted in a request's
+    // discussion after you did, or answered the request you filed. The same
+    // promise, so the same switch governs it too
+    // (createIssueThreadNotifications checks it) — one place to turn the
+    // conversation follow-ups off.
+    kinds: Object.freeze(['reply', 'thread_reply', 'issue_thread_reply']),
   }),
   Object.freeze({
     key: 'proposal_votes',

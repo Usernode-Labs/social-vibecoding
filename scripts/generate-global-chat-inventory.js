@@ -64,6 +64,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
   ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
+  ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
@@ -170,6 +171,12 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'staging empty-state middleware represented by the concrete CLI-token list capability',
   },
   {
+    // #4313: answers only the ?demo=1 Needs-you cards' negative ids on staging.
+    matches: (route) => route.source === 'src/routes/workshop-overview.js'
+      && ['/api/sessions/:id/vote', '/api/sessions/:id/votes'].includes(route.path),
+    reason: 'staging demo-card middleware represented by the concrete session vote capabilities',
+  },
+  {
     matches: (route) => route.source === 'src/routes/mcp-remote.js' && !route.path,
     reason: 'hosted MCP consent or transport endpoint represented by connector Settings capabilities',
   },
@@ -245,10 +252,10 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
   [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
-  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
+  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|changes|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],
-  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors|dev-flow)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
+  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
   [/^\/api\/(?:apps|favorites|gallery|home|workshop|campaigns)/, 'apps'],
 ];
 
@@ -534,6 +541,9 @@ function classicPathFor(domain, routePath) {
     if (inApp && governance) return appRoot + '/dev/governance/:' + governance[1];
     const proposal = value.match(/\/proposals\/:(id|sessionId)(?:\/|$)/);
     if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
+    // #4367: a change by its pull request's number.
+    const change = value.match(/\/changes\/:(number)(?:\/|$)/);
+    if (inApp && change) return appRoot + '/dev/changes/:' + change[1];
     return inApp ? appRoot + '/workshop' : '#workshop';
   }
   if (domain === 'apps') {

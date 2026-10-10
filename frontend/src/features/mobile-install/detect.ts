@@ -25,6 +25,12 @@ export interface InstallEnv {
   native: boolean;
   /** Already installed — launched from a home-screen icon, not a tab. */
   standalone: boolean;
+  /**
+   * Signed in with platform access: somebody who is already in Homeroom
+   * (lib/platform-viewer.ts). False on the signed-out landing, an invite
+   * link's page before Join, the sign-in page and the waiting room.
+   */
+  member: boolean;
   dismissed: boolean;
   /** `null` until the fetch resolves. */
   urls: StoreUrls | null;
@@ -133,6 +139,11 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
   if (env.native) return null;
   // Already installed something — a home-screen launch is not a browser tab.
   if (env.standalone) return null;
+  // #4204: not before somebody is in. On an invite's page the strip asked a
+  // stranger to put Homeroom on their home screen before they knew what they
+  // were invited to, and sat above the one action that matters there: Join.
+  // It is offered once they are signed in and let in, wherever they land.
+  if (!env.member) return null;
   if (env.dismissed) return null;
   if (!env.urls) return null;
 
@@ -179,6 +190,32 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
 export const A2HS_STEPS: Record<MobileOs, string> = {
   ios: 'Tap Share, then Add to Home Screen.',
   android: 'Open the browser menu, then Add to Home screen.',
+};
+
+/** One numbered line of the banner's "How" sheet, with the glyph it names. */
+export interface A2hsStep {
+  text: string;
+  /** The toolbar control the line tells you to tap, drawn beside it. */
+  glyph?: 'share' | 'menu';
+}
+
+/**
+ * The same instructions as `A2HS_STEPS`, one line per step, for the install
+ * banner's "How" sheet (#4400). The sentence form stays for the app's About
+ * pane, which has one line to spend; the sheet has room to number them and to
+ * show the control the first step names.
+ */
+export const A2HS_STEP_LIST: Record<MobileOs, readonly A2hsStep[]> = {
+  ios: [
+    { text: "Tap Share in Safari's toolbar", glyph: 'share' },
+    { text: 'Choose Add to Home Screen' },
+    { text: 'Open Homeroom from its icon' },
+  ],
+  android: [
+    { text: "Tap the menu in your browser's toolbar", glyph: 'menu' },
+    { text: 'Choose Add to Home screen' },
+    { text: 'Open Homeroom from its icon' },
+  ],
 };
 
 /**

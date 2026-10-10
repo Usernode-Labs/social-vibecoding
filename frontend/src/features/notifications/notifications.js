@@ -496,6 +496,21 @@ const Notifications = {
   // behaviour; there is no anchored dropdown any more, and a side drawer left
   // open over the screen you just navigated to is the same problem the touch
   // sheet had.
+  // #4367: a change's topic ref, carrying its pull request's number when it
+  // has one, so the page opens at `dev/changes/<N>`.
+  _changeRef(sessionId, prNumber) {
+    const id = parseInt(sessionId, 10);
+    const pr = Number(prNumber);
+    return Number.isInteger(pr) && pr > 0 ? { kind: 'proposal', id, pr } : { kind: 'proposal', id };
+  },
+
+  // The same change as an address (lib/change-href.ts; spelled out here,
+  // as this module keeps its one bundle import).
+  _changeHash(slug, sessionId, prNumber) {
+    const ref = Notifications._changeRef(sessionId, prNumber);
+    return ref.pr ? `#app/${slug}/dev/changes/${ref.pr}` : `#app/${slug}/dev/proposals/${ref.id}`;
+  },
+
   _dismissSheetForNav() {
     if (Notifications.open) Notifications.hide();
   },
@@ -771,7 +786,10 @@ const Notifications = {
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
-      await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      // #3984: a vote that did not go through (castVote resolves false and
+      // says why in its toast) leaves the row, and its button, where it was.
+      const ok = await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      if (ok === false) return false;
       Notifications._markOneRead(id);
       if (typeof Notifications.refresh === 'function') Notifications.refresh();
       return true;
@@ -919,6 +937,16 @@ const Notifications = {
       }
       return;
     }
+    // #4296: an unexpected events alert opens the section that lists them.
+    if (item.kind === 'platform_incident') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('incidents');
+      } else {
+        window.location.hash = '#admin/incidents';
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their change.
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -938,10 +966,10 @@ const Notifications = {
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind: 'proposal', id: parseInt(item.sessionId, 10) },
+          ref: Notifications._changeRef(item.sessionId, item.prNumber),
         });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/proposals/${item.sessionId}`;
+        window.location.hash = Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber);
       }
       return;
     }
@@ -959,7 +987,7 @@ const Notifications = {
         GroupChat._writeSpecPanelOpen(item.appSlug, {
           sessionId: item.sessionId,
           version,
-          title: `Spec v${version}`,
+          title: `Plan v${version}`,
         });
       }
       Notifications._dismissSheetForNav();
@@ -982,10 +1010,10 @@ const Notifications = {
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind: 'proposal', id },
+          ref: Notifications._changeRef(id, item.prNumber),
         });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/proposals/${id}`;
+        window.location.hash = Notifications._changeHash(item.appSlug, id, item.prNumber);
       }
       return;
     }
@@ -1041,7 +1069,7 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply']);
       // #2387: a message in a REPLY thread (thread_type 'message', its ref
       // the thread's first message) opens that thread beside the channel,
       // at the address the server worked out for the row — which the router
@@ -1053,6 +1081,27 @@ const Notifications = {
           ? item.href
           : (Number.isInteger(root) && root > 0
             ? `#messages/app/${encodeURIComponent(item.appSlug)}/thread/${root}` : null);
+        if (href) {
+          const messages = window.UsernodeReact?.messages;
+          if (messages?.openAddress) messages.openAddress(href);
+          else window.location.hash = href;
+          return;
+        }
+      }
+      // #4417 follow-up: a message in one of the project's TOPIC channels
+      // (thread_type 'category', its ref the topic) opens that channel on its
+      // project page, brought into view and marked as a #general message is,
+      // at the address the server worked out for the row
+      // (`#messages/app/<slug>/c/<topic>/m/<id>`, which the router takes to
+      // the channel's place). A reply in one of its reply threads is a
+      // 'message' row above, whose address names the topic too.
+      if (chatKinds.has(item.kind) && item.threadType === 'category' && item.threadRef != null) {
+        const topic = parseInt(item.threadRef, 10);
+        const message = parseInt(item.chatMessageId, 10);
+        const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
+          ? item.href
+          : (Number.isInteger(topic) && topic > 0 && Number.isInteger(message) && message > 0
+            ? `#messages/app/${encodeURIComponent(item.appSlug)}/c/${topic}/m/${message}` : null);
         if (href) {
           const messages = window.UsernodeReact?.messages;
           if (messages?.openAddress) messages.openAddress(href);
@@ -1100,7 +1149,9 @@ const Notifications = {
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
-      const issueNumber = item.kind === 'issue_opened' && /^\d+$/.test(String(item.detail || ''))
+      // #3952: so does a mention in one, where the words that named you are.
+      const issueNumber = (item.kind === 'issue_opened' || item.kind === 'issue_mention')
+        && /^\d+$/.test(String(item.detail || ''))
         ? Number(item.detail) : null;
       if (!toProposals && !issueNumber) {
         // Everything else is about a message in the app's general chat — a
@@ -1111,11 +1162,13 @@ const Notifications = {
       }
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
-          ? { subTab: 'proposals', ref: item.sessionId || null }
+          ? (item.sessionId && Number(item.prNumber) > 0
+            ? { subTab: 'topic', ref: Notifications._changeRef(item.sessionId, item.prNumber) }
+            : { subTab: 'proposals', ref: item.sessionId || null })
           : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
-          ? `#app/${item.appSlug}/dev/proposals${item.sessionId ? `/${item.sessionId}` : ''}`
+          ? (item.sessionId ? Notifications._changeHash(item.appSlug, item.sessionId, item.prNumber) : `#app/${item.appSlug}/dev/proposals`)
           : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }
@@ -1696,6 +1749,22 @@ function parsePlatformLimitDetail(detail) {
   return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
 }
 
+// services/platform-incident-alerts.js tokens (#4296): "digest:<total>:<kind>=<n>,..."
+// (the previous UTC day, per kind) or "hour:<kind>:<n>" (one kind past its
+// hourly line).
+const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
+const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+
+function parsePlatformIncidentDetail(detail) {
+  const s = String(detail || '');
+  const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
+  if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
+  const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
+  if (!d) return null;
+  const kinds = d[2] ? d[2].split(',').map((p) => { const [kind, n] = p.split('='); return { kind, n: Number(n) }; }) : [];
+  return { type: 'digest', total: Number(d[1]), kinds };
+}
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -2035,6 +2104,7 @@ function botMomentLine(detail, message) {
     stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
     stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
     stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
+    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
     held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
     live: app ? `Your change to ${app} is live` : 'Your change is live',
     live_first: app ? `${app} is live` : 'Your project is live',
@@ -2332,6 +2402,42 @@ function rowView(n) {
     };
   }
 
+  // #4296: errors that should not happen, counted for full admins (services/
+  // platform-incident-alerts.js). No app, so the meta line says Admin like
+  // platform_limit above; a token this build cannot read still says what it is.
+  if (n.kind === 'platform_incident') {
+    const alert = parsePlatformIncidentDetail(n.detail);
+    const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'hour') {
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: '\u{1F6A8}',
+        label: 'Unexpected events piling up',
+        segments: [
+          { t: 'strong', v: `${alert.n} ${words(alert.kind)} in the last hour.` },
+          { t: 'text', v: ' Admin \u2192 Unexpected events has each one.' },
+        ],
+      };
+    }
+    if (alert && alert.type === 'digest') {
+      const listed = alert.kinds.reduce((sum, k) => sum + k.n, 0);
+      const parts = alert.kinds.map((k) => `${words(k.kind)} ${k.n}`);
+      if (alert.total > listed) parts.push(`other ${alert.total - listed}`);
+      return {
+        ...base,
+        appLine: 'Admin',
+        wrap: true,
+        icon: '\u26A0\uFE0F',
+        label: `${alert.total} unexpected event${alert.total === 1 ? '' : 's'} yesterday`,
+        segments: [{ t: 'text', v: parts.length ? `${parts.join(', ')}.` : 'See Admin \u2192 Unexpected events.' }],
+      };
+    }
+    return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
+      ...headline('Unexpected events', 'something that should not happen did') };
+  }
+
   const prLabel = n.prTitle || null;
 
   // #3227: a first kudos arrived with nothing saying what it was. The note
@@ -2515,6 +2621,17 @@ function rowView(n) {
     };
   }
 
+  // #3952: somebody named you with @ in a request they filed. Said the way a
+  // chat mention is, with the request in place of the message: its number,
+  // since `detail` carries nothing else.
+  if (n.kind === 'issue_mention') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      ...headline('Mentioned you', /^\d+$/.test(String(n.detail || '')) ? `request #${n.detail}` : 'a request'),
+    };
+  }
+
   // The app is unwell, and this row goes only to people who can fix it.
   //
   // `detail` is a short TOKEN, never a reason line: notifications.detail is
@@ -2685,7 +2802,7 @@ function rowView(n) {
       icon: '\u{1F4CB}',
       by: n.sourceUsername || null,
       ...headline(
-        'Spec shared',
+        'Plan shared',
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
     };
@@ -2790,7 +2907,13 @@ function rowView(n) {
       n.kind === 'mention' ? 'Mentioned you'
         : n.kind === 'reply' ? 'Replied to you'
           // #2387: somebody answered in a reply thread you started or joined.
-          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
+          : n.kind === 'thread_reply' ? 'Replied in thread'
+            // #4535: somebody posted in a request's discussion you filed or
+            // posted in; `detail` is the request's number.
+            : n.kind === 'issue_thread_reply'
+              ? (/^\d+$/.test(String(n.detail || ''))
+                ? `Replied on request #${n.detail}` : 'Replied on a request')
+              : 'Posted',
       (n.messageContent || '').slice(0, 140),
     ),
   };

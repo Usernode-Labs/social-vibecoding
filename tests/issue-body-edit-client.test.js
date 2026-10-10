@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function context(username = 'Builder') {
+function context(username = 'Builder', globals = {}) {
   const c = {
+    ...globals,
     console,
     App: {
       user: { id: 42, username },
@@ -79,4 +80,26 @@ test('_cacheIssueBody updates list and single-topic caches and returns rendered 
   assert.equal(av._ghIssues[0].body, 'A **clearer** description.');
   assert.equal(av._topicIssue.body, 'A **clearer** description.');
   assert.match(html, /A \*\*clearer\*\* description/);
+});
+
+test('#3952: the body and its GitHub comments go through the request mention pass', () => {
+  // group-chat.js publishes renderRequestMentions as a page global; this
+  // stand-in marks what passed through it.
+  const seen = [];
+  const av = context('Builder', {
+    renderRequestMentions: (html) => { seen.push(html); return `[mentions]${html}`; },
+  });
+  const row = issue({ body: 'ping @​snait lmk wyt' });
+  av._ghIssues = [row];
+  assert.match(av._topicViewFor('issue', row).body.issueBodyHtml, /^<div class="dev-issue-body">\[mentions\]/);
+  assert.match(seen[seen.length - 1], /ping @​snait lmk wyt/);
+  // #4453: a GitHub comment is a row of the request page's thread now.
+  av._ghComments.set(av._ghCommentsKey('example', row.number), { truncated: false, comments: [{ id: 1, author: 'ada', body: 'cc @​snait' }] });
+  assert.match(av._requestThreadRows(row.number).rows[0].bodyHtml, /^\[mentions\]/);
+  assert.match(seen[seen.length - 1], /cc @​snait/);
+
+  // Without group-chat.js on the page, the body renders exactly as before.
+  const bare = context();
+  bare._ghIssues = [row];
+  assert.doesNotMatch(bare._topicViewFor('issue', row).body.issueBodyHtml, /\[mentions\]/);
 });

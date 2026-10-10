@@ -304,6 +304,20 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
   assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
+  // #4053: a first version Homeroom bot is making says its build line
+  // instead, quiet, and blue only when it waits on the reader.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
+    /<p class="app-card-status line-clamp-2 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Homeroom bot is planning it<\/p>/);
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<p class="app-card-status line-clamp-2 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Your plan is ready to review<\/p>/);
+  // While it shows one, the name takes one line so the caption has two.
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<div class="app-card app-card-draggable [^"]* \[&_\.app-card-title\]:line-clamp-1 \[&_\.app-card-title\]:min-h-0"/);
+  assert.doesNotMatch(Home.renderAppCard(baseApp()), /line-clamp-1/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building it');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
+  assert.equal(Home.appView(baseApp()).buildLine, null);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {
@@ -446,7 +460,7 @@ test('menu: plain user on a non-member app gets App details + the favorite toggl
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Shortcuts');
+  assert.equal(items[2].label, 'Add to My apps');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -469,7 +483,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -482,7 +496,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from Shortcuts');
+  assert.equal(fav.label, 'Remove from My apps');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -490,7 +504,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to Shortcuts');
+  assert.equal(fav.label, 'Add to My apps');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -910,7 +924,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Shortcuts here/);
+  assert.match(empty, /Drag a card from My apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

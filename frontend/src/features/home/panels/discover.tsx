@@ -28,7 +28,7 @@
  * flow into a single continuous rail under the one "Discover" heading.
  *
  * What did NOT change: the ORDER. Curated first (by `featured_order`), then
- * popular (by active users) — exactly the sequence the two rails drew in,
+ * popular (public communities you have not joined, by members) — exactly the sequence the two rails drew in,
  * concatenated. `discoverView` still derives the two lists separately and
  * both counts are still stamped on the article, because they describe the
  * block's composition and dapp.json selects on them; only the rendering is
@@ -194,8 +194,8 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
-          title={added ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'}
-          aria-label={added ? `Remove ${tile.name} from Shortcuts` : `Add ${tile.name} to Shortcuts`}
+          title={added ? 'Added. Tap to remove from My apps' : 'Add to My apps'}
+          aria-label={added ? `Remove ${tile.name} from My apps` : `Add ${tile.name} to My apps`}
           aria-pressed={added}
         >
           {added

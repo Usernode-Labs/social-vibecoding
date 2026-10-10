@@ -19,11 +19,11 @@ import { SocialIdentity } from '../social-identity';
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
  * agent (Claude Code on the web, Codex) can do the work on the user's own
- * subscription. This file also renders the two parts that shared that pane
+ * subscription. This file also renders the part that shared that pane
  * until the settings restructure: the GitHub/X ownership proofs for the
  * Layer-1 daily credit tier (LinkedAccountsSection, IDENTITY ONLY: immutable
  * provider id + display handle and verification timestamps, with no provider
- * token retained) and the build-venue preference (BuildVenueSection).
+ * token retained).
  *
  * Rendered by Settings._renderConnectors() / _renderGithubLink() from
  * GET /api/me/connectors and GET /api/me/social-identities (deterministic
@@ -121,9 +121,10 @@ url = "${CODEX_URL_PLACEHOLDER}"`;
  * hundred words on naming and three cases of permission rules, all open, all
  * at 12px — 6,330px on a phone before the social accounts at the bottom. Every
  * one of those is reference for a reader who has picked a route, so each is a
- * row now: the summary names the route and says what it costs ("7 steps ·
- * needs Developer mode"), which is what lets someone choose WITHOUT opening
- * any of them.
+ * row now: the summary names the route and says what it costs ("6 steps ·
+ * also sets up Claude Code", "4 steps · in the plugins directory"), which
+ * is what lets someone choose WITHOUT
+ * opening any of them.
  *
  * A `<details>` rather than a stateful island, on purpose. settings.js still
  * writes into these bodies by id (the case filtering, both Copy handlers, the
@@ -308,17 +309,22 @@ export function ConnectorsSection() {
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
             and it skipped every step a first-time user actually stalls on —
-            ChatGPT's Developer mode gate, Claude's per-conversation toggle,
-            the Team/Enterprise Owner requirement. So each product gets its
-            own numbered walkthrough, current as of the flows the issue
-            documents. Wherever the products' generic docs say "your MCP
-            server URL", these steps point back at the #connector-url field
-            above — that field is the dynamic, per-deployment value, so the
-            copy never hardcodes a URL that a fork or a config change would
-            stale. Static prose, deliberately NOT filtered by which product
-            is already connected (unlike #connector-prompt-help's cases):
-            these are pre-connection instructions, so the reader by
-            definition hasn't told us which product they're in yet.
+            ChatGPT's plugins directory at chatgpt.com/plugins (where custom
+            MCP servers are created, #4431, #4433), Claude's
+            per-conversation toggle, the Team/Enterprise Owner requirement. So
+            each product gets its own numbered walkthrough, current as of the
+            flows the issues document. Wherever the products' generic docs say
+            "your MCP server URL", these steps carry the dynamic,
+            per-deployment value rather than a written host: they point back
+            at the #connector-url field above, and ChatGPT's step 3 renders
+            the same derived origin itself — the placeholder in its markup is
+            filled by Settings._loadConnectors() the way the field and the
+            Codex blocks are, so a fork or a config change cannot stale the
+            copy. Static prose, deliberately
+            NOT filtered by which product is already connected (unlike
+            #connector-prompt-help's cases): these are pre-connection
+            instructions, so the reader by definition hasn't told us which
+            product they're in yet.
         */}
         <Disclosure title="Claude.ai" hint="6 steps &middot; also sets up Claude Code">
           {/*
@@ -535,7 +541,7 @@ export function ConnectorsSection() {
           </Disclosure>
           </div>
         </Disclosure>
-        <Disclosure title="ChatGPT" hint="7 steps &middot; needs Developer mode">
+        <Disclosure title="ChatGPT" hint="4 steps &middot; in the plugins directory">
           <GuidedSetup id="connector-open-chatgpt" href="https://chatgpt.com/" product="ChatGPT" />
             <ChatgptSetupSteps />
         </Disclosure>
@@ -708,70 +714,6 @@ export function LinkedAccountsSection() {
           and stores no provider token. Connecting confirms you control the account. It is not proof of unique humanity.
         </p>
         <StatusLine id="github-link-status" size="xs" />
-      </div>
-    </div>
-  );
-}
-
-/**
- * "Where changes get built" (#1049), the part after the connectors on the
- * Connectors & CLI page. See the note inside for its history.
- */
-export function BuildVenueSection() {
-  return (
-    <div data-settings-section="build-venue" className="hidden">
-      {/*
-          "Preferred build flow" (#1049) — the escape hatch for the dev-chat
-          picker's "remember my option" checkbox. Once a user ticks that box
-          the picker stops rendering, so there has to be somewhere to change
-          their mind; Connections is where the GitHub link and the connectors
-          already live, which is exactly the machinery the external flows
-          depend on.
-
-          It was INJECTED at runtime by Settings._renderDevFlowSection until
-          #1191, for a reason that had expired: the shell's body used to be a
-          hand-written document pinned id-for-id against
-          tests/baselines/shell-markup.json, so a new settings control had
-          nowhere to go but a `document.createElement` into this pane. The
-          pane is a component now and a deliberate id is a line in ADDED_IDS,
-          so the block is markup and the module keeps only what it always kept
-          for every other control here: the value, the save, and the two
-          option gates.
-
-          The settings restructure made it a part of its own on the
-          Connectors & CLI page, straight after the connectors: the two
-          hand-offs it offers are what those connectors set up, and it is
-          still a preference about work you have not started yet rather than
-          the thing you came to the page for.
-      */}
-      <div id="dev-flow-pref-section">
-        <SectionHeading title="Where changes get built">
-          Choose where Homeroom builds your changes, or let it ask each time.
-        </SectionHeading>
-        {/*
-            A plain `<select>`, not `@/components/ui/select`: the primitive's
-            `default` variant is the same field box but at `border-zinc-300`
-            with no explicit ink, and this control writes its own
-            `text-zinc-900 dark:text-zinc-100`. Adopting it is a styling
-            decision with its own evidence to gather, not part of moving the
-            block out of a runtime injection.
-
-            The two hand-off options are disabled by settings.js where the
-            deployment has no external flows — a deployment without them can
-            still express "always build on Homeroom" vs "ask me".
-        */}
-        <select
-          id="settings-dev-flow"
-          aria-label="Where changes get built"
-          className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          defaultValue=""
-        >
-          <option value="">Ask me every time</option>
-          <option value="platform">Build on Homeroom</option>
-          <option value="claude-code">Claude Code (claude.ai/code)</option>
-          <option value="codex">Codex (chatgpt.com/codex)</option>
-        </select>
-        <div id="settings-dev-flow-status" className="text-xs mt-2 hidden"></div>
       </div>
     </div>
   );

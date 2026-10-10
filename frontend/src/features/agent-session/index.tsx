@@ -29,12 +29,15 @@ import {
 } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../lib/html';
+import { changeHref as changeLink } from '../../lib/change-href';
 import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useReleaseNow } from '../../lib/use-release-now';
 import type { AiBudgetState } from '../header/ai-budget';
 import { aiBudgetStore } from '../header/ai-budget-store.js';
 import { Attached } from '../dev-chat/transcript';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { PendingStrip } from '../attachments/pending-strip';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
 import type { AgentChange, AgentSession, SavedDraft } from './api';
@@ -66,6 +69,7 @@ import {
   checksSummary,
   skippedChecksReason,
   cardView,
+  changeReleaseLine,
   changeStatusLabel,
   durationLabel,
   latestReplies,
@@ -334,9 +338,13 @@ function SessionBar({ session, about, embedded, action }: {
   // (#3016). The Messages pane's title is a line of its own above it rather
   // than a sibling the pills wrap around.
   const focusTitle = 'The app this conversation is about when a request does not name one. The agent moves it when you ask.';
-  const changeText = active
+  // A merge of Homeroom itself waiting for the platform's next release: the
+  // pill keeps "Going live" and its title says when.
+  const releaseNow = useReleaseNow(active?.release);
+  const releaseLine = building ? null : changeReleaseLine(active, releaseNow);
+  const changeText = releaseLine || (active
     ? changeStatusLabel(active.status, building)
-    : 'No change yet';
+    : 'No change yet');
   return (
     <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
@@ -754,7 +762,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   }
   const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason);
   const changeHref = change && change.appSlug && item.changeId != null
-    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    ? changeLink(change.appSlug, item.changeId, prNumber)
     : null;
   const inVote = change && (change.status === 'promoted' || change.status === 'merging');
   const merged = change && change.status === 'merged';
@@ -927,7 +935,7 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
   const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
   const snippetInner = useInnerHtml(snippet || '');
   const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
-  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
+  const title = `Plan${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
   return (
     <div
       className="dc-spec-preview-card"
@@ -945,7 +953,7 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
     >
       <div className="dc-spec-preview-header">
         <span className="dc-spec-preview-title">{title}</span>
-        <span className="dc-spec-preview-cta">View full spec →</span>
+        <span className="dc-spec-preview-cta">View full plan →</span>
       </div>
       {snippet
         ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={snippetInner} />
@@ -1009,7 +1017,7 @@ export function SpecBody({ text, tab, split, onTab }: {
   return (
     <>
       {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
         <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
       </div>
@@ -1040,7 +1048,7 @@ export function SpecHtmlBody({ doc, tab, onTab }: {
   return (
     <>
       {doc.preambleHtml ? <div className="dc-spec-viewer-preamble"><SpecHtmlPart html={doc.preambleHtml} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
         <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
       </div>
@@ -1064,14 +1072,14 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
     <>
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Plan</h2>
           {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
         </div>
         {sheet.versions.length > 1 ? (
           <span className="dc-venue-detail-inline">
             <select
               className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-              aria-label="Spec version"
+              aria-label="Plan version"
               value={sheet.version ?? ''}
               onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
             >
@@ -1089,7 +1097,7 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
           <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
         ) : null}
         {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
-        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no plan yet.</p> : null}
         {sheet.phase === 'ready' && sheet.text && htmlDoc ? <SpecHtmlBody doc={htmlDoc} tab={sheet.tab} onTab={setSpecTab} /> : null}
         {sheet.phase === 'ready' && sheet.text && !htmlDoc ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
       </div>
@@ -1114,7 +1122,7 @@ function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
     >
       <section
         role="dialog"
-        aria-label="Spec"
+        aria-label="Plan"
         className={cover
           ? 'platform-safe-bar flex h-full w-full flex-col bg-white dark:bg-zinc-900'
           : 'platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none'}
@@ -1143,7 +1151,7 @@ function PaneTabs({ tab }: { tab: PaneTab }) {
   );
   return (
     <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
-      {button('spec', 'Spec')}
+      {button('spec', 'Plan')}
       {button('preview', 'Preview')}
     </div>
   );
@@ -1236,7 +1244,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the plan'}
         aria-valuenow={width}
         aria-valuemin={floor}
         tabIndex={0}
@@ -1247,7 +1255,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
       />
       <aside
         ref={paneRef}
-        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        aria-label={showing === 'preview' ? 'Preview' : 'Plan'}
         className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
         style={{ width }}
         data-agent-session-side-pane={showing}
@@ -1617,7 +1625,7 @@ function useCredit(): CreditView | null {
 }
 
 const BUSY_PLACEHOLDER = 'The agent is working. Type your next message and save it for later.';
-const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+const SAVE_TITLE = 'Save this as a draft (Ctrl+Enter or ⌘+Enter). It stays here until you send it';
 
 /**
  * The saved drafts above the composer (the dev chat's #798 list, per account):
@@ -1698,7 +1706,7 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * The message box. Its ONE button follows the dev chat's (#798, #810):
  * Send while the Mayor is free; while it works, Stop with nothing typed and
  * a green Save with something typed, which parks the text as a saved draft
- * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * (Ctrl/Cmd+Enter does the same) so nothing typed mid-turn can leak into the running
  * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
  *
  * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
@@ -1882,14 +1890,14 @@ function Composer({ id }: { id: string }) {
       return;
     }
     if (!text && !files.length) return;
-    // Files still uploading hold the send: the button says so, and Enter waits too.
+    // Files still uploading hold the send: the button says so, and Ctrl/Cmd+Enter waits too.
     if (uploading) return;
     update('');
     void sendAgentMessage(text);
   }
 
   // Pasted or dropped files join the tray (a pasted screenshot gets a name).
-  const takeFiles = (list: FileList | null | undefined) => {
+  const takeFiles = (list: FileList | File[] | null | undefined) => {
     const picked = Array.from(list || []);
     if (!picked.length) return false;
     addAttachments(picked.map((file, index) => (
@@ -1911,12 +1919,14 @@ function Composer({ id }: { id: string }) {
     input.current?.focus();
   };
 
+  const drop = useFileDrag({ disabled: archived, onFiles: (dropped) => { takeFiles(dropped); } });
+
   const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
-    <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    <div className="platform-safe-bar shrink-0 px-3 pt-1" {...drop.handlers}>
     {archived ? (
       <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
         <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
@@ -1928,13 +1938,11 @@ function Composer({ id }: { id: string }) {
     <form
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
-      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
-      onDrop={(event) => {
-        if (archived || !event.dataTransfer?.files?.length) return;
-        event.preventDefault();
-        takeFiles(event.dataTransfer.files);
-      }}
     >
+      {/* #4065: the drop zone, over the card while a file is held anywhere
+          on the bar around it (the drop is the bar's, a little wider than
+          the card, so a near miss still attaches). */}
+      {drop.dragging ? <DropOverlay /> : null}
       {files.length ? (
         <PendingStrip
           id={`${id}-attachments`}
@@ -1952,7 +1960,7 @@ function Composer({ id }: { id: string }) {
       ) : null}
       {saving ? (
         // Said in words, above what is typed, the moment it applies: while
-        // the Mayor works, Enter and the button keep this as a draft. It is
+        // the Mayor works, Ctrl/Cmd+Enter and the button keep this as a draft. It is
         // not sent, and nothing sends it on its own.
         <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
           The agent is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
@@ -1974,7 +1982,8 @@ function Composer({ id }: { id: string }) {
           if (takeFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat) sends.
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
             event.preventDefault();
             submit();
           }
@@ -2111,6 +2120,10 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
   const active = session.activeChange;
   const others = (session.changes || []).filter((change) => !active || change.id !== active.id);
   const closed = new Set(['merged', 'archived']);
+  // A merge of Homeroom itself waits for the platform's next release, and
+  // the drawer says when, counting down while it is open.
+  const now = useReleaseNow(active?.release, ...others.map((change) => change.release));
+  const activeRelease = changeReleaseLine(active, now);
   return (
     <div
       className="absolute inset-0 z-20 flex flex-col justify-end bg-zinc-950/30 sm:items-end sm:justify-stretch"
@@ -2137,8 +2150,9 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">{active.title || changeRef(active)}</p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">{active.appName || active.appSlug} · {changeRef(active)}{active.prNumber ? ` (change ${active.id})` : ''}</p>
               </div>
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(active.status)}`}>{changeStatusLabel(active.status)}</span>
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(active.status)}`} title={activeRelease || undefined}>{changeStatusLabel(active.status)}</span>
             </div>
+            {activeRelease ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300" data-agent-session-release>{activeRelease}</p> : null}
             {active.checkState ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Checks: {active.checkState}</p> : null}
             {active.checkState === 'skipped'
               ? <p className={CHECK_REASON} data-agent-session-checks-reason>{skippedChecksReason(active.checkSkipReason)}</p> : null}
@@ -2160,12 +2174,12 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                 className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
                 onClick={() => void openSpec(active.id)}
               >
-                Spec
+                Plan
               </button>
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
-                  href={`#app/${encodeURIComponent(active.appSlug)}/dev/proposals/${active.id}`}
+                  href={changeLink(active.appSlug, active.id, active.prNumber)}
                 >
                   Proposal page
                 </a>
@@ -2186,7 +2200,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                     <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{change.title || changeRef(change)}</p>
                     <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.appName || change.appSlug} · {changeRef(change)}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(change.status)}`}>{changeStatusLabel(change.status)}</span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone(change.status)}`} title={changeReleaseLine(change, now) || undefined}>{changeStatusLabel(change.status)}</span>
                   {!closed.has(change.status || '') ? (
                     <button type="button" className="shrink-0 text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300" onClick={() => void switchActiveChange(change.id)}>
                       Switch to

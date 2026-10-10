@@ -552,15 +552,49 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
+test('the release mail with a one-time sign-in link says so, and tracking leaves that link alone (#4594)', () => {
+  const linked = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true,
+  });
+  for (const part of [linked.text, linked.html]) {
+    assert.match(part, /signs you in once/);
+    // The figure must track RELEASE_LINK_TTL_MS in services/release-links.js.
+    assert.match(part, /works for 7 days/);
+    assert.match(part, /emails you a 6-digit code/, 'and says what happens after');
+  }
+  const { RELEASE_LINK_TTL_MS } = require('../src/services/release-links');
+  assert.equal(RELEASE_LINK_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+
+  // Click tracking stores each destination URL; one carrying a sign-in
+  // credential is never rewritten, so its token is never stored.
+  const tracking = require('../src/services/mail/tracking');
+  const prior = process.env.PLATFORM_MAIL_TRACKING_SECRET;
+  process.env.PLATFORM_MAIL_TRACKING_SECRET = 'test-secret';
+  try {
+    const credential = `https://x.invalid/?signup=1&amp;${tracking.CREDENTIAL_PARAM}=secret-token`;
+    const message = {
+      html: `<html><body><a href="${credential}">Create my account</a><a href="https://x.invalid/other">Other</a></body></html>`,
+      text: '',
+    };
+    const out = tracking.decorate('waitlist_released', message, { trackingEnabled: true, messageId: 'a'.repeat(48) });
+    assert.ok(out.html.includes(credential), 'the credential link is left as it is');
+    assert.ok(!out.trackingLinks.some((l) => l.includes('secret-token')), 'and never stored');
+    assert.deepEqual(out.trackingLinks, ['https://x.invalid/other'], 'other links are still tracked');
+  } finally {
+    if (prior === undefined) delete process.env.PLATFORM_MAIL_TRACKING_SECRET;
+    else process.env.PLATFORM_MAIL_TRACKING_SECRET = prior;
+  }
+});
+
 test('the release mail is the "you\'re in" welcome, with its list and sign-off', () => {
   const m = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok', hasAccount: false,
   });
   assert.equal(m.subject, "You're in. Welcome to Homeroom");
   for (const part of [m.text, m.html]) {
-    assert.match(part, /Make and share small apps with friends and groups\./);
-    assert.match(part, /Make an app for you, your friends or your group\./);
-    assert.match(part, /Suggest, preview, and vote on changes\./);
+    assert.match(part, /Make and share apps with groups and friends\./);
+    assert.match(part, /Make an app for your group/);
+    assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
   }
   assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
@@ -568,7 +602,21 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   // would otherwise be what the inbox shows.
   const pre = m.html.indexOf("Here's how to get started.");
   assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
-  assert.match(m.html, /display:none[^"]*">Make and share small apps with friends and groups\. Here's how/);
+  assert.match(m.html, /display:none[^"]*">Make and share apps with groups and friends\. Here's how/);
+  // #4570: the landing page's hero. The illustration sits between the
+  // frame's logo and the button, and is an <img>, not a link, so the pill
+  // stays the mail's first anchor.
+  assert.match(m.html, /\/brand\/people\.png" width="272" height="204" alt=""/);
+  const logo = m.html.indexOf('<img ');
+  const illustration = m.html.indexOf('/brand/people.png');
+  const pill = m.html.indexOf('border-radius:999px');
+  assert.ok(logo > -1 && illustration > logo && pill > illustration,
+    'illustration after the logo, before the pill');
+  // The landing page's eyebrow over the headline.
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>You're in</);
+  // The welcome sentences #4570 cut are gone from both parts.
+  assert.doesNotMatch(m.html, /Once you're inside|Thanks for your interest/);
+  assert.doesNotMatch(m.text, /Once you're inside|Thanks for your interest/);
 });
 
 test('the release mail offers mobile steps only for a published store link', () => {
@@ -577,8 +625,9 @@ test('the release mail offers mobile steps only for a published store link', () 
   const both = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: ANDROID },
   });
-  assert.match(both.text, /Want to test Homeroom on mobile\?/);
-  assert.ok(both.text.includes(`Open the Homeroom invite (${IOS}).`));
+  assert.match(both.text, /Try it on mobile/);
+  assert.match(both.html, /Try it on mobile/);
+  assert.ok(both.text.includes(`open the Homeroom invite (${IOS}).`));
   assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
   assert.ok(both.html.includes(`<a href="${IOS}"`));
   assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));

@@ -19,6 +19,7 @@
 // draws as the dev chat's run card, captioned with the agent that actually
 // ran (its `agentBackend`). A drafted spec is its own item after it.
 
+import { releaseSentence, releaseShort } from '../../lib/release-eta';
 import type { AgentAction, AgentActionStatus, AgentAttachment, AgentCard, AgentMessage } from './api';
 
 export interface CardView {
@@ -509,12 +510,12 @@ export function runHeading(run: Pick<RunItem, 'mode' | 'status'>): string {
   const scout = run.mode === 'scout';
   const sync = run.mode === 'sync';
   switch (run.status) {
-    case 'running': return scout ? 'Writing the spec…' : sync ? 'Syncing with main…' : 'Building the change…';
-    case 'done': return scout ? 'Wrote the spec' : sync ? 'Synced with main' : 'Built the change';
+    case 'running': return scout ? 'Writing the plan…' : sync ? 'Syncing with main…' : 'Building the change…';
+    case 'done': return scout ? 'Wrote the plan' : sync ? 'Synced with main' : 'Built the change';
     case 'no_changes': return 'Made no changes';
-    case 'failed': return scout ? 'The spec was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
-    case 'stopped': return scout ? 'Stopped writing the spec' : 'Stopped the build';
-    default: return scout ? 'Spec run ended' : sync ? 'Sync ended' : 'Build ended';
+    case 'failed': return scout ? 'The plan was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
+    case 'stopped': return scout ? 'Stopped writing the plan' : 'Stopped the build';
+    default: return scout ? 'Plan run ended' : sync ? 'Sync ended' : 'Build ended';
   }
 }
 
@@ -572,12 +573,46 @@ const TOOL_ACTIVITY: Record<string, string> = {
   switch_active_change: 'Switching changes',
   set_focus_app: 'Changing the focus',
   get_prod_status: 'Reading production status',
-  dispatch_scout: 'The coding agent is writing the spec',
+  dispatch_scout: 'The coding agent is writing the plan',
   dispatch_coding_agent: 'The coding agent is building',
 };
 
 export function toolActivity(name: string): string {
   return TOOL_ACTIVITY[name] || 'Preparing a confirmation';
+}
+
+/**
+ * A change merged into the platform's own app and not live yet reads
+ * "Going live" on its pill, as one still being merged does; this says why it
+ * waits and how long, for the pill's title and the changes drawer: "Merged;
+ * goes live in the next release (about 8 minutes)." (../../lib/release-eta.ts,
+ * from the server's `release`). Null for every other change, whose pill
+ * keeps its own words.
+ */
+export function changeReleaseLine(
+  change: { status?: string | null; release?: unknown } | null | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (!change || change.status !== 'merging' || !change.release) return null;
+  const words = releaseSentence(change.release, now);
+  return words ? `${words}.` : null;
+}
+
+/**
+ * Where a session's change stands, in the words a list row says after the
+ * change's name (Messages' agent rows, the Homeroom menu's Agent chats):
+ * "Waiting for approval", "Going live", "Live", "In progress". A merge of the
+ * platform's own app says when its release comes instead of "Going live":
+ * "Goes live in about 8 minutes".
+ */
+export function changeRowWords(
+  change: { status?: string | null; release?: unknown },
+  now: number = Date.now(),
+): string {
+  if (change.status === 'promoted') return 'Waiting for approval';
+  if (change.status === 'merging') return (change.release ? releaseShort(change.release, now) : null) || 'Going live';
+  if (change.status === 'merged') return 'Live';
+  return 'In progress';
 }
 
 /** The active change's state, in the words the header pill uses. */

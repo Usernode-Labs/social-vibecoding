@@ -18,10 +18,13 @@
 //      row is the field's own height, so nothing beside it props it open.
 //   2. The two buttons are drawn smaller but stay 44px tap targets, and their
 //      overhang stays out of the field.
-//   3. The count's line is not laid out on a phone until the text nears the
-//      limit, the length it turns amber at.
-//   4. Desktop keeps the card it had, and the bar's tab-bar, home-indicator
-//      and keyboard clearances are not part of the phone block.
+//   3. The count's line is not laid out until the text nears the limit, the
+//      length it turns amber at: on a phone since #3735, and at every width
+//      since #4202.
+//   4. Desktop keeps the card's 8px padding round a 40px row, now with no
+//      count line under it, so a Messages card is the app channel's 56px
+//      (#4202); and the bar's tab-bar, home-indicator and keyboard
+//      clearances are not part of the phone block.
 //
 // Run with: node --test tests/messages-composer-compact.test.js
 
@@ -177,8 +180,11 @@ test('the smaller buttons are still 44px tap targets, and their overhang stays o
 
 // ── 3. The count's line ────────────────────────────────────────────────
 
-test('on a phone the count\'s line is laid out only once the text nears the limit', () => {
-  assert.match(MESSAGES, /\.messages-composer-count:not\(\[data-near-limit\]\) \{ display: none; \}/);
+test('at every width the count\'s line is laid out only once the text nears the limit', () => {
+  // #4202: a base rule, outside any media block, so desktop hides it too.
+  assert.match(CSS, /\n\.messages-composer-count:not\(\[data-near-limit\]\) \{ display: none; \}/);
+  assert.doesNotMatch(MESSAGES, /messages-composer-count/, 'not restated in the phone block');
+  assert.doesNotMatch(CSS, /\.messages-composer-count[^{]*\{[^}]*display: (?!none)/, 'no rule lays it out again at some width');
   // `flex` on the same element is one class; this selector is two (the class
   // and the attribute), so it wins although tailwind.css loads later.
   assert.match(COMPOSER, /const nearLimit = value\.length > 7600;/);
@@ -212,14 +218,14 @@ function composerHtml() {
 test('an empty composer renders the count\'s line without the near-limit mark', () => {
   const html = composerHtml();
   const count = /<div class="messages-composer-count[^"]*"[^>]*>/.exec(html);
-  assert.ok(count, 'the count\'s line is still rendered (desktop lays it out)');
+  assert.ok(count, 'the count\'s line is still rendered (a declared check selects it), only not laid out');
   assert.doesNotMatch(count[0], /data-near-limit/);
   assert.match(html, /<div class="messages-composer-card">/);
 });
 
 // ── 4. What the phone block leaves alone ───────────────────────────────
 
-test('desktop keeps the card it had', () => {
+test('desktop keeps the card\'s padding and row, and is the app channel\'s height', () => {
   assert.match(rule('.messages-composer-card'), /padding: 8px 8px 8px 12px;/);
   assert.match(rule('.messages-composer-input'), /min-height: 40px;/);
   assert.match(rule('.messages-composer-input'), /padding: 9px 4px;/);
@@ -227,6 +233,14 @@ test('desktop keeps the card it had', () => {
   assert.match(rule('.gc-composer-card'), /padding: 8px 8px 8px 12px;/);
   assert.match(rule('.gc-composer-card .gc-composer-input'), /min-height: 40px;/);
   assert.match(rule('.gc-send'), /width: 40px;\s*\n\s*height: 40px;/);
+  // #4202: with the count's line gone, padding + row + padding is the whole
+  // card, and the same sum for both composers.
+  const height = (card, field) => {
+    const [top, , bottom] = padding(/padding: ([^;]+);/.exec(rule(card))[1]);
+    return top + px(/min-height: (\d+px);/.exec(rule(field))[1]) + bottom;
+  };
+  assert.equal(height('.messages-composer-card', '.messages-composer-input'), 56);
+  assert.equal(height('.gc-composer-card', '.gc-composer-card .gc-composer-input'), 56);
 });
 
 test('the bar\'s tab-bar, home-indicator and keyboard clearances are not the phone block\'s', () => {

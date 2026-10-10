@@ -667,9 +667,16 @@ test('the hook, watching content: a topic opened at its card shows the way down 
 });
 
 test('Jump to latest alone: hidden until the reader is up the transcript, and a sibling of the scroller', () => {
-  const html = renderToHtml(createElement(loadTsx('frontend/src/features/messages/jump-to-latest.tsx').JumpToLatest, { scroller: { current: null } }));
+  const mod = loadTsx('frontend/src/features/messages/jump-to-latest.tsx');
+  const html = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null } }));
   assert.match(html, /^<div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot"><div class="pointer-events-none absolute inset-x-0 flex justify-center px-4 bottom-3"><button type="button" inert="" data-jump-latest=""/);
   assert.match(html, /aria-label="Jump to latest" title="Jump to latest"/);
+
+  // #4553: docked, the button sits in its own strip instead of the overlay —
+  // hidden with the page's full height back when there is nothing to jump to.
+  const docked = renderToHtml(createElement(mod.JumpToLatest, { scroller: { current: null }, docked: true }));
+  assert.match(docked, /^<div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/);
+  assert.doesNotMatch(docked, /data-transcript-overlay/);
 
   assert.match(THREAD, /<\/div>\s*<JumpToLatest scroller=\{scroller\} \/>\s*<MessageComposer threadRootId=\{rootId\} \/>/, 'a reply thread beside a conversation');
 });
@@ -688,11 +695,22 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
 
   const shell = loadTsx('frontend/src/features/group-chat/thread-shell.tsx');
   assert.equal(shell.THREAD_FOLLOW_PX, 80);
-  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < 80/, 'a thread follows within 80px');
+  assert.match(GROUP, /THREAD_FOLLOW_PX: 80,/, 'a thread follows within 80px');
+  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < GroupChat\.THREAD_FOLLOW_PX/);
   const props = { withHeader: true, readOnly: false, notice: '', placeholder: 'Reply', maxLength: 4000 };
   const fill = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: true });
-  assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot">/,
-    'after the thread\'s scroller, which holds the card and the messages');
+  // #4553: the button docks in its own strip after the scroller, so it never
+  // covers the topic card (or, on a change's page, the Votes and Testing
+  // cards and their buttons).
+  assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/,
+    'after the thread\'s scroller, docked in its own strip between it and the composer');
+  assert.doesNotMatch(fill, /data-transcript-overlay/, 'nothing floats over the topic thread');
+  for (const kind of ['change', 'request']) {
+    const page = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: true, [kind]: true });
+    assert.match(page, /<div data-transcript-strip="foot" class="hidden"><button type="button" inert="" data-jump-latest=""/,
+      `a ${kind}'s page docks the button the same way`);
+    assert.doesNotMatch(page, /data-transcript-overlay/, `nothing floats over a ${kind}'s cards`);
+  }
   const boxed = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: false });
   assert.doesNotMatch(boxed, /data-jump-latest/, 'the boxed layout is a small inline box: no floating control');
 });

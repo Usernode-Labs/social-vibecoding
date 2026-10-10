@@ -123,6 +123,12 @@ const TopochainChallenges = {
   _collapsed: {},
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
+  // Unwatch handle from live reads (#3985), held while the pane is open.
+  _unwatchLive: null,
+  // Fences for the list and the viewer's own rows (#3985): a re-read can
+  // overlap an earlier read, and only the newest answer may land.
+  _listSeq: 0,
+  _mineSeq: 0,
   // The event id `_challenges` was last loaded for. `undefined` until the
   // first load, which is deliberately distinct from the `null` a pane with
   // no resolvable event settles on.
@@ -192,6 +198,49 @@ const TopochainChallenges = {
       ? `${n.toLocaleString('en-US')} pts` : TopochainChallenges.str(v);
   },
 
+  // A reward as a number of points, or null when it is organiser prose that
+  // cannot be summed ("½ of your final credits"). A copy of the server's
+  // parseRewardPoints (src/services/topochain/challenge-rules.js) — the same
+  // parser Home's panel and the scorer read, kept as a copy because this file
+  // stays import-free (see _illustrationOf).
+  _rewardPoints(reward) {
+    if (reward == null) return null;
+    const cleaned = String(reward)
+      .trim()
+      .replace(/^up\s+to\s+/i, '')
+      .replace(/\s*(?:pts?|points?)\s*$/i, '')
+      .replace(/,/g, '')
+      .trim();
+    if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  },
+
+  // The points half of the summary (#4565): what the challenges in scope
+  // offer, and what the viewer has earned on them, from the same `_mine`
+  // rows the cards' green "Earned N pts" reads. Only challenges whose reward
+  // is a plain number count; organiser prose cannot be summed and is left
+  // out of both figures, so the two numbers always describe the same set.
+  // Null when nothing in view offers a number — "0 of 0 pts earned" says
+  // nothing.
+  _pointsView(challenges) {
+    let total = 0;
+    let earned = 0;
+    for (const c of Array.isArray(challenges) ? challenges : []) {
+      const n = TopochainChallenges._rewardPoints(
+        c && c.card_preview ? c.card_preview.reward : null
+      );
+      if (n == null) continue;
+      total += n;
+      const m = TopochainChallenges._mine.get(Number(c.id)) || null;
+      earned += Math.max(0, Number(m && m.activities_total) || 0);
+    }
+    if (!(total > 0)) return null;
+    // A repeatable challenge can credit more than its reward; the figure
+    // never reads "2,400 of 2,000".
+    return { earned: Math.min(Math.max(0, earned), total), total };
+  },
+
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
   // This is the ONE guard React does not make redundant. Rendering through a
   // component stops attribute breakout for free, but it does NOT stop a
@@ -227,9 +276,15 @@ const TopochainChallenges = {
     return typeof tone === 'string' && TopochainChallenges.ILLUSTRATION_TONE.test(tone) ? tone : null;
   },
 
-  async fetchJson(url) {
+  // The fetch init a re-read uses, as lib/live-reads.ts's FRESH: the service
+  // worker waits for the network instead of answering from its saved copy
+  // (public/sw.js, wantsFreshAnswer). Spelled here because this file stays
+  // import-free (see _illustrationOf).
+  FRESH: Object.freeze({ cache: 'no-cache' }),
+
+  async fetchJson(url, init) {
     try {
-      const res = await fetch(url);
+      const res = await (init ? fetch(url, init) : fetch(url));
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
         return { status: res.status, ok: res.ok, data: null };
@@ -283,7 +338,24 @@ const TopochainChallenges = {
       TopochainChallenges._hashListener = (e) => TopochainChallenges._onHashChange(e);
       window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
+    TopochainChallenges._watchLiveReads();
     TopochainChallenges.loadChallenges();
+  },
+
+  // Live reads (#3985, lib/live-reads.ts): while the pane is open, coming
+  // back to the tab after a while, the socket reconnecting or the browser
+  // coming back online re-reads the challenges and the viewer's own rows, so
+  // a challenge finished elsewhere shows its new count without a reload.
+  // The service worker's corrections already reach loadChallenges through
+  // App.refreshActiveScreen, so this watcher claims no reads of its own.
+  _watchLiveReads() {
+    if (TopochainChallenges._unwatchLive) return;
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    TopochainChallenges._unwatchLive = live.watch(() => {
+      if (!TopochainChallenges._open) return undefined;
+      return TopochainChallenges.loadChallenges({ fresh: true });
+    });
   },
 
   close() {
@@ -302,6 +374,10 @@ const TopochainChallenges = {
     if (TopochainChallenges._unsub) {
       TopochainChallenges._unsub();
       TopochainChallenges._unsub = null;
+    }
+    if (TopochainChallenges._unwatchLive) {
+      TopochainChallenges._unwatchLive();
+      TopochainChallenges._unwatchLive = null;
     }
   },
 
@@ -327,8 +403,18 @@ const TopochainChallenges = {
 
   // ── Data loading ─────────────────────────────────────────────────────
 
-  async loadChallenges() {
+  // `fresh` (a pull, a correction, a live re-read) asks the network for the
+  // current answer rather than the service worker's saved copy, and when the
+  // same event's grid is already up it re-reads in place (_reread) instead
+  // of blanking the cards to a skeleton first.
+  async loadChallenges({ fresh = false } = {}) {
     const eventId = TopochainChallenges._eventId();
+    if (fresh && eventId != null && eventId === TopochainChallenges._loadedEventId
+        && TopochainChallenges._challenges.length && !TopochainChallenges._challengesLoading
+        && !TopochainChallenges._challengesError) {
+      return TopochainChallenges._reread(eventId);
+    }
+    const init = fresh ? TopochainChallenges.FRESH : undefined;
     // A different event starts its groups from the board's defaults; a
     // refresh of the same one (pull-to-refresh) keeps the viewer's toggles.
     if (eventId !== TopochainChallenges._loadedEventId) TopochainChallenges._collapsed = {};
@@ -354,11 +440,13 @@ const TopochainChallenges = {
     TopochainChallenges._challenges = [];
     TopochainChallenges._renderGrid();
 
+    const seq = ++TopochainChallenges._listSeq;
     const res = await TopochainChallenges.fetchJson(
-      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`
+      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`, init
     );
     if (!TopochainChallenges._open
-        || TopochainChallenges._eventId() !== eventId) return;
+        || TopochainChallenges._eventId() !== eventId
+        || seq !== TopochainChallenges._listSeq) return;
 
     TopochainChallenges._challengesLoading = false;
     if (res.ok && res.data?.success && Array.isArray(res.data.data)) {
@@ -371,19 +459,45 @@ const TopochainChallenges = {
     }
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
-    TopochainChallenges._loadMine(eventId);
+    TopochainChallenges._loadMine(eventId, init);
+  },
+
+  // A re-read of the grid already on screen (#3985). The cards stay up while
+  // it runs, and a failed read leaves them as they are rather than trading
+  // real numbers for an error. An open detail page keeps its row object (the
+  // breakdown and block-production reads are fenced on it) and takes the
+  // fresh fields onto it, so its count moves with the card's.
+  async _reread(eventId) {
+    const seq = ++TopochainChallenges._listSeq;
+    const res = await TopochainChallenges.fetchJson(
+      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`, TopochainChallenges.FRESH
+    );
+    if (!TopochainChallenges._open || TopochainChallenges._eventId() !== eventId
+        || TopochainChallenges._loadedEventId !== eventId
+        || seq !== TopochainChallenges._listSeq) return;
+    if (!(res.ok && res.data?.success && Array.isArray(res.data.data))) return;
+    const open = TopochainChallenges._detailChallenge;
+    TopochainChallenges._challenges = res.data.data.map((row) => (
+      open && row && Number(row.id) === Number(open.id) ? Object.assign(open, row) : row
+    ));
+    TopochainChallenges._onboarding = res.data.onboarding || null;
+    TopochainChallenges._store?.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+    if (open) TopochainChallenges._renderDetailOverlay();
+    await TopochainChallenges._loadMine(eventId, TopochainChallenges.FRESH);
   },
 
   // Your own points per challenge, from the session-authed web read. Purely
   // additive: any failure (401 signed out, 422, network) leaves the grid as
   // rendered above — no error banner, no retry.
-  async _loadMine(eventId) {
+  async _loadMine(eventId, init) {
     if (!TopochainChallenges._challenges.length) return;
+    const seq = ++TopochainChallenges._mineSeq;
     const { ok, data } = await TopochainChallenges.fetchJson(
-      `/challenges-api/challenges?season_event_id=${encodeURIComponent(eventId)}`
+      `/challenges-api/challenges?season_event_id=${encodeURIComponent(eventId)}`, init
     );
     if (!TopochainChallenges._open
-        || TopochainChallenges._eventId() !== eventId) return;
+        || TopochainChallenges._eventId() !== eventId
+        || seq !== TopochainChallenges._mineSeq) return;
     // The /challenges-api envelope is { success, data } like /api/v4.
     const rows = (ok && data && Array.isArray(data.data)) ? data.data : null;
     if (!rows) return;
@@ -393,6 +507,8 @@ const TopochainChallenges = {
     }
     TopochainChallenges._mine = mine;
     TopochainChallenges._renderGrid();
+    // The detail page reads the viewer's own row too.
+    if (TopochainChallenges._detailChallenge) TopochainChallenges._renderDetailOverlay();
   },
 
   // ── Challenge grid ───────────────────────────────────────────────────
@@ -563,7 +679,7 @@ const TopochainChallenges = {
       // Always present when the grid has rows (including "0/8" and "8/8"),
       // so the declared dapp.json check can anchor on #tc-se-challenge-summary
       // whatever the selected event's data happens to be.
-      progress: TopochainChallenges._progressView(doneCount, ordered.length),
+      progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
       groups,
     };
   },
@@ -607,15 +723,22 @@ const TopochainChallenges = {
     const doneCount = ordered.filter((c) => TopochainChallenges._isDone(c)).length;
     const onboarding = TopochainChallenges._onboarding;
     if (!onboarding) {
-      return { kind: 'cards', progress: TopochainChallenges._progressView(doneCount, ordered.length), groups };
+      return {
+        kind: 'cards',
+        progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
+        groups,
+      };
     }
     return {
       kind: 'cards',
       // First challenges is its own scope while it gates the rest; once unlocked
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
-        ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'First challenges'),
+        ? TopochainChallenges._progressView(doneCount, ordered.length, null, ordered)
+        : TopochainChallenges._progressView(
+          onboarding.completed, onboarding.total, 'First challenges',
+          ordered.filter((c) => TopochainChallenges._groupOf(c).key === 'setup')
+        ),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
@@ -897,24 +1020,38 @@ const TopochainChallenges = {
   },
 
   // The progress over the grid, as the board's quiet season summary draws it
-  // ("3/9 done in Season 2", one segment per challenge, in
+  // ("3/9 done in this event", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("First challenges"); otherwise it is the selected event, whose name
-  // can land after the grid does. The onChange redraw in open() fills it in
-  // then, and until it has, the caption is plain "done".
+  // of its own ("First challenges"); otherwise it is the selected event. The
+  // onChange redraw in open() fills the caption in once the event has
+  // arrived, and until it has, the caption is plain "done".
   //
   // THE EVENT SAYS IT IS AN EVENT (QA 2026-09-24 Q17). This tally is one
   // event's challenges, while Home's and the profile's are the whole
   // season's; production names its season event after the season ("Season
   // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
   // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("First challenges") is unchanged.
-  _progressView(done, total, scope) {
-    if (scope) return { done, total, caption: `done in ${scope}` };
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? `done in this event · ${name}` : 'done' };
+  // event" now, without the name (issue #4528): the event's own name can
+  // still be the season's, and the name added nothing the words did not say.
+  // A named scope ("First challenges") is unchanged.
+  //
+  // `challenges` (fourth) is the list in scope, whose numeric rewards and the
+  // viewer's earned points make up the summary's points line (#4565): the
+  // event scope counts the whole ordered grid, First challenges its own
+  // cards. Absent, or no numeric reward in view, the descriptor is exactly
+  // what it was.
+  _progressView(done, total, scope, challenges) {
+    const points = TopochainChallenges._pointsView(challenges);
+    let view;
+    if (scope) {
+      view = { done, total, caption: `done in ${scope}` };
+    } else {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+      view = { done, total, caption: name ? 'done in this event' : 'done' };
+    }
+    return points ? { ...view, points } : view;
   },
 
   // The card's rail: which of the three states a challenge is in, the one
@@ -1801,6 +1938,9 @@ const TopochainChallenges = {
           key: `${i}`,
           text: str(a.description || a.activity_type),
           points: `+${str(a.points)}`,
+          // Raw; ./activity-row.tsx formats it in the renderer (#3648),
+          // since this module stays import-free.
+          at: a.activity_at || null,
         }))
         : null,
     };

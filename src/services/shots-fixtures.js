@@ -8,6 +8,7 @@
 
 const { Client } = require('pg');
 const dbManager = require('./db-manager');
+const dbRetry = require('./db-retry');
 const hostedApp = require('../../worker/shots-hosted-app-contract');
 
 const SOURCE_SESSION_ID = 990801;
@@ -32,7 +33,36 @@ function assertShotsDatabase(databaseUrl, slug, runId, side) {
   if (actual !== expected) throw new Error('Before & after shots fixture requires its isolated shots database.');
 }
 
-async function withClient(databaseUrl, fn) {
+// ONE MOMENT FOR BOTH SIDES. Every row the platform writes into a pair is
+// stamped from one instant, read once per reset (shots-environment.resetPair)
+// and handed to both sides. Postgres reads NOW() from each side's own
+// transaction, which began at its own instant, so rows written "together"
+// were never quite the same: they differed by however far apart the two
+// transactions began, microseconds for the demo states and a tenth of a
+// second or more for writes made on one side after the other.
+function pairMoment(at) {
+  const ms = at == null ? Date.now() : at instanceof Date ? at.getTime() : Date.parse(String(at));
+  if (!Number.isFinite(ms)) throw new Error('Before & after shots fixtures need a valid moment.');
+  return new Date(ms).toISOString();
+}
+
+// A client whose NOW() is that moment: each NOW() in a statement is bound to
+// it as the statement's next parameter. The fixtures and demo states keep
+// writing NOW() in their SQL, so a state added later is pinned the same way.
+// Column defaults and triggers are Postgres's own and still read its clock.
+const NOW_CALL = /\bNOW\(\)/gi;
+function atMoment(client, at) {
+  const moment = pairMoment(at);
+  return {
+    query(sql, params) {
+      if (typeof sql !== 'string' || !/\bNOW\(\)/i.test(sql)) return client.query(sql, params);
+      const values = params ? [...params, moment] : [moment];
+      return client.query(sql.replace(NOW_CALL, `$${values.length}::timestamptz`), values);
+    },
+  };
+}
+
+async function withClient(databaseUrl, fn, { at = null } = {}) {
   const client = new Client({
     connectionString: databaseUrl,
     connectionTimeoutMillis: 15_000,
@@ -41,8 +71,29 @@ async function withClient(databaseUrl, fn) {
     application_name: 'social-shots-fixture',
   });
   await client.connect();
-  try { return await fn(client); }
+  try { return await fn(at == null ? client : atMoment(client, at)); }
   finally { await client.end(); }
+}
+
+// One fixture write, as one transaction on a fresh connection. These rows go
+// in while both booted copies are already running against the same
+// databases, so a write can lose a deadlock (40P01) or a serialization
+// conflict (40001) to the app's own work. That says nothing about the
+// proposal, and the rolled-back transaction is simply run again, a bounded
+// number of times; any other failure, or one that outlasts the retries,
+// fails as before.
+async function inTransaction(databaseUrl, fn, { retry = {}, at = null } = {}) {
+  return dbRetry.withDbRetry(() => withClient(databaseUrl, async (client) => {
+    await client.query('BEGIN');
+    try {
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    }
+  }, { at }), { label: 'Shots fixture write', ...retry });
 }
 
 async function canCopyMemberAgentSession({ databaseUrl, slug, runId, side }) {
@@ -97,8 +148,8 @@ async function installFullAdminFixture(client, slug) {
     await client.query(
       `INSERT INTO users
          (id, username, password, is_admin, admin_readonly, can_create_apps,
-          has_platform_access, platform_access_granted_at)
-       VALUES ($1, $2, '__shots_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
+          has_platform_access, platform_access_granted_at, created_at)
+       VALUES ($1, $2, '__shots_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW(), NOW())`,
       [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
     );
   } else {
@@ -136,19 +187,9 @@ async function installFullAdminFixture(client, slug) {
   };
 }
 
-async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
+async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
-  return withClient(databaseUrl, async (client) => {
-    await client.query('BEGIN');
-    try {
-      const installed = await installFullAdminFixture(client, slug);
-      await client.query('COMMIT');
-      return installed;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    }
-  });
+  return inTransaction(databaseUrl, (client) => installFullAdminFixture(client, slug), { at });
 }
 
 async function installHostedAppFixture(client, runId) {
@@ -199,19 +240,9 @@ async function installHostedAppFixture(client, runId) {
   };
 }
 
-async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
+async function ensureHostedAppFixture({ databaseUrl, slug, runId, side, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
-  return withClient(databaseUrl, async (client) => {
-    await client.query('BEGIN');
-    try {
-      const installed = await installHostedAppFixture(client, runId);
-      await client.query('COMMIT');
-      return installed;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
-    }
-  });
+  return inTransaction(databaseUrl, (client) => installHostedAppFixture(client, runId), { at });
 }
 
 // A copy of the staging fixture's agent session, owned by `userId`, with its
@@ -261,89 +292,78 @@ async function copyAgentSession(client, { userId, appId, sessionId, changeId, br
   return session.rows[0];
 }
 
-async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
+async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
-  return withClient(databaseUrl, async (client) => {
-    await client.query('BEGIN');
-    try {
-      const viewer = await client.query(
-        `SELECT id FROM users WHERE username = 'usernode-capture' AND is_admin = FALSE`
-      );
-      const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
-      if (viewer.rowCount !== 1 || app.rowCount !== 1) {
-        throw new Error('Before & after shots member identity or platform app is missing from the paired fixture.');
-      }
-      const userId = viewer.rows[0].id;
-      const appId = app.rows[0].id;
-      // A member story must see the same private app surface that a genuine
-      // collaborator sees. This grant lives only in this run's disposable DB.
-      await client.query(
-        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
-         VALUES ($1, $2, 'member', NOW())
-         ON CONFLICT (app_id, user_id)
-         DO UPDATE SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
-        [appId, userId]
-      );
-      const session = await copyAgentSession(client, {
-        userId, appId, sessionId: MEMBER_SESSION_ID, changeId: MEMBER_CHANGE_ID,
-        branch: 'shots-fixture/member-agent-session', persona: 'member',
-      });
-      await client.query('COMMIT');
-      return {
-        id: PROFILE,
-        persona: 'member',
-        startPath: '/#messages',
-        path: `/#messages/agent/${MEMBER_SESSION_ID}`,
-        title: session.title,
-        sessionId: MEMBER_SESSION_ID,
-        changeId: MEMBER_CHANGE_ID,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
+  return inTransaction(databaseUrl, async (client) => {
+    const viewer = await client.query(
+      `SELECT id FROM users WHERE username = 'usernode-capture' AND is_admin = FALSE`
+    );
+    const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
+    if (viewer.rowCount !== 1 || app.rowCount !== 1) {
+      throw new Error('Before & after shots member identity or platform app is missing from the paired fixture.');
     }
-  });
+    const userId = viewer.rows[0].id;
+    const appId = app.rows[0].id;
+    // A member story must see the same private app surface that a genuine
+    // collaborator sees. This grant lives only in this run's disposable DB.
+    await client.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW())
+       ON CONFLICT (app_id, user_id)
+       DO UPDATE SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+      [appId, userId]
+    );
+    const session = await copyAgentSession(client, {
+      userId, appId, sessionId: MEMBER_SESSION_ID, changeId: MEMBER_CHANGE_ID,
+      branch: 'shots-fixture/member-agent-session', persona: 'member',
+    });
+    return {
+      id: PROFILE,
+      persona: 'member',
+      startPath: '/#messages',
+      path: `/#messages/agent/${MEMBER_SESSION_ID}`,
+      title: session.title,
+      sessionId: MEMBER_SESSION_ID,
+      changeId: MEMBER_CHANGE_ID,
+    };
+  }, { at });
 }
 
 // The full admin gets an agent session too. Without one, anything drawn only
 // for a viewer with sessions (the menu's Agent sessions list) is absent on a
 // before build, and its change cannot be shown there.
-async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
+async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfAppSlug, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
-  return withClient(databaseUrl, async (client) => {
-    await client.query('BEGIN');
-    try {
-      const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
-      const admin = await client.query('SELECT id FROM users WHERE id = $1 AND username = $2',
-        [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]);
-      if (app.rowCount !== 1 || admin.rowCount !== 1) {
-        throw new Error('Before & after shots full-admin identity or platform app is missing from the paired fixture.');
-      }
-      const session = await copyAgentSession(client, {
-        userId: FULL_ADMIN_USER_ID, appId: app.rows[0].id,
-        sessionId: FULL_ADMIN_SESSION_ID, changeId: FULL_ADMIN_CHANGE_ID,
-        branch: 'shots-fixture/full-admin-agent-session', persona: 'full admin',
-      });
-      await client.query('COMMIT');
-      return {
-        id: FULL_ADMIN_SESSION_PROFILE,
-        persona: 'full_admin',
-        startPath: '/#messages',
-        path: `/#messages/agent/${FULL_ADMIN_SESSION_ID}`,
-        title: session.title,
-        sessionId: FULL_ADMIN_SESSION_ID,
-        changeId: FULL_ADMIN_CHANGE_ID,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw error;
+  return inTransaction(databaseUrl, async (client) => {
+    const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
+    const admin = await client.query('SELECT id FROM users WHERE id = $1 AND username = $2',
+      [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]);
+    if (app.rowCount !== 1 || admin.rowCount !== 1) {
+      throw new Error('Before & after shots full-admin identity or platform app is missing from the paired fixture.');
     }
-  });
+    const session = await copyAgentSession(client, {
+      userId: FULL_ADMIN_USER_ID, appId: app.rows[0].id,
+      sessionId: FULL_ADMIN_SESSION_ID, changeId: FULL_ADMIN_CHANGE_ID,
+      branch: 'shots-fixture/full-admin-agent-session', persona: 'full admin',
+    });
+    return {
+      id: FULL_ADMIN_SESSION_PROFILE,
+      persona: 'full_admin',
+      startPath: '/#messages',
+      path: `/#messages/agent/${FULL_ADMIN_SESSION_ID}`,
+      title: session.title,
+      sessionId: FULL_ADMIN_SESSION_ID,
+      changeId: FULL_ADMIN_CHANGE_ID,
+    };
+  }, { at });
 }
 
 module.exports = {
   assertShotsDatabase,
+  pairMoment,
+  atMoment,
   withClient,
+  inTransaction,
   PROFILE,
   FULL_ADMIN_SESSION_ID,
   FULL_ADMIN_CHANGE_ID,

@@ -26,7 +26,10 @@
 //       GET /api/me/active-sessions returns and the board keeps as
 //       `_mySessions` (its `my-session` entries in the Underway lane).
 //     · their proposals in review, `promoted` or `merging`: the
-//       GET /api/apps/:slug/promoted rows whose `user_id` is theirs.
+//       GET /api/apps/:slug/promoted rows whose `user_id` is theirs — plus,
+//       since #4538, the ones Homeroom bot built from a request made for
+//       them (botRequestedBySql, MY_PROPOSALS_WHERE below). They still owe
+//       their vote on such a change, so NEEDS counts it too.
 //     · their open governance proposals: the GET /api/apps/:slug/issues
 //       rows whose `created_by` is theirs.
 //     The three statuses are disjoint, so nothing is counted twice.
@@ -71,9 +74,15 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { currentVotePredicateSql, countedVotePredicateSql } = require('../services/pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql, visualHeadForSession } = require('../services/pr-vote-revision');
+const diagramContract = require('../services/diagram');
+const proposalTouches = require('../services/proposal-touches');
+const visualsService = require('../services/visuals');
+const shotsView = require('../services/shots-view');
+const { botRequestedBySql } = require('../services/bot-requested-by');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const communities = require('../services/communities');
+const governance = require('../services/governance');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -96,12 +105,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {
-  // `owed` names DEMO_NEEDS_FEED's three, below, so a vote swiped past in
+  // `owed` names DEMO_NEEDS_FEED's cards, below, so a vote swiped past in
   // the demo feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
     working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
   },
-  'staging-demo-emoji-icon': { working: 0, needs: 5 },
+  // #4313: its one demo card, the Just-you change that asks for approval.
+  'staging-demo-emoji-icon': { working: 0, needs: 5, owed: ['proposal:-106@0'] },
   'staging-demo-image-icon': { working: 1, needs: 0 },
   'staging-demo-long-name': { working: 4, needs: 1 },
 };
@@ -122,7 +132,15 @@ const MY_SESSIONS_WHERE = `cs.user_id = $1
        AND cs.status IN ('active', 'paused')
        AND cs.is_headless = FALSE`;
 
-const MY_PROPOSALS_WHERE = `cs.user_id = $1
+// #4538: a change Homeroom bot built from a request made for the viewer is
+// that viewer's work in flight too, even though `cs.user_id` is the bot's —
+// they asked for it and they are waiting on it. The bot-request predicate is
+// the shared fragment (services/bot-requested-by.js), the same one the
+// /promoted payload reads, so the strip and the counts cannot disagree.
+// OWED_PROPOSALS_WHERE is unchanged: the bot's change still counts as a vote
+// owed (the bot is not the viewer, and the viewer may still vote on it).
+const MY_PROPOSALS_WHERE = `(cs.user_id = $1
+       OR ${botRequestedBySql('cs', '$1')})
        AND cs.status IN ('promoted', 'merging')`;
 
 const MY_GOVERNANCE_WHERE = `i.status = 'open'
@@ -290,7 +308,7 @@ const ITEMS_SQL = `
 // GET /api/workshop/needs-feed (#3270)
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
-//                number, epoch, at, yes, no,
+//                number, epoch, at, yes, no, approve?,
 //                app: { slug, name, icon_url, icon_emoji } }
 //
 // The Communities screen's Needs you tab as ONE FEED: every decision owed by
@@ -306,6 +324,13 @@ const ITEMS_SQL = `
 // proposal's summary, or a group decision's description), who asked, the
 // tally so far, and the approval epoch a vote must carry (#2038). Bounded to
 // NEEDS_FEED_MAX; the tab says so when it stops there.
+//
+// And whether it is approved rather than voted on (#4270, B7): `approve` on a
+// change on a project that is just the viewer's whose Yes is the one it
+// needs, so the feed says Approve / Don't approve where its card does. The
+// query says which rows are on such a project (`solo`: the audience is
+// 'solo' and the viewer's vote counts there); withVotesRequired works out
+// how many Yes votes those need; approvedAlone decides.
 //
 // The words are the Description sheet's as well since #3488 (the feed is a
 // project's own NeedsFeed now, which renders them in full there), so they
@@ -328,7 +353,23 @@ const NEEDS_FEED_SQL = `
                AND ${countedVotePredicateSql('pv', 'cs')})::int AS yes,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'no'
-               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no
+               AND ${countedVotePredicateSql('pv', 'cs')})::int AS no,
+           -- #4490: the card's picture, as a project's Needs you draws it:
+           -- the shots run and the heads its serializer checks, the legacy
+           -- capture pair, the author's diagram and "What it touches".
+           cs.shots_run_id::text AS shots_run_id, cs.shots_detail, cs.status::text AS status,
+           cs.source::text AS source, cs.imported_pr_head_sha::text AS imported_pr_head_sha,
+           cs.reviewed_head_sha::text AS reviewed_head_sha, cs.checks_commit_sha::text AS checks_commit_sha,
+           cs.handoff_head_sha::text AS handoff_head_sha,
+           cs.pr_diagram, cs.pr_diagram_source, cs.pr_touches, cs.pr_touches_sha,
+           (SELECT jsonb_object_agg(
+                     sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                     jsonb_build_object(
+                       'id', sv.id, 'path', sv.captured_path, 'viewport', sv.captured_viewport,
+                       'commit', sv.commit_hash, 'scenarioId', sv.scenario_id,
+                       'scenarioFingerprint', sv.scenario_fingerprint, 'fellBack', sv.before_fell_back))
+              FROM session_visuals sv WHERE sv.session_id = cs.id) AS visuals_agg,
+           NULL::text AS decision_kind, NULL::jsonb AS decision_payload
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -336,14 +377,24 @@ const NEEDS_FEED_SQL = `
     SELECT 'governance', i.app_id, i.id, i.title::text,
            LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
-           NULL::int, NULL::int
+           NULL::int, NULL::int,
+           NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
+           NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
+           i.kind::text, i.payload
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
   )
-  SELECT a.slug, a.name, a.icon_image_id, a.icon_emoji,
+  SELECT a.id AS app_id, a.slug, a.name, a.icon_image_id, a.icon_emoji,
          o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
-         o.at, o.yes, o.no
+         o.at, o.yes, o.no, a.repo_url,
+         o.shots_run_id, o.shots_detail, o.status, o.source, o.imported_pr_head_sha,
+         o.reviewed_head_sha, o.checks_commit_sha, o.handoff_head_sha,
+         o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
+         o.decision_kind, o.decision_payload,
+         (o.kind = 'proposal'
+           AND (${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}) = 'solo'
+           AND counts_toward_outcome($1, a.id)) AS solo
     FROM owed o
     JOIN apps a ON a.id = o.app_id
     LEFT JOIN app_collaborators me
@@ -419,6 +470,122 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
   }));
 }
 
+/**
+ * #4270: how many Yes votes each of NEEDS_FEED_SQL's `solo` rows needs, as
+ * `votes_required` on the row, worked out as GET /api/apps/:slug/promoted
+ * works it out for the change's card: the project's governance and
+ * electorate, then the merge gate over the counted votes. One read per
+ * project, and only for those rows; a project whose read fails is left
+ * without one. Resolves the rows. Exported for tests.
+ */
+async function withVotesRequired(pool, rows) {
+  const byApp = new Map();
+  for (const row of rows) {
+    if (row.solo !== true) continue;
+    if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
+    byApp.get(row.app_id).push(row);
+  }
+  await Promise.all([...byApp].map(async ([appId, list]) => {
+    try {
+      const gov = await governance.getGovernance(pool, appId);
+      const electorate = await governance.getElectorate(pool, appId, gov);
+      for (const row of list) {
+        row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+      }
+    } catch (err) {
+      log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
+    }
+  }));
+  return rows;
+}
+
+/**
+ * B7 for one of the feed's rows, the rule AppView._approveSolo applies to a
+ * card: a change on a project that is just the viewer's, whose vote counts,
+ * and whose Yes is the one it needs. A row with no count worked out needs
+ * one, as a card without votes_required does.
+ */
+function approvedAlone(row) {
+  if (row.solo !== true) return false;
+  const needed = parseInt(row.votes_required, 10);
+  return !Number.isFinite(needed) || needed <= 1;
+}
+
+/**
+ * A group decision's own facts, the few fields its diagram is drawn from
+ * (frontend/src/lib/diagram/decision.ts), named one by one so nothing else
+ * in a payload reaches the feed. A secret change carries its key and action,
+ * never a value.
+ */
+function decisionFacts(kind, payload) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : null);
+  if (kind === 'rename') return str(p.newName) ? { kind, newName: str(p.newName) } : null;
+  if (kind === 'close_issue') {
+    const n = Number(p.issueNumber);
+    return { kind, issueNumber: Number.isInteger(n) && n > 0 ? n : null, issueTitle: str(p.issueTitle), reason: str(p.reason) };
+  }
+  if (kind === 'secret_change') {
+    return str(p.key) ? { kind, key: str(p.key), action: p.action === 'delete' ? 'delete' : 'set' } : null;
+  }
+  return null;
+}
+
+/**
+ * #4490: what a feed row needs to draw its picture: the shots run (attached
+ * by withPictures), the legacy capture pair, the author's diagram, "What it
+ * touches" for the head it was read at, and a group decision's facts.
+ */
+function pictureFields(row) {
+  if (row.kind === 'governance') {
+    const decision = decisionFacts(row.decision_kind, row.decision_payload);
+    if (decision && decision.kind === 'rename') decision.fromName = row.name || null;
+    return decision ? { decision } : {};
+  }
+  const head = visualHeadForSession(row);
+  const diagram = diagramContract.storedDiagram(row.pr_diagram);
+  const out = {};
+  if (row.shots && typeof row.shots === 'object') out.shots = row.shots;
+  if (row.visuals_agg) {
+    const shaped = visualsService.shapeAgg(row.visuals_agg, head);
+    if (shaped) out.visuals = shaped;
+  }
+  if (diagram) {
+    out.diagram = diagram;
+    out.diagram_source = row.pr_diagram_source || 'author';
+  }
+  if (head && row.pr_touches_sha === head) {
+    const touches = proposalTouches.storedTouches(row.pr_touches);
+    if (touches) out.touches = touches;
+  }
+  const impact = row.shots_detail && row.shots_detail.intent && row.shots_detail.intent.impact;
+  if (impact === 'none') out.nothing_visible = true;
+  return out;
+}
+
+/**
+ * Attach each proposal row's shots (the same serializer a project's list
+ * uses) and start "What it touches" for a head not yet read. Resolves the
+ * rows. Best-effort: a failed read leaves the row without a picture.
+ */
+async function withPictures(pool, rows, { shotsPresent = false } = {}) {
+  const proposals = rows.filter((r) => r.kind === 'proposal');
+  if (!proposals.length) return rows;
+  if (shotsPresent) {
+    try {
+      for (const r of proposals) r.app_slug = r.slug;
+      const bySession = await shotsView.getForSessions(pool, proposals, null);
+      for (const r of proposals) r.shots = bySession.get(Number(r.id)) || null;
+    } catch (err) {
+      log.warn('workshop-overview', 'Could not read the feed\'s shots', { message: err.message });
+    }
+  }
+  proposalTouches.scheduleRefresh(pool, proposals.map((r) => ({
+    id: r.id, repo_url: r.repo_url, pr_touches_sha: r.pr_touches_sha, head: visualHeadForSession(r),
+  })));
+  return rows;
+}
+
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
 function shapeNeedsFeed(rows) {
   return rows.map((row) => ({
@@ -432,6 +599,9 @@ function shapeNeedsFeed(rows) {
     at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
+    ...(approvedAlone(row) ? { approve: true } : {}),
+    // #4490: the card's picture, the same as a project's Needs you draws.
+    ...pictureFields(row),
     app: {
       slug: row.slug,
       name: row.name || row.slug,
@@ -484,21 +654,66 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -103, title: 'Sort recipes by rating',
     summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    // #4490: its author's diagram, so the feed's picture can be seen on ?demo=1.
+    diagram: {
+      version: 1, kind: 'changes',
+      rows: [
+        { op: 'added', what: 'Sort by rating', detail: 'Highest rated first' },
+        { op: 'changed', what: 'The sort menu', detail: 'Remembers your choice' },
+      ],
+    },
+    diagram_source: 'author',
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
   {
     kind: 'proposal', id: -104, title: 'Let members share a shopping list',
     summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
+    // #4490: no diagram, so its picture is "What it touches".
+    touches: {
+      version: 1, files: 5,
+      areas: [
+        { key: 'screens', label: 'Screens', files: 3, lines: 140 },
+        { key: 'server', label: 'Server', files: 1, lines: 46 },
+        { key: 'database', label: 'Database', files: 1, lines: 12 },
+        { key: 'tests', label: 'Tests', files: 0, lines: 0 },
+        { key: 'docs', label: 'Docs', files: 0, lines: 0 },
+        { key: 'other', label: 'Other', files: 0, lines: 0 },
+      ],
+    },
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
   {
     kind: 'governance', id: -105, title: 'Rename the app to Recipe Box',
     summary: 'A group decision: the new name shows everywhere once it passes.',
     author: 'staging-demo-partner', number: null, epoch: null, at: '2026-09-21T08:00:00Z', yes: null, no: null,
+    // #4490: a group decision's diagram is drawn from its own facts.
+    decision: { kind: 'rename', newName: 'Recipe Box', fromName: 'Staging demo app' },
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
+  // #4313: a change on a Just-you project, which asks for your approval
+  // rather than a vote (#4270's `approve`), so the reel's approval wording
+  // can be seen in a preview. Nobody else is in it, so it has no author and
+  // no tally; `?shot=needs-approve` opens on it with its vote sheet up.
+  {
+    kind: 'proposal', id: -106, title: '[Demo] Show a word count under each note',
+    summary: 'A demo change on a project that is just yours: each note shows how many words it has.',
+    author: null, number: null, epoch: 0, at: '2026-09-20T09:00:00Z', yes: 0, no: 0, approve: true,
+    app: { slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_url: null, icon_emoji: '🎮' },
+  },
 ];
+
+/**
+ * Whether a proposal id is one of the demo feed's (#4313): the follow-up
+ * requests the reel makes for a demo row (its vote, its Ask thread) are
+ * answered by the demo path rather than refused, so a preview logs no
+ * failed request. Negative ids name no real proposal anywhere.
+ */
+function isDemoNeedsProposal(id) {
+  const n = Number(id);
+  return IS_STAGING && Number.isInteger(n) && n < 0
+    && DEMO_NEEDS_FEED.some((it) => it.kind === 'proposal' && it.id === n);
+}
 
 /** The feed's demo overlay: the real feed first, then the demo cards. */
 function withDemoNeedsFeed(items) {
@@ -529,6 +744,30 @@ function groupItems(rows) {
     });
   }
   return items;
+}
+
+/**
+ * #4313: a vote on one of the ?demo=1 Needs-you feed's cards is answered
+ * here, never cast: the preview's Approve and Vote land as they would, and
+ * nothing logs a failed request. So is the card's page's read of who voted
+ * (nobody: a demo card names no real people). Its own router, mounted ahead
+ * of the session routers (server.js), whose access guard refuses a negative
+ * id before those routes are reached. Every other id passes straight through.
+ */
+function demoNeedsVoteRoutes() {
+  const router = Router();
+  router.get('/api/sessions/:id/votes', (req, res, next) => {
+    if (!isDemoNeedsProposal(req.params.id)) return next();
+    return res.json({ yes: [], no: [], reasons: [], earlier: { yes: [], no: [] } });
+  });
+  router.post('/api/sessions/:id/vote', (req, res, next) => {
+    if (!isDemoNeedsProposal(req.params.id)) return next();
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const vote = req.body?.vote;
+    if (!['yes', 'no'].includes(vote)) return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
+    return res.json({ ok: true, demo: true, vote });
+  });
+  return router;
 }
 
 function workshopOverviewRoutes(config) {
@@ -599,7 +838,8 @@ function workshopOverviewRoutes(config) {
       const { rows } = await pool.query(NEEDS_FEED_SQL, [
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
-      const items = shapeNeedsFeed(rows);
+      await withPictures(pool, rows, { shotsPresent: !!config.shots?.present });
+      const items = shapeNeedsFeed(await withVotesRequired(pool, rows));
       if (IS_STAGING && req.query.demo === '1') {
         return res.json({ items: withDemoNeedsFeed(items), max: NEEDS_FEED_MAX });
       }
@@ -614,9 +854,10 @@ function workshopOverviewRoutes(config) {
 }
 
 module.exports = {
-  workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
+  workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withPictures, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
 };

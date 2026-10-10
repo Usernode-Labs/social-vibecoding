@@ -217,6 +217,18 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint,
+ * and the hub's open seats draw it pale in a circle (community-card.tsx
+ * WeekPeople).
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
@@ -436,6 +448,12 @@ export const ArrowUpTrayIcon = stroked(
   'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
 );
 
+/** Download a file onto the device: the arrow into the tray (#4055). */
+export const DownloadIcon = stroked(
+  'DownloadIcon',
+  'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
+);
+
 export const SendIcon = stroked(
   'SendIcon',
   'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
@@ -506,6 +524,14 @@ export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6
 export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
 
 /**
+ * FOUR ARROWS out from the centre (✥) — a handle that moves what it is on.
+ *
+ * The comment bar's grip wears it beside a move cursor, so "drag me" reads at
+ * a glance where the ⋮ it replaced read as a menu.
+ */
+export const ArrowsMoveIcon = stroked('ArrowsMoveIcon', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3');
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
@@ -550,6 +576,17 @@ export const CogIcon = stroked('CogIcon', [
   'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
   'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
 ]);
+
+/**
+ * A globe, for a project's custom domain (#4405): the Settings & rules row
+ * that opens the Custom domain dialog. Renders behind state (the row shows
+ * only to whoever manages the project), so it is on the expected-absent list
+ * in tests/shell-icon-set.test.js.
+ */
+export const GlobeIcon = stroked(
+  'GlobeIcon',
+  'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+);
 
 export const SunIcon = stroked(
   'SunIcon',
@@ -849,6 +886,15 @@ export const HeartIcon = stroked(
   'HeartIcon',
   'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
 );
+
+/**
+ * A phone with a plus on its screen: "Add Homeroom to your home screen", the
+ * mark menu's row for a private member who has not been Home yet (#4399).
+ */
+export const PhonePlusIcon = stroked('PhonePlusIcon', [
+  'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
+  'M12 9v6M9 12h6',
+]);
 
 /** Food & drink, a category of the emoji picker: a cup with steam. */
 export const CupIcon = stroked('CupIcon', [

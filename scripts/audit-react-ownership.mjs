@@ -237,10 +237,6 @@ const OWNED = [
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
   // Swept on #app/recipebot/dev whenever the board is in kanban mode.
   { sel: '#dev-kanban-filterbar' },
-  // An issue topic page's GitHub thread
-  // (features/dev-board/issue-comments.tsx), inside the topic card that
-  // app-view.js still fills. Swept on the topic route above.
-  { sel: '#dev-issue-comments' },
   // The thread panel's shell (features/group-chat/thread-shell.tsx). ONE host
   // inside it stays its module's — the transcript's own portal target —
   // rendered once, empty, with a constant className and never looked inside,
@@ -259,17 +255,26 @@ const OWNED = [
     sel: '.dev-thread',
     except: ['#gc-thread-messages'],
   },
+  // #4453: a request's page is the same shell in its Messages-thread layout
+  // (`RequestShell`), with the same one module-owned host. Its back and
+  // header hosts are the topic head's portals, React's too. #4455: a
+  // change's page is that layout as well (`.dev-request.dev-change`), so this
+  // entry covers it; the legacy kudos host in its Addresses row is the topic
+  // head's documented `[data-kudos-host]` seam (below).
+  {
+    sel: '.dev-request',
+    except: ['#gc-thread-messages', '[data-kudos-host]'],
+  },
   // The opened topic's head — the card and everything under it
-  // (features/dev-board/topic/topic-head.tsx). Three seams inside it stay
+  // (features/dev-board/topic/topic-head.tsx). Two seams inside it stay
   // legacy-FILLED, each rendered once, empty, with a constant className:
   // `[data-transcript-body]` (public/js/session-transcript.js writes the
-  // chat and its Fork button), `[data-kudos-host]` in the detail action row,
-  // and `#dev-issue-comments`, which is a React island of its own listed
-  // below. Swept on the topic route.
+  // chat and its Fork button) and `[data-kudos-host]` in the detail action
+  // row. Swept on the topic route.
   {
     sel: '#gc-thread-head',
     except: [
-      '[data-transcript-body]', '[data-kudos-host]', '#dev-issue-comments',
+      '[data-transcript-body]', '[data-kudos-host]',
       // The change card's tabs give the existing chat controllers their
       // own empty hosts. Their React subtrees are audited separately below.
       '[data-change-discussion]', '[data-change-workspace]',
@@ -337,7 +342,9 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/push' },    // features/admin/admin-push.tsx
   { sel: '#admin-section-content', when: '#admin/campaigns' }, // features/admin/admin-campaigns.tsx
   { sel: '#admin-section-content', when: '#admin/mail' },    // features/admin/admin-mail.tsx
+  { sel: '#admin-section-content', when: '#admin/sms' },     // features/admin/admin-sms.tsx
   { sel: '#admin-section-content', when: '#admin/status' },  // features/admin/admin-status.tsx
+  { sel: '#admin-section-content', when: '#admin/incidents' }, // features/admin/admin-incidents.tsx (#4296)
   { sel: '#admin-section-content', when: '#admin/estimator' }, // features/admin/admin-estimator.tsx
   { sel: '#admin-section-content', when: '#admin/analytics' }, // features/admin/admin-analytics.tsx
   { sel: '#admin-section-content', when: '#admin/journey' }, // features/admin/admin-journey.tsx
@@ -349,13 +356,16 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/limits' },  // features/admin/admin-limits.tsx
   { sel: '#admin-section-content', when: '#admin/rollover' }, // features/admin/admin-rollover.tsx
   { sel: '#admin-section-content', when: '#admin/staging-reap' }, // features/admin/admin-staging-reap.tsx
+  { sel: '#admin-section-content', when: '#admin/workflows' }, // features/admin/admin-workflows.tsx
   { sel: '#admin-section-content', when: '#admin/model-costs' }, // features/admin/admin-model-costs.tsx
+  { sel: '#admin-section-content', when: '#admin/domains' }, // features/admin/admin-domains.tsx (#4405)
   { sel: '#admin-section-content', when: '#admin/welcome-dm' }, // features/admin/admin-welcome-dm.tsx
   { sel: '#admin-section-content', when: '#admin/sign-in' }, // features/admin/admin-sign-in.tsx
   // #3654: the Homeroom bot section and its Benchmark tab (the tab is a tail
   // the section reads itself), both one React tree in the section host.
   { sel: '#admin-section-content', when: '#admin/homeroom-bot' }, // features/admin/admin-homeroom-bot.tsx (+ admin-homeroom-bench.tsx, and its /benchmark/… places)
   { sel: '#admin-section-content', when: '#admin/small-changes' }, // features/admin/admin-small-changes.tsx
+  { sel: '#admin-section-content', when: '#admin/bot-configs' }, // features/admin/admin-bot-configs.tsx
   // The programme console's screens convert one at a time (#1120 slice 24).
   // The host is #admin-topo-content, not the section host: admin-topochain.js
   // still owns the shell around it and recreates that node on every screen
@@ -402,12 +412,20 @@ const ROUTES = [
   // issue (scripts/seed-checks-db.js); if the seed changes, re-point it rather
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/rollover', '#admin/staging-reap',
+  // #4453: a request's page in its Messages-thread layout, on the demo
+  // request that has GitHub comments, Homeroom replies and a spec.
+  '?demo=1#app/usernode-2d5619/dev/issues/900003',
+  // #4455: a change's page in the same layout (`.dev-request.dev-change`),
+  // on the demo proposal whose testing is part way through.
+  '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/rollover', '#admin/staging-reap', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`
   // covers them): runs, one run of each kind on the staging demo, and suites.
   '#admin/homeroom-bot/benchmark/runs', '#admin/homeroom-bot/benchmark/runs/936551', '#admin/homeroom-bot/benchmark/runs/936550',
-  '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542',
+  '#admin/homeroom-bot/benchmark/suites', '#admin/homeroom-bot/benchmark/suites/936542', '#admin/homeroom-bot/benchmark/studio',
+  // The Homeroom bot's configurations, versioned recipes and how each measures up.
+  '#admin/bot-configs', '#admin/domains',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

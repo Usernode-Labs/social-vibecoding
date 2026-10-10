@@ -59,6 +59,9 @@
 import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
+// Publishes window.PlatformI18n and follows the session's language. First,
+// so the adapter exists before any legacy module's init() can ask for it.
+import './lib/i18n/runtime';
 import { Shell } from './Shell';
 import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
@@ -99,6 +102,9 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+// Publishes window.UsernodeReact.verifyIdentity: the sheet a public vote the
+// verified-identity rule refused opens (public/js/app-view.js castVote).
+import './features/auth/verify-identity';
 // The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
 // window as the header's — App._syncPlatformTabs() runs inside
 // PlatformUI.transition's reveal callback on every screen swap, the earliest
@@ -139,6 +145,24 @@ import './lib/transition-ground';
 // Publishes window.ResetTime: allowance resets worded in the viewer's own
 // clock, for the classic scripts that cannot import it (#3230).
 import './lib/reset-time';
+// Publishes window.ReleaseEta: when a merged change of the platform's own
+// app goes live, in the one sentence every surface says it in, for the board
+// and the change page's classic script (public/js/app-view.js).
+import './lib/release-eta';
+// #4177: the one place that re-reads what is on screen after a gap
+// (window.UsernodeReact.liveReads). Before DOMContentLoaded, because the
+// group chat registers with it the first time a channel connects.
+import './lib/live-reads';
+// #4065: the drop-zone tracker for the classic chat scripts
+// (window.UsernodeReact.fileDrag), and the floor under every drop zone: a
+// file dropped where nothing takes it no longer opens in place of the app.
+import './features/attachments/file-drag';
+import './lib/file-drop-guard';
+// #4289: the C key comments on the page (a pin where the pointer is), behind
+// Settings, Experimental's switch (off by default). Listeners on the document
+// (the shell's own keys and pointer, and the bridge's message from inside an
+// app); the comment itself (features/comment-pin/) loads on the first C.
+import './features/improve/suggest-shortcut';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at

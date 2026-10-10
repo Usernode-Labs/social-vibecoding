@@ -68,7 +68,7 @@ test('the Friday card is shown while it is fresh, as its own sentence, naming no
 test('the reads: this app, the settings kinds, the last week; the latest card of the last three days', async () => {
   assert.match(notices.SETTINGS_SQL, /e\.event_type = ANY\(\$2::text\[\]\)\s+AND e\.created_at > NOW\(\) - \(\$3 \|\| ' days'\)::interval\s+AND e\.app_id = \$1/);
   assert.match(notices.WEEK_SQL, /e\.event_type = 'weekly_digest'/);
-  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'approver_joined']);
+  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'app_domain_changed', 'approver_joined']);
   assert.equal(notices.SETTINGS_DAYS, 7);
   assert.equal(notices.WEEK_DAYS, 3);
   const seen = [];
@@ -126,7 +126,7 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // On the Workshop tab, straight under the approval rules (#3528). All
   // items leads the tab since 5 Oct 2026, and the panel kept its place
   // under the rules rather than moving up with it.
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
   assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'straight under the approval rules');
   assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-mine=""'),
     'under All items, and above your work');
@@ -137,7 +137,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // #3555: the hub's door is the general one turned to the hub, so a Recents
   // channel can open its project's Discussion tab the same way.
   assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
-  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\.WORKSHOP_TABS\.indexOf\(tab\) !== -1 \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
+  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\._isWorkshopPlace\(tab\) \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);

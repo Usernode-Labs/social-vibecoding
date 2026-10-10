@@ -1,24 +1,21 @@
-// The saved build-flow preference (#1049).
+// The saved build-flow preference (#1049), and its removal (#4311).
 //
-// "Remember my choice" on the dev-chat flow picker, and the same dropdown in
-// Settings, write ONE nullable column: users.dev_flow_preference. Null is
-// load-bearing — it means "ask me every time", which is the default and the
-// only state in which the picker renders at all.
+// "Remember my choice" on the dev-chat flow picker, and later a dropdown in
+// Settings, wrote ONE nullable column: users.dev_flow_preference. #1353
+// stopped anything acting on it (a hand-off is a choice made about THIS
+// session, recorded on chat_sessions.build_venue), and #4268 retired the
+// rest of the classic chat, so a setting that did nothing was misleading
+// people. #4311 removed it end to end: the Settings row, POST
+// /api/me/dev-flow and the venue sheet's write to it, and the /api/auth/me
+// field. The COLUMN stays, so a rollback to a build that still reads it
+// finds it where it left it.
 //
-// Three layers, in the shape tests/user-locale.test.js established for the
-// sibling `locale` preference:
-//   1. Behavioural: POST /api/me/dev-flow mounted with a stubbed pool — the
-//      three allowed flows persist, null / "" / a missing body clear it, a
-//      value outside the allowlist is a 400 that never reaches the database,
-//      and unauthenticated is a 401.
-//   2. /api/auth/me round-trips the stored value, and reports whether the
-//      external flows are offerable in this deployment at all.
-//   3. Source guards down the rest of the chain: the column and its CHECK,
-//      the Settings dropdown, and the two client surfaces that read the
-//      preference (the dev-chat picker gate, and the "+" menu entry).
-//
-// The three-way agreement between DEV_FLOWS, the CHECK constraint and
-// DevFlowSelect.FLOWS is pinned in tests/dev-flow-select.test.js.
+// Three layers:
+//   1. Behavioural: the route is gone, and /api/auth/me no longer reports
+//      the value even when the column holds one; it still reports whether
+//      the external flows are offerable, which the venue list reads.
+//   2. The column and its CHECK stay in the schema (rollback safety).
+//   3. Source guards: no client surface reads or writes the preference.
 //
 // Run with: node --test tests/dev-flow-preference.test.js
 
@@ -46,7 +43,7 @@ poolMod.getPool = () => ({
   },
 });
 
-const { authRoutes, DEV_FLOWS } = require('../src/routes/auth');
+const { authRoutes } = require('../src/routes/auth');
 const { shellMarkup } = require('./lib/shell-markup');
 
 // With OAuth credentials configured the hand-off is offerable; the
@@ -94,90 +91,27 @@ test.beforeEach(() => {
   user = { id: 42, username: 'tester', isAdmin: false, appQuota: 0, locale: null };
 });
 
-const post = (body) => fetch(`${base}/api/me/dev-flow`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
+// ── 1. The route and the field are gone ─────────────────────────────────
+
+test('POST /api/me/dev-flow is no longer mounted, and writes nothing', async () => {
+  const r = await fetch(`${base}/api/me/dev-flow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow: 'codex' }),
+  });
+  assert.equal(r.status, 404);
+  assert.equal(calls.find((c) => /dev_flow_preference/.test(c.sql)), undefined,
+    'no query touches the column');
 });
 
-const flowUpdate = () => calls.find((c) => /UPDATE users SET dev_flow_preference/.test(c.sql));
-
-// ── 1. POST /api/me/dev-flow behaviour ──────────────────────────────────
-
-test('401 when not authenticated', async () => {
-  user = null;
-  const r = await post({ flow: 'codex' });
-  assert.equal(r.status, 401);
-  assert.equal(flowUpdate(), undefined, 'an anonymous caller must not write a row');
-});
-
-test('each allowed flow persists and is echoed back', async () => {
-  for (const flow of DEV_FLOWS) {
-    calls = [];
-    const r = await post({ flow });
-    assert.equal(r.status, 200, `expected 200 for ${flow}`);
-    assert.deepEqual(await r.json(), { ok: true, flow });
-    assert.deepEqual(flowUpdate().params, [flow, 42]);
-  }
-});
-
-test('null, empty string and a missing body clear it back to "ask me"', async () => {
-  // Unticking "remember my choice" sends null. Clearing has to be possible:
-  // a preference you cannot un-save is a trap, and null is what makes the
-  // picker come back.
-  for (const cleared of [{ flow: null }, { flow: '' }, {}]) {
-    calls = [];
-    const r = await post(cleared);
-    assert.equal(r.status, 200, `expected 200 for ${JSON.stringify(cleared)}`);
-    assert.deepEqual(await r.json(), { ok: true, flow: null });
-    assert.deepEqual(flowUpdate().params, [null, 42]);
-  }
-});
-
-test('anything outside the allowlist is a 400 and never reaches the database', async () => {
-  for (const bad of [
-    'claude',            // close, but not the enum value
-    'CODEX',             // the column's CHECK is case-sensitive
-    'platform ',
-    'external',          // a real agent value, but not a pickable flow
-    'DROP TABLE users',
-    123,
-    true,
-    ['codex'],
-    { flow: 'codex' },
-  ]) {
-    calls = [];
-    const r = await post({ flow: bad });
-    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
-    assert.equal(flowUpdate(), undefined, 'no UPDATE on invalid input');
-    // The refusal names the values that would work.
-    assert.match((await r.json()).error, /platform/);
-  }
-});
-
-// ── 2. /api/auth/me ─────────────────────────────────────────────────────
-
-test('/api/auth/me round-trips the stored preference', async () => {
-  for (const flow of DEV_FLOWS) {
-    storedFlow = flow;
-    const j = await (await fetch(`${base}/api/auth/me`)).json();
-    assert.equal(j.user.devFlowPreference, flow);
-  }
-});
-
-test('/api/auth/me reports null when unset', async () => {
+test('/api/auth/me no longer reports the preference, even when the column holds one', async () => {
+  storedFlow = 'claude-code';
   const j = await (await fetch(`${base}/api/auth/me`)).json();
-  assert.equal(j.user.devFlowPreference, null, 'unset means "ask me every time"');
-});
-
-test('a value the column should never hold is reported as null, not passed through', async () => {
-  // Defence in depth: the CHECK constraint makes this unreachable through
-  // the route, but the client branches on this string, and an unknown value
-  // arriving there would suppress the picker while matching no flow — the
-  // one state in which a user can pick nothing at all.
-  storedFlow = 'something-else';
-  const j = await (await fetch(`${base}/api/auth/me`)).json();
-  assert.equal(j.user.devFlowPreference, null);
+  assert.ok(j.user, 'the endpoint still answers');
+  assert.equal(Object.hasOwn(j.user, 'devFlowPreference'), false);
+  const lookup = calls.find((c) => /FROM users u/.test(c.sql));
+  assert.ok(lookup, 'the users lookup still runs');
+  assert.doesNotMatch(lookup.sql, /dev_flow_preference/, 'and no longer reads the column');
 });
 
 test('/api/auth/me says whether the hand-off is offerable at all', async () => {
@@ -195,67 +129,42 @@ test('/api/auth/me says whether the hand-off is offerable at all', async () => {
 
 // ── 3. Chain source guards ──────────────────────────────────────────────
 
-test('schema adds the nullable column and constrains its values', () => {
+// ── 2. The column stays ─────────────────────────────────────────────────
+
+test('the column and its CHECK stay in the schema, so a rollback is safe', () => {
+  // Removing the setting is not dropping the data: a build from before
+  // #4311 still selects the column in /api/auth/me and writes it from
+  // Settings, and schema.sql is applied on every boot. Drop it, if at all,
+  // in a later migration once no deployable build reads it.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT/);
-  assert.match(schema, /users_dev_flow_preference_chk/,
-    'the allowed values must be enforced in the database, not only in the route');
-  assert.match(schema, /CHECK \(dev_flow_preference IS NULL/,
-    'NULL must stay legal — it is the "ask me every time" default');
-  // Re-runnable: schema.sql is applied on every boot.
+  assert.match(schema, /users_dev_flow_preference_chk/);
+  assert.match(schema, /CHECK \(dev_flow_preference IS NULL/);
   assert.match(schema, /DROP CONSTRAINT IF EXISTS users_dev_flow_preference_chk/);
 });
 
-test('Settings offers the same preference as a dropdown', () => {
-  const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /_renderDevFlowSection/);
-  assert.match(js, /_saveDevFlow/);
-  assert.match(js, /\/api\/me\/dev-flow/);
-  assert.match(js, /devFlowPreference/, 'the control renders from the /me value');
+// ── 3. No client surface reads or writes it ─────────────────────────────
 
-  // ── This assertion INVERTED, on purpose (#1191) ────────────────────
-  //
-  // It used to require that the block be INJECTED and that the dropdown NOT
-  // appear in public/index.html. The reason was real at the time: the shell
-  // body was a hand-written document frozen against a pre-migration fixture,
-  // so a new settings control could only be added by
-  // `document.createElement` at runtime. #1078 replaced that fixture with the
-  // id/script baselines, and the Connections pane is a React component, so
-  // the injection became a legacy module writing a node into a subtree React
-  // owns — the one thing the ownership rule forbids.
-  //
-  // The block is markup now, its three ids are declared in
-  // tests/shell-id-inventory.test.js's ADDED_IDS with that reason, and the
-  // module keeps exactly what it keeps for every other control on the screen.
+test('Settings no longer offers the preference', () => {
+  const js = read('frontend/src/features/settings/settings.js');
+  const facade = read('frontend/src/features/settings/facade.js');
   const pane = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(pane, /id="dev-flow-pref-section"/);
-  assert.match(pane, /id="settings-dev-flow"/);
-  assert.match(pane, /data-settings-section="connectors"/,
-    'and it is in the Connections pane, where the flows it configures live');
+  const sections = read('frontend/src/features/settings/sections/index.tsx');
+  for (const [name, src] of [['settings.js', js], ['facade.js', facade]]) {
+    assert.doesNotMatch(src, /devFlowPreference|_renderDevFlowSection|_saveDevFlow|\/api\/me\/dev-flow/,
+      `${name} carries nothing of the removed setting`);
+  }
+  assert.doesNotMatch(js, /key: 'build-venue'/, 'and it is no longer a row in the Settings menu');
+  assert.doesNotMatch(pane, /BuildVenueSection|settings-dev-flow|dev-flow-pref-section/);
+  assert.doesNotMatch(sections, /BuildVenueSection/);
   const html = shellMarkup();
-  assert.ok(html.includes('id="settings-dev-flow"'),
-    'so the dropdown IS in the prerendered document');
-  // ── This assertion INVERTED again (#2370) ──────────────────────────
-  //
-  // It required the preference to sit ABOVE the GitHub block, reading as the
-  // question with the link below it as one answer. #2370 measured the pane at
-  // 390x844: the social-account block started at 5,703px of a 6,330px page,
-  // last on a screen whose nav item is named after it. Social accounts leads
-  // now, and the preference stays last — it is about work you have not started
-  // yet, not the thing you opened this pane to do.
-  assert.ok(html.indexOf('id="github-link-section"') < html.indexOf('id="dev-flow-pref-section"'),
-    'social accounts leads the pane (#2370) and the build-flow preference '
-    + 'follows it');
-  // Nothing builds it any more.
-  const render = js.slice(js.indexOf('    _renderDevFlowSection() {'));
-  assert.doesNotMatch(render.slice(0, 1400), /createElement|innerHTML|insertBefore/,
-    'the renderer binds and reflects; it does not build');
+  assert.ok(!html.includes('id="settings-dev-flow"'), 'the dropdown is not in the shell');
+  assert.ok(!html.includes('data-settings-section="build-venue"'), 'nor is its part');
 });
 
-test('Settings disables the hand-offs when the deployment cannot offer them', () => {
-  const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /externalFlowsAvailable/,
-    'a deployment with no GitHub link must not offer a preference it cannot honour');
+test('the venue sheet and the launchpad toggle no longer save a default', () => {
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.doesNotMatch(devChat, /_saveDevFlowPreference|\/api\/me\/dev-flow|devFlowPreference/);
 });
 
 test('the dev chat asks nothing at creation, and assumes nothing either', () => {
@@ -332,18 +241,14 @@ test('the ⋯ menu leads with its asks and names its settings group', () => {
   const frame = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.doesNotMatch(frame, /label="Add to the board"/);
   assert.ok(frame.indexOf('data-plus="issue"') < frame.indexOf('data-plus="import-pr"')
-    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('groupKey="settings"'));
-  assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
-  // A heading must not be a <button>: _wirePlusMenu collects
-  // `button[data-plus]` for the touch action sheet, and a heading that
-  // matched would arrive there as a tappable row that does nothing.
-  const fnStart = frame.indexOf('function PlusMenuHeading(');
-  assert.ok(fnStart !== -1, 'the PlusMenuHeading primitive must exist');
-  // Slice from the RETURN, not the signature: the destructured props' type
-  // annotation closes with a `}` in column 0, which is not the function's end.
-  const fn = frame.slice(fnStart, frame.indexOf('\n}\n', frame.indexOf('return (', fnStart)));
-  assert.match(fn, /<div\s+data-plus-group=/, 'headings render as a div');
-  assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
+    && frame.indexOf('data-plus="import-pr"') < frame.indexOf('data-plus="settings"'));
+  // #4045: one "Settings & rules" row now, which opens the settings on top.
+  assert.match(frame, /data-plus="settings"\s+group="settings"[\s\S]{0,120}title="Settings &amp; rules"[\s\S]{0,240}dividerCls=\{PLUS_ROW_DIVIDER_CLS\}/);
+  // The menu has no heading any more (#4045): "Settings & rules" is a real
+  // row, a PlusRow, which a tap acts on, so it is a button carrying both
+  // data-plus and its group's marker.
+  assert.doesNotMatch(frame, /function PlusMenuHeading\(/);
+  assert.match(frame, /data-plus=\{action\}\s+data-plus-group=\{group\}/);
   // The touch sheet renders them too, since it has no heading primitive.
   assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,
     'the action sheet walks headings and rows together, in DOM order');

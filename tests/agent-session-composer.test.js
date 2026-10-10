@@ -313,7 +313,14 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
-  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
+  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Save mid-turn parks, never sends');
+  assert.match(panel, /event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/,
+    'only Ctrl/Cmd+Enter submits from the box, as in the dev chat');
+  assert.doesNotMatch(panel, /event\.key === 'Enter' && !event\.shiftKey/,
+    'plain Enter never sends: it is a new line');
+  assert.match(panel, /Save this as a draft \(Ctrl\+Enter or ⌘\+Enter\)\. It stays here until you send it/,
+    'the Save draft hint names the chord, not Enter');
+  assert.doesNotMatch(panel, /\(Enter\)\. It stays here until you send it/, 'the old Enter hint is gone');
   assert.match(panel, /The agent is working\. Type your next message and save it for later\./);
 });
 

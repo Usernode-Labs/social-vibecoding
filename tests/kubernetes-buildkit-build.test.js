@@ -343,6 +343,19 @@ test('createBuild: a namespace or RBAC the cluster does not have yet is the lane
   assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
 });
 
+test('createBuild: a Job name still held by a terminating Job past the create deadline does not strand the clone credential', async (t) => {
+  const conflict = Object.assign(new Error('jobs.batch "bk" already exists'), { code: 409 });
+  const { clients, state } = fakeCluster({ createJobError: conflict });
+  clients.batch.readNamespacedJob = async ({ name }) => ({ metadata: { name, deletionTimestamp: '2026-10-08T12:00:00Z' }, status: { active: 1 } });
+  // Every clock read lands past the one-minute create deadline.
+  let now = 0;
+  t.mock.method(Date, 'now', () => (now += 61000));
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), /Timed out waiting to recreate BuildKit Job/);
+  assert.deepEqual(state.deleted.filter((d) => /-input$/.test(d.name)).map((d) => d.name), [state.secrets[0].metadata.name]);
+});
+
 test('kubernetes.createBuild under auto builds with kpack while the lane is unavailable, and remembers that for a while', async () => {
   const unavailable = fakeCluster({
     jobReads: [{ failed: 1, conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }],

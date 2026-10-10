@@ -59,7 +59,10 @@ lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
 referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
-component refreshes.
+component refreshes. A manual run never waits for the release gap: a push
+to `main` waits until the previous release is `RELEASE_MIN_GAP_MINUTES`
+old. So a manual run is also how to release an urgent fix without waiting;
+see "Ownership and releases" in `docs/kubernetes-operations.md`.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and
@@ -416,6 +419,21 @@ browser groups). Their requests are one CPU / 3 GiB, matching the observed
 browser working set; smaller limit overrides also lower the requests so
 Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
 requested / 4 GiB limited. Changes apply to newly created check Jobs.
+
+`config.checksMaxConcurrentRuns` (`CHECKS_MAX_CONCURRENT_RUNS`, default 4)
+bounds how many proposal checks runs have their Jobs on the cluster at once,
+across every platform Pod. A run whose preview is built waits for a slot
+before it creates its capture and unit-suite Jobs, so their deadlines start
+only once it has one; proposals show "Waiting for a checks slot" meanwhile.
+Slots go to promoted proposals first, then submitted CLI hand-offs, then
+drafts, first come first served within each. Main-watch's run of the unit
+suite on a merge commit has one slot of its own besides these and goes first
+for any free one. The count is the live `check_runs` rows, so it survives a
+platform restart, and a run that was waiting keeps its place when the next
+leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
+run) leave room in the worker namespace's ResourceQuota for coding workers,
+and so the previews under test do not saturate the shared Postgres primary.
+`0` turns the queue off.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

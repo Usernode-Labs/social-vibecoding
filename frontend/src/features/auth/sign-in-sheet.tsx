@@ -47,9 +47,11 @@
  *   username    POST /api/auth/phone/finish, the provider's step with the
  *               phone's own route, which mints the session.
  *
- * "Already on Homeroom? Sign in another way" leads to the other ways, for an
- * account made before; one made by email from here is not a private member
- * and waits in the queue.
+ * Under the phone step, past an "or", Continue with Apple and Continue with
+ * Google when an admin has set them up (the same buttons as the first step's
+ * otherwise), then "Already on Homeroom? Sign in with email", for an account
+ * made before; one made by email from here is not a private member and
+ * waits in the queue. That step still leads on to "Sign in with a password".
  *
  * "Sign in with a password" is a step of its own here too:
  *
@@ -141,7 +143,8 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
-import { phoneRecaptchaToken, RECAPTCHA_NOTICE } from './recaptcha';
+import { PhoneInput, readPhone } from './phone-input';
+import { phoneRecaptchaToken, RECAPTCHA_LINE } from './recaptcha';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   blockedOffline,
@@ -153,7 +156,7 @@ import {
   sessionMintFailureMessage,
   USERNAME_RULE,
 } from './shared';
-import { TermsNotice } from './waitlist-shared';
+import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
 type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code';
 
@@ -246,10 +249,10 @@ const PROVIDER_LABEL: Record<SignInProvider, string> = { apple: 'Apple', google:
 // Apple's button is solid black (white on dark), Google's is white with a
 // hairline, as their sign-in guidelines draw them; both the sheet's pill shape.
 const PROVIDER_BUTTON: Record<SignInProvider, string> = {
-  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-semibold text-white dark:bg-white dark:text-black disabled:opacity-60',
-  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
+  apple: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-black text-[17px] font-[650] text-white dark:bg-white dark:text-black disabled:opacity-60',
+  google: 'flex h-[50px] w-full items-center justify-center gap-2 rounded-full bg-white text-[17px] font-[650] text-zinc-900 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)] dark:bg-zinc-800 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)] disabled:opacity-60',
 };
-const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
+const EMAIL_BUTTON = 'flex h-[50px] w-full items-center justify-center rounded-full bg-zinc-200 text-[17px] font-[650] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 disabled:opacity-60';
 
 // The server holds a second code back for this long (routes/auth.js); the
 // resend counts it down rather than pretending to send.
@@ -275,6 +278,16 @@ export const CLOSE_MS = 240;
  */
 export function mayFocusByCode({ touch, keysUp }: { touch: boolean; keysUp: boolean }): boolean {
   return !touch || keysUp;
+}
+
+/**
+ * `mayFocusByCode` for this device, now. The make screen asks it too
+ * (../first-session/make.tsx, #4597): the sheet hands off with the keys
+ * down, and a caret put in the description from code would raise them again
+ * over a screen that is meant to open whole.
+ */
+export function mayFocusByCodeNow(): boolean {
+  return mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
 }
 
 /**
@@ -327,45 +340,29 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/**
- * A typed phone number as the server takes it (firebase-phone-auth.js
- * normalizePhone): `+`, the country code and the number, with spaces,
- * dashes, dots and brackets dropped. Null for anything else; no country
- * code is guessed, since a wrong guess would text somebody else.
- */
 /** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */
 export const PHONE_NAME_MAX = 40;
 
-export function phoneE164(raw: string): string | null {
-  const value = String(raw || '').replace(/[\s().\u2010-\u2015-]/g, '');
-  return /^\+[1-9][0-9]{1,14}$/.test(value) ? value : null;
-}
+// The "+…" number as the server takes it, now kept with the shared field.
+export { phoneE164 } from './phone-input';
 
 /**
- * The line over "Sign in with a password", for the screen that opened the
- * sheet. Only what is true there: an invite's Join and the story's Get
- * started make an account for a new address; the story's Sign in is for
- * somebody who has one.
+ * What sits under the first step's button (#4037, the owner's ruling of
+ * 7 October). Where the sheet makes an account (the story's Make an account,
+ * an invite's Join) it is the terms line alone, since continuing is agreeing
+ * (tests/terms-first-run.test.js); somebody with an account signs in from
+ * the story's own Sign in, or with the same email code. The story's Sign in,
+ * and the other ways after an invite's phone step, are for an account
+ * somebody has: "Sign in with a password" right under the button, then the
+ * terms line.
  */
-export function passwordLead(from: 'invite' | 'story' | 'signin'): string {
-  if (from === 'invite') return 'New to Homeroom? This makes your account. ';
-  if (from === 'story') return 'Already have an account? ';
-  return '';
+export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
+  return from === 'signin' || phone ? 'password' : 'terms';
 }
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
-  const n = RECAPTCHA_NOTICE;
-  const link = 'underline hover:text-zinc-700 dark:hover:text-zinc-300';
-  return (
-    <p data-sign-in-sheet-recaptcha="" className="text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-      {n.lead}
-      <a href={n.privacy.href} target="_blank" rel="noopener noreferrer" className={link}>{n.privacy.label}</a>
-      {n.and}
-      <a href={n.terms.href} target="_blank" rel="noopener noreferrer" className={link}>{n.terms.label}</a>
-      {n.tail}
-    </p>
-  );
+  return <RecaptchaLine notice={RECAPTCHA_LINE} data={{ 'data-sign-in-sheet-recaptcha': '' }} />;
 }
 
 /** Where a waitlist "you're in" link's sheet starts. */
@@ -396,6 +393,54 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   return { address, send: true };
 }
 
+/** A waitlist "you're in" link's one-time sign-in, spent (#4594). */
+export type ReleaseSpend = {
+  next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean; suggestedUsername: string;
+};
+
+/**
+ * Spend the release mail's one-time sign-in link (src/services/release-links.js)
+ * with a POST, never on the GET that opened the page, so a mail scanner's
+ * prefetch cannot use it up. Null on anything else (expired, used, unknown,
+ * offline): the sheet then falls back to the address and a code.
+ */
+export async function spendReleaseLink(key: string): Promise<ReleaseSpend | null> {
+  try {
+    const res = await fetchSessionMint('/api/auth/release-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token: key }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || typeof data.email !== 'string') return null;
+    if (data.next !== 'signed-in' && data.next !== 'set-password') return null;
+    return {
+      next: data.next,
+      email: data.email,
+      needsUsername: data.needsUsername === true,
+      suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * On a step's main button: the press keeps the caret where it is until its
+ * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
+ * "Text me a code" only closed the keyboard. The press blurred the field,
+ * the sheet rode down with the keys before the click was dispatched, and the
+ * click landed on nothing. A mousedown whose default is prevented moves no
+ * focus, so the sheet stays put under the finger and the one tap submits;
+ * the next step's field then takes the caret with the keys still up, or the
+ * keys go down with the field when the step has none. Messages' and the
+ * composers' Send do the same (lib/keyboard-open.ts).
+ */
+export const HOLD_FIELD_FOCUS = {
+  onMouseDown: (event: { preventDefault(): void }) => { event.preventDefault(); },
+} as const;
+
 // White cards with the sheets' hairline, on the sheet's plane colour (the make screen's own field card).
 const FIELD_GROUP = 'overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -405,10 +450,14 @@ const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400
 
 export type SignInSheetProps = {
   open: boolean;
-  /** "Join Sunday Run Club" */
+  /** "Join Sunday Run Club", "Make your account", "Sign in" */
   title: string;
-  /** The line under the title on the first step. */
-  intro: string;
+  /**
+   * A line under the title on the first step. Nobody passes one now: the
+   * title, the field and the button say it, and the phone sign-up's own
+   * copy is trimmed (#4326, #4037).
+   */
+  intro?: string;
   /** This sign-in is the Join pressed on an invite's page. */
   followInvite?: boolean;
   /** Apple and Google, when an admin has set them up (inside the app, those its build can show). */
@@ -431,6 +480,12 @@ export type SignInSheetProps = {
   resume?: SignInResume | null;
   /** Opened by a waitlist "you're in" link: the token that names the address to sign up with. */
   releaseToken?: string | null;
+  /**
+   * The same link's one-time sign-in (#4594): spent first, and on success
+   * the sheet says "Welcome <address>" and goes straight to the account
+   * step. Expired, used or unknown, it falls back to `releaseToken`'s code.
+   */
+  releaseSignIn?: string | null;
   /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
@@ -458,8 +513,8 @@ function rememberInviteJoin() {
 }
 
 export function SignInSheet({
-  open, title, intro, followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
+  open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
@@ -471,6 +526,11 @@ export function SignInSheet({
   // Whose username step this is: a provider's (Apple, Google) or the phone's.
   const [usernameVia, setUsernameVia] = useState<'oauth' | 'phone'>('oauth');
   const [needsUsername, setNeedsUsername] = useState(false);
+  // The address a release link signed in (#4594), for the account step's welcome.
+  const [welcome, setWelcome] = useState<string | null>(null);
+  // The handle the account step's field arrives holding (#4596): made from
+  // the address by the server, or '' for an empty field.
+  const [suggestedUsername, setSuggestedUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -544,6 +604,7 @@ export function SignInSheet({
   useEffect(() => {
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
+    setWelcome(null);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -555,7 +616,7 @@ export function SignInSheet({
   // field whose keys are up lands before anything can take them down.
   useIsomorphicLayoutEffect(() => {
     if (!open || step === 'choose') return;
-    const focus = mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
+    const focus = mayFocusByCodeNow();
     if (step === 'password' && identifierPrefill.current && identifierField.current) {
       identifierField.current.value = identifierPrefill.current;
       identifierPrefill.current = '';
@@ -567,9 +628,9 @@ export function SignInSheet({
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
-              : (needsUsername ? usernameField : passwordField);
+              : (needsUsername && !suggestedUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername]);
+  }, [open, step, needsUsername, suggestedUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -641,12 +702,41 @@ export function SignInSheet({
   // names, filled in, and the code sent once per tab, exactly what the
   // sign-in screen does for the same link (./login.tsx). A token that names
   // nothing leaves the email step as it is, to be filled in by hand.
+  //
+  // #4594: a link that also carries its one-time sign-in spends that first.
+  // Spent, it is a proven mailbox, like a right code: the account step, with
+  // "Welcome <address>", or straight in for an account with nothing to set
+  // up. Expired, used or unknown, it is the prefill and the code as before.
+  const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!open || !releaseToken || releaseSeen.current === releaseToken) return undefined;
-    releaseSeen.current = releaseToken;
+    const seen = releaseSignIn || releaseToken;
+    if (!open || !seen || releaseSeen.current === seen) return undefined;
+    releaseSeen.current = seen;
     let live = true;
     setStep('email');
-    void releaseArrival(releaseToken).then((arrival) => {
+    const prefill = () => {
+      if (!releaseToken) return;
+      void releaseArrival(releaseToken).then(arrive);
+    };
+    if (releaseSignIn) {
+      setBusy(true);
+      // Not dropped when the sheet re-renders mid-request: the link is spent
+      // either way, so its answer must land.
+      void spendReleaseLink(releaseSignIn).then(async (spent) => {
+        setBusy(false);
+        if (!spent) { prefill(); return; }
+        setEmail(spent.email);
+        if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
+        setWelcome(spent.email);
+        setNeedsUsername(spent.needsUsername);
+        setSuggestedUsername(spent.suggestedUsername);
+        setCooldownUntil(0);
+        setStep('account');
+      });
+    } else {
+      prefill();
+    }
+    function arrive(arrival: ReleaseArrival | null) {
       if (!live || !arrival) return;
       setEmail(arrival.address);
       if (firstField.current) firstField.current.value = arrival.address;
@@ -657,13 +747,18 @@ export function SignInSheet({
         return;
       }
       void requestCode(arrival.address);
-    });
+    }
     return () => { live = false; };
-  }, [open, releaseToken, requestCode]);
+  }, [open, releaseToken, releaseSignIn, requestCode]);
 
   // Away to the make screen: the panel goes down while the wallpaper comes
   // up behind it. Resolves once that has had its time.
   const handOff = useCallback((): Promise<void> => {
+    // The keys go down with the sheet (#4597): Continue kept the caret in
+    // its field (HOLD_FIELD_FOCUS), and the make screen opens whole, its
+    // description waiting for a tap rather than under the keyboard.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && panelRef.current?.contains(active)) active.blur();
     setLeaving(true);
     const ms = prefersReducedMotion() ? 0 : HAND_OFF_MS;
     return new Promise((resolve) => { window.setTimeout(resolve, ms); });
@@ -678,6 +773,7 @@ export function SignInSheet({
     const opened = await confirmSession();
     if (!opened) setLeaving(false);
   }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
+  finishRef.current = finish;
 
   const verify = useCallback(async () => {
     setError(null);
@@ -713,6 +809,7 @@ export function SignInSheet({
         return;
       }
       setNeedsUsername(data.needsUsername === true);
+      setSuggestedUsername(typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '');
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -723,10 +820,10 @@ export function SignInSheet({
   }, [email, followInvite, finish]);
 
   // The phone's code (`phone`): a reCAPTCHA token first, then the text.
-  const requestPhoneCode = useCallback(async (raw: string) => {
+  // `value` is the E.164 number the field built (./phone-input.tsx), or one
+  // sent before, for the code step's resend.
+  const requestPhoneCode = useCallback(async (value: string) => {
     setError(null);
-    const value = phoneE164(raw);
-    if (!value) { setError('Enter your number with its country code, like +1 415 555 0123.'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -766,14 +863,21 @@ export function SignInSheet({
   }, [phoneNumber]);
 
   // The phone step: a name for the group, then the number's code.
-  const submitPhoneStep = useCallback(() => {
+  const submitPhoneStep = useCallback(async () => {
     setError(null);
-    if (!askName) { phoneName.current = ''; void requestPhoneCode(phoneField.current?.value || ''); return; }
+    const read = await readPhone(phoneField.current);
+    if (!askName) {
+      phoneName.current = '';
+      if (!read.ok) { setError(read.error); return; }
+      void requestPhoneCode(read.e164);
+      return;
+    }
     const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
     if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
     if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
     phoneName.current = name;
-    void requestPhoneCode(phoneField.current?.value || '');
+    if (!read.ok) { setError(read.error); return; }
+    void requestPhoneCode(read.e164);
   }, [askName, requestPhoneCode]);
 
   const verifyPhone = useCallback(async () => {
@@ -815,14 +919,19 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  const finishAccount = useCallback(async () => {
+  // #4595: the password is optional. "Skip for now" (`skip`), or both
+  // password fields left empty, finishes without one: the account then signs
+  // in with an email code, and can add a password in Settings.
+  const finishAccount = useCallback(async (skip = false) => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = passwordField.current?.value || '';
-    const confirm = confirmField.current?.value || '';
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirm) { setError('Passwords do not match'); return; }
+    const password = skip ? '' : passwordField.current?.value || '';
+    const confirm = skip ? '' : confirmField.current?.value || '';
+    if (password || confirm) {
+      if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
+      if (password !== confirm) { setError('Passwords do not match'); return; }
+    }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -830,7 +939,10 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ password, passwordConfirmation: confirm, ...(handle ? { username: handle } : {}) }),
+        body: JSON.stringify({
+          ...(password ? { password, passwordConfirmation: confirm } : {}),
+          ...(handle ? { username: handle } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
@@ -938,14 +1050,51 @@ export function SignInSheet({
 
   if (!open) return null;
 
+  const oneLine = firstStepLine(from, phone) === 'password' ? (
+    <>
+      <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
+        <a
+          href="#login"
+          data-sign-in-sheet-password=""
+          onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
+          className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+        >
+          Sign in with a password
+        </a>
+      </p>
+      <TermsNotice />
+    </>
+  ) : <TermsNotice />;
+
+  // Apple and Google, in the order the server lists them: the first step's
+  // own, or under the invite's phone step past an "or".
+  const providerButtons = providers.map((provider) => (
+    <button
+      key={provider}
+      type="button"
+      data-sign-in-provider={provider}
+      disabled={busy}
+      className={PROVIDER_BUTTON[provider]}
+      onClick={() => continueWith(provider)}
+    >
+      {provider === 'apple'
+        ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
+        : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
+      {`Continue with ${PROVIDER_LABEL[provider]}`}
+    </button>
+  ));
+
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
     : step === 'code' ? 'Check your email'
       : step === 'phone-code' ? 'Check your texts'
         : step === 'password' ? 'Sign in'
-          : step === 'username' ? 'Pick a username' : 'Finish your account';
-  // The opener's line is the first step's; with the phone first, the other
-  // ways are for an account made before.
+          : step === 'username' ? 'Pick a username'
+            : welcome ? `Welcome ${welcome}` : 'Finish your account';
+  // The first step says nothing under its title unless it is given a line:
+  // "Make your account", "Join Sunday Run Club" and "Sign in" already say
+  // it, and the field or the providers come next (#4037). With the phone
+  // first, the other ways are for an account made before.
   const sub = step === firstStep
     ? intro
     : step === 'choose'
@@ -960,7 +1109,9 @@ export function SignInSheet({
           ? 'With your username or email, and your password.'
           : step === 'username'
             ? 'Your username is public on Homeroom. It is how people @mention you.'
-            : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+            : (needsUsername
+              ? 'Pick a username. It is public on Homeroom. A password is optional: without one, you sign in with an emailed code.'
+              : 'Pick a password for next time, or skip it and sign in with an emailed code.');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades.
@@ -1002,7 +1153,7 @@ export function SignInSheet({
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
-          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
+          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
             type="button"
             onClick={close}
@@ -1012,31 +1163,18 @@ export function SignInSheet({
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p>
+        {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
-            {providers.map((provider) => (
-              <button
-                key={provider}
-                type="button"
-                data-sign-in-provider={provider}
-                disabled={busy}
-                className={PROVIDER_BUTTON[provider]}
-                onClick={() => continueWith(provider)}
-              >
-                {provider === 'apple'
-                  ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
-                  : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
-                {`Continue with ${PROVIDER_LABEL[provider]}`}
-              </button>
-            ))}
+            {providerButtons}
             <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
               Continue with email
             </button>
             {phone ? (
               <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
             ) : null}
+            {oneLine}
           </div>
         ) : null}
 
@@ -1048,7 +1186,8 @@ export function SignInSheet({
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Send code'}</button>
+            {oneLine}
             {providers.length ? (
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
             ) : null}
@@ -1059,7 +1198,7 @@ export function SignInSheet({
         ) : null}
 
         {step === 'phone' ? (
-          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); submitPhoneStep(); }}>
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void submitPhoneStep(); }}>
             <div className={FIELD_GROUP}>
               {askName ? (
                 <div className={FIELD}>
@@ -1069,14 +1208,10 @@ export function SignInSheet({
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
-                <input ref={phoneField} id="sign-in-sheet-phone" type="tel" autoComplete="tel" inputMode="tel" enterKeyHint="go" defaultValue={phoneNumber} placeholder="+1 415 555 0123" className={INPUT} />
+                <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Sending code…' : 'Text me a code'}</button>
-            <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-              {askName ? 'Only this group sees your name, never your number.' : 'Nobody sees your number.'}
-            </p>
-            <RecaptchaNotice />
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Text me a code'}</button>
           </form>
         ) : null}
 
@@ -1089,7 +1224,7 @@ export function SignInSheet({
               </div>
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
@@ -1107,7 +1242,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
           </form>
         ) : null}
 
@@ -1119,7 +1254,7 @@ export function SignInSheet({
                 <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
@@ -1141,7 +1276,7 @@ export function SignInSheet({
                 <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
                 {providers.length ? 'Other ways to continue' : 'Use an email code'}
@@ -1158,11 +1293,11 @@ export function SignInSheet({
               {needsUsername ? (
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
+                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password (optional)</label>
                 <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
               </div>
               <div className={FIELD}>
@@ -1170,7 +1305,8 @@ export function SignInSheet({
                 <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="button" data-sign-in-sheet-skip-password="" disabled={busy} className={`${QUIET} self-center disabled:opacity-60`} onClick={() => { void finishAccount(true); }}>Skip for now</button>
           </form>
         ) : null}
 
@@ -1182,33 +1318,33 @@ export function SignInSheet({
         ) : null}
         <SessionConfirmationNotice completion={completion} />
 
+        {step === 'phone' && providers.length ? (
+          <div data-sign-in-sheet-providers="" className="mt-4 flex flex-col gap-2.5">
+            <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+              or
+              <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
+            </div>
+            {providerButtons}
+          </div>
+        ) : null}
         {step === 'phone' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
             {'Already on Homeroom? '}
             <a
               href="#login"
-              data-sign-in-sheet-other-ways=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep(otherWays); }}
+              data-sign-in-sheet-to-email=""
+              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('email'); }}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
             >
-              Sign in another way
+              Sign in with email
             </a>
           </p>
         ) : null}
-        {step === 'choose' || step === 'email' ? (
-          <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {phone ? '' : passwordLead(from)}
-            <a
-              href="#login"
-              data-sign-in-sheet-password=""
-              onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
-              className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-            >
-              Sign in with a password
-            </a>
-          </p>
-        ) : null}
-        <TermsNotice className="mt-3" />
+        {/* The first step's terms sit in its group (above); every later step keeps them here. */}
+        {step === 'choose' || step === 'email' ? null : (
+          <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_LINE : null} />
+        )}
       </div>
     </div>
   );

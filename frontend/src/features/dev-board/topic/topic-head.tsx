@@ -22,10 +22,12 @@
  *   surfaces still call (the admin gallery, the dev chat's "Changes ready"
  *   card, and its own tests), so it stays a string builder.
  *
- * And two genuine controller hosts, rendered once, empty, with a constant
- * className: `#dev-issue-comments` (features/dev-board/issue-comments.tsx
- * mounts into it) and `[data-transcript-body]`, which
- * public/js/session-transcript.js fills on expand.
+ * And a genuine controller host, rendered once, empty, with a constant
+ * className: `[data-transcript-body]`, which public/js/session-transcript.js
+ * fills on expand.
+ *
+ * A request's page is ./request-head.tsx (#4453): the request as a Messages
+ * thread's root post, its GitHub comments in the thread's own stream.
  */
 
 import { Fragment, useEffect, useRef, useState } from 'react';
@@ -33,19 +35,20 @@ import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
+import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ActionBand, ActionButton, Badge, DevCard, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
-import type { DevCardModel } from '../card/model';
-import { swatchFor } from '../../group-chat/swatch';
+import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore } from './topic-store';
-import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
+import { RequestHead } from './request-head';
+import { ChangeThreadHead } from './change-head';
 import { DescriptionEditor } from './description-editor';
+import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -53,6 +56,7 @@ import type {
   NoteTone,
   RosterView,
   IssueLink,
+  IssueClosedBand,
   IssueProposalRef,
   TextRun,
   TopicBody,
@@ -135,8 +139,9 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * than wrapping — a check's name can run to a paragraph), the path for a
  * pass, and the tags. A check that FAILED, or passed only after a retry,
  * opens its reason from the line's right end ("Why it failed"), where the
- * selector string and the console errors sit until somebody asks: that
- * detail is for whoever fixes the check, not for a voter reading the row.
+ * selector string, the unit suite's per-test excerpts and the console
+ * errors sit until somebody asks: that detail is for whoever fixes the
+ * check, not for a voter reading the row.
  */
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
@@ -175,6 +180,20 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         <div className="dev-ledger-why-body">
           {r.reason || 'failed'}
           {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          {/* #3978: the unit-suite row's failing tests, each with the
+              assertion text the run captured. The fold is the collapse —
+              these open with "Why it failed" like the console errors below. */}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <span className="dev-ledger-why-test">{d.test}</span>
+                  {d.file ? <span className="dev-ledger-why-file">{` · in ${d.file}`}</span> : null}
+                  {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {r.errors && r.errors.length ? (
             <ul className="dev-ledger-why-errors">
               {r.errors.map((e, i) => (
@@ -182,6 +201,16 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
                   <span className="opacity-70">{`[${e.kind}] `}</span>
                   {e.message}
                   {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {r.details && r.details.length ? (
+            <ul className="dev-ledger-why-details mt-1 space-y-1">
+              {r.details.map((d, i) => (
+                <li key={i}>
+                  <div className="font-medium">{d.file ? `${d.file} · ${d.test}` : d.test}</div>
+                  <pre className="dev-ledger-why-excerpt mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-500/10 p-2 font-mono text-[0.7rem]">{d.excerpt}</pre>
                 </li>
               ))}
             </ul>
@@ -508,17 +537,24 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
   );
 }
 
-export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+export function ProposalBody({ b, label = 'Technical details', part }: {
+  b: NonNullable<TopicBody['proposalBody']>;
+  /** The disclosure's name: a change page with no summary calls it "Description". */
+  label?: string;
+  /** `data-topic-part`, when the disclosure stands in for a part of the page. */
+  part?: string;
+}): ReactNode {
   return (
     <details
-      className="dev-topic-details"
+      className={part ? 'dev-topic-details dev-topic-hero-more' : 'dev-topic-details'}
+      data-topic-part={part}
       open={b.open}
       onToggle={(e) => {
         if (b.id != null) call('_setProposalBodyOpen', b.id, e.currentTarget.open);
       }}
     >
       <summary className="dev-topic-details-summary">
-        Technical details
+        {label}
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
@@ -534,7 +570,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
  * deciding on it. The open flag is AppView's, like ProposalBody's, so a
  * repaint does not shut it.
  */
-function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
   return (
     <details
       className="dev-topic-details dev-topic-hero-more"
@@ -572,13 +608,16 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   );
 }
 
-export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  // #4453: a request's page is a Messages reply thread with the request as
+  // its root post, not the card and its sheets.
+  if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -588,21 +627,34 @@ function withPendingVote(av: any, row: any) {
   return row;
 }
 
-export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
+/** The path a change page reads its row from, review or not. */
+export function changeDetailPath(item: any): string {
+  const av = (window as any).AppView;
+  const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
+  return review ? `/api/apps/${av.appData.slug}/proposals/${item.id}` : `/api/sessions/${item.id}/details`;
+}
+
+/**
+ * `fresh` is a re-read after a gap (#4177, lib/live-reads.ts): it skips the
+ * service worker's saved copy, and re-reads the vote roster for every viewer,
+ * because whatever moved the row while this page was not hearing about it
+ * may have moved the votes too.
+ */
+export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal, { fresh = false } = {}) {
   const id = item.id;
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
-  const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+  const url = changeDetailPath(item);
   // The short form: passing checks are counted, and their fold reads the
   // names when opened (AppView._loadCheckNames, _readTopicRow).
   const demo = av?._demoQS?.() ? '&demo=1' : '';
-  const response = await fetch(`${url}?results=failing${demo}`, { signal });
+  const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
-    if (owner) av._invalidateVoteRoster(id);
-    await av._loadVoteRoster(id);
+    if (owner || fresh) av._invalidateVoteRoster(id);
+    await av._loadVoteRoster(id, { fresh });
   }
   return session;
 }
@@ -728,12 +780,52 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
 }
 
 /**
+ * #4244 — a closed request's ONE status band, at the top of its card:
+ * "✓ Closed · Oct 5 · by #10 <title> ›". It replaced a separate "Closed by"
+ * box above the card plus a grey "Closed" badge on it, which said the same
+ * thing twice in two places. Emerald when a merged change closed it, zinc
+ * when a close vote or an admin did. The change is an inline pill drawn like
+ * the change page's "Addresses" line (`.dev-topic-issue`), and it keeps
+ * `data-addressed-by`, the hook the old box's row carried.
+ */
+function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
+  const r = b.ref;
+  return (
+    <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
+      <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
+      <span className="dev-issue-closed-band-k">Closed</span>
+      {b.when ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span title={b.whenTitle || undefined}>{b.when}</span>
+      </> : null}
+      {r ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>by</span>
+        <a
+          href={r.href}
+          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+          data-addressed-by={r.sessionId}
+          aria-label={`Closed by ${r.label}: ${r.title}`}
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+          }}
+        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+      </> : b.how ? <>
+        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
+        <span>{b.how}</span>
+      </> : null}
+    </div>
+  );
+}
+
+/**
  * On a change's page: the change it went live inside
  * (services/included-changes.js). The same box, row and chip as
  * `AddressedBy`, read from the other end again: that names the change that
  * closed an issue, this the change that carried this one live.
  */
-function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+export function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   return (
     <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
       <h4 className="dev-topic-h">{r.heading}</h4>
@@ -752,13 +844,14 @@ function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
-function IssueAssociations({
+export function IssueAssociations({
   proposalId,
   issues,
   issueOptions,
   linkedIssues,
   editable,
   onSaved,
+  thread,
 }: {
   proposalId: number;
   issues: IssueLink[];
@@ -766,6 +859,13 @@ function IssueAssociations({
   linkedIssues: number[];
   editable: boolean;
   onSaved: (issues: number[]) => void;
+  /**
+   * #4455: a change's page draws the line as one row under the summary:
+   * "Addresses", the first request, "+N more" (which opens the rest, one to a
+   * line), then the thanks. Editing is ⋯ "Edit requests", which asks for the
+   * editor by event, as "Edit description" does.
+   */
+  thread: { thanks: ReactNode };
 }): ReactNode {
   const normalized = normalizeLinkedIssues(linkedIssues);
   const signature = normalized.join(', ');
@@ -779,6 +879,7 @@ function IssueAssociations({
   useEffect(() => {
     if (!editing) setSelected(normalized);
   }, [signature, editing]);
+  const [more, setMore] = useState(false);
 
   const selectedSignature = normalizeLinkedIssues(selected).join(', ');
   const changed = selectedSignature !== signature;
@@ -805,6 +906,14 @@ function IssueAssociations({
     setError('');
     setEditing(false);
   };
+  useEffect(() => {
+    if (!editable) return undefined;
+    const open = (event: Event) => {
+      if (Number((event as CustomEvent).detail) === proposalId) openEditor();
+    };
+    window.addEventListener('change-issues-edit', open);
+    return () => window.removeEventListener('change-issues-edit', open);
+  }, [editable, proposalId, signature]);
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
@@ -861,44 +970,8 @@ function IssueAssociations({
     }
   }
 
-  return (
-    <aside className="dev-topic-hero-issues" aria-label="Requests this change addresses">
-      {!editing ? (
-        <div className="dev-topic-hero-issues-line">
-          {/* One line under the summary: "Addresses", then each issue as a
-              chip — the number bold, the title after it — in the Needs-you
-              chip's accent tint. The chip opens the issue's own page; the
-              owner's pencil sits at the line's end. */}
-          <span className="dev-topic-hero-issues-k">Addresses</span>
-          {issues.length ? issues.map((issue) => (
-            <a
-              key={issue.n}
-              href={issue.href}
-              className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
-              data-issue-ref={issue.n}
-              onClick={(event) => {
-                if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
-                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault(); call('openTopic', 'issue', issue.n);
-              }}
-            ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
-          )) : <span className="dev-topic-note">No requests linked yet.</span>}
-          {editable ? <Button
-            type="button"
-            variant="unstyled"
-            size="inline"
-            ink="none"
-            className="dev-topic-hero-issues-edit inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
-            aria-expanded="false"
-            onClick={openEditor}
-          >
-            {issues.length ? <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-              : <PlusIcon className="h-4 w-4" aria-hidden="true" />}
-            {issues.length ? 'Edit requests' : 'Add request'}
-          </Button> : null}
-        </div>
-      ) : null}
-      {editing ? <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
+  const editorForm = () => (
+    <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
             <span>{`Selected (${selected.length})`}</span>
@@ -958,202 +1031,47 @@ function IssueAssociations({
           <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
           <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
         </div>
-      </form> : null}
-      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
-    </aside>
+      </form>
   );
-}
-
-/** The shots run's state, as one strip: a failed or waived run explains itself. */
-function ShotsStrip({ e }: { e: NonNullable<TopicBody['shots']> }): ReactNode {
-  const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
-  return (
-    <div className="dev-topic-shots" data-shots-state={e.state}>
-      <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
-      <span className="dev-topic-shots-text">{e.sentence}</span>
-    </div>
+  const chip = (issue: IssueLink) => (
+    <a
+      key={issue.n}
+      href={issue.href}
+      className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+      data-issue-ref={issue.n}
+      onClick={(event) => {
+        if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); call('openTopic', 'issue', issue.n);
+      }}
+    ><b>{`#${issue.n}`}</b><span>{issue.title}</span></a>
   );
-}
-
-/**
- * The shots states that are a run still going: the picture is coming.
- * 'planned' is in this set only while it is FRESH — `shots.notStarted`
- * (AppView._shotsNotStarted) marks the run that has sat there past the
- * idle threshold, and that one is not going anywhere on its own.
- */
-const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
-
-/**
- * The before/after: the verified shots card (or the legacy capture
- * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Taking the shots"
- * in a box read as a verdict. A run that failed, or was waived,
- * keeps its strip: that is a fact a voter weighs.
- *
- * #2601/#2558: a run that never started keeps the PANEL rather than the
- * strip, because it is the one pending state with something for the reader
- * to do — the panel carries the recorded reason and the retry control.
- */
-function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
-  const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
-  const ev = body.shots || null;
-  const notStarted = !!(ev && ev.notStarted);
-  if (tiles && (!ev || ev.verified || notStarted)) {
-    return (
-      <div className="dev-topic-visuals" data-visuals-scope="1">
-        {/* AppView.visualsTilesHtml's markup — four other surfaces still
-            call it, so it stays a string builder. */}
-        <Html className="usn-visuals-body" html={tiles.tilesHtml} />
-      </div>
-    );
-  }
-  if (!ev || ev.verified) return null;
-  // An interrupted run the recovery sweep is about to start again reads as
-  // under way too: the next thing that happens needs nobody.
-  if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
-    return (
-      <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
-        <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
-      </p>
-    );
-  }
-  return <ShotsStrip e={ev} />;
-}
-
-/**
- * The hero: the change as the Workshop's Needs-you item. The eyebrow (what
- * the page is, the pull request, where it stands) with the age at its
- * right; the title, with the author's pencil; who proposed it; the card's
- * tags as chips, in the card's own tints — what the change IS, never what
- * state it is in, because the steps under it say that; the action band
- * with Vote first; the plain-English summary; the issue it addresses; the
- * picture, or the line that says it is coming.
- */
-function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
-  id: number | null;
-  card: DevCardModel;
-  body: TopicBody;
-  linkedIssues: number[];
-  onIssuesSaved: (issues: number[]) => void;
-}): ReactNode {
-  const h: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
-  const all = card.actions || [];
-  const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
-  const noSpec = all.find((a) => isVoteSpec(a, 'no'));
-  const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
-  const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
-  const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
-  const hasIssues = !!((body.issues && body.issues.length) || body.canEditIssues) && !!id;
-  // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the shots — stay off: the steps say it.
-  // A request the Addresses line under the summary already names, by its
-  // number AND its title, is not a "Closes #1" tag up here as well: that
-  // tag said the same thing in a pull request's words (first-session
-  // run-through, 4 Oct 2026).
-  const named = new Set(hasIssues ? (body.issues || []).map((issue) => Number(issue.n)) : []);
-  const unnamed = (b: any) => !(b && b.n != null && named.has(Number(b.n)));
-  const badges = (card.badges || []).filter(Boolean);
-  const chips = [
-    ...badges.filter((b) => b.t === 'attr'),
-    ...(card.linked || []).filter(unnamed),
-    ...badges.filter((b) => b.t === 'issueChip' && unnamed(b)),
-  ];
+  const [first, ...rest] = issues;
   return (
-    <section className="dev-topic-sheet dev-topic-hero" data-topic-sheet="hero" data-ws-tint={h.tint}>
-      <div className="dev-topic-hero-top">
-        {/* B10b: what the page is and where it stands. The pull request it
-            names is in Details. */}
-        <span className="dev-ws-eyebrow dev-topic-hero-eyebrow">
-          {h.status ? `${h.kind} · ${h.status}` : h.kind}
-        </span>
-        {h.age ? <span className="dev-ws-item-of" title={h.age.title}>{h.age.s}</span> : null}
-      </div>
-      <h2 className="dev-ws-item-title dev-topic-hero-title"><TitleContent t={card.title} /></h2>
-      {h.author || h.age ? (
-        <p className="dev-ws-item-by dev-topic-hero-by">
-          {h.author ? (
-            <span className="dev-ws-item-avatar" style={{ background: swatchFor(h.author) }} aria-hidden="true">
-              {h.author.slice(0, 1).toUpperCase()}
+    <aside className="dev-change-addresses" aria-label="Requests this change addresses">
+      {!editing && (first || thread.thanks) ? (
+        <div className="dev-change-chips" data-open={more ? 'true' : 'false'}>
+          {first ? <span className="dev-change-chips-lead">Addresses</span> : null}
+          {first ? (
+            <span className="dev-change-chips-first">
+              {chip(first)}
+              {rest.length ? (
+                <button
+                  type="button"
+                  className="dev-ws-chip dev-change-reqs-more"
+                  aria-expanded={more}
+                  onClick={() => setMore((v) => !v)}
+                >{more ? 'Show less' : `+${rest.length} more`}</button>
+              ) : null}
             </span>
           ) : null}
-          <span>
-            {h.author ? <b>{h.author}</b> : null}
-            {h.age ? <span>{`${h.author ? ' · ' : ''}${h.verb} ${h.age.s}`}</span> : null}
-            {h.provenance ? <span>{` · ${h.provenance}`}</span> : null}
-          </span>
-        </p>
-      ) : null}
-      {chips.length ? (
-        <div className="dev-ws-item-chips dev-topic-hero-chips">
-          {chips.map((b) => <Badge key={b.key} b={b} />)}
+          {thread.thanks}
+          {more && rest.length ? <span className="dev-change-chips-rest">{rest.map(chip)}</span> : null}
         </div>
       ) : null}
-      {/* The card's two rows, as the board card draws them: the status row —
-          the pill spanning, the Vote button at its right end — then the band
-          (card/dev-card.tsx ActionBand). The pill carries the vote's count,
-          so the Votes step below only names who voted. The rows wear the
-          card's class so the band's own rules — the one-line fold into ⋯,
-          the accent pills, Preview and the hamburger at the right — and the
-          pill's block form apply here as on the card; app.css takes the
-          card's box off it. */}
-      <div className="dev-card-topic dev-topic-hero-actions">
-        {pill || vote ? (
-          <div className="dev-card-badges dev-card-status dev-topic-hero-status">
-            {pill ? <StatusPill s={pill} /> : null}
-            {vote}
-          </div>
-        ) : null}
-        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
-      </div>
-      {/* #3826: the pill's lock explains itself only in a hover title, which
-          a phone never shows. While the other member's Yes is missing, say
-          it; once it is in, the line goes. */}
-      {pill && pill.awaitsOtherYes
-        ? <p className="dev-topic-note" data-topic-part="needs-other-yes">Needs a Yes from another member before it can go live.</p>
-        : null}
-      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
-      {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
-      {body.summaryStale && body.summaryHtml
-        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
-        : null}
-      {body.tested && id ? <TestedLine id={id} t={body.tested} /> : null}
-      {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
-      {hasIssues ? (
-        <IssueAssociations
-          proposalId={Number(id)}
-          issues={body.issues || []}
-          issueOptions={body.issueOptions || []}
-          linkedIssues={linkedIssues}
-          editable={body.canEditIssues === true}
-          onSaved={onIssuesSaved}
-        />
-      ) : null}
-      <BeforeAfter body={body} />
-      {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
-    </section>
-  );
-}
-
-/** B10b: the Tested line's mark, in the steps' own glyphs. */
-const TESTED_MARK: Record<string, string> = {
-  passed: '✓', failed: '✕', skipped: '·', broken: '!',
-};
-
-/**
- * B10b: one line for what testing found, where the steps list and its checks
- * used to be. A tap opens Details at the Checks part.
- */
-function TestedLine({ id, t }: { id: number; t: NonNullable<TopicBody['tested']> }): ReactNode {
-  const open = () => (window as any).AppView?.openTechnicalDetails(id, 'checks');
-  return (
-    <button type="button" className="dev-topic-tested" data-tested={t.state} onClick={open}>
-      <span className={`dev-topic-tested-mark dev-topic-tested-mark-${t.state}`} aria-hidden="true">
-        {t.state === 'running' ? <Spinner /> : (TESTED_MARK[t.state] || '·')}
-      </span>
-      <span>{t.text}</span>
-    </button>
+      {editing ? editorForm() : null}
+      {!editing && notice ? <p role="status" className="dev-topic-note">{notice}</p> : null}
+    </aside>
   );
 }
 
@@ -1249,7 +1167,9 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
     ? (c.done
       ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
       : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
-    : (run.live ? (run.phase === 'testing' ? 'Starting' : 'After the build') : 'Did not run');
+    : (run.live
+      ? (run.phase === 'testing' ? 'Starting' : run.phase === 'queued' ? 'Waiting for a slot' : 'After the build')
+      : 'Did not run');
   const u = run.unit;
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
   const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
@@ -1437,12 +1357,14 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-function DetailsSheet({ id, prRef, steps, help, html }: {
+function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
   help: boolean;
   html: string;
+  /** #4455: Shot details, what the change page's Before and after card leaves out. */
+  shotsHtml?: string;
 }): ReactNode {
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
@@ -1485,6 +1407,13 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
           </button>
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
+        {shotsHtml ? (
+          <section className="dev-details-part" data-details-part="shots" data-note="shots">
+            <h5 className="dev-details-sub">Shot details</h5>
+            {/* AppView.shotsHtml's `details` reading, escaped where it is built. */}
+            <Html className="dev-shot-details" html={shotsHtml} />
+          </section>
+        ) : null}
       </div>
     </div>,
     document.body,
@@ -1495,26 +1424,27 @@ function DetailsSheet({ id, prRef, steps, help, html }: {
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
  *
- * A CHANGE (a session or a proposal, `body.changeId`) reads top to bottom
- * as the Workshop's Needs-you item: the hero (ChangeHero) — the title, the
- * tags, the actions, the summary, the issues, the picture — then the merge
- * steps (StepsSheet), then, on its own page, the Discussion
- * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
- * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
- * dev session (#2605). An issue or a governance vote keeps the card and
+ * A CHANGE (a session or a proposal, `body.changeId`) is a Messages reply
+ * thread's root post (#4455, ./change-head.tsx): the change, where it
+ * stands as its Votes and Testing cards, its before and after; its replies
+ * are the thread's stream. The technical half is a sheet the ⋯ menu opens
+ * (DetailsSheet). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
  *
  * `back` puts the topic page's "‹ Workshop" chip (./topic-back.tsx) first in
  * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
  * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, back = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; back?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  // The next read is a live re-read (#4177): fresh, roster included. Held
+  // until a read actually runs, because a hidden page defers it.
+  const freshNext = useRef(false);
   const id = item?.id;
   // THE PAGE RE-READS ITS ROW WHEN SOMETHING HAPPENS TO IT, not on a timer.
   // It polled every ten seconds for as long as it was open, because the
@@ -1526,12 +1456,17 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   //   - with `{ id, row }`: adopt a row the Workshop just read for this page;
   //   - with `{ id, patch }`: merge a live patch (a checks tick), which would
   //     otherwise be painted over by this page's older read;
-  //   - with 'all': the socket reconnected (App.resyncCurrentView);
+  //   - a live re-read (#4177, lib/live-reads.ts): the socket reconnected, the
+  //     tab came back after a while, or the service worker corrected this
+  //     page's own read, which it may have answered from an older copy;
   //   - the page coming back into view after a read was skipped for it.
   useEffect(() => {
     if (!id || !active) return;
     const abort = new AbortController();
     let skipped = false;
+    // A fresh read still on the wire when this effect is torn down (a
+    // revision bump aborts it): the next effect's read inherits `fresh`.
+    let freshInFlight = false;
     async function load() {
       // These portals can remain mounted while another screen is open, and a
       // hidden tab reads nothing; either reads when it is seen again.
@@ -1540,16 +1475,20 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         return;
       }
       skipped = false;
+      const fresh = freshNext.current;
+      freshNext.current = false;
+      freshInFlight = fresh;
       try {
-        const session = await readChangeDetail(item, owner, abort.signal);
+        const session = await readChangeDetail(item, owner, abort.signal, { fresh });
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) freshInFlight = false;
       }
     }
     const refresh = (event: Event) => {
       const detail = (event as CustomEvent).detail;
-      if (detail === 'all') { setRevision((n) => n + 1); return; }
       if (detail && typeof detail === 'object') {
         if (Number(detail.id) !== Number(id)) return;
         if (detail.row) { setLoaded(detail.row); setError(''); return; }
@@ -1561,6 +1500,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       if (Number(detail) === Number(id)) setRevision((n) => n + 1);
     };
     const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
+    // Its own read and the roster it reads with it (readChangeDetail).
+    const paths = new Set([changeDetailPath(item), `/api/sessions/${id}/votes`]);
+    const unwatch = watch(() => {
+      freshNext.current = true;
+      setRevision((n) => n + 1);
+    }, { reads: (url) => paths.has(url.pathname) });
     window.addEventListener('change-detail-refresh', refresh);
     document.addEventListener('visibilitychange', seen);
     const shown = typeof ResizeObserver === 'function' && root.current ? new ResizeObserver(seen) : null;
@@ -1568,6 +1513,8 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     void load();
     return () => {
       abort.abort();
+      if (freshInFlight) freshNext.current = true;
+      unwatch();
       window.removeEventListener('change-detail-refresh', refresh);
       document.removeEventListener('visibilitychange', seen);
       shown?.disconnect();
@@ -1591,20 +1538,18 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const changePage = !!body.changeId;
   const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
-    <div ref={root} className="dev-topic">
-      {back ? <TopicBack /> : null}
+    <div ref={root} className={changePage ? 'dev-change-head' : 'dev-topic'}>
+      {/* A change's back chip is portalled above its sheet (change-head.tsx). */}
+      {back && !changePage ? <TopicBack /> : null}
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       {changePage ? (
         <>
-          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
-          {/* #2605: a change's page carries NO build surface — not the Build
-              sheet, and not the published chat's disclosure that used to sit
-              beside it. Both are the dev session page's now, behind the
-              hero's pill. */}
-          {conversation ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
-          {/* The GitHub thread's host (issue-comments.tsx mounts into it):
-              a body that carries one gets it whatever page it is on. */}
-          {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
+          {/* #4455: the change as a Messages thread's root post, where it
+              stands, its shots; its replies are the thread's stream. #2605:
+              no build surface here: the ⋯'s Build door leaves for it. */}
+          {body.thread ? (
+            <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
+          ) : null}
           {id ? (
             <DetailsSheet
               id={Number(id)}
@@ -1612,6 +1557,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
@@ -1625,7 +1571,9 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
             {/* #2431: an ISSUE's page names the change on it. A CHANGE's page
-                names its issues under the summary (ChangeHero). */}
+                names its issues under the summary (change-head.tsx). #4244: a
+                CLOSED issue says so once, in the band at the card's top. */}
+            {body.closedBand ? <ClosedBand b={body.closedBand} /> : null}
             {body.addressedBy ? <AddressedBy r={body.addressedBy} /> : null}
             <DevCard model={card} />
           </div>
@@ -1634,6 +1582,26 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       )}
     </div>
   );
+}
+
+/**
+ * Save a request's words: the author's PATCH, then every issue cache the page
+ * may have resolved through, returning the body as stored and rendered.
+ * Shared by the Workshop's About sheet (`IssueBody`) and a request's root
+ * post (./request-head.tsx).
+ */
+export async function saveIssueBody(slug: string, issue: number, draft: string): Promise<{ body: string; html: string }> {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const response = await fetch(`/api/apps/${slug}/github-issues/${issue}/body`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: draft }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
+  const body = typeof result.body === 'string' ? result.body : draft;
+  const html = typeof av?._cacheIssueBody === 'function' ? av._cacheIssueBody(issue, body) : '';
+  return { body, html };
 }
 
 function IssueBody(
@@ -1673,19 +1641,9 @@ function IssueBody(
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(`/api/apps/${slug}/github-issues/${editor.issue}/body`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: draft }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
-      const savedBody = typeof result.body === 'string' ? result.body : draft;
-      const rendered = typeof av?._cacheIssueBody === 'function'
-        ? av._cacheIssueBody(editor.issue, savedBody)
-        : '';
-      setDraft(savedBody);
-      setHtml(rendered);
+      const saved = await saveIssueBody(slug, editor.issue, draft);
+      setDraft(saved.body);
+      setHtml(saved.html);
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
@@ -1718,7 +1676,7 @@ function IssueBody(
             id="dev-issue-body-input"
             aria-labelledby="dev-issue-body-heading"
             rows={10}
-            maxLength={10000}
+            maxLength={ISSUE_BODY_MAX}
             width="full"
             box="default"
             className="resize-y"
@@ -1753,8 +1711,9 @@ function IssueBody(
  * holds the one topic the screen is on and an inline expansion is not
  * navigation: two readers of one store would fight over it.
  *
- * The Workshop passes `comments: false`, so the singleton
- * `#dev-issue-comments` host below is emitted on the topic screen only.
+ * A request's own page draws none of this: it is a thread
+ * (./request-head.tsx), and only the Workshop's inline expansion still draws
+ * a request through these sections.
  */
 export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   const a = body.actions;
@@ -1826,9 +1785,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
-      {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
-          so app.css can run it into the Discussion sheet below the head. */}
-      {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
     </>
   );
 }

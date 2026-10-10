@@ -592,19 +592,85 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
   }
 });
 
-// Test accounts for first-run testing (routes/test-accounts.js). Three routes
+// The App bench studio, the benchmark's suites and trials, the live Homeroom
+// bot and the recent before/after screenshots (routes/bench-studio.js):
+// twenty-three routes outside /api/admin, allowed because every handler
+// refuses anybody who is not a full platform admin before it reads a thing.
+// They read builds, tasks and screenshots of every app, private ones
+// included, and a launch spends the platform's money.
+test('the studio\'s twenty-three connector routes are allowed, and every one is full-admin gated first', () => {
+  for (const [method, target] of [
+    ['GET', '/api/bot-studio'],
+    ['GET', '/api/bot-studio/gallery'],
+    ['GET', '/api/bot-studio/runs/12/watch'],
+    ['GET', '/api/bot-studio/runs/12/reference-order'],
+    ['POST', '/api/bot-studio/launch'],
+    ['POST', '/api/bot-studio/runs/12/references'],
+    ['POST', '/api/bot-studio/trials/3/rerun'],
+    ['POST', '/api/bot-studio/trials/3/cancel'],
+    ['POST', '/api/bot-studio/trials/3/keep'],
+    ['POST', '/api/bot-studio/trials/3/preview'],
+    ['GET', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/suites'],
+    ['GET', '/api/bot-studio/suites/2'],
+    ['POST', '/api/bot-studio/suites/2/tasks'],
+    ['POST', '/api/bot-studio/tasks/9/taste'],
+    ['GET', '/api/bot-studio/runs/12/trials'],
+    ['GET', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/bot/runs/5/rating'],
+    ['GET', '/api/bot-studio/shots'],
+    ['GET', '/api/bot-studio/shots/77'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs/4'],
+    ['DELETE', '/api/bot-studio/trials/3'],
+    ['POST', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/trials/3/preview'],
+    ['POST', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/shots/77'],
+    ['GET', '/api/bot-studio/launch'],
+    ['GET', '/api/admin/homeroom-bot/bench/studio'],
+    ['POST', '/api/admin/homeroom-bot/bench/studio/launch'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
+  assert.equal(routes.length, 23);
+  for (const [, method, route, gate] of routes) {
+    assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
+  }
+  // Every write is rate-limited per person and guarded after the limiter. A
+  // launch shares the benchmark's launch limiter, since both spend money.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-studio[^']*)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 10);
+  for (const [, route, chain] of writes) {
+    const limiter = route === '/api/bot-studio/launch' ? 'benchRunLimiter' : 'benchStudioLimiter';
+    assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
+  }
+});
+
+// Test accounts for first-run testing (routes/test-accounts.js). Five routes
 // outside /api/admin and /api/auth (which a connector can never reach),
 // allowed because every handler refuses anybody who is not a full platform
-// admin before anything else runs: they mint a new sign-in, list accounts,
-// and delete one with the apps it made. The gate comes first, then the
-// per-admin limiter, then the same-origin browser guard, on all three; and no
-// path carries a `password` segment, which the canonical-target wall would
-// refuse anyway.
-test('the three test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+// admin before anything else runs: they mint a new sign-in, send the
+// waitlist's release mail to a test address, list accounts, and delete one
+// with the apps it made. The gate comes first, then the per-admin limiter,
+// then the same-origin browser guard, on all of them; and no path carries a
+// `password` segment, which the canonical-target wall would refuse anyway.
+test('the five test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
   for (const [method, target] of [
     ['POST', '/api/test-accounts'],
     ['GET', '/api/test-accounts'],
     ['POST', '/api/test-accounts/12/retire'],
+    ['POST', '/api/test-accounts/phone-sign-ins'],
+    ['POST', '/api/test-accounts/release-emails'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -618,6 +684,10 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     ['POST', '/api/test-accounts/12/retire/extra'],
     ['POST', '/api/test-accounts/12/password'],
     ['GET', '/api/test-accounts/password'],
+    ['GET', '/api/test-accounts/phone-sign-ins'],
+    ['DELETE', '/api/test-accounts/phone-sign-ins'],
+    ['GET', '/api/test-accounts/release-emails'],
+    ['POST', '/api/test-accounts/release-emails/12'],
     // The admin console's own user routes stay out of reach.
     ['POST', '/api/admin/users'],
     ['POST', '/api/v4/admin/users'],
@@ -631,6 +701,8 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     'GET /api/test-accounts',
     'POST /api/test-accounts',
     'POST /api/test-accounts/:id/retire',
+    'POST /api/test-accounts/phone-sign-ins',
+    'POST /api/test-accounts/release-emails',
   ]);
   for (const [, method, route, chain] of routes) {
     assert.equal(chain, 'requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, ',
@@ -638,5 +710,5 @@ test('the three test-account routes are allowed, full-admin gated first, limited
     assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
   }
   // Nothing else in the file registers a route.
-  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 3);
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 5);
 });

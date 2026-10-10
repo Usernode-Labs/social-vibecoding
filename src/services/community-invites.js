@@ -229,6 +229,28 @@ async function listInvites(pool, { app, user }) {
   return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
 }
 
+/**
+ * Whether `userId` has a live invite link for `app` (the same "live" as
+ * listInvites: not turned off, not past its end, not used up). The hub reads
+ * it to draw a project that is just theirs with open seats once a link is
+ * out (#4045, 8 Oct 2026). It is the only trace a link leaves: copying or
+ * sharing it happens on the person's device, and making the link is what
+ * opening the invite pane does, so this says "a link was made", which is as
+ * near to "went out" as the records get.
+ */
+async function hasLiveLink(pool, appId, userId) {
+  if (!appId || !userId) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM community_invites
+      WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (max_uses IS NULL OR uses < max_uses)
+      LIMIT 1`,
+    [appId, userId]
+  );
+  return rows.length > 0;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function inDays(ms) {
@@ -481,26 +503,6 @@ async function firstVersionPending(db, appId) {
 }
 
 /**
- * The same picture for somebody who has just joined, at addresses that need
- * no link ("You're in", frontend/src/features/first-session): the card of
- * the idea, as words the screen draws itself, and the Discover card's image,
- * which anyone may see. An after-shot is served only through a live link,
- * so a member is shown none here. Null for no picture.
- */
-function memberPicture(slug, picture) {
-  if (!picture || !slug) return null;
-  if (picture.kind === 'sketch') return { kind: 'sketch', url: null, darkUrl: null, card: picture.card };
-  if (picture.kind === 'illustration') {
-    return {
-      kind: 'illustration',
-      url: `/app-illustrations/${picture.id}`,
-      darkUrl: picture.darkId ? `/app-illustrations/${picture.darkId}` : null,
-    };
-  }
-  return null;
-}
-
-/**
  * What a link shows before anyone signs in. A live link discloses the
  * project's name, icon and one-line description, who invited you (and
  * whether they made it), their note, one picture of it (pictureFor) and how
@@ -738,8 +740,9 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
     // a new account answers ("What communities do you want to join?",
     // services/onboarding.js) is not put between them and it. Answered
     // as 'invite' for the admin Journey page, and communities_onboarded_at
-    // stays NULL, so the Getting started card stays out of their first
-    // session too.
+    // stays NULL. The Getting started card and the First-challenges gate
+    // follow `getting_started_gate` alone (#4601), so a new account that
+    // came by a link gets both like any other.
     await client.query(
       `UPDATE users
           SET needs_communities_choice = FALSE,
@@ -915,6 +918,10 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     );
     if (!rows[0]) return null;
     const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
+    // The admin Journey's invite funnel: signed up or in through this link.
+    // Recorded before following it, while they are not in it yet; never
+    // throws (journey-events.js).
+    await require('./journey-events').noteInviteSignedIn(pool, { token, userId: user.id, carried: true });
     const browser = require('./invite-activity').browserFrom(req);
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
@@ -928,6 +935,25 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
   }
 }
 
+/**
+ * A sign-in that carried a link but does not follow it: an existing account
+ * is asked first, by the shell (App._followInvite), unless this sign-in IS
+ * the Join its page asked for. The carried copy is dropped, so nothing
+ * follows it later without asking. The admin Journey's invite funnel still
+ * counts the sign-in as one the link brought (#4272): they opened the link
+ * signed out and signed in carrying it, and the shell's standing read after
+ * it would otherwise take them for somebody already signed in. Recorded
+ * before the sign-in answers, so that read finds it. Never throws; resolves
+ * null, as redeemCarried does when it follows nothing.
+ */
+async function dropCarried(pool, req, res, userId) {
+  const token = req.cookies?.[INVITE_COOKIE];
+  clearInviteCookie(res);
+  if (!token || !isToken(token) || !userId) return null;
+  await require('./journey-events').noteInviteSignedIn(pool, { token, userId, carried: true });
+  return null;
+}
+
 module.exports = {
   DEFAULT_DAYS,
   DEFAULT_USES,
@@ -936,7 +962,6 @@ module.exports = {
   cleanNote,
   pictureBytes,
   pictureFor,
-  memberPicture,
   firstVersionPending,
   joiningRule,
   joiningRuleText,
@@ -949,6 +974,7 @@ module.exports = {
   deadReason,
   grantFor,
   canCreate,
+  hasLiveLink,
   canRevoke,
   createInvite,
   listInvites,
@@ -961,4 +987,5 @@ module.exports = {
   setInviteCookie,
   clearInviteCookie,
   redeemCarried,
+  dropCarried,
 };

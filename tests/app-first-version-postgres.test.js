@@ -93,7 +93,7 @@ test('the first version being built, from the records the bot leaves', { timeout
   );
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const state = () => dm.firstVersionState(pool, app.id);
-  const steps = (s) => s && { step: s.step, of: s.of, stepName: s.stepName, question: s.question, ready: s.ready };
+  const steps = (s) => s && { step: s.step, of: s.of, line: s.line, question: s.question, ready: s.ready };
   let proposal = null;
 
   await t.test('nothing recorded, or a description the bot does not build, is no state', async () => {
@@ -108,7 +108,7 @@ test('the first version being built, from the records the bot leaves', { timeout
 
   await t.test('set up: step 1, whose description, and their DM with the bot', async () => {
     const s = await state();
-    assert.deepEqual(steps(s), { step: 1, of: 7, stepName: 'Set up the project', question: false, ready: false });
+    assert.deepEqual(steps(s), { step: 1, of: 7, line: 'planning', question: false, ready: false });
     assert.equal(s.userId, ada.id);
     assert.equal(s.creator, ada.username);
     assert.equal(s.conversationId, opened.conversationId);
@@ -128,7 +128,7 @@ test('the first version being built, from the records the bot leaves', { timeout
        VALUES ($1, 1, $2, 'First version of Plant Pal', TRUE)`,
       [app.id, ada.id],
     );
-    assert.deepEqual(steps(await state()), { step: 2, of: 7, stepName: 'Read the description', question: false, ready: false },
+    assert.deepEqual(steps(await state()), { step: 2, of: 7, line: 'planning', question: false, ready: false },
       'filed and not picked up yet: next to be read');
     await pool.query(`INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 1, 1, 'new')`, [app.id]);
     assert.equal((await state()).step, 2, 'queued to be read');
@@ -144,8 +144,10 @@ test('the first version being built, from the records the bot leaves', { timeout
        VALUES ($1, $2, $3, $4, 1, 'question', $5, 'open')`,
       [asked.messageId, ada.id, asked.conversationId, app.id, run.id],
     );
-    assert.deepEqual(steps(await state()), { step: 2, of: 7, stepName: 'Read the description', question: true, ready: false },
-      'the bot waits on an answer from its creator');
+    assert.deepEqual(steps(await state()), { step: 2, of: 7, line: 'planning', question: true, ready: false },
+      'the bot waits on an answer from its creator; anyone else reads that it is planning');
+    assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: ada.id })).line, 'question',
+      '#4053: its creator reads that it has a question for them');
     await pool.query(`UPDATE homeroom_bot_dm_messages SET question_status = 'answered' WHERE message_id = $1`, [asked.messageId]);
 
     ({ rows: [proposal] } = await pool.query(
@@ -158,7 +160,7 @@ test('the first version being built, from the records the bot leaves', { timeout
        VALUES ($1, 1, 'live', 'ready', TRUE, $2)`,
       [app.id, proposal.id],
     );
-    assert.deepEqual(steps(await state()), { step: 6, of: 7, stepName: 'Approval', question: false, ready: true },
+    assert.deepEqual(steps(await state()), { step: 6, of: 7, line: 'ready', question: false, ready: true },
       'up for its vote: ready to try');
   });
 
@@ -182,7 +184,7 @@ test('the first version being built, from the records the bot leaves', { timeout
       const { rows: [{ community_id: communityId }] } = await pool.query('SELECT community_id FROM apps WHERE id = $1', [app.id]);
       await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [communityId, ada.id]);
       assert.deepEqual(await get(), {
-        building: true, mine: true, step: 6, of: 7, stepName: 'Approval', creator: ada.username,
+        building: true, mine: true, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: opened.conversationId,
         approval: {
           sessionId: proposal.id, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false,
@@ -209,7 +211,7 @@ test('the first version being built, from the records the bot leaves', { timeout
         'its maker still has to approve it, and so does the other member');
       viewer = sam;
       assert.deepEqual(await get(), {
-        building: true, mine: false, step: 6, of: 7, stepName: 'Approval', creator: ada.username,
+        building: true, mine: false, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: null,
         approval: waits({ mustApprove: true, waitingOn: [ada.username] }),
       }, 'somebody else\'s DM is never handed out; who it waits on is the same for everyone');
@@ -256,12 +258,25 @@ test('the first version being built, from the records the bot leaves', { timeout
         governance.governedGate = realGate;
       }
 
+      // #4053 (owner, 7 Oct): the Home tile says the same line, read from
+      // the list (GET /api/apps) for whoever is looking.
+      const listed = async () => {
+        const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps`);
+        assert.equal(res.status, 200);
+        return (await res.json()).apps.find((a) => a.slug === 'plant-pal');
+      };
+      viewer = ada;
+      assert.equal((await listed()).first_version_line, 'ready');
+      viewer = sam;
+      assert.equal((await listed()).first_version_line, 'ready');
+
       // A read that fails is no state, never a failed page.
       viewer = ada;
       const real = dm.firstVersionState;
       dm.firstVersionState = async () => { throw new Error('boom'); };
       try {
         assert.equal(await get(), null);
+        assert.equal((await listed()).first_version_line, null, 'the tile says what it said before');
       } finally {
         dm.firstVersionState = real;
       }
@@ -274,6 +289,10 @@ test('the first version being built, from the records the bot leaves', { timeout
   await t.test('merged: the app is the first version now', async () => {
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
     assert.equal(await state(), null);
+    // Its tile says nothing more (routes/apps.js firstVersionLinesFor).
+    const routes = require('../src/routes/apps');
+    assert.equal(typeof routes.firstVersionLinesFor, 'function');
+    assert.equal((await routes.firstVersionLinesFor(pool, [app], ada.id)).size, 0);
   });
 
   await t.test('any other ending is the end of the state too', async () => {

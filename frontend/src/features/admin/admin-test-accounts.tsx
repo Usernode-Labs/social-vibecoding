@@ -9,10 +9,12 @@ import { returnKeyHandler } from '../../lib/return-to-next';
 import { agoStamp } from '../../lib/timestamp';
 
 // Test accounts (#admin/test-accounts): make a genuinely new account for
-// first-time-user testing, see the live ones, and retire one when testing is
-// done. The routes are src/routes/test-accounts.js, the same three the
-// connector's create_test_account / list_test_accounts / retire_test_account
-// wrap; this section replaces pasting a fetch() into devtools.
+// first-time-user testing, get a one-time phone sign-in for a test number,
+// see the live ones, and retire one when testing is done. The routes are
+// src/routes/test-accounts.js, the same four the connector's
+// create_test_account / create_test_phone_sign_in / list_test_accounts /
+// retire_test_account wrap; this section replaces pasting a fetch() into
+// devtools.
 //
 // PERMISSIONS: every one of those routes is requireAdminWrite, the LIST
 // included, so a view-only admin can neither make nor see test accounts. The
@@ -41,7 +43,6 @@ export interface NewAccount {
   password: string;
   needsUsernameChoice: boolean;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
   note: string | null;
 }
@@ -62,7 +63,6 @@ export interface Fields {
   username: string;
   note: string;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
 }
 
@@ -70,7 +70,6 @@ export interface CreateBody {
   username?: string;
   note?: string;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
 }
 
@@ -93,7 +92,7 @@ export const RETIRE_CONFIRMATION = 'RETIRE';
 const USERNAME_RE = /^[A-Za-z0-9_]{3,32}$/;
 
 export const BLANK: Fields = Object.freeze({
-  username: '', note: '', platformAccess: true, homeroomBotDm: false, welcomeDm: false,
+  username: '', note: '', platformAccess: true, welcomeDm: false,
 }) as Fields;
 
 const HINT = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
@@ -135,7 +134,7 @@ async function send(fetchImpl: Fetch, method: 'GET' | 'POST', path: string, body
 /**
  * The sentence to show for a refusal, and the field it belongs to. The
  * server's own sentence wins, except where it names a connector parameter
- * (at_capacity, bot_dm_full) or is not a sentence at all (a 403 from a guard,
+ * (at_capacity) or is not a sentence at all (a 403 from a guard,
  * a bare 500). `unsure` says what to do when the request may have landed.
  */
 export function refusal(reply: Reply, unsure: string): { error: string; field: Field | null } {
@@ -147,13 +146,6 @@ export function refusal(reply: Reply, unsure: string): { error: string; field: F
     const live = Number.isFinite(data.live) ? data.live : MAX_LIVE;
     return {
       error: `There are already ${live} live test accounts, the most allowed at once. Retire one below, then try again.`,
-      field: null,
-    };
-  }
-  if (data.code === 'bot_dm_full') {
-    return {
-      error: 'The Homeroom bot\'s list is full. Make the account with "Homeroom bot builds for it" off, '
-        + 'or free a place in the Homeroom bot section first.',
       field: null,
     };
   }
@@ -181,7 +173,6 @@ export function buildCreateBody(fields: Fields):
   if (username) body.username = username;
   if (note) body.note = note;
   body.platformAccess = !!fields.platformAccess;
-  body.homeroomBotDm = !!fields.homeroomBotDm;
   body.welcomeDm = !!fields.welcomeDm;
   return { ok: true, body };
 }
@@ -193,7 +184,6 @@ function toNewAccount(a: any): NewAccount {
     password: String(a.password || ''),
     needsUsernameChoice: !!a.needsUsernameChoice,
     platformAccess: a.platformAccess !== false,
-    homeroomBotDm: !!a.homeroomBotDm,
     welcomeDm: !!a.welcomeDm,
     note: a.note ? String(a.note) : null,
   };
@@ -502,13 +492,10 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
             ) : null}
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           <Toggle id="admin-test-accounts-platform-access" checked={fields.platformAccess} disabled={busy}
             onChange={(v) => set({ platformAccess: v })} title="Let in now"
-            hint="It signs in to Homeroom itself. Off, it waits in the waiting room, to test that screen." />
-          <Toggle id="admin-test-accounts-bot-dm" checked={fields.homeroomBotDm} disabled={busy}
-            onChange={(v) => set({ homeroomBotDm: v })} title="Homeroom bot builds for it"
-            hint="Puts it on the Homeroom bot's list, as Settings, Experimental does: the bot builds its first version and talks to it in Messages." />
+            hint="It signs in to Homeroom itself, and Homeroom bot works for it as for anybody let in. Off, it waits in the waiting room, to test that screen." />
           <Toggle id="admin-test-accounts-welcome-dm" checked={fields.welcomeDm} disabled={busy}
             onChange={(v) => set({ welcomeDm: v })} title="Welcome DM"
             hint="Lets the welcome message reach it: a group with the people set in Welcome messages." />
@@ -526,6 +513,122 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
         {general ? <p id="admin-test-accounts-error" role="alert" className={ERROR}>{general}</p> : null}
       </form>
       {state.result ? <OneTimeResult account={state.result} onDone={() => dispatch({ type: 'dismiss' })} /> : null}
+    </div>
+  );
+}
+
+// ── A one-time phone sign-in ────────────────────────────────────────────
+//
+// POST /api/test-accounts/phone-sign-ins (services/test-accounts.js
+// mintPhoneSignIn): a fictional test number and a code that signs in once,
+// for the flows that ask for a phone, above all an invite's Join sheet. The
+// code is handled like the password above: held only in PhoneSignInCard's
+// state, cleared on Hide, on a new request, on unmount and on pagehide.
+
+export interface PhoneSignIn {
+  phoneNumber: string;
+  code: string;
+  expiresAt: string;
+  signsInTo: string | null;
+}
+
+/** "18:42", the local time a sign-in's code stops working. */
+export function untilText(expiresAt: string): string {
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return 'in 30 minutes';
+  return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** One press: POST, and the sign-in or the sentence to show. Never throws. */
+export async function runPhoneSignIn(fetchImpl: Fetch = browserFetch):
+  Promise<{ ok: true; signIn: PhoneSignIn } | { ok: false; error: string }> {
+  const reply = await send(fetchImpl, 'POST', '/api/test-accounts/phone-sign-ins', {});
+  const s = is2xx(reply.status) && reply.data ? reply.data.signIn : null;
+  if (s && typeof s.code === 'string' && s.code && typeof s.phoneNumber === 'string') {
+    return {
+      ok: true,
+      signIn: {
+        phoneNumber: s.phoneNumber,
+        code: s.code,
+        expiresAt: String(s.expiresAt || ''),
+        signsInTo: s.signsInTo ? String(s.signsInTo) : null,
+      },
+    };
+  }
+  return { ok: false, error: refusal(reply, 'Try again in a moment.').error };
+}
+
+export function PhoneSignInResult({ signIn, onDone }: { signIn: PhoneSignIn; onDone: () => void }) {
+  return (
+    <section id="admin-test-accounts-phone-result" aria-label="The one-time phone sign-in"
+      className="mt-4 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4">
+      <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">Shown once. Copy it now.</p>
+      <p className="text-xs text-amber-800 dark:text-amber-300 mt-1 mb-3">
+        {`The code works once, until ${untilText(signIn.expiresAt)}. Leaving this section or asking for another clears it.`}
+      </p>
+      <div className="space-y-2">
+        <CopyValue id="admin-test-accounts-phone-number" label="Number" value={signIn.phoneNumber} />
+        <CopyValue id="admin-test-accounts-phone-code" label="Code" value={signIn.code} />
+      </div>
+      <ul className="mt-3 list-disc pl-5 space-y-1 text-sm text-amber-900 dark:text-amber-200">
+        <li>Sign out on the device first.</li>
+        <li>Open the invite link and enter this number. Tap Text me a code: no text is sent.</li>
+        <li>Enter the code.</li>
+        {signIn.signsInTo
+          ? <li>{`It signs in to the test account @${signIn.signsInTo}.`}</li>
+          : <li>The account it makes is a test account. Retire it below when testing is done.</li>}
+      </ul>
+      <button id="admin-test-accounts-phone-done" type="button" className={`${AdminUI.btn.outline} mt-3`} onClick={onDone}>
+        Hide it
+      </button>
+    </section>
+  );
+}
+
+export function PhoneSignInCard({ full }: { full: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [signIn, setSignIn] = useState<PhoneSignIn | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  // As for the password: clear the code before a back/forward cache snapshot.
+  useEffect(() => {
+    const forget = () => { flushSync(() => setSignIn(null)); };
+    window.addEventListener('pagehide', forget);
+    return () => window.removeEventListener('pagehide', forget);
+  }, []);
+
+  const ask = async () => {
+    if (busy || full) return;
+    setBusy(true);
+    setSignIn(null);
+    setError(null);
+    const out = await runPhoneSignIn();
+    if (!alive.current) return;
+    setBusy(false);
+    if (out.ok) setSignIn(out.signIn);
+    else setError(out.error);
+  };
+
+  return (
+    <div id="admin-test-accounts-phone" className={`${AdminUI.card} p-4`}>
+      <div className={AdminUI.cardHeader}>
+        <h2 className={AdminUI.cardTitle}>A one-time phone sign-in</h2>
+      </div>
+      <p className={`${AdminUI.muted} mb-4`}>
+        For the flows that ask for a phone number, like an invite&apos;s Join sheet. You get a
+        made-up test number and a code that works once, within 30 minutes. No text is sent. The
+        account it makes is a test account, like the ones above.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button id="admin-test-accounts-phone-submit" type="button" className={AdminUI.btn.primary}
+          disabled={busy || full} onClick={() => { void ask(); }}>
+          {busy ? 'Getting one…' : 'Get a number and code'}
+        </button>
+      </div>
+      {error ? <p id="admin-test-accounts-phone-error" role="alert" className={ERROR}>{error}</p> : null}
+      {signIn ? <PhoneSignInResult signIn={signIn} onDone={() => setSignIn(null)} /> : null}
     </div>
   );
 }
@@ -696,6 +799,7 @@ function ManageTestAccounts() {
   return (
     <div id="admin-test-accounts" className="space-y-4">
       <CreateCard full={full} max={max} onCreated={() => { void load(); }} />
+      <PhoneSignInCard full={full} />
       <LiveAccounts state={list} retiring={retiring} status={status}
         onRefresh={() => { setStatus(null); void load(); }} onRetire={(a) => { void retire(a); }} />
     </div>

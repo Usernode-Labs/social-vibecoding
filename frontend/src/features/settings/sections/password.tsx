@@ -6,7 +6,8 @@ import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
 
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
- * (current password required). In the Homeroom native app with a linked
+ * (current password required, except for an account with none yet, #4595:
+ * settings.js hides that row when /api/auth/me says hasPassword is false). In the Homeroom native app with a linked
  * wallet, a "Don't have a password? Create one" link switches to the
  * wallet-backed creation mode (cp-wallet-mode shown, current password hidden),
  * which signs a wallet-check challenge and calls POST
@@ -27,7 +28,7 @@ export function PasswordSection() {
     <div data-settings-section="password" className="hidden">
       <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
         <SectionHeading title="Change password">
-          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
+          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here. No password yet? Choose one here; until then you sign in with an emailed code.
         </SectionHeading>
         {/* One card, the three fields as its rows. */}
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">

@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowUpTrayIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -92,37 +92,24 @@ export interface DevActionsRowProps {
    * setting, so it is a row here. Absent everywhere else.
    */
   onMakePrivate?: (() => void) | null;
-}
-
-/**
- * `AppView._plusMenuHeading(label, key, divider)`, as JSX.
- *
- * Still a `<div>`, not a `<button>`, and for the same reason the template said
- * so: `_wirePlusMenu` collects `button[data-plus]` for the touch action sheet,
- * so anything that is not an action must not be a button or it would arrive in
- * that sheet as a tappable row that does nothing. It does carry
- * `data-plus-group`, which is how the sheet picks headings up in DOM order.
- */
-function PlusMenuHeading({
-  label,
-  groupKey,
-  divider,
-}: {
-  label: string;
-  groupKey: string;
-  divider: boolean;
-}) {
-  return (
-    <div
-      data-plus-group={groupKey}
-      className={
-        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
-        (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
-      }
-    >
-      {label}
-    </div>
-  );
+  /**
+   * #4045: "Make it public", beside "Make it private" for a private
+   * community (workshop/community-card.tsx canMakePublic /
+   * confirmMakePublic). It was a button in the hub's hero, beside Invite;
+   * the row is for asking people in, and who a project is for is a
+   * setting. Absent everywhere else.
+   */
+  onMakePublic?: (() => void) | null;
+  /**
+   * #4045: Leave, for a member who did not start the project
+   * (community-card.tsx canLeave / leaveCommunity). It was the hero's
+   * Joined pill, which a tap turned into the way out; the hub's row says
+   * what you can do, and leaving is a setting of yours. Absent everywhere
+   * else.
+   */
+  onLeave?: (() => void) | null;
+  /** The project's name, for "Leave <name>". */
+  appName?: string | null;
 }
 
 /**
@@ -151,6 +138,12 @@ const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-2
 const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '
   + 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
+/** The menu's one lit row, Suggest an improvement (the owner, 8 Oct 2026):
+    the accent's tint behind it and its title bold. Every other row stays plain. */
+const PLUS_ROW_LIT_CLS =
+  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  + 'bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/30 dark:hover:bg-violet-900/40 transition-colors';
+const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold text-zinc-900 dark:text-zinc-100';
 
 /**
  * One `data-plus` action, as the row shell above.
@@ -166,13 +159,20 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * interesting part.
  */
 function PlusRow({
-  'data-plus': action, icon, title, sub, dividerCls = '', titleNode, onClick,
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode, onClick, group, trailing, lit = false,
 }: {
   'data-plus': string;
+  /** The highlighted row: a tint behind it and a bold title (PLUS_ROW_LIT_CLS). */
+  lit?: boolean;
+  /** #4045: a row that opens a group of rows (Settings & rules) carries
+      the group's `data-plus-group` marker, and a chevron as `trailing`. */
+  group?: string;
+  trailing?: ReactNode;
   onClick?: () => void;
   icon: ReactNode;
   title?: string;
-  sub: ReactNode;
+  /** The line under the title; a row whose title says it all has none. */
+  sub?: ReactNode;
   dividerCls?: string;
   /** For the one row whose title carries a legacy-owned leaf beside it. */
   titleNode?: ReactNode;
@@ -180,16 +180,20 @@ function PlusRow({
   return (
     <button
       data-plus={action}
+      data-plus-group={group}
+      data-plus-lit={lit ? '' : undefined}
+      aria-haspopup={group ? 'true' : undefined}
       onClick={onClick}
-      className={PLUS_ROW_CLS + dividerCls}
+      className={(lit ? PLUS_ROW_LIT_CLS : PLUS_ROW_CLS) + dividerCls}
     >
       {icon}
       <span className="min-w-0 flex-1">
         {titleNode ?? (
-          <span data-plus-title className={PLUS_TITLE_CLS}>{title}</span>
+          <span data-plus-title className={lit ? PLUS_TITLE_LIT_CLS : PLUS_TITLE_CLS}>{title}</span>
         )}
-        <span className={PLUS_SUB_CLS}>{sub}</span>
+        {sub ? <span className={PLUS_SUB_CLS}>{sub}</span> : null}
       </span>
+      {trailing}
     </button>
   );
 }
@@ -241,6 +245,9 @@ export function DevPlusMenu({
   showsMembers,
   inHero = false,
   onMakePrivate = null,
+  onMakePublic = null,
+  onLeave = null,
+  appName = null,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -341,6 +348,7 @@ export function DevPlusMenu({
                 second. */}
             <PlusRow
               data-plus="issue"
+              lit
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title="Suggest an improvement"
               sub="Report a problem or idea without building it yourself"
@@ -348,7 +356,7 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Build it yourself"
+              title="Build it now"
               sub="With a coding agent, then ask for approval"
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
             />
@@ -366,11 +374,46 @@ export function DevPlusMenu({
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
               />
             ) : null}
-            <PlusMenuHeading
-              label="Settings &amp; rules"
-              groupKey="settings"
-              divider={true}
+            {/*
+                SETTINGS & RULES IS ONE ROW (#4045, the owner, 7 Oct): the
+                menu stays short, and the project's settings open on top of
+                it. On desktop the row turns the dropdown to its settings
+                panel (#dev-plus-settings, with a way back); on touch it
+                presents them as a second action sheet. `_wirePlusMenu`
+                (public/js/app-view.js) does both, and leaves the rows inside
+                the panel out of the first sheet. It keeps
+                `data-plus-group="settings"`, the group's marker, so the
+                menu still names where its settings begin.
+            */}
+            <PlusRow
+              data-plus="settings"
+              group="settings"
+              icon={<CogIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Settings &amp; rules"
+              trailing={<ChevronRightIcon className="shrink-0 mt-0.5 w-4 h-4 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
+              dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
+            <div id="dev-plus-settings" data-plus-settings="" className="dev-plus-settings">
+            <button
+              type="button"
+              data-plus-back=""
+              aria-label="Back to the menu"
+              className="w-full text-left flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <ChevronLeftIcon className="shrink-0 w-4 h-4" aria-hidden="true" />
+              Settings &amp; rules
+            </button>
+            {onMakePublic ? (
+              <PlusRow
+                data-plus="make-public"
+                icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Make it public"
+                sub="Anyone can find it on Discover and join."
+                // Rendered after the menu was wired (once the community read
+                // answers), so it closes the menu itself.
+                onClick={() => { callAppView('_closePlusMenu'); onMakePublic(); }}
+              />
+            ) : null}
             {onMakePrivate ? (
               <PlusRow
                 data-plus="make-private"
@@ -382,6 +425,15 @@ export function DevPlusMenu({
                 onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
               />
             ) : null}
+            {onLeave ? (
+              <PlusRow
+                data-plus="leave"
+                icon={<ArrowRightIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={appName ? `Leave ${appName}` : 'Leave'}
+                // Home.setMembership asks before it takes them out.
+                onClick={() => { callAppView('_closePlusMenu'); onLeave(); }}
+              />
+            ) : null}
             {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
               || window.AppView?.appData?.can_delete
               || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
@@ -389,6 +441,15 @@ export function DevPlusMenu({
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
               title="App settings"
               sub="Manage who can use and build this app"
+            /> : null}
+            {/* #4405: a project's own web address. Owner-set, like secrets,
+                so the same people who manage the app see it; never for the
+                platform's own app, which the deploy pipeline addresses. */}
+            {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
+              data-plus="domain"
+              icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Custom domain"
+              sub="Use your own web address for this project"
             /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
@@ -423,6 +484,20 @@ export function DevPlusMenu({
               sub="Renames are proposals, applied once voted in"
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
             />
+            {/* #4417: the project's topics, its lasting conversations: each
+                is a channel and a category. A change to them is a proposal
+                against dapp.json's `topics` (features/dialogs/topics.tsx).
+                Its own onClick, so it works however the menu was wired. */}
+            <PlusRow
+              data-plus="topics"
+              icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Topics"
+              sub="The project's channels, and the categories requests are filed under"
+              onClick={() => {
+                callAppView('_closePlusMenu');
+                window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
+              }}
+            />
             <PlusRow
               data-plus="secrets"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
@@ -446,28 +521,40 @@ export function DevPlusMenu({
                 : 'Set or update secret values'}
               dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
+            {/* Suggest this back and Remix (#4045, the owner, 7 Oct): the
+                last rows of the Settings & rules sheet, so the ⋯ itself
+                ends at that row. */}
+            {suggestTarget ? (
+              <PlusRow
+                data-plus="suggest-back"
+                icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Suggest this back"
+                sub={`Send your changes to ${suggestTarget.name} as a proposal`}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
+              />
+            ) : null}
+            {selfHosted ? null : (
+              <PlusRow
+                data-plus="fork"
+                icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Remix"
+                sub="Make your own copy"
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+              />
+            )}
+            </div>
           </>
         )}
-        {suggestTarget ? (
-          <PlusRow
-            data-plus="suggest-back"
-            icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            title="Suggest this back"
-            sub={`Send your changes to ${suggestTarget.name} as a proposal`}
-            dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
-            onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
-          />
-        ) : null}
-
-        {selfHosted ? null : (
+        {/* A read-only viewer has no settings: Remix is the menu's one row. */}
+        {readOnly && !selfHosted ? (
           <PlusRow
             data-plus="fork"
             icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
             title="Remix"
             sub="Make your own copy"
-            dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
           />
-        )}
+        ) : null}
       </div>
     </div>
     </>

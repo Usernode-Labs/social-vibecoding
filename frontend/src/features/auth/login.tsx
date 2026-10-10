@@ -114,11 +114,16 @@ interface OtpSignup {
   /** The code just CREATED the account: no account used this address. */
   created: boolean;
   /**
-   * The account has never chosen its handle, so this step asks for it, with
-   * an empty field (#3575: the server no longer suggests one, and will not
-   * finish the step without it).
+   * The account has never chosen its handle, so this step asks for it. The
+   * server will not finish the step without one.
    */
   needsUsername: boolean;
+  /**
+   * #4596: the handle the field arrives holding, made from the address by
+   * the server and free when it was read; '' for an empty field. The person
+   * can change it.
+   */
+  suggestedUsername: string;
   /** It will land in the waiting room; null when the server could not tell. */
   waitlisted: boolean | null;
 }
@@ -131,9 +136,10 @@ const OTP_PASSWORD_INTRO_NEW =
   "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
 const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
 // Said BEFORE the waiting room rather than by it: the person is about to be
-// signed in to a queue, not to the platform.
+// signed in to the waitlist, not to the platform. The waitlist's own words
+// (#4073): a spot, a few at a time.
 const OTP_WAITLIST_NOTE =
-  "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
+  'New accounts get a spot on the waitlist. We\u2019re letting people in a few at a time.';
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -929,6 +935,7 @@ export function LoginScreen() {
       setOtpSignup({
         created: data.created === true,
         needsUsername: data.needsUsername === true,
+        suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '',
         waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
       });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
@@ -941,7 +948,10 @@ export function LoginScreen() {
     }
   }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
-  const onOtpSetPassword = useCallback(async () => {
+  // #4595: the password is optional. "Skip for now" (`skip`), or both
+  // fields left empty, finishes without one; the account then signs in with
+  // an email code and can add a password in Settings.
+  const onOtpSetPassword = useCallback(async (skip = false) => {
     clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
@@ -954,26 +964,27 @@ export function LoginScreen() {
       otpUsername.current?.focus();
       return;
     }
-    const value = otpNewPassword.current?.value || '';
-    const confirm = otpConfirmPassword.current?.value || '';
-    if (value.length < 8) {
-      setOtpError('Password must be at least 8 characters');
-      return;
-    }
-    if (value !== confirm) {
-      setOtpError('Passwords do not match');
-      return;
+    const value = skip ? '' : otpNewPassword.current?.value || '';
+    const confirm = skip ? '' : otpConfirmPassword.current?.value || '';
+    if (value || confirm) {
+      if (value.length < 8) {
+        setOtpError('Password must be at least 8 characters');
+        return;
+      }
+      if (value !== confirm) {
+        setOtpError('Passwords do not match');
+        return;
+      }
     }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Setting password...');
+    setOtpStatus(value ? 'Setting password...' : 'Finishing...');
     try {
       const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          password: value,
-          passwordConfirmation: confirm,
+          ...(value ? { password: value, passwordConfirmation: confirm } : {}),
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -1408,7 +1419,7 @@ export function LoginScreen() {
           */}
           <Wordmark
             title="Homeroom"
-            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-950 dark:text-white"
           />
           <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
             {heading}
@@ -1767,13 +1778,12 @@ export function LoginScreen() {
                   have platform access yet"); the first-run gate that asks for
                   it only runs at release.
 
-                  #3575: the field starts EMPTY. It used to arrive holding a
-                  name derived from the address, which "Create account"
-                  accepted with one press — a username generated from the
-                  email, the thing the request asked us not to do. The person
-                  types their own, the server refuses to finish without one
-                  (`username_required`), and the line under the field says
-                  who will see it. That line is its own <p>, ahead of the
+                  #4596 (overturning #3575 for this step): the field arrives
+                  holding a suggestion the server made from the address, the
+                  letters and digits before the @, free when it was read, or
+                  empty when none fits. The person can change it, the server
+                  refuses to finish without one (`username_required`), and
+                  the line under the field says who will see it. That line is its own <p>, ahead of the
                   rule: the rule's line is swapped whole for the server's
                   refusal, and the public note has to stay put meanwhile.
               */}
@@ -1786,6 +1796,7 @@ export function LoginScreen() {
                     ref={otpUsername}
                     id="otp-username"
                     type="text"
+                    defaultValue={otpSignup.suggestedUsername}
                     autoComplete="username"
                     maxLength={32}
                     enterKeyHint="next"
@@ -1840,10 +1851,17 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={onOtpSetPassword}
+                onClick={() => { void onOtpSetPassword(); }}
               >
                 {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
               </Button>
+              <button
+                type="button"
+                className="block w-full py-1 text-center text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                onClick={() => { void onOtpSetPassword(true); }}
+              >
+                Skip the password for now
+              </button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}

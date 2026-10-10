@@ -492,7 +492,7 @@ const issueEntry = () => ({
   },
 });
 
-test('kanban In progress: private → archived toggle → visible → issues → shared', () => {
+test('kanban In progress: private → visible → issues → shared → archived toggle (#4486)', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
   AppView._archivedSessions = [mySess({ id: 90, session_title: 'Old one', status: 'archived' })];
@@ -502,21 +502,28 @@ test('kanban In progress: private → archived toggle → visible → issues →
     issueEntry(),
     { kind: 'shared-session', item: sharedSess({ id: 71 }) },
   ];
-  const html = rowsHtml(AppView._inProgressRows(entries));
+  const rows = AppView._inProgressRows(entries);
+  const html = rowsHtml(rows);
+  // The private sessions lead as rows of their own, with no divider over
+  // them: each says "Only you" itself. The archived toggle closes the column.
   assertOrder(html, [
-    'Yours · not shared',
     'data-session-chip="1"',
-    'Show archived (1)',
     'Yours · visible',
     'data-session-chip="2"',
     'Issue five',
     '>Others<',
     'data-shared-session-row="71"',
+    'Show archived (1)',
   ]);
-  // The long copy survives as the divider label's tooltip rather than as a
-  // full grey sentence occupying its own line in the column.
-  assert.match(html, /title="Only you can see your active sessions here\. Their code is on public GitHub\."/);
-  assert.match(html, /dev-col-divider/, 'rendered as a hairline divider');
+  assert.doesNotMatch(html, /Yours · not shared/);
+  // The long copy the divider carried rides the row's "Only you" tag as its
+  // tooltip, with a lock.
+  const own = rows.find((r) => r.key === 'my-session:1');
+  assert.equal(own.brief.tags[0].label, 'Only you');
+  assert.equal(own.brief.tags[0].glyph, 'lock');
+  assert.equal(own.brief.tags[0].title, 'Only you can see your active sessions here. Their code is on public GitHub.');
+  assert.ok(!rows.find((r) => r.key === 'my-session:2').brief.tags.some((t) => t.label === 'Only you'), 'a visible one says nothing of the kind');
+  assert.match(html, /dev-col-divider/, 'the other groups keep their hairline dividers');
 });
 
 test('kanban In progress: no private sessions → no private caption; block still renders', () => {
@@ -538,7 +545,8 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
   const entries = [{ kind: 'my-session', item: mySess({ id: 1 }) }];
   const html = rowsHtml(AppView._inProgressRows(entries));
   assert.doesNotMatch(html, /Yours · visible/);
-  assertOrder(html, ['Yours · not shared', 'data-session-chip="1"', 'Show archived (1)']);
+  assert.doesNotMatch(html, /Yours · not shared/);
+  assertOrder(html, ['data-session-chip="1"', 'Show archived (1)']);
 });
 
 // ── #1112: the work-state chip belongs to issue cards only ─────────────────
@@ -593,11 +601,10 @@ test('the Underway column mirrors the private/visible split', () => {
     { kind: 'my-session', item: mySess({ id: 2, session_title: 'Visible one', shared_at: '2026-06-01T03:00:00Z' }) },
   ]));
   assertOrder(html, [
-    'Yours · not shared',
     'data-session-chip="1"',
-    'Show archived (1)',
     'Yours · visible',
     'data-session-chip="2"',
+    'Show archived (1)',
   ]);
 });
 

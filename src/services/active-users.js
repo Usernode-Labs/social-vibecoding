@@ -357,9 +357,15 @@ async function getAppMeta(pool, appId) {
     'SELECT self_hosted, collab_visibility FROM apps WHERE id = $1',
     [appId]
   );
+  return appMetaFromRow(rows[0]);
+}
+
+// What the vote denominator needs from an apps row (self_hosted,
+// collab_visibility), for a caller that has the row already.
+function appMetaFromRow(row) {
   return {
-    selfHosted: !!rows[0]?.self_hosted,
-    collabPrivate: rows[0]?.collab_visibility === 'private',
+    selfHosted: !!row?.self_hosted,
+    collabPrivate: row?.collab_visibility === 'private',
   };
 }
 
@@ -418,8 +424,10 @@ const INVITED_FLOOR_SQL = `SELECT CASE
 // its vote out of the tally (counts_toward_outcome, schema.sql): an admin who
 // can mint accounts must not be able to raise a real app's threshold with
 // them. On an app a test account made, test accounts count like anybody.
-async function getActiveUserStats(pool, appId) {
-  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
+// `meta` ({ selfHosted, collabPrivate }) skips reading the app row again
+// when the caller already has it (the workflow governance machine's facts).
+async function getActiveUserStats(pool, appId, meta = null) {
+  const { selfHosted, collabPrivate } = meta || await getAppMeta(pool, appId);
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -636,6 +644,7 @@ async function listActiveUserIds(pool, appId) {
 
 module.exports = {
   getActiveUserStats,
+  appMetaFromRow,
   isUserActive,
   listActiveUserIds,
   hasQualifyingActivity,

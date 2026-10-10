@@ -165,7 +165,7 @@ test('one helper hangs it on, so the two surfaces cannot drift again', () => {
   assert.match(APP_VIEW_SRC, /_attachRowConversation\(row, kind, item\) \{/);
   // The Workshop's own builder routes through it rather than repeating it.
   assert.match(APP_VIEW_SRC,
-    /const row = AppView\._attachRowConversation\(\{ t: 'card', key: card\.key, card \}, kind, item\);/,
+    /const row = AppView\._attachRowConversation\(\{\s*t: 'card', key: card\.key, card, brief: AppView\._workshopBrief\(kind, item, card\),\s*\}, kind, item\);/,
     'the Workshop’s rows are built by the shared helper');
   // Nothing hangs a thread on a row by hand any more.
   const strays = APP_VIEW_SRC.split('\n').filter((l) => /^\s*if \(th\) row\.thread = th;/.test(l));
@@ -208,9 +208,11 @@ test('the legacy comment filler is wired from the board and paints wherever the 
   // A fold happens BETWEEN publishes, so the column re-wires on its own —
   // from `#dev-kanban`, not from the column. `_wireFeedComments` keeps one
   // observer and replaces it on every call, so a per-column call would leave
-  // three of the four columns unwatched.
+  // three of the four columns unwatched. Four columns asking in one paint is
+  // still one wiring pass: the filler collects its callers and runs once.
+  assert.match(APP_VIEW_SRC, /if \(!AppView\._feedWireRoots\) \{\s*AppView\._feedWireRoots = new Set\(\);\s*Promise\.resolve\(\)\.then\(\(\) => AppView\._wireFeedCommentsNow\(\)\);\s*\}\s*AppView\._feedWireRoots\.add\(root\);/);
   assert.match(KANBAN, /callAppView\('_wireFeedComments', host\.closest\('#dev-kanban'\) \|\| host\);/);
-  assert.match(KANBAN, /\}, \[openKey, unfolded\]\);/, 'keyed on the fold, as the kudos filler is');
+  assert.match(KANBAN, /\}, \[unfolded\]\);/, 'keyed on ?cards=open, as the kudos filler is: nothing unfolds in place (#4486)');
 
   // And the paint is document-wide: the same issue can hold a slot in more
   // than one place at once, and none of them is guaranteed to be under
@@ -219,9 +221,13 @@ test('the legacy comment filler is wired from the board and paints wherever the 
   const body = fill.slice(0, fill.indexOf('\n  },'));
   assert.ok(!/getElementById\('dev-workshop'\)/.test(body), 'the paint is not scoped to the Workshop host');
   assert.match(body, /document\.querySelectorAll\(\s*`\.dev-feed-comments\[data-comments-for="\$\{number\}"\]`\s*\)/);
+  // ...unless it is already showing that answer: the board is repainted many
+  // times over while it loads, and writing the same HTML again re-applied the
+  // stylesheet to the whole board each time (tests/dev-comment-clamp.test.js
+  // holds the behaviour; this holds the order).
   assert.match(
     body,
-    /for \(const node of live\) \{\s*node\.innerHTML = html;\s*AppView\._clampFeedComments\(node\);\s*\}/,
+    /for \(const node of live\) \{[\s\S]*?if \(AppView\._feedSlotShows\(node, html\)\) continue;\s*node\.innerHTML = html;\s*AppView\._feedCommentsPainted\.set\(node, html\);\s*AppView\._clampFeedComments\(node\);\s*\}/,
     'every live slot gets the answer, and its own clamp measurement (#2556)',
   );
 });

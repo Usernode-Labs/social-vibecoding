@@ -77,8 +77,9 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // ben: admitted, mail sent, never asked for a code, no account.
     await signup('ben@example.test', null);
     await mail('waitlist_released', 'ben@example.test', 'sent', `${D}T09:00:06Z`);
-    // cy: asked for a code, the account exists, the password was never set.
-    const cy = await user('cy', { password_set: false, has_platform_access: true });
+    // cy: asked for a code, the account exists, its account step (a username,
+    // and a password or "Skip for now") never finished.
+    const cy = await user('cy', { password_set: false, needs_username_choice: true, has_platform_access: true });
     await signup('cy@example.test', cy);
     await mail('waitlist_released', 'cy@example.test', 'failed', `${D}T09:00:07Z`);
     await mail('otp', 'cy@example.test', 'sent', `${D}T11:00:00Z`);
@@ -99,10 +100,19 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // account on the left-out list.
     const old = await user('old_hand', { platform_access_granted_at: '2026-03-01T00:00:00Z' });
     await signup('old@example.test', old);
-    const boss = await user('boss', { is_admin: true });
+    const boss = await user('boss', { is_admin: true, email: 'boss@example.test' });
     await signup('boss@example.test', boss);
-    const qa = await user('qa_phone');
+    const qa = await user('qa_phone', { email: 'qa@example.test' });
     await signup('qa@example.test', qa);
+    // Team addresses, with no left-out entry: admitted waitlist test signups
+    // that never made an account (a team domain, and +tag variants of an
+    // admin's and a left-out account's address), and an account at a team
+    // domain. ben@example.test shares the admin's domain and still counts.
+    await signup('salah+te123@onhomeroom.com', null);
+    await signup('Boss+wl0929@example.test', null);
+    await signup('qa+2@example.test', null);
+    const teammate = await user('teammate', { email: 'andrea@usernodelabs.org' });
+    await signup('andrea+waitlist@gmail.example', teammate);
     // Test accounts (services/test-accounts.js) are left out by their own
     // flag, with no left-out entry: one admitted in the cohort, and one let
     // in another way.
@@ -135,12 +145,30 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
        VALUES ($1, $2, 'challenge', 500, NOW(), $3)`, [userId, event.id, challengeId]);
     await credit(ana, firsts[0].id);
 
+    // The admit mail's tracking (services/mail): ana clicked the link (no
+    // open seen: images blocked), dee's mail was opened through an image
+    // proxy, cy's only "click" was a link scanner's, and ben's mail went out
+    // before tracking began.
+    const track = async (recipient, events) => {
+      const { rows: [d] } = await pool.query(
+        `UPDATE mail_deliveries SET engagement_tracked = TRUE
+          WHERE recipient = $1 AND kind = 'waitlist_released' RETURNING id`, [recipient]);
+      for (const [type, uaClass, at] of events) {
+        await pool.query(
+          'INSERT INTO mail_events (delivery_id, type, user_agent_class, created_at) VALUES ($1, $2, $3, $4)',
+          [d.id, type, uaClass, at]);
+      }
+    };
+    await track('ana@example.test', [['clicked', 'unknown_client', `${D}T09:58:00Z`]]);
+    await track('dee@example.test', [['opened', 'image_proxy', `${D}T11:50:00Z`]]);
+    await track('cy@example.test', [['clicked', 'scanner_or_prefetch', `${D}T09:00:09Z`]]);
+
     const leftOutIds = [qa];
     const list = await journey.cohorts(pool, { now, leftOutIds });
     assert.deepEqual(list.cohorts, [
       { day: '2026-09-26', admitted: 1, withAccount: 0 },
       { day: D, admitted: 4, withAccount: 3 },
-    ], 'old members, admins, test accounts and left-out accounts are not newcomers');
+    ], 'old members, admins, test accounts, left-out accounts and team addresses are not newcomers');
     assert.deepEqual(list.otherWay, { people: 1 });
 
     const mile = await journey.firstMile(pool, { day: D, now, leftOutIds });
@@ -165,8 +193,8 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // The onboard column: the tour plus the season's First challenges, x of n.
     assert.deepEqual(by.ana.onboard, { shown: true, done: 2, total: 3, complete: false },
       'the tour and one of two First challenges');
-    assert.deepEqual(by.dee.onboard, { shown: false, done: null, total: null, complete: false },
-      'the card is drawn only after the join screen is answered');
+    assert.deepEqual(by.dee.onboard, { shown: true, done: 0, total: 3, complete: false },
+      'the card is drawn for every new account, join screen answered or not (#4601)');
     assert.equal(by['ben@example.test'].onboard, null, 'no account, no card');
     await credit(ana, firsts[1].id);
     const again = (await journey.firstMile(pool, { day: D, now, leftOutIds })).people.find((p) => p.name === 'ana');
@@ -181,7 +209,17 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     const stuckOn = Object.fromEntries(mile.steps.map((s) => [s.key, s.stuck.map((p) => p.name)]));
     assert.deepEqual(stuckOn.code_asked, ['ben@example.test']);
     assert.deepEqual(stuckOn.join, ['dee']);
-    assert.deepEqual(mile.notRecorded.followedLink.recorded, false);
+    const mailNote = (name) => by[name].steps.find((s) => s.key === 'mail_sent').note;
+    assert.equal(mailNote('ana'), 'clicked the link');
+    assert.equal(mailNote('dee'), 'opened');
+    assert.equal(mailNote('cy'), null, 'cy\'s admit mail failed, so it has no engagement note');
+    assert.equal(mailNote('ben@example.test'), 'not tracked', 'a mail sent before tracking is a gap, not "no open"');
+    assert.deepEqual(by.ana.mail, { opened: true, clicked: true }, 'a followed link counts as an open');
+    assert.deepEqual(by.cy.mail, { opened: false, clicked: false }, 'a link scanner is not the person');
+    assert.equal(by['ben@example.test'].mail, null);
+    assert.deepEqual(mile.mail, { tracked: 3, opened: 2, clicked: 1 });
+    const later = await journey.firstMile(pool, { day: '2026-09-26', now, leftOutIds });
+    assert.equal(later.mail.recorded, false, 'a cohort with no tracked mail says so, never 0 of 0');
 
     const other = await journey.firstMile(pool, { day: 'other_way', now, leftOutIds });
     assert.deepEqual(other.people.map((p) => [p.name, p.door]), [['guest', 'invite_link']]);

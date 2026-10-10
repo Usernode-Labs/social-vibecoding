@@ -21,7 +21,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const APP = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', repo_url: 'https://github.com/usernode-bot/rss-reader-4113da', self_hosted: false };
 const BOT = { id: 77, username: 'homeroom_bot' };
-const SETTINGS = { mode: 'shadow', liveApps: ['rss-reader-4113da'], turnSeconds: 1200, turnInputTokens: 10_000_000 };
+const SETTINGS = { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 };
 const SEEN = '2026-09-26T10:00:00Z';
 const ITEM = { id: 31, app_id: 9, issue_number: 24, priority: 2, reason: 'changed', thread_seen_at: '2026-09-26T12:00:00Z' };
 const OLD_HEAD = 'a'.repeat(40);
@@ -84,7 +84,7 @@ test('#3703: the prompt carries the spec the proposal was built from, the card a
 
 test('the action is the last fenced block; anything else is not guessed', () => {
   const text = 'notes\n```json\n{"action":"answer","reply":"x"}\n```\nmore\n```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```';
-  assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.', stopMentioning: [], resumeMentioning: [] });
+  assert.deepEqual(followup.parseFollowUp(text), { action: 'revise', reply: 'Darker now.', summary: 'Background is #09090b.', planChanged: false, stopMentioning: [], resumeMentioning: [] });
   assert.equal(followup.parseFollowUp('```json\n{"action":"merge","reply":"x"}\n```'), null);
   assert.equal(followup.parseFollowUp('```json\n{"action":"answer","reply":""}\n```'), null, 'a reply with nothing to say is not one');
   assert.equal(followup.parseFollowUp('no json at all'), null);
@@ -112,6 +112,50 @@ test('a turn Claude Code ran that failed never moved the head, whatever it pushe
   assert.equal(followup.headMoved({ mode: 'build', result: codex, reviewedHeadSha: OLD_HEAD, action: 'revise' }), true);
 });
 
+test('#4612: the prompt offers the updated plan only when it can revise and a format is given', () => {
+  const format = 'PLAN FORMAT BLOCK';
+  const p = followup.followUpPrompt({ seed: 'S', replies: [], canRevise: true, planFormat: format });
+  assert.match(p, /write the whole updated plan in your message before the JSON block/);
+  assert.match(p, /"plan": "for revise only: true when you wrote an updated plan above"/);
+  assert.ok(p.indexOf(format) > p.indexOf('"person"'), 'the plan format follows the choices');
+  assert.ok(p.indexOf(format) < p.indexOf('END YOUR REPLY'), 'and comes before the JSON shape');
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'S', replies: [], canRevise: true }), /"plan"/, 'no format, no plan field');
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'S', replies: [], canRevise: false, planFormat: format }), /PLAN FORMAT BLOCK/);
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'S', replies: [], canRevise: false, planFormat: format }), /"plan"/, 'a read-only turn is not offered the plan field');
+});
+
+test('#4612: planChanged is set only on a revise whose JSON says the plan changed', () => {
+  const fence = (obj) => `\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's', plan: true })).planChanged, true);
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's' })).planChanged, false, 'no plan field, no plan');
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', plan: false })).planChanged, false);
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', plan: 'yes' })).planChanged, false, 'only the boolean counts');
+  assert.equal('planChanged' in followup.parseFollowUp(fence({ action: 'answer', reply: 'ok', plan: true })), false, 'an answer has no plan');
+});
+
+test('#4612: planOutOf is the text before the action JSON block, and nothing when there is none before it', () => {
+  const md = '# Darker dark mode\n\n## User-facing changes\nDarker.\n\n## Technical implementation\nOne constant.';
+  const fenced = `${md}\n\n\`\`\`json\n{"action":"revise","reply":"Done.","plan":true}\n\`\`\``;
+  assert.equal(followup.planOutOf(fenced), md, 'the markdown plan, without the fence');
+  const html = '<article data-spec>\n  <h1>Darker dark mode</h1>\n  <section data-spec-tab="user"><p>Darker.</p></section>\n  <section data-spec-tab="tech"><p>One constant.</p></section>\n</article>';
+  assert.equal(followup.planOutOf(`${html}\n\n\`\`\`\n{"action":"revise","reply":"Done.","plan":true}\n\`\`\``), html, 'the HTML plan, without the fence');
+  // A later block wins: everything before the LAST action block is the plan.
+  const two = `First I answered.\n\`\`\`json\n{"action":"answer","reply":"x"}\n\`\`\`\nthen\n${md}\n\n\`\`\`json\n{"action":"revise","reply":"Done.","plan":true}\n\`\`\``;
+  assert.equal(followup.planOutOf(two), `First I answered.\n\`\`\`json\n{"action":"answer","reply":"x"}\n\`\`\`\nthen\n${md}`);
+  assert.equal(followup.planOutOf('```json\n{"action":"answer","reply":"ok"}\n```'), '', 'nothing before the block');
+  assert.equal(followup.planOutOf('no json at all'), '');
+  assert.equal(followup.planOutOf(''), '');
+});
+
+test('#4612: revisedText names the new plan version before the approvals line', () => {
+  const withPlan = followup.revisedText({ summary: 's', reply: 'r', planVersion: 2 });
+  assert.match(withPlan, /Its plan is updated to match: version 2 is in the change's discussion\./);
+  assert.ok(withPlan.indexOf('version 2') < withPlan.indexOf('Earlier approvals were cleared'), 'before the approvals line');
+  assert.doesNotMatch(followup.revisedText({ summary: 's', reply: 'r' }), /Its plan is updated/, 'no version, no line');
+  const texts = [withPlan, followup.revisedText({ summary: 's', reply: 'r', planVersion: 12 })];
+  for (const t of texts) assert.ok(!/—/.test(t) && !/PR #|proposal/.test(t), t);
+});
+
 test('what it says has no em dashes', () => {
   const texts = [
     followup.answerText({ reply: 'r', prNumber: 25 }),
@@ -133,7 +177,7 @@ function harness({
   proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [], spec = null,
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [], cards: [], issueComments: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -265,13 +309,13 @@ test('#3703: without a spec (or when it cannot be read) the follow-up still runs
 });
 
 test('#3703: a row started as a follow-up beside other work never falls through to triage', async (t) => {
-  // The bot's proposal merged (or the app left the live list) between the
+  // The bot's proposal merged (or the app was paused) between the
   // pick and the run: the app's own session may be busy with another
   // request, so the row touches nothing and goes back to the queue.
   const comments = [{ author: 'evan', body: 'x', createdAt: '2026-09-26T11:30:00Z' }];
   const realPost = live.post;
   t.after(() => { live.post = realPost; });
-  for (const settings of [SETTINGS, { ...SETTINGS, liveApps: [] }]) {
+  for (const settings of [SETTINGS, { ...SETTINGS, pausedApps: [APP.slug] }]) {
     const h = harness({ proposalStatus: null, comments });
     live.post = async (args) => { h.calls.posts.push(args); return {}; };
     const out = await bot.runTriage(h.pool, {}, {
@@ -307,6 +351,111 @@ test('a clear change is made on the proposal, and the proposal is reconciled lik
   assert.equal(insert.params[9], 'The dark background is now #000.', 'build_note says what changed');
 });
 
+test('#4612: a revise that says the plan changed publishes the next spec version, the card and the issue copy', async (t) => {
+  const plan = '<article data-spec>\n  <h1>Darker dark mode</h1>\n  <section data-spec-tab="user"><p>The dark background is #000.</p></section>\n  <section data-spec-tab="tech"><p>One constant in the theme module.</p></section>\n</article>';
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: `${plan}\n\n\`\`\`json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","plan":true}\n\`\`\``,
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  const specCalls = [];
+  h.deps.sessions.persistScoutPublication = async (args) => { specCalls.push(args); return { specVersion: 2 }; };
+  h.deps.github.createIssueComment = async (owner, repo, number, body) => {
+    h.calls.issueComments.push({ owner, repo, number, body });
+    return { created_at: '2026-09-26T12:06:00Z' };
+  };
+  h.deps.ws = {
+    // Only the spec card is a sendBotMessage here: the "working" note goes
+    // through postThreadNote, which also lands here when the reply was not
+    // in the proposal's thread.
+    async sendBotMessage(pool, appId, msg) { if (msg?.msgType === 'spec_share') h.calls.cards.push(msg); return { id: 1 }; },
+  };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise', 'an unreadable plan never blocks the revise, and a readable one does not either');
+  // Stored as the next numbered version of the proposal's session.
+  assert.equal(specCalls.length, 1);
+  assert.equal(specCalls[0].sessionId, 5001);
+  assert.equal(specCalls[0].hadSpec, true, 'the transcript says the plan was revised');
+  assert.match(specCalls[0].content, /Darker dark mode/);
+  assert.match(specCalls[0].content, /#000/);
+  assert.match(specCalls[0].contentHtml, /<article data-spec>/, 'stored as an HTML document with its markdown copy');
+  // The numbering itself: the version row is MAX(version)+1 on its session.
+  assert.match(read('src/routes/sessions.js'),
+    /COALESCE\(\(SELECT MAX\(version\) FROM chat_session_specs WHERE session_id = \$1\), 0\) \+ 1/,
+    'the next version is MAX(version)+1, so old cards stay');
+  // Shared with the group, then the card in the change's discussion.
+  const share = h.calls.queries.find((q) => /UPDATE chat_session_specs SET shared_to_group_at/.test(q.s));
+  assert.deepEqual(share.params, [5001, 2]);
+  assert.equal(h.calls.cards.length, 1);
+  assert.equal(h.calls.cards[0].content, '📋 The plan, updated for this change (version 2): "Darker dark mode".');
+  assert.equal(h.calls.cards[0].msgType, 'spec_share');
+  assert.deepEqual(h.calls.cards[0].thread, { type: 'session', ref: 5001 });
+  assert.equal(h.calls.cards[0].metadata.specShare.version, 2, 'the transcript shows it as v2, beside the v1 card');
+  // And its copy on the GitHub issue, in the same collapsed block.
+  assert.equal(h.calls.issueComments.length, 1);
+  assert.equal(h.calls.issueComments[0].number, 24);
+  assert.match(h.calls.issueComments[0].body, /^Homeroom bot updated the plan for this change to match \(version 2\)\./);
+  assert.match(h.calls.issueComments[0].body, /<details><summary>The plan<\/summary>/);
+  assert.match(h.calls.issueComments[0].body, /Darker dark mode/);
+  // The update message names the version; the bot has seen its own comment.
+  assert.match(h.calls.posts[0].text, /Its plan is updated to match: version 2 is in the change's discussion\./);
+  assert.ok(h.calls.seen[0].postedAt.includes('2026-09-26T12:06:00Z'), 'its own issue comment counts as seen');
+});
+
+test('#4612: a revise that leaves the plan alone publishes no version', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000."}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  const specCalls = [];
+  h.deps.sessions.persistScoutPublication = async (args) => { specCalls.push(args); return { specVersion: 2 }; };
+  h.deps.github.createIssueComment = async () => { throw new Error('nothing should be posted'); };
+  h.deps.ws = { async sendBotMessage() { throw new Error('no card should be posted'); } };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(specCalls.length, 0, 'no version stored');
+  assert.equal(h.calls.queries.some((q) => /UPDATE chat_session_specs SET shared_to_group_at|INSERT INTO chat_session_specs/.test(q.s)), false, 'no spec SQL runs');
+  assert.doesNotMatch(h.calls.posts[0].text, /Its plan is updated/, 'no version line');
+});
+
+test('#4612: a plan the turn could not produce is not published, and the revise still lands', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: 'I could not write the plan.\n```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","plan":true}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  const specCalls = [];
+  h.deps.sessions.persistScoutPublication = async (args) => { specCalls.push(args); return { specVersion: 2 }; };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise', 'the revision is recorded');
+  assert.equal(specCalls.length, 0, 'a fragment is not stored as a version');
+  assert.equal(h.calls.posts[0].kind, 'followup_revise');
+  assert.doesNotMatch(h.calls.posts[0].text, /Its plan is updated/);
+});
+
+test('#4612: a plan on a turn whose head did not move is ignored, as the failed revise is', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: '<article data-spec>\n<h1>x</h1>\n</article>\n```json\n{"action":"revise","reply":"Done.","plan":true}\n```',
+      pushOk: true, sha: OLD_HEAD,
+    },
+  });
+  const specCalls = [];
+  h.deps.sessions.persistScoutPublication = async (args) => { specCalls.push(args); return { specVersion: 2 }; };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(specCalls.length, 0, 'no version stored');
+  assert.equal(h.calls.posts[0].kind, 'followup_failed');
+});
+
 test('a turn that changed files while "answering" is still a revision, and is reconciled', async (t) => {
   const h = harness({
     comments: [{ author: 'evan', body: 'thoughts?', createdAt: '2026-09-26T11:30:00Z' }],
@@ -334,7 +483,8 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
   // The requester hears it in their DM, with the change's card; the record goes with it to be read, never quoted.
   assert.deepEqual(h.calls.posts[0].dm, {
     reason: 'the turn produced no change', canRevise: true, sessionId: 5001,
-    link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001),
+    // #4367: the change has PR #25, so its link goes by that number.
+    link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001, 25),
   });
 });
 

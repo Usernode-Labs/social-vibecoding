@@ -22,12 +22,17 @@ import { LocalAgentsList } from '../local-agents-list';
  * #2779 Agent sessions used to have a switch here too. They are no longer
  * experimental: new work starts in one for everyone, so the switch is gone.
  *
- * #3624 Homeroom bot (default OFF) puts this person on the bot's DM list, or
- * takes them off it: the same list an admin keeps on the bot's dashboard
- * (homeroom_bot_dm_users), so its cap and the weekly allowance per person
- * hold either way. settings.js wires the change handler to
- * POST /api/me/homeroom-bot-dm and paints the switch from /api/auth/me's
- * `homeroomBotDm`; a full list answers 409 and the switch goes back off.
+ * #3624 Homeroom bot used to have a switch here too, while it was tried out
+ * one person at a time. It works for everyone now, so the switch is gone.
+ *
+ * #4289 Press C to comment on the page (default OFF) is the one switch
+ * here kept on the DEVICE, not the account: a keyboard shortcut belongs to
+ * the keyboard in front of you. C turns on comment mode, where a click leaves
+ * a comment (../../comment-pin/), and Suggest an improvement opens it too,
+ * with its form one switch away. ../../improve/suggest-settings.ts keeps the
+ * switch (localStorage), and
+ * ../../improve/suggest-shortcut.ts publishes window.UsernodeReact.suggestShortcut,
+ * which settings.js paints and saves the switch through.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -61,18 +66,17 @@ export function ExperimentalSection() {
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
         <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="homeroom-bot-dm-enabled">
-            Homeroom bot (build with it in Messages)
+          <SwitchRow id="suggest-shortcut-enabled">
+            Press C to comment on the page
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Create a project and describe what it should do, and Homeroom bot builds the first version. On the projects it works on, it asks you its questions about your requests in Messages, with answers you can tap, and tells you when something is building, ready to vote on, and live. Your answers are still posted on the request, where everyone can see them. You can also write to it to ask what it's working on. The platform pays for its work for you, up to a weekly limit. Turning this off stops it, including on projects it built for you.
+            Suggest an improvement opens comment mode, and on a computer so does pressing C. Click or tap anything, say what should change and post it: it's a suggestion with a screenshot of the page and your pin on it. Add more comments to the same suggestion, or post each on its own, then press Done. The form is one switch away. C does nothing while you're typing or have text selected, or when the screen or app you're in uses C for something of its own. Saved on this device only.
           </p>
-          <StatusLine id="homeroom-bot-dm-status" size="xs" />
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
         <SectionHeading title="Local coding agent">
-          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's spec and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; spec turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
+          Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's plan and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; plan turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.
         </SectionHeading>
         <div id="settings-local-agents-list" className="space-y-2">
           <LocalAgentsList />

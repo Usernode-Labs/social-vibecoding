@@ -360,6 +360,31 @@ test('#17: staging gives mock 900018, and only it, a synthetic bot build; produc
   }
 });
 
+test('#4530: the bot\'s demo door draws one request it waits on an answer for; nothing else, and never in production', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const list = async (qs) => new Map((await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues${qs}`)).json())
+      .issues.map((i) => [i.number, i]));
+    const drawn = await list('?demo=1&bot=1');
+    assert.deepEqual(drawn.get(900001).botAwaits, { kind: 'question', messageId: null });
+    for (const [n, issue] of drawn) {
+      if (n !== 900001) assert.strictEqual(issue.botAwaits, null, `#${n} is not waited on`);
+    }
+    assert.ok([...(await list('?demo=1')).values()].every((i) => i.botAwaits === null), 'not without the door');
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const port = prod.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1&bot=1`);
+    assert.ok((await res.json()).issues.every((i) => i.botAwaits === null), 'production synthesizes nothing');
+  } finally {
+    prod.close();
+  }
+});
+
 test('staging does not clobber a real headless row on a mock number', async () => {
   poolQueryHandler = async (sql) => {
     const s = String(sql);
@@ -765,7 +790,7 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
 const BOT_THREAD = [
   { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
   { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
-  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a spec for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
   { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
 ];
 
@@ -892,7 +917,7 @@ test('#3693: the staging spec comment is as long as a real one, so the route cli
     const port = server.address().port;
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
     const body = await res.json();
-    const spec = body.comments.find((c) => /<details><summary>The spec<\/summary>/.test(c.body));
+    const spec = body.comments.find((c) => /<details><summary>The plan<\/summary>/.test(c.body));
     assert.ok(spec, 'the thread carries the bot\'s spec comment');
     assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
     assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');
@@ -1477,6 +1502,69 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
 // is the wiring: both issue routes have to carry `addressed_by`, because the
 // topic page of a CLOSED issue renders from the single-issue payload and the
 // page of an OPEN one renders from the list.
+
+// #4244: a closed issue no merged change closed says whether a vote or an
+// admin closed it, read off the applied close_issue row's audit payload.
+test('a closed issue carries closed_via from the applied close_issue row', async () => {
+  stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  let appliedBy = 'group-vote';
+  let closeParams = null;
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/kind = 'close_issue' AND status = 'closed'/.test(s)) {
+      closeParams = params;
+      return { rows: appliedBy ? [{ applied_by: appliedBy }] : [] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const read = async () => (await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`)).json()).issue;
+    assert.strictEqual((await read()).closed_via, 'vote');
+    assert.strictEqual(closeParams[1], 142);
+    appliedBy = 'admin:evan';
+    assert.strictEqual((await read()).closed_via, 'admin');
+    appliedBy = null;
+    assert.strictEqual((await read()).closed_via, null, 'closed on GitHub, no vote: says nothing');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('#4244: staging serves two closed mock requests by address only, never on the board', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const list = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
+    assert.ok(!list.issues.some((i) => i.number === 900031 || i.number === 900032), 'the board lists open requests');
+    const read = async (n) => (await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/${n}?demo=1`)).json()).issue;
+    const merged = await read(900031);
+    assert.strictEqual(merged.state, 'closed');
+    assert.ok(merged.closedAt);
+    assert.strictEqual(merged.addressed_by.state, 'merged');
+    assert.strictEqual(merged.addressed_by.prNumber, 10);
+    assert.strictEqual(merged.mockAddressedBy, undefined, 'the fixture field stays server-side');
+    const voted = await read(900032);
+    assert.strictEqual(voted.state, 'closed');
+    assert.strictEqual(voted.addressed_by, null);
+    assert.strictEqual(voted.closed_via, 'vote');
+    assert.strictEqual(voted.mockClosedVia, undefined);
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const res = await realFetch(`http://127.0.0.1:${prod.address().port}/api/apps/demo/github-issues/900031?demo=1`);
+    assert.strictEqual(res.status, 404, 'production has no mocks');
+  } finally {
+    prod.close();
+  }
+});
 
 test('both issue routes carry addressed_by, resolved in one extra query', async () => {
   stubSingleIssue(() => ({

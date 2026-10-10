@@ -109,6 +109,51 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
   assert.equal(metadataModel.costTier, 'unknown');
 });
 
+test('sanitizeModel reads cache read and write prices, off the catalog JSON', () => {
+  const compatibility = { status: 'experimental', note: null };
+  // As OpenRouter's /api/v1/models lists them: USD per token, as strings.
+  const anthropic = sanitizeModel({
+    id: 'anthropic/opus-like',
+    pricing: {
+      prompt: '0.000005', completion: '0.000025',
+      input_cache_read: '0.0000005', input_cache_write: '0.00000625', input_cache_write_1h: '0.00001',
+    },
+  }, compatibility);
+  assert.equal(anthropic.cacheReadPricePerMillion, 0.5);
+  assert.equal(anthropic.cacheWritePricePerMillion, 6.25);
+
+  const readOnly = sanitizeModel({
+    id: 'z-ai/glm-like', pricing: { prompt: '0.00000015', completion: '0.0000005', input_cache_read: '0.00000003' },
+  }, compatibility);
+  assert.equal(readOnly.cacheReadPricePerMillion, 0.03);
+  assert.equal(readOnly.cacheWritePricePerMillion, null, 'absent is null, never a false zero');
+
+  const none = sanitizeModel({ id: 'vendor/plain', pricing: { prompt: '0.000001', completion: '0.000002' } }, compatibility);
+  assert.equal(none.cacheReadPricePerMillion, null);
+  assert.equal(none.cacheWritePricePerMillion, null);
+  assert.equal(sanitizeModel({ id: 'vendor/unpriced' }, compatibility).cacheReadPricePerMillion, null);
+
+  for (const bad of ['', 'abc', '-0.0000001', null]) {
+    const malformed = sanitizeModel({
+      id: 'vendor/malformed', pricing: { prompt: '0.000001', completion: '0.000002', input_cache_read: bad, input_cache_write: bad },
+    }, compatibility);
+    assert.equal(malformed.cacheReadPricePerMillion, null, `input_cache_read ${JSON.stringify(bad)}`);
+    assert.equal(malformed.cacheWritePricePerMillion, null, `input_cache_write ${JSON.stringify(bad)}`);
+    assert.equal(malformed.inputPricePerMillion, 1, 'a bad cache price leaves the prompt price alone');
+  }
+  assert.equal(sanitizeModel({
+    id: 'vendor/free-cache', pricing: { prompt: '0.000001', completion: '0.000002', input_cache_read: '0' },
+  }, compatibility).cacheReadPricePerMillion, 0, 'a free cache read is a price');
+
+  // Server-side metadata like supportsImages: the catalog JSON the pickers
+  // read is unchanged.
+  const plainJson = JSON.stringify(sanitizeModel({
+    id: 'anthropic/opus-like', pricing: { prompt: '0.000005', completion: '0.000025' },
+  }, compatibility));
+  assert.equal(JSON.stringify(anthropic), plainJson);
+  assert.ok(!/cache/i.test(Object.keys(anthropic).join(',')));
+});
+
 test('catalog exposes every key-visible model and sorts known prices low to high', async (t) => {
   const originalFetch = openrouterClient.fetchModels;
   openrouterClient.fetchModels = async () => [

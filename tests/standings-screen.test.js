@@ -584,8 +584,8 @@ test('pull-to-refresh dispatches on the active section', () => {
   assert.match(body, /TopochainLeaderboard\.loadLeaderboard\(\)/,
     'a pull on the Topochain tab reloads Topochain standings, not kudos panes');
   assert.match(body, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
-  assert.match(body, /TopochainChallenges\.loadChallenges\(\)/,
-    'a pull on the Challenges tab reloads the challenge grid');
+  assert.match(body, /TopochainChallenges\.loadChallenges\(\{ fresh: true \}\)/,
+    'a pull on the Challenges tab reloads the challenge grid, fresh (#3985)');
 });
 
 // ─── Duplicate titles ────────────────────────────────────────────────────
@@ -605,7 +605,7 @@ test('the challenges pane decorates the public grid with your own points', () =>
   assert.match(chJs, /\/challenges-api\/challenges\?season_event_id=/,
     'it fetches the session-scoped view');
   assert.match(chJs, /activities_total/, 'and reads your own per-challenge total');
-  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
+  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId, init) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
   // #1917: the "See where the season stands" link under the grid is gone —
@@ -649,11 +649,14 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
   // ITERATION 03 moved the tally into the shared season progress
-  // ("3/9 done in Season 2" over one segment per challenge) rather than
+  // ("3/9 done in this event" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
-  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+  // QA 2026-09-24 Q17: an event's tally says it is an event's; the event's
+  // own name stays out of the words (issue #4528).
+  assert.match(chJs, /caption: name \? 'done in this event' : 'done'/, 'and states the tally in words');
+  // #4565: the tally also carries the points figures, so the shaping call
+  // hands it the challenge list its scope is made of.
+  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length, null, ordered\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
     'drawn by the component Home shares');

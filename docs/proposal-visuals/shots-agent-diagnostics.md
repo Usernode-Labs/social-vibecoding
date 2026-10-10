@@ -33,6 +33,11 @@ agent process between calls, and the trace alone cannot prove what it was
 thinking. Compare those events with `agent_deadline` and `worker_stop_requested`
 to distinguish the platform's timeout from an external interruption.
 
+A browser call made in a persona's phone browser (a phone screen's, see
+"Phone screens" in `before-after-shots.md`) carries `phone: true` beside its
+`persona`, and `provider_init` counts the phone browsers' tools together as
+`browserPhoneToolCount`, so a phone browser that did not start shows there.
+
 `routeHint` reports whether a browser navigation matches an accepted intent
 start or a declared check, with only an ordinal for its route. Browser result
 shape counts headings, buttons, links, image blocks, and response size. These
@@ -59,6 +64,13 @@ them. The admin shots-runs export has them as `agent_exit_code` and
 | `container_gone` | The worker container stopped or disappeared |
 | `turn_process_gone` | The container kept running, but the turn's processes were gone with no exit marker |
 | `probe_unobservable` | The worker could not be asked whether the turn was still running |
+
+For `oom_killed`, `container_gone` and `turn_process_gone` the run
+dispatches the agent once more, with the budget that is left (at least a
+minute), so `agentDispatches` then has two entries; the second one's outcome
+is the run's. The admin connector's `list_recent_shots` reports the last
+failed dispatch of a failed run as `agentExit` (`code`, `exitCode`,
+`exitCause`).
 
 `workerMemory` summarises the worker's memory, which the shots proxy samples
 every 5 seconds (`worker/shots-memory.js`):

@@ -245,8 +245,8 @@ test('the heading needs the ISSUE state, which is why the server does not word i
 test('the reference links the proposal page in-app, and names the PR', () => {
   const AppView = makeAppView();
   const ref = AppView._issueProposalRefView(issueRow());
-  assert.equal(ref.href, '#app/demo/dev/proposals/5001',
-    'the proposal page, not the GitHub URL — the resolver only ever returns rows that have one');
+  assert.equal(ref.href, '#app/demo/dev/changes/2431',
+    'the proposal page, not the GitHub URL, at its PR number (#4367) — the resolver only ever returns rows that have one');
   assert.equal(ref.label, '#2431');
   assert.equal(ref.title, 'A closed issue says which proposal closed it');
 
@@ -266,6 +266,31 @@ test('an issue with nothing linked carries no reference at all', () => {
   assert.equal(AppView._topicViewFor('issue', issueRow({ addressed_by: null })).body.addressedBy, null);
 });
 
+test('a closed issue gets one status band: emerald for a merged change, zinc for a vote or an admin', () => {
+  const AppView = makeAppView();
+  const view = (over) => AppView._topicViewFor('issue', issueRow(over)).body;
+
+  const merged = view({});
+  assert.equal(merged.closedBand.tone, 'merged');
+  assert.equal(merged.closedBand.ref.sessionId, 5001);
+  assert.equal(merged.closedBand.how, null);
+  assert.ok(merged.closedBand.when, 'says when');
+  assert.equal(merged.addressedBy, null, 'the band carries the change; no second box');
+
+  assert.equal(view({ addressed_by: null, closed_via: 'vote' }).closedBand.how, 'by vote');
+  assert.equal(view({ addressed_by: null, closed_via: 'admin' }).closedBand.how, 'by an admin');
+  const unknown = view({ addressed_by: null, closed_via: null, closedAt: null }).closedBand;
+  assert.deepEqual({ ...unknown }, { tone: 'settled', when: null, whenTitle: null, how: null, ref: null });
+
+  // A change still under review on a closed issue did not close it.
+  const review = view({ addressed_by: addressed({ state: 'review' }) });
+  assert.equal(review.closedBand.tone, 'settled');
+  assert.equal(review.addressedBy.heading, 'Waiting for approval');
+
+  // An open issue has no band.
+  assert.equal(view({ state: 'open', closedAt: null }).closedBand, null);
+});
+
 test('the issue topic page renders the reference as a navigable row', () => {
   const AppView = makeAppView();
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
@@ -275,18 +300,28 @@ test('the issue topic page renders the reference as a navigable row', () => {
     return renderToHtml(createElement(ChangeDetail, { ...v, item: issue }));
   };
 
+  // #4244: a CLOSED issue says so once, in one band at the top of its card,
+  // with the change that closed it as the band's inline pill (drawn like
+  // the change page's "Addresses" chips). No separate "Closed by" box.
   const closed = render({});
-  assert.match(closed, /class="dev-topic-h">Closed by</);
-  assert.match(closed, /href="#app\/demo\/dev\/proposals\/5001"/);
-  assert.match(closed, /data-addressed-by="5001"/);
-  assert.ok(closed.includes('#2431'), 'the PR number is the identity chip');
+  assert.match(closed, /class="dev-issue-closed-band" data-tone="merged" data-topic-part="closed-band"/);
+  assert.match(closed, /class="dev-issue-closed-band-k">Closed</);
+  assert.match(closed, /href="#app\/demo\/dev\/changes\/2431"/);
+  assert.match(closed, /class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-addressed-by="5001"/);
+  assert.ok(closed.includes('<b>#2431</b>'), 'the PR number leads the pill');
   assert.ok(closed.includes('A closed issue says which proposal closed it'));
-  // The mirror of a proposal's "Addresses issues" box, drawn from the same
-  // box, row and chip — no second styling vocabulary for one reference.
-  assert.match(closed, /class="dev-change-issues"/);
-  assert.match(closed, /rounded-full bg-violet-500\/10/);
-  assert.match(closed, /class="gc-event-box dev-issue-ref"/,
-    'the row is the Discussion’s event box, the number where the glyph goes');
+  assert.ok(!closed.includes('dev-change-issues'), 'no separate "Closed by" box');
+  assert.ok(!closed.includes('>Closed by<'));
+  assert.ok(closed.indexOf('dev-issue-closed-band') < closed.indexOf('dev-card-topic'),
+    'the band heads the card');
+
+  // Closed by a vote or an admin: the zinc band, worded, no pill.
+  for (const [via, words] of [['vote', 'by vote'], ['admin', 'by an admin']]) {
+    const html = render({ addressed_by: null, closed_via: via });
+    assert.match(html, /class="dev-issue-closed-band" data-tone="settled"/);
+    assert.ok(html.includes(`<span>${words}</span>`), words);
+    assert.ok(!html.includes('data-addressed-by'));
+  }
 
   const underway = render({
     state: 'open', closedAt: null,
@@ -295,14 +330,22 @@ test('the issue topic page renders the reference as a navigable row', () => {
   assert.match(underway, /class="dev-topic-h">Work underway</);
   assert.ok(underway.includes('Fix the toggle'));
 
-  // Nothing linked: no box, no heading, no empty placeholder.
+  // An open issue under work keeps its box, and has no closed band.
+  assert.match(underway, /class="dev-change-issues"/);
+  assert.match(underway, /class="gc-event-box dev-issue-ref"/);
+  assert.match(underway, /data-addressed-by="5001"/);
+  assert.ok(!underway.includes('dev-issue-closed-band'));
+
+  // Nothing linked: no box, no heading, no empty placeholder. Closed, it
+  // still says Closed, in the grey band, and nothing else.
   const bare = render({ addressed_by: null });
   assert.ok(!bare.includes('dev-change-issues'));
+  assert.match(bare, /class="dev-issue-closed-band" data-tone="settled"/);
+  assert.ok(!bare.includes('data-addressed-by'));
   for (const label of ['Closed by', 'Addressed by', 'Waiting for approval', 'Work underway']) {
     assert.ok(!bare.includes(`>${label}<`), label);
   }
   // …and the rest of the issue page is untouched by its absence.
-  assert.match(bare, /id="dev-issue-comments"/);
   assert.ok(bare.includes('About this request'));
 });
 

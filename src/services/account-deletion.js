@@ -100,6 +100,21 @@ async function placeholderUsername(db, userId) {
   throw new Error('No free placeholder username for the anonymised account');
 }
 
+// The Homeroom bot's copies of a person's words that no foreign key reaches,
+// so neither the purge nor the anonymised row takes them: what they asked a
+// plan changed with (homeroom_bot_runs.plan_change, on the requests they
+// asked for, found through their requester rows before the purge takes
+// those).
+async function forgetBotWords(db, userId) {
+  await db.query(
+    `UPDATE homeroom_bot_runs r SET plan_change = NULL
+       FROM homeroom_bot_requesters q
+      WHERE q.user_id = $1 AND r.app_id = q.app_id AND r.issue_number = q.issue_number
+        AND r.plan_change IS NOT NULL`,
+    [userId]
+  );
+}
+
 async function anonymiseUser(db, userId, unusablePassword) {
   // What the users BEFORE DELETE trigger did: hand group ownership on,
   // archive direct conversations. Then leave the remaining groups.
@@ -110,6 +125,7 @@ async function anonymiseUser(db, userId, unusablePassword) {
   await db.query(`UPDATE conversation_members cm SET status = 'declined', responded_at = NOW()
     FROM conversations c WHERE c.id = cm.conversation_id AND c.kind = 'group'
       AND cm.user_id = $1 AND cm.status = 'invited'`, [userId]);
+  await forgetBotWords(db, userId);
   await purgeCascadingRows(db, userId);
   const username = await placeholderUsername(db, userId);
   await db.query(

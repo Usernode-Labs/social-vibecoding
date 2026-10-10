@@ -101,9 +101,11 @@ test('the wire cap is enforced on every GLM request, independently of history si
   for (let i = 0; i < calls.length; i++) {
     assert.equal(calls[i].url, '/api/v1/responses');
     assert.equal(calls[i].headers.authorization, `Bearer ${KEY}`);
-    const { max_output_tokens: _cap, ...rest } = calls[i].body;
+    const { max_output_tokens: _cap, provider, ...rest } = calls[i].body;
     const { max_output_tokens: _originalCap, ...expected } = bodies[i];
     assert.deepEqual(rest, expected, 'the adapter must preserve tools, history and reasoning');
+    assert.deepEqual(provider, { preferred_max_latency: { p90: 15 }, preferred_min_throughput: { p50: 30 } },
+      'and asks OpenRouter to prefer hosts that answer promptly');
   }
   assert.equal(diagnostics[0].maxOutputTokens, 32000);
   assert.equal(diagnostics[0].inputBytes, Buffer.byteLength(JSON.stringify(original.input)));
@@ -190,6 +192,41 @@ test('request timing separates provider wait, first byte, and stream completion 
   assert.ok(events.at(-1).responseBytes > 0);
   assert.equal(events.at(-1).httpStatus, 200);
   assert.doesNotMatch(JSON.stringify(events), /private|api\/v1/i);
+});
+
+test("each request's start and end say when, in ms since the listener started", async t => {
+  // A restarted platform reads the journal again, so only the turn's own
+  // clock says when a request ran (2026-10-07, worker.js
+  // noteCodingRequestClock). atMs climbs across requests, and the gap
+  // between them is the time Codex spent running its tools.
+  const base = await upstream(t, async (req, res) => {
+    await json(req);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: [DONE]\n\n');
+  });
+  const events = [];
+  const instance = await adapter(t, base, { onTiming: event => events.push(event) });
+  for (let i = 0; i < 2; i++) {
+    if (i) await new Promise(resolve => setTimeout(resolve, 25));
+    const response = await request(instance, { model: MODEL, stream: true, input: [] });
+    await response.text();
+  }
+  const starts = events.filter(event => event.kind === 'provider_request_start');
+  const ends = events.filter(event => event.kind === 'provider_request_end');
+  assert.deepEqual(starts.map(event => event.requestOrdinal), [1, 2]);
+  assert.deepEqual(ends.map(event => event.requestOrdinal), [1, 2]);
+  for (const event of [...starts, ...ends]) {
+    assert.ok(Number.isSafeInteger(event.atMs) && event.atMs >= 0, `${event.kind} carries atMs`);
+  }
+  for (let i = 0; i < 2; i++) {
+    assert.ok(ends[i].atMs >= starts[i].atMs);
+    assert.ok(Math.abs(ends[i].atMs - ends[i].durationMs - starts[i].atMs) <= 2,
+      'an end is its start plus its duration, on the same clock');
+  }
+  assert.ok(starts[1].atMs >= ends[0].atMs + 10, 'the wait between requests shows between them');
+  for (const event of events.filter(e => !['provider_request_start', 'provider_request_end'].includes(e.kind))) {
+    assert.equal('atMs' in event, false, `${event.kind} is unchanged`);
+  }
 });
 
 test('a real HTTP refusal is retried with the smaller limit on the wire and safe ledger evidence', async t => {

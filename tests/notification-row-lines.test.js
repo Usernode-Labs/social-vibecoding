@@ -137,7 +137,7 @@ test('every kind names itself the same way for every row of that kind', async ()
     [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
     [{ kind: 'auto_solve_done', sourceUsername: null, headlessIssueNumber: 91, detail: 'question' },
       'Change has a question', 'request #91'],
-    [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Spec shared', 'Notifications overhaul'],
+    [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Plan shared', 'Notifications overhaul'],
     [{ kind: 'mention', messageContent: 'can you take a look at the board?' },
       'Mentioned you', 'can you take a look at the board?'],
     // #2161: the app_deleted row has no app row left, so the name it names
@@ -267,7 +267,7 @@ test('no row can reach the renderer with an empty kind line', async () => {
     'reply', 'openrouter_key_created', 'openrouter_key_review',
     'conversation_message', 'conversation_invite', 'conversation_mention',
     'conversation_reply', 'conversation_reaction', 'app_delete_attempted', 'app_deleted',
-    'platform_limit', 'something_unheard_of'];
+    'platform_limit', 'platform_incident', 'something_unheard_of'];
   for (const kind of kinds) {
     const view = (await load())({ ...ROW, kind });
     assert.equal(typeof view.label, 'string', `${kind} has a label`);
@@ -333,6 +333,22 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const odd = await lines({ kind: 'platform_limit', detail: 'disk_warn:1:2',
     appName: null, sourceUsername: null });
   assert.equal(odd.label, 'Platform limit');
+  assert.ok(odd.subject.length > 0);
+});
+
+test('unexpected events rows say how many, of what, and where to look (#4296)', async () => {
+  const hour = await lines({ kind: 'platform_incident', detail: 'hour:build_interrupted:6',
+    appName: null, sourceUsername: null });
+  assert.equal(hour.label, 'Unexpected events piling up');
+  assert.match(hour.subject, /^6 build interrupted in the last hour\. +Admin → Unexpected events has each one\.$/);
+  assert.equal(hour.meta, 'Admin · 4m ago', 'no app, nobody credited');
+  const digest = await lines({ kind: 'platform_incident', detail: 'digest:9:build_interrupted=7',
+    appName: null, sourceUsername: null });
+  assert.equal(digest.label, '9 unexpected events yesterday');
+  assert.equal(digest.subject, 'build interrupted 7, other 2.');
+  const odd = await lines({ kind: 'platform_incident', detail: 'nonsense',
+    appName: null, sourceUsername: null });
+  assert.equal(odd.label, 'Unexpected events');
   assert.ok(odd.subject.length > 0);
 });
 

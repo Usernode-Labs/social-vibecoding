@@ -18,6 +18,13 @@
 // That is the change not working, and it is shown and handled as a problem
 // (shots-state.brokenOnHead, homeroom-bot-followup.checksDue). The agent
 // says which, as skip_change's `outcome`.
+//
+// Apart from the declared changes, the agent may note a few clear problems
+// it saw on the after build while it took the shots (note_problem): content
+// cut off, controls overlapping, an error on screen. They are advisory and
+// kept beside the results as the verdict's `notices`: they never change a
+// change's status, never fail a run and are never read as the change not
+// working.
 
 const crypto = require('crypto');
 const planContract = require('./visible-changes');
@@ -29,6 +36,18 @@ const MIN_CLIP_BYTES = 1024;
 const MAX_IMAGE_EDGE = 8192;
 const MAX_REASON = 1000;
 const MAX_NOTE = 500;
+// A problem the agent noticed is one short sentence, and a run keeps a
+// handful: more than that is a review, not a notice.
+const MAX_NOTICE = 300;
+const MAX_NOTICES = 5;
+// An element shot taller than this many screens is not one element a person
+// can read on the card, and Chromium can tile the capture of an element far
+// taller than the screen (a 2026-10-06 survey of runs found a 3679 px mosaic
+// of repeated phone screens published as one product grid).
+const MAX_ELEMENT_SCREENS_TALL = 2;
+// What the card says, after "Not in these shots:", about a change whose
+// before and after screens came out the same.
+const UNCHANGED_NOTE = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_IEND = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
 const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
@@ -146,6 +165,35 @@ function note(value) {
   return text;
 }
 
+// Whether the before build shows the same problem: true, false, or
+// 'unknown' when the agent did not look (the default).
+function alsoBefore(value) {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  if (value == null || value === '' || value === 'unknown') return 'unknown';
+  throw new ShotError('invalid_also_before', 'alsoBefore must be true, false, or "unknown".');
+}
+
+// One problem the agent noticed on the after build, where it shows: a
+// declared change it was shooting, one of that change's screens, and
+// optionally which of that screen's after shots shows it.
+function notice(intent, raw = {}) {
+  const text = typeof raw.problem === 'string' ? raw.problem.trim().slice(0, MAX_NOTICE) : '';
+  if (!text) throw new ShotError('problem_required', 'Say in one short sentence what is broken, in words a person reading the proposal will understand.');
+  const story = changeFor(intent, raw.change);
+  const screen = String(raw.screen || '');
+  if (!story.viewports.some((candidate) => candidate.name === screen)) {
+    throw new ShotError('unknown_screen',
+      `Screen ${JSON.stringify(screen)} is not declared for ${story.id}; use ${story.viewports.map((v) => v.name).join(' or ')}.`);
+  }
+  let shot = null;
+  if (raw.shot != null && raw.shot !== '') {
+    if (!['screen', 'element'].includes(raw.shot)) throw new ShotError('invalid_kind', 'Shot must be screen or element.');
+    shot = raw.shot;
+  }
+  return { text, change: story.id, screen, shot, alsoBefore: alsoBefore(raw.alsoBefore) };
+}
+
 function stored(target, buffer, info) {
   return {
     ...target,
@@ -158,6 +206,63 @@ function stored(target, buffer, info) {
     focusRect: null,
     stageLabels: null,
   };
+}
+
+// An element shot must fit the screen it was taken on. One wider than the
+// screen means the page was laid out at another size (it was loaded before
+// browser_resize, and the app chose its layout once, at load) or the element
+// runs off the screen; one many screens tall is a tiled capture nobody can
+// read. `screenFile` is the same side's screen shot when it is saved: a
+// width of two or three times the screen's says the browser shot at that
+// device scale, so its element shots may be as much larger. Any other width
+// is a screen shot taken at the wrong size and says nothing about scale.
+function checkElementSize(story, target, info, screenFile = null) {
+  if (target.variant !== 'focus' || !info?.width) return;
+  const viewport = story.viewports.find((candidate) => candidate.name === target.viewport);
+  if (!viewport) return;
+  const ratio = screenFile?.width ? screenFile.width / viewport.width : 1;
+  const scale = [2, 3].find((factor) => Math.abs(ratio - factor) < 0.02) || 1;
+  const maxWidth = Math.round(viewport.width * scale) + 1;
+  const maxHeight = Math.round(viewport.height * scale * MAX_ELEMENT_SCREENS_TALL) + 1;
+  if (info.width > maxWidth) {
+    throw new ShotError('element_shot_too_wide',
+      `This element shot is ${info.width} px wide, wider than the ${target.viewport} screen (${viewport.width} px). `
+      + 'The page was probably laid out at another size: open the start path again after browser_resize, '
+      + 'retake the screen shot, then shoot a smaller element that fits on the screen.');
+  }
+  if (info.height > maxHeight) {
+    throw new ShotError('element_shot_too_tall',
+      `This element shot is ${info.height} px tall, more than ${MAX_ELEMENT_SCREENS_TALL} ${target.viewport} screens. `
+      + 'Shoot the smallest element that holds the change (a card or a row, not the whole list).');
+  }
+}
+
+// The changes whose before and after screen shots are the same image on
+// every screen size, so their shots cannot show them.
+function identicalStories(intent, saved) {
+  const ids = new Set();
+  for (const story of intent.stories) {
+    const same = story.viewports.every((viewport) => {
+      const base = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context' }));
+      const head = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context' }));
+      return !!base && !!head && base.sha256 === head.sha256;
+    });
+    if (same && story.viewports.length) ids.add(story.id);
+  }
+  return ids;
+}
+
+// Mark ready changes whose screens came out the same, and say so in the note
+// shown beside their shots. The agent's own note is kept, with the sentence
+// added after it.
+function markUnchanged(stories, ids) {
+  return stories.map((story) => {
+    if (story.status !== 'ready' || !ids.has(story.id) || story.unchanged) return story;
+    const note = story.note
+      ? `${story.note} The before and after screens came out the same.`.slice(0, MAX_NOTE)
+      : UNCHANGED_NOTE;
+    return { ...story, unchanged: true, note };
+  });
 }
 
 function missingWords(viewport, side, variant) {
@@ -173,12 +278,14 @@ function missingWords(viewport, side, variant) {
 // withdraws shots it found do not show the change. It is failed instead
 // when the agent said the after build broke (`failed`). `fallbackReason` (a
 // skip of everything) only explains the changes that are not ready, and
-// `fallbackFailed` says that skip was the app breaking.
+// `fallbackFailed` says that skip was the app breaking. `notices` (what
+// the agent noticed broken on the after build) ride along as they are, and
+// a notice names its shot only while that shot is published.
 function summarize(intent, saved, skipped = new Map(), {
-  fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false,
+  fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false, notices = [],
 } = {}) {
   const published = [];
-  const stories = intent.stories.map((story) => {
+  const results = intent.stories.map((story) => {
     if (skipped.has(story.id)) {
       return { id: story.id, status: failed.has(story.id) ? 'failed' : 'skipped', reason: skipped.get(story.id) };
     }
@@ -205,19 +312,33 @@ function summarize(intent, saved, skipped = new Map(), {
       reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
     };
   });
+  // A ready change is still published when its before and after are the same
+  // image (people judge the shots), but the card says so rather than letting
+  // two copies of one screen pass for the change.
+  const stories = markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
     .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
+  const publishedSlots = new Set(published.map(slotKey));
+  const noticed = (Array.isArray(notices) ? notices : []).slice(0, MAX_NOTICES).map((entry) => ({
+    ...entry,
+    shot: entry.shot && publishedSlots.has(slotKey({
+      storyId: entry.change, viewport: entry.screen, side: 'head', variant: KINDS[entry.shot].variant,
+    })) ? entry.shot : null,
+  }));
   return {
     stories,
+    notices: noticed,
     files: published,
     readyCount: ready,
     failedCount: stories.filter((story) => story.status === 'failed').length,
     // Stored as the run's plan hash: it fences storage and names exactly
     // which files were published.
     manifestHash: sha256(Buffer.from(planContract.canonicalJson({ mode: SHOTS_MODE, intent, manifest }))),
-    verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories },
+    // A run without notices stores no `notices` key, as every run before
+    // them did.
+    verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories, ...(noticed.length ? { notices: noticed } : {}) },
   };
 }
 
@@ -238,15 +359,23 @@ module.exports = {
   SHOTS_MODE,
   MAX_IMAGE_BYTES,
   MAX_CLIP_BYTES,
+  MAX_NOTICE,
+  MAX_NOTICES,
+  UNCHANGED_NOTE,
   ShotError,
   inspectImage,
   inspectClip,
   shotTarget,
   slotKey,
+  checkElementSize,
+  identicalStories,
+  markUnchanged,
   OUTCOMES,
   outcome,
   reason,
   note,
+  alsoBefore,
+  notice,
   stored,
   summarize,
   failedReason,

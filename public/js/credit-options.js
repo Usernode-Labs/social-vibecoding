@@ -364,13 +364,20 @@
     };
   }
 
-  function socialOption() {
+  // #4378: an unverified account out of credits is asked to verify, through
+  // the same sheet a public vote opens (phone first, then GitHub and X in
+  // Settings: frontend/src/features/auth/verify-identity.tsx). wire() opens
+  // it in place; the hash is the fallback where the sheet is not loaded.
+  var VERIFY_LINE = 'Verify your account to get more: add your phone number, or link GitHub and X.';
+
+  function verifyOption() {
     return {
-      id: 'social-identity',
-      title: 'Unlock $10/day with a social account',
-      blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Homeroom keeps no provider token.',
-      cta: 'Connect GitHub or X',
-      hash: SETTINGS_HASHES.connector,
+      id: 'verify-account',
+      title: 'Verify your account',
+      blurb: VERIFY_LINE,
+      cta: 'Verify my account',
+      hash: '#settings/linked-accounts',
+      verify: true,
       developer: false,
     };
   }
@@ -443,7 +450,7 @@
       });
     }
     if (s.verificationRequired) {
-      out.unshift(socialOption());
+      out.unshift(verifyOption());
     }
     return out;
   }
@@ -470,7 +477,9 @@
   function lead(state) {
     var s = state || {};
     if (s.verificationRequired) {
-      return 'Connect GitHub or X to unlock $10/day of Homeroom credits.';
+      return s.capWindow === 'daily'
+        ? "You're out of today's free AI credits."
+        : "You're out of this week's free AI credits.";
     }
     if (s.globalOut) return "The platform's shared daily AI budget is used up.";
     return s.capWindow === 'daily'
@@ -486,6 +495,7 @@
       + '<div class="dc-credits-option-blurb">' + escapeHtml(opt.blurb) + '</div>'
       + '</div>'
       + '<button type="button" class="dc-pr-btn dc-credits-go"'
+      + (opt.verify ? ' data-credits-verify="1"' : '')
       + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
       + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
       + escapeHtml(opt.cta) + '</button>'
@@ -529,7 +539,10 @@
   // clock (#3230) the same way resetSentence() words it.
   function cardHtml(state) {
     var s = state || {};
-    var list = options(s);
+    // #4378: an unverified account's way out is drawn under the lead (the
+    // line and its button), so it is not repeated as a row of the list.
+    var verify = s.verificationRequired ? verifyOption() : null;
+    var list = options(s).filter(function (opt) { return !opt.verify; });
     // #1281: the count still spells the WHOLE list. Three rows and an
     // expander over "Five ways to keep building right now" is a promise the
     // card keeps; counting only the visible three would hide that the other
@@ -538,7 +551,13 @@
     return ''
       + '<div class="dc-credits-card" data-credits-card="1">'
       + '<div class="dc-credits-card-lead">' + escapeHtml(lead(s)) + '</div>'
-      + (s.error
+      // An unverified account: the line says how to get more, and its
+      // button opens the verify sheet (wire()).
+      + (verify
+        ? '<div class="dc-credits-card-detail" data-credits-verify-line="1">' + escapeHtml(VERIFY_LINE) + '</div>'
+          + '<div class="dc-credits-verify"><button type="button" class="dc-pr-btn dc-credits-go" data-credits-verify="1"'
+          + ' data-credits-hash="' + escapeHtml(verify.hash) + '">' + escapeHtml(verify.cta) + '</button></div>'
+        : s.error
         ? '<div class="dc-credits-card-detail">' + escapeHtml(
           resetTime() ? resetTime().localizeResetText(s.error) : s.error) + '</div>'
         : '')
@@ -570,8 +589,8 @@
     var s = state || {};
     var actions = [
       // Whichever remedy leads in this state: an unverified account cannot
-      // spend credits at all, so connecting one comes before paying.
-      s.verificationRequired ? socialOption() : apiKeyOption(s),
+      // spend credits at all, so verifying it comes before paying.
+      s.verificationRequired ? verifyOption() : apiKeyOption(s),
       {
         id: 'venue',
         cta: 'Change session type',
@@ -588,6 +607,7 @@
           + (index === 0 ? ' id="dc-credits-add-key"' : '')
           + ' class="dc-credits-banner-btn' + (index === 0 ? ' dc-credits-banner-btn-primary' : '')
           + '"' + (opt.venue ? ' data-credits-venue="1"' : '')
+          + (opt.verify ? ' data-credits-verify="1"' : '')
           + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
           + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
           + escapeHtml(opt.cta) + '</button>';
@@ -611,9 +631,19 @@
     var h = handlers || {};
     root.addEventListener('click', function (event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-credits-venue],[data-credits-flow],[data-credits-hash]')
+        ? event.target.closest('[data-credits-venue],[data-credits-verify],[data-credits-flow],[data-credits-hash]')
         : null;
       if (!target || !root.contains(target)) return;
+      // #4378: "Verify my account" opens the verify sheet in place (the
+      // bridge verify-identity.tsx publishes). Without it, the hash below.
+      var verifyBridge = typeof window !== 'undefined' && window.UsernodeReact
+        && window.UsernodeReact.verifyIdentity;
+      if (target.getAttribute('data-credits-verify') && verifyBridge
+          && typeof verifyBridge.askForCredits === 'function') {
+        event.preventDefault();
+        verifyBridge.askForCredits();
+        return;
+      }
       // #1348: "Change session type" opens the venue sheet on the surface
       // that mounted us, anchored to the button it was clicked on. Falls
       // through to the hash when a surface wires no handler, which is the
@@ -648,7 +678,8 @@
     meterTone: meterTone,
     lowLead: lowLead,
     apiKeyOption: apiKeyOption,
-    socialOption: socialOption,
+    verifyOption: verifyOption,
+    VERIFY_LINE: VERIFY_LINE,
     options: options,
     partition: partition,
     introFor: introFor,

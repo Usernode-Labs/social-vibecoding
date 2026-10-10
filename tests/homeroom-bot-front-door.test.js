@@ -29,25 +29,26 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it yourself"/);
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it now"/);
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
-  assert.match(row, /title="Build it yourself"\s+sub="With a coding agent, then ask for approval"/);
-  // The tour no longer sends a newcomer to the menu's Build it yourself: that
+  assert.match(row, /title="Build it now"\s+sub="With a coding agent, then ask for approval"/);
+  // The tour no longer sends a newcomer to the menu's Build it now: that
   // row shows only once they have had an agent session (first-session
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Tell Homeroom bot what should change\. It builds it for you, or passes it to the group as a request\.',/);
-  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it yourself/);
-  assert.match(read('frontend/src/features/dialogs/create-app.tsx'), /openLabel=\{botChat \? 'Open chat' : 'Open project'\}/);
+  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Say what should change\. It doesn\\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along\.',/);
+  assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
+  // The made screen's plan card is the door after a new project (the
+  // retired create dialog's "Open chat" was before it).
+  assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*Go to chat/);
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /openBot: \(reference\?: StagedObject \| null\) => \{ void openBot\(reference\); \},/);
   // B8: Ask for changes attaches the change on the composer when it names
   // its project (tests/ask-for-changes-attach.test.js); anything less is
   // chosen in the Share item dialog, as Share stages one.
   assert.match(store, /else if \(reference\) pendingShare = reference;/);
-  for (const f of ['game-2d', 'game-3d', 'multimedia-social', 'social-productivity']) {
-    assert.match(read(`app-templates/${f}/public/index.html`), /To change this app, ask Homeroom bot: tap the Homeroom icon, then <strong class="font-semibold">Suggest an improvement<\/strong>\./, f);
-  }
+  // (The four starters' pages said the same; they were deleted with the
+  // create dialog, tests/app-templates.test.js.)
 });
 
 test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
@@ -71,13 +72,14 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
   const dm = require('../src/services/homeroom-bot-dm');
   const communities = require('../src/services/communities');
   const user = async (username, extra = {}) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic, is_admin) VALUES ($1, 'x', TRUE, $2, $3)
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic, is_admin) VALUES ($1, 'x', $4, $2, $3)
      RETURNING id, username, is_synthetic AS "isSynthetic", is_admin AS "isAdmin", has_platform_access AS "hasPlatformAccess"`,
-    [username, !!extra.synthetic, !!extra.admin],
+    [username, !!extra.synthetic, !!extra.admin, extra.access !== false],
   )).rows[0];
   await user('homeroom_bot', { synthetic: true });
   const maya = await user('maya');
-  const sam = await user('sam');
+  // Homeroom has not let Sam in yet, so the bot does not work for him.
+  const sam = await user('sam', { access: false });
   const boss = await user('boss', { admin: true });
   const project = async (slug, label) => {
     const { rows: [inserted] } = await pool.query(
@@ -95,9 +97,9 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  // The bot builds on every project but a paused one: Quiet notes is paused.
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['plant-pal']));
+  await set('homeroom_bot_paused_apps', JSON.stringify(['quiet-notes']));
 
   await t.test('only a member files a request; an admin always may', async () => {
     const refused = await communities.appNeedsJoin(pool, 'plant-pal', sam);
@@ -161,6 +163,68 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
 
     assert.equal((await dm.askBotToBuild(pool, { app: quiet, user: maya, issueNumber: 4 })).code, 'not_building');
     assert.equal((await dm.askBotToBuild(pool, { app: live, user: sam, issueNumber: 21 })).status, 403);
+  });
+
+  await t.test('#4530: not while the bot waits on an answer there; once somebody answers, or edits the request, it goes', async () => {
+    const live = { id: plantPal.id, slug: plantPal.slug, name: plantPal.name, repo_url: 'https://github.com/usernode-bot/plant-pal' };
+    const { rows: [homeroomBot] } = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot'");
+    // The bot asked on the request at 9:02, as live.post leaves it: its row,
+    // its GitHub comment's id and its line in the discussion.
+    const askedOn = async (n) => {
+      const { rows: [line] } = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, 'Which days should it remind you on?', 'message', 'issue', $3, '2026-10-09T09:02:00Z') RETURNING id`,
+        [plantPal.id, homeroomBot.id, n],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, created_at, github_comment_id, thread_message_id)
+         VALUES ($1, $2, 'question', '2026-10-09T09:02:00Z', $3, $4)`,
+        [plantPal.id, n, 9000 + n, line.id],
+      );
+      return line.id;
+    };
+    const own = (n) => ({ id: 9000 + n, author: 'usernode-bot[bot]', body: 'Which days?', createdAt: '2026-10-09T09:02:01Z' });
+    const github = (comments, updatedAt = '2026-10-09T09:02:02Z') => ({
+      isEnabled: () => true,
+      parseGithubUrl: require('../src/services/github').parseGithubUrl,
+      async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, state: 'open', updatedAt } }; },
+      async fetchIssueComments() { return { comments, truncated: false }; },
+      async getBotUsername() { return 'usernode-bot'; },
+    });
+    const ask = (n, gh) => dm.askBotToBuild(pool, { app: live, user: maya, issueNumber: n, deps: { github: gh } });
+    const queued = async (n) => (await pool.query(
+      'SELECT reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [plantPal.id, n],
+    )).rows.map((r) => r.reason);
+
+    const line = await askedOn(30);
+    const refused = await ask(30, github([own(30)]));
+    assert.deepEqual([refused.ok, refused.status, refused.code], [false, 409, 'awaiting_reply']);
+    assert.equal(refused.error, dm.WAITING_TEXT.question);
+    assert.match(refused.error, /waiting for an answer/);
+    assert.deepEqual(await queued(30), [], 'nothing is queued, so the question is not asked again');
+    // The request list knows it too, for the card.
+    const waits = await dm.botWaitingByIssue(pool, plantPal.id, [{ number: 30, updatedAt: '2026-10-09T09:02:02Z' }, { number: 20 }]);
+    assert.deepEqual([...waits], [[30, { kind: 'question', messageId: line }]]);
+
+    // Answered on the GitHub issue only.
+    const there = await ask(30, github([own(30), { id: 9100, author: 'maya-gh', body: 'Sundays', createdAt: '2026-10-09T09:10:00Z' }]));
+    assert.equal(there.ok, true);
+    assert.deepEqual(await queued(30), ['asked']);
+
+    // Answered in the discussion: GitHub is not even read.
+    await askedOn(31);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, 'Sundays', 'message', 'issue', 31, '2026-10-09T09:10:00Z')`,
+      [plantPal.id, maya.id],
+    );
+    const unread = { isEnabled: () => true, parseGithubUrl: require('../src/services/github').parseGithubUrl,
+      async fetchPublicIssue() { throw new Error('not read'); }, async fetchIssueComments() { throw new Error('not read'); } };
+    assert.equal((await ask(31, unread)).ok, true);
+
+    // The request edited since the question (its updated_at, past every comment).
+    await askedOn(32);
+    assert.equal((await ask(32, github([own(32)], '2026-10-09T09:40:00Z'))).ok, true);
   });
 
   await t.test('how long it usually takes is the median of its own record, once there is enough of it', async () => {

@@ -39,6 +39,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { BuildLineState } from '../first-session/build-line';
 
 /** Where an item sits on the canvas. `null` = flow after it (overflow items). */
 export interface GridPlacement {
@@ -70,6 +71,11 @@ export interface HomeAppView {
   demo: boolean;
   /** '' for a running app; otherwise the words shown under the name. */
   statusLabel: string;
+  /**
+   * #4053: the first version's build line while Homeroom bot makes it
+   * (../first-session/build-line.tsx); `statusLabel` holds its tile words.
+   */
+  buildLine: BuildLineState | null;
   isAwaiting: boolean;
   isError: boolean;
   /** Running and awaiting-secrets tiles open; every other status does not. */

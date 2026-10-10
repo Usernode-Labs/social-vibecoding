@@ -16,6 +16,9 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 // #11 (WP3): the platform issue and its receipt, shared with the Homeroom
 // bot's report_problem, which files through the service rather than here.
 const { parseGitHubRepo, createPlatformIssue, recordFeedbackReport } = require('../services/feedback-reports');
+// #4194: the description may be as long as a GitHub issue body allows, less
+// the room the lines this route adds around it need.
+const { GITHUB_ISSUE_BODY_MAX, FEEDBACK_DESCRIPTION_MAX } = require('../services/issue-body-limit');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -49,9 +52,10 @@ function validateScreenshotUpload(data) {
 }
 
 // Pure (exported for tests): the exact markdown suffix appended to the
-// issue body for an attached screenshot.
-function buildScreenshotEmbed(id, domain) {
-  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
+// issue body for an attached screenshot. `fragment` is its pin's (#4482,
+// pinFragment below), or nothing.
+function buildScreenshotEmbed(id, domain, fragment = '') {
+  return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id}${fragment})`;
 }
 
 // #3027: how many images one feedback submit may carry ("one before saving
@@ -97,12 +101,105 @@ function parseScreenshotIds(body) {
 // Pure (exported for tests): the issue-body suffix for every attached image.
 // One image keeps the exact pre-#3027 line, so an issue with one screenshot
 // reads as it always has; several are numbered under one heading, in the
-// order they were attached.
-function buildScreenshotsEmbed(ids, domain) {
+// order they were attached. `pins` (#4482) maps an id to its pins; that
+// image's link carries them as its fragment, each note with its share of the
+// budget among all of the request's pins.
+function buildScreenshotsEmbed(ids, domain, pins = null) {
   if (!Array.isArray(ids) || ids.length === 0) return '';
-  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
-  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
+  let total = 0;
+  if (pins) for (const list of pins.values()) total += list.length;
+  const budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, total));
+  const fragment = (id) => (pins && pins.has(id) ? pinsFragment(pins.get(id), budget) : '');
+  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain, fragment(ids[0]));
+  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id}${fragment(id)})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
+// #4482: a C comment's pin, kept as data on its screenshot instead of drawn
+// into it, so the request's page can show the page clean or with the comment
+// on it. It rides on the image's link as the URL's fragment,
+//
+//   ![Screenshot](https://<domain>/issue-images/<id>#pin=0.4213,0.318&note=Make%20it%20bigger)
+//
+// which never reaches a server: GitHub's image proxy, the coding agents and
+// GET /issue-images/:id all see the plain picture, and the comment's words
+// and where line are in the body for them. The same rule as
+// frontend/src/features/comment-pin/pin-data.ts `pinsFragment`, which reads
+// it back; tests/comment-pin.test.js holds the two together. A request made
+// of several comments numbers them, and a picture with several of their pins
+// carries each in turn: `#pin=x,y&n=1&note=…&pin=x,y&n=2&note=…`.
+//
+// A post carries `screenshotPins: [{ id, x, y, n?, note? }]`, up to
+// MAX_PINS_PER_ISSUE: `id` one of the attached screenshotIds (several pins
+// may share one), `x` and `y` fractions of the picture, `n` the comment's
+// number when there are several, `note` its words. The notes share what the
+// body's reserve has room for (FEEDBACK_BODY_RESERVE), PIN_NOTE_ENCODED_MAX
+// in all; eight pins keep the whole fragment, with every other line the
+// route adds, inside it.
+const MAX_PINS_PER_ISSUE = 8;
+const PIN_NOTE_MAX = 280;
+const PIN_NOTE_ENCODED_MAX = 600;
+
+function encodePinNote(s) {
+  return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function fitPinNote(text, budget = PIN_NOTE_ENCODED_MAX) {
+  const chars = Array.from(String(text || '').replace(/\s+/g, ' ').trim());
+  let note = chars.length > PIN_NOTE_MAX ? `${chars.slice(0, PIN_NOTE_MAX - 1).join('').trimEnd()}\u2026` : chars.join('');
+  while (note && encodePinNote(note).length > budget) {
+    note = `${Array.from(note).slice(0, -2).join('').trimEnd()}\u2026`;
+  }
+  return note;
+}
+
+// Pure (exported for tests): the fragment for a picture's pins, `#`
+// included; `budget` is each note's encoded length.
+function pinsFragment(pins, budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, pins.length))) {
+  if (!pins.length) return '';
+  const round4 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 10000) / 10000;
+  return `#${pins.map((pin) => {
+    const note = fitPinNote(pin.note, budget);
+    const n = Number.isInteger(pin.n) && pin.n > 0 ? `&n=${pin.n}` : '';
+    return `pin=${round4(pin.x)},${round4(pin.y)}${n}${note ? `&note=${encodePinNote(note)}` : ''}`;
+  }).join('&')}`;
+}
+
+// Pure (exported for tests): the fragment for one pin, `#` included.
+function pinFragment(pin) {
+  return pinsFragment([pin]);
+}
+
+// Pure (exported for tests): the pins a POST /api/feedback body puts on its
+// screenshots. Returns { ok: true, pins } (a Map of id to its pins, each
+// { x, y, n, note }, in the order sent; empty when there are none) or
+// { ok: false, error }.
+function parseScreenshotPins(body, screenshotIds) {
+  const raw = (body || {}).screenshotPins;
+  const pins = new Map();
+  if (raw === undefined || raw === null) return { ok: true, pins };
+  if (!Array.isArray(raw)) return { ok: false, error: 'screenshotPins must be an array' };
+  if (raw.length > MAX_PINS_PER_ISSUE) return { ok: false, error: `A request carries at most ${MAX_PINS_PER_ISSUE} pins` };
+  const ids = new Set(screenshotIds || []);
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !ids.has(p.id)) {
+      return { ok: false, error: 'A pin must be on an attached screenshot' };
+    }
+    const inside = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+    if (!inside(p.x) || !inside(p.y)) return { ok: false, error: 'A pin must be on the picture' };
+    if (p.note !== undefined && p.note !== null && typeof p.note !== 'string') {
+      return { ok: false, error: 'A pin note must be text' };
+    }
+    if (typeof p.note === 'string' && p.note.length > FEEDBACK_DESCRIPTION_MAX) {
+      return { ok: false, error: 'A pin note is too long' };
+    }
+    if (p.n !== undefined && p.n !== null && !(Number.isInteger(p.n) && p.n > 0 && p.n <= 99)) {
+      return { ok: false, error: 'A pin number must be a small whole number' };
+    }
+    if (!pins.has(p.id)) pins.set(p.id, []);
+    pins.get(p.id).push({ x: p.x, y: p.y, n: p.n || null, note: p.note || '' });
+  }
+  return { ok: true, pins };
 }
 
 // #3940: feedback-modal video attachments. Same shape as the screenshots
@@ -157,10 +254,45 @@ function parseVideoId(body) {
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
 // The bridge caps the serialized snapshot at 32,768 chars client-side;
-// 40,000 is a defensive server ceiling that keeps the JSON request body
-// under the global 100 KB express.json() limit and the final issue body
-// (description ≤ 2,000 chars + this) under GitHub's 65,536-char maximum.
+// 40,000 is a defensive server ceiling on what the request may carry. Since
+// #4194 the description may use most of GitHub's 65,536-char body by itself,
+// so the snapshot is fitted into whatever is left (fitPageState below)
+// rather than assumed to fit.
 const MAX_PAGE_STATE_CHARS = 40000;
+
+// #4194: the title is named from the start of the description. A long report
+// says what it is about in its first paragraphs, and the naming call is
+// billable, so neither the live preview nor the submit-time call sends more.
+// The dialog's preview sends at most this much (feedback-controller.js).
+const TITLE_SOURCE_MAX = 2000;
+
+// Smallest snapshot worth keeping once it has to be cut to fit: below this
+// it says nothing, and the snapshot is left out instead.
+const MIN_PAGE_STATE_CHARS = 200;
+
+// Pure (exported for tests): the snapshot embed that fits beside `fixedBody`
+// within GitHub's body limit. Returns '' when there is no snapshot or no
+// useful room for one; a snapshot that had to be cut says so in its summary.
+function fitPageState(fixedBody, pageState, truncated, max = GITHUB_ISSUE_BODY_MAX) {
+  if (!pageState) return '';
+  const whole = buildPageStateEmbed(pageState, truncated);
+  if (fixedBody.length + whole.length <= max) return whole;
+  const overhead = buildPageStateEmbed('', true).length;
+  const room = max - fixedBody.length - overhead;
+  if (room < MIN_PAGE_STATE_CHARS) return '';
+  return buildPageStateEmbed(pageState.slice(0, room), true);
+}
+
+// The 400 for a body that would still be over GitHub's limit. The
+// description cap leaves room for the lines this route adds, so this is a
+// backstop; it names the numbers rather than trimming the report.
+function bodyTooLong(res, body) {
+  return res.status(400).json({
+    error: `This report comes to ${body.length} characters with its attachments, over GitHub's `
+      + `${GITHUB_ISSUE_BODY_MAX}-character limit. Shorten it by at least `
+      + `${body.length - GITHUB_ISSUE_BODY_MAX} characters.`,
+  });
+}
 
 // Pure (exported for tests): the collapsed <details> suffix appended to
 // the issue body for an app-provided state snapshot. Four-backtick fence
@@ -465,8 +597,8 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > TITLE_SOURCE_MAX) {
+      return res.status(400).json({ error: `Description too long (max ${TITLE_SOURCE_MAX} chars)` });
     }
     try {
       const billing = await resolveTitleBilling(req.user?.id);
@@ -563,8 +695,8 @@ function feedbackRoutes(config) {
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
-    if (description.length > 2000) {
-      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    if (description.length > FEEDBACK_DESCRIPTION_MAX) {
+      return res.status(400).json({ error: `Description too long (max ${FEEDBACK_DESCRIPTION_MAX} chars)` });
     }
 
     // #556: optional user-chosen title. When present (non-empty after
@@ -590,6 +722,9 @@ function feedbackRoutes(config) {
     const parsedShots = parseScreenshotIds(req.body);
     if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
     const screenshotIds = parsedShots.ids;
+    // #4482: and the pin a C comment keeps on its screenshot, as data.
+    const parsedPins = parseScreenshotPins(req.body, screenshotIds);
+    if (!parsedPins.ok) return res.status(400).json({ error: parsedPins.error });
     if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
@@ -761,7 +896,7 @@ function feedbackRoutes(config) {
           const billing = await resolveTitleBilling(req.user?.id);
           if (billing.error) throw new Error(`title billing unavailable: ${billing.error}`);
           const gen = await llm.generateIssueTitle({
-            description,
+            description: description.slice(0, TITLE_SOURCE_MAX),
             apiKey: billing.apiKey || undefined,
           });
           title = gen.title;
@@ -785,7 +920,7 @@ function feedbackRoutes(config) {
             `INSERT INTO title_heal_queue (user_id, owner, repo, issue_number, description)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (owner, repo, issue_number) DO NOTHING`,
-            [req.user?.id || null, owner, repo, issueNumber, description.trim()]
+            [req.user?.id || null, owner, repo, issueNumber, description.trim().slice(0, TITLE_SOURCE_MAX)]
           );
         } catch (err) {
           log.warn('feedback', 'Failed to queue title heal', { repo: `${owner}/${repo}`, issueNumber, message: err.message });
@@ -796,7 +931,7 @@ function feedbackRoutes(config) {
       // the public /issue-images/:id URL GitHub's camo proxy, the in-app
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
+      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN, parsedPins.pins);
       // #3940: the clip's embed link, after the screenshots (the body's
       // reading order: what happened, then the stills, then the moving
       // picture).
@@ -845,13 +980,13 @@ function feedbackRoutes(config) {
       if (target === 'app') {
         // #685: the collapsed state-snapshot block goes last, after the
         // screenshot embed, so it never buries the description.
-        const pageStateSuffix = pageState
-          ? buildPageStateEmbed(pageState, pageStateTruncated)
-          : '';
         // #1054: the "written while offline" line sits with the other header
         // lines, above the description — it is context for reading the report,
         // not part of it.
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}${pageStateSuffix}`;
+        const fixedBody = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+        // #4194: the snapshot gets whatever room the report leaves it.
+        const body = fixedBody + fitPageState(fixedBody, pageState, pageStateTruncated);
+        if (body.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, body);
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -870,6 +1005,11 @@ function feedbackRoutes(config) {
         await linkScreenshot(issueOwner, issueRepo, issue.number);
         await linkVideo(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
+        // #3952: the people the report names with @. Never rejects.
+        require('../services/notifications').notifyIssueMentions?.(pool, {
+          appId: appContext.id, issueNumber: issue.number, authorId: req.user?.id,
+          text: `${title}\n\n${description}`,
+        });
         // #964: the pledge goes last — after the issue exists and after the
         // announce — and can only ever add a `bounty` field to the response.
         // The filed issue is never at risk from it.
@@ -897,7 +1037,7 @@ function feedbackRoutes(config) {
         const homeroomBot = await require('../services/homeroom-bot-dm').noteRequestFiled(pool, {
           app: appContext, user: req.user, issueNumber: issue.number, title, askedText: description.trim(),
         });
-        // Its confirmation's small "Build it yourself" link, for somebody who
+        // Its confirmation's small "Build it now" link, for somebody who
         // could start a change here (the first-request moment's canFix rule).
         if (homeroomBot?.botWillBuild) {
           let canFix = false;
@@ -918,11 +1058,13 @@ function feedbackRoutes(config) {
       // The platform repo, with the bot's token (services/feedback-reports.js
       // createPlatformIssue): a hand-rolled call that applies safeMention to
       // the user-typed title and description itself (#723).
+      const platformBody = `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`;
+      if (platformBody.length > GITHUB_ISSUE_BODY_MAX) return bodyTooLong(res, platformBody);
       const created = await createPlatformIssue({
         owner: issueOwner,
         repo: issueRepo,
         title,
-        body: `**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}${videoSuffix}`,
+        body: platformBody,
         pat,
       });
       // The underlying status is in the client-facing error (the hint), so
@@ -939,6 +1081,11 @@ function feedbackRoutes(config) {
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
+      // #3952: as in the app branch, on the platform's own project.
+      require('../services/notifications').notifyIssueMentions?.(pool, {
+        owner: issueOwner, repo: issueRepo, issueNumber: issue.number, authorId: req.user?.id,
+        text: `${title}\n\n${description}`,
+      });
       // #964: same placement as the app branch. `app: null` sends
       // attachBounty to findAppByRepo, which resolves the platform repo to
       // the self-hosted platform app — the same row announceIssueCreated
@@ -1010,6 +1157,11 @@ module.exports = {
   parseScreenshotIds,
   buildScreenshotsEmbed,
   MAX_SCREENSHOTS_PER_ISSUE,
+  // #4482: a comment's pin as data on its screenshot — tests/comment-pin.test.js.
+  parseScreenshotPins,
+  pinFragment,
+  pinsFragment,
+  MAX_PINS_PER_ISSUE,
   // #3940: video attachments — tests/feedback-video.test.js.
   validateVideoUpload,
   buildVideoEmbed,
@@ -1019,6 +1171,10 @@ module.exports = {
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
+  // #4194: the description's limit and the snapshot fitted beside it.
+  fitPageState,
+  TITLE_SOURCE_MAX,
+  FEEDBACK_DESCRIPTION_MAX,
   normalizeQueuedAt,
   MAX_QUEUED_AT_CHARS,
 };

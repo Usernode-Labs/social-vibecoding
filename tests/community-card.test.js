@@ -31,6 +31,15 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   assert.equal(line({ electorate: 1, required: 1 }),
     'A change goes live when the only active member approves it.',
     'no wait to mention: the quiet path needs a Yes short of the threshold, and one Yes is the threshold');
+  const solo = { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 };
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: true }),
+    'A change goes live when you approve it.', 'Just you: the one approver is the reader (#4246)');
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: false }),
+    'A change goes live when the only active member approves it.', 'a visitor is not the approver');
+  assert.equal(approvalLine(solo, { audience: 'invited', is_member: true }),
+    'A change goes live when the only active member approves it.', 'a private community keeps the generic line');
+  assert.equal(approvalLine({ ...solo, electorate: 2, required: 1 }, { audience: 'solo', is_member: true }),
+    'A change goes live when 1 of the 2 active members approves it.', 'only when the reader is the whole electorate');
   assert.equal(line({ electorate: 3, required: 3 }), 'A change goes live when all 3 active members approve it, or after a wait if one approves and nobody objects.');
   assert.equal(line({ electorate: 3, required: 1 }), 'A change goes live when 1 of the 3 active members approves it.');
   assert.equal(approvalLine({ policy: 'anyone', approvals_required: 2, electorate: 30, required: 2 }),
@@ -55,6 +64,17 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   // is a change too and goes live only once approved, went (5 Oct 2026).
   assert.doesNotMatch(read(CARD), /Changing these rules|dev-ws-rules-sub/);
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-rules-sub/, 'and its style with it');
+});
+
+test('#4527: the middle step gets room, and the card stacks when the card is narrow', () => {
+  const CSS = read('public/css/app.css');
+  // The faces crowd the middle step's words, so it takes the wider share.
+  assert.match(CSS, /^\.dev-ws-rule-step\[data-ws-rule-people\] \{ flex-grow: 2; \}$/m);
+  // The strip is its own container, so the stack fires when the CARD is too
+  // narrow, not only when the window is (the 640px media query stays).
+  assert.match(CSS, /^\.dev-ws-strip\[data-ws-approval-rules\] \{ container-type: inline-size; \}$/m);
+  assert.match(CSS, /@container \(max-width: 600px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}\s*\.dev-ws-rule-join \{ flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; \}\s*\}/);
+  assert.match(CSS, /@media \(max-width: 640px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}/);
 });
 
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
@@ -105,9 +125,11 @@ test('the channel is a hub card at its old address; Join asks under its button a
     'it hangs from the button');
   assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
-  assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
-  assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
-  assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
+  // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
+  // the same call Discover makes, and never the creator's.
+  assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave goes through the same call Discover makes');
+  assert.doesNotMatch(src, /data-ws-community-leave=""|>\s*Joined\s*</, 'no Joined pill on the hero');
+  assert.match(src, /return !!data && !!data\.is_member && !data\.is_creator;/, 'the creator is never offered Leave');
   // #3362: Invite is invite LINKS, which any member can make
   // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
   // its own gate.

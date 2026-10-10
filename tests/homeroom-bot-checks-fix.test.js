@@ -29,7 +29,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const APP = { id: 9, slug: 'recipebot-33b169', name: 'RecipeBot', repo_url: 'https://github.com/usernode-bot/recipebot-33b169', self_hosted: false };
 const BOT = { id: 77, username: 'homeroom_bot' };
-const SETTINGS = { mode: 'shadow', liveApps: ['recipebot-33b169'], turnSeconds: 1200, turnInputTokens: 10_000_000 };
+const SETTINGS = { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 };
 const SEEN = '2026-10-01T10:00:00Z';
 const ITEM = { id: 31, app_id: 9, issue_number: 50, priority: 1, reason: bot.CHECKS_REASON, thread_seen_at: null };
 const HEAD = 'a'.repeat(40);
@@ -148,7 +148,7 @@ function harness({
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       if (/FROM platform_settings/.test(s)) {
-        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }, { key: 'homeroom_bot_live_apps', value: JSON.stringify([APP.slug]) }] };
+        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }] };
       }
       return { rows: [] };
     },
@@ -324,7 +324,10 @@ test('a person\'s reply comes first; a fix still due after it is queued again', 
   });
   const out = await run(t, h, { ...ITEM, reason: 'changed', thread_seen_at: '2026-10-01T11:30:00Z' });
   assert.equal(out.verdict, 'answer');
-  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /automated checks/, 'the reply turn is the reply turn');
+  // #4572: the reply turn is shown what is failing, so it can fix it if asked.
+  assert.match(h.calls.exec[0].opts.prompt, /The change's automated checks are failing on its current commit: 1 of 86\./);
+  assert.match(h.calls.exec[0].opts.prompt, /Cooking mode text-size control offers all steps/);
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /"action": "revise" \| "person"/, 'and answers as a reply turn does');
   const again = queued(h);
   assert.equal(again.length, 1, 'the checks are looked at on the next pass');
   assert.deepEqual(again[0].params, [9, 50, bot.CHECKS_REASON]);
@@ -332,7 +335,7 @@ test('a person\'s reply comes first; a fix still due after it is queued again', 
 
 // ── Getting it queued ────────────────────────────────────────────────────
 
-function notePool(row, { liveApps = [APP.slug], mode = 'shadow' } = {}) {
+function notePool(row, { pausedApps = [], mode = 'shadow' } = {}) {
   const asked = [];
   return {
     asked,
@@ -341,7 +344,7 @@ function notePool(row, { liveApps = [APP.slug], mode = 'shadow' } = {}) {
       asked.push({ s, params });
       if (/AS looked/.test(s)) return { rows: row ? [row] : [] };
       if (/FROM platform_settings/.test(s)) {
-        return { rows: [{ key: 'homeroom_bot_mode', value: mode }, { key: 'homeroom_bot_live_apps', value: JSON.stringify(liveApps) }] };
+        return { rows: [{ key: 'homeroom_bot_mode', value: mode }, { key: bot.KEY_PAUSED_APPS, value: JSON.stringify(pausedApps) }] };
       }
       return { rows: [] };
     },
@@ -360,7 +363,7 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
     [notePool(null), 'somebody else\'s proposal'],
     [notePool(checksRow({ check_state: 'passing' })), 'checks passing'],
     [notePool(checksRow({ looked: true })), 'already looked at'],
-    [notePool(checksRow(), { liveApps: [] }), 'the app is not live'],
+    [notePool(checksRow(), { pausedApps: [APP.slug] }), 'the app is paused, so not live'],
     [notePool(checksRow(), { mode: 'off' }), 'the bot is off'],
     [notePool(checksRow({ test_results: results({ failing: 40, total: 43 }) })), 'looks like the platform'],
   ]) {

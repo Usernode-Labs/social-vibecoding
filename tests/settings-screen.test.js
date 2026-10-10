@@ -270,7 +270,9 @@ test('the registry groups pages under four headings, Account first', () => {
   assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
     'and Delete account closes it');
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
-  assert.deepEqual(['connectors', 'build-venue', 'cli'].map(pageOf), Array(3).fill('connectors'));
+  assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
+  // #4311: "Where changes get built" is gone; nothing acted on its value.
+  assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -342,7 +344,7 @@ test('a part address resolves to its page, scrolled to the part', () => {
   assert.deepEqual(S._resolve('cli'), { page: 'connectors', anchor: 'cli' });
   assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
     'connectors leads its page, so its address is the page');
-  assert.deepEqual(S._resolve('build-venue'), { page: 'connectors', anchor: 'build-venue' });
+  assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
   assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
   assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
   assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });
@@ -418,27 +420,22 @@ test('the filter matches every word, and names the parts that matched', () => {
   assert.deepEqual(hit('   '), [], 'blank is not a query');
 });
 
-// ── #1556: Language is gated on an already-saved locale ────────────────
+// ── Language is offered to everyone (the #1556 gate is gone) ───────────
 
-test('the Language section is offered only to a user who already saved a locale', () => {
+test('the Language section is offered to everyone, whatever is saved', () => {
   const hit = registrySections().find((s) => s.key === 'language');
   assert.ok(hit, 'language is still a registered section');
-  assert.equal(hit.gate, 'settings-language-section',
-    'the shell is English-only, so the picker is behind a capability gate');
-  // It ships hidden (the generic gate test above covers the markup), and the
-  // render fn is what reveals it — for a saved value, and only then.
+  assert.equal(hit.gate ?? null, null, 'no capability gate: Auto and English are always there');
   const fn = sliceMethod(settingsJs, '_renderLanguageSection');
   assert.match(fn, /const value = this\.state\.locale \|\| ''/,
-    'the gate is decided by the stored locale, nothing else');
-  assert.match(fn, /if \(!value\) \{[^}]*section\.classList\.add\('hidden'\);[^}]*return;/,
-    'no saved locale -> the section stays hidden and nothing else renders');
-  assert.match(fn, /section\.classList\.remove\('hidden'\)/,
-    'a saved locale -> the section is revealed, so the preference stays changeable');
+    'the select shows the stored locale');
+  assert.doesNotMatch(fn, /settings-language-section/,
+    'nothing hides the section for an account without a saved locale');
   // state.locale lands with /api/auth/me, which can resolve AFTER a cold-boot
-  // deep link has already painted the menu — so the gate re-renders there too.
+  // deep link has already painted the section, so the select re-renders there.
   const refresh = sliceMethod(settingsJs, 'refresh');
   assert.match(refresh, /this\._renderLanguageSection\(\)/,
-    'refresh() re-runs the gate once the account payload arrives');
+    'refresh() re-renders the select once the account payload arrives');
 });
 
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
@@ -1012,9 +1009,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  // #1556: 'language' is deliberately absent — it is no longer a routable
-  // section for a default user, and its check asserts the FALLBACK instead.
-  for (const key of ['password', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
+  for (const key of ['password', 'language', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -1036,13 +1031,15 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs an explicit CLI review fixture`);
     }
   }
-  // #1556: the Language deep link still has a check, but it asserts that the
-  // route falls back to the default page rather than rendering a pane.
+  // The Language deep link opens its own pane, for an account with no saved
+  // locale too, and the pane offers Auto and English.
   const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
   assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
   assert.match(lang[0].expectSelector || '',
-    new RegExp(`data-settings-section="${DEFAULT_PART}"\\]:not\\(\\.hidden\\)`),
-    'the Language deep link lands on the default page, not on a Language pane');
+    /data-settings-section="language"\]:not\(\.hidden\) #settings-language-section:not\(\.hidden\)/,
+    'the Language deep link lands on the Language pane');
+  assert.match(lang[0].expectSelector || '', /option\[value=""\]\).*option\[value="en"\]\)/,
+    'the pane offers Auto and English');
 
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to

@@ -1,3 +1,4 @@
+import type { ReleaseOutlook } from '../../lib/release-eta';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -82,6 +83,13 @@ export interface HomeroomBotMeta {
    * follows the request now. This one is no longer drawn.
    */
   movedTo?: number;
+  /**
+   * #4392: the activity card Build it moved under a plan, drawn as the bot's
+   * thanks for answering: its words over the project's thumbnail row
+   * (./bot-thanks-card.tsx), the project's icon (`appEmoji`) as its tile.
+   */
+  thanks?: boolean;
+  appEmoji?: string;
   /** B7: once its person approved it, what happens next (services/homeroom-bot-dm.js goesLiveAfterYes). */
   goesLive?: HomeroomBotGoesLive;
 }
@@ -131,6 +139,13 @@ export interface HomeroomBotPlanQuestion {
 export interface HomeroomBotPlan {
   bullets: string[];
   questions: HomeroomBotPlanQuestion[];
+  /**
+   * #4488: a complicated change on a project that already exists, checked
+   * with the person who asked for it before it is built. Its spec (with its
+   * before and after screens) is on the request, whose card goes under it.
+   */
+  complicated?: boolean;
+  spec?: { sessionId: number; version: number } | null;
 }
 
 /**
@@ -143,11 +158,20 @@ export interface HomeroomBotAction {
   id: string;
   label: string;
   style: 'primary' | 'secondary';
-  /** B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card. */
-  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply';
+  /**
+   * B7: `preview` opens a change's preview, `vote` casts the person's own Yes, `reply` quotes the card.
+   * #4231: `invite` opens the invite sheet for the message's project (`appSlug`), in place.
+   */
+  type: 'server' | 'open' | 'prompt' | 'preview' | 'vote' | 'reply' | 'invite';
   target?: string;
   sessionId?: number;
   epoch?: number;
+  /**
+   * #4097 follow-up: a `prompt` sent replying to the message it sits on, so it
+   * is about what that message is about ("Try again" under a build that did
+   * not finish). Any other prompt is sent on its own.
+   */
+  quote?: boolean;
 }
 
 /**
@@ -180,12 +204,22 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
+  iconUrl: string | null;
+  /** #4201: the app's emoji icon, for an app with no image; else null. */
+  iconEmoji: string | null;
   issueNumber: number | null;
   title: string | null;
   firstVersion: boolean;
   href: string | null;
   links: HomeroomBotLinks;
   earlier: HomeroomBotRun[];
+  /**
+   * Going live (Now's `merging`, or an ending of `going_live`), on a merge
+   * of the platform's own app: when the platform's next release carries it
+   * (services/release-watch.js), which the tray words. Absent otherwise.
+   */
+  release?: ReleaseOutlook;
 }
 
 /** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
@@ -226,7 +260,10 @@ export interface HomeroomBotWork {
  */
 export type HomeroomBotActivityOutcome =
   | 'question' | 'proposed' | 'live' | 'closed' | 'blocked' | 'build_failed'
-  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise';
+  | 'person' | 'empty' | 'failed' | 'held' | 'stopped' | 'answer' | 'revise'
+  // #4242 / #4227: built and being checked before it is offered, built and
+  // needing a person to look, and merged but not live yet.
+  | 'checking' | 'needs_look' | 'going_live';
 
 export interface HomeroomBotActivity {
   messageId: number;
@@ -245,10 +282,18 @@ export interface HomeroomBotActivity {
   of: number | null;
   stepName: string | null;
   doing: string | null;
+  /** While it is working, the stage it is at (services/homeroom-bot-progress.js stageOf). */
+  stage?: string | null;
   outcome: HomeroomBotActivityOutcome | null;
   endedAt: string | null;
   /** How long the step it is at usually takes, in minutes, when it takes a while. */
   typicalMinutes?: { from: number; to: number };
+  /**
+   * `going_live`, on a merge of the platform's own app: when the platform's
+   * next release carries it (services/release-watch.js), which the card
+   * words (../../lib/release-eta.ts). Absent on any other change.
+   */
+  release?: ReleaseOutlook;
 }
 
 /**
@@ -272,6 +317,8 @@ export interface HomeroomBotReadyNow {
     more: number;
   };
   goesLive?: HomeroomBotGoesLive;
+  /** `going_live`, on a merge of the platform's own app: when its release comes (as HomeroomBotActivity's). */
+  release?: ReleaseOutlook;
 }
 
 /** One read of the bot DM's cards: its activity cards and its ready cards. */
@@ -335,6 +382,8 @@ export type ObjectCardType = SharedObjectType | 'hub' | 'discussion';
 export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   type: ObjectCardType;
   available: boolean;
+  /** A change's pull request number, when it has one (#4367). */
+  prNumber?: number;
   title?: string | null;
   subtitle?: string | null;
   state?: string | null;
@@ -605,6 +654,12 @@ export interface MessagesSnapshot {
   nextAfter: number | null;
   /** #2387: the list pane folded away on a desktop — single-panel mode. */
   listCollapsed: boolean;
+  /**
+   * #4229: the strip is wider than a phone but too narrow for an open
+   * conversation to keep a readable measure beside the list, so the list
+   * steps aside while one is open and the bar's back arrow returns to it.
+   */
+  listCrowded: boolean;
   /** #2967: the channels outside Your apps shown, under "Show more". */
   showMoreChannels: boolean;
   /**

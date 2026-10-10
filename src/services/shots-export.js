@@ -264,7 +264,8 @@ function exportRecord(row) {
     session_source: row.session_source,
     pr_number: row.pr_number,
     pr_url: row.pr_url,
-    proposal_path: slug && row.session_id ? `/#app/${slug}/dev/proposals/${row.session_id}` : null,
+    proposal_path: slug && row.session_id
+      ? `/${require('./change-destination').changeHref(slug, row.session_id, row.pr_number)}` : null,
     trigger: row.trigger,
     repair_attempt: row.repair_attempt,
     current_run: row.current_run == null ? null : !!row.current_run,

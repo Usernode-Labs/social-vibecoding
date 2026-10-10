@@ -54,6 +54,25 @@ function cleanShotResults(value) {
     }));
 }
 
+// What the shots agent noticed broken on the after build besides the
+// declared changes: a handful of short notes, each where it shows (one of
+// this run's declared changes and a screen name), which after shot shows it
+// if one does, and whether the before build has it too. Advisory: shown
+// under "Also noticed" and nothing else reads them.
+function cleanShotNotices(value, claims) {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set((claims || []).map((claim) => claim.id));
+  return value.filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()
+    && ids.has(entry.change) && VIEWPORT_RE.test(String(entry.screen || '')))
+    .slice(0, 5).map((entry) => ({
+      text: unescapeQuotes(entry.text.trim()).slice(0, 300),
+      change: entry.change,
+      screen: entry.screen,
+      shot: entry.shot === 'screen' || entry.shot === 'element' ? entry.shot : null,
+      alsoBefore: entry.alsoBefore === true || entry.alsoBefore === false ? entry.alsoBefore : 'unknown',
+    }));
+}
+
 // The screens a verified run's card shows, and the areas that differ on
 // each: integers and story ids from this run's own declaration, nothing else.
 function cleanScreens(screens, claims) {
@@ -158,6 +177,7 @@ function fromSnapshot(session, currentHead) {
     repairAvailable: detail.repairAvailable === true,
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
+    shotNotices: [],
     screens: [],
     progress: null,
     verifiedReason: null,
@@ -199,6 +219,9 @@ function serialize(run, session, slug, currentHead) {
     shotResults: matchesCurrent && (run.state === 'verified'
       || (run.state === 'failed' && run.failureCode === 'shots_change_failed'))
       ? cleanShotResults(run.shotResults) : [],
+    // Only a published run's card shows them.
+    shotNotices: matchesCurrent && run.state === 'verified'
+      ? cleanShotNotices(run.shotNotices, cleanClaims(run.claims)) : [],
     screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,
@@ -267,6 +290,7 @@ module.exports = {
   PUBLIC_STATES,
   cleanClaims,
   cleanShotResults,
+  cleanShotNotices,
   cleanScreens,
   cleanArtifacts,
   artifactUrl,

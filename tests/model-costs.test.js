@@ -43,19 +43,26 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
     300,
   );
   // The real default profile, on the published Opus 5.5 price (#2818:
-  // $4 in / $20 out, below Opus 5's $5 / $25).
+  // $4 in / $20 out, below Opus 5's $5 / $25), its cache reads at $0.20 and
+  // its cache writes at $5.
   const opus = modelCosts.estimateCents(modelCosts.publishedPricing('claude-opus-5-5'));
-  const { inputTokens, outputTokens } = modelCosts.TYPICAL_CHANGE;
+  const {
+    inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens,
+  } = modelCosts.TYPICAL_CHANGE;
+  const uncached = inputTokens - cachedInputTokens - cacheWriteInputTokens;
   assert.equal(opus, Math.round(
-    ((inputTokens / 1_000_000) * 4 + (outputTokens / 1_000_000) * 20) * 100 * 100,
+    ((uncached * 4 + cachedInputTokens * 0.2 + cacheWriteInputTokens * 5 + outputTokens * 20)
+      / 1_000_000) * 100 * 100,
   ) / 100);
   // The ladder the picker will show is the ladder the prices describe.
+  // DeepSeek v4.1 Flash reads cheaper than GLM 5.3 Flash but writes at more
+  // than twice its price, and a change writes 120k tokens.
   const sonnet = modelCosts.estimateCents(modelCosts.publishedPricing('claude-sonnet-5-5'));
   const fable = modelCosts.estimateCents(modelCosts.publishedPricing('claude-fable-5-1'));
   const glm = modelCosts.estimateCents(modelCosts.publishedPricing('z-ai/glm-5.3-flash'));
   const deepseek = modelCosts.estimateCents(modelCosts.publishedPricing('deepseek/deepseek-v4.1-flash'));
-  assert.ok(deepseek < glm && glm < sonnet && sonnet < opus && opus < fable,
-    `expected deepseek < glm < sonnet < opus < fable, got ${deepseek} ${glm} ${sonnet} ${opus} ${fable}`);
+  assert.ok(glm < deepseek && deepseek < sonnet && sonnet < opus && opus < fable,
+    `expected glm < deepseek < sonnet < opus < fable, got ${glm} ${deepseek} ${sonnet} ${opus} ${fable}`);
 
   // And the figures themselves, in cents. The derivation above cannot
   // catch a wrong PROFILE, because it uses the same one; these are the
@@ -64,20 +71,121 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
   // estimateCents keeps two decimals of a cent so that a sub-cent model is
   // not flattened to zero, so pin the figure as a PERSON reads it: rounded
   // to the cent, in dollars. A change to the profile or to a published
-  // price has to be a deliberate edit here.
+  // price has to be a deliberate edit here, and to the figures the comment
+  // above TYPICAL_CHANGE states.
   const shown = (c) => `$${(c / 100).toFixed(2)}`;
   assert.deepEqual(
     { deepseek: shown(deepseek), glm: shown(glm), sonnet: shown(sonnet),
       opus: shown(opus), fable: shown(fable) },
-    { deepseek: '$0.21', glm: '$0.30', sonnet: '$6.20',
-      opus: '$12.40', fable: '$31.00' },
-    'at 2.5M in / 120k out, these are the five figures the picker states',
+    { deepseek: '$0.21', glm: '$0.15', sonnet: '$1.99',
+      opus: '$3.50', fable: '$8.16' },
+    'at 2.5M in (95% cache reads, 5% cache writes) / 120k out, these are the five figures the picker states',
   );
+  const src = read('src/services/model-costs.js');
+  assert.match(src, /about \$0\.15 on\n\/\/ GLM 5\.3 Flash, \$0\.21 on DeepSeek v4\.1 Flash, \$1\.99 on Sonnet 5\.5, \$3\.50 on\n\/\/ Opus 5\.5 and \$8\.16 on Fable 5\.1/,
+    'the comment that states what a typical change costs says the same five figures');
+});
+
+test('a typical change is mostly cache reads, and the constant says by how much and from where', () => {
+  const t = modelCosts.TYPICAL_CHANGE;
+  // inputTokens counts every prompt token; the cached parts are shares of
+  // it, as agent_turns counts them, never added to it.
+  assert.deepEqual(
+    { cachedInputTokens: t.cachedInputTokens, cacheWriteInputTokens: t.cacheWriteInputTokens },
+    modelCosts.cacheSplit(t.inputTokens, modelCosts.DOCUMENTED_CACHE_SHARES),
+  );
+  assert.ok(t.cachedInputTokens + t.cacheWriteInputTokens <= t.inputTokens);
+  assert.deepEqual({ ...modelCosts.DOCUMENTED_CACHE_SHARES }, { read: 0.95, write: 0.05 });
+  // The constant sits BELOW the share it cites, so it errs high: App bench
+  // run 7's GLM 5.3 Flash builds ran 10.41M of 10.69M, and 8.13M of 8.37M,
+  // as cache reads.
+  for (const [cached, input] of [[10.41, 10.69], [8.13, 8.37]]) {
+    assert.ok(cached / input > modelCosts.DOCUMENTED_CACHE_SHARES.read, `${cached}/${input}`);
+  }
+  const src = read('src/services/model-costs.js');
+  assert.match(src, /App\n\/\/ bench run 7's GLM 5\.3 Flash builds ran 97-98% cache reads/, 'the comment cites the measurement');
+
+  // A share never claims more input than there is.
+  assert.deepEqual(modelCosts.cacheSplit(1000, { read: 0.9, write: 0.5 }),
+    { cachedInputTokens: 900, cacheWriteInputTokens: 100 });
+  assert.deepEqual(modelCosts.cacheSplit(1000, { read: 2, write: 1 }),
+    { cachedInputTokens: 1000, cacheWriteInputTokens: 0 });
+  assert.deepEqual(modelCosts.cacheSplit(1000, { read: null, write: undefined }),
+    { cachedInputTokens: 0, cacheWriteInputTokens: 0 });
+});
+
+test('cache reads and writes are priced at their own rates, and at the prompt rate without one', () => {
+  const profile = {
+    inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 0,
+  };
+  const prompt = { inputPricePerMillion: 2, outputPricePerMillion: 10 };
+  // No cache rates: every input token at the prompt rate, as before.
+  assert.equal(modelCosts.estimateCents(prompt, profile), 200);
+  // Reads only (GLM's shape): 50k uncached + 50k writes at $2, 900k reads at $0.40.
+  assert.equal(modelCosts.estimateCents({ ...prompt, cacheReadPricePerMillion: 0.4 }, profile), 56);
+  // Both (Anthropic's shape): 50k at $2, 900k at $0.20, 50k at $2.50.
+  assert.equal(modelCosts.estimateCents(
+    { ...prompt, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 }, profile,
+  ), 40.5);
+  // A free cache read is a price; a malformed one is not.
+  assert.equal(modelCosts.estimateCents({ ...prompt, cacheReadPricePerMillion: 0 }, profile), 20);
+  assert.equal(modelCosts.estimateCents({ ...prompt, cacheReadPricePerMillion: 'x' }, profile), 200);
+  // Parts that claim more than the input are cut to it; no token is priced
+  // twice and the uncached remainder never goes negative.
+  assert.equal(modelCosts.estimateCents(
+    { ...prompt, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 },
+    { inputTokens: 1_000_000, cachedInputTokens: 2_000_000, cacheWriteInputTokens: 500_000, outputTokens: 0 },
+  ), 20);
+});
+
+test('a forecast prices tokens exactly the way the turn ledger records them', () => {
+  // agent-turn.js estimateRequestedModelCost is what a turn's cost is
+  // recorded at; the estimate is read against those records, so the two
+  // must agree on the same tokens and the same prices.
+  const agentTurn = require('../src/services/agent-turn');
+  const prices = [
+    { inputPricePerMillion: 0.15, outputPricePerMillion: 0.5, cacheReadPricePerMillion: 0.03 },
+    { inputPricePerMillion: 4, outputPricePerMillion: 20, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 5 },
+    { inputPricePerMillion: 2, outputPricePerMillion: 10 },
+    { inputPricePerMillion: 1, outputPricePerMillion: 2, cacheWritePricePerMillion: 1.25 },
+  ];
+  const profiles = [
+    modelCosts.TYPICAL_CHANGE,
+    { inputTokens: 10_690_000, cachedInputTokens: 10_410_000, cacheWriteInputTokens: 0, outputTokens: 60_100 },
+    { inputTokens: 300, cachedInputTokens: 900, cacheWriteInputTokens: 100, outputTokens: 7 },
+  ];
+  for (const pricing of prices) {
+    for (const profile of profiles) {
+      const ledger = agentTurn.estimateRequestedModelCost(profile, { available: true, ...pricing });
+      const forecast = modelCosts.tokenCostUsd(pricing, profile);
+      assert.ok(Math.abs(ledger.estimatedCostUsd - forecast) < 1e-8,
+        `${JSON.stringify(pricing)} ${JSON.stringify(profile)}: ledger ${ledger.estimatedCostUsd}, forecast ${forecast}`);
+    }
+  }
+});
+
+test('the published prices are OpenRouter\'s catalog, cache prices included (2026-10-07)', () => {
+  // Read from GET https://openrouter.ai/api/v1/models on 2026-10-07. A
+  // change to any of these is a change to what the picker states, so it is a
+  // deliberate edit here, with the date.
+  const table = {};
+  for (const id of [...modelCosts.curatedModelIds(), 'claude-opus-5', 'claude-sonnet-5']) {
+    table[id] = { ...modelCosts.publishedPricing(id) };
+  }
+  assert.deepEqual(table, {
+    'claude-sonnet-5-5': { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 },
+    'claude-opus-5-5': { inputPricePerMillion: 4, outputPricePerMillion: 20, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 5 },
+    'claude-fable-5-1': { inputPricePerMillion: 10, outputPricePerMillion: 50, cacheReadPricePerMillion: 0.25, cacheWritePricePerMillion: 12.5 },
+    'z-ai/glm-5.3-flash': { inputPricePerMillion: 0.15, outputPricePerMillion: 0.5, cacheReadPricePerMillion: 0.03 },
+    'deepseek/deepseek-v4.1-flash': { inputPricePerMillion: 0.05, outputPricePerMillion: 1.2, cacheReadPricePerMillion: 0.024 },
+    'claude-opus-5': { inputPricePerMillion: 5, outputPricePerMillion: 25, cacheReadPricePerMillion: 0.5, cacheWritePricePerMillion: 6.25 },
+    'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 },
+  });
 });
 
 test('the retired Opus 5 keeps its price for recorded history, but is not offered (#2818)', () => {
   assert.deepEqual(modelCosts.publishedPricing('claude-opus-5'),
-    { inputPricePerMillion: 5, outputPricePerMillion: 25 });
+    { inputPricePerMillion: 5, outputPricePerMillion: 25, cacheReadPricePerMillion: 0.5, cacheWritePricePerMillion: 6.25 });
   assert.ok(!modelCosts.curatedModelIds().includes('claude-opus-5'),
     'the picker and the admin table do not list it as a curated model');
   assert.ok(modelCosts.curatedModelIds().includes('claude-opus-5-5'));
@@ -85,9 +193,9 @@ test('the retired Opus 5 keeps its price for recorded history, but is not offere
 
 test('the retired Sonnet 5 keeps its price for recorded history, but is not offered (#3579)', () => {
   assert.deepEqual(modelCosts.publishedPricing('claude-sonnet-5'),
-    { inputPricePerMillion: 2, outputPricePerMillion: 10 });
+    { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 });
   assert.deepEqual(modelCosts.publishedPricing('claude-sonnet-5-5'),
-    { inputPricePerMillion: 2, outputPricePerMillion: 10 });
+    { inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5 });
   assert.ok(!modelCosts.curatedModelIds().includes('claude-sonnet-5'),
     'the picker and the admin table do not list it as a curated model');
   assert.ok(modelCosts.curatedModelIds().includes('claude-sonnet-5-5'));
@@ -144,11 +252,24 @@ test('the token profile is measured when there is enough history, and named eith
   const enough = poolFor([[/FROM agent_turns/, [{
     changes: String(modelCosts.MIN_SESSIONS_FOR_PROFILE),
     input_tokens: '300000', output_tokens: '20000',
+    cache_read_share: '0.9', cache_write_share: '0.04',
   }]]]);
   assert.deepEqual(await modelCosts.typicalChange(enough), {
-    inputTokens: 300000, outputTokens: 20000, source: 'recorded_usage',
+    inputTokens: 300000, cachedInputTokens: 270000, cacheWriteInputTokens: 12000,
+    outputTokens: 20000, source: 'recorded_usage',
     changes: modelCosts.MIN_SESSIONS_FOR_PROFILE,
   });
+
+  // A history with no cached share recorded is priced at the prompt rate,
+  // the dearer reading, rather than borrowing the constant's share.
+  const uncached = poolFor([[/FROM agent_turns/, [{
+    changes: '40', input_tokens: '300000', output_tokens: '20000',
+    cache_read_share: null, cache_write_share: null,
+  }]]]);
+  const plain = await modelCosts.typicalChange(uncached);
+  assert.equal(plain.source, 'recorded_usage');
+  assert.equal(plain.cachedInputTokens, 0);
+  assert.equal(plain.cacheWriteInputTokens, 0);
 
   // Too few changes for a median to mean anything: the constant, and it
   // says so.
@@ -158,11 +279,47 @@ test('the token profile is measured when there is enough history, and named eith
   const fallback = await modelCosts.typicalChange(thin);
   assert.equal(fallback.source, 'documented_constant');
   assert.equal(fallback.inputTokens, modelCosts.TYPICAL_CHANGE.inputTokens);
+  assert.equal(fallback.cachedInputTokens, modelCosts.TYPICAL_CHANGE.cachedInputTokens);
 
   // And a read that fails is the constant too, never a throw: this feeds a
   // picker, not a gate.
   const broken = { async query() { throw new Error('db down'); } };
   assert.equal((await modelCosts.typicalChange(broken)).source, 'documented_constant');
+});
+
+test('input is every prompt token, counted once: the cache counts are parts of it, never added to it', async () => {
+  // agent_turns.input_tokens already includes a turn's cache reads and
+  // writes on every path. The profile once summed all three, which put a
+  // typical change at nearly twice the input it had
+  // (tests/model-costs-postgres.test.js pins it against real rows).
+  const pool = poolFor([[/per_change/, [{ changes: '40', input_tokens: '9', output_tokens: '3' }]]]);
+  await modelCosts.typicalChange(pool, { days: 30 });
+  const sql = pool.calls[0].sql;
+  assert.match(sql, /SUM\(input_tokens\) AS input_tokens/);
+  assert.doesNotMatch(sql, /input_tokens\s*\+|\+\s*cached_input_tokens|\+\s*cache_write_input_tokens/,
+    'no cache count is added to input_tokens');
+  // The shares are each change's own, and a change with no input has none.
+  assert.match(sql, /cached_input_tokens::float8 \/ NULLIF\(input_tokens, 0\)/);
+  assert.match(sql, /cache_write_input_tokens::float8 \/ NULLIF\(input_tokens, 0\)/);
+});
+
+test('the picker and the console are told the profile’s cached parts', async () => {
+  const pool = poolFor([[/FROM agent_turns/, [{ changes: '0' }]]]);
+  const picker = await modelCosts.pickerPayload(pool);
+  assert.deepEqual(picker.typicalChange, {
+    inputTokens: 2_500_000, cachedInputTokens: 2_375_000, cacheWriteInputTokens: 125_000,
+    outputTokens: 120_000, source: 'documented_constant',
+  });
+  const admin = await modelCosts.adminPayload(pool, { days: 30 });
+  assert.equal(admin.typicalChange.cachedInputTokens, 2_375_000);
+  assert.equal(admin.typicalChange.cacheWriteInputTokens, 125_000);
+  // And the console's paragraph says how much of the input is cached, and
+  // what a cache token is priced at.
+  const src = read('frontend/src/features/admin/admin-model-costs.tsx');
+  assert.match(src, /% of it cache reads/);
+  assert.match(src, /Cache reads and writes are priced at the model’s own cache rates where it publishes them/);
+  // The route's fallback is the same constant, cached parts and all.
+  assert.match(read('src/routes/chat.js'), /res\.json\(\{ typicalChange: modelCosts\.TYPICAL_CHANGE, models: \{\} \}\)/);
 });
 
 // ── 3. Observed spend is per CHANGE ─────────────────────────────────────
@@ -450,6 +607,20 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   assert.equal(DevChat._modelCostNote('tiny/model', null).compact,
     'trivial edits · about <$0.01 for a typical change');
 
+  // A model the platform does not curate is priced here, from the viewer's
+  // catalog, with the server's arithmetic: its cached share at the cache
+  // rates the catalog lists, at the prompt rate without them.
+  DevChat._modelNotes.typicalChange = { ...modelCosts.TYPICAL_CHANGE };
+  const sonnetOnOpenRouter = {
+    inputPricePerMillion: 2, outputPricePerMillion: 10,
+    cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5,
+  };
+  assert.equal(DevChat._modelCostNote('anthropic/claude-sonnet-5.5', sonnetOnOpenRouter).estimate,
+    `$${(modelCosts.estimateCents(sonnetOnOpenRouter) / 100).toFixed(2)}`);
+  assert.equal(DevChat._modelCostNote('anthropic/claude-sonnet-5.5', sonnetOnOpenRouter).estimate, '$1.99');
+  assert.equal(DevChat._modelCostNote('plain/model', { inputPricePerMillion: 2, outputPricePerMillion: 10 }).estimate,
+    '$6.20', 'no cache prices in the catalog: every input token at the prompt rate');
+
   // The admin table's cells are bare, so its headers carry the unit.
   const admin = read('frontend/src/features/admin/admin-model-costs.tsx');
   // And the profile it prints reads as millions: a typical change is 2.5M
@@ -463,6 +634,33 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   }
   assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
     'the save confirmation uses the phrase too');
+});
+
+test('the agent-session picker prices a catalog model the way the server does', () => {
+  const { loadTsx } = require('./lib/render-tsx');
+  const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
+  const profile = { ...modelCosts.TYPICAL_CHANGE };
+  const models = [
+    { id: 'z-ai/glm-5.3-flash', ...modelCosts.publishedPricing('z-ai/glm-5.3-flash') },
+    { id: 'anthropic/claude-opus-5.5', ...modelCosts.publishedPricing('claude-opus-5-5') },
+    { id: 'plain/model', inputPricePerMillion: 1, outputPricePerMillion: 4 },
+    { id: 'write/only', inputPricePerMillion: 1, outputPricePerMillion: 4, cacheWritePricePerMillion: 1.25 },
+  ];
+  for (const model of models) {
+    assert.equal(choice.typicalChangeCents(profile, model), modelCosts.estimateCents(model, profile), model.id);
+  }
+  // An older server's profile has no cached parts: the prompt-rate figure.
+  assert.equal(choice.typicalChangeCents({ inputTokens: 2_500_000, outputTokens: 120_000 }, models[1]), 1240);
+  assert.equal(choice.typicalChangeCents(profile, { id: 'x', inputPricePerMillion: null, outputPricePerMillion: 1 }), null);
+
+  // The catalog the picker reads carries the cache prices the shared
+  // catalog keeps off its own JSON, and api.ts keeps the profile's parts.
+  const routes = read('src/routes/credentials.js');
+  assert.match(routes, /cacheReadPricePerMillion: model\.cacheReadPricePerMillion/);
+  assert.match(routes, /cacheWritePricePerMillion: model\.cacheWritePricePerMillion/);
+  const api = read('frontend/src/features/agent-session/api.ts');
+  assert.match(api, /cachedInputTokens: cached/);
+  assert.match(api, /cacheWriteInputTokens: written/);
 });
 
 test('the observed unit matches the estimate’s unit', async () => {

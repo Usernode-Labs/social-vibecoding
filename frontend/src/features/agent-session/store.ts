@@ -34,6 +34,7 @@ import { useRef, useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
@@ -265,6 +266,9 @@ const seen = new Set<string>();
 // The hint the next `new` open starts from: undefined when nothing has been
 // prepared (a reload of `#agent/new`, or the same draft routed again).
 let pendingHint: AgentHint | null | undefined;
+// The hand-off a shared `?flow=claude-code|codex` link asked for (#4312): the
+// next conversation opened, sent or not, opens "Build with" on that tab.
+let pendingHandoff: HandoffAgent | null = null;
 let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
@@ -393,9 +397,9 @@ export function useAgentSessions(): AgentSession[] {
 }
 
 /**
- * Whether the Homeroom menu shows its Agent chats section (Build it yourself
+ * Whether the Homeroom menu shows its Agent chats section (Build it now
  * and your sessions): once the viewer has had an agent session, from any
- * door (the hub's ⋯, a request's Build it yourself, Messages' new chat, the
+ * door (the hub's ⋯, a request's Build it now, Messages' new chat, the
  * filed request's link). A first-time user's menu stays short (first-session
  * run-through, 5 Oct 2026). A listed session counts at once, so the section
  * is there from the moment the first one is created.
@@ -880,7 +884,8 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // It is also the moment a screen is most likely behind (the user tapped
   // the conversation again, or came back to it): read it.
   if (state.id === id && state.open) {
-    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    const handoff = takeHandoff();
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen, ...(handoff ? { handoff } : {}) });
     syncTitle();
     applyCarriedPane();
     // Still loading: that read is this one's too.
@@ -898,7 +903,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     error: '',
     drawerOpen: drawer,
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
-    credits: null, handoff: null, attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
+    credits: null, handoff: takeHandoff(), attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
   });
   syncTitle();
   seen.clear();
@@ -920,6 +925,27 @@ export function prepareAgentDraft(hint: AgentHint | null | undefined) {
   pendingHint = hint || null;
 }
 
+/** A `?flow=` value as a hand-off agent, or null for anything else. */
+export function handoffFromFlow(value: unknown): HandoffAgent | null {
+  return value === 'claude-code' || value === 'codex' ? value : null;
+}
+
+/**
+ * A shared link's `?flow=claude-code|codex` (#4312, app.js's router): the
+ * next conversation opened, whichever address and host it is drawn at, opens
+ * its "Build with" sheet on that agent's tab, as the in-app doors do.
+ * Unknown values are ignored.
+ */
+export function prepareHandoff(flow: unknown) {
+  pendingHandoff = handoffFromFlow(flow);
+}
+
+function takeHandoff(): HandoffAgent | null {
+  const agent = pendingHandoff;
+  pendingHandoff = null;
+  return agent;
+}
+
 /**
  * Show an unsent conversation. A freshly prepared hint starts a new draft;
  * routing the one already on screen again (a resize, a same-address
@@ -933,13 +959,15 @@ function openDraft(host: AgentSessionHost) {
   // call's preview then still lands, and the bar names the app instead of
   // staying on "Any app".
   if (!fresh && state.open && state.id === null && state.draft) {
-    publish({ host });
+    const handoff = takeHandoff();
+    publish({ host, ...(handoff ? { handoff } : {}) });
     syncTitle();
     return;
   }
   const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
+  const linked = takeHandoff();
   // Started from a request (Start work), or handed a message (Global Chat,
   // Explore): the box offers that first message (the composer reads it off
   // the hint, ./request-seed.ts), not the text an earlier unsent
@@ -972,8 +1000,9 @@ function openDraft(host: AgentSessionHost) {
     attachments: dropAllAttachments(),
     credits: null,
     // The out-of-credits card's "Use Claude Code" / "Use Codex" opens the
-    // conversation on its "Build with" tab (AppView.createProposal).
-    handoff: hint?.handoff === 'claude-code' || hint?.handoff === 'codex' ? hint.handoff : null,
+    // conversation on its "Build with" tab (AppView.createProposal), and so
+    // does a shared `?flow=` link (prepareHandoff).
+    handoff: linked || handoffFromFlow(hint?.handoff),
     outbox: [],
     version: null,
   });
@@ -1180,8 +1209,8 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
 /** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
 export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
   if (state.session?.status === 'archived') return;
-  const { accepted, error } = acceptFiles(state.attachments.length, files);
-  if (error) toast(error);
+  const { accepted, error, refusedCount } = acceptFiles(state.attachments.length, files);
+  if (error) toast(refusalSummary(error, refusedCount - 1));
   if (!accepted.length) return;
   const id = state.id;
   const added: PendingFile[] = accepted.map((file) => {
@@ -1883,7 +1912,7 @@ export async function openSpec(changeId: number, version: number | null = null) 
     if (ticket !== specRequest) return;
     publish((current) => ({
       specSheet: current.specSheet
-        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the plan.') }
         : null,
     }));
   }
@@ -2234,6 +2263,7 @@ export const agentSessionController = {
   route: (id: AgentSessionTarget, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
   start: (hint: AgentHint | null = null) => startAgentSession(hint),
   prepareDraft: prepareAgentDraft,
+  prepareHandoff,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
   /** The conversation on screen: its id, `new` while it is unsent, or null. */

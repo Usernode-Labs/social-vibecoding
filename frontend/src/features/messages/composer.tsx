@@ -8,6 +8,8 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { DropOverlay, useFileDrag } from '../attachments/file-drag';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
@@ -79,7 +81,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [focusWanted, setFocusWanted] = useState(false);
   const stagedCard = useStagedCard(object);
   const [error, setError] = useState('');
-  const [dragging, setDragging] = useState(false);
+  // #4065: the shared drop zone (features/attachments/file-drag.tsx). Its
+  // depth count keeps the outline steady while the pointer crosses the card's
+  // own controls, where a leave from any child used to clear it.
+  const drop = useFileDrag({ onFiles: (files) => { void addFiles(files); } });
+  const dragging = drop.dragging;
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
   // which — two guesses at a 40px target, on the narrowest row in the app.
@@ -393,12 +399,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
     const selected = files.slice(0, room);
     if (!selected.length) { setError(`You can attach up to ${MAX_ATTACHMENTS} files.`); return; }
+    // #4065: one line for every file left out — the first reason, and how
+    // many more went with it. The files past the room used to go silently.
+    const tooLarge = selected.filter((file) => file.size > attachmentLimit(file));
+    const cut = files.length - selected.length;
+    const firstReason = tooLarge.length
+      ? `${tooLarge[0].name} is too large for this file type.`
+      : (cut ? `You can attach up to ${MAX_ATTACHMENTS} files.` : '');
+    const refused = refusalSummary(firstReason, tooLarge.length + cut - 1);
+    setError(refused);
     for (const file of selected) {
-      if (file.size > attachmentLimit(file)) {
-        setError(`${file.name} is too large for this file type.`);
-        continue;
-      }
-      setUploading((count) => count + 1); setError('');
+      if (tooLarge.includes(file)) continue;
+      setUploading((count) => count + 1); setError(refused);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
         setAttachments((items) => [...items, attachment]);
@@ -480,7 +492,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const nearLimit = value.length > 7600;
 
   return (
-    <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+    <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} {...drop.handlers}>
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
@@ -533,13 +545,13 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      {/* The count's line is always laid out, empty or not: it appearing
-          with the first keystroke pushed the whole composer up by a line.
-          On a phone (#3735) it is not laid out at all until the text nears
-          the limit (`data-near-limit`, app.css), so the card stays one row. */}
+      {/* The count's line is not laid out until the text nears the limit
+          (`data-near-limit`, app.css): on a phone since #3735, and at every
+          width since #4202, so the card stays one row and the first
+          keystroke does not push the composer up by a line. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
-      {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
+      {dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </div>
   );
 }

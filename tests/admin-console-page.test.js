@@ -125,12 +125,19 @@ test('the console island imports every admin module, console first', () => {
     .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-analytics',
+    // How the Homeroom bot builds first versions, and how each configuration measures up.
+    'admin-bot-configs',
+    'admin-campaigns', 'admin-codes', 'admin-db-export',
+    // #4405: every custom domain a project has claimed.
+    'admin-domains',
     'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
     'admin-gallery',
     // #2684: the Homeroom bot's shadow-mode verdicts and their ratings.
     'admin-homeroom-bot',
     // #3369: Journey, the user journey and the North Star.
+    // #4296: Unexpected events, beside Health & status.
+    'admin-incidents',
     'admin-journey',
     'admin-limits', 'admin-mail', 'admin-merges',
     // #2570: Model costs, where the picker's per-model notes and cost
@@ -142,6 +149,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-sign-in',
     // The watch-only small-change tag's verdicts.
     'admin-small-changes',
+    // #4128: SMS delivery, a test text through Firebase Phone Auth.
+    'admin-sms',
     'admin-staging-reap',
     // #2253: App storage, the per-app database cap's console section.
     'admin-status', 'admin-storage',
@@ -152,6 +161,8 @@ test('the console island imports every admin module, console first', () => {
     'admin-topochain', 'admin-users',
     // Welcome messages: the group and first message somebody let in gets.
     'admin-welcome-dm',
+    // The workflow machines: problems, instances and timelines.
+    'admin-workflows',
   ], 'every section module is imported by the island');
 });
 

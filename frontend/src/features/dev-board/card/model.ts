@@ -158,7 +158,9 @@ export interface ActionSpec {
   /**
    * B7: on the Yes spec of a change, the project is just the viewer's and
    * their Yes is the one it needs: there is nobody to vote with, so the
-   * button is one tap, "Approve", and its No is "Don't approve" in ⋯.
+   * button reads "Approve" and its picker's sides "Approve" / "Don't
+   * approve". It opens the same picker a group's vote does (#3977; it was
+   * one tap, with "Don't approve" only in ⋯).
    */
   approve?: boolean;
   /**
@@ -175,7 +177,7 @@ export type BadgeSpec =
    *  `meta` rides the META LINE with the priority/assignee/category tags
    *  instead of the facts row — see metaLineNodes. The status tags set it, so
    *  the status row is left to the vote and its button alone. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; progress?: ChecksProgress; data?: Record<string, string> }
   /** The same chip with a click — the work-state chip that opens its target. */
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
@@ -349,6 +351,70 @@ export interface FeedThreadRef {
   ref: number;
 }
 
+/** One small tag on a Workshop row: what is happening on the item. */
+/**
+ * How far a check run is (#4499): drawn as a thin bar inside the checks
+ * chip. `text` is the count in words ("619 of 732 checks done"), the bar's
+ * accessible name. Present for the whole run (#4628): counted once the run
+ * knows its total, indeterminate before that — the bar pulses instead of
+ * filling.
+ */
+export interface ChecksProgress {
+  done: number;
+  total: number;
+  /** True until the run knows its total: a pulsing bar, not a filling one. */
+  indeterminate?: boolean;
+  text: string;
+}
+
+export interface RowTag {
+  label: string;
+  tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
+  glyph?: 'eye' | 'lock';
+  /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
+   *  the chip's tooltip and what a screen reader says. */
+  short?: string;
+  title?: string;
+  progress?: ChecksProgress;
+}
+
+/**
+ * The Workshop tab's row, resolved (#4457): the facts its one line of words
+ * is made of, its tags, and on a change up for a vote, the vote. The card
+ * stays the source of the item's hooks and its Yes/No specs.
+ */
+export interface RowBrief {
+  /** The neutral tile's glyph. */
+  kind: 'request' | 'change' | 'live' | 'vote';
+  noun: string;
+  n: number | null;
+  /** Who made it ('' when nobody is named). */
+  by: string;
+  /** The viewer made it. */
+  mine: boolean;
+  /** Homeroom bot built it from a request made for the viewer (#4538). */
+  requested: boolean;
+  category: string;
+  replies: number;
+  /** The requests a change addresses ("for #4455"). */
+  linked: number[];
+  /** The requests a live change closed. */
+  closed: number[];
+  /** Where it is, for a week's groups. */
+  stage: 'request' | 'worked' | 'vote' | 'live';
+  /** When it was made (epoch ms; 0 when unknown). */
+  at: number;
+  /**
+   * The card's own age, as its meta line says it ("11h ago"), for the row's
+   * line in words (#4486). '' when the card names no time.
+   */
+  ago: string;
+  tags: RowTag[];
+  /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
+  vote: { yes: number; need: number; ask: boolean } | null;
+}
+
 export type ListRow =
   | {
     t: 'card';
@@ -371,6 +437,8 @@ export type ListRow =
     summary?: string | null;
     /** The server has themes but has not placed this card into one yet. */
     placing?: boolean;
+    /** What the Workshop tab's row says about it, in words (#4457, AppView._workshopBrief). */
+    brief?: RowBrief;
     /**
      * Which item the Needs-you deck's ask box is asking about — an ADDRESS,
      * never content. The server resolves the kind/ref pair against this
@@ -429,6 +497,12 @@ export interface WorkshopTheme {
   ungrouped?: boolean;
   /** On the pseudo-theme: how many of its cards are being placed now. */
   placing?: number;
+  /**
+   * #4417: one of the project's TOPICS (dapp.json `topics`): its category
+   * key and its channel's handle. By category draws topics first, under
+   * their own heading, each with a way into its channel.
+   */
+  topic?: { key: string; handle: string };
 }
 
 export interface DevWorkshopView {
@@ -446,8 +520,11 @@ export interface DevWorkshopView {
    * which says "Nothing here matches" from `meta.filtered` itself.
    */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
-  /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | null;
+  /**
+   * Which place a `?ws=` deep link asked for; null for the viewer's own
+   * choice. A topic's channel is `c:<handle>` (#4417).
+   */
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | `c:${string}` | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -463,7 +540,12 @@ export interface DevWorkshopView {
   queue: (ListRow & {
     kind: 'vote' | 'claim';
     ask: string;
-    yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    /**
+     * `approve` (#3977): a change on a project that is just yours whose Yes
+     * is the one it needs (ActionSpec.approve, B7): the item reads Approve
+     * and Don't approve instead of a vote.
+     */
+    yes: { label: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
     no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;
@@ -488,6 +570,21 @@ export interface DevWorkshopView {
      * when there is none.
      */
     descriptionHtml?: string;
+    /**
+     * #4490: the picture a change shows when it has no before & after shots,
+     * in this order: its author's diagram (services/diagram.js, drawn by
+     * lib/diagram), a group decision's own facts drawn the same way, then
+     * "What it touches" (services/proposal-touches.js). Each is untyped
+     * here and read defensively where it is drawn.
+     */
+    diagram?: unknown;
+    /** Who supplied `diagram`: its author. */
+    diagramSource?: string | null;
+    /** A group decision's facts its diagram is drawn from (lib/diagram/decision.ts). */
+    decision?: unknown;
+    touches?: unknown;
+    /** The author declared that nothing on screen changes (visible changes impact "none"). */
+    nothingVisible?: boolean;
     /**
      * The item's picture: the first before/after capture pair the checks
      * shot, one still per side. Null when there is none, and the feed then

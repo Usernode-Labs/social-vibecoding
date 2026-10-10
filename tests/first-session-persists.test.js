@@ -253,10 +253,18 @@ test('Make it and "Look around first" each end it: on the account, the shell\'s 
 
   const src = read(ISLAND);
   assert.match(src, /onMade=\{\(made\) => \{ noteAnswered\(\); setMode\(\{ kind: 'made', made \}\); \}\}/);
-  assert.match(src, /onLookAround=\{\(\) => \{\s+noteAnswered\(\);\s+void recordLookAround\(\);\s+setMode\(\{ kind: 'none' \}\);\s+legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+\}\}/);
+  // "Look around first" goes Home and opens its own short tour there (decision E).
+  // (A ?shot= screenshot state closes first and records nothing: tests/first-session-make.test.js.)
+  assert.match(src, /onLookAround=\{\(\) => \{\s+if \(shot\) \{ setMode\(\{ kind: 'none' \}\); return; \}\s+noteAnswered\(\);\s+void recordLookAround\(\);\s+legacy\(\)\.App\?\.navigateHome\?\.\(\);\s+setMode\(\{ kind: 'tour', info: LOOK_AROUND_INFO, path: 'look' \}\);\s+\}\}/);
   // The snapshot's screen is taken down only while it is still the make
   // screen: what Make it led to stays.
-  assert.match(src, /dismissMake\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'make' \? \{ kind: 'none' \} : prev\)\);/);
+  // Nor the Create button's make screen, which nobody owes an answer to.
+  assert.match(src, /dismissMake\(\): void \{\s+setMode\(\(prev\) => \(prev\.kind === 'make' && prev\.entry !== 'create' \? \{ kind: 'none' \} : prev\)\);/);
+  // Made from Create, nothing is answered: the first session's question
+  // stays the first session's (noteAnswered only on its own door).
+  const fromCreate = src.slice(src.indexOf("if (mode.kind === 'make' && mode.entry === 'create') {"), src.indexOf("if (mode.kind === 'make') {"));
+  assert.ok(fromCreate.length > 0, 'the Create door has its own branch');
+  assert.doesNotMatch(fromCreate, /noteAnswered|recordLookAround/);
 });
 
 test('the admin Journey page says where somebody sits who was asked what to make and has not said', () => {

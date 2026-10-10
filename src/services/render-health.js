@@ -124,7 +124,7 @@ async function maybeBuildRenderHealthRow({ pool, appId, sessionId = null, frames
     let graduated = false;
     if (!verdict.passed) {
       try {
-        graduated = (await checkHistory.loadGraduated(pool, appId))
+        graduated = (await checkHistory.loadGraduated(pool, appId, { sessionId }))
           .has(appManifest.checkKey(RENDER_CHECK_NAME, RENDER_CHECK_PATH));
       } catch (err) {
         log.warn('render-health', 'Graduation lookup failed — treating as advisory', {

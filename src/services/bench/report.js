@@ -21,7 +21,10 @@
 const graders = require('./graders');
 const stats = require('./stats');
 
-const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source']);
+// `template`: the starter a first-version task's first commit came from
+// (services/bench/taste.js tagsFor), so with and without a game starter
+// read side by side.
+const SLICE_KEYS = Object.freeze(['verdict', 'repo_size', 'request_type', 'difficulty', 'app_slug', 'known_outcome', 'answer_source', 'template']);
 // A first version (#3737) is built `repeats` times, so pass^k reads how
 // reliably each brief comes out well, as the research behind it asks.
 const REPEATED_STAGES = Object.freeze(['triage', 'dm', 'followup', 'checks_fix', 'first_version']);
@@ -59,6 +62,24 @@ function sliceGroups(trials, key) {
   return slices;
 }
 
+/**
+ * A trial's ARM: its model, or for the App bench studio (services/bench/
+ * studio.js) its model with its context pack ("<model> + <pack> v<n>"), or
+ * a reference build's label (its model, "reference:<label>"). A run with no
+ * packs and no references has exactly one arm per model, as before. Pure.
+ */
+function armKey(t) {
+  const pack = t.context_pack_id ? ` + ${t.pack_name || `pack ${t.context_pack_id}`}${t.pack_version ? ` v${t.pack_version}` : ''}` : '';
+  return `${t.model}${pack}`;
+}
+
+/** The arms a stage's trials ran in: the run's models first, as launched, then the rest in order. Pure. */
+function armsOf(models, trials) {
+  const present = [...new Set(trials.map((t) => t.arm || t.model))];
+  const first = (models || []).filter((m) => present.includes(m));
+  return [...first, ...present.filter((a) => !first.includes(a)).sort()];
+}
+
 async function runTrials(pool, runId) {
   const { rows } = await pool.query(
     `SELECT tr.id, tr.task_id, tr.model, tr.attempt, tr.status, tr.cost_usd::float8 AS cost_usd,
@@ -67,11 +88,13 @@ async function runTrials(pool, runId) {
             tk.stage, tk.tags, tk.issue_number, a.slug AS app_slug,
             tk.reference->'dm_script'->>'source' AS dm_answer_source,
             CASE WHEN tk.stage IN ('first_version', 'capture') THEN tr.capture END AS capture,
-            CASE WHEN tk.stage IN ('first_version', 'capture') THEN sn.extra->>'appName' END AS taste_app_name
+            CASE WHEN tk.stage IN ('first_version', 'capture') THEN sn.extra->>'appName' END AS taste_app_name,
+            tr.context_pack_id, tr.reference_label, p.name AS pack_name, p.version AS pack_version
        FROM bench_trials tr
        JOIN bench_tasks tk ON tk.id = tr.task_id
        LEFT JOIN apps a ON a.id = tk.app_id
        LEFT JOIN homeroom_bot_run_snapshots sn ON sn.id = tk.snapshot_id
+       LEFT JOIN bench_context_packs p ON p.id = tr.context_pack_id
       WHERE tr.run_id = $1
       ORDER BY tr.id`,
     [Number(runId)],
@@ -93,6 +116,7 @@ async function runTrials(pool, runId) {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id)[0];
     return {
       ...t,
+      arm: armKey(t),
       appSlug: t.app_slug || '?',
       tags: t.tags || {},
       answerSource: answerSource(t),
@@ -172,7 +196,7 @@ function tasteTrials(trials) {
     return {
       trialId: t.id,
       stage: t.stage,
-      model: t.model,
+      model: t.arm || t.model,
       attempt: t.attempt,
       status: t.status,
       appSlug: t.appSlug,
@@ -265,22 +289,33 @@ async function runReport(pool, runId, { slice = 'verdict', trials: loaded = null
     const given = Math.max(1, ...ofStage.map((t) => Number(t.attempt) || 1));
     const k = REPEATED_STAGES.includes(stage) ? Math.min(run.repeats, given) : 1;
     if (!ofStage.length) continue;
-    const baseline = taskScores(ofStage.filter((t) => t.model === run.baseline_model));
-    for (const model of run.models) {
-      const mine = ofStage.filter((t) => t.model === model);
+    const armOf = (t) => t.arm || t.model;
+    const arms = armsOf(run.models, ofStage);
+    for (const arm of arms) {
+      const mine = ofStage.filter((t) => armOf(t) === arm);
       if (!mine.length) continue;
+      const reference = !!mine[0].reference_label;
       const row = {
-        stage, model, baseline: model === run.baseline_model, ...summarize(mine, { stage, k }),
+        stage, model: arm, baseline: arm === run.baseline_model, ...summarize(mine, { stage, k }),
         ...(stage === 'first_version' || stage === 'capture' ? { taste: tasteAggregates(mine) } : {}),
+        ...(reference ? { reference: true } : {}),
+        ...(mine[0].context_pack_id ? { packId: Number(mine[0].context_pack_id) } : {}),
       };
       rows.push(row);
-      points.push({ key: `${stage}|${model}`, stage, model, cost: row.costPerAttempt, accuracy: row.accuracy });
-      if (model !== run.baseline_model) {
-        const scores = taskScores(mine);
-        const pairs = [...scores].filter(([task]) => baseline.has(task))
-          .map(([task, s]) => ({ task, app: s.app, a: s.score, b: baseline.get(task).score }));
-        paired.push({ stage, model, baselineModel: run.baseline_model, ...stats.pairedDiff(pairs, { seed: 3654 + Number(runId) }) });
-      }
+      // A reference build is the target, never a candidate: it is shown
+      // beside the arms and kept out of the comparisons.
+      if (reference) continue;
+      points.push({ key: `${stage}|${arm}`, stage, model: arm, cost: row.costPerAttempt, accuracy: row.accuracy });
+      // Each arm against its own model without a pack when it has one (what
+      // the pack changed), else against the run's baseline.
+      const own = mine[0].context_pack_id && arms.includes(mine[0].model) ? mine[0].model : run.baseline_model;
+      if (arm === own) continue;
+      const base = taskScores(ofStage.filter((t) => armOf(t) === own));
+      if (!base.size && own !== run.baseline_model) continue;
+      const scores = taskScores(mine);
+      const pairs = [...scores].filter(([task]) => base.has(task))
+        .map(([task, s]) => ({ task, app: s.app, a: s.score, b: base.get(task).score }));
+      paired.push({ stage, model: arm, baselineModel: own, ...stats.pairedDiff(pairs, { seed: 3654 + Number(runId) }) });
     }
   }
   const frontier = new Set();
@@ -383,7 +418,7 @@ async function runAggregates(pool, runId, { slice = 'verdict', agreement = null 
   if (!report) return null;
   const frontier = new Set(report.pareto.filter((p) => p.frontier).map((p) => p.key));
   const cells = report.rows.map((r) => {
-    const mine = trials.filter((t) => t.stage === r.stage && t.model === r.model);
+    const mine = trials.filter((t) => t.stage === r.stage && (t.arm || t.model) === r.model);
     return {
       stage: r.stage,
       model: r.model,
@@ -470,6 +505,8 @@ module.exports = {
   FAILURE_STATUSES,
   CSV_COLUMNS,
   runTrials,
+  armKey,
+  armsOf,
   summarize,
   answerSource,
   sliceGroups,

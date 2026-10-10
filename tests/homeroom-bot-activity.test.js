@@ -50,10 +50,17 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   assert.equal(activity.outcomeOf({}), null, 'no run yet: still going');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready' })), null, 'a build not finished: still going');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted' })), 'proposed');
-  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merging' })), 'proposed');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merging' })), 'going_live',
+    '#4227: merged and not live yet is going live, with its spinner');
+  // #4242: not "waiting for approval" until its news (the ready card) went out.
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false })), 'checking');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: true })), 'proposed');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false, needs_look: true })), 'needs_look',
+    'nothing will offer it without a person, and its requester was told so');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merged' })), 'live');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'closed' })), 'closed');
-  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true })), 'proposed', 'built, its proposal a moment from recorded');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true })), 'checking', '#4242: built, no proposal recorded: never waiting for approval');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: true, needs_look: true })), 'needs_look');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'turn timed out' })), 'build_failed');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'blocked: needs a paid API' })), 'blocked');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request was closed before its build started' })), 'stopped',
@@ -65,7 +72,8 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
     assert.equal(activity.outcomeOf(run({ verdict })), verdict);
   }
   assert.equal(activity.outcomeOf(run({ verdict: 'something new' })), 'failed');
-  for (const outcome of ['question', 'proposed', 'live', 'closed', 'blocked', 'build_failed', 'person', 'empty', 'failed', 'held', 'stopped']) {
+  for (const outcome of ['question', 'proposed', 'live', 'closed', 'blocked', 'build_failed', 'person', 'empty', 'failed', 'held', 'stopped',
+    'checking', 'needs_look', 'going_live']) {
     assert.ok(activity.OUTCOMES.includes(outcome), outcome);
   }
 });
@@ -198,12 +206,11 @@ test('a card that joined work under way starts when that work began, not when th
 
 // ── Starting one ──
 
-function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
+function startDeps({ sendResult, sendThrows = false } = {}) {
   const sent = [];
   const queries = [];
   const pool = { async query(sql, params) { queries.push([String(sql), params]); return { rows: [] }; } };
   const dm = {
-    isDmUser: dmSvc.isDmUser,
     hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     async requestStart() { return 77; },
@@ -213,12 +220,13 @@ function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
       return sendResult === undefined ? { conversationId: 5, messageId: 900, duplicate: false } : sendResult;
     },
   };
-  return { pool, dm, sent, queries, settings: { dmUsers } };
+  return { pool, dm, sent, queries, settings: { mode: 'shadow' } };
 }
 
 const app = { id: 11, slug: 'ear-trainer', name: 'Ear Trainer' };
 const bot = { id: 1, username: 'homeroom_bot' };
-const ada = { userId: 7, username: 'ada', issueTitle: 'Sort by date', firstVersion: false };
+// The bot works for anybody Homeroom has let in (homeroom-bot-dm.js hasBot).
+const ada = { userId: 7, username: 'ada', hasPlatformAccess: true, issueTitle: 'Sort by date', firstVersion: false };
 
 test('starting work sends the requester ONE card, keyed by the queue row it was claimed from, and records it', async () => {
   const { pool, dm, sent, queries, settings } = startDeps();
@@ -248,8 +256,10 @@ test('a first version\'s card says so', async () => {
 });
 
 test('no card for somebody the bot does not talk to in a DM, nor without a requester or a job', async () => {
-  const off = startDeps({ dmUsers: ['sam'] });
-  assert.equal(await activity.startCard(off.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
+  const off = startDeps();
+  for (const requester of [{ ...ada, hasPlatformAccess: false }, { ...ada, isSynthetic: true }]) {
+    assert.equal(await activity.startCard(off.pool, { app, issueNumber: 12, requester, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
+  }
   assert.equal(off.sent.length, 0);
   const on = startDeps();
   assert.equal(await activity.startCard(on.pool, { app, issueNumber: 12, requester: null, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
@@ -279,7 +289,7 @@ test('the live loop starts a card where it tells the request it is looking: neve
   assert.ok(followUp < looking && looking < start && start < reading,
     'after a follow-up has returned and the looking post is made, before the request is read');
   assert.match(body.slice(looking, reading),
-    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{ app, issueNumber, requester, bot, jobKey: item\.id, settings, deps: \{ dm: deps\.dm \} \}\);/);
+    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{ app, issueNumber, requester, bot, jobKey: item\.id, settings, deps: \{ dm: deps\.dm \} \}\);/);
   // Inside the live branch: shadow triage has no card.
   const live = body.lastIndexOf('if (liveMode) {', looking);
   assert.ok(live > -1 && body.indexOf('const open = await live.openBotProposal', live) < looking);
@@ -364,12 +374,12 @@ test('catching up gives nobody else\'s work a card, and does nothing for somebod
     async connect() { throw new Error('no lock is taken when there is nothing to do'); },
   };
   const deps = (over = {}) => ({
-    dm: { isDmUser: dmSvc.isDmUser, hasBot: dmSvc.hasBot },
+    dm: { hasBot: dmSvc.hasBot },
     liveSvc: { isStaging: () => false, isLiveFor: () => true, ...over.liveSvc },
     botSvc: { APP_AGAIN_REASON: 'app_again', async readSettings() { throw new Error('settings were passed'); } },
   });
-  const ada = { id: 7, username: 'ada' };
-  const on = { mode: 'shadow', dmUsers: ['ada'] };
+  const ada = { id: 7, username: 'ada', hasPlatformAccess: true };
+  const on = { mode: 'shadow' };
   assert.deepEqual(await activity.catchUpCards(pool, { user: { id: 8, username: 'sam' }, settings: on, deps: deps() }), { added: 0 });
   assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: { ...on, mode: 'off' }, deps: deps() }), { added: 0 });
   assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: on, deps: deps({ liveSvc: { isStaging: () => true } }) }), { added: 0 });
@@ -420,6 +430,13 @@ test('the staging demo has one card being built and one that ended in a proposal
   assert.equal(done.outcome, 'proposed');
   for (const card of demo.cards) assert.deepEqual(card.links, { request: null, proposal: null });
   assert.deepEqual(activity.demoState({}, now), { cards: [] }, 'a fixture without its cards has no state to show');
+  // #4046: two first versions' cards, which their plans carry: one waiting
+  // for Build it, one being built under the plan that was built.
+  const [waits, builds] = activity.demoState({ plan: 43, building: 44 }, now).cards;
+  assert.deepEqual([waits.messageId, waits.state, waits.step, waits.of, waits.waitingOn], [43, 'working', 3, 7, 'them']);
+  assert.equal(waits.typicalMinutes, undefined, 'a plan waiting on its maker has no usual time');
+  assert.deepEqual([builds.messageId, builds.step, builds.of, builds.typicalMinutes], [44, 4, 7, { from: 10, to: 25 }]);
+  assert.deepEqual([waits.stepName, builds.stepName], [progressSvc.FIRST_VERSION_STEPS[2], progressSvc.FIRST_VERSION_STEPS[3]], 'by their own names');
   // And the card opening the demo DM gives work already under way: its plan,
   // begun well before the card, as the tray's demo lists it.
   const [joined] = activity.demoState({ underWay: 42 }, now).cards;
@@ -488,23 +505,33 @@ function draw(props) {
 
 test('a card going: its step as a ring and in words, what it is doing, how long so far, and its request', () => {
   const html = draw({ card: working() });
-  assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working">/);
-  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it">/);
+  assert.match(html, /^<div class="[^"]*rounded-2xl[^"]*" role="group" aria-label="Homeroom bot activity: Ear Trainer #12: Sort by date" data-bot-activity="working" data-bot-activity-request="ear-trainer#12">/,
+    '#4241: naming its request, for a #N chip to find');
+  assert.match(html, /<svg [^>]*role="img" aria-label="Step 3 of 6: Build it"[ >]/);
   assert.match(html, />3\/6<\/text>/);
   assert.match(html, /stroke-dasharray="47\.125 94\.25"/, 'half the ring: step 3 of 6');
   assert.match(html, /data-bot-activity-eyebrow="">Step 3 of 6 · Build it</);
-  assert.match(html, /motion-safe:animate-ping/, 'a live dot while it goes');
+  // #4199: an arc circling the ring while it goes, still under reduced
+  // motion; the ring and its step stay. No pulsing dot beside the eyebrow.
+  assert.match(html, /<svg [^>]*overflow="visible" data-progress-ring-spinning="">/);
+  assert.match(html, /<circle [^>]*r="20" [^>]*stroke-dasharray="18 125\.66" class="[^"]*motion-safe:animate-\[spin_1\.6s_linear_infinite\] motion-reduce:animate-none[^"]*"/);
+  assert.doesNotMatch(html, /animate-ping/);
   assert.match(html, />Ear Trainer #12: Sort by date</);
   assert.match(html, /<span role="status">Building it<\/span><span> · 9m so far<\/span>/,
     'only what it is doing is announced; the clock beside it is not, every half minute');
   assert.match(html, /<a href="#app\/ear-trainer\/dev\/issues\/12" class="[^"]*rounded-full[^"]*" data-bot-activity-link="">Request #12<\/a>/);
+  // #4200: the link pill is one step darker than the card in both themes,
+  // and neutral: zinc-100 and zinc-800 were the card's own fills.
+  assert.match(html, /class="[^"]*rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600[^"]*" data-bot-activity-link=""/);
   assert.doesNotMatch(html, /Open change/);
 
   const queued = draw({ card: working({ step: 1, stepName: 'Read the request', doing: 'waiting in the queue (number 3) to be read', startedAt: minutesAgo(75) }) });
   assert.match(queued, /Waiting in the queue \(number 3\) to be read<\/span><span> · 1h 15m so far/);
   const unstepped = draw({ card: working({ step: null, of: null, stepName: null, doing: null }) });
   assert.match(unstepped, /data-bot-activity-eyebrow="">Working on it</);
-  assert.doesNotMatch(unstepped, /role="img"/);
+  assert.match(unstepped, /<svg [^>]*role="img" aria-label="Working on it" overflow="visible" data-progress-ring-spinning="">/,
+    'no step yet: an empty ring with the arc circling it, in place of the clock');
+  assert.doesNotMatch(unstepped, /stroke-dasharray="[0-9.]+ 94\.25"|<text/);
   assert.match(unstepped, /<span role="status">Working on it<\/span>/);
 });
 
@@ -519,7 +546,7 @@ test('a card done: what it came to, at a glance and in words, how long it took, 
   assert.match(proposed, /<span role="status">Built it\. Waiting for approval<\/span><span> · took 23m<\/span>/);
   assert.match(proposed, /d="M5 13l4 4L19 7"/, 'a check where the ring was');
   assert.match(proposed, />Open change<\/a><a [^>]*>Request #12<\/a>/, 'the change first');
-  assert.doesNotMatch(proposed, /animate-ping|role="img"/);
+  assert.doesNotMatch(proposed, /animate-ping|role="img"|data-progress-ring-spinning/);
 
   const asked = draw({ card: done('question') });
   assert.match(asked, /data-bot-activity-eyebrow="">Needs you</);
@@ -572,12 +599,13 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   assert.equal(isActivityMessage(message({ deleted: true })), false);
   const row = read('frontend/src/features/messages/message-row.tsx');
   // #3770: handed the words a message is drawn with, for a card with nothing on record.
-  assert.match(row, /const words = message\.content\s*\? <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>\s*: null;/);
+  // #4097: led by the card of what they are about when they open with its line.
+  assert.match(row, /const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} \/>;/);
   // B5: led by the bot's hello, on the first card it sends somebody.
   // B6: then a plan and two questions at once, which stand in place of their words too.
   assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotActivityCard message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);
   // B7: and a change ready to try.
-  assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isTwoQuestions\(message\) \? \(\s*<BotTwoQuestions message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isReadyMessage\(message\) \? \([\s\S]{0,120}<BotReadyCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : words\}/);
+  assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>\s*\) : isTwoQuestions\(message\) \? \(\s*<BotTwoQuestions message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isReadyMessage\(message\) \? \([\s\S]{0,120}<BotReadyCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : words\}/);
 });
 
 // ── #3770: an older card keeps its words ──
@@ -874,7 +902,7 @@ test('#3767: a request filed in the DM gets its card at once, and the card says 
 // plan, the same card read from the plan's run, and the one above is no
 // longer drawn.
 
-function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.123Z'), dmUsers = ['ada'], sendResult } = {}) {
+function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.123Z'), sendResult } = {}) {
   const sent = [];
   const queries = [];
   const moved = [];
@@ -890,7 +918,6 @@ function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.
     },
   };
   const dm = {
-    isDmUser: dmSvc.isDmUser,
     hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     askedLine: dmSvc.askedLine,
@@ -901,28 +928,30 @@ function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.
     },
     async setQuestionState(_pool, messageId, patch, opts) { moved.push([messageId, patch, opts.userId]); },
   };
-  return { pool, dm, sent, queries, moved, settings: { dmUsers } };
+  return { pool, dm, sent, queries, moved, settings: { mode: 'shadow' } };
 }
 
-const maker = { userId: 7, username: 'ada', issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat' };
+const maker = { userId: 7, username: 'ada', hasPlatformAccess: true, issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat' };
 const flat = { id: 21, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
 
 test('B6: Build it moves the request\'s card under the plan, read from the plan\'s run, and the card above stops being drawn', async () => {
   const { pool, dm, sent, queries, moved, settings } = underPlanDeps({ existing: { messageId: 800 } });
   const out = await activity.cardUnderPlan(pool, {
-    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings, deps: { dm },
+    app: { ...flat, icon_emoji: '🧹' }, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings, deps: { dm },
   });
   assert.deepEqual(out, { conversationId: 5, messageId: 950, duplicate: false });
   assert.equal(sent.length, 1, 'one card, under the plan');
   const [card] = sent;
   assert.equal(card.idempotencyKey, 'hrbot-activity-run-61', 'the key catching up gives the same run\'s build: never two messages');
-  assert.equal(card.content, '**Flat 4B Chores**, its first version\n\nBuilding the first version now. This card updates as I go.');
+  // #4392: the bot's thanks for answering, drawn over the app's card (bot-thanks-card.tsx), and the inbox's preview.
+  assert.equal(card.content, 'Thanks for answering about the plan. I\'ll let you know when Flat 4B Chores is ready to try.');
+  assert.equal(card.content, activity.thanksText('Flat 4B Chores'));
   assert.ok(!/—/.test(card.content));
   assert.deepEqual(card.metadata, {
     kind: 'activity', appSlug: 'flat-4b-chores', appName: 'Flat 4B Chores', issueNumber: 1,
     issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat',
-    lookAt: '2026-10-04T10:02:00.123Z',
-  }, 'read from the run the plan came from; no startedAt, so its time counts from the tap');
+    lookAt: '2026-10-04T10:02:00.123Z', thanks: true, appEmoji: '🧹',
+  }, 'read from the run the plan came from; no startedAt, so its time counts from the tap; drawn as the thanks, with its icon');
   assert.equal(card.moment, undefined, 'a card rings nothing (homeroom-bot-dm.js MOMENTS has no activity)');
   assert.equal(dmSvc.momentOf(card.metadata), null);
   const insert = queries.find(([sql]) => /INSERT INTO homeroom_bot_dm_messages/.test(sql));
@@ -946,12 +975,14 @@ test('B6: a card already under the plan carries on; with none, Build it gives th
     app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: none.settings, deps: { dm: none.dm },
   })).messageId, 950);
   assert.equal(none.sent.length, 1);
+  assert.equal(none.sent[0].metadata.thanks, true);
+  assert.equal(none.sent[0].metadata.appEmoji, undefined, 'no icon yet: the row draws its first letter');
   assert.ok(!none.queries.some(([sql]) => /DELETE FROM homeroom_bot_dm_messages/.test(sql)), 'nothing to move');
   assert.equal(none.moved.length, 0);
 
-  const off = underPlanDeps({ existing: { messageId: 800 }, dmUsers: ['sam'] });
+  const off = underPlanDeps({ existing: { messageId: 800 } });
   assert.equal(await activity.cardUnderPlan(off.pool, {
-    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: off.settings, deps: { dm: off.dm },
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: { ...maker, hasPlatformAccess: false }, bot, settings: off.settings, deps: { dm: off.dm },
   }), null);
   assert.equal(off.sent.length + off.moved.length, 0);
 
@@ -978,7 +1009,7 @@ test('B6: Build it moves the card once it is decided, before the tray hears; Cha
   const answered = body.indexOf("status: 'answered', chosen: 'build', answer: BUILD_IT");
   const move = body.indexOf("require('./homeroom-bot-activity').cardUnderPlan(pool, {");
   const tray = body.indexOf("require('./homeroom-bot-tray').noteWorkChanged(user.id, deps)");
-  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "You chose Build it", before the tray re-reads');
+  assert.ok(answered > -1 && move > answered && tray > move, 'after the plan reads "Building it", before the tray re-reads');
   assert.match(body, /if \(app && requester && Number\(requester\.userId\) === Number\(user\.id\) && bot\) \{/,
     'only for the person the plan was for');
   assert.match(body, /runId: Number\(card\.run_id\), planMessageId: Number\(action\.message_id\),/);
@@ -1037,7 +1068,8 @@ test('B6: the transcript leaves out a card Build it moved under its plan, and th
   assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 950 } }).homeroomBot.movedTo, 950);
   assert.equal('movedTo' in normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 'x' } }).homeroomBot, false);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*const day = dayKey\(message\);/,
+  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*\/\/[^\n]*\n\s*if \(plans\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
     'skipped before its day and its name are counted, so the row after it is drawn as it would be');
-  assert.match(screen, /import \{ BotActivitySync, isMovedActivity \} from '\.\/bot-activity';/);
+  // #4564 joined isActivityMessage to the import, for the change blocks' read of what a row shows.
+  assert.match(screen, /import \{ BotActivitySync, isActivityMessage, isMovedActivity \} from '\.\/bot-activity';/);
 });

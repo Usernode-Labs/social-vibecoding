@@ -211,6 +211,13 @@ async function gradeTrial(pool, trialId, { github = null } = {}) {
       [Number(trialId)],
     );
     if (!t) return null;
+    // A side build of a live first version is judged pairwise against the
+    // live one (services/bot-configs.js), never by the benchmark's judge.
+    if (t.bot_config_version_id) {
+      const pairwise = { needsJudge: false, notes: ['judged pairwise against the current configuration (Bot configurations)'] };
+      await pool.query('UPDATE bench_trials SET deterministic = $2::jsonb WHERE id = $1', [t.id, JSON.stringify(pairwise)]);
+      return pairwise;
+    }
     // Graded again without GitHub (a reference changed), the scope it found
     // the first time stands.
     let scope = !github && t.deterministic?.scope ? t.deterministic.scope : null;

@@ -5,6 +5,7 @@ const { Client } = require('pg');
 const log = require('./logger');
 const { withResourceUse } = require('./build-retention-guard');
 const { STAGING_TEMPLATE_LOCK } = require('./advisory-locks');
+const dbRetry = require('./db-retry');
 
 const execFileAsync = promisify(execFile);
 
@@ -207,7 +208,9 @@ async function createDatabase(dbName) {
 // (none in our model, but defensive).
 // Recreating a clone requires confirmed cleanup. Ordinary teardown remains
 // best-effort, but clone callers must not create a new role after a failed drop.
-async function dropDatabase(dbName, { strict = false, execute = execInDb } = {}) {
+// A disposable shots or staging-template database is dropped WITH (FORCE)
+// and retried briefly (dropDisposableDatabase); `retry` tunes that.
+async function dropDatabase(dbName, { strict = false, execute = execInDb, retry = {} } = {}) {
   log.info('db-manager', 'Dropping database', { dbName });
 
   if (!SAFE_IDENT.test(dbName)) {
@@ -216,13 +219,14 @@ async function dropDatabase(dbName, { strict = false, execute = execInDb } = {})
     return;
   }
 
-  // Terminate any open connections so DROP DATABASE doesn't error.
-  await execute(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`
-  ).catch(() => {});
-
   try {
-    await execute(`DROP DATABASE IF EXISTS ${dbName}`);
+    if (isDisposableDb(dbName)) {
+      await dropDisposableDatabase(dbName, { execute, retry });
+    } else {
+      // Terminate any open connections so DROP DATABASE doesn't error.
+      await execute(terminateSessionsSql(dbName)).catch(() => {});
+      await execute(`DROP DATABASE IF EXISTS ${dbName}`);
+    }
   } catch (err) {
     log.warn('db-manager', 'Failed to drop database', { dbName, err: err.message });
     // Don't try to drop the role if the DB drop failed — the role
@@ -291,6 +295,110 @@ function isStagingCloneDb(name) {
 
 function isShotsCloneDb(name) {
   return SHOTS_CLONE_DB_RE.test(String(name || ''));
+}
+
+// ─── Disposable shots and staging-template databases ────────────────────
+//
+// The shots and staging-template code makes databases that nothing else
+// ever uses: a shots run's two clones, the frozen source they are copied
+// from (`_evsrc_<12 hex>`), and the shared staging template with the `_next`
+// build that replaces it. A session found on one of them is a leftover: a
+// backend still exiting after a terminate, a pool that reconnected between
+// the terminate and the DROP, a build an earlier process abandoned. Postgres
+// then refuses to copy or drop the database ("is being accessed by other
+// users", 55006), and twice that ended a shots run. These databases, and
+// only these, may have their sessions cut off and be dropped WITH (FORCE).
+// The shapes are the names this module builds; any other name, an app's own
+// database or a preview's clone among them, is refused.
+const DISPOSABLE_DB_RES = Object.freeze([
+  SHOTS_CLONE_DB_RE,
+  /^app_[a-z0-9_]+_evsrc_[0-9a-f]{12}$/,
+  /^app_[a-z0-9_]+_stgtmpl(?:_next)?$/,
+]);
+
+function isDisposableDb(name) {
+  const value = String(name || '');
+  return value.length <= 63 && DISPOSABLE_DB_RES.some((re) => re.test(value));
+}
+
+function assertDisposableDb(name, caller) {
+  if (!isDisposableDb(name)) {
+    throw new Error(`${caller}: refusing ${JSON.stringify(name)}, which is not a disposable shots or staging-template database`);
+  }
+}
+
+function terminateSessionsSql(dbName) {
+  return `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`;
+}
+
+async function terminateDisposableSessions(dbName, { execute = execInDb } = {}) {
+  assertDisposableDb(dbName, 'terminateDisposableSessions');
+  await execute(terminateSessionsSql(dbName));
+}
+
+function isSyntaxError(err) {
+  return err?.code === '42601' || /\bERROR:\s+syntax error at or near/.test(String(err?.message || ''));
+}
+
+// A copy whose template is gone (SQLSTATE 3D000): the shared staging template
+// can be dropped and renamed away by a refresh running in another process
+// between the freshness read and this copy. Every other failure — refused,
+// in use, timed out — is a real problem and still surfaces as it does.
+function isMissingTemplateError(err) {
+  if (!err) return false;
+  if (err.code === '3D000') return true;
+  return /template database ".*" does not exist/.test(String(err.message || ''));
+}
+
+// FORCE (PostgreSQL 13 and later; the platform runs 17) cuts sessions off and
+// keeps new ones out while it drops, which closes the gap a reconnect slipped
+// through. An older server rejects the option and gets the plain statement.
+// Retried while a backend takes longer to exit than the drop waits for it.
+async function dropDisposableDatabase(dbName, { execute = execInDb, retry = {} } = {}) {
+  assertDisposableDb(dbName, 'dropDisposableDatabase');
+  await dbRetry.withDbRetry(async () => {
+    await execute(terminateSessionsSql(dbName)).catch(() => {});
+    try {
+      await execute(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    } catch (err) {
+      if (!isSyntaxError(err)) throw err;
+      await execute(`DROP DATABASE IF EXISTS ${dbName}`);
+    }
+  }, { retryable: dbRetry.isDbConflict, label: 'Disposable database drop', ...retry });
+}
+
+// CREATE DATABASE … TEMPLATE. With `attempts` above one (the shots path), a
+// copy refused because a session was on the template (55006) or that lost a
+// deadlock is run again: either way Postgres made nothing. Before the next
+// attempt the template's sessions are cut off (nothing connects to a
+// template on purpose: it is ALLOW_CONNECTIONS false), and a disposable
+// target is dropped in case the failed attempt left anything behind.
+async function createFromTemplate(templateDb, targetDb, ownerRole, {
+  execute = execInDb, timeoutMs = null, attempts = 1, wait,
+} = {}) {
+  if (![templateDb, targetDb, ownerRole].every((name) => SAFE_IDENT.test(String(name || '')))) {
+    throw new Error(`createFromTemplate: unsafe identifiers ${templateDb}/${targetDb}/${ownerRole}`);
+  }
+  await dbRetry.withDbRetry(async (attempt) => {
+    if (attempt > 1 && isDisposableDb(targetDb)) {
+      await dropDisposableDatabase(targetDb, { execute, retry: { attempts: 1 } });
+    }
+    await execute(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${ownerRole}`,
+      timeoutMs ? { timeoutMs } : {});
+  }, {
+    attempts,
+    retryable: dbRetry.isDbConflict,
+    beforeRetry: async (error) => {
+      if (!dbRetry.isObjectInUse(error)) return;
+      await terminateDisposableSessions(templateDb, { execute }).catch((err) => {
+        log.warn('db-manager', 'Could not cut sessions off a template before copying it again', {
+          templateDb, err: err.message,
+        });
+      });
+    },
+    label: 'Template copy',
+    ...(wait ? { wait } : {}),
+  });
 }
 
 /**
@@ -590,10 +698,7 @@ function withTemplateLock(key, fn) {
 // objects inside it, so it must outlive any one database.
 async function dropTemplateDb(dbName) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`dropTemplateDb: unsafe dbName ${JSON.stringify(dbName)}`);
-  await execInDb(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`
-  ).catch(() => {});
-  await execInDb(`DROP DATABASE IF EXISTS ${dbName}`);
+  await dropDisposableDatabase(dbName);
 }
 
 // When the template was last rebuilt, from the comment the refresh stamps
@@ -608,6 +713,32 @@ async function readTemplateRefreshedAt(templateDb) {
   if (!m) return null;
   const t = Date.parse(m[1]);
   return Number.isFinite(t) ? t : null;
+}
+
+// The direct path's steps, verbatim, into `targetDb`: a bare database from
+// template0, a dump/restore of the live source, both ownership reassigns and
+// the two redaction passes. The caller owns the role, the stamp, the lock
+// and the swap. Returns the exclusion list.
+async function buildRedactedCopy(sourceDb, targetDb, ownerRole) {
+  if (!SAFE_IDENT.test(targetDb) || !SAFE_IDENT.test(ownerRole)) {
+    throw new Error(`buildRedactedCopy: unsafe identifiers ${sourceDb}/${targetDb}/${ownerRole}`);
+  }
+  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${ownerRole}`);
+
+  const excludeData = await privateDataExclusions(sourceDb);
+  await dumpRestore(sourceDb, targetDb, excludeData);
+  const sourceRole = ownerRoleName(sourceDb);
+  if (SAFE_IDENT.test(sourceRole)) {
+    await reassignUserObjectsTo(targetDb, sourceRole, ownerRole).catch((err) => {
+      log.warn('db-manager', 'template reassign from source-role failed', { targetDb, sourceRole, err: err.message });
+    });
+  }
+  await reassignUserObjectsTo(targetDb, adminUser(), ownerRole).catch((err) => {
+    log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
+  });
+  await truncatePrivateTables(targetDb);
+  await scrubPrivateColumns(targetDb);
+  return excludeData;
 }
 
 // Rebuild the template from the live source, then swap it in.
@@ -627,22 +758,7 @@ async function refreshStagingTemplate(sourceDb) {
       CREATE ROLE ${templateRole} NOLOGIN;
     END IF;
   END $$;`);
-  await execInDb(`CREATE DATABASE ${next} TEMPLATE template0 OWNER ${templateRole}`);
-
-  // The direct path's steps, verbatim, into `next`.
-  const excludeData = await privateDataExclusions(sourceDb);
-  await dumpRestore(sourceDb, next, excludeData);
-  const sourceRole = ownerRoleName(sourceDb);
-  if (SAFE_IDENT.test(sourceRole)) {
-    await reassignUserObjectsTo(next, sourceRole, templateRole).catch((err) => {
-      log.warn('db-manager', 'template reassign from source-role failed', { next, sourceRole, err: err.message });
-    });
-  }
-  await reassignUserObjectsTo(next, adminUser(), templateRole).catch((err) => {
-    log.warn('db-manager', 'template reassign from superuser failed', { next, err: err.message });
-  });
-  await truncatePrivateTables(next);
-  await scrubPrivateColumns(next);
+  const excludeData = await buildRedactedCopy(sourceDb, next, templateRole);
 
   await execInDb(`REVOKE CONNECT ON DATABASE ${next} FROM PUBLIC`);
   const stamp = new Date().toISOString();
@@ -655,8 +771,15 @@ async function refreshStagingTemplate(sourceDb) {
 
   // Swap. A failed rename leaves `next` behind and no template, which the
   // next ensure simply rebuilds; a failed drop is surfaced, not hidden.
+  // The rename too is refused while a session is on `next`, such as the
+  // backend of the scrub that just finished, still exiting.
   await dropTemplateDb(templateDb);
-  await execInDb(`ALTER DATABASE ${next} RENAME TO ${templateDb}`);
+  await dbRetry.withDbRetry(() => execInDb(`ALTER DATABASE ${next} RENAME TO ${templateDb}`), {
+    retryable: dbRetry.isDbConflict,
+    beforeRetry: (error) => (dbRetry.isObjectInUse(error)
+      ? terminateDisposableSessions(next).catch(() => {}) : null),
+    label: 'Staging template swap',
+  });
   log.info('db-manager', 'Staging template refreshed', {
     sourceDb, templateDb, excludedTables: excludeData.length, durationMs: Date.now() - startedAt,
   });
@@ -707,7 +830,10 @@ function templateIdle(sourceDb) {
 }
 
 // The fast clone: a file copy of the template, handed to a fresh role.
-async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null } = {}) {
+// `attempts` above one retries the copy (createFromTemplate); a preview
+// keeps one, since a failed template clone already falls back to the
+// direct copy.
+async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null, attempts = 1 } = {}) {
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -725,7 +851,7 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
     onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
     onProgress?.('copy_template');
-    await admin(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
+    await createFromTemplate(templateDb, targetDb, targetRole, { execute: admin, attempts });
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
   }, { queryTimeoutMs });
@@ -767,6 +893,11 @@ function preparedCloneSourceName(sourceDb, sourceId) {
   return `${sourceDb.slice(0, 63 - suffix.length)}${suffix}`;
 }
 
+// The statement ceiling for preparing a shots run's clone source and for each
+// side's clone from it: a large copy or ownership pass under load is slow
+// without being stuck.
+const PREPARED_SOURCE_TIMEOUT_MS = 90_000;
+
 function isPreparedCloneSource(name) {
   return SAFE_IDENT.test(String(name || '')) && /_evsrc_[0-9a-f]{12}$/.test(String(name));
 }
@@ -777,21 +908,78 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
     throw new Error('prepareStagingCloneSource: staging templates are disabled');
   }
   return withTemplateLock(sourceDb, async () => {
-    const ensured = await ensureStagingTemplate(sourceDb);
-    const sharedTemplate = ensured.template;
-    const refreshedAtMs = await readTemplateRefreshedAt(sharedTemplate);
-    if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+    // The template and its stamp, read again. A missing template rebuilds
+    // here; a template with no provenance is a real problem and throws.
+    const readProvenance = async () => {
+      const ensured = await ensureStagingTemplate(sourceDb);
+      const template = ensured.template;
+      const refreshedAtMs = await readTemplateRefreshedAt(template);
+      if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+      return { template, refreshedAtMs };
+    };
 
     const preparedDb = preparedCloneSourceName(sourceDb, sourceId);
     const preparedRole = ownerRoleName(preparedDb);
-    const sharedRole = ownerRoleName(sharedTemplate);
+    const provenance = await readProvenance();
+    let sharedTemplate = provenance.template;
+    let refreshedAtMs = provenance.refreshedAtMs;
     await dropDatabase(preparedDb, { strict: true });
     await execInDb(`CREATE ROLE ${preparedRole} NOLOGIN`);
     try {
-      await execInDb(`CREATE DATABASE ${preparedDb} TEMPLATE ${sharedTemplate} OWNER ${preparedRole}`);
-      await withDatabaseConnection(preparedDb, async (execute) => {
-        await reassignUserObjectsTo(preparedDb, sharedRole, preparedRole, execute);
+      let copied = false;
+      let builtDirectly = false;
+      // The copy and the ownership pass get the paired clones' own
+      // ceiling (cloneFromPreparedSource): under load the copy alone
+      // can outlast the 30-second default, and a timeout here fails
+      // the whole shots run.
+      const copyFromShared = () => createFromTemplate(sharedTemplate, preparedDb, preparedRole, {
+        timeoutMs: PREPARED_SOURCE_TIMEOUT_MS, attempts: dbRetry.DB_RETRY_ATTEMPTS,
       });
+      const buildDirectly = async (why) => {
+        log.warn('db-manager', 'Preparing the shots clone source directly from the live source', {
+          sourceDb, sharedTemplate, preparedDb, why,
+        });
+        // The direct build's objects already belong to preparedRole, so
+        // the shared-role reassign below is skipped and the stamp reads
+        // as fresh now: this copy is as fresh as the moment it was built.
+        await buildRedactedCopy(sourceDb, preparedDb, preparedRole);
+        builtDirectly = true;
+        refreshedAtMs = Date.now();
+      };
+      for (let attempt = 1; attempt <= 2 && !copied; attempt++) {
+        try {
+          await copyFromShared();
+          copied = true;
+        } catch (err) {
+          if (!isMissingTemplateError(err)) throw err;
+          // A refresh running in another process dropped the shared
+          // template between the freshness read and this copy. Drop the
+          // half-made copy (the role stays), rebuild the template and
+          // try once more; if it still will not copy, build the prepared
+          // source directly so the run takes the slower path instead of
+          // failing.
+          await dropDisposableDatabase(preparedDb);
+          if (attempt > 1) {
+            await buildDirectly('rebuilt template still missing');
+          } else {
+            log.warn('db-manager', 'Staging template vanished during the shots copy — rebuilding it and copying again', {
+              sourceDb, sharedTemplate, preparedDb, err: err.message,
+            });
+            try {
+              const reEnsured = await readProvenance();
+              sharedTemplate = reEnsured.template;
+              refreshedAtMs = reEnsured.refreshedAtMs;
+            } catch (ensureErr) {
+              await buildDirectly(`re-ensure failed: ${ensureErr.message}`);
+            }
+          }
+        }
+      }
+      if (!builtDirectly) {
+        await withDatabaseConnection(preparedDb, async (execute) => {
+          await reassignUserObjectsTo(preparedDb, ownerRoleName(sharedTemplate), preparedRole, execute);
+        }, { queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS });
+      }
       await execInDb(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
       const fingerprint = crypto.createHash('sha256')
         .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
@@ -821,7 +1009,9 @@ async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null }
   // Paired shots resets repeat this clone and have their own bounded
   // lifetime. A large ownership/redaction query may exceed the ordinary
   // preview's 30-second ceiling without being stuck.
-  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
+  const result = await cloneFromTemplate(templateDb, targetDb, {
+    queryTimeoutMs: PREPARED_SOURCE_TIMEOUT_MS, onProgress, attempts: dbRetry.DB_RETRY_ATTEMPTS,
+  });
   onProgress?.('connection_limit');
   await applyStagingConnectionLimit(targetDb);
   return {
@@ -1138,6 +1328,8 @@ async function execInDb(sql, opts = {}) {
   return execInTarget('usernode', sql, opts);
 }
 
+// `timeoutMs` lets a statement known to run long (a CREATE DATABASE … TEMPLATE
+// copy under load) take longer than the 30-second default, up to two minutes.
 async function execInTarget(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
@@ -1148,15 +1340,52 @@ async function execInTarget(dbName, sql, opts = {}) {
   }
   args.push('-c', sql);
 
-  const { stdout, stderr } = await execFileAsync('psql', args, {
-    timeout: 30000,
-    env: postgresEnv(dbName),
-  });
+  const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
+  let ran;
+  try {
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName) });
+  } catch (err) {
+    throw psqlFailure(err, { sql, timeoutMs });
+  }
+  const { stdout, stderr } = ran;
 
   if (stderr && !stderr.includes('NOTICE')) {
     throw new Error(stderr);
   }
   return stdout;
+}
+
+const PASSWORD_LITERAL = /\bPASSWORD\s+'(?:[^']|'')*'/gi;
+const maskPasswords = (text) => (typeof text === 'string'
+  ? text.replace(PASSWORD_LITERAL, 'PASSWORD \'[redacted]\'') : text);
+
+// What a failed psql run says. Node's message is "Command failed: psql
+// <args>" and then psql's stderr, which carries Postgres's own error
+// ("ERROR: source database … is being accessed by other users"), so that one
+// is kept as it is. A run cut off at its time limit has no stderr: its
+// message ended at the command, and the before & after shots gallery showed
+// exactly that for two copies on 2026-10-09 (a CREATE DATABASE … TEMPLATE
+// past its 90 seconds, a DROP DATABASE … WITH (FORCE) past its 30), with
+// nothing saying time ran out. Killing psql does not cancel the statement,
+// which may still be running on the server. A password in the statement
+// (CREATE ROLE … PASSWORD) is masked everywhere the error carries it, its
+// stack included: the message reaches logs and the shots failure people read. The error's own
+// fields (code, signal, stderr) stay, for db-retry's reading of them.
+function psqlFailure(err, { sql, timeoutMs }) {
+  if (!err || typeof err !== 'object') return err;
+  const timedOut = err.killed === true && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+  if (timedOut) {
+    const said = typeof err.stderr === 'string' && err.stderr.trim() ? `\n${err.stderr.trim()}` : '';
+    err.message = `No answer from Postgres within ${Math.round(timeoutMs / 1000)} seconds, psql's time limit, so `
+      + `psql was stopped and the statement may still be running on the server: ${sql}${said}`;
+  } else if (!err.code && err.signal) {
+    err.message = `psql was stopped by ${err.signal} before Postgres answered: ${sql}`;
+  }
+  err.message = maskPasswords(err.message);
+  for (const field of ['cmd', 'stderr', 'stack']) {
+    if (typeof err[field] === 'string') err[field] = maskPasswords(err[field]);
+  }
+  return err;
 }
 
 // Which tables' DATA can be skipped by the clone's pg_dump — i.e. exactly
@@ -1679,6 +1908,11 @@ module.exports = {
   isStagingCloneDb,
   isShotsCloneDb,
   applyStagingConnectionLimit,
+  // Disposable shots and staging-template databases.
+  isDisposableDb,
+  terminateDisposableSessions,
+  dropDisposableDatabase,
+  createFromTemplate,
   DEFAULT_STAGING_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,
   ensureRoleExists,
@@ -1704,6 +1938,7 @@ module.exports = {
   STAGING_TEMPLATE_MAX_AGE_MS,
   STAGING_TEMPLATE_HARD_MAX_AGE_MS,
   _templateIdleForTest: templateIdle,
+  _psqlFailureForTest: psqlFailure,
   // Per-app database storage cap (#2253).
   parseDatabaseSizes,
   listAppDatabaseSizes,

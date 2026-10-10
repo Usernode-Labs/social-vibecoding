@@ -19,7 +19,15 @@
  *   - Escape, on a keyboard.
  *
  * The thumbnail is still the file's link, so a modified click (a new tab on
- * purpose, from a desktop) does what it always did, and Download saves it.
+ * purpose, from a desktop) does what it always did.
+ *
+ * Download, and a finger held still on the picture, put it on the device
+ * (#4055) through ./save-image.ts: the app's own save, the phone's share
+ * sheet ("Save Image" puts it in Photos), or a browser download. A bare
+ * download link went to Files on a phone and, in the installed app, opened
+ * the file with no way back. A picture on another site keeps "Open
+ * original", and where the app build has no road at all the button is not
+ * drawn.
  *
  * Portalled to <body>, as the message sheet is
  * (features/message-actions/action-sheet.tsx): a chat's transcript sits under
@@ -35,8 +43,9 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { XIcon } from '@/components/ui/icons';
+import { DownloadIcon, XIcon } from '@/components/ui/icons';
 import { pushDismissible } from '../../lib/back-stack';
+import { isRemoteFile, nativeSaveKnown, saveImage, useCanSaveImage } from './save-image';
 
 /** How far a swipe down has to travel before letting go closes the viewer. */
 export const SWIPE_CLOSE_PX = 90;
@@ -136,20 +145,11 @@ export function useInlineImageViewer(): {
   };
 }
 
-/**
- * Whether `src` is on another site. `download` is ignored there and the
- * browser follows the link instead, which would replace the page under the
- * viewer; such a file opens in a new tab (or, in the installed app, through
- * nav-link.js to the system browser) rather than being saved.
- */
-export function isRemoteFile(src: string): boolean {
-  if (typeof window === 'undefined' || !window.location) return false;
-  try {
-    return new URL(src, window.location.href).origin !== window.location.origin;
-  } catch {
-    return false;
-  }
-}
+// Whether a file is on another site lives with the saving it rules out.
+export { isRemoteFile } from './save-image';
+
+/** How long a finger rests on the picture, still, before it downloads (#4055). */
+export const HOLD_SAVE_MS = 500;
 
 export function ImageViewer({ src, alt, onClose }: {
   src: string;
@@ -161,7 +161,34 @@ export function ImageViewer({ src, alt, onClose }: {
   onCloseRef.current = onClose;
   // How far the image has been dragged down, while a swipe is under way.
   const [drag, setDrag] = useState(0);
-  const start = useRef<{ id: number; y: number } | null>(null);
+  const start = useRef<{ id: number; x: number; y: number } | null>(null);
+  // #4055: a finger held still on the picture downloads it; one that moves
+  // (a swipe down) or lifts early does not. The app's own save starts as the
+  // hold completes. The share sheet opens as the finger lifts instead: a
+  // touch only counts as a tap, which a browser requires before it opens
+  // the sheet, when it ends.
+  const hold = useRef<number | null>(null);
+  const held = useRef(false);
+  const touching = useRef(false);
+  const canSave = useCanSaveImage(src);
+  const [busy, setBusy] = useState(false);
+  const [tapAgain, setTapAgain] = useState(false);
+  const busyRef = useRef(false);
+  const download = useCallback(() => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    void saveImage({ src, name: alt }).then((outcome) => {
+      setTapAgain(outcome === 'tap-again');
+    }).finally(() => {
+      busyRef.current = false;
+      setBusy(false);
+    });
+  }, [src, alt]);
+  const stopHold = () => {
+    if (hold.current) window.clearTimeout(hold.current);
+    hold.current = null;
+  };
 
   useEffect(() => {
     // Back closes it (lib/back-stack.ts). Closed any other way, the claim is
@@ -178,6 +205,7 @@ export function ImageViewer({ src, alt, onClose }: {
     const before = document.activeElement as HTMLElement | null;
     closeRef.current?.focus({ preventScroll: true });
     return () => {
+      if (hold.current) window.clearTimeout(hold.current);
       document.removeEventListener('keydown', onKey);
       if (!backed) release();
       before?.focus?.({ preventScroll: true });
@@ -189,6 +217,7 @@ export function ImageViewer({ src, alt, onClose }: {
   // A request's screenshot can live on another site (a GitHub upload); see
   // `isRemoteFile`.
   const remote = isRemoteFile(src);
+  const pill = 'inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-white/15 text-white text-sm font-semibold';
   return createPortal(
     <div
       className="fixed inset-0 z-[2200] flex items-center justify-center bg-black/90"
@@ -203,37 +232,75 @@ export function ImageViewer({ src, alt, onClose }: {
       <img
         src={src}
         alt={name}
-        className="max-w-full max-h-full object-contain select-none touch-none"
+        className="max-w-full max-h-full object-contain select-none touch-none [-webkit-touch-callout:none]"
         draggable={false}
         data-image-viewer-image=""
         style={drag ? { transform: `translateY(${drag}px)`, opacity: Math.max(0.4, 1 - drag / 400) } : undefined}
         onPointerDown={(event) => {
           if (event.pointerType === 'mouse') return;
-          start.current = { id: event.pointerId, y: event.clientY };
+          start.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+          touching.current = true;
+          stopHold();
+          held.current = false;
+          if (canSave && !remote) {
+            hold.current = window.setTimeout(() => {
+              hold.current = null;
+              if (nativeSaveKnown()) download();
+              else held.current = true;
+            }, HOLD_SAVE_MS);
+          }
         }}
         onPointerMove={(event) => {
           if (!start.current || start.current.id !== event.pointerId) return;
+          if (Math.abs(event.clientX - start.current.x) > 8 || Math.abs(event.clientY - start.current.y) > 8) {
+            stopHold();
+            held.current = false;
+          }
           setDrag(Math.max(0, event.clientY - start.current.y));
         }}
         onPointerUp={(event) => {
+          touching.current = false;
+          stopHold();
           if (!start.current || start.current.id !== event.pointerId) return;
           const travelled = Math.max(0, event.clientY - start.current.y);
           start.current = null;
-          if (travelled >= SWIPE_CLOSE_PX) onCloseRef.current();
+          if (held.current) {
+            held.current = false;
+            setDrag(0);
+            download();
+          } else if (travelled >= SWIPE_CLOSE_PX) onCloseRef.current();
           else setDrag(0);
         }}
-        onPointerCancel={() => { start.current = null; setDrag(0); }}
+        onPointerCancel={() => { touching.current = false; held.current = false; stopHold(); start.current = null; setDrag(0); }}
+        // The phone's own long-press menu would open over the download, as
+        // useLongPress keeps it off a message row. A right-click with a mouse
+        // keeps the browser's "Save image as…".
+        onContextMenu={(event) => { if (touching.current) event.preventDefault(); }}
       />
       <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
-        <a
-          href={src}
-          download={alt || true}
-          {...(remote ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-          className="inline-flex items-center h-10 px-4 rounded-full bg-white/15 text-white text-sm font-semibold"
-          data-image-viewer-download=""
-        >
-          {remote ? 'Open original' : 'Download'}
-        </a>
+        {remote ? (
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={pill}
+            data-image-viewer-download=""
+          >
+            Open original
+          </a>
+        ) : canSave ? (
+          <button
+            type="button"
+            className={`${pill} disabled:opacity-70`}
+            disabled={busy}
+            aria-busy={busy || undefined}
+            data-image-viewer-download=""
+            onClick={download}
+          >
+            <DownloadIcon className="w-4 h-4" aria-hidden="true" />
+            {busy ? 'Downloading…' : tapAgain ? 'Tap to save' : 'Download'}
+          </button>
+        ) : <span aria-hidden="true" />}
         <button
           ref={closeRef}
           type="button"

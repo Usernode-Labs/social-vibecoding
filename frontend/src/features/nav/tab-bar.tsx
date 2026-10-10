@@ -87,7 +87,7 @@ import { CommunitySwitcher } from '../workshop/community-switcher';
 import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
-import { RecentsList } from './recents-list';
+import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -904,11 +904,12 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after the last
-        // section (Communities), before Me at the rail's foot, which is where
-        // the Resume strip it replaces sat, so the four destinations stay one
-        // run. Desktop only; app.css keeps it off the phone's bar.
-        key === 'me' ? <RecentsList key="recents" /> : null,
+        // #4417: THE FIVE RECENT APPS SIT BETWEEN THE SECTIONS AND YOU, on
+        // the desktop strip: after the last section (Communities), before Me
+        // at its foot, where Recents (#2802) sat. The conversations it listed
+        // are Messages' own list. Desktop only; app.css keeps it off the
+        // phone's bar.
+        key === 'me' ? <StripApps key="apps" /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}

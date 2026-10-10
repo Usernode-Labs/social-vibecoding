@@ -118,6 +118,8 @@ export const Feedback = {
   // the island's legacy `{ fromDev }` payload in the public signature.
   _open: (_opts = {}) => {},
   _reset: () => {},
+  /** @returns {{ text: string, title: string, images: Blob[], bounty: boolean, target: 'app' | 'platform' | null }} */
+  _takeDraft: () => ({ text: '', title: '', images: [], bounty: false, target: null }),
 };
 
 let wired = false;
@@ -232,9 +234,9 @@ export function init() {
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
-    // "Posted to Run Club" / "Posted to Homeroom" is the heading; the notice
-    // under it carries only what else happened (a bounty, the app's state),
-    // and says nothing when nothing did.
+    // "Thanks! Posted to Run Club" / "Thanks! Posted to Homeroom" is the
+    // heading; the notice under it carries only what else happened (a
+    // bounty, the app's state), and says nothing when nothing did.
     const sentTitle = document.getElementById('feedback-sent-title');
     // B8: the bot's version of it. `bot` is the post's `homeroomBot`
     // ({ botWillBuild, typicalMinutes, canFix, appSlug, issueNumber }).
@@ -242,16 +244,33 @@ export function init() {
     const sentChat = document.getElementById('feedback-sent-chat');
     const sentFix = document.getElementById('feedback-sent-fix');
     const sentMine = document.getElementById('feedback-sent-mine');
-    const SENT_LINE = 'Find it on your profile, under Your requests.';
+    // #3971: a first request the bot builds; see showSent's `firstApp`.
+    const sentFirst = document.getElementById('feedback-sent-first');
+    const sentFirstLine = document.getElementById('feedback-sent-first-line');
+    // #3971: "Thanks!" went with #3400 and B8 made the bot's answer "Got it",
+    // which read as bland next to what it replaced. Both say what happens
+    // next now; the bot's line promises what its chat does ("I'll message
+    // you here when it's ready to try").
+    const SENT_LINE = 'Your idea is on the board now. Find it on your profile, under Your requests.';
+    const BOT_TITLE = 'Your idea is underway!';
+    // `minutes` is the bot's typical build time (8 until it has five builds
+    // to take a median of); 8 here too when the post did not say.
+    const botLine = (minutes) => `Homeroom bot is building it now, usually about ${minutes} minutes. You'll get a message when it's ready to try.`;
     let sentBot = null;
-    const showSent = (title, notice = '', bot = null) => {
+    // `firstApp`: the app's name when this is the person's first request ever
+    // and the bot builds it. The first-request moment used to be skipped for
+    // the bot (B8), so the bot's confirmation carries it instead.
+    const showSent = (title, notice = '', bot = null, firstApp = '') => {
       const building = !!bot?.botWillBuild;
       sentBot = building ? bot : null;
-      if (sentTitle) sentTitle.textContent = building ? 'Got it' : title;
+      if (sentTitle) sentTitle.textContent = building ? BOT_TITLE : title;
       if (sentLine) {
         const minutes = Number(bot?.typicalMinutes) > 0 ? Number(bot.typicalMinutes) : 8;
-        sentLine.textContent = building ? `Homeroom bot is on it, usually about ${minutes} minutes.` : SENT_LINE;
+        sentLine.textContent = building ? botLine(minutes) : SENT_LINE;
       }
+      const first = building && !!firstApp;
+      if (sentFirstLine && first) sentFirstLine.textContent = `You just helped shape ${firstApp}.`;
+      sentFirst?.classList.toggle('hidden', !first);
       sentChat?.classList.toggle('hidden', !building);
       sentMine?.classList.toggle('hidden', building);
       sentFix?.classList.toggle('hidden', !(building && bot.canFix));
@@ -560,6 +579,12 @@ export function init() {
     const TITLE_GEN_DEBOUNCE_MS = 900;
     const TITLE_GEN_MIN_DESC = 12;
     const TITLE_GEN_MAX_PER_OPEN = 8;
+    // #4194: the description may run to 64,000 characters now; the title is
+    // named from its start, and the preview route refuses more than this
+    // (TITLE_SOURCE_MAX in lib/issue-body-limit.ts and routes/feedback.js,
+    // kept equal by tests/issue-body-limit.test.js). A literal, not an
+    // import: the controller's tests run it with its imports stripped.
+    const TITLE_GEN_SOURCE_MAX = 2000;
     const titleIdlePlaceholder = feedbackTitle.placeholder;
     let titleDirty = false;
     let lastGeneratedFor = '';
@@ -592,7 +617,7 @@ export function init() {
         const res = await fetch('/api/feedback/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc }),
+          body: JSON.stringify({ description: desc.slice(0, TITLE_GEN_SOURCE_MAX) }),
         });
         const data = res.ok ? await res.json() : {};
         // Stale (a newer request or a reset happened) or the user took
@@ -654,6 +679,47 @@ export function init() {
     // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
     const screenshotCount = document.getElementById('feedback-screenshot-count');
+    // #4127: Photos and the video picker are the two rows of a popover under
+    // one paperclip button (feedback.tsx), so the row stays on one line. The
+    // rows keep their own handlers below; this block only opens and closes
+    // the popover and keeps the paperclip in step with the rows: shown while
+    // either row is, inert while both are.
+    const attachBtn = document.getElementById('feedback-attach-btn');
+    const attachMenu = document.getElementById('feedback-attach-menu');
+    const attachRows = [screenshotPickerBtn, document.getElementById('feedback-video-btn')];
+    const attachMenuOpen = () => !!attachMenu && !attachMenu.classList.contains('hidden');
+    const setAttachMenuOpen = (open) => {
+      if (!attachMenu || !attachBtn) return;
+      attachMenu.classList.toggle('hidden', !open);
+      attachBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    const paintAttachButton = () => {
+      if (!attachBtn) return;
+      const shown = attachRows.filter((row) => row && !row.classList.contains('hidden'));
+      attachBtn.classList.toggle('hidden', shown.length === 0);
+      attachBtn.disabled = shown.length === 0 || shown.every((row) => row.disabled);
+      if (attachBtn.disabled || attachBtn.classList.contains('hidden')) setAttachMenuOpen(false);
+    };
+    if (attachBtn && attachMenu) {
+      attachBtn.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (attachBtn.disabled) return;
+        setAttachMenuOpen(!attachMenuOpen());
+        if (attachMenuOpen()) {
+          const first = attachRows.find((row) => row && !row.classList.contains('hidden') && !row.disabled);
+          if (first) first.focus({ preventScroll: true });
+        }
+      });
+      // Any click outside the paperclip and its popover closes it. Capture
+      // phase, so a click something else stops still counts. (Escape is the
+      // kit modal's: it closes the dialog, and _reset closes this with it.)
+      document.addEventListener('click', (e) => {
+        if (!attachMenuOpen()) return;
+        const t = e && e.target;
+        if (t && (attachBtn.contains(t) || attachMenu.contains(t))) return;
+        setAttachMenuOpen(false);
+      }, true);
+    }
     const screenshotTools = window.ScreenshotSelect;
     const displayCaptureSupported = !!screenshotTools && screenshotTools.isSupported();
     let nativeCaptureSupported = false;
@@ -843,6 +909,7 @@ export function init() {
         : (count ? 'Attach another' : 'Attach screenshot');
       screenshotBtn.classList.toggle('hidden', full || !canCapture);
       screenshotPickerBtn.classList.toggle('hidden', full);
+      paintAttachButton();
       // #3027: say how many fit, so the second picture is not a guess.
       if (screenshotCount) {
         screenshotCount.textContent = count === 0
@@ -865,6 +932,7 @@ export function init() {
     const setScreenshotActionsDisabled = (disabled) => {
       screenshotBtn.disabled = disabled;
       screenshotPickerBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     // Forget one attachment client-side. An already uploaded (now orphaned)
@@ -907,7 +975,24 @@ export function init() {
       removeBtn.className = 'rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
       removeBtn.textContent = '✕';
       removeBtn.addEventListener('click', () => removeScreenshot(shot));
-      item.appendChild(img);
+      // #4482: comments handed over from comment mode keep their pins beside
+      // their picture, as data; the thumbnail shows them over the picture.
+      if (shot.pins && shot.pins.length) {
+        const frame = document.createElement('span');
+        frame.className = 'relative inline-block shrink-0';
+        frame.appendChild(img);
+        for (const pin of shot.pins) {
+          const dot = document.createElement('span');
+          dot.className = 'absolute h-2.5 w-2.5 -translate-y-full rounded-[50%_50%_50%_0] bg-violet-600 shadow-[0_0_0_1.5px_#fff]';
+          dot.style.left = `${pin.x * 100}%`;
+          dot.style.top = `${pin.y * 100}%`;
+          dot.setAttribute('aria-hidden', 'true');
+          frame.appendChild(dot);
+        }
+        item.appendChild(frame);
+      } else {
+        item.appendChild(img);
+      }
       item.appendChild(stateEl);
       item.appendChild(removeBtn);
       screenshotPreview.appendChild(item);
@@ -920,13 +1005,14 @@ export function init() {
       body: blob,
     });
 
-    const attachScreenshotBlob = async (blob) => {
+    const attachScreenshotBlob = async (blob, pins = null) => {
       // Never a fourth: every caller checks the room first, and this is the
       // backstop behind them.
       if (screenshots.length >= MAX_SCREENSHOTS) return;
       // Thumbnail immediately; upload in the background with Submit blocked
-      // (screenshotUploading) until the id lands.
-      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
+      // (screenshotUploading) until the id lands. `pins` (#4482) are comment
+      // mode's, each { x, y, n, note }, sent beside the picture at submit.
+      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true, pins };
       screenshots.push(shot);
       renderScreenshotThumb(shot);
       paintScreenshotActions();
@@ -1135,6 +1221,8 @@ export function init() {
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
+      // #4127: a choice closes the paperclip's popover.
+      setAttachMenuOpen(false);
       if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
       // An image instead of the share the browser has not answered: that
       // attempt is over (see pendingCapture).
@@ -1147,14 +1235,19 @@ export function init() {
       screenshotInput.click();
     });
 
-    screenshotInput.addEventListener('change', async () => {
-      // #3027: the picker takes several files at once. Only as many as there
-      // is room for are attached, in the order picked, and the rest are
-      // named rather than silently dropped.
+    screenshotInput.addEventListener('change', () => {
       const files = Array.from((screenshotInput.files) || []);
       screenshotInput.value = '';
       // A cancelled pick came back with the page intact — nothing to rescue.
       if (!files.length) { clearCaptureDraft(); return; }
+      void attachScreenshotFiles(files);
+    });
+
+    // #3027: the picker takes several files at once. Only as many as there
+    // is room for are attached, in the order picked, and the rest are
+    // named rather than silently dropped. #4065: images dropped on the form
+    // come through here too.
+    async function attachScreenshotFiles(files) {
       const room = Math.max(0, MAX_SCREENSHOTS - screenshots.length);
       const taken = files.slice(0, room);
       // Bumped by every open and every real close: a dialog closed while the
@@ -1189,7 +1282,7 @@ export function init() {
         setScreenshotActionsDisabled(false);
         paintScreenshotActions();
       }
-    });
+    }
 
     // ── #3940: video attachment ────────────────────────────────────
     // One clip per issue, chosen alongside the images above. MP4/WebM/MOV
@@ -1216,13 +1309,16 @@ export function init() {
 
     const paintVideoActions = () => {
       videoBtn.classList.remove('hidden');
-      videoLabel.textContent = video ? 'Replace video' : 'Add video';
+      // #4127: a row in the paperclip's popover, beside "Photo".
+      videoLabel.textContent = video ? 'Replace video' : 'Video';
+      paintAttachButton();
       videoPreview.classList.toggle('hidden', !video);
       videoPreview.classList.toggle('flex', !!video);
     };
 
     const setVideoActionsDisabled = (disabled) => {
       videoBtn.disabled = disabled;
+      paintAttachButton();
     };
 
     const discardVideo = (entry) => {
@@ -1401,6 +1497,7 @@ export function init() {
     };
 
     videoBtn.addEventListener('click', () => {
+      setAttachMenuOpen(false);
       if (videoBtn.disabled) return;
       // Same page-death insurance as the Photos picker above: the file
       // picker is a native surface and the tab can be evicted behind it.
@@ -1409,18 +1506,61 @@ export function init() {
       videoInput.click();
     });
 
-    videoInput.addEventListener('change', () => {
-      const file = (videoInput.files || [])[0] || null;
-      videoInput.value = '';
-      // A cancelled pick came back with the page intact — nothing to rescue.
-      clearCaptureDraft();
-      if (!file) return;
+    const attachVideoFile = (file) => {
       void attachVideoBlob(file).catch((err) => {
         try { console.warn('[feedback] video attach failed', err && err.message); } catch { /* console is optional */ }
         if (video && video.uploading) discardVideo(video);
         paintVideoActions();
         showFeedbackNotice("Couldn't attach that clip. Please try another.", true);
       });
+    };
+
+    videoInput.addEventListener('change', () => {
+      const file = (videoInput.files || [])[0] || null;
+      videoInput.value = '';
+      // A cancelled pick came back with the page intact — nothing to rescue.
+      clearCaptureDraft();
+      if (!file) return;
+      attachVideoFile(file);
+    });
+
+    // ── #4065: drop files on the form ──────────────────────────────
+    // Messages, group chat and agent sessions already take a dropped file;
+    // this dialog only had its pickers, and a file dropped on it made the
+    // browser navigate away to the file, taking the draft with it. A drop
+    // anywhere on the form now goes where the pickers would send it: images
+    // to the screenshot row (same room limit and checks), a clip to the
+    // video slot. A control the dialog has switched off (an upload or a
+    // submit under way) refuses the drop the way its button would, and a
+    // full image row says so.
+    const draggingFiles = (event) => {
+      const types = event.dataTransfer && event.dataTransfer.types;
+      return !!types && Array.from(types).includes('Files');
+    };
+    feedbackForm.addEventListener('dragover', (event) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    });
+    feedbackForm.addEventListener('drop', (event) => {
+      if (!draggingFiles(event)) return;
+      event.preventDefault();
+      if (feedbackText.readOnly) return;
+      const files = Array.from(event.dataTransfer.files || []);
+      const images = files.filter((file) => /^image\//.test(file.type));
+      const clip = files.find((file) => /^video\//.test(file.type));
+      if (images.length && !screenshotPickerBtn.disabled) {
+        if (screenshots.length >= MAX_SCREENSHOTS) {
+          showFeedbackNotice(`You can attach up to ${MAX_SCREENSHOTS} images.`, true);
+        } else {
+          abandonPendingCapture();
+          void attachScreenshotFiles(images);
+        }
+      }
+      if (clip && !videoBtn.disabled) attachVideoFile(clip);
+      if (!images.length && !clip && files.length) {
+        showFeedbackNotice('Drop an image or a video clip.', true);
+      }
     });
 
     // ── #1054: the offline outbox seam ─────────────────────────────
@@ -1470,10 +1610,13 @@ export function init() {
         return "You're offline. Your message will be saved on this device and sent automatically "
           + "when you're back online.";
       }
+      // #3994: not "sending now". The outbox sends on its own schedule, which
+      // can be ten minutes away, so the line says what is true and the
+      // Try again under it (#feedback-queue-retry) sends it now.
       if (n > 0) {
         return n === 1
-          ? '1 message saved on this device, sending now.'
-          : `${n} messages saved on this device, sending now.`;
+          ? "1 message saved on this device hasn't been sent yet."
+          : `${n} messages saved on this device haven't been sent yet.`;
       }
       return '';
     };
@@ -1514,6 +1657,7 @@ export function init() {
     // — same seam as the offline banner and the header's own visibility.
     const paintQueueDot = (n) => {
       publishVisibility('feedback-queue-dot', n > 0);
+      paintQueueRetry();
     };
 
     // Every count() is async (opening IndexedDB can take a moment) and three
@@ -1523,6 +1667,74 @@ export function init() {
     // ?shot=feedback-queued lost its dot, because the offline-change fired
     // before the seed and its slower read landed after it. Only the newest
     // read is allowed to paint.
+    // #3994: "Try again" under the status line, while anything saved on
+    // this device is still waiting. The outbox sends on its own triggers
+    // (coming back online, signing in, a backoff timer), and every one of
+    // them can miss a connection that is back, which left a person looking at
+    // a stuck message with nothing to press. It is hidden while the composer
+    // is locked (a message was just saved or filed), so it never sits under
+    // the "Saved on this device" confirmation. The words stay in the outbox
+    // throughout: a try that fails again only puts the message back on the
+    // schedule, and one the server refuses outright comes back into the box.
+    const queueRetryBtn = document.getElementById('feedback-queue-retry');
+    let queueRetrying = false;
+    const paintQueueRetry = () => {
+      if (!queueRetryBtn) return;
+      const show = queueRetrying || (queuePendingCount > 0 && !feedbackText.readOnly);
+      queueRetryBtn.classList.toggle('hidden', !show);
+      queueRetryBtn.disabled = queueRetrying;
+      queueRetryBtn.textContent = queueRetrying ? 'Sending…' : 'Try again';
+    };
+    const retryQueuedNow = async () => {
+      if (!window.FeedbackQueue?.retryNow || queueRetrying) return;
+      queueRetrying = true;
+      paintQueueRetry();
+      // A probe too, so a connection that came back clears the offline
+      // state (and the "Save for later" label) without waiting 15 s.
+      try { window.Offline?.nudge?.(); } catch (err) { /* ignore */ }
+      let res = null;
+      try { res = await window.FeedbackQueue.retryNow(); } catch (err) { res = null; }
+      queueRetrying = false;
+      const n = await readQueueCount();
+      paintQueueRetry();
+      const modal = document.getElementById('feedback-modal');
+      if (!modal || modal.classList.contains('hidden')) return;
+      // A sent message is announced by onFlushed's toast; the line itself
+      // goes back to describing what is left.
+      // A message the server refused outright comes back into an empty,
+      // editable box right away, as the open path's hand-back does. Someone
+      // mid-sentence keeps their sentence, and the refused one waits in the
+      // outbox for the next open.
+      if (res && res.failed > 0 && !feedbackText.readOnly && !feedbackText.value.trim()) {
+        const failed = await Promise.resolve(window.FeedbackQueue.takeFailed()).catch(() => null);
+        // takeFailed() is a store read, and the box stayed editable while it
+        // ran: typing that started meanwhile wins, and the record goes back.
+        if (failed && (feedbackText.readOnly || feedbackText.value.trim() || feedbackTitle.value.trim())) {
+          Promise.resolve(window.FeedbackQueue.putBack?.(failed)).catch(() => {});
+        } else if (failed) {
+          const p = failed.payload || {};
+          feedbackText.value = p.description || '';
+          if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
+          restoreChosenTarget(p.target);
+          showFeedbackNotice(`This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
+            + ' Your text is back, so edit it and try again.', true);
+          queueLineText = '';
+          feedbackText.focus();
+          return;
+        }
+      }
+      if (n > 0 && (!res || res.remaining > 0)) {
+        showFeedbackNotice(n === 1
+          ? "Still couldn't send it. It's kept on this device and will try again by itself."
+          : `Still couldn't send them. All ${n} are kept on this device and will try again by themselves.`, true);
+        queueLineText = '';
+        return;
+      }
+      queueLineText = feedbackStatus.classList.contains('hidden') ? '' : feedbackStatus.textContent;
+      paintQueueState();
+    };
+    queueRetryBtn?.addEventListener('click', () => { void retryQueuedNow(); });
+
     let queueReadSeq = 0;
     const readQueueCount = () => {
       if (!window.FeedbackQueue) return Promise.resolve(null);
@@ -1773,6 +1985,13 @@ export function init() {
         // the embed lines and links every row to the filed issue.
         const shotIds = screenshotIds();
         if (shotIds.length) body.screenshotIds = shotIds;
+        // #4482: comments handed over keep their pins beside their pictures,
+        // which the server writes onto each picture's link.
+        const pinned = screenshots.filter((shot) => shot.id && shot.pins && shot.pins.length)
+          .flatMap((shot) => shot.pins.map((pin) => ({
+            id: shot.id, x: pin.x, y: pin.y, ...(pin.n ? { n: pin.n } : {}), note: String(pin.note || ''),
+          })));
+        if (pinned.length) body.screenshotPins = pinned;
         // #3940: and the uploaded clip.
         if (video && video.id) body.videoId = video.id;
         // #685: collect the app's state snapshot at submit time (fresh
@@ -1903,17 +2122,21 @@ export function init() {
             AppView.refreshDevData('issue');
           }
           // B8: Homeroom bot is on it: its confirmation, first request or not.
+          // #3971: a first request says so inside it, naming the app.
           if (data.homeroomBot?.botWillBuild) {
-            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot);
+            const first = !!data.firstFeedback && Number(data.firstFeedback.userId) === Number(App.user?.id);
+            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim(), data.homeroomBot,
+              first ? (AppView?.appData?.name || 'this app') : '');
             return;
           }
           // B8: the bot is theirs but does not build here: it went to the group.
           const toGroup = data.homeroomBot && target === 'app'
-            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group as a request` : postedTo;
+            ? `Sent to ${AppView?.appData?.name || 'this app'}'s group` : postedTo;
           // #3186: the confirmation stays, with "See your requests" in it,
-          // instead of closing itself (see showSent above).
+          // instead of closing itself (see showSent above). #3971: "Thanks!"
+          // leads it again, as it did before #3400.
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(toGroup, `${bountyNotice}${stateNotice}`.trim());
+            showSent(`Thanks! ${toGroup}`, `${bountyNotice}${stateNotice}`.trim());
           }
           return;
         }
@@ -1973,8 +2196,10 @@ export function init() {
       const screenshotSession = ++screenshotProbeSequence;
       nativeCaptureSupported = false;
       resetScreenshotState();
-      // #3940: and clip-less, with the button repainted to "Add video".
+      // #3940: and clip-less, with the row repainted to "Video".
       resetVideoState();
+      // #4127: every open starts with the paperclip's popover shut.
+      setAttachMenuOpen(false);
       void probeNativeCaptureSupport(screenshotSession, true);
 
       // "This app" is only selectable when an app with a real repo is
@@ -2030,6 +2255,37 @@ export function init() {
       // guess about intent, so asking again would only be a second tap.
       // Only when "This app" is really there to choose.
       if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
+      // The experimental C comment (features/comment-pin/) hands itself over
+      // here when it cannot post on its own (offline, the server failing):
+      // its words, its screenshot and the destination the person already
+      // chose, so the outbox below takes it from there and nothing is lost.
+      // The words go after anything already in the box, never over it.
+      if (opts.target === 'platform') setFeedbackTarget('platform');
+      if (typeof opts.description === 'string' && opts.description.trim()) {
+        const typed = feedbackText.value.trim();
+        feedbackText.value = typed ? `${typed}\n\n${opts.description}` : opts.description;
+      }
+      if (typeof Blob !== 'undefined' && opts.screenshotBlob instanceof Blob
+          && screenshots.length < MAX_SCREENSHOTS) {
+        void attachScreenshotBlob(opts.screenshotBlob);
+      }
+      // Comment mode handing a box over (features/comment-pin/post.ts
+      // handOverOptions): its pictures, the pages' with their pins beside them
+      // (#4482), the title the box showed, and its Kudos. A title the person
+      // saw and kept is theirs, so it is not dropped as a stale suggestion.
+      if (Array.isArray(opts.screenshots)) {
+        for (const handed of opts.screenshots) {
+          if (screenshots.length >= MAX_SCREENSHOTS) break;
+          if (typeof Blob !== 'undefined' && handed && handed.blob instanceof Blob) {
+            void attachScreenshotBlob(handed.blob, Array.isArray(handed.pins) ? handed.pins : null);
+          }
+        }
+      }
+      if (typeof opts.title === 'string' && opts.title.trim() && !feedbackTitle.value.trim()) {
+        feedbackTitle.value = opts.title.trim().slice(0, 200);
+        titleDirty = true;
+      }
+      if (opts.bounty === true && !bountyCheckbox.disabled) bountyCheckbox.checked = true;
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so
@@ -2050,10 +2306,15 @@ export function init() {
       if (window.FeedbackQueue && !saved) {
         Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
           const modal = document.getElementById('feedback-modal');
-          if (!failed || modal.classList.contains('hidden')) return;
+          if (!failed) return;
           // Live text always wins — a returned draft must never overwrite
-          // what someone is typing right now.
-          if (feedbackText.readOnly || feedbackText.value.trim()) return;
+          // what someone is typing right now. #3994: and takeFailed() has
+          // already removed it, so a draft that cannot be shown goes back to
+          // the outbox for the next open instead of being dropped.
+          if (modal.classList.contains('hidden') || feedbackText.readOnly || feedbackText.value.trim()) {
+            Promise.resolve(window.FeedbackQueue.putBack?.(failed)).catch(() => {});
+            return;
+          }
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
@@ -2133,6 +2394,7 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      setAttachMenuOpen(false);
       clearTimeout(closeTimer);
       firstFeedback = null;
       firstSuccess?.classList.add('hidden');
@@ -2179,6 +2441,32 @@ export function init() {
         if (Number(pending.userId) === Number(App.user?.id)) App.openFeedbackModal({ firstFeedback: pending });
       }, 0);
     };
+    // The form's draft, taken for its switch to comment mode (feedback.tsx):
+    // the words, a title the person wrote, the pictures (their bytes; comment
+    // mode uploads them with its own), the Kudos and a destination the person
+    // chose. TAKEN, not copied: the composer is emptied, so the close that
+    // follows saves no draft (#2796) to come back as a second copy. Comment
+    // mode asks before it drops words nobody has posted.
+    Feedback._takeDraft = () => {
+      const chosen = feedbackTargetApp.getAttribute('aria-checked') === 'true'
+        ? 'app'
+        : feedbackTargetPlatform.getAttribute('aria-checked') === 'true' ? 'platform' : null;
+      const draft = {
+        text: feedbackText.readOnly ? '' : feedbackText.value,
+        title: titleDirty ? feedbackTitle.value.trim() : '',
+        images: screenshots.map((shot) => shot.blob).filter(Boolean),
+        bounty: !!(bountyCheckbox.checked && !bountyCheckbox.disabled),
+        target: chosen,
+      };
+      if (!feedbackText.readOnly) {
+        feedbackText.value = '';
+        feedbackTitle.value = '';
+        titleDirty = false;
+        resetScreenshotState();
+        bountyCheckbox.checked = false;
+      }
+      return draft;
+    };
     feedbackBtn.addEventListener('click', submitFeedback);
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
     // Textareas swallow Enter by default (it inserts a newline), so we
@@ -2204,7 +2492,21 @@ export function init() {
   // above, the Dev "+" menu's "File an issue" item, and `App._applyFeedbackShot`
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
+  //
+  // Experimental (#4289's comment mode): where the device's switch is on, a
+  // plain open is comment mode instead (features/improve/suggest-shortcut.ts
+  // decides, `opensComment`), and this form is one switch away from it. Not
+  // an open that carries something for the form (a handed-over comment, the
+  // first-request moment) or that asks for the form by name (`mode: 'form'`,
+  // comment mode's Form).
   App.openFeedbackModal = (opts = {}) => {
+    const shortcut = window.UsernodeReact?.suggestShortcut;
+    const plain = !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots
+      && opts.mode !== 'form';
+    if (plain && shortcut?.opensComment?.()) {
+      shortcut.openComment({ via: 'suggest' });
+      return;
+    }
     const island = dialogController();
     if (island) { island.open(opts); return; }
     Feedback._open(opts);
@@ -2276,7 +2578,7 @@ export function init() {
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Posted to Homeroom');
+    showSent('Thanks! Posted to Homeroom');
   };
 
   // B8: ?shot=feedback-bot, what a request Homeroom bot builds is answered

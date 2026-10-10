@@ -50,15 +50,28 @@ test('B9 (E8): names starting with homeroom are taken; the bot is never notified
   assert.match(read('src/services/notifications.js'), /'SELECT id FROM users WHERE id = ANY\(\$1::int\[\]\) AND is_synthetic = FALSE'/);
 });
 
-test('B9: the room hands a mention over after it is stored, and only from the main stream', () => {
+test('B9: the room hands a mention over after it is stored, and only from the main stream or (#4417) a topic\'s channel', () => {
   const ws = read('src/services/ws.js');
-  assert.match(ws, /if \(!thread\) \{\s*void require\('\.\/homeroom-bot-chat'\)\.noteChatMessage\(pool, null, \{\s*appId: client\.appId, userId: client\.user\.id, messageId: rows\[0\]\.id, content, thread, postedVia,/);
+  assert.match(ws, /if \(!thread \|\| thread\.type === appChat\.CATEGORY_THREAD\) \{\s*void require\('\.\/homeroom-bot-chat'\)\.noteChatMessage\(pool, null, \{\s*appId: client\.appId, userId: client\.user\.id, messageId: rows\[0\]\.id, content, thread, postedVia,/);
+  assert.match(read('src/services/homeroom-bot-chat.js'), /if \(\(thread && thread\.type !== 'category'\) \|\| postedVia === 'agent' \|\| !appId \|\| !userId\) return null;/,
+    'a reply thread, an issue\'s or a proposal\'s discussion is not a place to ask the bot');
   assert.ok(ws.indexOf("noteChatMessage(pool, null") > ws.indexOf('await broadcastFromSender(pool, client.appId, outMsg, client.user.id);'), 'after the room has it');
   const chat = read('src/routes/chat.js');
   assert.match(chat, /router\.post\('\/api\/apps\/:slug\/messages\/:id\/request', groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\),/);
   assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatReadLimiter,/);
   const policy = require('../src/services/cli-api-policy');
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/x/messages/5/request'), false, 'a person\'s own browser only');
+});
+
+// The room does not await the hand-over, so a rejection there would be
+// unhandled and end the process: a failed read is logged, and resolves null.
+test('B9: a failed read never rejects, and the room catches the hand-over anyway', async () => {
+  const pool = { query: async () => { throw new Error('connection terminated'); } };
+  const out = await botChat.noteChatMessage(pool, null, {
+    appId: 7, userId: 3, messageId: 11, content: '@Homeroom bot add tags',
+  });
+  assert.equal(out, null);
+  assert.match(read('src/services/ws.js'), /noteChatMessage\(pool, null, \{[^}]*\}\)\s*\.catch\(/);
 });
 
 test('B9: the chip and the card', () => {
@@ -112,13 +125,15 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
-  const user = async (username, synthetic = false) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2) RETURNING id, username`,
-    [username, synthetic],
+  const user = async (username, synthetic = false, access = true) => (await pool.query(
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', $3, $2) RETURNING id, username`,
+    [username, synthetic, access],
   )).rows[0];
   await user('homeroom_bot', true);
   const ben = await user('ben');
-  const ada = await user('ada');
+  // Ada is a member, but Homeroom has not let her in yet: the bot works for
+  // everyone with platform access, so not for her.
+  const ada = await user('ada', false, false);
   const { rows: [inserted] } = await pool.query(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility, repo_url)
      VALUES ('Supper Club', 'supper-club', 'running', $1, 'private', 'private', 'https://github.com/example/supper-club')
@@ -134,9 +149,7 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['ben']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['supper-club']));
 
   let nextIssue = 40;
   const created = [];
@@ -198,7 +211,7 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
     // His cards come back after a reload; Ada sees none of them.
     const mine = await botChat.myRequests(pool, { app, user: { id: ben.id, username: 'ben', hasPlatformAccess: true } });
     assert.deepEqual([mine.bot, mine.builds, mine.cards.length, mine.cards[0].messageId], [true, true, 1, id]);
-    const hers = await botChat.myRequests(pool, { app, user: { id: ada.id, username: 'ada', hasPlatformAccess: true } });
+    const hers = await botChat.myRequests(pool, { app, user: { id: ada.id, username: 'ada', hasPlatformAccess: false } });
     assert.deepEqual([hers.bot, hers.cards.length], [false, 0]);
   });
 

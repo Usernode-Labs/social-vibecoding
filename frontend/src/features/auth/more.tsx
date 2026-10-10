@@ -677,7 +677,7 @@ export function MoreScreen() {
         */}
         <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
           Four questions, about three minutes. These are what we read when we
-        pick the next group, and you can come back and add to them any time.
+        pick who gets in next, and you can come back and add to them any time.
         </p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
         {/*

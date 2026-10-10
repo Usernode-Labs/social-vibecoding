@@ -86,6 +86,9 @@ function openInvitePane(): void {
 export function ShareDialog() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [href, setHref] = useState('');
+  // #4405: the project's Homeroom address, shown under the field when the
+  // link offered is the project's own custom domain.
+  const [alsoAt, setAlsoAt] = useState('');
   const [copyLabel, setCopyLabel] = useState('Copy');
   const [audience, setAudience] = useState<ShareAudience>('members');
   const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,9 +102,14 @@ export function ShareDialog() {
       inviteNext.current = false;
       setAudience(shareAudience(window.AppView?.appData as { view_visibility?: unknown; audience?: unknown } | undefined));
       const raw = (window.AppView?.appData?.url as string) || '';
-      const url = raw && window.resolveDevHost ? window.resolveDevHost(raw) : raw;
+      // #4405: once a custom domain is live the server offers it as the
+      // share address (share_url); the Homeroom address keeps working and is
+      // named under the field.
+      const share = (window.AppView?.appData?.share_url as string) || raw;
+      const url = share && window.resolveDevHost ? window.resolveDevHost(share) : share;
       if (inputRef.current) inputRef.current.value = url;
       setHref(url);
+      setAlsoAt(share && raw && share !== raw ? raw.replace(/^https?:\/\//, '') : '');
       setCopyLabel('Copy');
       setTimeout(() => {
         inputRef.current?.focus();
@@ -190,6 +198,12 @@ export function ShareDialog() {
             {copyLabel}
           </Button>
         </div>
+        <p
+          id="share-homeroom-address"
+          className={alsoAt ? 'mt-2 text-xs text-zinc-500 dark:text-zinc-400' : 'hidden'}
+        >
+          {alsoAt ? `Also at ${alsoAt}` : ''}
+        </p>
         <div className={audience === 'members' ? 'mt-4 flex items-center justify-between gap-3' : 'mt-4 flex justify-end'}>
           {audience === 'members' ? (
             <Button

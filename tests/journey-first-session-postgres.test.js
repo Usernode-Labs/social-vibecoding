@@ -22,7 +22,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const at = (base, seconds) => (seconds == null ? null : new Date(base.getTime() + seconds * 1000).toISOString());
 
-test('the reading: steps against the hour and the two-minute reward, the aha, opens beside joins', () => {
+test('the reading: steps against the hour and the two-minute reward, the aha, the invite funnel beside them', () => {
   const t0 = new Date('2026-09-29T08:00:00Z');
   const make = (userId, [reward, invited, running], start = t0) => ({
     path: 'make', user_id: userId, username: `u${userId}`, slug: `p${userId}`, name: `P${userId}`, intent_at: start.toISOString(),
@@ -32,15 +32,22 @@ test('the reading: steps against the hour and the two-minute reward, the aha, op
     path: 'join', user_id: userId, username: `u${userId}`, slug: 'p1', name: 'P1', intent_at: start.toISOString(),
     reward_at: null, invited_at: null, running_at: null, said_at: at(start, said), suggested_at: at(start, suggested),
   });
+  const look = (userId, [made], start = t0) => ({
+    path: 'look', user_id: userId, username: `u${userId}`, slug: null, name: null, intent_at: start.toISOString(),
+    reward_at: null, invited_at: null, running_at: null, said_at: null, suggested_at: null, made_at: at(start, made),
+  });
   const rows = [
     make(1, [90, 1000, 80]),
     make(2, [200, 4000, null]),
     join(3, [100, null]),
     join(4, [null, 5000]),
+    look(5, [7200]),
+    look(6, [null]),
   ];
   const since = '2026-09-01T00:00:00Z';
-  const r = journey.firstSessionReading(rows, 5, {
-    week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since },
+  const funnel = { from: '2026-09-28T00:00:00.000Z', opened: 5, signedIn: 3, signedInByInvite: 2, signedInAlready: 1, joined: 2 };
+  const r = journey.firstSessionReading(rows, funnel, {
+    week: { label: '2026-09-28', finished: true }, recordedFrom: { make: since, reward: since, opens: since, signedIn: since, look: since },
   });
   assert.deepEqual([r.week, r.finished, r.sessionMinutes], ['2026-09-28', true, journey.FIRST_SESSION_MINUTES]);
   assert.equal(r.make.people, 2);
@@ -53,22 +60,32 @@ test('the reading: steps against the hour and the two-minute reward, the aha, op
   assert.equal(r.make.aha, 1, 'one maker sent an invite within the hour');
   assert.deepEqual(r.join.steps.map((s) => [s.key, s.reached, s.inSession]), [['said', 1, 1], ['suggested', 1, 0]]);
   assert.equal(r.join.aha, 1, 'one invited person wrote within the hour; a request after it is not the aha');
-  assert.deepEqual(r.opens, { opened: 5, joined: 2 });
-  assert.deepEqual(r.examples.map((e) => e.userId), [4, 3, 2, 1], 'newest first');
-  assert.deepEqual(r.examples[3].steps, { reward: 90, invited: 1000, running: 80 });
+  assert.deepEqual(r.opens, funnel, 'the funnel as read');
+  // #4039: "Look around first" is its own outcome beside Made a project, with
+  // whether they made one of their own later.
+  assert.deepEqual([r.look.people, r.look.notRecorded], [2, null]);
+  assert.deepEqual(r.look.steps.map((s) => [s.key, s.reached, s.inSession, s.medianSeconds]), [['made', 1, 0, 7200]]);
+  assert.deepEqual(r.examples.map((e) => e.userId), [6, 5, 4, 3, 2, 1], 'newest first');
+  assert.deepEqual(r.examples[5].steps, { reward: 90, invited: 1000, running: 80 });
+  assert.deepEqual([r.examples[1].path, r.examples[1].project, r.examples[1].steps], ['look', null, { made: 7200 }]);
 
   // Before its records began, a measure reads "not recorded", never 0.
-  const early = journey.firstSessionReading([], 0, { week: { label: 'all', finished: false } });
+  const early = journey.firstSessionReading([], undefined, { week: { label: 'all', finished: false } });
   assert.equal(early.make.notRecorded.recorded, false);
-  assert.equal(early.opens.opened.recorded, false);
-  assert.deepEqual(early.recordedFrom, { make: null, reward: null, opens: null });
+  assert.equal(early.opens.recorded, false);
+  assert.equal(early.look.notRecorded.recorded, false);
+  assert.deepEqual(early.recordedFrom, { make: null, reward: null, opens: null, signedIn: null, look: null });
   assert.deepEqual(early.make.steps.map((s) => [s.reached, s.medianSeconds]), [[0, null], [0, null], [0, null]]);
 });
 
 test('the first session\'s create marks the project, and the sketch records its maker\'s first artefact', () => {
-  assert.match(read('frontend/src/features/first-session/make.tsx'), /from: 'first-session',/);
+  // The make screen sends its door: 'first-session' by default, 'create'
+  // from the Create button, which the Journey does not count (it reads
+  // `from = 'first-session'`).
+  assert.match(read('frontend/src/features/first-session/make.tsx'), /from: entry,/);
   const apps = read('src/routes/apps.js');
-  assert.match(apps, /\.\.\.\(req\.body\.from === 'first-session' \? \{ from: 'first-session' \} : \{\}\),/,
+  assert.match(apps, /const MAKE_ORIGINS = new Set\(\['first-session', 'create'\]\);/);
+  assert.match(apps, /\.\.\.\(MAKE_ORIGINS\.has\(req\.body\.from\) \? \{ from: req\.body\.from \} : \{\}\),/,
     'app_created carries it, and nothing else a client sends');
   assert.match(apps, /noteFirstArtefactShown\(pool, \{ appId: app\.id, userId: req\.user\.id \}\)/);
   assert.match(read('src/db/schema.sql'),
@@ -126,8 +143,9 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
   await t.test('before anything was recorded, the reading says so', async () => {
     const r = await journey.firstSession(pool, { week: week() });
     assert.equal(r.make.notRecorded.recorded, false);
-    assert.equal(r.opens.opened.recorded, false);
-    assert.deepEqual([r.make.people, r.join.people, r.examples.length], [0, 0, 0]);
+    assert.equal(r.opens.recorded, false);
+    assert.equal(r.look.notRecorded.recorded, false);
+    assert.deepEqual([r.make.people, r.join.people, r.look.people, r.examples.length], [0, 0, 0, 0]);
   });
 
   const book = await project('book-swap', ana);
@@ -172,12 +190,17 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     await event('app_created', { userId: cat, appId: other.id, when: new Date(Date.now() - 9 * 86400000), metadata: { from: 'first-session' } });
     const tests = await project('tess-app', tess);
     await event('app_created', { userId: tess, appId: tests.id, when: at(start, 20), metadata: { from: 'first-session' } });
-    // Two opens of live links in the window, one before it.
+    // Two opens of live links in the window, one before it; ben signing in
+    // through the link, and a sign-in days ago, before the window, so the
+    // funnel was recorded from before it.
     await event('invite_opened', { appId: book.id, when: at(start, 900), metadata: { inviteId: invite.id, signedIn: false } });
     await event('invite_opened', { userId: ben, appId: book.id, when: at(start, 950), metadata: { inviteId: invite.id, signedIn: true } });
     await event('invite_opened', { appId: book.id, when: new Date(Date.now() - 3 * 86400000), metadata: { inviteId: invite.id, signedIn: false } });
+    await event('invite_signed_in', { userId: ben, appId: book.id, when: at(start, 960), metadata: { inviteId: invite.id, how: 'was_signed_in' } });
+    await event('invite_signed_in', { userId: cat, appId: book.id, when: new Date(Date.now() - 3 * 86400000), metadata: { inviteId: 0, how: 'signed_up' } });
 
-    const r = await journey.firstSession(pool, { week: week() });
+    const window = week();
+    const r = await journey.firstSession(pool, { week: window });
     assert.equal(r.make.notRecorded, null);
     assert.equal(r.make.people, 1, 'ana alone made a project from the first session in the window');
     assert.deepEqual(r.make.steps.map((s) => [s.key, s.reached, s.medianSeconds]),
@@ -188,14 +211,43 @@ test('first artefacts and the first-session reading against the full PostgreSQL 
     assert.deepEqual(r.join.steps.map((s) => [s.key, s.reached, s.medianSeconds, s.inSession]),
       [['said', 1, 60, 1], ['suggested', 1, 4000, 0]]);
     assert.equal(r.join.aha, 1);
-    assert.deepEqual(r.opens, { opened: 2, joined: 1 });
+    // Ben opened it already signed in (#4272: the sign-ins in their two ways).
+    assert.deepEqual(r.opens, {
+      from: window.start.toISOString(), opened: 2, signedIn: 1, signedInByInvite: 0, signedInAlready: 1, joined: 1,
+    }, 'two opens, ben signing in and ben joining, counted from the start of the window');
     assert.deepEqual(r.examples.map((e) => [e.path, e.name, e.slug]), [['join', 'ben', 'book-swap'], ['make', 'ana', 'book-swap']]);
-    assert.ok(r.recordedFrom.make && r.recordedFrom.reward && r.recordedFrom.opens);
+    assert.ok(r.recordedFrom.make && r.recordedFrom.reward && r.recordedFrom.opens && r.recordedFrom.signedIn);
 
     // One cohort, and the admin-edited left-out list.
     const cohort = await journey.firstSession(pool, { week: week(), memberIds: new Set([ben]) });
     assert.deepEqual([cohort.make.people, cohort.join.people], [0, 1]);
+    assert.equal(cohort.opens.recorded, false, 'an open signed out is in no cohort: the funnel is everyone\'s');
     const left = await journey.firstSession(pool, { week: week(), leftOutIds: [ana] });
     assert.deepEqual([left.make.people, left.join.people], [0, 1]);
+  });
+
+  await t.test('"Look around first" is recorded once, with the answer, and counted beside the projects made', async () => {
+    const firstSession = require('../src/services/first-session');
+    const dee = await user('dee', { needs_communities_choice: true });
+    await firstSession.recordStart(pool, dee, 'sign_in');
+    await firstSession.answerJoinScreenByLookingAround(pool, dee);
+    await firstSession.answerJoinScreenByLookingAround(pool, dee);
+    const { rows } = await pool.query(
+      "SELECT user_id, metadata FROM events WHERE event_type = 'first_session_looked_around'");
+    assert.deepEqual(rows.map((x) => [x.user_id, x.metadata.via]), [[dee, 'sign_in']], 'once, however often it is pressed');
+    // Make it writes none: app_created with from 'first-session' is its record.
+    const eve = await user('eve', { needs_communities_choice: true });
+    await firstSession.answerJoinScreenByMaking(pool, eve);
+    assert.equal((await pool.query(
+      "SELECT COUNT(*)::int AS n FROM events WHERE event_type = 'first_session_looked_around' AND user_id = $1", [eve])).rows[0].n, 0);
+    // Then dee made a project of their own.
+    const later = await project('dee-later', dee);
+    assert.ok(later.id);
+    const r = await journey.firstSession(pool, { week: week() });
+    assert.equal(r.look.notRecorded, null);
+    assert.equal(r.look.people, 1);
+    assert.deepEqual(r.look.steps.map((s) => [s.key, s.reached]), [['made', 1]]);
+    assert.equal(r.examples.find((e) => e.path === 'look').name, 'dee');
+    assert.ok(r.recordedFrom.look);
   });
 });

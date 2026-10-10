@@ -3,11 +3,14 @@
 // A freshly created app used to deploy as a bare "Press!" demo that looked
 // like the finished product — nothing on screen said it was placeholder
 // content or that tapping Improve is how you build the real app. The
-// scaffold now ships a template welcome screen: a "Starter template" hero,
-// a "What's already working" explainer, and the demo reframed as a
-// clearly-labelled example card — plus a repo README and a CLAUDE.md
-// instruction so the coding agent removes the template wholesale when the
-// first real feature is built.
+// scaffold ships a template welcome screen: a "Starter template" hero that
+// opens with the app's thumbnail tile and the plain-English note on how
+// the app gets built — plus a repo README and a CLAUDE.md instruction so
+// the coding agent removes the template wholesale when the first real
+// feature is built. #4047 dropped the screen's technical sections (the
+// "What's already working" list and the "Try the example" Press! counter
+// and its demo endpoints): someone who just asked for an app wants its
+// face and how it is built, not its plumbing.
 //
 // The template messaging is wrapped in sentinel comments
 // (usernode-starter-notice@1), following the usernode-dev-console@1
@@ -30,7 +33,7 @@ function file(list, p) {
   return f.content;
 }
 
-test('index.html carries the starter-notice sentinel block before the example card', () => {
+test('index.html carries the starter-notice sentinel block around the hero card', () => {
   const html = file(files(), 'public/index.html');
 
   const open = html.indexOf('<!-- usernode-starter-notice@1');
@@ -52,30 +55,51 @@ test('index.html carries the starter-notice sentinel block before the example ca
   assert.match(block, /To change this app, ask Homeroom bot: tap the <strong[^>]*>Homeroom icon<\/strong>, then <strong[^>]*>Suggest an improvement<\/strong>\./,
     'hero copy names the Homeroom icon and its Suggest an improvement button');
   assert.doesNotMatch(block, /Improve/, 'no Improve button to point at any more');
-  assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
+  // #4047: the technical explainer is gone.
+  assert.doesNotMatch(block, /What's already working/, 'no "What\'s already working" list in the hero');
   // #1418: the welcome copy is product-focused — it describes the outcome,
   // never the AI that produces it.
   assert.ok(!block.includes('Claude'), 'welcome copy does not name Claude');
 
-  // …and precedes the labelled example card.
-  const example = html.indexOf('Try the example');
-  assert.ok(example !== -1, 'example card is labelled');
-  assert.ok(close < example, 'sentinel block precedes the example card');
-  assert.match(html, /This example will be replaced/,
-    'example card carries the will-be-replaced tag');
+  // #4047: the whole example card and its demo script are gone with it.
+  assert.doesNotMatch(html, /Try the example/, 'no example card any more');
+  assert.doesNotMatch(html, /This example will be replaced/, 'no will-be-replaced tag any more');
+  // The thumbnail tile opens the hero card, inside the sentinel block.
+  assert.match(block, /<div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">/,
+    'the hero card opens with the thumbnail tile');
 });
 
-test('the demo contract survives the redesign', () => {
+test('the Press! demo is gone from the scaffold entirely', () => {
   const html = file(files(), 'public/index.html');
+  const server = file(files(), 'server.js');
 
-  // The inline script looks these up by id; each must exist exactly once.
+  // #4047: the demo ids, its script and its endpoints no longer ship.
   for (const id of ['press-btn', 'count', 'leaderboard']) {
-    const matches = html.match(new RegExp(`id="${id}"`, 'g')) || [];
-    assert.equal(matches.length, 1, `exactly one element with id="${id}"`);
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`), `no element with id="${id}"`);
   }
-  assert.ok(html.includes("document.getElementById('press-btn')"),
-    'the demo script still wires the press button');
-  assert.match(html, /Leaderboard/, 'the leaderboard heading survives');
+  assert.doesNotMatch(html, /<script>\s*\n\s*const params/, 'no inline demo script in the body');
+  assert.ok(!html.includes('fetch('), 'the static screen fetches nothing');
+  assert.doesNotMatch(server, /\/api\/press|\/api\/leaderboard|presses/, 'server.js carries no demo endpoints or table');
+});
+
+test('the thumbnail tile falls back to the name when no icon is known', () => {
+  const html = file(files(), 'public/index.html');
+  assert.match(html, /text-title"><span class="text-muted">M<\/span><\/div>/,
+    'no emoji: the tile shows the first letter, muted, like the home tile');
+  // No emoji to show, so dapp.json stays without an icon block, exactly as
+  // it always was.
+  assert.deepEqual(JSON.parse(file(files(), 'dapp.json')), { secrets: [] });
+
+  // The repo heal's emoji (#4047): the tile shows it, and dapp.json's icon
+  // block carries the same emoji, so the first deploy's icon reconcile
+  // (app-manifest reconcileAppIcon) keeps the icon the app already had
+  // instead of clearing it from a manifest without one.
+  const withEmojiFiles = getTemplateFiles('My App', 'my-app-123', 'pg://x', null, { iconEmoji: '🏃' });
+  const withEmoji = withEmojiFiles.find((f) => f.path === 'public/index.html').content;
+  assert.match(withEmoji, /text-title">🏃<\/div>/, 'an emoji icon fills the tile itself');
+  assert.deepEqual(JSON.parse(withEmojiFiles.find((f) => f.path === 'dapp.json').content),
+    { icon: { emoji: '🏃' }, secrets: [] },
+    'the caller emoji stands in dapp.json so the deploy keeps it');
 });
 
 test('the scaffold ships a README that names the app and the template state', () => {
@@ -89,6 +113,8 @@ test('the scaffold ships a README that names the app and the template state', ()
   assert.doesNotMatch(readme, /Improve/);
   assert.match(readme, /rewrite this README/i,
     'README instructs its own rewrite once the real app exists');
+  // #4047: the demo's presses table is not shipped, so it is not described.
+  assert.doesNotMatch(readme, /presses|Live API/, 'README carries no Press! demo leftovers');
   // #1418: the product promise never names Claude as the actor. "Claude Code"
   // (the developer tool) and the CLAUDE.md filename are the only sanctioned
   // mentions, so a bare "Claude" not followed by " Code" is a regression.
@@ -108,8 +134,8 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
   // B8: the menu leads with Suggest an improvement; making it yourself is its own row.
   assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label="Suggest an improvement"/,
     'the menu still has Suggest an improvement');
-  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it yourself"/,
-    'and the agent-session row is called Build it yourself');
+  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label="Build it now"/,
+    'and the agent-session row is called Build it now');
   assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
     'the header control is still the Homeroom mark');
 });

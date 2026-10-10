@@ -14,7 +14,7 @@
  * it through (public/sw.js, 'bypass').
  *
  * The badge is not shown (`badge: 'inline'` in a see-through box); the
- * sheet carries the notice Google asks for in its place (RECAPTCHA_NOTICE).
+ * sheet carries the notice Google asks for in its place (RECAPTCHA_LINE).
  * A challenge, when Google wants one, draws over the page on its own.
  *
  * Never throws: anything that goes wrong is a null token, the request goes
@@ -81,8 +81,14 @@ let widget: { id: number; resolve: ((token: string | null) => void) | null } | n
 /** A fresh reCAPTCHA token for one phone code request, or null. */
 export async function phoneRecaptchaToken(): Promise<string | null> {
   try {
-    const [siteKey, g] = await Promise.all([readSiteKey(), loadScript()]);
-    if (!siteKey || !g) return null;
+    // Both start at once; with no site key (a server with test numbers
+    // only, services/firebase-phone-auth.js) the request goes now, without
+    // waiting on Google's script.
+    const script = loadScript();
+    const siteKey = await readSiteKey();
+    if (!siteKey) return null;
+    const g = await script;
+    if (!g) return null;
     if (!widget) {
       const box = document.createElement('div');
       box.setAttribute('aria-hidden', 'true');
@@ -121,7 +127,20 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
   }
 }
 
-/** Google's own wording for a page that hides the badge. */
+/**
+ * The short line the sign-in sheet's phone steps and the waiting room's
+ * add-phone card carry under their button, where the badge is hidden:
+ * "Protected by reCAPTCHA · Google Privacy · Terms", the two words linked
+ * to Google's pages (RecaptchaLine in ./waitlist-shared.tsx, #4379).
+ */
+export const RECAPTCHA_LINE = {
+  lead: 'Protected by reCAPTCHA · Google ',
+  privacy: { label: 'Privacy', href: 'https://policies.google.com/privacy' },
+  sep: ' · ',
+  terms: { label: 'Terms', href: 'https://policies.google.com/terms' },
+} as const;
+
+/** Google's own wording for a page that hides the badge (the admin SMS console's test send). */
 export const RECAPTCHA_NOTICE = {
   lead: 'This is protected by reCAPTCHA, and Google’s ',
   privacy: { label: 'Privacy Policy', href: 'https://policies.google.com/privacy' },

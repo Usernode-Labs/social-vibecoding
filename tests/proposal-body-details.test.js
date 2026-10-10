@@ -85,13 +85,18 @@ test('both live and completed proposal rows include the full PR body', () => {
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'),
     'utf8'
   );
-  // On the page the summary leads the hero, and the steps sheet (the
-  // detail view's ledger) and the full body are the sheet the ⋯ menu's
-  // "Details" row opens (topic-head.tsx DetailsSheet, B10b) — reached from
-  // the page, never drawn on it.
+  // On the page the summary leads the change's root post (#4455,
+  // change-head.tsx), and the steps sheet (the detail view's ledger) and the
+  // full body are the sheet the ⋯ menu's "Details" row opens (topic-head.tsx
+  // DetailsSheet, B10b) — reached from the page, never drawn on it.
+  const CHANGE_SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'change-head.tsx'),
+    'utf8'
+  );
+  assert.match(CHANGE_SRC, /<RequestWords html=\{body\.summaryHtml \|\| ''\} \/>/, 'the summary leads the post');
   assert.match(
     HEAD_SRC,
-    /body\.summaryHtml[\s\S]*?<DetailsSheet\n\s+id=\{Number\(id\)\}\n\s+prRef=\{body\.hero\?\.ref \|\| null\}\n\s+steps=\{body\.steps\}\n\s+help=\{!!\(body\.details && body\.details\.help\)\}\n\s+html=\{body\.proposalBody\?\.html \|\| ''\}/,
+    /<ChangeThreadHead [^\n]*\/>[\s\S]*?<DetailsSheet\n\s+id=\{Number\(id\)\}\n\s+prRef=\{body\.hero\?\.ref \|\| null\}\n\s+steps=\{body\.steps\}\n\s+help=\{!!\(body\.details && body\.details\.help\)\}\n\s+html=\{body\.proposalBody\?\.html \|\| ''\}/,
     'and the component draws the summary, with the steps and the body behind the ⋯'
   );
 });

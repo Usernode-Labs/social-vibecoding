@@ -67,7 +67,7 @@ export interface ShareDestination {
 }
 
 const TYPE_WORDS: Record<SharedObjectReference['type'], string> = {
-  app: 'App', issue: 'Request', proposal: 'Proposal', governance: 'Governance proposal', spec: 'Spec',
+  app: 'App', issue: 'Request', proposal: 'Proposal', governance: 'Governance proposal', spec: 'Plan',
 };
 
 /** "Request #12", "Proposal #4209": what the card is, when no title came with it. */

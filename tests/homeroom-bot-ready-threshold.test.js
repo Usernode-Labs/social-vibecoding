@@ -164,7 +164,6 @@ test('Page Turners: two of three must approve, against the full PostgreSQL schem
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['alex_t1005', 'ben']));
   await set('homeroom_bot_mode', 'live');
   const project = async (slug, label, { view = 'private', members = [] } = {}) => {
     const { rows: [inserted] } = await pool.query(

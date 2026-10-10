@@ -186,9 +186,8 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   for (const member of [maya, sam]) {
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, member.id]);
   }
+  // On, for everyone with platform access, on every app but a paused one.
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify(['maya', 'sam', 'ola']));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['flat-chores']));
   // The group's first version: the bot's change for Maya's request #1,
   // waiting for approval. And an older one of its changes that is live.
   await pool.query(

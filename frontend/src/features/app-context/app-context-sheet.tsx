@@ -121,9 +121,9 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
-  HomeIcon,
   InfoCircleIcon,
   PlusIcon,
+  PhonePlusIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -132,7 +132,10 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
+import { offeringGoToHomeroom } from './about-data';
 import { InvitePane } from './invite-pane';
+import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
+import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { openReport } from '../dialogs/report';
@@ -166,6 +169,16 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
  */
 const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
+
+/**
+ * A second pane's way back: the header's back disc (BACK_BTN_CLASS in
+ * ../header/platform-header.tsx, and the Workshop's `.dev-ws-page-back`),
+ * drawn at 36px with the kit's 44pt hit box. `un-touch-target` last, as
+ * there: its ::after grows the hit box, never the disc.
+ */
+const BACK_DISC = 'shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full'
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)] un-touch-target';
 
 /** A section label that owns its whole row. */
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
@@ -385,7 +398,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
 
 /**
  * AGENT CHATS (it was "Continue", #2779 follow-up, then "Agent sessions",
- * then "More"), BELOW the app's own rows: Build it yourself and your agent
+ * then "More"), BELOW the app's own rows: Build it now and your agent
  * sessions, on every app, under their own heading. See the comment on
  * `continuing` in the sheet below for the sessions' rules.
  *
@@ -393,7 +406,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
  * run-through, 5 Oct 2026). For a first-time user the menu is the app's own
  * rows and Suggest an improvement, above, which is the front door: the
  * whole section shows only once they have had an agent session, started
- * from any of the other doors (the hub's ⋯, a request's Build it yourself,
+ * from any of the other doors (the hub's ⋯, a request's Build it now,
  * Messages' new chat, the filed request's link). The sheet asks the store
  * (useAgentChatsShown): a session, archived ones included, which the list's
  * read reports, and which the first message of a new one sets, so the
@@ -431,7 +444,7 @@ export function AgentChats({ readOnly, continuing }: {
               is building it yourself, with a coding agent. */}
           <RowBody
             icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-            label="Build it yourself"
+            label="Build it now"
           />
         </button>
       )}
@@ -514,20 +527,34 @@ export function AppsSwitcherSheet(): ReactNode {
   // The discussion and invite rows that went with it left the menu in the UI
   // overhaul: the project's channel is on its hub, and invite links are the
   // hub's Invite (#3362).
-  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
-  useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current]) {
-      if (el && el.classList.contains('hidden') !== !!restricted) {
-        el.classList.toggle('hidden', !!restricted);
-      }
-    }
-  }, [restricted, view]);
+  //
+  // A NEWCOMER WHILE "GO TO HOMEROOM" IS OFFERED (#4216): a private member
+  // who has not used it yet has that one way onward, and the community page
+  // comes after it, so "Go to community" is hidden through the same seam
+  // until they have used it or are let in (./about-data.ts
+  // offeringGoToHomeroom). Hidden, never renamed or dropped: the row is in
+  // the prerender, and its id is the Workshop's.
   // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
   // sessions): the hydrating render must print what the prerender printed
   // whatever the store says by then, or it is React #418 on every route. The
-  // class toggle above is an effect for the same reason.
+  // class toggle below is an effect for the same reason.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  // #4399: the home-screen offer that rides in the Go to Homeroom card while
+  // it is offered (the banner is held down meanwhile). Asked only while the
+  // menu is open, so a closed menu costs no request.
+  const homeScreenOs = useHomeScreenOffer(open && newcomer);
+  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
+  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    const hide = !!restricted || newcomer;
+    for (const el of [workshopRowRef.current]) {
+      if (el && el.classList.contains('hidden') !== hide) {
+        el.classList.toggle('hidden', hide);
+      }
+    }
+  }, [restricted, newcomer, view, open]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
@@ -669,17 +696,26 @@ export function AppsSwitcherSheet(): ReactNode {
               leaves it. On the menu it is the "Apps" label it has always
               been.
           */}
+          {/*
+              THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
+              small caps: the header's own disc, in its brand ink, at the
+              size the Workshop's page heads draw it one level down (36px),
+              with the kit's 44pt hit box (`un-touch-target`). The name
+              beside it says where it goes back to.
+          */}
           {view !== 'menu' ? (
-            <button
-              id="app-about-back"
-              type="button"
-              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
-                + SECTION_TYPE}
-              onClick={() => AppContext.showMenu()}
-            >
-              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{appLabel}</span>
-            </button>
+            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+              <button
+                id="app-about-back"
+                type="button"
+                aria-label={`Back to ${appLabel}'s menu`}
+                className={BACK_DISC}
+                onClick={() => AppContext.showMenu()}
+              >
+                <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+              </button>
+              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
+            </div>
           ) : (
             /*
                 IT SAID "Apps" while a strip of every app sat under it. With
@@ -776,6 +812,85 @@ export function AppsSwitcherSheet(): ReactNode {
               Tabs, Safari's view controller, Discord, Slack, Teams. Nobody
               nests a mini-app's menu.
           */}
+          {/*
+              GO TO HOMEROOM, for a private member only, and only after mount
+              (the store says who is signed in after hydration, so the
+              prerender has no such row). Home, and the first time its tour
+              (features/first-session goHome).
+
+              A CARD, NOT A ROW (#4401): as a plain row among the app's own it
+              was easy to miss, and it is the one door a private member has to
+              the rest of Homeroom. So it leads the list, right under the blue
+              "Suggest an improvement" (which stays the menu's one filled
+              button): a white card in the shell's card shape (20px, one inset
+              hairline), the Homeroom mark as the header's mark button draws
+              it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
+              so `#improve-quick-actions + #switcher-nav` still holds.
+
+              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
+              Homeroom is still offered, the install banner stays down over
+              the app they were invited into, and the offer is a second row
+              here under a hairline instead. It opens the banner's How sheet
+              for their OS, and only when the banner itself would offer the
+              home-screen install (../mobile-install/home-screen-offer.ts).
+              Once they have been Home the row goes and the banner is back.
+          */}
+          {mounted && privateMember ? (
+            <div
+              id="app-menu-homeroom-card"
+              className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
+            >
+              <button
+                id="app-menu-row-homeroom"
+                type="button"
+                className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                onClick={() => {
+                  const info = { slug: slug || null, name: name || null };
+                  void AppContext.dismissForNav().then(() => {
+                    (window as any).UsernodeReact?.firstSession?.goHome?.(info);
+                  });
+                }}
+              >
+                <span className="shrink-0 inline-flex w-10 h-10 rounded-[11px] overflow-hidden bg-zinc-950" aria-hidden="true">
+                  <img
+                    src="/brand/homeroom-mark.png"
+                    alt=""
+                    draggable="false"
+                    width={40}
+                    height={40}
+                    className="platform-mark-tile w-10 h-10 rounded-[11px]"
+                  />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Go to Homeroom</span>
+                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">Your Home, your communities and Homeroom bot</span>
+                </span>
+                <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+              </button>
+              {newcomer && homeScreenOs ? (
+                <>
+                  <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
+                  <button
+                    id="app-menu-row-add-home"
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={homeScreenSteps}
+                    className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    onClick={() => setHomeScreenSteps(true)}
+                  >
+                    <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
+                      <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Add Homeroom to your home screen</span>
+                    <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+                  </button>
+                  {open && homeScreenSteps ? (
+                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {/*
               GIVE FEEDBACK IS NOT A ROW HERE ANY MORE (#2718 review). It led
               this list, on the reading that it is the thing somebody who is
@@ -894,31 +1009,6 @@ export function AppsSwitcherSheet(): ReactNode {
               want it one tap away. Same id, same gate (`showTerminal`, which
               DevConsole publishes), same method.
           */}
-          {/*
-              GO TO HOMEROOM, for a private member only, and only after mount
-              (the store says who is signed in after hydration, so the
-              prerender has no such row). Home, and the first time its tour
-              (features/first-session goHome).
-          */}
-          {mounted && privateMember ? (
-            <button
-              id="app-menu-row-homeroom"
-              type="button"
-              className={`${ROW} w-full text-left`}
-              onClick={() => {
-                const info = { slug: slug || null, name: name || null };
-                void AppContext.dismissForNav().then(() => {
-                  (window as any).UsernodeReact?.firstSession?.goHome?.(info);
-                });
-              }}
-            >
-              <RowBody
-                icon={<HomeIcon />}
-                label="Go to Homeroom"
-                sub="Your Home, your communities and Homeroom bot"
-              />
-            </button>
-          ) : null}
           {showTerminal && !privateMember ? (
             <MenuRow
               id="improve-row-terminal"

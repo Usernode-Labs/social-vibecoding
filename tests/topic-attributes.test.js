@@ -134,10 +134,16 @@ function makeMockPool() {
   let seq = 0;
   let catSeq = 0;
   const norm = (field, value) => (field === 'assignee' ? String(value).toLowerCase() : String(value));
+  // #4417: a RETIRED topic's key (archived, or merged into another), which
+  // every tally reads past (RETIRED_TOPIC_KEYS_SQL).
+  const retiredTopic = (appId, value) => cats.some((c) => c.app_id === appId && c.origin === 'topic'
+    && c.slug === value && (c.topic_state === 'archived' || c.topic_state === 'merged'));
 
-  function grouped(filter) {
+  function grouped(filter, sql) {
+    const skipsRetired = /topic_state IN \('archived', 'merged'\)/.test(sql || '');
     const groups = new Map(); // `${ref}|${field}|${norm}` -> rows
     for (const r of store.filter(filter)) {
+      if (skipsRetired && r.field === 'category' && retiredTopic(r.app_id, r.value)) continue;
       const key = `${r.target_ref}|${r.field}|${norm(r.field, r.value)}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
@@ -168,13 +174,27 @@ function makeMockPool() {
       // fake speaks its shape rather than #780's append-only one.
       //
       // ensureCategory's first read: does this key exist, and is it live?
-      if (/SELECT id, \(retired_at IS NULL\) AS live FROM app_category_registry/.test(sql)) {
+      if (/SELECT id, \(retired_at IS NULL\) AS live, origin, topic_state FROM app_category_registry/.test(sql)) {
         const [appId, key] = params;
         const row = cats.find((c) => c.app_id === appId && c.slug === key);
-        return { rows: row ? [{ id: row.id, live: !row.retired_at }] : [] };
+        return {
+          rows: row ? [{
+            id: row.id, live: !row.retired_at, origin: row.origin || 'ai', topic_state: row.topic_state || null,
+          }] : [],
+        };
+      }
+      // #4417: resolveCategoryKey's topic read — a key, a handle or an alias.
+      if (/SELECT category_key, topic_state, merged_into FROM app_category_registry/.test(sql)) {
+        const [appId, candidates] = params;
+        const hit = (c) => candidates.includes(c.slug) || candidates.includes(c.topic_handle)
+          || (c.topic_aliases || []).some((a) => candidates.includes(a));
+        const row = cats
+          .filter((c) => c.app_id === appId && c.origin === 'topic' && hit(c))
+          .sort((a, b) => (Number(candidates.includes(b.slug)) - Number(candidates.includes(a.slug))) || (a.id - b.id))[0];
+        return { rows: row ? [{ category_key: row.slug, topic_state: row.topic_state || 'live', merged_into: row.merged_into || null }] : [] };
       }
       // resolveCategoryKey: which spelling this app already stores.
-      if (/SELECT category_key FROM app_category_registry/.test(sql)) {
+      if (/^\s*SELECT category_key FROM app_category_registry/.test(sql)) {
         const [appId, candidates] = params;
         const row = cats
           .filter((c) => c.app_id === appId && candidates.includes(c.slug))
@@ -184,12 +204,14 @@ function makeMockPool() {
       // The cap probe: LIVE rows only, which is what lets the model churn.
       if (/SELECT COUNT\(\*\)::int AS live FROM app_category_registry/.test(sql)) {
         const [appId] = params;
-        return { rows: [{ live: cats.filter((c) => c.app_id === appId && !c.retired_at).length }] };
+        const topics = /origin <> 'topic'/.test(sql);
+        return { rows: [{ live: cats.filter((c) => c.app_id === appId && !c.retired_at && !(topics && c.origin === 'topic')).length }] };
       }
       // The two UPDATE shapes: refresh-and-maybe-pin, and revive.
       if (/UPDATE app_category_registry/.test(sql) && /SET\s+retired_at = NOW\(\)/.test(sql)) {
         const [appId, keep] = params;
-        const hit = cats.filter((c) => c.app_id === appId && !c.retired_at && !c.pinned_at && !keep.includes(c.slug));
+        const hit = cats.filter((c) => c.app_id === appId && !c.retired_at && !c.pinned_at
+          && !(/origin <> 'topic'/.test(sql) && c.origin === 'topic') && !keep.includes(c.slug));
         for (const c of hit) c.retired_at = new Date().toISOString();
         return { rows: hit.map((c) => ({ category_key: c.slug })) };
       }
@@ -224,11 +246,14 @@ function makeMockPool() {
         return {
           rows: cats
             .filter((c) => c.app_id === appId && !c.retired_at)
-            .sort((a, b) => (Number(!a.pinned_at) - Number(!b.pinned_at))
+            .sort((a, b) => (Number(b.origin === 'topic') - Number(a.origin === 'topic'))
+              || ((a.topic_order ?? Infinity) - (b.topic_order ?? Infinity))
+              || (Number(!a.pinned_at) - Number(!b.pinned_at))
               || (Date.parse(a.created_at) - Date.parse(b.created_at)) || (a.id - b.id))
             .map((c) => ({
               category_key: c.slug, label: c.label, description: c.description || '',
               icon: c.icon || '', origin: c.origin || 'ai', pinned: !!c.pinned_at,
+              topic_handle: c.topic_handle || null, topic_order: c.topic_order ?? null,
             })),
         };
       }
@@ -237,14 +262,14 @@ function makeMockPool() {
       if (/SELECT DISTINCT value FROM topic_attribute_votes/.test(sql)) {
         const [appId] = params;
         const vals = [...new Set(store
-          .filter((r) => r.app_id === appId && r.field === 'category')
+          .filter((r) => r.app_id === appId && r.field === 'category' && !retiredTopic(appId, r.value))
           .map((r) => r.value))].sort();
         return { rows: vals.map((value) => ({ value })) };
       }
       // summarizeForTargets — grouped tally over a set of refs.
       if (/GROUP BY target_ref, field, norm/.test(sql)) {
         const [appId, type, ids] = params;
-        return { rows: grouped((r) => r.app_id === appId && r.target_type === type && ids.includes(r.target_ref)) };
+        return { rows: grouped((r) => r.app_id === appId && r.target_type === type && ids.includes(r.target_ref), sql) };
       }
       // summarizeForTargets — viewer's own votes over a set of refs.
       if (/SELECT target_ref AS ref, field, value/.test(sql)) {
@@ -258,7 +283,7 @@ function makeMockPool() {
       // listOptions — grouped tally for one target+field.
       if (/GROUP BY norm/.test(sql)) {
         const [appId, type, ref, field] = params;
-        return { rows: grouped((r) => r.app_id === appId && r.target_type === type && r.target_ref === ref && r.field === field) };
+        return { rows: grouped((r) => r.app_id === appId && r.target_type === type && r.target_ref === ref && r.field === field, sql) };
       }
       // listOptions — viewer's own single value.
       if (/SELECT value FROM topic_attribute_votes/.test(sql)) {
@@ -1049,4 +1074,95 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   assert.match(badge, /height:\s*20px/, 'one fixed chip height');
   assert.match(badge, /box-sizing:\s*border-box/);
   assert.match(badge, /font-size:\s*10\.5px/);
+});
+
+// ── #4417: topics are categories dapp.json owns ────────────────────────
+//
+// A topic is a registry row with origin 'topic'. A vote for a live one is a
+// vote like any other; a retired one (archived, or merged into another) is
+// read past by every tally and listed nowhere, and nothing — a vote, a
+// draft — may mint, revive or redraw a category under a topic's key.
+
+function withTopics(pool) {
+  const at = new Date().toISOString();
+  pool.cats.push(
+    { id: 901, app_id: 1, slug: 'onboarding', label: 'Onboarding', description: 'The first week', icon: '\u{1F6AA}',
+      origin: 'topic', topic_state: 'live', topic_handle: 'first-week', topic_aliases: ['onboarding'], topic_order: 0,
+      pinned_at: at, retired_at: null, created_at: at },
+    { id: 902, app_id: 1, slug: 'signup', label: 'Sign-up', description: '', icon: '',
+      origin: 'topic', topic_state: 'merged', merged_into: 'onboarding', topic_handle: 'signup', topic_order: 1,
+      pinned_at: at, retired_at: at, created_at: at },
+    { id: 903, app_id: 1, slug: 'old-things', label: 'Old things', description: '', icon: '',
+      origin: 'topic', topic_state: 'archived', topic_handle: 'old-things', topic_order: 2,
+      pinned_at: at, retired_at: at, created_at: at },
+  );
+  return pool;
+}
+
+test('#4417: the category tally reads past an archived topic\'s votes', async () => {
+  const pool = withTopics(makeMockPool());
+  // Two votes for the archived topic, one for a member's own category: the
+  // archived topic would win on count, and is skipped instead.
+  pool.store.push(
+    { app_id: 1, target_type: 'issue', target_ref: 7, field: 'category', value: 'old-things', user_id: 1, created_at: '2026-01-01T00:00:00Z' },
+    { app_id: 1, target_type: 'issue', target_ref: 7, field: 'category', value: 'old-things', user_id: 2, created_at: '2026-01-01T00:00:01Z' },
+    { app_id: 1, target_type: 'issue', target_ref: 7, field: 'category', value: 'bug', user_id: 3, created_at: '2026-01-02T00:00:00Z' },
+  );
+  const map = await attrs.summarizeForTargets(pool, 1, 'issue', [7], 1);
+  assert.equal(map.get(7).category.top, 'bug');
+  assert.equal(map.get(7).category.count, 1);
+  const opts = await attrs.listOptions(pool, 1, 'issue', 7, 'category', 1);
+  assert.deepEqual(opts.options.map((o) => o.value), ['bug'], 'the dropdown offers no retired topic');
+});
+
+test('#4417: listCategories leads with the live topics and never offers a retired one', async () => {
+  const pool = withTopics(makeMockPool());
+  await attrs.castVote(pool, 1, 'issue', 8, 'category', 'performance', 5, [], 'Performance');
+  pool.store.push({ app_id: 1, target_type: 'issue', target_ref: 9, field: 'category', value: 'old-things', user_id: 6, created_at: '2026-01-01T00:00:00Z' });
+  const list = await attrs.listCategories(pool, 1);
+  const custom = list.filter((c) => c.custom).map((c) => c.value);
+  assert.deepEqual(custom, ['onboarding', 'performance'], 'the live topic first, then the rest; no retired topic, not even in the self-heal tail');
+  assert.deepEqual(list.find((c) => c.value === 'onboarding').topic, { handle: 'first-week', order: 0 });
+  assert.equal(list.find((c) => c.value === 'performance').topic, undefined);
+});
+
+test('#4417: a vote for a live topic changes nothing about it; a retired topic cannot be revived or minted over', async () => {
+  const pool = withTopics(makeMockPool());
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'onboarding', 5, [], 'ONBOARDING (typed)');
+  const topic = pool.cats.find((c) => c.slug === 'onboarding');
+  assert.equal(topic.label, 'Onboarding', 'the name is dapp.json\'s');
+  assert.equal(topic.description, 'The first week');
+  assert.equal(pool.store[0].value, 'onboarding');
+
+  await assert.rejects(
+    () => attrs.ensureCategory(pool, 1, { slug: 'old-things', label: 'Old things' }, 5, { pin: true }),
+    new RegExp(attrs.TOPIC_CLOSED_ERROR),
+  );
+  await assert.rejects(
+    () => attrs.ensureCategory(pool, 1, { slug: 'old-things', label: 'Old things', description: 'redrawn' }, null, { pin: false }),
+    new RegExp(attrs.TOPIC_CLOSED_ERROR),
+    'a discovery draft may not redraw it either',
+  );
+  assert.equal(pool.cats.find((c) => c.slug === 'old-things').retired_at !== null, true, 'still retired');
+  assert.equal(pool.cats.filter((c) => c.slug === 'old-things').length, 1, 'no second row under the key');
+});
+
+test('#4417: a typed name resolves a topic by its handle and its old handles, and a merged topic to the one it joined', async () => {
+  const pool = withTopics(makeMockPool());
+  assert.equal(await attrs.resolveCategoryKey(pool, 1, 'first-week'), 'onboarding', 'the channel\'s handle');
+  assert.equal(await attrs.resolveCategoryKey(pool, 1, 'Onboarding'), 'onboarding', 'its key');
+  assert.equal(await attrs.resolveCategoryKey(pool, 1, 'signup'), 'onboarding', 'a merged topic is its survivor');
+  assert.equal(await attrs.resolveCategoryKey(pool, 1, 'Performance'), 'performance', 'anything else is unchanged');
+});
+
+test('#4417: the topic cap is dapp.json\'s, so topics hold no slot of the members\' 24', async () => {
+  const pool = withTopics(makeMockPool());
+  for (let i = 0; i < attrs.MAX_CUSTOM_CATEGORIES_PER_APP; i += 1) {
+    await attrs.castVote(pool, 1, 'issue', 100 + i, 'category', `cat-${i}`, 5, [], `Cat ${i}`);
+  }
+  assert.equal(pool.cats.filter((c) => c.origin !== 'topic' && !c.retired_at).length, attrs.MAX_CUSTOM_CATEGORIES_PER_APP);
+  await assert.rejects(
+    () => attrs.castVote(pool, 1, 'issue', 200, 'category', 'one-more', 5, [], 'One more'),
+    new RegExp(attrs.CATEGORY_CAP_ERROR),
+  );
 });

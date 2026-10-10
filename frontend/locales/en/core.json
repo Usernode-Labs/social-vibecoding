@@ -1,0 +1,14 @@
+{
+  "language.notice.showing": {
+    "text": "Showing Homeroom in {{language}}",
+    "description": "Notice shown once after Homeroom picked the device's language automatically. {{language}} is that language's own name, for example Español."
+  },
+  "language.notice.dismiss": {
+    "text": "Dismiss",
+    "description": "Accessible label of the close button on the automatic-language notice."
+  },
+  "language.notice.switchToEnglish": {
+    "text": "Switch to English",
+    "description": "Button on the automatic-language notice. Always shown in English, whatever language is active, so a person who cannot read the picked language can find it."
+  }
+}

@@ -27,6 +27,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
+import { BUILD_LINE_TILE_CARD, BUILD_LINE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -405,36 +406,37 @@ const Home = {
   // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The popular half of the rail (#949): what everyone else is actually
-  // using, appended after the curated cards. Derived from the SAME
-  // /api/apps payload the grid already holds — `active_users` rides along
-  // with every row (see the au join in src/routes/apps.js), so this costs
-  // no query.
+  // The popular half of the rail: the public communities the viewer has
+  // NOT joined, appended after the curated cards. Derived from the SAME
+  // /api/apps payload the grid already holds — `member_count`, `audience`
+  // and `is_member` ride along with every row (see the serializer in
+  // src/routes/apps.js), so this costs no query.
   //
-  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
-  // first, ties keeping the server's own order via a stable sort), so the
-  // widget and the Browse directory can't disagree about what is popular.
-  // (#1383 gave the directory five orders and made 'recommended' its default
-  // — this lane still tracks the users one, which is the question the word
-  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
-  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  // Popularity is the member count, most first, with `active_users` as the
+  // tie-break; after that the server's own order holds (the sort is stable).
+  // parseInt because a count arrives as a STRING when it comes straight off
+  // a Postgres bigint.
   //
-  // Only currently reviewed working apps with icons qualify. Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, and only
+  // currently reviewed working ones with icons. Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
-  //   * isYours — the whole point is apps you don't have yet.
-  // And a floor of one active user: an app nobody uses is not "popular",
-  // and padding the lane out with zero-user rows would misrepresent it.
+  //   * isJoined / isYours — the whole point is communities you haven't
+  //     joined. isYours stays in the exclusion too: a Home shortcut is not
+  //     membership, but adding one already joins you, so offering it again
+  //     is noise either way. `_discoverKeep` still holds a card just added
+  //     with + in place for the visit (#1567).
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    const members = (a) => (parseInt(a && a.member_count, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
-        && users(a) >= 1
-        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => users(y) - users(x))
+      .filter((a) => a && !a.featured && a.audience === 'open'
+        && Home.isDiscoveryReady(a)
+        && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 
@@ -874,7 +876,7 @@ const Home = {
       // not in the layout, so it is never dragged, stored or displaced; a drop
       // onto its cell lands in an empty cell and the next paint moves it on.
       // It FLOWS instead (no placement) when there is no cell to follow: an
-      // empty launcher, where it comes after the "No apps added yet" note, and
+      // empty launcher, where it is all the grid shows, and
       // overflow tiles, which have no cell of their own either.
       //
       // Present for EVERY account: `canCreate` decides its treatment, never
@@ -1016,7 +1018,12 @@ const Home = {
     // The status DOT and the active-users badge are gone from the tile face —
     // a launcher icon should read as an app, not a dashboard row. Every
     // non-running status still says so in words.
-    const statusLabel = isRunning ? ''
+    // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
+    // is making says where it is in the build line's words, from the time it
+    // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+      : isRunning ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
@@ -1036,6 +1043,7 @@ const Home = {
       locked: !!app.locked,
       demo: !!app.demo,
       statusLabel,
+      buildLine,
       isAwaiting,
       isError,
       // Awaiting-secrets cards stay clickable so the viewer can open the app
@@ -1050,6 +1058,17 @@ const Home = {
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
+  },
+
+  /**
+   * #4053: the build line a tile shows (frontend/src/features/first-session/
+   * build-line-words.js), from the list's `first_version_line` (GET /api/apps:
+   * the line homeroom-bot-dm.js firstVersionState says for this viewer), or
+   * null. An app that failed to set up says that instead: Error and Retry.
+   */
+  tileBuildLine(app) {
+    if (!app || app.status === 'error') return null;
+    return buildLineTileOf(app.first_version_line);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -2123,11 +2142,14 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
+      // #4600: a pin that JOINED (the server says so: `joined`, after it has
+      // counted "Join a community") is a join, and says so as setMembership
+      // does, so Home's Challenges block and the Getting started card read
+      // again now rather than on their next refresh.
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2288,12 +2310,11 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? 'Added to My apps' : 'Removed from My apps');
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
     } catch (err) {
       Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
@@ -2443,7 +2464,9 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const statusLabel = app.status === 'running' ? ''
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? BUILD_LINE_WORDS[buildLine]
+      : app.status === 'running' ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
@@ -2482,8 +2505,12 @@ const Home = {
     const failureTip = isError && app.last_failure_reason
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
+    // #4053: a first version's build line is quiet (blue when it asks), not
+    // the status colours below.
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
+      ? (buildLine
+        ? `<p class="${buildLineTileClass(buildLine)}" data-build-line="${buildLine}">${statusLabel}</p>`
+        : `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`)
       : '';
 
     const isLocked = !!app.locked;
@@ -2498,9 +2525,9 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
+        isAdded ? 'Added. Tap to remove from My apps' : 'Add to My apps'
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
+        isAdded ? `Remove ${escapeHtml(app.name)} from My apps` : `Add ${escapeHtml(app.name)} to My apps`
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -2569,7 +2596,7 @@ const Home = {
     // would 404. They keep the long-press menu instead.
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}${buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
@@ -3626,16 +3653,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
+        label: app.your_apps_hidden ? 'Add to My apps' : 'Remove from My apps',
         title: app.your_apps_hidden
-          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
-          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
+          ? 'Show this app in My apps again. You keep your builder access either way.'
+          : 'Hide this app from My apps. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        label: app.is_favorited ? 'Remove from My apps' : 'Add to My apps',
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }

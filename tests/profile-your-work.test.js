@@ -33,7 +33,8 @@ test('the summary counts what is in progress: in an agent session or up for a vo
   const profile = require('../src/routes/profile');
   assert.equal(profile.shapeSummary({ counts: { merged: 9, in_progress: 2 } }).inProgress, 2);
   const sql = read('src/routes/profile.js');
-  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\)\)::int AS in_progress,/);
+  // A merged change still going live (live_at null) is in progress too.
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\) OR \(cs\.status = 'merged' AND cs\.live_at IS NULL\)\)::int AS in_progress,/);
 });
 
 test('your requests: each says where it stands, and the counts are the whole set\'s', () => {
@@ -198,7 +199,7 @@ test('Your votes: still open, then decided, each saying your vote as it stands',
   });
   assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.title, r.meta, r.href])]), [
     ['Still open', [
-      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/proposals/31'],
+      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/changes/40'],
       ['Rename to Run Crew', 'Run Club · you voted yes', '#app/run-club/dev/governance/77'],
     ]],
     ['Decided', [

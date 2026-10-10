@@ -74,7 +74,7 @@ function dispatch(map) {
 // The ask goes through llm.streamChat now, so the stub is the STREAM
 // surface (tests/llm-fallback.test.js' shape): .on('text', …) feeds the
 // token callback and finalMessage() resolves the canned response.
-const answerResp = (text, served = 'claude-haiku-4-5') => ({
+const answerResp = (text, served = 'claude-haiku-5-5') => ({
   model: served,
   stop_reason: 'end_turn',
   stop_details: null,
@@ -401,7 +401,7 @@ test('ask debits the asker and reports the model', async () => {
         pool, config: CONFIG, app: APP, userId: 42,
         target: { kind: 'proposal', ref: 55 }, question: 'Why?', history: [],
       });
-      assert.equal(out.model, 'claude-haiku-4-5');
+      assert.equal(out.model, 'claude-haiku-5-5');
     })
   );
   assert.equal(spends.length, 1);
@@ -421,7 +421,7 @@ test('ask routes the spend to the BYOK bucket when the user key paid', async () 
   const prevAnswer = llm.answerWorkshopQuestion;
   llm.answerWorkshopQuestion = async ({ apiKey }) => {
     assert.equal(apiKey, 'sk-user', 'the user key must reach the generator');
-    return { text: 'An answer.', usage: { input_tokens: 900, output_tokens: 120 }, model: 'claude-haiku-4-5' };
+    return { text: 'An answer.', usage: { input_tokens: 900, output_tokens: 120 }, model: 'claude-haiku-5-5' };
   };
   try {
     await withBilling(
@@ -551,11 +551,11 @@ test('recordExchange writes both turns and trims to the tail', async () => {
   dispatch([]);
   queries.length = 0;
   await workshopAsk.recordExchange(
-    pool, APP, 42, { kind: 'proposal', ref: 55 }, 'Why?', 'Because.', 'claude-haiku-4-5'
+    pool, APP, 42, { kind: 'proposal', ref: 55 }, 'Why?', 'Because.', 'claude-haiku-5-5'
   );
   const insert = queries.find((x) => /INSERT INTO workshop_ask_messages/.test(x.sql));
   assert.ok(insert, 'the exchange must be written');
-  assert.deepEqual(insert.params, [7, 42, 'proposal', 55, 'Why?', 'Because.', 'claude-haiku-4-5']);
+  assert.deepEqual(insert.params, [7, 42, 'proposal', 55, 'Why?', 'Because.', 'claude-haiku-5-5']);
   // One statement for both turns: a half-written exchange is a thread that
   // reads as the model answering nothing.
   assert.match(insert.sql, /'you'/);
@@ -614,13 +614,15 @@ test('a refused ask writes nothing to the thread', async () => {
 test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', async () => {
   await withStubClient(answerResp('Short answer.'), async (calls) => {
     const a = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q' });
-    assert.equal(a.model, 'claude-haiku-4-5');
-    assert.equal(calls[0].model, 'claude-haiku-4-5');
+    assert.equal(a.model, 'claude-haiku-5-5');
+    assert.equal(calls[0].model, 'claude-haiku-5-5');
+    assert.deepEqual(calls[0].thinking, { type: 'disabled' }, 'Haiku 5.5 would think into the short cap');
   });
   await withStubClient(answerResp('Short answer.', 'claude-sonnet-5'), async (calls) => {
     const b = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q', model: 'claude-sonnet-5' });
     assert.equal(b.model, 'claude-sonnet-5');
     assert.equal(calls[0].model, 'claude-sonnet-5');
+    assert.equal(calls[0].thinking, undefined, 'a picked model is asked as before');
   });
 });
 
@@ -629,11 +631,11 @@ test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', as
 // straight to estimateCostCents), so a fallback that swapped the model
 // must not be billed at the requested model's rate.
 test('answerWorkshopQuestion reports the served model, not the requested one', async () => {
-  await withStubClient(answerResp('Short answer.', 'claude-haiku-4-5'), async () => {
+  await withStubClient(answerResp('Short answer.', 'claude-haiku-5-5'), async () => {
     const out = await llm.answerWorkshopQuestion({
       contextJson: '{}', question: 'q', model: 'claude-sonnet-5',
     });
-    assert.equal(out.model, 'claude-haiku-4-5');
+    assert.equal(out.model, 'claude-haiku-5-5');
   });
 });
 

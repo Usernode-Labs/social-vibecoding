@@ -17,12 +17,13 @@
  *   own store) and dapp.json's one-line description when it has one.
  *
  *   WHO IT IS FOR. The audience, in the words people see (Public community,
- *   Private community, Just you) as a chip, and for a public or a private
- *   community WHO IS HERE: faces, the member count, and a line of this
- *   week's activity with the last fourteen days as a small bar chart (#3268;
- *   it was the hub's Members & activity card, fourth down the page). The
- *   chart names a day when it is pointed at, or dragged across with a
- *   finger (Spark, below), so it needs no caption of its own.
+ *   Private community, Just you), and for a public or a private community
+ *   WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block under what it is:
+ *   faces, the member count over a line of this week's activity, and the
+ *   last fourteen days as a small bar chart across from both (#3268; it was
+ *   the hub's Members & activity card, fourth down the page). The chart
+ *   names a day when it is pointed at, or dragged across with a finger
+ *   (Spark, below), so it needs no caption of its own.
  *
  *   JOIN, JOINED, INVITE, ⋯. Membership sits across from the name, because
  *   it is a fact about you and this project, the way a profile's Follow
@@ -73,10 +74,13 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
-import { invitedByLine, joinByInvite, seenByLine, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
+import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
+import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
+import { hubShot, hubShotPayload } from './hub-shot';
+import { changeHref } from '../../../lib/change-href';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -89,9 +93,10 @@ type Audience = 'open' | 'invited' | 'solo';
 export type HubFirstVersion = {
   step: number | null;
   of: number | null;
-  /** The step's name as the server names it for this viewer (the App
-      tab's and the made screen's words), never one written here. */
-  step_name: string | null;
+  /** #4053: its build line for this viewer (homeroom-bot-progress.js
+      buildLineOf), the App tab's and the made screen's; the words are
+      ../../first-session/build-line.tsx's, never written here. */
+  line: string | null;
   /** Built and up for approval: ready to try. */
   ready: boolean;
   /** The description is the viewer's. */
@@ -103,7 +108,44 @@ export type HubFirstVersion = {
   conversation_id: number | null;
   /** The change, once it is ready to try. */
   session_id: number | null;
+  /** #4074: the plan waiting for its maker's Build it, read only, for a
+      member who did not start it (routes/apps.js sharedPlan); #4396: the
+      plan its maker chose, while it is built and tested; else null. */
+  plan?: {
+    bullets: string[];
+    questions: Array<{ question: string; suggested: string | null }>;
+  } | null;
 };
+
+/** One channel of a project (#4417): #general, or one of its topics. */
+export interface PlaceChannel {
+  /** The topic's registry row (its channel's thread ref); null for #general. */
+  id: number | null;
+  kind: 'general' | 'topic';
+  /** The topic's category key (dapp.json `id`); null for #general. */
+  key: string | null;
+  handle: string;
+  /** Handles it had before a rename, which still find it. */
+  aliases: string[];
+  name: string;
+  about: string;
+  icon: string;
+  state: 'live' | 'archived' | 'merged';
+  /** A merged topic: the key of the topic it joined, and when. */
+  merged_into: string | null;
+  merged_at: string | null;
+  /** Open requests filed under it; null for #general and retired topics. */
+  requests: number | null;
+  unread: number;
+}
+
+export interface PlacesPayload {
+  /** Votes waiting on the viewer here, or null when not counted. */
+  owed: number | null;
+  channels: PlaceChannel[];
+  /** Topic proposals waiting for a vote (the Topics dialog lists them). */
+  proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
+}
 
 export type CommunityPayload = {
   slug: string;
@@ -111,6 +153,13 @@ export type CommunityPayload = {
   /** dapp.json's one-line description, or the first sentence of the
       description it was made from when dapp.json has none yet. */
   description?: string | null;
+  /** #4045: made under seven days ago (never the platform's own): the hub
+      leaves out what is still empty (decision D). */
+  first_week?: boolean;
+  /** #4045: the viewer has a live invite link for a project that is still
+      just theirs, so the hub draws open seats beside their face instead of
+      "Just you". Only ever true for a member, on a Just you project. */
+  invite_link?: boolean;
   first_version?: HubFirstVersion | null;
   member_count: number;
   is_member: boolean;
@@ -144,6 +193,13 @@ export type CommunityPayload = {
   can_manage?: boolean;
   /** An audience change already up for a vote, if one is. */
   audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
+  /**
+   * #4417: THE PLACES — what the project's list says beside each of its
+   * places: the votes owed here, and every channel, #general first, then
+   * each topic in dapp.json's order, retired ones included and marked so
+   * (the list draws the live ones). Null when it could not be read.
+   */
+  places?: PlacesPayload | null;
   approval: {
     policy: 'anyone' | 'invited';
     approvals_required: number | null;
@@ -184,10 +240,18 @@ function whoApproves(required: number, of: number, one: string, many: string): s
  * 2 yes votes (2 active members), or unopposed after a wait" was the
  * sentence a newcomer met here.
  */
-export function approvalLine(approval: CommunityPayload['approval'] | null | undefined): string {
+export function approvalLine(
+  approval: CommunityPayload['approval'] | null | undefined,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> | null,
+): string {
   if (!approval) return '';
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
+  // A Just you project's one approver is the person reading it (#4246).
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return 'A change goes live when you approve it.';
+  }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
@@ -227,6 +291,10 @@ function AudienceGlyph({ audience }: { audience: Audience }) {
 }
 
 async function readCommunity(slug: string): Promise<CommunityPayload | null> {
+  // `?shot=hub-first-week` (./hub-shot.ts): a made-up first week, drawn for
+  // the before/after shots in place of the server's answer.
+  const shot = hubShot();
+  if (shot) return hubShotPayload(slug, shot);
   try {
     const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/community`);
     if (!res.ok) return null;
@@ -278,6 +346,19 @@ export function reloadCommunity(slug: string): Promise<void> {
   return pending;
 }
 
+/**
+ * The record already read for `slug`, or null, without asking for one: for a
+ * caller outside React (the chat's `#name` links, ./place-store.ts).
+ */
+export function cachedCommunity(slug: string): CommunityPayload | null {
+  return (slug && communities.get(slug)) || null;
+}
+
+/** Whether a read of `slug`'s record is on its way. */
+export function communityInflight(slug: string): boolean {
+  return !!slug && inflight.has(slug);
+}
+
 export function useCommunity(slug: string): CommunityPayload | null {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
@@ -293,6 +374,102 @@ export function useCommunity(slug: string): CommunityPayload | null {
 /** How many faces the hero shows before the count says the rest. */
 export const HERO_FACES = 5;
 
+/** Up to HERO_FACES faces, overlapping; nothing for nobody. */
+function HeroFaces({ members }: { members: CommunityPayload['members'] | null | undefined }) {
+  const faces = (members || []).slice(0, HERO_FACES);
+  if (!faces.length) return null;
+  return (
+    <span className="dev-ws-hero-faces" aria-hidden="true">
+      {faces.map((m) => (
+        <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
+          {(m.username || '?').charAt(0).toUpperCase()}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** How many faces the first week's row shows: the count says the rest. */
+export const WEEK_FACES = 3;
+
+/**
+ * The seats of a project nobody has joined yet, in the colours of the
+ * canvas board People (set "you-open"): one on each side of your face, pale,
+ * with a person's outline in them. They are not buttons; Invite is.
+ */
+const SEATS = [
+  { bg: '#ebefed', ink: '#cedae0' },
+  { bg: '#fae5dc', ink: '#ebb199' },
+] as const;
+
+function Seat({ bg, ink }: { bg: string; ink: string }) {
+  return (
+    <span className="dev-ws-hero-face dev-ws-hero-seat" style={{ background: bg, color: ink }}>
+      <PersonSilhouetteIcon aria-hidden="true" />
+    </span>
+  );
+}
+
+/**
+ * The people row of a project's first week (#4045, the owner, 8 Oct 2026;
+ * canvas boards Hub and People): the faces at the left, then who it is for
+ * as "Private community" with its lock, and "3 people" under it.
+ *
+ *   Just you              the label alone: nobody else is here, and no link is out
+ *   a link is out         your face between two open seats, "Private
+ *                         community" and no count: the count of one person
+ *                         is the seats' whole point
+ *   anyone else in it     up to three faces, the audience and "N people"
+ *
+ * `seats` is `invite_link` on a Just you project (GET .../community): the
+ * audience the server derives stays "Just you" until somebody accepts, so the
+ * hub says "Private community" itself while the seats are shown.
+ */
+export function WeekPeople({ members, count, audience, audienceLabel, seats }: {
+  members: CommunityPayload['members'] | null | undefined;
+  count: number;
+  audience?: Audience;
+  audienceLabel?: string;
+  seats?: boolean;
+}) {
+  const solo = audience === 'solo';
+  const shown: Audience | undefined = seats ? 'invited' : audience;
+  const label = seats ? 'Private community' : audienceLabel;
+  const you = (members || [])[0];
+  const faces = seats ? [] : solo ? [] : (members || []).slice(0, WEEK_FACES);
+  const countLine = seats || solo ? '' : plural(count, 'person', 'people');
+  return (
+    <div className="dev-ws-hero-week-people" data-ws-members="" data-ws-seats={seats ? '' : undefined}>
+      {seats && you ? (
+        <span className="dev-ws-hero-faces dev-ws-hero-seats" aria-hidden="true">
+          <Seat {...SEATS[0]} />
+          <span className="dev-ws-hero-face" style={{ background: swatchFor(you.username) }} title={`@${you.username}`}>
+            {(you.username || '?').charAt(0).toUpperCase()}
+          </span>
+          <Seat {...SEATS[1]} />
+        </span>
+      ) : faces.length ? (
+        <span className="dev-ws-hero-faces" aria-hidden="true">
+          {faces.map((m) => (
+            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
+              {(m.username || '?').charAt(0).toUpperCase()}
+            </span>
+          ))}
+        </span>
+      ) : null}
+      <span className="dev-ws-hero-week-who" data-ws-members-cell="members">
+        {label ? (
+          <span className="dev-ws-hero-audience" data-ws-community-audience="">
+            {shown ? <AudienceGlyph audience={shown} /> : null}
+            <b>{label}</b>
+          </span>
+        ) : null}
+        {countLine ? <span className="dev-ws-hero-week-count">{countLine}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 /**
  * The hub's people line (#3268): up to HERO_FACES faces, then who the
  * community is for and how many are in it, "Public community · 23 members".
@@ -307,30 +484,28 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
   audienceLabel?: string;
   children?: ReactNode;
 }) {
-  const faces = (members || []).slice(0, HERO_FACES);
-  const solo = audience === 'solo';
   return (
     <div className="dev-ws-hero-people" data-ws-members="">
-      {faces.length ? (
-        <span className="dev-ws-hero-faces" aria-hidden="true">
-          {faces.map((m) => (
-            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-              {(m.username || '?').charAt(0).toUpperCase()}
-            </span>
-          ))}
-        </span>
-      ) : null}
-      <span className="dev-ws-hero-count" data-ws-members-cell="members">
-        {audienceLabel ? (
-          <span className="dev-ws-hero-audience" data-ws-community-audience="">
-            {audience ? <AudienceGlyph audience={audience} /> : null}
-            <b>{audienceLabel}</b>
-          </span>
-        ) : null}
-        {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
-      </span>
+      <HeroFaces members={members} />
+      <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
       {children}
     </div>
+  );
+}
+
+/** "Public community · 23 members", the audience's glyph leading it. */
+function HeroCount({ count, audience, audienceLabel }: { count: number; audience?: Audience; audienceLabel?: string }) {
+  const solo = audience === 'solo';
+  return (
+    <span className="dev-ws-hero-count" data-ws-members-cell="members">
+      {audienceLabel ? (
+        <span className="dev-ws-hero-audience" data-ws-community-audience="">
+          {audience ? <AudienceGlyph audience={audience} /> : null}
+          <b>{audienceLabel}</b>
+        </span>
+      ) : null}
+      {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
+    </span>
   );
 }
 
@@ -439,34 +614,51 @@ function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: 
 }
 
 /**
- * The hero's activity line (#3268): who was around this week and what
- * shipped this month, in words, with the last fourteen days as a small bar
- * chart at its end. A zero says nothing; a fortnight in which nobody did
- * anything is one quiet sentence instead of fourteen slivers.
+ * WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block (#3268 put both on
+ * the hero, as two rows with the actions between them): the faces, then
+ * "Public community · 23 members" over who was around this week and how
+ * many changes shipped this month, and the last fourteen days as a small
+ * bar chart across from both. On a phone the chart moves up across from the
+ * faces and the words take the full width under them (app.css): faces,
+ * words and chart in one row left the words a column a few words wide.
+ *
+ * "Changes shipped", not "shipped": a bare number shipped said nothing
+ * about what it counted. The separator is a no-break space and a dot, so a
+ * line too long for a narrow phone breaks after the dot, never before it.
+ * A zero says nothing; a fortnight in which nobody did anything is one
+ * quiet line instead of fourteen slivers.
  */
-export function HeroActivity({ activity }: { activity: CommunityPayload['activity'] | null | undefined }) {
+export function HeroPulse({ members, count, audience, audienceLabel, activity }: {
+  members: CommunityPayload['members'] | null | undefined;
+  count: number;
+  audience?: Audience;
+  audienceLabel?: string;
+  activity: CommunityPayload['activity'] | null | undefined;
+}) {
   const days = activity?.daily || [];
   const active = Number(activity?.active_week) || 0;
   const shipped = Number(activity?.shipped_month) || 0;
   const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  if (!active && !shipped && !peak) {
-    return (
-      <p className="dev-ws-hero-line" data-ws-members-trend="" data-ws-trend-empty="">
-        Nobody has been around in the last 14 days.
-      </p>
-    );
-  }
+  const quiet = !active && !shipped && !peak;
   return (
-    <div className="dev-ws-hero-activity" data-ws-members-stats="">
-      <span className="dev-ws-hero-activity-words">
-        <span className="dev-ws-hero-activity-line">
-          {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
-          {active && shipped ? ' · ' : null}
-          {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> shipped this month</span> : null}
-          {!active && !shipped ? 'Quiet this week' : null}
-        </span>
+    <div className="dev-ws-hero-pulse" data-ws-members="">
+      <HeroFaces members={members} />
+      <span className="dev-ws-hero-pulse-words">
+        <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
+        {quiet ? (
+          <span className="dev-ws-hero-activity-line" data-ws-members-trend="" data-ws-trend-empty="">
+            Nobody has been around in the last 14 days.
+          </span>
+        ) : (
+          <span className="dev-ws-hero-activity-line" data-ws-members-stats="">
+            {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
+            {active && shipped ? '\u00a0· ' : null}
+            {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> changes shipped this month</span> : null}
+            {!active && !shipped ? 'Quiet this week' : null}
+          </span>
+        )}
       </span>
-      {days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
+      {!quiet && days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
     </div>
   );
 }
@@ -477,20 +669,47 @@ export function HeroActivity({ activity }: { activity: CommunityPayload['activit
  * to build; a private community is private to both, as the create dialog
  * maps them. A 409 is one already up, which the hero shows either way, so it
  * is not an error. Throws with words a person can read.
+ *
+ * #4378: making it public needs a verified owner. The route answers
+ * `identity_required` for one who is not; then the verify sheet asks, and
+ * once a phone is linked the proposal is sent again. Resolves false when
+ * they said Not now (the project stays private), true once it is up.
  */
-export async function proposeAudience(slug: string, to: 'public' | 'private'): Promise<void> {
-  const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
+export async function proposeAudience(slug: string, to: 'public' | 'private'): Promise<boolean> {
+  const send = () => fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(to === 'private'
       ? { collabVisibility: 'private', viewVisibility: 'private' }
       : { collabVisibility: 'public', viewVisibility: 'public' }),
   });
+  let res = await send();
   if (!res.ok && res.status !== 409) {
-    const body = await res.json().catch(() => ({}));
+    let body = await res.json().catch(() => ({}));
+    if (body && body.code === 'identity_required') {
+      if (!(await askToVerifyForPublic())) return false;
+      res = await send();
+      if (res.ok || res.status === 409) return true;
+      body = await res.json().catch(() => ({}));
+    }
     throw new Error((body && body.error) || 'That did not go through. Try again.');
   }
+  return true;
 }
+
+/**
+ * Before "Make it public" asks its question: an owner the verified-identity
+ * rule still holds is asked to verify first ("Verify to make it public").
+ * True to go on as before; false for Not now, which leaves it private.
+ */
+export async function verifiedToGoPublic(): Promise<boolean> {
+  if (!identityNeededHere()) return true;
+  return askToVerifyForPublic();
+}
+
+/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm). */
+export const MAKE_PUBLIC_LINE = 'Anyone can find it on Discover, join, and propose changes. '
+  + 'Members vote on this first, and it applies once it merges.';
 
 /**
  * What making it private means, said before it is proposed. Who can OPEN
@@ -529,8 +748,65 @@ export async function confirmMakePrivate(slug: string, name: string): Promise<vo
 }
 
 /**
- * "Make it public" (it was "Open it up"): the audience change as a question
- * under its button, the Join popup's shape. The answer opens the visibility
+ * "Make it public", from the hub's ⋯ (#4045, decision D). It was a button in
+ * the hero's row; it is a setting, so it lives beside "Make it private" in
+ * the ⋯ (../actions-row.tsx DevPlusMenu's `onMakePublic`), and the row keeps
+ * what you do with people: Invite. The same question as the popup, as the
+ * platform's confirm, then the same proposal.
+ */
+export async function confirmMakePublic(slug: string, name: string): Promise<void> {
+  const ui = (window as any).PlatformUI;
+  if (!ui || typeof ui.confirm !== 'function') return;
+  if (!(await verifiedToGoPublic())) return;
+  const ok = await ui.confirm({
+    title: `Make ${name} a public community?`,
+    message: MAKE_PUBLIC_LINE,
+    confirmLabel: 'Propose making it public',
+    cancelLabel: 'Not now',
+  });
+  if (!ok) return;
+  try {
+    if (!(await proposeAudience(slug, 'public'))) return;
+  } catch (err) {
+    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    return;
+  }
+  await reloadCommunity(slug);
+}
+
+/**
+ * Whether the hub's ⋯ offers "Make it public": a private community, to
+ * whoever may open the visibility proposal, while no change to who it is
+ * for is already up for a vote. A project that is just yours keeps it on
+ * its Share it card.
+ */
+export function canMakePublic(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
+  return !!data && data.audience === 'invited' && !!data.can_manage && !data.audience_change;
+}
+
+/**
+ * Leave, from the hub's ⋯ (#4045): it was the hero's Joined pill. Whether
+ * the ⋯ offers it: a member who did not start the project (they cannot
+ * leave what they started).
+ */
+export function canLeave(data: Pick<CommunityPayload, 'is_member' | 'is_creator'> | null | undefined): boolean {
+  return !!data && !!data.is_member && !data.is_creator;
+}
+
+/** Leave the community: Home.setMembership asks first, then the hub re-reads. */
+export async function leaveCommunity(slug: string): Promise<void> {
+  const home = (window as any).Home;
+  if (!slug || !home?.setMembership) return;
+  try {
+    await home.setMembership(slug, false);
+  } finally {
+    await reloadCommunity(slug);
+  }
+}
+
+/**
+ * "Make it public" on a project that is just yours (ShareItCard): the
+ * audience change as a question under its button, the Join popup's shape. The answer opens the visibility
  * PR; the hero then re-reads and shows it as up for a vote. Only this way
  * round: "Make it private" is the ⋯'s (confirmMakePrivate, above).
  */
@@ -566,9 +842,9 @@ function MakePublic({ slug, name, onOpened }: {
     setBusy(true);
     setError('');
     try {
-      await proposeAudience(slug, 'public');
+      const proposed = await proposeAudience(slug, 'public');
       setOpen(false);
-      onOpened();
+      if (proposed) onOpened();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
     } finally {
@@ -587,7 +863,12 @@ function MakePublic({ slug, name, onOpened }: {
         data-ws-community-audience-change="open"
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => { setError(''); setOpen((v) => !v); }}
+        onClick={() => {
+          setError('');
+          if (open) { setOpen(false); return; }
+          // #4378: an owner still to verify is asked first; Not now leaves it private.
+          void verifiedToGoPublic().then((go) => { if (go) setOpen(true); });
+        }}
       >
         Make it public
       </Button>
@@ -600,9 +881,7 @@ function MakePublic({ slug, name, onOpened }: {
           data-ws-audience-pop=""
         >
           <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
-          <p className="dev-ws-vote-sub">
-            Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.
-          </p>
+          <p className="dev-ws-vote-sub">{MAKE_PUBLIC_LINE}</p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
             <button
@@ -636,8 +915,8 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
 
 /**
  * WHO INVITED THEM, AND JOIN (#3700): "@maya invited you", their note, one
- * "Join <name>" as the screen's primary button, and "Maya will see that you
- * joined." The confirm's words (./invite-offer.ts), on a page. First in the
+ * "Join <name>" as the screen's primary button, standing alone. The
+ * confirm's words (./invite-offer.ts), on a page. First in the
  * hero of a page an invite link opened, and the body of a private
  * community's invite preview (../../invite-preview). `children` hang under
  * the button: the hero's Join question.
@@ -650,7 +929,6 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
   joinRef?: Ref<HTMLButtonElement>;
   children?: ReactNode;
 }) {
-  const seen = seenByLine(offer);
   return (
     <div className="dev-ws-invite" data-ws-invite="">
       <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
@@ -672,7 +950,6 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
         </Button>
         {children}
       </div>
-      {seen ? <p className="dev-ws-invite-seen" data-ws-invite-seen="">{seen}</p> : null}
     </div>
   );
 }
@@ -812,18 +1089,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
     void joinThroughLink(false).then((ok) => answer(ok ? 'joined' : false));
   };
 
-  const leave = async () => {
-    const home = (window as any).Home;
-    if (!home?.setMembership || busy) return;
-    setBusy(true);
-    try {
-      await home.setMembership(slug, false);
-    } finally {
-      setBusy(false);
-      void load();
-    }
-  };
-
   // Invite is a MEMBER's (#3362): an invite link can be made by anyone in
   // the community (services/community-invites.js), and the pane says so when
   // the viewer cannot make one yet. Collaborators and approvals stay behind
@@ -867,8 +1132,8 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
     </div>
   ) : null;
   // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
-  // on a phone, above everything the page shows them to decide by (who is
-  // here, what it is, Open app, the fortnight, and below the hero what is
+  // on a phone, above everything the page shows them to decide by (what it
+  // is, who is here and the fortnight, Open app, and below the hero what is
   // being decided).
   const inviteHead = invited && offer ? (
     <InviteCard
@@ -884,8 +1149,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       {popup}
     </InviteCard>
   ) : null;
-  // YOU AND THIS PROJECT, at the end of the action row: Join, or Joined.
-  const membership = invited ? null : !data.is_member ? (
+  // YOU AND THIS PROJECT, at the end of the action row: Join. Joined was
+  // here too, and was the way out; Leave is a row of the ⋯ now (#4045,
+  // canLeave), so a member's row is what they can do, not what they are.
+  const membership = invited || data.is_member ? null : (
     <span className="dev-ws-join-anchor">
       <Button
         ref={joinRef}
@@ -903,26 +1170,21 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       </Button>
       {popup}
     </span>
-  ) : data.is_creator ? null : (
-    // JOINED IS THE LEAVE CONTROL. A state you can see, with a check, and a
-    // tap asks before it takes you out (Home.setMembership), the same pill
-    // Discover draws. Outlined, not filled: it shares a row with Open app,
-    // and a settled state should not be the loudest thing in it. The creator
-    // gets none: they cannot leave what they started.
-    <Button
-      type="button"
-      variant="pillNeutral"
-      size="sm"
-      ink="neutral"
-      className="dev-ws-joined inline-flex items-center gap-1"
-      data-ws-community-leave=""
-      title={`Joined. Tap to leave ${displayName}`}
-      disabled={busy}
-      onClick={() => { void leave(); }}
-    >
-      <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-      Joined
-    </Button>
+  );
+  // #4045, DECISION D: IN ITS FIRST WEEK the hero leaves out what is still
+  // empty: no fortnight of activity. The people row is the week's own
+  // (WeekPeople): the faces, "Private community" over "3 people", then what
+  // you can do. A pending change to who it is for is not empty, so it stays.
+  const week = !!data.first_week;
+  // A link is out on a project that is still just theirs: their face and
+  // open seats, and the audience it is about to be (WeekPeople).
+  const seats = member && solo && !!data.invite_link;
+  // While its first version is on the way (or, in its first week, just
+  // went live) the First version card is the way into the app: Open app
+  // there, so not here too.
+  const appButton = data.first_version ? null : openApp;
+  const descLine = (
+    <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
   );
 
   return (
@@ -936,27 +1198,45 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
-          23 members". The tile and the name are the coloured header's. */}
-      <HeroPeople
-        members={solo ? [] : data.members}
-        count={Number(data.member_count) || 0}
-        audience={data.audience}
-        audienceLabel={data.audience_label}
-      />
-      {data.description ? (
-        <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
-      ) : null}
+      {/* WHAT IT IS first, under the coloured header's tile and name. In a
+          project's first week it sits under the people row instead. */}
+      {data.description && !week ? descLine : null}
+      {/* WHO IS HERE, WHO IT IS FOR AND HOW LIVELY IT HAS BEEN, one block:
+          the faces, "Public community · 23 members" over this week in words,
+          and the fortnight's chart across from both. Just you is the label
+          alone: nobody to show and nothing to count. In its first week the
+          people are the action row's first part instead (WeekPeople, below),
+          and there is no fortnight yet. */}
+      {week ? null : solo ? (
+        <HeroPeople members={[]} count={Number(data.member_count) || 0} audience={data.audience} audienceLabel={data.audience_label} />
+      ) : (
+        <HeroPulse
+          members={data.members}
+          count={Number(data.member_count) || 0}
+          audience={data.audience}
+          audienceLabel={data.audience_label}
+          activity={data.activity}
+        />
+      )}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
-          Invite, "Make it public" (a private community only: a public one's
-          "Make it private" is a row of the ⋯), the ⋯, and across from them
-          Join or Joined. A project that is just yours grows from its Share
-          it card instead (ShareItCard), so its row keeps Open app and the ⋯.
-          The ⋯ stays LAST among the actions (its menu hangs off its right
-          edge); Join or Joined is the row's, pushed to the far end. */}
+          Invite, the ⋯, and across from them Join. "Make it public" and
+          "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
+          project that is just yours grows from its Share it card instead
+          (ShareItCard), so its row keeps Open app and the ⋯. The ⋯ stays
+          LAST among the actions (its menu hangs off its right edge); Join is
+          the row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
+      {week ? (
+        <WeekPeople
+          members={data.members}
+          count={Number(data.member_count) || 0}
+          audience={data.audience}
+          audienceLabel={data.audience_label}
+          seats={seats}
+        />
+      ) : null}
       <div className="dev-ws-hero-actions">
-        {openApp}
+        {appButton}
         {member && !solo ? (
           <Button
             type="button"
@@ -970,18 +1250,16 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
             Invite
           </Button>
         ) : null}
-        {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
-          <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
-        ) : null}
         {menu}
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
       </div>
-      {solo ? null : <HeroActivity activity={data.activity} />}
+      {/* The app's one line sits under the week's people row (canvas board Hub). */}
+      {data.description && week ? descLine : null}
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"
-          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${data.audience_change.session_id}`}
+          href={changeHref(slug, data.audience_change.session_id, data.audience_change.pr_number)}
           data-ws-community-audience-pending={String(data.audience_change.session_id)}
         >
           {audienceChangeLine(data.audience_change.title)}
@@ -1045,27 +1323,175 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
 }
 
 /**
- * HOW A CHANGE GETS IN, on the Workshop page: the approval rule, read from
- * the server rather than restated here (GET /api/apps/:slug/community,
- * `approval`), as the headline number an unopposed change needs. It is a
- * headline, not the whole gate: opposition raises it, and the line names
- * the quiet path that can put a change live below it
- * (services/active-users.js). It was the hero's last line; it sits with the
- * work it governs now. Nothing until the shared read has answered.
+ * The approvers' names on an invited-approvers project, for the drawing
+ * below: GET /api/apps/:slug/approvers, read once per page load and shared.
+ * Null until it answers, and for a viewer it refuses (it is collaborator-
+ * read), who then sees the faces of the project's members instead.
+ */
+const approverNames = new Map<string, string[] | null>();
+const approverReads = new Map<string, Promise<void>>();
+function useApprovers(slug: string, wanted: boolean): string[] | null {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!wanted || !slug || approverNames.has(slug)) return;
+    let read = approverReads.get(slug);
+    if (!read) {
+      read = fetch(`/api/apps/${encodeURIComponent(slug)}/approvers`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body: { approvers?: Array<{ username?: string; status?: string }> } | null) => {
+          const list = body && Array.isArray(body.approvers)
+            ? body.approvers.filter((a) => a && a.status === 'member' && a.username).map((a) => String(a.username))
+            : null;
+          approverNames.set(slug, list);
+        })
+        .catch(() => { approverNames.set(slug, null); });
+      approverReads.set(slug, read);
+    }
+    let live = true;
+    void read.then(() => { if (live) bump(); });
+    return () => { live = false; };
+  }, [slug, wanted]);
+  return approverNames.get(slug) || null;
+}
+
+/** "evan or snait", "evan, snait or maya", "evan and snait"; past three, the first three and "+N". */
+function nameList(names: string[], joiner: 'or' | 'and'): string {
+  if (!names.length) return '';
+  if (names.length > 3) return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} ${joiner} ${names[names.length - 1]}`;
+}
+
+/** How many faces the middle step shows before "+N" says the rest. */
+export const RULE_FACES = 3;
+
+/**
+ * The middle step in words: who has to say yes, the names under it, and the
+ * wait rule's line where there is one. Pure, for the tests; the three
+ * regimes are approvalLine's.
+ */
+export function approvalStep(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> | null | undefined,
+  approvers: string[] | null,
+): { who: string; names: string; wait: string; solo: boolean } {
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return { who: 'You approve it', names: 'It is just you', wait: '', solo: true };
+  }
+  const fixed = approval.approvals_required != null;
+  const quiet = !fixed && required > 1;
+  const says = required === 1 ? 'says' : 'say';
+  if (approval.policy === 'invited') {
+    const who = required < electorate
+      ? `${required} of ${electorate} approvers ${says} yes`
+      : electorate === 1 ? 'The approver says yes'
+        : electorate === 2 && required === 2 ? 'Both approvers say yes'
+          : required === electorate ? `All ${electorate} approvers say yes`
+            : `${required} approvers say yes (there ${electorate === 1 ? 'is' : 'are'} ${electorate})`;
+    return {
+      who,
+      names: approvers ? nameList(approvers, required === 1 ? 'or' : 'and') : '',
+      wait: quiet ? 'Or after a wait, if one says yes and nobody says no' : '',
+      solo: false,
+    };
+  }
+  if (fixed) {
+    return { who: `${plural(required, 'member approves', 'members approve')}`, names: '', wait: '', solo: false };
+  }
+  return {
+    who: `${whoApproves(required, electorate, 'active member', 'active members').replace(/^./, (c) => c.toUpperCase())} ${says} yes`,
+    names: '',
+    wait: quiet ? 'Or after a wait, if one approves and nobody objects' : '',
+    solo: false,
+  };
+}
+
+/**
+ * HOW A CHANGE GETS IN, on the Workshop page (#4457): the approval rule
+ * DRAWN, as the three things that happen to a change — its checks pass, the
+ * people the rule names say yes, it goes live — read from the server rather
+ * than restated here (GET /api/apps/:slug/community, `approval`). It was one
+ * sentence with nothing to look at; that sentence is the drawing's
+ * accessible name now (`approvalLine`), so a screen reader still hears the
+ * rule whole.
  *
- * The rule and nothing else. A muted note under it said that changing these
- * rules is a change too, approved before it goes live; the owner dropped it
- * (5 Oct 2026), and the card is one line.
+ * The middle step wears faces: the approvers' on an invited-approvers
+ * project, with their names ("evan or snait"); otherwise a few members'
+ * and "+N" for the rest of the electorate; on a project that is just you,
+ * yours. The wait rule adds a line under it. The steps run across a wide
+ * card and stack on a phone and beside the Workshop's side panel (app.css);
+ * the middle step takes the wider share, because the faces crowd its words
+ * otherwise.
+ *
+ * WHO CAN CHANGE THE RULE also reaches in from here (#4527): the heading's
+ * Edit button, drawn like the dashboard's "See all", shows for exactly whom
+ * the card's data says can manage (`can_manage`, the same rule the
+ * governance proposal enforces) and opens the Members & approvals dialog on
+ * its Proposal approvals section — where the change is proposed and voted
+ * on. Nothing here edits the rule itself.
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
+  const invited = !!(data && data.approval && data.approval.policy === 'invited');
+  const approvers = useApprovers(slug, invited);
   if (!data || !data.approval) return null;
+  const step = approvalStep(data.approval, data, approvers);
+  const electorate = Math.max(1, Number(data.approval.electorate) || 1);
+  const people = step.solo
+    ? (data.members || []).slice(0, 1).map((m) => m.username)
+    : invited && approvers
+      ? approvers.slice(0, RULE_FACES)
+      : (data.members || []).slice(0, RULE_FACES).map((m) => m.username);
+  const rest = step.solo ? 0 : Math.max(0, (invited && approvers ? approvers.length : electorate) - people.length);
   return (
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
+        {data.can_manage ? (
+          <button
+            type="button"
+            className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+            data-ws-rules-edit=""
+            aria-label="Edit approval rules"
+            onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
+          >
+            Edit
+          </button>
+        ) : null}
       </div>
-      <p className="dev-ws-rules-line" data-ws-community-rule="">{approvalLine(data.approval)}</p>
+      <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
+        <li className="dev-ws-rule-step">
+          <span className="dev-ws-rule-tile" aria-hidden="true"><ShieldCheckIcon aria-hidden="true" /></span>
+          <span className="dev-ws-rule-text"><b>Its checks pass</b><span>on a preview of the change</span></span>
+        </li>
+        <li className="dev-ws-rule-join" aria-hidden="true" />
+        <li className="dev-ws-rule-step" data-ws-rule-people="">
+          <span className="dev-ws-rule-faces" aria-hidden="true">
+            {people.map((name) => (
+              <span key={name} className="dev-ws-rule-face" style={{ background: swatchFor(name) }}>
+                {(name || '?').charAt(0).toUpperCase()}
+              </span>
+            ))}
+            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{`+${rest}`}</span> : null}
+            {!people.length && !rest ? (
+              <span className="dev-ws-rule-tile"><UserGroupIcon aria-hidden="true" /></span>
+            ) : null}
+          </span>
+          <span className="dev-ws-rule-text">
+            <b>{step.who}</b>
+            {step.names ? <span>{step.names}</span> : null}
+            {step.wait ? <span className="dev-ws-rule-wait">{step.wait}</span> : null}
+          </span>
+        </li>
+        <li className="dev-ws-rule-join" aria-hidden="true" />
+        <li className="dev-ws-rule-step">
+          <span className="dev-ws-rule-tile" data-tone="ok" aria-hidden="true"><CheckIcon aria-hidden="true" /></span>
+          <span className="dev-ws-rule-text"><b>It goes live</b><span>for everyone, right away</span></span>
+        </li>
+      </ol>
     </section>
   );
 }

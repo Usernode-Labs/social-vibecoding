@@ -183,6 +183,10 @@ function router(start, { platform = null, launchRecords = false, channels = {} }
       channelTarget: () => null,
       openChannel() {},
     },
+    // #4417: a topic channel's door (features/dev-board/workshop/place-store.ts).
+    places: {
+      openTopicRef: (slug, ref, target) => calls.push(['topic', slug, ref, JSON.parse(JSON.stringify(target || null))]),
+    },
   };
   let target = null;
   const appView = {
@@ -331,6 +335,43 @@ test('a door followed on the project page turns it in place, with no address of 
   assert.equal(r.App._discussionInPlace('#messages/90'), false);
 });
 
+// #4417 follow-up: a notification's address for a TOPIC channel's message,
+// or for a reply in one of its reply threads, is that channel's door, with
+// the place in it the address names, as #general's own address is. On the
+// project page already on screen it turns the page in place, with no address
+// of its own (App._topicInPlace), as #general's does (App._discussionInPlace).
+test('a topic channel\'s address opens that channel, at the message or the reply thread it names', async () => {
+  for (const [address, target] of [
+    ['/#messages/app/garden-ab12/c/12/m/88', { focusMessageId: 88 }],
+    ['/#messages/app/garden-ab12/c/12/thread/70', { threadRootId: 70 }],
+    ['/#messages/app/garden-ab12/c/12/thread/70/m/90', { threadRootId: 70, focusMessageId: 90 }],
+    ['/#messages/app/garden-ab12/c/12', {}],
+  ]) {
+    const r = router(address, { platform: 'homeroom-ef56' });
+    r.App.restoreFromHash();
+    await r.settle();
+    assert.deepEqual(of(r.calls, 'topic'), [['topic', 'garden-ab12', 12, target]], address);
+    assert.deepEqual(of(r.calls, 'messages'), [], 'never the Messages screen');
+    assert.deepEqual(of(r.calls, 'target'), [], 'never #general\'s place');
+  }
+});
+
+test('a topic channel\'s door followed on its project page turns it in place, with no address of its own', async () => {
+  const r = router('/app/garden-ab12/workshop', { platform: 'homeroom-ef56' });
+  r.App.restoreFromHash();
+  await r.settle();
+  r.App._isScreenVisible = (id) => id === 'app-view';
+  r.calls.length = 0;
+  assert.equal(r.App._discussionInPlace('#messages/app/garden-ab12/c/12/m/88'), true);
+  assert.deepEqual(of(r.calls, 'topic'), [['topic', 'garden-ab12', 12, { focusMessageId: 88 }]]);
+  assert.equal(r.route(), '/app/garden-ab12/workshop');
+  // Another project's topic, or a page not on screen, is the router's.
+  assert.equal(r.App._discussionInPlace('#messages/app/recipes-cd34/c/12/m/88'), false);
+  r.App._isScreenVisible = () => false;
+  assert.equal(r.App._discussionInPlace('#messages/app/garden-ab12/c/12/m/88'), false);
+  assert.equal(of(r.calls, 'topic').length, 1);
+});
+
 // ── 3. The store ─────────────────────────────────────────────────────────
 
 const GENERAL = 7;
@@ -473,7 +514,8 @@ test('the group chat opens a reply thread in the page it is on, not in Messages'
   const open = GROUP_CHAT.slice(GROUP_CHAT.indexOf('  openReplyThread(id) {'), GROUP_CHAT.indexOf('  isReplyThreadOpen(id) {'));
   assert.match(open, /if \(GroupChat\._openThreadInPage\(slug, id\)\) return;\s*location\.hash = `#messages\/app\//);
   assert.match(open, /closest\('\[data-ws-discussion\]'\)/);
-  assert.match(open, /AppView\._stashDiscussionTarget\(slug, \{ threadRootId: Number\(rootId\) \}\)/);
+  // #4417 follow-up: named for the topic whose channel the pane shows (none: #general).
+  assert.match(open, /AppView\._stashDiscussionTarget\(slug, \{ threadRootId: Number\(rootId\), topicRef: GroupChat\._channelRef\(\) \}\)/);
   // A message link to a reply opens its thread there too.
   const reveal = GROUP_CHAT.slice(GROUP_CHAT.indexOf('  _applyPendingReveal(attempt = 0) {'), GROUP_CHAT.indexOf('  restoreScroll() {'));
   assert.equal((reveal.match(/_openThreadInPage\(/g) || []).length, 2);

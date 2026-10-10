@@ -32,6 +32,9 @@ poolMod.getPool = () => currentMockPool;
 // backfill) is services/waitlist.js's own, and tested with it.
 const waitlistService = require('../src/services/waitlist');
 const realRelease = waitlistService.releaseWaitlistSignup;
+const realGrant = waitlistService.grantPlatformAccess;
+const realRowsForGrant = waitlistService.releaseRowsForGrant;
+const realReleaseText = waitlistService.sendReleaseText;
 
 const { topochainAdminRoutes } = require('../src/routes/topochain/admin');
 const { RESOLVE_MAX, BULK_ADMIT_MAX } = require('../src/routes/topochain/admin/waitlist');
@@ -76,6 +79,7 @@ function handleQuery(rawSql, params = []) {
     return { rows: accountRows.filter((r) => params[0].includes(r.email)) };
   }
   if (sql.startsWith('SELECT os, update_url FROM app_version_configs')) return { rows: [] };
+  if (sql === 'SELECT id FROM users WHERE id = $1') return { rows: params[0] === 404 ? [] : [{ id: params[0] }] };
   if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) return { rows: [{ roots: 0, through_links: 0 }] };
   throw new Error(`Unhandled mock query: ${sql}`);
 }
@@ -128,10 +132,17 @@ test.beforeEach(() => {
   seen.length = 0;
   mailed = [];
   currentMockPool = makeMockPool();
-  waitlistService.releaseWaitlistSignup = realRelease;
+  restoreWaitlist();
 });
 
-test.after(() => { waitlistService.releaseWaitlistSignup = realRelease; });
+function restoreWaitlist() {
+  waitlistService.releaseWaitlistSignup = realRelease;
+  waitlistService.grantPlatformAccess = realGrant;
+  waitlistService.releaseRowsForGrant = realRowsForGrant;
+  waitlistService.sendReleaseText = realReleaseText;
+}
+
+test.after(restoreWaitlist);
 
 // ─── parseEmailList ─────────────────────────────────────────────────────
 
@@ -249,6 +260,7 @@ function fakeRelease({ failOn = [] } = {}) {
     if (failOn.includes(id)) throw new Error('boom');
     const row = signupRows.find((r) => r.id === id);
     if (!row) return null;
+    if (row.email == null) throw new waitlistService.WaitlistReleaseError('needs_sms', 'Needs SMS (#4096).');
     const newly = row.released_at == null;
     row.released_at = row.released_at || new Date();
     return { id, email: row.email, released_at: row.released_at, linked_user_id: null, more_token: `t${id}`, newly_released: newly };
@@ -261,7 +273,7 @@ test('bulk-release admits each id, mails only the newly admitted, and reports ev
   const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [1, '2', 3, 404, 1, 'x'] });
   assert.equal(res.status, 200);
   assert.deepEqual(calls, [1, 2, 3, 404], 'deduped, unparseable ids dropped, order kept');
-  assert.deepEqual(res.body.data, { admitted: [1, 2], already_admitted: [3], not_found: [404], failed: [] });
+  assert.deepEqual(res.body.data, { admitted: [1, 2], already_admitted: [3], not_found: [404], needs_sms: [], failed: [] });
   assert.deepEqual(mailed.map((m) => [m.kind, m.to]).sort(), [
     ['waitlist_released', 'unconfirmed@example.invalid'],
     ['waitlist_released', 'waiting@example.invalid'],
@@ -282,6 +294,78 @@ test('one row failing does not strand the rows already admitted unmailed', async
   assert.deepEqual(res.body.data.failed, [2]);
   assert.deepEqual(res.body.data.admitted, [1]);
   assert.deepEqual(mailed.map((m) => m.to), ['waiting@example.invalid']);
+});
+
+// #4223: a phone row (no email) waits on outbound SMS (#4096). A batch
+// skips it and says so rather than failing it or the rows around it, and
+// the one-row Admit answers with the reason.
+test('a phone row is held for SMS: a batch skips it, the one-row Admit refuses it', async () => {
+  signupRows.push({ id: 7, email: null, released_at: null, confirmed_at: new Date(), linked_username: 'phoney', has_platform_access: false });
+  fakeRelease();
+  const res = await call('POST', '/api/v4/admin/waitlist/bulk-release', { ids: [7, 1] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data.needs_sms, [7]);
+  assert.deepEqual(res.body.data.failed, []);
+  assert.deepEqual(res.body.data.admitted, [1]);
+  assert.deepEqual(mailed.map((m) => m.to), ['waiting@example.invalid']);
+  const one = await call('POST', '/api/v4/admin/waitlist/7/release');
+  assert.equal(one.status, 409);
+  assert.match(one.body.error, /#4096/);
+});
+
+// #4083: a direct grant is a way of letting somebody in like Admit, so it
+// sends the same "you're in" mail: once, from the grant that let them in,
+// never when a row's own release already sent it, and never to no address.
+function fakeGrant({ letIn = true, release }) {
+  const calls = { grants: [], rows: [], texts: [] };
+  waitlistService.grantPlatformAccess = async (_pool, id, opts) => {
+    calls.grants.push([id, opts]);
+    return letIn;
+  };
+  waitlistService.releaseRowsForGrant = async (_pool, id) => {
+    calls.rows.push(id);
+    return release;
+  };
+  waitlistService.sendReleaseText = async (_pool, signup) => { calls.texts.push(signup); return false; };
+  return calls;
+}
+
+test('a direct grant that lets somebody in sends the "you\'re in" mail, once', async () => {
+  const calls = fakeGrant({ release: { id: 5, email: 'granted@example.invalid', linked_user_id: 77, more_token: null } });
+  const res = await call('POST', '/api/v4/admin/users/77/grant-access');
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls.grants, [[77, { manualRelease: true }]]);
+  assert.deepEqual(calls.rows, [77]);
+  assert.deepEqual(mailed.map((m) => [m.kind, m.to]), [['waitlist_released', 'granted@example.invalid']]);
+  assert.match(mailed[0].url, /\?login=1$/, 'the account exists, so the mail says sign in');
+
+  // Granting again lets nobody in, so it mails nobody and touches no row.
+  mailed = [];
+  const again = fakeGrant({ letIn: false, release: { id: 5, email: 'granted@example.invalid', linked_user_id: 77 } });
+  assert.equal((await call('POST', '/api/v4/admin/users/77/grant-access')).status, 200);
+  assert.deepEqual(again.rows, []);
+  assert.equal(mailed.length, 0);
+});
+
+test('a direct grant mails nothing when a row\'s release already did, and texts an account with no address', async () => {
+  fakeGrant({ release: null });
+  assert.equal((await call('POST', '/api/v4/admin/users/78/grant-access')).status, 200);
+  assert.equal(mailed.length, 0);
+
+  const calls = fakeGrant({ release: { id: null, email: null, linked_user_id: 79, more_token: null } });
+  assert.equal((await call('POST', '/api/v4/admin/users/79/grant-access')).status, 200);
+  assert.equal(mailed.length, 0);
+  assert.equal(calls.texts.length, 1, 'the SMS hook is told, as for a phone row');
+});
+
+test('a direct grant whose notice fails still grants', async () => {
+  const calls = fakeGrant({ release: null });
+  waitlistService.releaseRowsForGrant = async () => { throw new Error('boom'); };
+  const res = await call('POST', '/api/v4/admin/users/80/grant-access');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.data.has_platform_access, true);
+  assert.equal(calls.grants.length, 1);
+  assert.equal(mailed.length, 0);
 });
 
 test('bulk-release refuses no ids and more than one batch', async () => {

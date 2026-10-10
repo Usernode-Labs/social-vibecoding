@@ -68,8 +68,9 @@ test('what content scrolls or slides behind is solid, in the plane colour', () =
     [/\.dc-lift-panel \{ background-color: var\(--dc-sheet-solid\); \}/, 'the bell and Homeroom menu sheets'],
     [/\.un-sheet, \.un-sheet::after, \.un-panel, \.un-panel::after,[\s\S]*?\{\s*background-color: var\(--dc-sheet-solid\);\s*\}/, 'kit sheets and panels'],
     [/\.un-modal \{ background-color: var\(--dc-sheet\); \}/, 'kit dialogs (a 95% fill, so the opaque sheet)'],
-    [/\.un-modal:has\(#feedback-form\) \{ background-color: var\(--dc-sheet-solid\); \}/, 'Send Feedback, in the plane colour like the sheets'],
-    [/background-color: var\(--create-modal-fill, var\(--dc-strip-solid\)\)/, 'the centred create dialog'],
+    // #4542 added scroll-padding-bottom to the same rule, so the match runs
+    // inside one declaration block rather than the whole single line.
+    [/\.un-modal:has\(#feedback-form\) \{[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/, 'Send Feedback, in the plane colour like the sheets'],
     [/\.dev-ws-pane-head, \.dev-ws-pane-body \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Workshop pane, head and body together'],
     // The Browse list's card and its empty note, on a phone. Its search and
     // filters sit on the ground above it now and scroll with it, so there is

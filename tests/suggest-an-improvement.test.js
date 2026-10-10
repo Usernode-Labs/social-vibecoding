@@ -48,7 +48,9 @@ function walk(dir, out = []) {
 
 test('no user-facing copy says "Ask for a change" any more', () => {
   const offenders = [];
+  // (app-templates/ holds the ready-made apps' screens, services/app-templates.js.)
   for (const dir of ['frontend/src', 'public/js', 'src', 'app-templates']) {
+    if (!fs.existsSync(path.join(ROOT, dir))) continue;
     for (const rel of walk(dir)) {
       const code = withoutComments(read(rel), path.extname(rel));
       code.split('\n').forEach((line, i) => {
@@ -85,16 +87,16 @@ test('every door to filing a request says Suggest an improvement', () => {
 test('a new app\'s starter page and README send its maker to Suggest an improvement', () => {
   const template = read('src/services/template.js');
   assert.match(template, /then <strong class="font-semibold text-fg">Suggest an improvement<\/strong>\./);
-  assert.equal(template.split('then **Suggest an improvement**, and describe').length - 1, 2, 'both READMEs');
-  for (const kind of ['game-2d', 'game-3d', 'multimedia-social', 'social-productivity']) {
-    assert.match(read(`app-templates/${kind}/public/index.html`),
-      /tap the Homeroom icon, then <strong class="font-semibold">Suggest an improvement<\/strong>\./, kind);
-  }
+  assert.equal(template.split('then **Suggest an improvement**, and describe').length - 1, 3,
+    'every README: the scaffold\'s, a ready-made app\'s and a game starter\'s');
+  // The four starters' own pages said the same; they were deleted with the
+  // create dialog (tests/app-templates.test.js).
 });
 
 test('Ask for changes on a built change is a different action, and keeps its words', () => {
   // It revises a change Homeroom bot already built (the viewer's chat with
   // the change attached), where Suggest an improvement files a new request.
-  assert.match(read('public/js/app-view.js'), /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  // #4455: a row of the change page's ⋯.
+  assert.match(read('public/js/app-view.js'), /label: 'Ask for changes', icon: 'generate',/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
 });

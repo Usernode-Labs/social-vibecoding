@@ -18,11 +18,12 @@
 // Each model carries what a typical change costs on it, the dev chat's own
 // figure (#2570, dev-chat.js `_modelCostNote`): the platform's estimate for a
 // model it curates, otherwise the viewer's catalog prices times the server's
-// token profile of a typical change. Never a bare amount: always "about $X
+// token profile of a typical change, its cached input priced at the model's
+// cache rates (typicalChangeCents). Never a bare amount: always "about $X
 // for a typical change", because a naked "$1.55" reads as per message, per
 // hour or per month just as easily.
 
-import type { AgentChoice, ModelCatalog, OpenRouterModel } from './api';
+import type { AgentChoice, ModelCatalog, ModelNotes, OpenRouterModel } from './api';
 import { prettyModel } from './transcript';
 
 export const ANTHROPIC_PREFIX = 'anthropic:';
@@ -68,25 +69,46 @@ export interface ModelCost {
 }
 
 /**
+ * Cents for the typical change at a catalog model's prices, the server's
+ * arithmetic (services/model-costs.js tokenCostUsd): the profile's
+ * inputTokens is every prompt token, and its cache-read and cache-write parts
+ * are each priced at the model's cache rate where the catalog lists one and
+ * at its prompt rate where it does not. Null without a prompt or completion
+ * price.
+ */
+export function typicalChangeCents(profile: NonNullable<ModelNotes['typicalChange']>, model: OpenRouterModel): number | null {
+  if (model.inputPricePerMillion == null || model.outputPricePerMillion == null) return null;
+  const input = Number(model.inputPricePerMillion);
+  const output = Number(model.outputPricePerMillion);
+  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
+  const rate = (value: number | null | undefined) => {
+    const n = value == null ? NaN : Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const readRate = rate(model.cacheReadPricePerMillion);
+  const writeRate = rate(model.cacheWritePricePerMillion);
+  const tokens = Math.max(Number(profile.inputTokens) || 0, 0);
+  const part = (n: number | undefined, room: number) => Math.min(Math.max(Number(n) || 0, 0), Math.max(room, 0));
+  const reads = readRate == null ? 0 : part(profile.cachedInputTokens, tokens);
+  const writes = writeRate == null ? 0 : part(profile.cacheWriteInputTokens, tokens - reads);
+  let perMillion = (tokens - reads - writes) * input + Math.max(Number(profile.outputTokens) || 0, 0) * output;
+  if (reads > 0 && readRate != null) perMillion += reads * readRate;
+  if (writes > 0 && writeRate != null) perMillion += writes * writeRate;
+  return Math.round((perMillion / 1_000_000) * 100 * 100) / 100;
+}
+
+/**
  * What a typical change costs on a model: the platform's estimate for one it
  * curates, else the catalog's per-token prices times the typical change's
- * token profile. Under a cent reads "<$0.01", never "$0.00": a model that
- * costs something must not look free.
+ * token profile (typicalChangeCents). Under a cent reads "<$0.01", never
+ * "$0.00": a model that costs something must not look free.
  */
 export function modelCost(id: string | null | undefined, catalog: ModelCatalog | null, model: OpenRouterModel | null = null): ModelCost {
   const notes = catalog?.notes || null;
   const entry = id && notes ? notes.models[id] || null : null;
   const note = entry && typeof entry.note === 'string' ? entry.note : '';
   let cents = entry && entry.estimateCents != null && Number.isFinite(Number(entry.estimateCents)) ? Number(entry.estimateCents) : null;
-  if (cents == null && notes?.typicalChange && model) {
-    const input = Number(model.inputPricePerMillion);
-    const output = Number(model.outputPricePerMillion);
-    if (model.inputPricePerMillion != null && model.outputPricePerMillion != null && Number.isFinite(input) && Number.isFinite(output)) {
-      const dollars = (notes.typicalChange.inputTokens / 1_000_000) * input
-        + (notes.typicalChange.outputTokens / 1_000_000) * output;
-      cents = Math.round(dollars * 100 * 100) / 100;
-    }
-  }
+  if (cents == null && notes?.typicalChange && model) cents = typicalChangeCents(notes.typicalChange, model);
   const money = cents == null ? '' : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
   const perChange = money ? `about ${money} for a typical change` : '';
   return { note, perChange, compact: [note, perChange].filter(Boolean).join(' · ') };

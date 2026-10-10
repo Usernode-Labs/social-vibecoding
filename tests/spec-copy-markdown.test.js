@@ -103,7 +103,7 @@ test('the viewer renders a copy button and the model tells it what to copy', () 
     'an empty spec must blank the copy button, mirroring the share buttons');
 
   assert.ok(viewerTsx.includes('id="dc-spec-viewer-copy"'), 'the copy button is rendered');
-  assert.ok(/disabled\s*\n?\s*title="No spec to copy yet"/.test(viewerTsx),
+  assert.ok(/disabled\s*\n?\s*title="No plan to copy yet"/.test(viewerTsx),
     'and its disabled placeholder keeps the same title');
 });
 

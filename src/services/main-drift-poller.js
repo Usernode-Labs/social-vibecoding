@@ -206,6 +206,17 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   const remoteSha = head.sha;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
 
+  // With the merge-followups machine on, main's unit suite runs on every
+  // new main, merge or direct push (services/main-watch.js). Its claim is
+  // per commit, so a merge commit the merge already checks is not run twice.
+  // Fire-and-forget, as from the merge.
+  if (config.wfMergeFollowupsEnabled
+      && (remoteSha !== app.main_check_sha || !app.main_check_state || app.main_check_state === 'error')) {
+    require('./main-watch').afterMerge(config, pool, { app, mergeSha: remoteSha }).catch((err) => {
+      log.warn('drift-poller', 'Main check on a new main failed to start', { slug: app.slug, err: err.message });
+    });
+  }
+
   // First-time backfill: no prior SHA recorded → just save it. This
   // shouldn't happen often (createApp/rebuildProduction both record
   // the SHA), but if it did we don't want to needlessly redeploy on
@@ -314,7 +325,7 @@ async function poll(config) {
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );

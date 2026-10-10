@@ -55,6 +55,58 @@ test('parseVerdict: "none" clears missing_fact, ready keeps its note, person kee
   assert.equal(person.reason, 'Changes the login flow.');
 });
 
+test('#4239: parseVerdict reads `platform` on a person verdict only', () => {
+  const about = bot.parseVerdict('{"verdict":"person","determined":true,"platform":true,"reason":"The header is Homeroom\'s, not the app\'s."}');
+  assert.equal(about.platform, true);
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"A design call."}').platform, false, 'absent is false');
+  assert.equal(bot.parseVerdict('{"verdict":"person","platform":"yes","reason":"x"}').platform, false, 'only a real true');
+  assert.equal(bot.parseVerdict('{"verdict":"ready","platform":true,"build_note":"Edit app.js."}').platform, false,
+    'never on a verdict that builds');
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /- `platform`: true ONLY with the verdict `person`, when the request is about the Homeroom platform itself rather than this app/);
+  assert.match(prompt, /"platform": true \(verdict person, only when the request is about the Homeroom platform itself, not this app\),/);
+  assert.equal(bot.PLATFORM_SELF_APP_SLUG, 'usernode-2d5619');
+  // Stored on the run, and carried to the requester's DM, which offers the move.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /plan: parsed\.plan, aboutPlatform: !!parsed\.platform,/);
+  assert.match(src, /if \(parsed\.platform && \(await platformAppSlugs\(pool\)\)\.includes\(app\.slug\)\) parsed = \{ \.\.\.parsed, platform: false \};/);
+  assert.match(src, /\{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.platform \? \{ platform: true \} : \{\}\) \} \}/);
+});
+
+test('parseVerdict finds the last verdict object whatever surrounds it', () => {
+  // The notes quote code in a fence of their own and the block's closing
+  // fence never comes: the old reader took the code fence as the only
+  // candidate and never looked at braces at all.
+  const unclosed = [
+    'The handler is `function pick(o) { return o.id; }`:',
+    '```js',
+    'const pins = { drift: true };',
+    '```',
+    'So:',
+    '```json',
+    '{"verdict":"person","determined":true,"reason":"Changes the login flow."}',
+  ].join('\n');
+  assert.equal(bot.parseVerdict(unclosed)?.verdict, 'person');
+  // A stray brace in the prose before a bare block: first `{` to last `}`
+  // spanned the prose and failed to parse.
+  const stray = 'Wraps the list in a { group.\n{"verdict":"empty","determined":true,"reason":"Nothing to build."}';
+  assert.equal(bot.parseVerdict(stray)?.verdict, 'empty');
+  // Braces inside strings, a nested object, and a later object with no
+  // verdict: the outer verdict object is the one read.
+  const nested = [
+    '```json',
+    '{"verdict":"question","determined":false,"missing_fact":"which","question":"Which screen?","default":"The map",',
+    ' "answers":["The map","The list"],"blocker":"user_facing","why_default_fails":"Two screens draw it {differently}.",',
+    ' "second_question":{"question":"Which zoom?","answers":["All","Close"]}}',
+    '```',
+    '{"note":"not a verdict"}',
+  ].join('\n');
+  const q = bot.parseVerdict(nested);
+  assert.equal(q?.verdict, 'question');
+  assert.equal(q.question, 'Which screen?');
+  assert.equal(q.reason, 'user_facing: Two screens draw it {differently}.');
+});
+
 test('parseVerdict refuses anything that is not one of the three verdicts', () => {
   assert.equal(bot.parseVerdict(''), null);
   assert.equal(bot.parseVerdict('no json here'), null);
@@ -87,6 +139,13 @@ test('classifyIssue: unchanged since the last run is skipped; changed is re-queu
   assert.equal(changed.eligible, true);
   assert.equal(changed.priority, 2);
   assert.equal(changed.reason, 'changed');
+  assert.equal(changed.changedBy, 'discussion', 'a person\'s message on Homeroom moved past the last read');
+  const onGithub = bot.classifyIssue({
+    issue: { ...issue, updatedAt: '2026-09-06T00:00:00Z' }, threadLastAt: '2026-09-01T00:00:00Z',
+    lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.deepEqual([onGithub.reason, onGithub.changedBy], ['changed', 'github'], 'the issue itself: a comment, an edit or a label');
+  assert.equal(unchanged.changedBy, undefined, 'only a change says what changed');
 });
 
 test('classifyIssue: an unchanged issue whose last verdict a cap held says which cap (#3152)', () => {
@@ -163,18 +222,21 @@ test('the last run says whether a live build is waiting or under way, as the rea
 test('settings default to off and clamp their numbers', () => {
   const s = bot.parseSettings([]);
   assert.deepEqual(s, {
-    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
+    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
-    // #3624: nobody gets the bot's DM by default; $50 a week each.
-    dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
+    // #3624: $50 a week each for what a person's requests cost the bot.
+    userWeeklyCents: 5000,
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
-    // #3624 stage 2: live work, 6 at once and 2 per person; a DM is read.
-    liveAtOnce: 6, perPerson: 2, dmChat: true,
-    // The bot is for the people on the list until an admin says everyone;
-    // the platform's own project stays out; the proposal ceiling is automatic.
-    audience: 'list', audienceSince: null, livePlatform: false, proposalCeiling: 0, platformSlugs: [],
+    // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
+    // project went live); a DM is read.
+    liveAtOnce: 12, perPerson: 3, dmChat: true,
+    // Reading a request again continues the conversation it was read in.
+    continueReads: true,
+    // The moment it went on for everyone is schema.sql's to write (readSettings
+    // fills in a database without it); the proposal ceiling is automatic.
+    everyoneSince: null, proposalCeiling: 0, liveBuildStream: true,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -192,70 +254,68 @@ test('settings default to off and clamp their numbers', () => {
     { key: bot.KEY_PER_PERSON, value: '0' },
     { key: bot.KEY_DM_CHAT, value: 'off' },
   ]);
-  assert.equal(u.liveAtOnce, 16, 'clamped to the ceiling');
+  assert.equal(u.liveAtOnce, 24, 'clamped to the ceiling');
   assert.equal(u.perPerson, 1, 'clamped to the floor');
   assert.equal(u.dmChat, false);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_PER_PERSON, value: '99' }]).perPerson, 6, 'clamped to the ceiling');
   assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
     [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
   ]);
-  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 17 }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ perPerson: 5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 24 }).ok, true);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 25 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 6 }).ok, true);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 7 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
-test('the audience, the platform switch and the proposal ceiling parse, clamp and validate', () => {
+test('the everyone moment and the proposal ceiling parse, clamp and validate', () => {
   const s = bot.parseSettings([
-    { key: bot.KEY_AUDIENCE, value: 'everyone' },
-    { key: bot.KEY_AUDIENCE_SINCE, value: '2026-10-05T09:00:00Z' },
-    { key: bot.KEY_LIVE_PLATFORM, value: 'on' },
+    { key: bot.KEY_EVERYONE_SINCE, value: '2026-10-05T09:00:00Z' },
     { key: bot.KEY_PROPOSAL_CEILING, value: '5000' },
   ]);
-  assert.equal(s.audience, 'everyone');
-  assert.equal(s.audienceSince, '2026-10-05T09:00:00.000Z');
-  assert.equal(s.livePlatform, true);
+  assert.equal(s.everyoneSince, '2026-10-05T09:00:00.000Z');
   assert.equal(s.proposalCeiling, 1000, 'clamped to the ceiling');
-  assert.equal(bot.parseSettings([{ key: bot.KEY_AUDIENCE, value: 'all' }]).audience, 'list', 'anything else is the list');
-  assert.equal(bot.parseSettings([{ key: bot.KEY_AUDIENCE_SINCE, value: 'soon' }]).audienceSince, null);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_EVERYONE_SINCE, value: 'soon' }]).everyoneSince, null);
 
-  assert.deepEqual(bot.validateSettingsPatch({ audience: 'everyone', livePlatform: false, proposalCeiling: 40 }).updates, [
-    [bot.KEY_AUDIENCE, 'everyone'], [bot.KEY_LIVE_PLATFORM, 'off'], [bot.KEY_PROPOSAL_CEILING, '40'],
-  ]);
-  assert.equal(bot.validateSettingsPatch({ audience: 'some' }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ livePlatform: 'yes' }).ok, false);
+  assert.deepEqual(bot.validateSettingsPatch({ proposalCeiling: 40 }).updates, [[bot.KEY_PROPOSAL_CEILING, '40']]);
+  assert.deepEqual(bot.validateSettingsPatch({ audience: 'everyone', livePlatform: false, proposalCeiling: 40 }).updates,
+    [[bot.KEY_PROPOSAL_CEILING, '40']], 'the retired audience and platform switch are not written');
   assert.equal(bot.validateSettingsPatch({ proposalCeiling: -1 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ proposalCeiling: 1001 }).ok, false);
-  // The moment of the switch is the server's to write, never a patch's.
+  // The moment it went on for everyone is schema.sql's to write, never a patch's.
+  assert.equal(bot.validateSettingsPatch({ everyoneSince: '2020-01-01' }).ok, false);
   assert.equal(bot.validateSettingsPatch({ audienceSince: '2020-01-01' }).ok, false);
 });
 
-test('the proposal ceiling: an admin\'s number, else 5 per live app on the list, else a fixed one for everyone', () => {
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 15);
-  assert.equal(bot.botProposalCeiling({ liveApps: [] }), 5, 'never below one app\'s worth');
-  assert.equal(bot.botProposalCeiling({ audience: 'everyone', liveApps: ['a'] }), bot.EVERYONE_PROPOSAL_CEILING,
-    'every app is live, so "per live app" would be no ceiling at all');
-  assert.equal(bot.botProposalCeiling({ audience: 'everyone', proposalCeiling: 30 }), 30);
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a'], proposalCeiling: 12 }), 12);
+test('the proposal ceiling: an admin\'s number, else a fixed one, since every app is live', () => {
+  assert.equal(bot.botProposalCeiling({}), bot.EVERYONE_PROPOSAL_CEILING);
+  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 100);
+  assert.equal(bot.botProposalCeiling(null), 100);
+  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 100,
+    'the retired lists do not count: "per live app" would be no ceiling at all');
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 30 }), 30);
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
 });
 
-test('switching to everyone records when, once, and rebuilds the queue', async () => {
+test('a settings save never writes the everyone moment, and more room wakes the loop', async () => {
   const writes = [];
-  let audience = 'list';
   const pool = {
     async query(sql, params) {
       const s = String(sql);
-      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: [{ key: bot.KEY_AUDIENCE, value: audience }] };
+      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: [{ key: bot.KEY_MODE, value: 'shadow' }] };
       if (/INSERT INTO platform_settings/.test(s)) { writes.push([params[0], params[1]]); return { rows: [] }; }
       return { rows: [] };
     },
   };
-  assert.deepEqual(await bot.writeSettings(pool, { audience: 'everyone' }, 1), { ok: true });
-  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_AUDIENCE, bot.KEY_AUDIENCE_SINCE]);
-  assert.ok(Number.isFinite(Date.parse(writes[1][1])));
-  // Saved again while already everyone: the moment does not move.
-  writes.length = 0;
-  audience = 'everyone';
-  await bot.writeSettings(pool, { audience: 'everyone' }, 1);
-  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_AUDIENCE]);
+  // What used to switch the bot to everyone changes nothing now.
+  assert.deepEqual(await bot.writeSettings(pool, { audience: 'everyone' }, 1), { ok: false, error: 'Nothing to update' });
+  assert.deepEqual(writes, []);
+  assert.deepEqual(await bot.writeSettings(pool, { liveAtOnce: 12, perPerson: 3 }, 1), { ok: true });
+  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_LIVE_AT_ONCE, bot.KEY_PER_PERSON]);
+  assert.ok(!writes.some(([k]) => k === bot.KEY_EVERYONE_SINCE));
+  const write = SRC.slice(SRC.indexOf('async function writeSettings('), SRC.indexOf('// ── Identity'));
+  assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY\]\.includes\(key\)\)\) \{\s+wakeAll\(\);/);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -696,6 +756,20 @@ test('relaySpend: no finished request means no figure at all', () => {
   );
 });
 
+test('relaySpend: the relay\'s cache reads and writes are priced as the ledger prices them', () => {
+  const cachePriced = {
+    ...PRICING, cacheReadPricePerMillion: 0.0075, cacheWritePricePerMillion: 0.09375,
+  };
+  const usage = { requests: 3, inputTokens: 1_000_000, cachedInputTokens: 900_000, cacheWriteInputTokens: 50_000, outputTokens: 0 };
+  const spend = bot.relaySpend(usage, cachePriced, { estimateRequestedModelCost: realEstimator });
+  assert.equal(spend.costUsd, realEstimator(usage, cachePriced).estimatedCostUsd);
+  // 50K uncached at $0.075/M + 900K reads at $0.0075/M + 50K writes at $0.09375/M.
+  assert.equal(spend.costUsd, 0.0151875);
+  assert.equal(spend.inputTokens, 1_000_000, 'the tokens it reports are unchanged');
+  // Without cache prices, the old prompt-rate figure.
+  assert.equal(bot.relaySpend(usage, PRICING, { estimateRequestedModelCost: realEstimator }).costUsd, 0.075);
+});
+
 test('the stopped-run detail says its cost is a floor', () => {
   const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(ui, /Its cost counts the model requests that finished before the stop\./);
@@ -760,7 +834,8 @@ test('an empty reply moments after a stop on the same session is the stop, not t
     bot: BOT, app: APP, item: ITEM, mode: 'shadow',
     settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
   });
-  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' });
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'collateral' },
+    'not \'infra\': one session\'s fallout is no platform fault (see the runOnce test below)');
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.match(insert.params[18], /collateral: the session was stopped mid-dispatch/,
     'the row says what happened rather than blaming the issue');
@@ -989,6 +1064,53 @@ test('runOnce: inside a fault backoff it refreshes but dispatches nothing, and s
   bot._resetForTests();
 });
 
+test('runOnce: a turn lost to a stop on its session goes back on the queue without pausing every project', async () => {
+  // One pass of the background lane over one request, its turn as `h` runs it.
+  const pass = async (h) => {
+    bot._resetForTests();
+    const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
+    let heads = 0;
+    let items = 0;
+    const realQuery = pool.query.bind(pool);
+    pool.query = async (sql, params) => {
+      const s = String(sql);
+      if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: heads++ === 0 ? [{ app_id: 9 }] : [] };
+      if (/SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
+      if (/FROM homeroom_bot_queue\s+WHERE app_id = \$1 AND started_at IS NULL/.test(s)) return { rows: items++ === 0 ? [ITEM] : [] };
+      if (/SELECT \* FROM chat_sessions|INSERT INTO homeroom_bot_runs|UPDATE homeroom_bot_queue SET started_at = NULL WHERE id/.test(s)) {
+        return h.pool.query(sql, params);
+      }
+      return realQuery(sql, params);
+    };
+    return bot.runOnce(pool, {}, {
+      ...h.deps,
+      github: { ...h.deps.github, async fetchPublicIssues() { return { issues: [] }; } },
+      worker: { ...h.deps.worker, async listWorkerVolumes() { return []; } },
+      forceRefresh: true,
+    });
+  };
+
+  // A read started over mid-thread (homeroom-maps #30, run 1250) paused the
+  // bot on every project for two minutes, doubling while it recurred.
+  const lost = triageHarness({ verdictText: '', sessionId: 735 });
+  bot.noteStopped(735);
+  const out = await pass(lost);
+  const row = lost.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(row.params[18], /^collateral: /);
+  assert.ok(lost.calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s) && q.params[0] === ITEM.id),
+    'the request goes back on the queue');
+  assert.equal(bot.faultBackoff(), null, 'and the bot does not back off');
+  assert.ok(out.paused == null, 'nor does the pass pause');
+
+  // A real platform fault still backs off the whole bot, as before.
+  const fault = triageHarness({ verdictText: 'x', sessionId: 736 });
+  fault.deps.worker.ensureWorker = async () => { throw new Error('image pull failed'); };
+  const faulted = await pass(fault);
+  assert.equal(faulted.paused, 'infra');
+  assert.equal(bot.faultBackoff()?.error, 'worker: image pull failed');
+  bot._resetForTests();
+});
+
 test('runOnce: a triage that throws is recorded as failed and its claimed row is dropped', async () => {
   // runTriage claims its row before its first GitHub read. A throw used to
   // leave the row claimed with nothing recorded, so the issue was never tried
@@ -1191,7 +1313,7 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   assert.equal(out.removed, 2);
 });
 
-test('the everyone audience: what the bot never read live before the switch waits for something new', async () => {
+test('the everyone moment: what the bot never read live before it went on for everyone waits for something new', async () => {
   const inserts = [];
   const since = '2026-10-05T00:00:00.000Z';
   const pool = {
@@ -1201,8 +1323,8 @@ test('the everyone audience: what the bot never read live before the switch wait
       if (/FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) {
         return { rows: [
-          // #2 was read in the background a week before the switch; #3 was
-          // live already (its app was on the list), and changed since.
+          // #2 was read in the background a week before the moment; #3 was
+          // live already (its app was on the old live list), and changed since.
           { issue_number: 2, thread_seen_at: '2026-09-28T00:00:00Z', mode: 'shadow' },
           { issue_number: 3, thread_seen_at: '2026-09-28T00:00:00Z', mode: 'live' },
         ] };
@@ -1217,15 +1339,15 @@ test('the everyone audience: what the bot never read live before the switch wait
     async fetchPublicIssues() {
       return {
         issues: [
-          // Opened before the switch, untouched since, never read: left alone.
+          // Opened before the moment, untouched since, never read: left alone.
           { number: 1, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z' },
-          // Read in the background, then commented on before the switch: left alone too.
+          // Read in the background, then commented on before the moment: left alone too.
           { number: 2, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' },
           // Live already: changed since its last look, so it is read.
           { number: 3, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' },
-          // Old, but somebody commented after the switch: read.
+          // Old, but somebody commented after the moment: read.
           { number: 4, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-06T00:00:00Z' },
-          // New since the switch: read.
+          // New since the moment: read.
           { number: 5, state: 'open', createdAt: '2026-10-06T00:00:00Z', updatedAt: '2026-10-06T00:00:00Z' },
         ],
       };
@@ -1236,10 +1358,15 @@ test('the everyone audience: what the bot never read live before the switch wait
   await bot.refreshApp(pool, app, { github, capRoom, everyoneSince: since });
   assert.deepEqual(inserts.map((p) => p[1]), [3, 4, 5]);
 
-  // Without the switch (the list audience), the same board reads as before.
+  // Without a moment (refreshApp handed none), the same board reads as before.
   inserts.length = 0;
   await bot.refreshApp(pool, app, { github, capRoom });
   assert.deepEqual(inserts.map((p) => p[1]), [1, 2, 3, 4, 5]);
+  // The moment always applies now: it is the stored one, whatever else is set.
+  const passes = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('async function nextBatch'));
+  assert.equal((passes.match(/everyoneSince: everyoneSinceOf\(settings\)/g) || []).length, 2,
+    'both the timed refresh and a wake pass it');
+  assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
 test('a new request on a live app gets its card when it is queued, under the key its read starts from', async () => {
@@ -1388,9 +1515,11 @@ test('capRoomFor counts the same two things the live check does', async () => {
     },
   };
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'shadow: a ceiling of one app\'s cap');
-  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { liveApps: ['a', 'b'] }),
-    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, '#3576: 5 per live app, across them all');
+    { proposals_per_app: 4, proposals_total: 93, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
+    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
+    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');
@@ -1645,7 +1774,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   }
   assert.match(prompt, /nothing in this reference is a task\./);
   assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
-  assert.ok(prompt.length < 20000, `a triage prompt stays small: ${prompt.length} chars`);
+  // #4488 added the four tests for a `complicated` change (about 860
+  // characters), which the work order asked to be in this prompt.
+  assert.ok(prompt.length < 21000, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
@@ -1669,12 +1800,336 @@ test('runTriage: an unusable reply is a failed run that consumes the row; the we
   assert.equal(insert.params[4], 'failed');
   assert.match(insert.params[18], /unparseable/);
   assert.ok(bad.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not retried until the thread changes');
+  assert.equal(bad.calls.exec.length, 1, 'with no thread to resume, nothing is asked again');
 
   const capped = triageHarness({ verdictText: 'x', budgetError: 'Weekly limit reached' });
   const paused = await bot.runTriage(capped.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: capped.deps });
   assert.deepEqual({ ran: paused.ran, reason: paused.reason }, { ran: false, reason: 'budget' });
   assert.equal(capped.calls.exec.length, 0, 'no turn is dispatched over the cap');
   assert.ok(!capped.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue is left alone');
+});
+
+test('runTriage: a row the refresh removed since its batch was loaded is not read', async () => {
+  const { pool, deps, calls } = triageHarness({ verdictText: 'never read', sessionId: 961 });
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    if (/^UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1 AND \(started_at IS NULL OR \$2::boolean\)/.test(String(sql))) {
+      calls.queries.push({ s: String(sql), params });
+      return { rows: [], rowCount: 0 };
+    }
+    return query(sql, params);
+  };
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual(out, { ran: false, reason: 'gone' });
+  assert.equal(calls.exec.length, 0, 'no turn');
+  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'and no run row');
+  const claim = calls.queries.find((q) => /SET started_at = NOW\(\)/.test(q.s));
+  assert.deepEqual(claim.params, [ITEM.id, false], 'a background row is claimed only while nobody holds it');
+});
+
+test('runTriage: the run records the newest thing it read, not the batch\'s figure', async () => {
+  const { pool, deps, calls } = triageHarness({ verdictText: '```json\n{"verdict":"person","determined":true,"reason":"Auth."}\n```', sessionId: 962 });
+  const order = [];
+  const query = pool.query;
+  pool.query = async (sql, params) => {
+    const s = String(sql);
+    if (/^UPDATE homeroom_bot_queue SET started_at = NOW\(\)/.test(s)) {
+      calls.queries.push({ s, params });
+      // The refresh moved the row on after the batch read it.
+      return { rows: [{ thread_seen_at: new Date('2026-09-21T00:00:00Z') }], rowCount: 1 };
+    }
+    if (/SELECT MAX\(m\.created_at\) AS last_at/.test(s)) {
+      order.push('person');
+      return { rows: [{ last_at: new Date('2026-09-22T10:00:00Z') }] };
+    }
+    return query(sql, params);
+  };
+  deps.github.fetchPublicIssue = async () => ({ issue: { number: 12, title: 'Pins drift', body: 'They drift.', state: 'open', updatedAt: '2026-09-22T09:00:00Z', createdAt: '2026-09-01T00:00:00Z' } });
+  deps.threadContext.loadIssueThread = async () => { order.push('thread'); return { messages: [] }; };
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual(order, ['person', 'thread'], 'the last word is read before the thread, so the thread holds it');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(new Date(insert.params[12]).toISOString(), '2026-09-22T10:00:00.000Z',
+    'newer than the batch (09-20), the claimed row (09-21) and the issue (09-22 09:00)');
+});
+
+test('runTriage on the live lane does not claim a row its lane already claimed', async () => {
+  const { pool, deps, calls } = triageHarness({ verdictText: '```json\n{"verdict":"empty","determined":true,"reason":"Nothing."}\n```', sessionId: 963 });
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: { ...ITEM, claimed: true }, mode: 'shadow', deps });
+  const claim = calls.queries.find((q) => /SET started_at = NOW\(\)/.test(q.s));
+  assert.deepEqual(claim.params, [ITEM.id, true]);
+  assert.match(SRC, /payer_user_id: pick\.payer_user_id \|\| null, followUp: !!pick\.followUp,\n\s+\/\/ Claimed just above, so runTriage does not claim it again\.\n\s+claimed: true,/,
+    'the live lane marks the row it claimed');
+});
+
+// The triage reply, then the reply to the one turn that asks for its block.
+function repairHarness(sessionId, replies, costs = [0.02, 0.005]) {
+  // No conversation left over from an earlier test to continue.
+  bot._resetForTests();
+  const h = triageHarness({ verdictText: 'unused', sessionId });
+  h.loops = [];
+  h.deps.worker.execInWorker = async (id, opts) => {
+    h.calls.exec.push({ id, opts });
+    return replies[h.calls.exec.length - 1];
+  };
+  h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => {
+    h.loops.push({ resumeThreadId });
+    const result = await dispatchOnce({ openrouterApiKey: 'k', resumeThreadId, resumeSessionId: resumeThreadId });
+    return { result, error: null, estimatedCostUsd: costs[h.loops.length - 1] };
+  };
+  return h;
+}
+
+const WORDS_ONLY = { lastResultText: 'Small and bounded, no schema, so it can be built now. Verdict below.', agentThreadId: 'thr-1', inputTokens: 1000, outputTokens: 50 };
+
+test('runTriage: a reply that decided in words is asked once, on its own thread, for the block', async () => {
+  const h = repairHarness(951, [WORDS_ONLY, {
+    lastResultText: '```json\n{"verdict":"person","determined":true,"reason":"Changes the login flow."}\n```',
+    agentThreadId: 'thr-1', inputTokens: 1200, outputTokens: 30,
+  }]);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' });
+  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-1' }],
+    'a fresh thread for the triage, then that same thread resumed');
+  assert.match(h.calls.exec[1].opts.prompt, /Reply now with ONLY that one fenced ```json block/);
+  assert.equal(h.calls.exec[1].opts.resumeSessionId, 'thr-1');
+  assert.equal(h.calls.exec[1].opts.mode, 'scout');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[4], 'person');
+  assert.equal(insert.params[10], 'Changes the login flow.');
+  assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'the row costs both turns');
+  assert.deepEqual([insert.params[15], insert.params[16]], [2200, 80], 'and carries both turns\' tokens');
+  assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
+  const statuses = h.calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
+  assert.deepEqual(statuses, ['active', 'paused', 'active', 'paused'], 'active only while each turn runs');
+  assert.equal(h.deps.activeWorkers.size, 0, 'released after the second turn');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'the row is consumed by the verdict');
+});
+
+test('runTriage: a reply still without its block after the one ask fails as it always did', async () => {
+  const h = repairHarness(952, [WORDS_ONLY, { lastResultText: 'It is fine to build.', agentThreadId: 'thr-1', inputTokens: 900, outputTokens: 10 }]);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.exec.length, 2, 'asked once, never twice');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.params[18], /^unparseable: Small and bounded/, 'the triage reply, not the ask\'s, is what the row shows');
+  assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'and it costs both turns');
+  assert.ok(h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'still a benchmark case: a better model writes its block');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'a model failure consumes the row');
+});
+
+test('runTriage: a thread the runtime will not resume is never asked on a fresh one', async () => {
+  const h = repairHarness(954, [WORDS_ONLY, { lastResultText: '```json\n{"verdict":"ready","determined":true,"build_note":"Invented."}\n```' }]);
+  h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => {
+    h.loops.push({ resumeThreadId });
+    // The runtime dropped the thread (resolveCodexRuntimeContext's
+    // resumeThreadDropped), so the attempt would start fresh.
+    try {
+      const result = await dispatchOnce({ openrouterApiKey: 'k', resumeThreadId: null, resumeSessionId: null });
+      return { result, error: null, estimatedCostUsd: 0.01 };
+    } catch (err) {
+      return { result: null, error: err, estimatedCostUsd: null };
+    }
+  };
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed', 'no verdict made up on a thread that never read the request');
+  assert.equal(h.loops.length, 2);
+  assert.equal(h.calls.exec.length, 1, 'the ask is never dispatched');
+});
+
+// ── A read started over, and a read continued ─────────────────────────────
+
+const PERSON_REPLY = '```json\n{"verdict":"person","determined":true,"reason":"Changes the login flow."}\n```';
+
+// The worker's stop as it really behaves (#937), the way
+// homeroom-bot-spec.test.js models it: a stop stays pending on the session
+// after its turn ends, and every dispatch is skipped (exit 143, no reply)
+// until a new turn clears it. A message in the request's discussion lands
+// while each turn runs. Returns the sessions whose dispatch was skipped.
+function interruptEachTurn(h, stopped) {
+  let pendingStop = null;
+  const skipped = [];
+  h.deps.worker.stopTurn = async (id) => { stopped.push(id); pendingStop = Date.now(); };
+  h.deps.worker.getPendingStop = () => pendingStop;
+  h.deps.worker.clearPendingStop = () => { pendingStop = null; };
+  const exec = h.deps.worker.execInWorker;
+  h.deps.worker.execInWorker = async (id, opts) => {
+    if (pendingStop) { skipped.push(id); return { exitCode: 143 }; }
+    return exec(id, opts);
+  };
+  const loop = h.deps.sessions.runCodexAttemptLoop;
+  h.deps.sessions.runCodexAttemptLoop = async (args) => {
+    const routed = await loop(args);
+    assert.equal(bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'thread' }), h.loops.length === 1,
+      'the first read is stopped; the read started over is left to finish');
+    return routed;
+  };
+  return skipped;
+}
+
+test('runTriage: a person writing mid-read stops the turn and reads again once, as one row', async () => {
+  const h = repairHarness(971, [
+    { lastResultText: '', inputTokens: 4000, outputTokens: 0 },
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-2', inputTokens: 1000, outputTokens: 40 },
+  ], [0.03, 0.01]);
+  const stopped = [];
+  const skipped = interruptEachTurn(h, stopped);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' });
+  assert.deepEqual(stopped, [971], 'the out-of-date turn is stopped, once');
+  assert.equal(h.loops.length, 2);
+  // homeroom-maps #30 (run 1250): the stop stayed pending, the read started
+  // over was skipped at once, and its empty reply was recorded as collateral.
+  assert.deepEqual(skipped, [], 'the read started over is dispatched, not skipped on the stop the first one left');
+  assert.equal(h.deps.worker.getPendingStop(971), null, 'that stop was cleared once its turn was over');
+  const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(inserts.length, 1, 'no row for the turn that was stopped');
+  assert.ok(Math.abs(inserts[0].params[14] - 0.04) < 1e-9, 'the one row carries what the stopped turn spent');
+  assert.deepEqual([inserts[0].params[15], inserts[0].params[16]], [5000, 40]);
+  assert.deepEqual(h.calls.spend.map((x) => x.cents), [3, 1], 'each turn is debited once');
+  const reason = h.calls.queries.find((q) => /SET reason = \$2 WHERE id = \$1/.test(q.s));
+  assert.deepEqual(reason.params, [ITEM.id, bot.READ_AGAIN_REASON]);
+  const claims = h.calls.queries.filter((q) => /SET started_at = NOW\(\)/.test(q.s)).map((q) => q.params);
+  assert.deepEqual(claims, [[ITEM.id, false], [ITEM.id, true]], 'the read started over keeps the row it already holds');
+  assert.equal(bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'thread' }), false, 'nothing is left in flight');
+  assert.equal(h.deps.activeWorkers.size, 0);
+});
+
+test('runTriage: a read started over that comes back empty is recorded as empty, not as collateral', async () => {
+  const h = repairHarness(976, [
+    { lastResultText: '', inputTokens: 4000, outputTokens: 0 },
+    { lastResultText: '', resultSubtype: 'error_during_execution', agentError: 'provider hung up', inputTokens: 900, outputTokens: 0 },
+  ], [0.03, 0.01]);
+  const stopped = [];
+  const skipped = interruptEachTurn(h, stopped);
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.deepEqual(skipped, []);
+  assert.equal(out.verdict, 'failed');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.match(insert.params[18], /^unparseable: \(empty reply\) .*provider hung up/,
+    'the stop was the first read\'s own, so it does not explain this reply');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'a model failure consumes the row');
+});
+
+test('runTriage: a request changed before its turn starts is read again without a turn', async () => {
+  const h = repairHarness(972, [{ lastResultText: PERSON_REPLY, agentThreadId: 'thr-3' }], [0.01]);
+  h.deps.threadContext.loadIssueThread = async () => {
+    // The person writes while the bot is still loading the request.
+    if (!h.loops.length) bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'updated' });
+    return { messages: [] };
+  };
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'person');
+  assert.equal(h.loops.length, 1, 'the read that was already out of date never ran a turn');
+});
+
+test('interruptRead: only a message or an edit sends a read back', () => {
+  bot._resetForTests();
+  for (const reason of ['created', 'unclaimed', 'proposal_thread', 'activity']) {
+    assert.equal(bot.interruptRead({ appId: 9, issueNumber: 12, reason }), false, reason);
+  }
+  assert.equal(bot.interruptRead({ appId: 9, issueNumber: 12, reason: 'thread' }), false, 'and only a read in flight');
+  const noteIssueActivity = SRC.slice(SRC.indexOf('function noteIssueActivity('), SRC.indexOf('async function noteProposalActivity('));
+  assert.match(noteIssueActivity, /interruptRead\(\{ appId: id, issueNumber: n, reason \}\);/, 'heard on the Pod the activity landed on');
+  const onBus = SRC.slice(SRC.indexOf('function onBusMessage('), SRC.indexOf('// ── The dashboard'));
+  assert.match(onBus, /if \(data\.issueNumber != null\) interruptRead\(/, 'and on the Pod running the loop');
+  assert.match(SRC, /\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(\{/,
+    'a read started over is not announced twice');
+  assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\n\s+await activity\(\)\.startCard/,
+    'and its card is not started twice');
+  assert.ok(bot.SELF_QUEUED_REASONS.includes(bot.READ_AGAIN_REASON), 'a refresh keeps its row and its reason');
+});
+
+test('runTriage: reading a request again continues the conversation it was read in', async () => {
+  const h = repairHarness(973, [
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-A', inputTokens: 900000, outputTokens: 900 },
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-A', inputTokens: 30000, outputTokens: 200 },
+  ], [0.2, 0.01]);
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps });
+  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-A' }]);
+  assert.match(h.calls.exec[0].opts.prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format/, 'the first read gets the whole prompt');
+  const again = h.calls.exec[1].opts.prompt;
+  assert.match(again, /==== REQUEST #12 HAS CHANGED SINCE YOU READ IT ====/);
+  assert.match(again, /Please work on GitHub issue #12/, 'with the request as it stands now, in full');
+  assert.match(again, /do not repeat reads you made before/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #12/);
+  assert.ok(!/YOUR ONLY JOB is to decide/.test(again), 'not the instructions again: they are earlier in the conversation');
+  assert.equal(h.calls.exec[1].opts.resumeSessionId, 'thr-A');
+});
+
+test('runTriage: a conversation the worker no longer has is read afresh, in the same read', async () => {
+  const h = repairHarness(974, [
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-B' },
+    { lastResultText: '', agentRetryFresh: true },
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-C', inputTokens: 800000, outputTokens: 700 },
+  ], [0.2, 0.001, 0.2]);
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  const insertsBefore = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length;
+  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'person');
+  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-B' }, { resumeThreadId: null }]);
+  assert.match(h.calls.exec[2].opts.prompt, /YOUR ONLY JOB is to decide/, 'the fresh read gets the whole prompt');
+  const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(inserts.length - insertsBefore, 1, 'one row for the read');
+  assert.ok(Math.abs(inserts[inserts.length - 1].params[14] - 0.201) < 1e-9, 'which costs both of its turns');
+});
+
+test('runTriage: with continuing switched off, every read is fresh', async () => {
+  const h = repairHarness(975, [
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-D' },
+    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-E' },
+  ]);
+  const settings = { continueReads: false };
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps });
+  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps });
+  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: null }]);
+});
+
+test('previousRead: a conversation is continued once per read, never past a day, a third time or another model', () => {
+  bot._resetForTests();
+  const t0 = Date.parse('2026-10-06T00:00:00Z');
+  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 0, now: t0 });
+  assert.equal(bot.previousRead(9, 12, { model: 'other', now: t0 }), null, 'another model reads afresh');
+  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'and the entry is gone once read');
+  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 1, now: t0 });
+  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 + 60_000 })?.threadId, 'thr-1');
+  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: bot.MAX_CONTINUED_READS, now: t0 });
+  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'a fresh read after the third continued one');
+  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 0, now: t0 });
+  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 + bot.CONTINUE_READ_MAX_AGE_MS + 1 }), null, 'or a day on');
+  bot.rememberRead(9, 12, { threadId: null, model: 'm', now: t0 });
+  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'a read with no conversation leaves none');
+});
+
+test('the continueReads setting is on by default, stored as on or off, and validated', () => {
+  assert.equal(bot.parseSettings([]).continueReads, true);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_CONTINUE_READS, value: 'off' }]).continueReads, false);
+  assert.deepEqual(bot.validateSettingsPatch({ continueReads: false }).updates, [[bot.KEY_CONTINUE_READS, 'off']]);
+  assert.equal(bot.validateSettingsPatch({ continueReads: 'no' }).ok, false);
+  const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(ui, /id="admin-homeroom-bot-continue-reads" type="checkbox"/, 'an admin can switch it off in the console');
+  assert.match(ui, /key === 'continueReads'/, 'and the console saves it');
+});
+
+test('runTriage: a reply that is the provider\'s API error is a platform fault, not the model\'s', async () => {
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 953,
+    result: {
+      lastResultText: 'API Error: 400 messages[6]: tool messages must include a non-empty string tool_call_id',
+      agentThreadId: 'thr-1', inputTokens: 3000, outputTokens: 20,
+    },
+  });
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' }, 'the pass backs off');
+  assert.equal(calls.exec.length, 1, 'a thread that died on the wire is not asked for a block');
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[4], 'failed');
+  assert.match(insert.params[18], /^provider: API Error: 400 messages\[6\]/);
+  assert.equal(insert.params[14], 0.0123, 'what it cost is still recorded');
+  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)), 'the issue keeps its turn');
+  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)));
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'and it is no benchmark case');
 });
 
 test('runTriage: a platform fault is recorded, hands the row back, and stops the pass', async () => {
@@ -1709,7 +2164,7 @@ test('runTriage on a live app: announces the first look, posts the question, rec
   deps.domain = 'app.onhomeroom.com';
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
-    settings: { mode: 'shadow', liveApps: [APP.slug], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
   });
   assert.equal(out.verdict, 'question');
   assert.equal(out.acted, 'question');
@@ -1723,7 +2178,11 @@ test('runTriage on a live app: announces the first look, posts the question, rec
     'and what it has seen moves past its own comments');
 });
 
-test('runTriage on an app not in the live list stays silent', async () => {
+test('runTriage on a staging copy stays silent', async (t) => {
+  // Every app is live in production; a staging copy is where nothing is.
+  const prior = process.env.USERNODE_ENV;
+  t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  process.env.USERNODE_ENV = 'staging';
   const { pool, deps, calls } = triageHarness({
     sessionId: 921,
     verdictText: 'x\n```json\n{"verdict":"question","determined":false,"missing_fact":"a","question":"Which?","default":"b"}\n```',
@@ -1731,7 +2190,7 @@ test('runTriage on an app not in the live list stays silent', async () => {
   deps.github.createIssueComment = async () => { throw new Error('must not post'); };
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
-    settings: { mode: 'shadow', liveApps: ['some-other-app'], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
   });
   assert.equal(out.acted, undefined);
   assert.ok(!calls.queries.some((q) => /homeroom_bot_posts/.test(q.s)));

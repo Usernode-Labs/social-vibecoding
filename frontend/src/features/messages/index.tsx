@@ -24,7 +24,12 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
-import { BotActivitySync, isMovedActivity } from './bot-activity';
+import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
+import { botHead } from './bot-head-card';
+import { NO_PLAN_LAYOUT, planLayout } from './bot-plan';
+import { botMeta } from './bot-question';
+import { isReadyMessage } from './bot-ready';
+import { changeBlocks, type ChangeBlock } from './bot-shared';
 import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -53,6 +58,7 @@ import {
   loadOlder,
   loadOlderReplies,
   loadReplyThread,
+  measureLayout,
   messagesController,
   open as openConversation,
   openAgentThread,
@@ -91,6 +97,7 @@ import {
   useAgentSessions,
 } from '../agent-session/store';
 import type { AgentSession as MayorSession } from '../agent-session/api';
+import { changeRowWords } from '../agent-session/transcript';
 import {
   deactivateGlobalChat,
   getGlobalChatState,
@@ -451,9 +458,7 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
  * from the Improve store's own list (`sessions` + `otherSessions`, one
  * fetch of /api/me/active-sessions). So this reads that store and draws that
  * row: a second copy of the list would drift, and a second row would let a
- * change's Working / Ready state say two things in two places. The store is
- * also what `Improve.onSessionCreated` publishes into, which is what makes a
- * change started a moment ago appear here at once.
+ * change's Working / Ready state say two things in two places.
  *
  * NOT GATED ON THE GLOBAL-CHAT FLAGS. Those decide whether the experimental
  * chat exists; a change is not that chat, and every collaborator has one.
@@ -547,7 +552,7 @@ const NEW_CHOICES = [
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:
   // named for what it is beside Homeroom bot, building it yourself.
-  { key: 'agent', label: 'Build it yourself', hint: 'Plan and build a change with a coding agent' },
+  { key: 'agent', label: 'Build it now', hint: 'Plan and build a change with a coding agent' },
   { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
   { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
 ] as const;
@@ -1236,6 +1241,17 @@ function dayKey(message: ConversationMessage): string {
   return Number.isNaN(date.getTime()) ? '' : date.toDateString();
 }
 
+/**
+ * #4564: whether a ready card names its request — "Request #N: …", what
+ * ./bot-ready.tsx `changeLine` leads with — so a later row of its change
+ * block may drop the request card it would otherwise repeat.
+ */
+function readyNamesRequest(message: ConversationMessage): boolean {
+  const meta = botMeta(message);
+  const n = Number(meta?.issueNumber);
+  return isReadyMessage(message) && !!meta?.appSlug && Number.isInteger(n) && n > 0 && !meta?.firstVersion;
+}
+
 function dayLabel(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   if (Number.isNaN(date.getTime())) return '';
@@ -1460,9 +1476,11 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
   const href = agentThreadAddress(thread);
   const change = session.activeChange;
   const mark = agentActivity(session);
+  // A merge of Homeroom itself says when the platform's next release
+  // carries it ("Goes live in about 8 minutes"), where any other change
+  // going live says "Going live" (changeRowWords).
   const status = change
-    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
-      change.status === 'promoted' ? 'Waiting for approval' : change.status === 'merged' ? 'Live' : 'In progress'}`
+    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${changeRowWords(change)}`
     : 'No active change';
   return (
     <a
@@ -1623,6 +1641,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const pinned = useStickToBottom(scroller, !snap.nextAfter);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
+  // Whether this conversation was last drawn as a linked window (#2387).
+  const wasWindow = useRef(false);
   const conversationId = snap.route.conversationId;
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
@@ -1640,10 +1660,36 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const unreadRows = useMemo(() => snap.messages.map((message) => messageRow(message, viewerId)), [snap.messages, viewerId]);
   const lineAt = mark ? firstUnreadId(unreadRows, mark.lastReadId) : null;
   const holdLine = useLineHold(conversationId);
+  // #3692: a conversation with the Homeroom bot carries its activity tray,
+  // and #4564 its rows draw as change blocks (see the memo below).
+  const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
+    && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // #4046 and #4564, decided once per drawn transcript so a row's layout and
+  // its block stay the same object between publishes and its memo() holds:
+  // the plans (a first version's plan carries its request's step,
+  // ./bot-plan.tsx) and, in the bot's DM, the change blocks — one outlined
+  // block per change, the change's card first (./bot-shared.ts
+  // changeBlocks, ./message-row.tsx). Other kinds of chat get neither.
+  const layout = useMemo(() => {
+    if (!botDm) return { plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> | null };
+    const plans = planLayout(snap.messages);
+    const blocks = changeBlocks(snap.messages, {
+      // The rows the loop skips: passed over without breaking a run.
+      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id),
+      // The same stretch of transcript: same day, and no unread line between.
+      together: (previous, next) => dayKey(previous) === dayKey(next)
+        && !(lineAt !== null && previous.id < lineAt && next.id >= lineAt),
+      // Who shows the request, so a later row of the block may drop its card.
+      showsRequest: (message) => isActivityMessage(message)
+        || botHead(message.content, botMeta(message))?.kind === 'request'
+        || readyNamesRequest(message),
+    });
+    return { plans, blocks };
+  }, [botDm, snap.messages, lineAt]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
-    previousLast.current = null; initialScroll.current = null; pinned.current = true;
+    previousLast.current = null; initialScroll.current = null; pinned.current = true; wasWindow.current = false;
   }, [conversationId]);
 
   // A layout effect, so the scroll lands before the new rows are painted and
@@ -1653,6 +1699,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
     if (!el || !last) return;
+    const fromWindow = wasWindow.current || !!snap.nextAfter;
+    wasWindow.current = !!snap.nextAfter;
     // #2387: a message link lands on its message, centred and flashed, once
     // — not at the bottom, and not again on every refresh after.
     if (focusId && shownFocus.current !== focusId) {
@@ -1682,11 +1730,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       previousLast.current = last;
       return;
     }
-    // The viewer's own send always lands in view, wherever they had scrolled.
-    // Anything else follows only a reader who was at the bottom BEFORE it
-    // arrived (#3757): measured now, after the draw, a reply taller than the
-    // allowance read as the reader having scrolled up.
-    const sentNow = !!lastMessage?.pending && last !== previousLast.current;
+    // A new line, the viewer's own send included (#4511), follows only a
+    // reader who was at the bottom BEFORE it arrived (#3757): measured now,
+    // after the draw, a reply taller than the allowance read as the reader
+    // having scrolled up. A reader up in the history stays where they are
+    // reading. The one send that still moves is one from a linked window
+    // (#2387): store.send takes it to the present, which is a different
+    // stretch of the conversation, so it opens at its newest line.
+    const sentNow = !!lastMessage?.pending && last !== previousLast.current && fromWindow;
     if (previousLast.current === null || sentNow || pinned.current) {
       // The foot of a linked window (#2387) is not the present: nothing
       // follows it there. A send from one goes to the present (store.send).
@@ -1741,9 +1792,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // safe-area test pins. It no longer changes the rows' shape: every kind is
   // the same named-row transcript (#2783).
   const kind = snap.active?.kind || 'direct';
-  // #3692: a conversation with the Homeroom bot carries its activity tray.
-  const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
-    && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
@@ -1759,10 +1807,13 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
   // A day divider breaks a run, so folding never hides one.
   const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
+  const { plans, blocks } = layout;
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
     if (isMovedActivity(message)) continue;
+    // #4046: and a card whose step its plan carries is not drawn at all.
+    if (plans.hidden.has(message.id)) continue;
     const day = dayKey(message);
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
@@ -1806,6 +1857,10 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       kind={kind}
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
+      planCardId={plans.cardOf.get(message.id) ?? null}
+      hidePrompts={plans.answersOpen && !!message.sender.bot}
+      // #4564: this row's part of its change's block, in the bot's DM alone.
+      block={blocks?.get(message.id) ?? null}
     />);
     previous = message;
     const length = runs.get(index);
@@ -1941,17 +1996,25 @@ function ReplyThreadPanel() {
   // phone this pane covers the conversation, so its composer is the one the
   // keyboard comes up under when a thread is replied to.
   useComposerKeyboard(scroller);
+  // #4511/#4513: the conversation's rule (./stick-to-bottom.ts). A reader at
+  // the newest reply stays there as replies arrive, their own included, and
+  // as the composer grows with a second line; one reading further up is
+  // left there. A thread opens at its newest reply.
+  const pinned = useStickToBottom(scroller, true);
   const count = useRef(0);
+  useIsomorphicLayoutEffect(() => { pinned.current = true; }, [conversationId, rootId]);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
       void loadReplyThread(conversationId, rootId);
     }
   }, [conversationId, rootId, snap.active?.id, snap.loadingThread]);
-  // New replies land in view, as the conversation's do.
-  useEffect(() => {
+  // New replies land in view for a reader who was at the bottom before they
+  // arrived. A layout effect, so it is read before a scroll event can report
+  // the grown content.
+  useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     const n = thread?.messages.length || 0;
-    if (el && n !== count.current) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    if (el && n !== count.current && pinned.current) el.scrollTop = el.scrollHeight;
     count.current = n;
   }, [thread?.messages.length]);
   if (!conversationId || !rootId) return null;
@@ -2153,9 +2216,19 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
 
 export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
+  const layoutRef = useRef<HTMLDivElement | null>(null);
   const snap = useMessagesSnapshot();
   useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
+  // #4229: the strip's width decides whether the list fits beside an open
+  // conversation. Its own width, so the platform rail folding counts too.
+  useEffect(() => {
+    const el = layoutRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const sizes = new ResizeObserver(() => measureLayout(el.clientWidth));
+    sizes.observe(el);
+    return () => sizes.disconnect();
+  }, []);
   // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
   //
   // The list's `useGlobalChatSelector` reads a store that nothing on this screen
@@ -2209,14 +2282,17 @@ export function MessagesScreen() {
   // for it to sit beside, whatever the full-width preference says.
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
+  // #4229: on a strip too narrow for a readable conversation beside the
+  // list, an open discussion takes the strip and the bar's back arrow returns
+  // to the list, as on a phone (store.ts measureLayout).
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-        <div className={layout}>
+        <div ref={layoutRef} className={layout}>
           <ConversationList />
           <ConversationThread />
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}

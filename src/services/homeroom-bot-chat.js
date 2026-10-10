@@ -117,8 +117,9 @@ function takeOfferRead(userId, now = Date.now(), budget = offerReads) {
 const STATUSES = new Set(['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version']);
 
 // Fix in place: a link to one of a project's changes, in either spelling the
-// router reads (`/app/<slug>/dev/proposals/12`, `#app/<slug>/dev/proposals/12`).
-const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/proposals\/([1-9]\d{0,9})(?!\d)/gi;
+// router reads (`/app/<slug>/dev/proposals/12`, `#app/<slug>/dev/proposals/12`),
+// or by its pull request's number (`/app/<slug>/dev/changes/34`, #4367).
+const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(proposals|changes)\/([1-9]\d{0,9})(?!\d)/gi;
 const FIRST_VERSION_RE = /\bfirst\s+version\b/i;
 // The most of the bot's pending changes the read is offered.
 const MAX_OFFERED_CHANGES = 5;
@@ -461,7 +462,8 @@ function stageOf(row, { activity = null } = {}) {
   switch (outcome) {
     case 'question': return row.queued ? 'reading' : 'question';
     case 'held': return 'waiting';
-    case 'proposed': case 'answer': case 'revise': return 'checking';
+    // #4242: built and not offered yet reads as it did, being checked.
+    case 'proposed': case 'answer': case 'revise': case 'checking': case 'needs_look': case 'going_live': return 'checking';
     case 'person': return row.queued ? 'reading' : 'person';
     default: return row.queued ? 'reading' : 'stopped';
   }
@@ -581,15 +583,25 @@ async function cardsOf(pool, { appId, user, rows, builds = true, typical = true,
       });
     }
   }
+  const sessionOf = (row) => states.get(Number(row.chat_message_id))?.session_id ?? row.session_id ?? null;
+  // Approved and merged into the platform's own app, not live yet: it waits
+  // for the platform's next release (services/release-watch.js), and the
+  // card says when ("Merged; goes live in the next release (about 8
+  // minutes)"). Any other approved change is left out of the answer and its
+  // card says "It's going live", as before. One read, only for those.
+  const approved = rows.filter((row) => stageOfRow(row) === 'approved' && sessionOf(row)).map((row) => Number(sessionOf(row)));
+  const releases = approved.length ? await require('./release-watch').releasesFor(pool, approved) : new Map();
   return rows.map((row) => {
     const id = Number(row.chat_message_id);
     const stateRow = states.get(id);
     const stage = stageOfRow(row);
-    const sessionId = stateRow?.session_id ?? row.session_id ?? null;
+    const sessionId = sessionOf(row);
+    const release = stage === 'approved' && sessionId ? releases.get(Number(sessionId)) : null;
     const state = stage ? {
       stage,
       ...(sessionId ? { sessionId: Number(sessionId) } : {}),
       ...(approvals.get(id) || {}),
+      ...(release ? { release } : {}),
     } : null;
     return cardOf(row, {
       builds: row.kind === 'group' ? false : builds,
@@ -690,6 +702,10 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
     messageId, appId: app.id, userId: user.id, kind: here.builds ? 'filed' : 'group',
     issueNumber: filed.issueNumber, title, replace: true,
   });
+  // #4417: asked in a topic's channel, so filed under that topic: the
+  // asker's category vote is cast for it, the seed a member can move like
+  // any category vote. Best-effort: the request is filed either way.
+  await seedTopicVote(pool, { appId: app.id, user, messageId, issueNumber: filed.issueNumber });
   // Where it stands as it is filed: held for the project's first version
   // (stageOf), its card and its chip say so from the start, never Reading.
   const [card] = await cardsOf(pool, { appId: app.id, user, rows: [row], builds: here.builds, typical: here.builds, deps });
@@ -717,6 +733,35 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
   return card;
 }
 
+/**
+ * #4417: a request filed from a message in one of the project's topic
+ * channels gets the topic as its category: the filer's vote is cast for the
+ * topic's key, as typing it on the card would. Only a LIVE topic; never
+ * throws.
+ */
+async function seedTopicVote(pool, { appId, user, messageId, issueNumber }) {
+  if (!appId || !user || !user.id || !issueNumber) return false;
+  try {
+    const { rows: [topic] } = await pool.query(
+      `SELECT r.category_key
+         FROM chat_messages m
+         JOIN app_category_registry r
+           ON r.id = m.thread_ref AND r.app_id = m.app_id AND r.origin = 'topic'
+        WHERE m.id = $1 AND m.app_id = $2 AND m.thread_type = 'category'
+          AND r.topic_state = 'live'`,
+      [messageId, appId],
+    );
+    if (!topic) return false;
+    await require('./topic-attributes').castVote(
+      pool, appId, 'issue', Number(issueNumber), 'category', topic.category_key, user.id,
+    );
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not file a request under its topic', { appId, issueNumber, err: err.message });
+    return false;
+  }
+}
+
 // ── Fix in place: a mention asking to fix one of the bot's pending changes ──
 
 /**
@@ -728,7 +773,7 @@ async function pendingChanges(pool, { appId, botId }) {
   if (!botId) return [];
   const { rows } = await pool.query(
     `SELECT * FROM (
-       SELECT DISTINCT ON (cs.linked_issues[1]) cs.id, cs.linked_issues[1] AS issue_number,
+       SELECT DISTINCT ON (cs.linked_issues[1]) cs.id, cs.pr_number, cs.linked_issues[1] AS issue_number,
               COALESCE(cs.session_title, cs.pr_title, q.issue_title) AS title,
               (COALESCE(q.first_version, FALSE) OR fv.app_id IS NOT NULL) AS first_version
          FROM chat_sessions cs
@@ -744,6 +789,7 @@ async function pendingChanges(pool, { appId, botId }) {
   );
   return rows.map((r) => ({
     id: Number(r.id), issueNumber: Number(r.issue_number), title: r.title || null, firstVersion: !!r.first_version,
+    prNumber: r.pr_number == null ? null : Number(r.pr_number),
   }));
 }
 
@@ -790,7 +836,9 @@ function pickChange({ words, changes = [], slug = null, quoted = null }) {
   const byId = (id) => changes.find((c) => c.id === Number(id)) || null;
   for (const m of String(words || '').matchAll(PROPOSAL_LINK_RE)) {
     if (slug && m[1].toLowerCase() !== String(slug).toLowerCase()) continue;
-    const hit = byId(m[2]);
+    const hit = m[2] === 'changes'
+      ? changes.find((c) => c.prNumber != null && c.prNumber === Number(m[3])) || null
+      : byId(m[3]);
     if (hit) return { change: hit, why: 'link' };
   }
   for (const id of quoted?.sessionIds || []) {
@@ -986,18 +1034,23 @@ async function personRow(pool, userId) {
  * a person, it is asked; anything else is nothing here. Never throws.
  */
 async function noteChatMessage(pool, config, { appId, userId, messageId, content, thread = null, postedVia = null, deps = {} }) {
+  // Outside the try, so the catch can name the app: it never throws.
+  let app = null;
   try {
-    if (thread || postedVia === 'agent' || !appId || !userId) return null;
+    // The main stream, or (#4417) a topic's channel, which is a channel like
+    // it: a request asked for there is filed under that topic.
+    if ((thread && thread.type !== 'category') || postedVia === 'agent' || !appId || !userId) return null;
     const mentioned = mentionsBot(content);
     // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
     if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
-    const [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
+    let user;
+    [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
     if (!mentioned) return await maybeOffer(pool, { app, user, messageId, content, deps });
     return await askFromMessage(pool, config, { app, user, messageId, content, deps });
   } catch (err) {
-    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug, messageId, err: err.message });
+    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug || appId, messageId, err: err.message });
     return null;
   }
 }
@@ -1051,7 +1104,9 @@ async function requestFromMessage(pool, config, { app, user, messageId, dismiss 
     [id, app.id],
   );
   if (!message || message.deleted_at) return { ok: false, status: 404, error: 'Message not found' };
-  if (Number(message.user_id) !== Number(user.id) || message.msg_type !== 'message' || message.thread_type) {
+  // The main stream, or (#4417) one of the project's topic channels.
+  if (Number(message.user_id) !== Number(user.id) || message.msg_type !== 'message'
+      || (message.thread_type && message.thread_type !== 'category')) {
     return { ok: false, status: 403, error: 'Only a message of your own in the chat can be made a request.' };
   }
   if (dismiss) {
@@ -1090,6 +1145,7 @@ async function myRequests(pool, { app, user, deps = {} }) {
 }
 
 module.exports = {
+  seedTopicVote,
   appRow,
   personRow,
   BOT_MENTION_RE,

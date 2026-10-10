@@ -359,7 +359,8 @@ test('the three reasons the red banner can appear each state their own remedy', 
   DevChat._creditState = () => ({ level: 'locked' });
   let v = view().credits;
   assert.equal(v.icon, 'person');
-  assert.match(v.lead, /Connect GitHub or X/);
+  assert.equal(v.lead, 'You\u2019re out of this week\u2019s free AI credits.');
+  assert.equal(v.tail, ' Verify your account to get more: add your phone number, or link GitHub and X.');
   assert.equal(v.reset, null, 'there is no allowance to reset yet');
 
   DevChat._creditState = () => ({ level: 'unavailable' });
@@ -388,7 +389,7 @@ test('the new-change banner offers the proposal card, in every state it shows', 
   const { DevChat, view } = makeDevChat();
   for (const status of ['promoted', 'merging', 'merged']) {
     DevChat.currentSession = { ...SESSION, status, pr_number: 7, app_slug: 'demo-app' };
-    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/proposals/5', status);
+    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/changes/7', status);
   }
 });
 
@@ -407,10 +408,10 @@ test('no slug, no link — the banner still renders the rest', () => {
 test('the link is an anchor to the hash route, not a button', () => {
   const html = bannersHtml({
     sync: null,
-    newChange: { stateLabel: 'proposed to the group (PR #7)', cardHref: '#app/demo-app/dev/proposals/5' },
+    newChange: { stateLabel: 'proposed to the group (PR #7)', cardHref: '#app/demo-app/dev/changes/7' },
     credits: null, creditsLow: null,
   });
-  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/proposals\/5"/);
+  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/changes\/7"/);
   assert.match(html, />Open proposal card</);
   // An anchor so it middle-clicks and copies, and so the byte-for-byte
   // <button> assertion above still reads the primary action.

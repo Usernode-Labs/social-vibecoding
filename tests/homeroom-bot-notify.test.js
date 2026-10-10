@@ -49,6 +49,7 @@ const MOMENT_WORDS = [
   ['hrbot:stopped_empty:Plant Pal', 'Plant Pal: I couldn\'t find anything to build. Tell me more'],
   ['hrbot:stopped_first:Plant Pal', 'Plant Pal: I couldn\'t start building it. You can still post a request'],
   ['hrbot:stopped_preview:Plant Pal', 'Plant Pal: the preview didn\'t start. I\'m trying again'],
+  ['hrbot:stopped_look:Plant Pal', 'Plant Pal: it\'s built, but it needs a look before you can try it'],
   ['hrbot:held:Plant Pal', 'Plant Pal: I\'ll start it on Monday'],
   ['hrbot:held:', 'I\'ve paused until Monday'],
   ['hrbot:live:Plant Pal', 'Your change to Plant Pal is live'],
@@ -124,7 +125,7 @@ test('B4: the push and the bell keep one copy of the words', () => {
     const body = src.slice(src.indexOf('const words = {'), src.indexOf('}[m[1]]'));
     return body.split('\n').map((l) => l.trim()).filter((l) => /^[a-z_]+: app \?/.test(l));
   };
-  assert.equal(words(server).length, 16);
+  assert.equal(words(server).length, 17);
   assert.deepEqual(words(client), words(server));
 });
 
@@ -222,11 +223,6 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   assert.deepEqual(benRang.map((r) => r.detail), ['hrbot:ready_group:Supper Club', 'hrbot:live:Supper Club']);
 
   await t.test('"it\'s built" waits until the change is ready to try, and is said once per approval round', async () => {
-    await pool.query(
-      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [JSON.stringify([maya.username])],
-    );
     const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 9, $2, 'Water reminders')`,
@@ -289,7 +285,8 @@ test('WP-F: a merged change is "live" only once the app answers on it, and a sto
   assert.equal(await detail('live', { live: false, firstVersion: true }), 'hrbot:live_first_soon:Plant Pal');
   assert.equal(await detail('live', {}), 'hrbot:live:Plant Pal', 'a message from before the field keeps its words');
   for (const [kind, said] of [['build_failed', 'stopped_build'], ['blocked', 'stopped_blocked'], ['person', 'stopped_person'],
-    ['empty', 'stopped_empty'], ['first_version_failed', 'stopped_first'], ['preview_failed', 'stopped_preview']]) {
+    ['empty', 'stopped_empty'], ['first_version_failed', 'stopped_first'], ['preview_failed', 'stopped_preview'],
+    ['needs_look', 'stopped_look']]) {
     assert.equal(dm.momentOf({ kind }), 'stopped', kind);
     assert.equal(await detail('stopped', { kind }), `hrbot:${said}:Plant Pal`, kind);
   }

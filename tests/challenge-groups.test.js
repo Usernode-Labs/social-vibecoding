@@ -79,6 +79,15 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
 }
 
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+// This week's clock is the earlier of a card's end and the end of the week
+// (Monday 00:00 UTC, #3869). A card ending 71 hours out reads "3d left" on a
+// weekday and less from Saturday 00:00 UTC on, so a This week expectation is
+// worked out the same way rather than written down: hard-coded, these failed
+// every weekend (first on Saturday 10 Oct 2026, pausing main's merges).
+const weekClock = (pane, raw) => {
+  const weekEnd = pane._weekEnd();
+  return pane._timeLeft(Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw);
+};
 const ch = (id, label, extra = {}) => ({ id, card_preview: { label, goal: `Challenge ${id}` }, ...extra });
 const DONE = { progress: { done: true } };
 
@@ -196,13 +205,14 @@ test('a card in a later group opens its own challenge', () => {
 
 test('each header counts its group and gives its clock', () => {
   const event = { id: 10, name: 'Season 2', ends_at: inHours(143) };
+  const weekCardEnd = inHours(71);
   const { pane, store } = loadPane({
     event,
     challenges: [
       ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING', DONE),
       // Done, and ending soonest: a finished challenge is not the clock.
       ch(3, 'WEEKLY', { ...DONE, effective: { schedule_end: inHours(10) } }),
-      ch(4, 'WEEKLY', { effective: { schedule_end: inHours(71) } }),
+      ch(4, 'WEEKLY', { effective: { schedule_end: weekCardEnd } }),
       // Not open yet, and an organiser-closed step the viewer never finished:
       // neither is open, so neither sets the clock.
       ch(5, 'WEEKLY', { effective: { schedule_start: inHours(5), schedule_end: inHours(20) } }),
@@ -214,7 +224,7 @@ test('each header counts its group and gives its clock', () => {
   pane._renderGrid();
   assert.deepEqual(headers(gridOf(store)), {
     setup: { meta: '2/2 done', allDone: true, collapsed: true },
-    week: { meta: '1/4 · 3d left', allDone: false, collapsed: false },
+    week: { meta: `1/4 · ${weekClock(pane, weekCardEnd)}`, allDone: false, collapsed: false },
     always: { meta: '0/2 · no deadline', allDone: false, collapsed: false },
     other: { meta: '0/1 · 6d left', allDone: false, collapsed: false },
   }, 'Always open never borrows the event’s end; Season challenges does');
@@ -339,13 +349,13 @@ test('a header with a clock takes the deadline off its cards and the page; First
     [['setup', '3d left'], ['week', null], ['always', null], ['other', null]]);
 
   const page = (c) => { const d = pageOf(pane, c); return [d.eyebrow, d.deadline]; };
-  assert.deepEqual(page(challenges[1]), ['This week · 3d left', null], 'the group and its clock, composed once');
+  assert.deepEqual(page(challenges[1]), [`This week · ${weekClock(pane, event.ends_at)}`, null], 'the group and its clock, composed once');
   assert.deepEqual(page(challenges[2]), ['Always open', null], '"no deadline" is not a clock for the eyebrow');
   assert.deepEqual(page(challenges[3]), ['Season challenges · 3d left', null]);
   assert.deepEqual(page(challenges[0]), ['First challenges', '3d left'], 'First challenges has no clock, so its page keeps the deadline');
 
   pane._openIdx(groupOf(grid, 'week').cards[0].idx);
-  assert.equal(store.get().detail.eyebrow, 'This week · 3d left', 'the published descriptor says the same');
+  assert.equal(store.get().detail.eyebrow, `This week · ${weekClock(pane, event.ends_at)}`, 'the published descriptor says the same');
 
   const finished = loadPane({ challenges: [ch(5, 'WEEKLY', DONE), ch(6, 'ONBOARDING')], event });
   const d = pageOf(finished.pane, finished.pane._challenges[0]);
@@ -468,8 +478,9 @@ test('while setup gates the rest the progress is the First challenges group’s 
   pane._renderGrid();
   grid = gridOf(store);
   // QA 2026-09-24 Q17: the tab's tally names its scope as an event, since
-  // Home's and the profile's "done in Season 2" count the whole season.
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event · Season 2' },
+  // Home's and the profile's "done in Season 2" count the whole season. The
+  // event's own name stays out of the caption (issue #4528).
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
   assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished First challenges follows what is left to do');
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');
@@ -479,6 +490,79 @@ test('while setup gates the rest the progress is the First challenges group’s 
   pane._challenges = [ch(4, 'WEEKLY')];
   pane._renderGrid();
   assert.equal(gridOf(store).onboardingEventId, 9, 'a locked event without setup cards points back to them');
+});
+
+test('the points summary totals numeric rewards only, earned from the viewer’s own rows', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '1,000 pts' }, progress: { done: true } }),
+      ch(2, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: 'Up to 250 pts' } }),
+      // Prose cannot be summed: it is out of the total AND its earned
+      // points with it, so both figures describe the same set.
+      ch(3, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '½ of your final credits' }, progress: { done: true } }),
+      ch(4, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '500 points' } }),
+    ],
+  });
+  pane._mine = new Map([
+    [1, { id: 1, activities_total: 800 }],
+    [3, { id: 3, activities_total: 50 }],
+  ]);
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.deepEqual({ ...grid.progress, points: undefined },
+    { done: 2, total: 4, caption: 'done in this event', points: undefined });
+  assert.deepEqual({ ...grid.progress.points }, { earned: 800, total: 1750 });
+});
+
+test('while the gate is closed the points read the First challenges only', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'ONBOARDING', { card_preview: { label: 'ONBOARDING', reward: '500 pts' }, progress: { done: true } }),
+      ch(2, 'ONBOARDING', { card_preview: { label: 'ONBOARDING', reward: '250 pts' } }),
+      ch(3, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '900 pts' } }),
+    ],
+    onboarding: { total: 2, completed: 1, unlocked: false, event_id: 10 },
+  });
+  pane._mine = new Map([[1, { id: 1, activities_total: 500 }], [3, { id: 3, activities_total: 900 }]]);
+  pane._renderGrid();
+  const grid = gridOf(store);
+  assert.deepEqual({ ...grid.progress, points: undefined },
+    { done: 1, total: 2, caption: 'done in First challenges', points: undefined },
+    'the count follows the gate, and so do the points');
+  assert.deepEqual({ ...grid.progress.points }, { earned: 500, total: 750 },
+    'the weekly row\'s 900 on offer and earned are both out of scope');
+});
+
+test('all prose on offer, there is no points field at all', () => {
+  const { pane, store } = loadPane({
+    event: { id: 10, name: 'Season 2' },
+    challenges: [
+      ch(1, 'WEEKLY', { card_preview: { label: 'WEEKLY', reward: '½ of your final credits' } }),
+      ch(2, 'WEEKLY', { card_preview: { label: 'WEEKLY' } }),
+    ],
+  });
+  pane._mine = new Map([[1, { id: 1, activities_total: 50 }]]);
+  pane._renderGrid();
+  assert.equal('points' in gridOf(store).progress, false, 'no "0 of 0 pts earned" line');
+});
+
+test('the frontend reward parser takes parseRewardPoints\' same cases', () => {
+  const { pane } = loadPane();
+  const parse = (v) => pane._rewardPoints(v);
+  assert.equal(parse('500 pts'), 500);
+  assert.equal(parse('1,000 pts'), 1000);
+  assert.equal(parse('Up to 2,000 pts'), 2000);
+  assert.equal(parse('500'), 500);
+  assert.equal(parse('500 points'), 500);
+  assert.equal(parse(' Up to 500 pts '), 500);
+  assert.equal(parse('Up to 500 pts / issue'), null, 'a trailing clause is prose');
+  assert.equal(parse('½ of your final credits'), null);
+  assert.equal(parse('Fame'), null);
+  assert.equal(parse(null), null);
+  assert.equal(parse(undefined), null);
+  assert.equal(parse(''), null);
 });
 
 // ─── The pane ───────────────────────────────────────────────────────────

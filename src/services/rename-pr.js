@@ -690,6 +690,9 @@ async function migrateOpenRenameIssues(config, pool) {
 }
 
 module.exports = {
+  // The shared core, for the manifest-editing flavours that live in their
+  // own module (#4417: services/topics-pr.js).
+  createManifestPR,
   createRenamePR,
   createVisibilityPR,
   createGovernancePR,

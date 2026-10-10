@@ -407,7 +407,7 @@ test('scout: a dropped stream re-dispatches once and the retry\'s spec is stored
     ));
     // The notice never reaches the user as a spec.
     assert.ok(!pool.state.messages.some(
-      (m) => /Scout drafted a 1-line spec/.test(m.content || '')
+      (m) => /Scout drafted a 1-line plan/.test(m.content || '')
     ));
   } finally {
     await srv.close();
@@ -444,7 +444,7 @@ test('scout: when the retry drops too, the notice is never stored as a spec', as
     // The chat says what actually happened, in plain terms.
     assert.ok(pool.state.messages.some(
       (m) => /API connection failed/.test(m.content || '')
-        && /spec doc was not updated/.test(m.content || '')
+        && /plan was not updated/.test(m.content || '')
     ));
     // A produced-nothing scout finalizes as 'question' — a human picks it up.
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });

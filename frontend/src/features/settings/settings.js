@@ -110,6 +110,35 @@
   // at the Settings screen forever, land them on the landing page.
   const NATIVE_LOGOUT_SAFETY_MS = 5000;
 
+  // #3915: the net above was armed only once native ANSWERED, so a phone
+  // whose app never answered (or answered late) sat on an unchanged Settings
+  // screen until the bridge gave up twelve seconds later, and on iOS a person
+  // force-quit it first. Once the SERVER has revoked the session this second
+  // net is armed the moment the native call is issued, so the page leaves
+  // within this bound whatever the app does. It is safe to leave early:
+  //
+  //   - Nothing can sign back in. /api/auth/logout deleted the web session
+  //     and, in the same transaction, revoked the native credential tied to
+  //     it (src/routes/auth.js), and its response cleared the cookie.
+  //   - Native cleanup does not need this document once it has started: the
+  //     app holds its lifecycle queue until it has deleted the WebView's
+  //     cookies, storage and cache, then replaces the WebView itself, so a
+  //     landing page that arrived first is simply replaced again.
+  //   - Native gets a fair chance first. Its whole teardown normally takes a
+  //     second or two; eight is several times that. If the app has not even
+  //     admitted the call by then, its credential is already revoked server
+  //     side, and the app retires it the first time the server refuses it.
+  //
+  // The offline path (remote revocation FAILED) never arms it: there only
+  // native can delete the live cookie, so leaving before native confirms
+  // would boot the signed-in shell again.
+  const NATIVE_LOGOUT_ISSUED_SAFETY_MS = 8000;
+
+  // What the button says, at rest (the markup's own words, restored after a
+  // failure) and while a sign-out is running (#3915).
+  const SIGN_OUT_LABEL = 'Sign out';
+  const SIGNING_OUT_LABEL = 'Signing out…';
+
   // How long the sign-out POST may take before it is abandoned. Two budgets,
   // because the two paths fail differently (#2078):
   //
@@ -137,12 +166,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    // `devFlowPreference` is the "remember my option" answer from the
-    // dev-chat flow picker (#1049): null = ask every time (the default),
-    // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
-    // says whether this deployment can offer the Claude Code / Codex
-    // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -276,14 +300,12 @@
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & building', page: 'ai' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & building', page: 'ai' },
       // Everything about building from outside Homeroom: the chat connectors
-      // (Claude, ChatGPT, Codex), the default hand-off they make possible, and
-      // the CLI credentials. The out-of-credits card deep-links
-      // #settings/connectors and #settings/cli; both land on this page
-      // (public/js/credit-options.js). Connectors leads because the page is
+      // (Claude, ChatGPT, Codex) and the CLI credentials. The out-of-credits
+      // card deep-links #settings/connectors and #settings/cli; both land on
+      // this page (public/js/credit-options.js). Connectors leads because the page is
       // keyed by it: a page key that named a LATER part would open the page
       // scrolled past everything above that part.
       { key: 'connectors', label: 'Connectors', group: 'AI & building', page: 'connectors' },
-      { key: 'build-venue', label: 'Where changes get built', group: 'AI & building', page: 'connectors' },
       { key: 'cli', label: 'CLI & coding-agent access', group: 'AI & building', page: 'connectors' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & building' },
       { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & building' },
@@ -300,16 +322,10 @@
       { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
       { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
       { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
-      // #1556: GATED, and the gate is "this user already picked a language".
-      // The value is app-facing only (the iframe JWT `locale` claim and
-      // usernode.getUserLocale) and the platform shell is English-only, so a
-      // "Language" row in Preferences reads as a UI language switch that does
-      // nothing — which is exactly what the feedback reported. Hiding it from
-      // everyone who never set one, while keeping it for anyone who did, is
-      // what stops a stored preference becoming unreachable. The read paths
-      // are untouched; to re-launch the picker, drop this `gate` and the two
-      // gate lines in _renderLanguageSection.
-      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
+      // Offered to everyone: Auto and the languages Homeroom ships
+      // (sections/language.tsx). #1556 had gated it on an already-saved
+      // locale while the row could not say what it did.
+      { key: 'language', label: 'Language', group: 'Preferences' },
       { key: 'alerts', label: 'Notifications', group: 'Preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
@@ -354,12 +370,11 @@
       usage: 'allowance limit credits budget spend remaining weekly',
       'api-key': 'claude byok key sk-ant billing',
       openrouter: 'model glm deepseek reasoning default coding agent key',
-      'build-venue': 'claude code codex hand off handoff default build',
       connectors: 'mcp claude chatgpt codex chat connector',
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
       'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages',
+      experimental: 'beta labs progress estimate session bridge local agent keyboard shortcut suggest improvement',
       theme: 'dark light mode appearance sidebar',
       'dev-console': 'bug icon logs errors debug developer',
       language: 'locale translate',
@@ -586,12 +601,15 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // #3624: join (or leave) the Homeroom bot's DM. Same shape again; the
-      // server may refuse a join when the bot's list is full, and the
-      // checkbox goes back to what is stored.
-      const botDmToggle = document.getElementById('homeroom-bot-dm-enabled');
-      if (botDmToggle) {
-        botDmToggle.addEventListener('change', (e) => this._saveHomeroomBotDm(e.target.checked));
+      // #4289: Press C to comment on the page. Kept on this device, not
+      // the account (features/improve/suggest-shortcut.ts), so there is no
+      // request to fail: the change is the save.
+      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
+      if (shortcutToggle) {
+        shortcutToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+          pref?.setEnabled(e.target.checked);
+        });
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -730,11 +748,7 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
-        this.state.homeroomBotDm = !!j.user?.homeroomBotDm;
-        this.state.homeroomBotForEveryone = !!j.user?.homeroomBotForEveryone;
         this.state.locale = j.user?.locale || null;
-        this.state.devFlowPreference = j.user?.devFlowPreference || null;
-        this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
         // fetches on its own when it runs first — the two orders both
@@ -745,13 +759,9 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // The preference lands here too, and its page may already be
-        // painted (a cold-boot deep link to #settings/build-venue renders
-        // before this resolves). Same reasoning as the wallet row above.
-        this._renderDevFlowSection();
-        // #1556: `locale` decides whether the Language row is in the menu at
-        // all, and it lands here too — a cold-boot deep link paints before
-        // this resolves. Same reasoning as the two rows above.
+        // `locale` is what the Language select shows, and it lands here
+        // too: a cold-boot deep link to #settings/language paints before
+        // this resolves. Same reasoning as the wallet row above.
         this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
@@ -833,7 +843,6 @@
       this._loadGithubLink();
       this._renderAgentFilesSection();
       this._renderWalletSection();
-      this._renderDevFlowSection();
       this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
@@ -1538,14 +1547,9 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const botDm = document.getElementById('homeroom-bot-dm-enabled');
-      if (botDm) botDm.checked = !!this.state.homeroomBotDm;
-      // With the bot on for everyone there is no list to join or leave: its
-      // whole block (the switch, its note and its status line) goes.
-      const botDmBlock = botDm ? botDm.closest('.border-t') : null;
-      if (botDmBlock) botDmBlock.classList.toggle('hidden', !!this.state.homeroomBotForEveryone);
-      const botDmStatus = document.getElementById('homeroom-bot-dm-status');
-      if (botDmStatus) { botDmStatus.classList.add('hidden'); botDmStatus.textContent = ''; }
+      const shortcut = document.getElementById('suggest-shortcut-enabled');
+      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
       this._renderLocalAgentsSection();
     },
 
@@ -1658,52 +1662,19 @@
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
-      // #1556 capability gate, read back by _visibleSections(). Offered only
-      // to a user who already has a preference saved — see the SECTIONS note.
-      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
-      if (section) {
-        if (!value) { section.classList.add('hidden'); return; }
-        section.classList.remove('hidden');
-      }
-      // A saved value outside the curated list (set via the API, or a
-      // future wider picker) still needs to render truthfully — inject
-      // an option for it so the select doesn't silently show "Auto".
+      // A saved value outside the shipped list (chosen when the picker
+      // listed more, or set via the API) still needs to render truthfully:
+      // inject an option for it, under the language's own name, so the
+      // select doesn't silently show "Auto".
       if (value && ![...select.options].some((o) => o.value === value)) {
         const opt = document.createElement('option');
         opt.value = value;
-        opt.textContent = value;
+        opt.textContent = window.PlatformI18n?.languageName?.(value) || value;
         select.appendChild(opt);
       }
       select.value = value;
       const status = document.getElementById('settings-locale-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-    },
-
-    // "Preferred build flow" (#1049). The BLOCK is markup now
-    // (sections/connectors.tsx) — it was injected here at runtime until
-    // #1191, because the shell's body was a hand-written document pinned
-    // id-for-id and a new settings control had nowhere else to go. What is
-    // left is what this module does for every other control on the screen:
-    // bind the change, reflect the stored value, and gate the two hand-off
-    // options on whether this deployment has the external flows at all.
-    //
-    // Idempotent — _renderAllSections and refresh() both call it, and the
-    // listener is attached once, to an element React keeps.
-    _renderDevFlowSection() {
-      const select = document.getElementById('settings-dev-flow');
-      if (!select) return;
-      if (!select.__devFlowWired) {
-        select.__devFlowWired = true;
-        select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
-      }
-      // A deployment without the external flows can still express "always
-      // build on Homeroom" vs "ask me" — just not the two hand-offs.
-      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
-        opt.disabled = !this.state.externalFlowsAvailable;
-      });
-      select.value = this.state.devFlowPreference || '';
-      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -1898,6 +1869,14 @@
       const urlField = document.getElementById('connector-url');
       const connectorUrl = `${window.location.origin}/mcp`;
       if (urlField) urlField.value = connectorUrl;
+
+      // The ChatGPT walkthrough states the URL in its own step rather than
+      // pointing back at #connector-url. It carries the same derived origin
+      // the field shows, filled here the way the Codex blocks below are:
+      // the prerendered interior ships a fill-in placeholder, and a fork or
+      // a config change cannot leave a stale host behind.
+      const stepUrl = document.querySelector('[data-connector-step-url]');
+      if (stepUrl) stepUrl.textContent = connectorUrl;
 
       // #1607: the "set it up in <product>" links open a new chat pre-loaded
       // with the job. Built HERE, from the same derived origin the field
@@ -2684,67 +2663,27 @@
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
+      // The language runtime (frontend/src/lib/i18n) loads the language,
+      // then saves, then switches, so a failed save leaves this screen as it
+      // was. Its saveAccountLocale is the POST /api/me/locale: it also keeps
+      // App.user, this.state.locale and any open app iframe
+      // (AppView.notifyLocaleChanged, `usernode:locale-changed`) in step.
+      const i18n = window.PlatformI18n;
+      let saving = false;
       try {
-        const r = await fetch('/api/me/locale', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ locale: value || null }),
+        const applied = await i18n.changeLanguage(value || null, async (next) => {
+          saving = true;
+          await i18n.saveAccountLocale(next);
         });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.locale = j.locale || null;
-        // Keep the shell's cached user in sync so the bridge's
-        // getUserLocale answers (app-view.js) reflect the new value
-        // without a re-fetch. Bare `App` — app.js declares it with
-        // `const`, so `window.App` is undefined (see _renderAdminSection).
-        if (typeof App !== 'undefined' && App.user) App.user.locale = this.state.locale;
-        // Live-update any open app iframe (usernode:locale-changed).
-        if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
-          try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
-        }
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
+        // A newer choice replaced this one, and reports for itself.
+        if (!applied) return;
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        return fail(saving ? (err.message || 'Failed to save.') : 'Could not load that language. Try again.');
       }
-    },
-
-    // Same shape as _saveLocale: POST on change, revert the select and paint
-    // the status line on failure, mirror onto App.user so anything reading
-    // the cached user (the dev-chat picker) sees the new value immediately.
-    async _saveDevFlow(value) {
-      const select = document.getElementById('settings-dev-flow');
-      const status = document.getElementById('settings-dev-flow-status');
-      const fail = (msg) => {
-        if (select) select.value = this.state.devFlowPreference || '';
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/dev-flow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ flow: value || null }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.devFlowPreference = j.flow || null;
-        if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
+      if (status) {
+        status.textContent = '✓ Saved';
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -2808,41 +2747,6 @@
         // object has to move with it or the next sheet opened in this same
         // page load would still be missing the row that was just enabled.
         if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
-      }
-    },
-
-    // #3624: put this account on the Homeroom bot's DM list, or take it off.
-    // A refused save (the list is full: 409) reverts the checkbox and says
-    // why, the same as the toggles above. The create dialog asks for a
-    // project description from App.user.homeroomBotDm, so the live object
-    // moves with it, as the session bridge's does.
-    async _saveHomeroomBotDm(enabled) {
-      const toggle = document.getElementById('homeroom-bot-dm-enabled');
-      const status = document.getElementById('homeroom-bot-dm-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.homeroomBotDm;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/homeroom-bot-dm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
-        }
-        this.state.homeroomBotDm = !!enabled;
-        if (typeof App !== 'undefined' && App.user) App.user.homeroomBotDm = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -3632,7 +3536,9 @@
         const el = document.getElementById(id);
         if (el) el.classList.toggle('hidden', !on);
       };
-      show('cp-current-row', !wallet);
+      // #4595: an account with no password (it signs in with an email code)
+      // has no current password to give, and sets its first one without.
+      show('cp-current-row', !wallet && !this._noPasswordYet());
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
       // Offer the password-creation link only in password mode and only when
@@ -3772,6 +3678,10 @@
       }
     },
 
+    _noPasswordYet() {
+      return !!(window.App && App.user && App.user.hasPassword === false);
+    },
+
     async changePassword() {
       const currentEl = document.getElementById('cp-current');
       const newEl = document.getElementById('cp-new');
@@ -3781,7 +3691,8 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
+      const first = this._noPasswordYet();
+      if (!currentPassword && !first) { this._setCpStatus('Enter your current password.', 'error'); return; }
       if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
       if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
 
@@ -3792,14 +3703,18 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ currentPassword, newPassword }),
+          body: JSON.stringify(first ? { newPassword } : { currentPassword, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
         currentEl.value = '';
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        if (j.first && window.App && App.user) {
+          App.user.hasPassword = true;
+          this._setChangePasswordMode('password');
+        }
+        this._setCpStatus(j.first ? 'Password set. You can now sign in with it.' : 'Password changed.', 'ok');
       } catch (err) {
         this._setCpStatus(`Network error: ${err.message}`, 'error');
       } finally {
@@ -3809,10 +3724,13 @@
 
     async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
-      if (btn) btn.disabled = true;
+      // #3915: say so the moment it starts. A disabled button that still
+      // looked and read exactly like "Sign out" is what made the phone look
+      // frozen while the app shut down.
+      if (btn) { btn.disabled = true; btn.textContent = SIGNING_OUT_LABEL; }
 
       const fail = (error) => {
-        if (btn) btn.disabled = false;
+        if (btn) { btn.disabled = false; btn.textContent = SIGN_OUT_LABEL; }
         if (window.PlatformUI && PlatformUI.toast) {
           PlatformUI.toast(
             'Could not sign out. Check your connection and try again.',
@@ -3926,19 +3844,33 @@
       // This must remain the final call on the native path: successful native
       // logout replaces the WebView, so the old document normally runs no
       // continuation work at all. The ONE relaxation (#1524) is navigation to
-      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // the landing page: on both outcomes below, and (#3915) on a bounded
+      // timer armed as the call is issued. It cannot re-admit anyone:
       // App.user is gone, so NativeChrome._webParticipantId() is null and
       // establishCurrentSession() returns without asking the bridge for
       // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
+        // Whichever exit comes first wins; a later one finds it done.
+        let left = false;
+        const leave = () => {
+          if (left) return;
+          left = true;
+          window.location.replace(LANDING_URL);
+        };
+        const armLeave = (ms) => {
+          const timer = setTimeout(leave, ms);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+        };
+        // #3915: counted from the call being issued, not answered (no timer
+        // can fire before the terminal call on the next line has been made).
+        // See NATIVE_LOGOUT_ISSUED_SAFETY_MS for why this is safe only once
+        // the server has revoked the session.
+        if (webRevoked) armLeave(NATIVE_LOGOUT_ISSUED_SAFETY_MS);
         return NativeChrome.commitNativeLogout().then((result) => {
           // The WebView should already be gone. If it is not, land this
           // document on the public landing page rather than leave a
           // signed-out user on the Settings screen.
-          const timer = setTimeout(() => {
-            window.location.replace(LANDING_URL);
-          }, NATIVE_LOGOUT_SAFETY_MS);
-          if (timer && typeof timer.unref === 'function') timer.unref();
+          armLeave(NATIVE_LOGOUT_SAFETY_MS);
           return result;
         }, (error) => {
           // If neither boundary completed, do not reload a possibly live
@@ -3952,6 +3884,7 @@
             window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
           } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          left = true;
           window.location.replace(LANDING_URL);
           return false;
         });

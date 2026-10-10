@@ -83,7 +83,9 @@ async function heartbeat(pool, runId) {
 }
 
 // The row is deleted rather than marked finished: its only purpose is to be
-// found by a harvester, and a settled run has nothing left to harvest.
+// found by a harvester, and a settled run has nothing left to harvest. It is
+// also the run's checks slot (services/checks-queue.js), so this process's
+// runs waiting for one are woken to take it now.
 async function finish(pool, runId) {
   if (!pool || !runId) return false;
   try {
@@ -92,6 +94,8 @@ async function finish(pool, runId) {
   } catch (err) {
     log.warn('check-runs', 'Could not clear the run manifest (non-fatal)', { runId, err: err.message });
     return false;
+  } finally {
+    require('./checks-queue').slotFreed();
   }
 }
 
@@ -121,12 +125,19 @@ function startHeartbeat(pool, runId, { intervalMs = HEARTBEAT_MS } = {}) {
 // `isInFlight(sessionId)` is visuals.hasInFlightCapture; a row whose session
 // has a live capture in this process is never an orphan, whatever its
 // heartbeat says — that run will settle it (or replace it) itself.
+//
+// Proposal rows only. A main-watch row (services/checks-queue.js) has no
+// session to settle: main-watch re-drives its own interrupted runs
+// (main-watch.resumeInterrupted). `queued_at` and `admitted_at` say whether
+// the run was still waiting for a checks slot, and the place it had.
 async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50 } = {}) {
   if (!pool) return [];
   const { rows } = await pool.query(
     `SELECT run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at,
+            queued_at, admitted_at,
             (heartbeat_at < NOW() - ($1::int * INTERVAL '1 millisecond')) AS stale
        FROM check_runs
+      WHERE kind = 'proposal' AND session_id IS NOT NULL
       ORDER BY started_at ASC
       LIMIT $2`,
     [Math.round(staleMs), limit]
@@ -137,6 +148,29 @@ async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false
     if (row.stale) return true;
     return row.owner === me;
   });
+}
+
+// Hand every row this process owns to the next harvester, on the way out.
+// A rollout's old Pod heartbeats its runs, and the runs it was harvesting,
+// until moments before the new leader's boot sweep, so listOrphans would not
+// count them as orphans for another ORPHAN_MS, and in that gap the stale
+// sweep started them over (7 Oct 2026). Stamping the heartbeat as long past
+// makes them orphans now; renaming the owner means the heartbeat this
+// process still sends until it exits matches no row. The runs' Jobs go on
+// on the cluster, untouched. Returns how many rows were handed over.
+async function release(pool) {
+  if (!pool) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE check_runs SET owner = $2, heartbeat_at = 'epoch'
+        WHERE owner = $1`,
+      [selfOwner(), `${selfOwner()}:exited`]
+    );
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('check-runs', 'Could not hand the run manifests over (non-fatal)', { err: err.message });
+    return 0;
+  }
 }
 
 // Take a row over. Compare-and-swap on the owner it was seen with, so two
@@ -162,5 +196,6 @@ module.exports = {
   finish,
   startHeartbeat,
   listOrphans,
+  release,
   claim,
 };

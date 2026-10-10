@@ -147,7 +147,10 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow), sketch });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) || appSketch.taglineOf(sketch), template: templateOf(appRow), sketch });
+        // Its description above is the creator's own line, else the card's
+        // tagline (#4235), so the first dapp.json says what the app is for
+        // rather than leaving the hub to quote the creator's prompt.
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -376,6 +379,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     // deploy. No-op when the block is absent; an explicit [] clears it.
     await appManifest.reconcileAppAdmins(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Admins reconcile failed', { appId, err: err.message }));
+
+    // And the manifest's `topics` array (#4417): an imported repo that
+    // names topics starts with them. No-op when the block is absent.
+    await appManifest.reconcileAppTopics(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Topics reconcile failed', { appId, err: err.message }));
 
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at

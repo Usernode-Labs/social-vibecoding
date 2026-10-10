@@ -1,8 +1,9 @@
 'use strict';
 
 // Test accounts (services/test-accounts.js), for a full platform admin's
-// connector session: create_test_account, list_test_accounts and
-// retire_test_account in services/mcp-tools.js.
+// connector session: create_test_account, create_test_phone_sign_in,
+// send_test_release_email, list_test_accounts and retire_test_account in
+// services/mcp-tools.js.
 //
 // They live at their own prefix, outside /api/admin and /api/auth, because a
 // connector token can reach neither (services/cli-api-policy.js) — the same
@@ -15,6 +16,7 @@
 //
 // The one-time password rides back in the create response and nowhere else:
 // it is not logged, not stored in plain text, and the response is no-store.
+// A one-time phone sign-in's code is handled the same way.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -60,8 +62,29 @@ function testAccountRoutes(config) {
 
   router.get('/api/test-accounts', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('List test accounts', async () => ({
     accounts: await testAccounts.list(pool),
+    releases: await testAccounts.listReleases(pool),
     max: testAccounts.MAX_LIVE,
   })));
+
+  // One-time phone sign-in for a test number (services/test-accounts.js
+  // mintPhoneSignIn): the number and its code come back once, no-store, and
+  // the code is kept only as a hash.
+  router.post('/api/test-accounts/phone-sign-ins', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Mint test phone sign-in', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const signIn = await testAccounts.mintPhoneSignIn(pool, {
+      phoneNumber: req.body && req.body.phoneNumber, actorId: req.user.id, config,
+    });
+    return { signIn };
+  }));
+
+  // The waitlist's "you're in" mail, sent to a test address (services/
+  // test-accounts.js sendRelease). It hands back no credential: the link in
+  // the mail is the address's own, and the delivery's outcome rides back so
+  // the admin knows whether it went out.
+  router.post('/api/test-accounts/release-emails', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Send test release email', async (req) => {
+    const release = await testAccounts.sendRelease(pool, req.body || {}, { actorId: req.user.id, config });
+    return { release };
+  }));
 
   router.post('/api/test-accounts/:id/retire', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Retire test account', async (req) => {
     const userId = idParam(req.params.id);

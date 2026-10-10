@@ -30,7 +30,6 @@ const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const model = loadTsx('frontend/src/features/app-context/continue-model.ts');
-const recents = loadTsx('frontend/src/features/nav/recents.ts');
 
 const conversation = (over = {}) => ({
   id: 7, title: 'Dark mode', status: 'open', lastActivityAt: '2026-09-24T10:00:00Z',
@@ -97,9 +96,10 @@ test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whe
   assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /improve/i, 'classic changes are the Workshop\'s, one row up');
 });
 
-test('#3073: a working session is always among the Continue rows, as it is in Recents', () => {
+test('#3073: a working session is always among the Continue rows', () => {
   // Five newer sessions used to push a working one out of the menu's rows
-  // while Recents (thirty rows, same clock) still showed it spinning.
+  // while the rail's Recents (thirty rows, same clock) still showed it
+  // spinning. #4417 retired Recents; the rows still keep a working session.
   const sessions = [
     conversation({ id: 1, lastActivityAt: '2026-09-24T08:00:00Z', busy: true }),
     ...Array.from({ length: 6 }, (_, i) => conversation({ id: i + 2, lastActivityAt: `2026-09-24T1${i}:00:00Z` })),
@@ -110,9 +110,8 @@ test('#3073: a working session is always among the Continue rows, as it is in Re
   assert.equal(list.rows[4].activity, 'working');
   assert.equal(list.more, true);
 
-  const recentsRows = recents.buildRecents({ apps: [], conversations: [], discussions: [], agents: [], agentSessions: sessions });
-  const spinning = (rows) => rows.filter((r) => r.activity === 'working').map((r) => r.href);
-  assert.deepEqual(spinning(list.rows), spinning(recentsRows), 'the two lists spin for the same sessions');
+  assert.deepEqual(list.rows.filter((r) => r.activity === 'working').map((r) => r.href), ['#messages/agent/1'],
+    'the working one spins');
 
   const allWorking = Array.from({ length: 7 }, (_, i) => conversation({ id: i + 1, lastActivityAt: `2026-09-24T1${i}:00:00Z`, busy: true }));
   const busy = model.continueRows(allWorking);
@@ -173,7 +172,7 @@ test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount
   const inSection = (id) => section.indexOf(`id="${id}"`);
   assert.ok(inSection('app-menu-sessions') < inSection('improve-row-new-session')
     && inSection('improve-row-new-session') < inSection('app-menu-continue'),
-    'led by Build it yourself, then the sessions');
+    'led by Build it now, then the sessions');
   // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
   // sessions", then "More", a plain word for a newcomer, who no longer sees
   // the section at all.
@@ -192,29 +191,9 @@ test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount
   assert.doesNotMatch(sheet, /See all your work|continue-change/);
 });
 
-test('Recents lists open agent sessions on its one clock', () => {
-  const items = recents.buildRecents({
-    apps: [],
-    conversations: [{ id: 3, kind: 'direct', title: 'x', lastActivityAt: '2026-09-24T09:30:00Z', unreadCount: 0, peer: { id: 2, username: 'bo' } }],
-    discussions: [],
-    agents: [],
-    agentSessions: [
-      { id: 7, title: 'Dark mode', status: 'open', lastActivityAt: '2026-09-24T10:00:00Z' },
-      { id: 8, title: null, status: 'open', lastActivityAt: null, createdAt: '2026-09-24T08:00:00Z', activeChange: { id: 41 } },
-      { id: 10, title: null, status: 'open', lastActivityAt: '2026-09-24T12:00:00Z', activeChange: null },
-      { id: 9, title: 'Old', status: 'archived', lastActivityAt: '2026-09-24T11:00:00Z' },
-    ],
-  });
-  assert.deepEqual(items.map((i) => [i.key, i.href]), [
-    ['agent-session:7', '#messages/agent/7'],
-    ['conversation:3', '#messages/3'],
-    ['agent-session:8', '#messages/agent/8'],
-  ]);
-  assert.equal(items[2].label, 'New session');
-  assert.ok(!items.some((i) => i.key === 'agent-session:10'), 'an empty one is not history');
-  const list = read('frontend/src/features/nav/recents-list.tsx');
-  assert.match(list, /if \(viewer\) void loadAgentSessions\(\);/);
-});
+// #4417: "Recents lists open agent sessions on its one clock" went with the
+// rail's Recents: agent sessions are listed in Messages (the Agents filter)
+// and in the mark's Continue rows above.
 
 test('Messages and the bell list paused sessions, and a conversation\'s change opens the conversation', () => {
   const improve = read('frontend/src/features/improve/improve-controller.js');
@@ -267,18 +246,27 @@ test('new work at the cap pauses the user\'s least recently used session instead
   assert.match(read('src/services/connector-limits.js'), /lifecycle\.freeUserSlot\(\{ pool, userId: user\.id \}\)/);
 });
 
-test('a message to a paused session resumes it, with every rule the resume route keeps', () => {
+test('a message to a paused session is refused, and never resumes it first (#3976)', () => {
+  // It used to resume the session and then run the turn (#2779 follow-up).
+  // Every paused row the chat route can load is now refused: an agent
+  // session's change names its conversation, and a classic session is
+  // read-only. Neither is resumed first, because a resume spends a slot and
+  // may pause another of the user's sessions for a message that is refused.
   const sessions = read('src/routes/sessions.js');
   const chat = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/chat'"));
-  const resumeAt = chat.indexOf('await resumePausedSession({');
-  assert.ok(resumeAt > 0 && resumeAt < chat.indexOf("error: 'Active session not found'"),
-    'resumed before the session is looked for again, never refused as not found');
-  assert.match(chat.slice(0, resumeAt), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
-  assert.match(chat.slice(0, resumeAt), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
-    'a change an agent session owns is refused before anything is resumed');
+  const chatBody = chat.slice(0, chat.indexOf('\n  router.', 1));
+  assert.doesNotMatch(chatBody, /resumePausedSession\(/, 'a message resumes nothing');
+  const notFound = chat.indexOf("error: 'Active session not found'");
+  assert.match(chat.slice(0, notFound), /status = 'paused'\s+AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'/);
+  assert.match(chat.slice(0, notFound), /pausedRows\[0\]\.agent_session_id != null\) \{\s+return res\.status\(409\)/,
+    'a change an agent session owns is refused, naming its conversation');
+  assert.match(chat.slice(0, notFound),
+    /pausedRows\.length && classicSessions\.isClassicSession\(pausedRows\[0\]\)\) \{\s+return res\.status\(409\)\.json\(classicSessions\.refusal\(\)\)/,
+    'a classic one is refused as read-only');
+  // The resume route and sync-main keep the one implementation.
   const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/resume'"));
   assert.match(route.slice(0, 600), /await resumePausedSession\(\{ pool, config, user: req\.user, sessionId \}\)/,
-    'one implementation for the route and the chat');
+    'one implementation for the route and sync-main');
   const syncMain = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/sync-main'"));
   assert.match(syncMain.slice(0, 2000), /session\.status === 'paused'[\s\S]{0,200}resumePausedSession/);
   assert.equal(typeof require('../src/routes/sessions').resumePausedSession, 'function');

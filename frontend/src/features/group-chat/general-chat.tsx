@@ -107,13 +107,6 @@ function ChannelJumpToLatest({ scroller }: { scroller: RefObject<HTMLElement | n
 const SAFE_BAR = 'platform-safe-bar';
 
 export interface GeneralChatProps {
-  /**
-   * The app's name for the first-arrival banner, or null once it has been
-   * seen. The localStorage read AND the write stay in app-view.js: whether
-   * this has been shown is a browser fact, not a render-time one, and a
-   * component that wrote it would fire again on every re-render.
-   */
-  introAppName: string | null;
   readOnly: boolean;
   /**
    * What the read-only bar says, when it is not the usual "only
@@ -123,9 +116,14 @@ export interface GeneralChatProps {
   notice?: string | null;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4417 follow-up: what the empty box says, when it is not the app's own
+   * stream: a topic's channel says "Message #handle".
+   */
+  placeholder?: string;
 }
 
-export function GeneralChat({ introAppName, readOnly, notice, maxLength }: GeneralChatProps) {
+export function GeneralChat({ readOnly, notice, maxLength, placeholder }: GeneralChatProps) {
   const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
@@ -134,18 +132,6 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
             #gc-messages scrolls and the composer bar is a shrink-0 sibling
             below it — so the keyboard inset is reserved here, on the column. */}
         <div className="gc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
-          {/*
-              #3: name what group chat is for, once per browser. It is rarely
-              empty — system messages land here — so a permanent banner would
-              be clutter.
-          */}
-          {introAppName ? (
-            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              {'This is where everyone using '}
-              <span className="font-medium">{introAppName}</span>
-              {' talks and votes on proposed changes to it.'}
-            </div>
-          ) : null}
           {/* Over the stream's top and its foot: siblings of #gc-messages,
               which stays the transcript's alone. */}
           <ChannelUnreadBanner scroller={messages} />
@@ -177,7 +163,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
                 <ComposerForm
                   scope="general"
                   fill
-                  placeholder="Type a message..."
+                  placeholder={placeholder || 'Type a message...'}
                   maxLength={maxLength}
                 />
               </>
@@ -189,7 +175,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize spec panel"
+          aria-label="Resize plan panel"
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

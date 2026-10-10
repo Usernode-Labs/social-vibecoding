@@ -49,6 +49,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { changeHref } from '../../lib/change-href';
 
 /**
  * @typedef {Object} ProfileState
@@ -534,6 +535,8 @@ function voteOpen(item) {
 function voteOutcome(item) {
   if (item.type === 'pr_vote') {
     if (item.status === 'merged') return 'live';
+    // Merged, its deploy still to come (api/me/history).
+    if (item.status === 'going_live') return 'going live';
     return 'closed';
   }
   return 'decided';
@@ -561,7 +564,7 @@ export function votesView(data) {
       if (!open) meta.push(voteOutcome(item));
       let href = null;
       if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
-        href = `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(item.pr.sessionId)}`;
+        href = changeHref(slug, item.pr.sessionId, item.pr.number);
       } else if (slug && item.type === 'proposal_vote' && Number(item.issue && item.issue.id) > 0) {
         href = `#app/${encodeURIComponent(slug)}/dev/governance/${Number(item.issue.id)}`;
       }

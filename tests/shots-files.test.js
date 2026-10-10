@@ -26,6 +26,10 @@ function twoScreenIntent() {
   return contract.parseIntent(raw);
 }
 
+// A before and an after that differ, as the shots of a real change do: the
+// same image on both sides is its own case (see the tests at the end).
+const sideShot = (side) => fixtures.png({ shade: side === 'after' ? 200 : 0 });
+
 // Save one file into a slot map the way RunControl does.
 function save(saved, intent, raw, buffer) {
   const target = shots.shotTarget(intent, raw);
@@ -214,7 +218,7 @@ test('a motion change also needs a before and an after clip', () => {
   const intent = motionIntent();
   const saved = new Map();
   for (const side of ['before', 'after']) {
-    save(saved, intent, { change: 'saved-toast', screen: 'desktop', side }, fixtures.png());
+    save(saved, intent, { change: 'saved-toast', screen: 'desktop', side }, sideShot(side));
   }
   let toast = shots.summarize(intent, saved).stories.find((story) => story.id === 'saved-toast');
   assert.deepEqual(toast, {
@@ -237,7 +241,7 @@ test('the agent\'s own skip reason is shown instead of the list of what is missi
     ['invite-suggestions', 'The invite dialog needs a second member.'],
   ]);
   for (const side of ['before', 'after']) {
-    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, fixtures.png());
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
   }
   const summary = shots.summarize(intent, saved, reasons);
   assert.deepEqual(summary.stories, [
@@ -261,7 +265,7 @@ test('a skip of everything explains only the changes that are not ready', () => 
   const intent = motionIntent();
   const saved = new Map();
   for (const side of ['before', 'after']) {
-    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, fixtures.png());
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
   }
   const summary = shots.summarize(intent, saved, new Map(), { fallbackReason: 'Every other screen is a sign-in page.' });
   assert.deepEqual(summary.stories, [
@@ -274,7 +278,7 @@ test('a ready change carries the agent\'s note on what its shots leave out', () 
   const intent = motionIntent();
   const saved = new Map();
   for (const side of ['before', 'after']) {
-    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, fixtures.png());
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
   }
   const notes = new Map([
     ['invite-suggestions', 'The "Show more" fold needs a member with a hidden app.'],
@@ -290,6 +294,81 @@ test('a ready change carries the agent\'s note on what its shots leave out', () 
   for (const empty of ['', '   ', null, 42]) {
     assert.throws(() => shots.note(empty), { code: 'note_required', status: 400 });
   }
+});
+
+test('a problem noticed on the after build names a declared change and one of its screens', () => {
+  const intent = twoScreenIntent();
+  assert.deepEqual(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'mobile', problem: '  The table is cut off at the right edge.  ',
+    alsoBefore: false, shot: 'screen',
+  }), {
+    text: 'The table is cut off at the right edge.', change: 'invite-suggestions', screen: 'mobile',
+    shot: 'screen', alsoBefore: false,
+  });
+  // The shot is optional, and so is whether the before build has it.
+  const bare = shots.notice(intent, { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' });
+  assert.equal(bare.shot, null);
+  assert.equal(bare.alsoBefore, 'unknown');
+  // One short sentence: longer text is cut at the cap.
+  assert.equal(shots.notice(intent, {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'x'.repeat(900),
+  }).text.length, shots.MAX_NOTICE);
+  assert.equal(shots.MAX_NOTICE, 300);
+
+  for (const value of [true, 'true']) assert.equal(shots.alsoBefore(value), true);
+  for (const value of [false, 'false']) assert.equal(shots.alsoBefore(value), false);
+  for (const value of [undefined, null, '', 'unknown']) assert.equal(shots.alsoBefore(value), 'unknown');
+  assert.throws(() => shots.alsoBefore('maybe'), refusal('invalid_also_before'));
+
+  const base = { change: 'invite-suggestions', screen: 'desktop', problem: 'Overlap.' };
+  assert.throws(() => shots.notice(intent, { ...base, problem: '  ' }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, problem: 42 }), refusal('problem_required'));
+  assert.throws(() => shots.notice(intent, { ...base, change: 'someone-elses' }), refusal('unknown_change'));
+  assert.throws(() => shots.notice(intent, { ...base, screen: 'tablet' }), refusal('unknown_screen'));
+  assert.throws(() => shots.notice(intent, { ...base, shot: 'clip' }), refusal('invalid_kind'));
+  assert.throws(() => shots.notice(intent, { ...base, alsoBefore: 'yes' }), refusal('invalid_also_before'));
+});
+
+test('noticed problems ride beside the results and never change a change\'s status', () => {
+  const intent = motionIntent();
+  const saved = new Map();
+  for (const side of ['before', 'after']) {
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
+  }
+  const without = shots.summarize(intent, saved);
+  assert.deepEqual(without.notices, []);
+  assert.equal(Object.hasOwn(without.verdict, 'notices'), false, 'a run without notices stores none');
+
+  const notices = [
+    { text: 'The sort control overlaps a heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    // The element shot was never saved, so the notice cannot point at it.
+    { text: 'A broken image.', change: 'invite-suggestions', screen: 'desktop', shot: 'element', alsoBefore: 'unknown' },
+    // A change that is not ready keeps its notice, without a shot to show it.
+    { text: 'The toast covers the button.', change: 'saved-toast', screen: 'desktop', shot: 'screen', alsoBefore: false },
+  ];
+  const summary = shots.summarize(intent, saved, new Map(), { notices });
+  assert.deepEqual(summary.stories, without.stories, 'the results are exactly what they were without notices');
+  assert.equal(summary.verdict.passed, without.verdict.passed);
+  assert.equal(summary.manifestHash, without.manifestHash, 'notices publish no file');
+  assert.deepEqual(summary.verdict.notices, [
+    { ...notices[0] },
+    { ...notices[1], shot: null },
+    { ...notices[2], shot: null },
+  ]);
+  assert.deepEqual(summary.notices, summary.verdict.notices);
+
+  // A run whose only change failed keeps its notices too, still advisory.
+  const failed = shots.summarize(intent, new Map(), new Map([['invite-suggestions', 'Saving answered 500.'], ['saved-toast', 'x']]), {
+    failed: new Set(['invite-suggestions']), notices: notices.slice(0, 1),
+  });
+  assert.equal(failed.verdict.passed, false);
+  assert.equal(failed.failedCount, 1);
+  assert.equal(failed.verdict.notices.length, 1);
+
+  // Never more than the cap, whatever the caller hands in.
+  const many = Array.from({ length: 9 }, (_, i) => ({ ...notices[0], text: `Problem ${i}.` }));
+  assert.equal(shots.summarize(intent, saved, new Map(), { notices: many }).verdict.notices.length, shots.MAX_NOTICES);
+  assert.equal(shots.MAX_NOTICES, 5);
 });
 
 test('only the files of ready changes are published, and the manifest hash names them', () => {
@@ -345,4 +424,66 @@ test('a shots verdict is recognised by its mode alone', () => {
   for (const other of [null, undefined, 'shots', { passed: true }, { mode: 'replay', passed: true }]) {
     assert.equal(shots.isShotsVerdict(other), false);
   }
+});
+
+test('a ready change whose before and after are the same image says so in its note', () => {
+  const intent = twoScreenIntent();
+  const saved = new Map();
+  for (const screen of ['desktop', 'mobile']) {
+    for (const side of ['before', 'after']) {
+      save(saved, intent, { change: 'invite-suggestions', screen, side }, fixtures.png());
+    }
+  }
+  let story = shots.summarize(intent, saved).stories[0];
+  assert.deepEqual(story, {
+    id: 'invite-suggestions', status: 'ready', files: 4, unchanged: true, note: shots.UNCHANGED_NOTE,
+  }, 'still published, people judge the shots, but the card says they show no difference');
+
+  // The agent's own note is kept, with the sentence after it.
+  const notes = new Map([['invite-suggestions', 'The fold needs a hidden app.']]);
+  story = shots.summarize(intent, saved, new Map(), { notes }).stories[0];
+  assert.equal(story.note, 'The fold needs a hidden app. The before and after screens came out the same.');
+
+  // One screen size that differs is enough: the change shows there.
+  save(saved, intent, { change: 'invite-suggestions', screen: 'mobile', side: 'after' }, fixtures.png({ shade: 9 }));
+  story = shots.summarize(intent, saved).stories[0];
+  assert.deepEqual(story, { id: 'invite-suggestions', status: 'ready', files: 4 });
+});
+
+test('markUnchanged only marks ready changes, once', () => {
+  const stories = [
+    { id: 'a', status: 'ready', files: 2 },
+    { id: 'b', status: 'skipped', reason: 'No data.' },
+  ];
+  const marked = shots.markUnchanged(stories, new Set(['a', 'b']));
+  assert.deepEqual(marked, [
+    { id: 'a', status: 'ready', files: 2, unchanged: true, note: shots.UNCHANGED_NOTE },
+    { id: 'b', status: 'skipped', reason: 'No data.' },
+  ]);
+  assert.deepEqual(shots.markUnchanged(marked, new Set(['a'])), marked, 'a second pass adds nothing');
+  assert.deepEqual(shots.markUnchanged(stories, new Set()), stories);
+});
+
+test('an element shot must fit the screen it was taken on', () => {
+  const intent = twoScreenIntent();
+  const story = intent.stories[0];
+  const target = (screen, kind = 'element') => shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen, side: 'before', kind });
+  const size = (width, height) => ({ width, height });
+
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(390, 1688)));
+  // Wider than the phone: a page laid out at desktop size, then resized.
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1206, 640)),
+    refusal('element_shot_too_wide'));
+  // More than two screens tall: a tiled capture of a whole grid.
+  assert.throws(() => shots.checkElementSize(story, target('desktop'), size(1206, 3679)),
+    refusal('element_shot_too_tall'));
+  // A screen shot taken at 2x says the element may be twice as large too.
+  const doubled = { width: 780, height: 1688 };
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile'), size(760, 2000), doubled));
+  // A screen shot at some other width is the wrong size, not a scale.
+  assert.throws(() => shots.checkElementSize(story, target('mobile'), size(1206, 640), { width: 1280, height: 800 }),
+    refusal('element_shot_too_wide'));
+  // Screen shots and clips are not element shots.
+  assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
 });

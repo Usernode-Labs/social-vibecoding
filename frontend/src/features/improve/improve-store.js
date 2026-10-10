@@ -95,11 +95,18 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * conversation, and a chip reading "Workshop" there would promise the wrong
  * screen.
  *
+ * #4486: and an item opened from All items (a row's tap on a phone, or "Open
+ * as a page" from the panel beside the board) goes back to All items, which
+ * is the page the project's Workshop route reopens on (`workshopTab`, the
+ * tab AppView._workshopTab remembers), so the chip says so.
+ *
  * @param {string|null} href
- * @returns {'Messages'|'Workshop'}
+ * @param {string|null} [workshopTab]
+ * @returns {'Messages'|'Workshop'|'All items'}
  */
-export function topicBackLabel(href) {
-  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
+export function topicBackLabel(href, workshopTab = null) {
+  if (typeof href === 'string' && href.startsWith('#messages')) return 'Messages';
+  return workshopTab === 'all' && typeof href === 'string' && /\/workshop$/.test(href) ? 'All items' : 'Workshop';
 }
 
 /**

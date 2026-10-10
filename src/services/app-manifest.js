@@ -299,6 +299,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 841
 // declared here.
 //
+// 870 → 880 (#3826): the member floor's words on the card. The mock row
+// whose votes are all in and whose floor is unmet has a route of its own
+// (the proposal page for 9000095), and no existing check shares it — the
+// #788 family's checks sit on rows below threshold or floor-met — so there
+// was nothing to fold it into, and the manifest stood at 840, exactly the
+// floor. Same arithmetic: 880 checks at ~3.9s over the pool of 16 is ~215s
+// of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears the
+// 2x margin by ~220s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 36 slots over the 844 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -310,7 +320,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 870;
+const MAX_DECLARED_TESTS = 880;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -493,6 +503,11 @@ const RESERVED_KEYS = new Set([
   // for the same reason as the rest: a manifest that shadowed it could
   // point an app's "Open in Homeroom" links at a host of its choosing.
   'USERNODE_PLATFORM_ORIGIN',
+  // Turns phone sign-in's test numbers on (config.js
+  // shotsPhoneTestCodeFrom). Only the platform puts it on a before & after
+  // shots copy (services/shots-environment.js); a manifest that set it would
+  // turn them on for an ordinary staging preview.
+  'SHOTS_PHONE_TEST_CODE',
 ]);
 
 // Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),
@@ -1157,15 +1172,212 @@ function readIcon(parsed) {
   return { emoji, image, color };
 }
 
+// ── Topics (#4417) ──────────────────────────────────────────────────────
+//
+// The optional top-level `topics` array: a project's lasting conversations,
+// each a channel and a category at once.
+//
+//   "topics": [
+//     { "id": "onboarding", "handle": "onboarding", "name": "Onboarding",
+//       "icon": "🚪", "about": "Signing up and the first week" },
+//     { "id": "signup", "handle": "signup", "name": "Sign-up",
+//       "mergedInto": "onboarding" },
+//     { "id": "old", "handle": "old", "name": "Old things", "archived": true }
+//   ]
+//
+//   id          set once and never changed: the CATEGORY KEY, so the
+//               literal value a category vote carries. No rename moves a
+//               vote.
+//   handle      the channel's name: 2 to 32 lowercase letters, digits and
+//               hyphens, starting with a letter (a `#123` is an issue, so a
+//               `#handle` reference has to begin with one), unique in the
+//               project and never `general`. A rename may change it; the
+//               reconcile keeps the old one as an alias.
+//   name        3 to 48 characters (topic-attributes MAX_CATEGORY_LEN).
+//   icon        one emoji, optional.
+//   about       up to 140 characters, optional.
+//   archived    true keeps a retired topic in the file, so its channel and
+//               history keep their key; read-only from then on.
+//   mergedInto  the id of the LIVE topic it was merged into: never itself,
+//               never a topic that was itself merged or archived.
+//
+// The array's order is the list's order. At most MAX_LIVE_TOPICS live.
+//
+// Inside the platform a topic is a category row with origin 'topic'
+// (app_category_registry), its channel a 'category' thread: "topic" already
+// names one request or proposal in this code (topic_attribute_votes).
+const MAX_LIVE_TOPICS = 12;
+// Retired entries stay in the file, so the whole array is bounded too.
+const MAX_TOPIC_ENTRIES = 64;
+const MIN_TOPIC_NAME_LENGTH = 3;
+const MAX_TOPIC_NAME_LENGTH = 48;
+const MAX_TOPIC_ABOUT_LENGTH = 140;
+const TOPIC_HANDLE_RE = /^[a-z][a-z0-9-]{0,30}[a-z0-9]$/;
+const RESERVED_TOPIC_HANDLES = new Set(['general']);
+// The built-in categories (services/topic-attributes.js CATEGORY_VALUES):
+// a topic's id is a category key, so it may not be one of those six.
+const BUILTIN_CATEGORY_KEYS = new Set(['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
+
+/** One emoji: a single grapheme with a pictograph in it, or a keycap. */
+function isOneEmoji(raw) {
+  if (typeof raw !== 'string') return false;
+  const s = raw.trim();
+  if (!s || s.length > MAX_ICON_EMOJI_LENGTH || /\s/.test(s)) return false;
+  const keycap = /^[0-9#*]️?⃣$/.test(s);
+  if (!keycap && !/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s)) return false;
+  if (!keycap && /[A-Za-z0-9]/.test(s)) return false;
+  try {
+    const seg = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    return [...seg.segment(s)].length === 1;
+  } catch {
+    return true;
+  }
+}
+
+/** A topic handle as dapp.json may spell it, normalised, or null. */
+function normalizeTopicHandle(raw) {
+  const h = typeof raw === 'string' ? raw.trim().replace(/^#/, '').toLowerCase() : '';
+  return TOPIC_HANDLE_RE.test(h) && !RESERVED_TOPIC_HANDLES.has(h) ? h : null;
+}
+
+/**
+ * Validate a `topics` array. Returns `{ topics, errors }`: the entries that
+ * hold, normalised to `{ id, handle, name, icon, about, state, mergedInto }`
+ * in the file's order, and one sentence per problem. STRICT callers (the
+ * topics PR, services/topics-pr.js) refuse on any error; the deploy reader
+ * (readTopics) keeps what holds and logs the rest, like every other block.
+ *
+ * Cross-entry rules are applied in order: a duplicate id or handle is the
+ * later entry's error, live entries past MAX_LIVE_TOPICS are errors, and a
+ * `mergedInto` that names no live topic is an error (the reader keeps such
+ * an entry as archived, so its history stays readable and no vote moves).
+ */
+function validateTopics(raw) {
+  const errors = [];
+  if (raw == null) return { topics: [], errors };
+  if (!Array.isArray(raw)) return { topics: [], errors: ['topics must be an array'] };
+  if (raw.length > MAX_TOPIC_ENTRIES) {
+    errors.push(`topics holds at most ${MAX_TOPIC_ENTRIES} entries`);
+  }
+  const out = [];
+  const ids = new Set();
+  const handles = new Set();
+  raw.slice(0, MAX_TOPIC_ENTRIES).forEach((entry, index) => {
+    const where = `topics[${index}]`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      errors.push(`${where} must be an object`);
+      return;
+    }
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    if (!TOPIC_HANDLE_RE.test(id)) {
+      errors.push(`${where}.id must be 2 to 32 lowercase letters, digits and hyphens, starting with a letter`);
+      return;
+    }
+    if (BUILTIN_CATEGORY_KEYS.has(id)) {
+      errors.push(`${where}.id "${id}" is a built-in category`);
+      return;
+    }
+    if (ids.has(id)) {
+      errors.push(`${where}.id "${id}" is used twice`);
+      return;
+    }
+    const handle = normalizeTopicHandle(entry.handle == null ? id : entry.handle);
+    if ((entry.handle != null && typeof entry.handle !== 'string') || !handle) {
+      errors.push(`${where}.handle must be 2 to 32 lowercase letters, digits and hyphens, starting with a letter, and never "general"`);
+      return;
+    }
+    if (handles.has(handle)) {
+      errors.push(`${where}.handle "#${handle}" is used twice`);
+      return;
+    }
+    const name = typeof entry.name === 'string' ? entry.name.replace(/\s+/g, ' ').trim() : '';
+    if (name.length < MIN_TOPIC_NAME_LENGTH || name.length > MAX_TOPIC_NAME_LENGTH) {
+      errors.push(`${where}.name must be ${MIN_TOPIC_NAME_LENGTH} to ${MAX_TOPIC_NAME_LENGTH} characters`);
+      return;
+    }
+    let icon = '';
+    if (entry.icon != null && entry.icon !== '') {
+      if (!isOneEmoji(entry.icon)) {
+        errors.push(`${where}.icon must be one emoji`);
+        return;
+      }
+      icon = entry.icon.trim();
+    }
+    let about = '';
+    if (entry.about != null) {
+      about = typeof entry.about === 'string' ? entry.about.replace(/\s+/g, ' ').trim() : null;
+      if (about == null || about.length > MAX_TOPIC_ABOUT_LENGTH) {
+        errors.push(`${where}.about must be at most ${MAX_TOPIC_ABOUT_LENGTH} characters`);
+        return;
+      }
+    }
+    let mergedInto = null;
+    if (entry.mergedInto != null) {
+      mergedInto = typeof entry.mergedInto === 'string' ? entry.mergedInto.trim() : '';
+      if (!mergedInto) {
+        errors.push(`${where}.mergedInto must name a topic id`);
+        return;
+      }
+    }
+    if (entry.archived != null && typeof entry.archived !== 'boolean') {
+      errors.push(`${where}.archived must be true or false`);
+      return;
+    }
+    ids.add(id);
+    handles.add(handle);
+    out.push({
+      id, handle, name, icon, about,
+      state: mergedInto ? 'merged' : (entry.archived === true ? 'archived' : 'live'),
+      mergedInto,
+    });
+  });
+  // A merge names a LIVE topic: never itself, never one that was itself
+  // merged or archived. An entry that fails is kept, as archived, so it
+  // moves no vote and its channel stays readable.
+  const live = new Set(out.filter((t) => t.state === 'live').map((t) => t.id));
+  for (const t of out) {
+    if (t.state !== 'merged') continue;
+    if (t.mergedInto === t.id || !live.has(t.mergedInto)) {
+      errors.push(`topic "${t.id}" can only be merged into a live topic`);
+      t.state = 'archived';
+      t.mergedInto = null;
+    }
+  }
+  let liveCount = 0;
+  const kept = [];
+  for (const t of out) {
+    if (t.state === 'live') {
+      liveCount += 1;
+      if (liveCount > MAX_LIVE_TOPICS) {
+        errors.push(`a project has at most ${MAX_LIVE_TOPICS} live topics`);
+        continue;
+      }
+    }
+    kept.push(t);
+  }
+  return { topics: kept, errors: [...new Set(errors)] };
+}
+
+// The deploy reader's view: what holds, the rest logged. `null` when the
+// block is absent, which leaves the project's topics as they are; an empty
+// array archives every topic it had.
+function readTopics(parsed) {
+  if (!parsed || parsed.topics === undefined || parsed.topics === null) return null;
+  const { topics, errors } = validateTopics(parsed.topics);
+  if (errors.length) log.warn('app-manifest', 'Ignoring part of the topics block', { errors: errors.slice(0, 10) });
+  if (!Array.isArray(parsed.topics)) return null;
+  return topics;
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
   }
 
   let parsed;
@@ -1173,7 +1385,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [], topics: null };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1192,6 +1404,7 @@ function read(cloneDir) {
     icon: readIcon(parsed),
     admins: readAdmins(parsed),
     platform_env: platformEnv,
+    topics: readTopics(parsed),
   };
 }
 
@@ -1236,6 +1449,214 @@ async function reconcileAppName(pool, app, manifest) {
     log.warn('app-manifest', 'Rename broadcast failed', { appId: app.id, err: err.message });
   }
   return true;
+}
+
+/**
+ * #4417: reconcile dapp.json's `topics` into the app's category registry,
+ * on the rebuild a merged topics PR triggers (staging.rebuildProduction),
+ * on an import's first deploy, and at boot for the platform's own app.
+ *
+ * Each topic is the registry row whose category_key is its `id`, origin
+ * 'topic', pinned. What changes, and what follows from it:
+ *
+ *   add      a new row, or an existing category of the same key becomes the
+ *            topic (its votes are the topic's from then on);
+ *   rename   name, about, icon and handle are written; a changed handle
+ *            keeps the old one in topic_aliases. No vote moves: the id is
+ *            what a vote carries;
+ *   merge    the topic is retired into the survivor: every category vote
+ *            for it moves to the survivor (a voter who already backs the
+ *            survivor on that card keeps that vote and loses the old one),
+ *            and so do the Workshop's placements;
+ *   archive  the topic is retired: its votes stay (the tally skips them),
+ *            and its placements are dropped, so the cards count as churn
+ *            and are placed again.
+ *
+ * A topic missing from the file is archived, so its channel stays readable.
+ * An ABSENT block (`topics: null`) changes nothing.
+ *
+ * Writes only what differs, and returns what it did:
+ * `{ added, renamed, merged, archived, revived, changed }` (null for an
+ * absent block). Best-effort like its siblings: callers fire-and-log.
+ */
+async function reconcileAppTopics(pool, app, manifest) {
+  const topics = manifest && Array.isArray(manifest.topics) ? manifest.topics : null;
+  if (!topics || !app || !app.id) return null;
+  const { rows } = await pool.query(
+    `SELECT id, category_key, origin, label, description, icon, topic_handle, topic_aliases,
+            topic_state, merged_into, topic_order, retired_at
+       FROM app_category_registry
+      WHERE app_id = $1`,
+    [app.id]
+  );
+  const byKey = new Map(rows.map((r) => [r.category_key, r]));
+  const handlesNow = new Set(topics.map((t) => t.handle));
+  const aliasTaken = new Set();
+  const result = { added: [], renamed: [], merged: [], archived: [], revived: [], changed: false };
+  const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  for (let order = 0; order < topics.length; order += 1) {
+    const t = topics[order];
+    const row = byKey.get(t.id) || null;
+    const wasTopic = !!row && row.origin === 'topic';
+    const prevState = wasTopic ? (row.topic_state || 'live') : null;
+    // Aliases: the old ones, less any that is somebody's handle now or
+    // another topic's alias already, plus the handle this one just left.
+    const aliases = [];
+    const keep = (a) => {
+      if (!a || a === t.handle || handlesNow.has(a) || aliasTaken.has(a) || aliases.includes(a)) return;
+      aliases.push(a);
+    };
+    for (const a of (wasTopic && Array.isArray(row.topic_aliases) ? row.topic_aliases : [])) keep(a);
+    if (wasTopic && row.topic_handle && row.topic_handle !== t.handle) keep(row.topic_handle);
+    for (const a of aliases) aliasTaken.add(a);
+
+    const differs = !wasTopic
+      || row.label !== t.name || (row.description || '') !== t.about || (row.icon || '') !== t.icon
+      || row.topic_handle !== t.handle || !sameList(row.topic_aliases || [], aliases)
+      || prevState !== t.state || (row.merged_into || null) !== (t.mergedInto || null)
+      || row.topic_order !== order || (t.state === 'live') !== (row.retired_at == null);
+    if (!differs) continue;
+
+    await pool.query(
+      `INSERT INTO app_category_registry
+         (app_id, category_key, label, description, icon, origin, pinned_at, retired_at,
+          topic_handle, topic_aliases, topic_state, merged_into, merged_at, topic_order)
+       VALUES ($1, $2, $3, $4, $5, 'topic', NOW(),
+               CASE WHEN $8::text = 'live' THEN NULL ELSE NOW() END,
+               $6, $7::text[], $8, $9, CASE WHEN $8::text = 'merged' THEN NOW() ELSE NULL END, $10)
+       ON CONFLICT (app_id, category_key) DO UPDATE SET
+         label = EXCLUDED.label,
+         description = EXCLUDED.description,
+         icon = EXCLUDED.icon,
+         origin = 'topic',
+         pinned_at = COALESCE(app_category_registry.pinned_at, NOW()),
+         retired_at = CASE WHEN EXCLUDED.topic_state = 'live' THEN NULL
+                           ELSE COALESCE(app_category_registry.retired_at, NOW()) END,
+         topic_handle = EXCLUDED.topic_handle,
+         topic_aliases = EXCLUDED.topic_aliases,
+         topic_state = EXCLUDED.topic_state,
+         merged_into = EXCLUDED.merged_into,
+         merged_at = CASE
+           WHEN EXCLUDED.topic_state <> 'merged' THEN NULL
+           WHEN app_category_registry.topic_state = 'merged'
+            AND app_category_registry.merged_into IS NOT DISTINCT FROM EXCLUDED.merged_into
+             THEN COALESCE(app_category_registry.merged_at, NOW())
+           ELSE NOW() END,
+         topic_order = EXCLUDED.topic_order`,
+      [app.id, t.id, t.name, t.about, t.icon, t.handle, aliases, t.state, t.mergedInto, order]
+    );
+    result.changed = true;
+    if (!wasTopic) result.added.push(t.id);
+    else if (row.topic_handle !== t.handle || row.label !== t.name
+      || (row.description || '') !== t.about || (row.icon || '') !== t.icon) result.renamed.push(t.id);
+    if (prevState && prevState !== 'live' && t.state === 'live') result.revived.push(t.id);
+
+    if (t.state === 'merged' && (prevState !== 'merged' || (row.merged_into || null) !== t.mergedInto)) {
+      await moveCategory(pool, app.id, t.id, t.mergedInto);
+      result.merged.push({ from: t.id, into: t.mergedInto });
+    } else if (t.state === 'archived' && prevState !== 'archived') {
+      await dropPlacements(pool, app.id, t.id);
+      result.archived.push(t.id);
+    }
+  }
+
+  // A topic the file no longer names is archived, never deleted: its
+  // channel's history stays readable under its key.
+  const inFile = new Set(topics.map((t) => t.id));
+  for (const row of rows) {
+    if (row.origin !== 'topic' || inFile.has(row.category_key) || row.topic_state === 'archived') continue;
+    await pool.query(
+      `UPDATE app_category_registry
+          SET topic_state = 'archived', retired_at = COALESCE(retired_at, NOW()),
+              merged_into = NULL, merged_at = NULL
+        WHERE id = $1 AND app_id = $2`,
+      [row.id, app.id]
+    );
+    if ((row.topic_state || 'live') === 'live') await dropPlacements(pool, app.id, row.category_key);
+    result.archived.push(row.category_key);
+    result.changed = true;
+  }
+
+  if (result.changed) {
+    log.info('app-manifest', 'Reconciled topics from dapp.json', {
+      appId: app.id, slug: app.slug,
+      added: result.added, renamed: result.renamed, merged: result.merged, archived: result.archived,
+    });
+    // Open pages re-read the places and the Workshop regroups (a merge or
+    // an archive moved placements; a new topic is a category to place
+    // into). Best-effort.
+    try {
+      require('./ws').pushAppUpdate({ action: 'topics_changed', appId: app.id, appSlug: app.slug, slug: app.slug });
+    } catch (err) {
+      log.warn('app-manifest', 'Topics broadcast failed', { appId: app.id, err: err.message });
+    }
+    try {
+      require('./workshop-themes').noteBoardChange(pool, { appId: app.id, appSlug: app.slug });
+    } catch (err) {
+      log.warn('app-manifest', 'Workshop regroup after topics failed', { appId: app.id, err: err.message });
+    }
+  }
+  return result;
+}
+
+// A merge: every category vote for `from` becomes one for `into`. A voter
+// who already backs `into` on that card keeps that vote and loses this one
+// (only possible for rows without a voter, given the one-vote-per-field
+// key, but said in SQL rather than assumed). Then the Workshop's placements
+// follow, and the merged definition leaves the draft.
+async function moveCategory(pool, appId, from, into) {
+  await pool.query(
+    `DELETE FROM topic_attribute_votes v
+      WHERE v.app_id = $1 AND v.field = 'category' AND v.value = $2
+        AND EXISTS (
+          SELECT 1 FROM topic_attribute_votes o
+           WHERE o.app_id = v.app_id AND o.target_type = v.target_type
+             AND o.target_ref = v.target_ref AND o.field = 'category'
+             AND o.value = $3 AND o.user_id IS NOT DISTINCT FROM v.user_id
+        )`,
+    [appId, from, into]
+  );
+  await pool.query(
+    `UPDATE topic_attribute_votes SET value = $3
+      WHERE app_id = $1 AND field = 'category' AND value = $2`,
+    [appId, from, into]
+  );
+  await pool.query(
+    `UPDATE app_workshop_themes
+        SET placements_json = COALESCE((
+              SELECT jsonb_object_agg(e.key, CASE WHEN e.value = to_jsonb($2::text) THEN to_jsonb($3::text) ELSE e.value END)
+                FROM jsonb_each(placements_json) e
+            ), '{}'::jsonb),
+            themes_json = COALESCE((
+              SELECT jsonb_agg(d.def ORDER BY d.n)
+                FROM jsonb_array_elements(themes_json) WITH ORDINALITY AS d(def, n)
+               WHERE d.def->>'id' IS DISTINCT FROM $2::text
+            ), '[]'::jsonb)
+      WHERE app_id = $1`,
+    [appId, from, into]
+  );
+}
+
+// An archive: the Workshop forgets where it put the topic's cards, and its
+// definition leaves the draft. The cards are then new to the next pass,
+// which counts them as churn and places them again.
+async function dropPlacements(pool, appId, key) {
+  await pool.query(
+    `UPDATE app_workshop_themes
+        SET placements_json = COALESCE((
+              SELECT jsonb_object_agg(e.key, e.value)
+                FROM jsonb_each(placements_json) e
+               WHERE e.value IS DISTINCT FROM to_jsonb($2::text)
+            ), '{}'::jsonb),
+            themes_json = COALESCE((
+              SELECT jsonb_agg(d.def ORDER BY d.n)
+                FROM jsonb_array_elements(themes_json) WITH ORDINALITY AS d(def, n)
+               WHERE d.def->>'id' IS DISTINCT FROM $2::text
+            ), '[]'::jsonb)
+      WHERE app_id = $1`,
+    [appId, key]
+  );
 }
 
 /**
@@ -1979,6 +2400,17 @@ module.exports = {
   reconcileAppScreenshot,
   reconcileAppIcon,
   reconcileAppAdmins,
+  reconcileAppTopics,
+  readTopics,
+  validateTopics,
+  normalizeTopicHandle,
+  isOneEmoji,
+  MAX_LIVE_TOPICS,
+  MAX_TOPIC_ENTRIES,
+  MIN_TOPIC_NAME_LENGTH,
+  MAX_TOPIC_NAME_LENGTH,
+  MAX_TOPIC_ABOUT_LENGTH,
+  TOPIC_HANDLE_RE,
   applyVisibilityChange,
   applyGovernanceChange,
   applyAdminsChange,

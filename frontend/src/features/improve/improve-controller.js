@@ -723,38 +723,6 @@ const Improve = {
    */
   _tasks: [],
 
-  /**
-   * Publish a session that was just created in this tab.
-   *
-   * DevChat owns session creation, but the Improve panel owns a separate
-   * cross-app cache. Waiting for its next /active-sessions response leaves a
-   * successful new session looking absent, and a preload issued before the
-   * POST can arrive afterwards and erase a naive optimistic row. Invalidate
-   * that older request and publish the server-created row immediately; the
-   * normal load on panel open remains the authoritative follow-up.
-   */
-  onSessionCreated(session, appSlug) {
-    if (!session || session.id == null) return;
-    const existing = Improve._all.find((candidate) => (
-      String(candidate.id) === String(session.id)
-    ));
-    const row = {
-      ...(existing || {}),
-      ...session,
-      app_slug: session.app_slug || existing?.app_slug || appSlug || null,
-    };
-    if (!row.app_slug) return;
-
-    // Any request already in flight describes the world before this POST.
-    Improve._loadToken += 1;
-    Improve._all = [
-      row,
-      ...Improve._all.filter((existing) => String(existing.id) !== String(row.id)),
-    ];
-    improveStore.set({ loadingSessions: false, sessionsLoaded: true });
-    Improve._rebucket();
-  },
-
   _rebucket() {
     const { slug, name } = improveStore.get();
     const mine = [];
@@ -972,20 +940,18 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
-   * `target: 'app'` preselects the open app as the target, where "This app"
-   * is there to choose (not the self-hosted row, or while the repo does not
-   * exist yet, which keep the dialog's own choice). Since #2707 that is the
-   * only thing that preselects: `fromDev` alone opens the dialog asking which
-   * one. Asking for a change from inside an app already answered that
-   * question: the panel is unambiguously about one app.
+   * `fromDev` opens it asking where the suggestion goes, with neither "This
+   * app" nor "Homeroom" chosen (#2707): a person in an app may well mean the
+   * platform, so the press does not answer that question (#4236). Getting
+   * started's "Suggest a change to <app>" still passes `target: 'app'`,
+   * because that button already named the app.
    */
   giveFeedback() {
     const { slug } = improveStore.get();
     Improve.close();
     if (!window.App?.openFeedbackModal) return;
-    // Already looking at this app: "This app" means it.
     if (window.App.currentApp === slug) {
-      window.App.openFeedbackModal({ fromDev: true, target: 'app' });
+      window.App.openFeedbackModal({ fromDev: true });
       return;
     }
     // Otherwise there is no open app for "This app" to mean, so the dialog

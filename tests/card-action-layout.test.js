@@ -280,13 +280,13 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.match(html, /gc-card-actions/, 'shared action row present');
   // The state-driven primary for a never-started issue.
   assert.ok(hasAction(model, 'chooseIssueWork', 5), 'the primary is wired');
-  assert.match(html, />Build it yourself</);
+  assert.match(html, />Build it now</);
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
   // chip it toggles is right above it in the status band.
   assert.ok(hasAction(model, 'markIssueInProgress', 5), 'the claim toggle is wired');
-  assert.match(html, />I&#x27;ll work on this</);
+  assert.match(html, />Claim it</);
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
   // Generating a headless proposal spends the viewer's credits, so it is a
   // chosen ⋯ action rather than the card's most prominent button.
@@ -295,7 +295,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
   // Promoted, so it is NOT also a menu row — one action, one place.
-  assert.ok(!menuHas(AppView, html, /I'll work on this/),
+  assert.ok(!menuHas(AppView, html, /Claim it/),
     'the claim toggle is on the face, so not duplicated in ⋯');
   // …and the ones that stayed demoted are not on the card face.
   assert.ok(!hasAction(model, 'giveIssueBounty'), 'no kudos pill');
@@ -342,7 +342,7 @@ test('issue card: a ready headless run IS the primary, replacing Start work', ()
   // #2779: it starts an agent session on the request (the run is no longer
   // cloned into a classic dev chat), and its title says what the run did.
   assert.match(html, />Start work</, 'and it reads as starting work');
-  assert.match(html, /An auto-solve run finished here \(it drafted a spec\)/);
+  assert.match(html, /An auto-solve run finished here \(it drafted a plan\)/);
   assert.ok(!hasAction(model, 'chooseIssueWork'), 'Start work is superseded, not stacked beside it');
   // Two primaries: the state-driven one, plus the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });
@@ -752,27 +752,119 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'askBotToBuild', 5), 'the bot button is wired');
   assert.match(html, />Ask Homeroom bot to build this</);
-  assert.equal(menuLabels(AppView, html)[0], 'Build it yourself', 'the same launcher, first in ≡');
-  assert.ok(menuHas(AppView, html, /^Build it yourself$/));
+  assert.equal(menuLabels(AppView, html)[0], 'Build it now', 'the same launcher, first in ≡');
+  assert.ok(menuHas(AppView, html, /^Build it now$/));
   // On the request's own page, its hint is the line under it.
   const head = AppView._issueCardModel(baseIssue(), { noNav: true });
   assert.ok(head.extra.some((e) => e.key === 'bot-door' && e.text === 'Usually ready to try in about 7 minutes.'));
   // While the bot is on it there is nothing to start: the asker can follow
-  // it, everybody else reads who asked; and no Build it yourself.
+  // it, everybody else reads who asked; and no Build it now.
   const mineOn = AppView._issueCardModel(baseIssue({ bot: { what: 'building', since: null, askedBy: 'maya', mine: true } }));
   assert.ok(hasAction(mineOn, 'openBotChatFromRequest'), 'See progress');
   assert.match(cardHtml(mineOn), />See progress</);
   const theirs = AppView._issueCardModel(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } }));
   const theirsHtml = cardHtml(theirs);
   assert.match(theirsHtml, />Homeroom bot is on it</);
-  assert.ok(!menuHas(AppView, theirsHtml, /^Build it yourself$/), 'never built twice');
+  assert.ok(!menuHas(AppView, theirsHtml, /^Build it now$/), 'never built twice');
   const note = AppView._issueWorkState(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } })).note;
   assert.match(note, /^maya asked Homeroom bot to build this\. It starts as soon as a builder is free/);
   // Where it does not build, building it yourself is the card's act, as Start work was.
   const plain = makeAppView(ME);
   const plainModel = plain._issueCardModel(baseIssue());
   assert.ok(hasAction(plainModel, 'chooseIssueWork', 5));
-  assert.match(cardHtml(plainModel), />Build it yourself</);
+  assert.match(cardHtml(plainModel), />Build it now</);
+});
+
+// #4530: Ask Homeroom bot to build this, pressed after its question, read
+// the request again and posted the same question again (number-guessing #52
+// got one question three times). While the bot is waiting on an answer
+// there (`issue.botAwaits`, routes/issues.js), the card answers it instead.
+test('#4530: while Homeroom bot waits on an answer, the card answers it instead of asking it again', () => {
+  const AppView = makeAppView(ME);
+  AppView._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const waiting = baseIssue({ botAwaits: { kind: 'question', messageId: 41 } });
+  const model = AppView._issueCardModel(waiting);
+  const html = cardHtml(model);
+  assert.ok(hasAction(model, 'answerBotOnRequest', 5, 41, 0), 'from the board: open the request and reply to its note');
+  assert.match(html, />Answer Homeroom bot(?:'|&#x27;)s question</);
+  assert.doesNotMatch(html, /Ask Homeroom bot to build this/);
+  assert.equal(menuLabels(AppView, html)[0], 'Build it now', 'building it yourself is still the first row of its ≡');
+  // On the request's own page, the reply is right there, and the line under
+  // it says what the bot is waiting for instead of how long it takes.
+  const head = AppView._issueCardModel(waiting, { noNav: true });
+  assert.ok(hasAction(head, 'answerBotOnRequest', 5, 41, 1));
+  assert.ok(head.extra.some((e) => e.key === 'bot-door'
+    && e.text === 'Homeroom bot asked a question here. Answer it, and it reads the request again.'));
+  // "A person needs to decide" and "nothing to build" are replied to.
+  for (const kind of ['person', 'empty']) {
+    const m = AppView._issueCardModel(baseIssue({ botAwaits: { kind, messageId: null } }));
+    assert.ok(hasAction(m, 'answerBotOnRequest', 5, 0, 0), kind);
+    assert.match(cardHtml(m), />Reply to Homeroom bot</, kind);
+  }
+  // Anything else is the ordinary door.
+  assert.ok(hasAction(AppView._issueCardModel(baseIssue({ botAwaits: { kind: 'proposal' } })), 'askBotToBuild', 5));
+  assert.ok(hasAction(AppView._issueCardModel(baseIssue({ botAwaits: null })), 'askBotToBuild', 5));
+  // The bot on it says so, whatever it last said.
+  const on = AppView._issueCardModel(baseIssue({ botAwaits: { kind: 'question', messageId: 41 }, bot: { what: 'reading', since: null } }));
+  assert.ok(!hasAction(on, 'answerBotOnRequest', 5, 41, 0));
+  assert.match(cardHtml(on), /Homeroom bot is reading/);
+  // Where it does not build for this viewer, nothing changes.
+  assert.ok(hasAction(makeAppView(ME)._issueCardModel(waiting), 'chooseIssueWork', 5));
+});
+
+test('#4530: answering the bot stages a Reply to its note, or starts the box with its handle', async () => {
+  const AppView = makeAppView(ME);
+  const sandbox = AppView.__sandbox;
+  const opened = [];
+  AppView.openTopic = async (kind, id) => { opened.push([kind, id]); };
+  const replies = [];
+  sandbox.GroupChat = {
+    replyDraft: null,
+    replyToMessage(id, surface) { replies.push([id, surface]); this.replyDraft = { refMsgId: id }; },
+  };
+  await AppView.answerBotOnRequest(5, 41, 1);
+  assert.deepEqual(opened, [], 'on its page already: nothing opened');
+  assert.deepEqual(replies, [[41, 'thread']], 'a Reply to the note, in the request\'s composer');
+  sandbox.GroupChat.replyDraft = null;
+  await AppView.answerBotOnRequest(5, 41, 0);
+  assert.deepEqual(opened, [['issue', 5]], 'from the board it opens the request first');
+
+  // With no note to reply to, the box starts with the bot's handle, which
+  // counts as speaking to it; words already in the box stay.
+  const input = {
+    value: '', focused: 0, events: [],
+    dispatchEvent(e) { this.events.push(e.type); }, focus() { this.focused += 1; },
+  };
+  sandbox.document.getElementById = (id) => (id === 'gc-thread-input' ? input : null);
+  sandbox.Event = class { constructor(type) { this.type = type; } };
+  sandbox.GroupChat = { replyDraft: null, replyToMessage() { throw new Error('no note to reply to'); } };
+  await AppView.answerBotOnRequest(5, 0, 1);
+  assert.equal(input.value, '@homeroom_bot ');
+  assert.deepEqual(input.events, ['input'], 'the composer saves it as its own draft');
+  assert.equal(input.focused, 1);
+  input.value = 'the blue one';
+  await AppView.answerBotOnRequest(5, 0, 1);
+  assert.equal(input.value, 'the blue one');
+  assert.equal(input.focused, 2);
+});
+
+test('#4530: a refused ask says why and reads the request list again', async () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'number-guessing' };
+  AppView._demoQS = () => '';
+  let toast = null;
+  AppView.__sandbox.PlatformUI = { toast: (m) => { toast = m; } };
+  const refreshed = [];
+  AppView.refreshDevData = (what) => { refreshed.push(what); };
+  const answer = (body) => { AppView.__sandbox.fetch = async () => ({ ok: false, status: 409, json: async () => body }); };
+  answer({ error: 'Homeroom bot asked a question here and is waiting for an answer.', code: 'awaiting_reply' });
+  await AppView.askBotToBuild(52);
+  assert.equal(toast, 'Homeroom bot asked a question here and is waiting for an answer.');
+  assert.deepEqual(refreshed, ['issue'], 'the card learns what it is waiting on, and offers the answer');
+  answer({ error: 'Homeroom bot is already on it.', code: 'already_building' });
+  await AppView.askBotToBuild(52);
+  assert.equal(toast, 'Homeroom bot is already on it.');
+  assert.deepEqual(refreshed, ['issue'], 'any other refusal is only said');
 });
 
 test('B8: a change Homeroom bot built is recognised by its author', () => {
@@ -780,7 +872,6 @@ test('B8: a change Homeroom bot built is recognised by its author', () => {
   assert.equal(AppView._botBuilt({ username: 'homeroom_bot' }), true);
   assert.equal(AppView._botBuilt({ username: 'ada' }), false);
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(src, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
-  assert.match(src, /if \(proposal && !botBuilt && AppView\._showExplorePill\(item\) && !AppView\.readOnly\)/,
-    'its band drops the explore pill; the ⋯ keeps Explore in a coding agent');
+  // #4455: a change's page has no band; asking the bot is a row of its ⋯.
+  assert.match(src, /if \(proposal && AppView\._botBuilt\(item\) && !ro\) \{\n\s+rows\.push\(\{\n\s+label: 'Ask for changes', icon: 'generate',/);
 });

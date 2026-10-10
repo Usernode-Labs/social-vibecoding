@@ -105,7 +105,7 @@ test('a post tags everyone in the thread and notifies each of them; GitHub gets 
     pool, github, ws, app, repo: { owner: 'o', repo: 'r' }, issueNumber: 24, kind: 'spec',
     text: 'spec', mentions: ['evan'], mention: 'evan', sender: BOT, notifications, threadMessage: card,
   });
-  assert.match(sent[0].content, /^@evan 📋 Homeroom bot's spec/, 'the spec card tags them too, once');
+  assert.match(sent[0].content, /^@evan 📋 Homeroom bot's plan/, 'the spec card tags them too, once');
 });
 
 // ── Recorded before anything is posted ──────────────────────────────────
@@ -147,7 +147,7 @@ test('triage records the ask before the verdict is posted, so that very post lea
   };
   const out = await bot.runTriage(pool, {}, {
     bot: { id: 77, username: 'homeroom_bot' }, app: { id: 9, slug: 'todo', repo_url: 'https://github.com/o/r' },
-    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', liveApps: [], turnSeconds: 60 }, deps,
+    item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', turnSeconds: 60 }, deps,
   });
   assert.equal(out.verdict, 'person');
   assert.deepEqual(order, [['run'], ['asks', ['maya'], ['sam'], 900]]);

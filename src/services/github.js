@@ -49,31 +49,48 @@ function publicFetchCredential() {
   return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'anonymous';
 }
 
-// Record one response's rate-limit headers (services/github-budget.js).
-// Bookkeeping only: it never throws into the request it describes, and a
-// stub without headers records nothing.
-function recordHeaders(credential, headers) {
+// Record one response's rate-limit headers (services/github-budget.js), and
+// count the request against the caller that asked for it (`request`:
+// { method, url, caller, status }). Bookkeeping only: it never throws into
+// the request it describes, and a stub without headers records nothing.
+function recordHeaders(credential, headers, request = null) {
   try {
-    if (headers) budget.record(credential, headers);
+    if (!headers) return;
+    budget.record(credential, headers);
+    if (request) budget.noteRequest(credential, { ...request, headers });
   } catch (_) { /* bookkeeping only */ }
 }
 
-function recordFetchResponse(credential, resp) {
-  recordHeaders(credential, resp && resp.headers);
+// For the raw fetch paths. `method` and `url` are what was sent; the caller
+// is read off the stack here, which still holds the awaiting callers.
+function recordFetchResponse(credential, resp, { method = 'GET', url = null } = {}) {
+  let caller = 'unknown';
+  try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
+  recordHeaders(credential, resp && resp.headers, {
+    method,
+    url: url || (resp && resp.url) || '',
+    caller,
+    status: resp && resp.status,
+  });
 }
 
 // Record every response an Octokit client gets, success or error, against
-// the credential it authenticates as. A client without Octokit's hook API (a
-// test double) is returned untouched.
+// the credential it authenticates as, and count it against the code that
+// asked (read off the stack before the request is sent, while the asking
+// frames are still on it). A client without Octokit's hook API (a test
+// double) is returned untouched.
 function instrument(octokit, credential) {
   if (!octokit || !octokit.hook || typeof octokit.hook.wrap !== 'function') return octokit;
   octokit.hook.wrap('request', async (request, options) => {
+    let caller = 'unknown';
+    try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
+    const sent = { method: options && options.method, url: options && options.url, caller };
     try {
       const response = await request(options);
-      recordHeaders(credential, response && response.headers);
+      recordHeaders(credential, response && response.headers, { ...sent, status: response && response.status });
       return response;
     } catch (err) {
-      recordHeaders(credential, err && err.response && err.response.headers);
+      recordHeaders(credential, err && err.response && err.response.headers, { ...sent, status: err && err.status });
       throw err;
     }
   });
@@ -504,13 +521,17 @@ function isEnabled() {
   return !!app;
 }
 
+// GitHub logins are case-insensitive, and an owner parsed out of a stored
+// repo URL keeps whatever case the URL was written in, so the installation
+// is matched without regard to case.
 async function resolveInstallationId(owner) {
-  const cached = installationCache.get(owner);
+  const key = String(owner || '').toLowerCase();
+  const cached = installationCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.id;
 
   for await (const { installation } of app.eachInstallation.iterator()) {
-    if (installation.account?.login === owner) {
-      installationCache.set(owner, { id: installation.id, expiresAt: Date.now() + CACHE_TTL_MS });
+    if (String(installation.account?.login || '').toLowerCase() === key) {
+      installationCache.set(key, { id: installation.id, expiresAt: Date.now() + CACHE_TTL_MS });
       return installation.id;
     }
   }
@@ -779,7 +800,7 @@ async function getReadOctokit(owner) {
     : await patOctokit(pat);
   const installation = await installationReadOctokit(owner);
   if (!installation) {
-    budget.noteRead('pat', 'no_installation');
+    budget.noteRead('pat', 'no_installation', { owner });
     return botToken;
   }
   return withBotTokenFallback(installation, botToken, owner);
@@ -807,7 +828,7 @@ async function installationReadHeaders(owner) {
     });
   }
   if (!token) {
-    budget.noteRead('pat', 'no_installation');
+    budget.noteRead('pat', 'no_installation', { owner });
     return null;
   }
   return {
@@ -828,7 +849,7 @@ async function publicReadFetch(owner, url, { signal } = {}) {
   const viaApp = await installationReadHeaders(owner);
   if (viaApp) {
     const resp = await fetch(url, { headers: viaApp.headers, signal });
-    recordFetchResponse(viaApp.credential, resp);
+    recordFetchResponse(viaApp.credential, resp, { url });
     const refused = READ_FALLBACK_STATUSES.has(resp.status);
     if (!refused) {
       budget.noteRead('installation');
@@ -837,7 +858,7 @@ async function publicReadFetch(owner, url, { signal } = {}) {
     budget.noteRead('pat', `status_${resp.status}`);
   }
   const resp = await fetch(url, { headers: publicFetchHeaders(), signal });
-  recordFetchResponse(publicFetchCredential(), resp);
+  recordFetchResponse(publicFetchCredential(), resp, { url });
   return resp;
 }
 
@@ -903,6 +924,24 @@ async function getFileContent(owner, repo, filePath, ref) {
     return Buffer.from(data.content, data.encoding || 'base64').toString('utf-8');
   } catch (err) {
     if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+// #4145: every file path in a repo at `ref` (default the repo's default
+// branch), one request through the read client: [{ path, size }], blobs
+// only, and `truncated` when GitHub cut a very large tree short. Null when
+// the repository or ref does not exist; other errors propagate.
+async function listRepoFiles(owner, repo, ref) {
+  const octokit = await getReadOctokit(owner);
+  try {
+    const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
+    const files = (data.tree || [])
+      .filter((entry) => entry.type === 'blob')
+      .map((entry) => ({ path: entry.path, size: entry.size || 0 }));
+    return { files, truncated: data.truncated === true };
+  } catch (err) {
+    if (err.status === 404 || err.status === 409) return null;
     throw err;
   }
 }
@@ -1159,11 +1198,14 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // Move a branch to an exact commit whether or not that is a fast-forward.
 //
 // This is deliberately not the module's general ref-update path. It exists
-// for exactly one caller, demo mode's reset (routes/demo-mode.js),
-// which puts a demo app's main back to where it stood before a recorded
-// take. That app is in demo mode, its creator asked, and the commits being
-// discarded are the partner's own demo proposals — the one situation where
-// rewinding main is the point rather than an accident.
+// for two callers. Demo mode's reset (routes/demo-mode.js) puts a demo
+// app's main back to where it stood before a recorded take. That app is in
+// demo mode, its creator asked, and the commits being discarded are the
+// partner's own demo proposals — the one situation where rewinding main is
+// the point rather than an accident. And the Homeroom bot's first-version
+// review (homeroom-bot-live.js rollbackReviewBranch) puts the bot's own
+// session branch, never a default branch, back on the last commit that
+// booted when a review fix broke the app, before anything is proposed.
 async function forceBranchToSha(owner, repo, branchName, sha) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -1769,7 +1811,7 @@ async function compareRefs(owner, repo, basehead) {
 // is the figure to show and `files` may be short of a very large change.
 // Throws on transport errors, like compareRefs.
 async function compareCommitSubjects(owner, repo, base, head) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead: `${base}...${head}`, per_page: 100,
   });
@@ -1923,7 +1965,7 @@ async function patchIssueTitle(owner, repo, issueNumber, title) {
       },
       body: JSON.stringify({ title: safeMention(title) }),
     });
-    recordFetchResponse('pat', res);
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
     if (res.ok) return;
     log.warn('github', 'PAT issue PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -1948,7 +1990,7 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
       },
       body: JSON.stringify({ body: safeBody }),
     });
-    recordFetchResponse('pat', res);
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
     if (res.ok) return;
     log.warn('github', 'PAT issue body PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -2243,7 +2285,7 @@ async function fetchPublicRepoInfo(owner, repo) {
     const resp = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
       headers: { 'Accept': 'application/vnd.github+json' },
     });
-    recordFetchResponse('anonymous', resp);
+    recordFetchResponse('anonymous', resp, { url: `/repos/${owner}/${repo}` });
     if (!resp.ok) return null;
     const data = await resp.json();
     return { name: data.name || null, description: data.description || null };
@@ -2525,7 +2567,12 @@ async function refreshPublicIssues(owner, repo) {
 // shape or null, with `note` naming why ('bad issue number',
 // 'not found', 'not an issue (pull request)', 'rate limited',
 // 'fetch failed').
-async function fetchPublicIssue(owner, repo, number) {
+//
+// `fresh` skips the cache, the overlay and the stale fallback: the issue as
+// GitHub has it now, or none. The Homeroom bot reads its updated_at right
+// after commenting (homeroom-bot-live.js advanceSeen), and a cached copy
+// up to five minutes old would answer with the time before its comment.
+async function fetchPublicIssue(owner, repo, number, { fresh = false } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { issue: null, note: 'bad issue number' };
@@ -2540,7 +2587,7 @@ async function fetchPublicIssue(owner, repo, number) {
   const suppressed = liveSuppressions(owner, repo);
   const knownClosed = !!(suppressed && suppressed.has(n));
   const cached = issuesCache.get(cacheKey);
-  if (!knownClosed && cached && cached.expiresAt > Date.now()) {
+  if (!fresh && !knownClosed && cached && cached.expiresAt > Date.now()) {
     const hit = cached.result.issues.find((i) => i.number === n);
     if (hit) return { issue: hit };
   }
@@ -2548,7 +2595,7 @@ async function fetchPublicIssue(owner, repo, number) {
   // #192: a just-created issue may predate both the cache and GitHub's
   // lagging anonymous endpoints — the overlay carries its full body, so
   // serving from it costs no network call (and no rate-limit budget).
-  const overlay = knownClosed ? null : liveCreatedOverlay(owner, repo);
+  const overlay = knownClosed || fresh ? null : liveCreatedOverlay(owner, repo);
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 
@@ -2570,7 +2617,7 @@ async function fetchPublicIssue(owner, repo, number) {
       // Same stale-cache fallback fetchPublicIssues uses: an expired list
       // entry still beats returning nothing.
       log.warn('github', 'Single-issue fetch rate-limited', { repo: cacheKey, issue: n });
-      const stale = issuesCache.get(cacheKey);
+      const stale = fresh ? null : issuesCache.get(cacheKey);
       const hit = stale && stale.result.issues.find((i) => i.number === n);
       if (hit) return { issue: hit, note: 'rate limited' };
       return { issue: null, note: 'rate limited' };
@@ -2623,14 +2670,19 @@ async function fetchPublicIssue(owner, repo, number) {
 // Homeroom bot recorded for each comment it posted (homeroom_bot_posts), so
 // the request page can leave out the bot's comments its Homeroom thread
 // already carries. clipIssueComments does not pass it on.
-async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
+//
+// `since` (an ISO time) asks GitHub for the comments updated at or after it
+// only, so a caller looking for a comment it may just have posted reads the
+// recent tail instead of the oldest pages (the workflow's close-and-comment).
+async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX, since = null } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { comments: [], truncated: false, note: 'bad issue number' };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
-    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`;
+    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`
+    + (since ? `&since=${encodeURIComponent(since)}` : '');
   const collected = [];
   let page = 0;
 
@@ -2798,6 +2850,7 @@ module.exports = {
   pushFiles,
   createRootCommit,
   getFileContent,
+  listRepoFiles,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

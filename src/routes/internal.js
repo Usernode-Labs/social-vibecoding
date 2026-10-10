@@ -26,6 +26,8 @@ const platformJwt = require('../services/platform-jwt');
 const benchRunner = require('../services/bench/runner');
 const shotsControl = require('../services/shots-control');
 const shotsState = require('../services/shots-state');
+const shotsIdentities = require('../services/shots-identities');
+const shotsReadyStates = require('../services/shots-ready-states');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -42,7 +44,17 @@ async function isKnownHost(pool, rawDomain) {
   if (domain === USERNODE_DOMAIN) return true;
 
   const suffix = '.' + USERNODE_APPS_DOMAIN;
-  if (!domain.endsWith(suffix)) return false;
+  if (!domain.endsWith(suffix)) {
+    // A custom domain (#4405): Caddy's on-demand site asks before issuing,
+    // and only a claim the platform has verified or already serves may cost
+    // a certificate. Unknown hosts never reach the database.
+    if (!/^[a-z0-9.-]+$/.test(domain) || !domain.includes('.') || domain.endsWith('.' + USERNODE_DOMAIN)) return false;
+    const custom = await pool.query(
+      "SELECT 1 FROM app_domains WHERE hostname = $1 AND status IN ('verified', 'live') LIMIT 1",
+      [domain]
+    );
+    return custom.rowCount > 0;
+  }
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
   // label); reject anything with a further dot.
@@ -183,6 +195,15 @@ function internalRoutes(_config) {
     } catch (err) { return shotsError(res, err); }
   });
 
+  // A problem the shots agent noticed on the after build besides the
+  // declared changes, shown on the proposal under "Also noticed".
+  router.post('/api/internal/shots/:runId/problem', shotsAuth, shotsLimiter, (req, res) => {
+    try {
+      const result = shotsControlForRequest(req).noteProblem(req.body || {});
+      return res.json({ ok: true, result });
+    } catch (err) { return shotsError(res, err); }
+  });
+
   // Build-agent declaration boundary. Claude build workers carry the legacy
   // worker:session capability; Codex build workers carry only worker:push.
   // Both may record intent for their own session, but neither can execute a
@@ -212,12 +233,38 @@ function internalRoutes(_config) {
         shots: { accepted: false, state: 'disabled', reason: 'Collecting declared visible changes is disabled.' },
       });
     }
+    let result;
     try {
-      const result = await shotsState.recordIntent(pool, sessionId, req.body?.intent);
-      return res.json({ ok: true, shots: result });
+      result = await shotsState.recordIntent(pool, sessionId, req.body?.intent);
     } catch (err) {
       return shotsError(res, err);
     }
+    // Whose browser the shots agent will use, and what data the copies hold
+    // (shots-ready-states.js), said while the building agent can still
+    // declare again. Best-effort: a lookup that fails never fails a
+    // declaration that was recorded.
+    let warnings = [];
+    let advice = null;
+    try {
+      const { rows } = await pool.query(
+        'SELECT a.id, a.slug FROM chat_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1',
+        [sessionId]
+      );
+      if (rows[0]) {
+        const selfApp = rows[0].slug === _config.selfAppSlug;
+        advice = shotsReadyStates.declarationAdvice(result.intent, { selfApp });
+        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, { selfApp });
+      }
+    } catch (err) {
+      log.warn('internal-api', 'Could not check the declared personas', { sessionId, err: err.message });
+    }
+    if (advice) warnings = [...warnings, ...advice.warnings];
+    return res.json({
+      ok: true,
+      shots: result,
+      ...(advice ? { availableStates: advice.availableStates, dataNote: advice.dataNote } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    });
   };
   router.post('/api/internal/sessions/:sessionId/visible-changes',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
@@ -225,6 +272,44 @@ function internalRoutes(_config) {
   // image while a deploy rolls out.
   router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
     visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
+
+  // #4490: a hosted build's diagram of its change (worker/visible-changes-mcp.js
+  // declare_diagram), on the same boundary as its visible changes: its own
+  // session only, the same validation submit_work applies, and Mermaid only
+  // when the session's declared impact is "none".
+  router.post('/api/internal/sessions/:sessionId/diagram',
+    visibleChangesAuth, visibleChangesLimiter, async (req, res) => {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid proposal session id.' });
+      }
+      if (Number(req.workerSession.sessionId) !== sessionId) {
+        return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this proposal.' });
+      }
+      try {
+        const { rows } = await pool.query(
+          "SELECT shots_detail->'intent'->>'impact' AS impact FROM chat_sessions WHERE id = $1",
+          [sessionId]
+        );
+        if (!rows[0]) return res.status(404).json({ ok: false, code: 'not_found', message: 'No such proposal session.' });
+        let record;
+        try {
+          record = require('../services/diagram').parseDiagram(req.body?.diagram, { impact: rows[0].impact || null });
+        } catch (err) {
+          return res.status(400).json({ ok: false, code: 'invalid_diagram', message: err.message });
+        }
+        const proposalDiagram = require('../services/proposal-diagram');
+        const stored = await proposalDiagram.store(pool, sessionId, record, 'author');
+        if (!stored) return res.status(500).json({ ok: false, code: 'diagram_not_stored', message: 'The diagram could not be stored.' });
+        proposalDiagram.syncPrBlock(pool, sessionId).catch((err) => {
+          log.warn('internal-api', 'Could not write the diagram into the pull request', { sessionId, err: err.message });
+        });
+        return res.json({ ok: true, diagram: record });
+      } catch (err) {
+        log.error('internal-api', 'declare_diagram failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'internal_error', message: 'Could not record the diagram.' });
+      }
+    });
 
   // The app-host gate (services/edge-gate.js): Caddy's forward_auth and the
   // Kubernetes gate proxy (scripts/app-gate.js) both ask here.

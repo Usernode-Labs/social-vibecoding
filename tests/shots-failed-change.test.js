@@ -274,22 +274,30 @@ function pageShots(overrides = {}) {
   };
 }
 
-test('the Tested line says something is not working when the shots show a change failing', () => {
-  const said = (item) => AppView._testedLine(item);
-  assert.deepEqual(said({ check_state: 'passing', shots: pageShots() }), { state: 'failed', text: 'Tested · One thing isn’t working' });
-  assert.deepEqual(said({ check_state: 'skipped', shots: pageShots() }), { state: 'failed', text: 'Tested · One thing isn’t working' });
+test('the Testing card says something is not working when the shots show a change failing (#4455)', () => {
+  const said = (item) => { const t = AppView._changeTestingView(item); return { tone: t.tone, figure: t.figure }; };
+  assert.deepEqual(said({ check_state: 'passing', shots: pageShots() }), { tone: 'bad', figure: 'One thing isn’t working' });
+  assert.deepEqual(said({ check_state: 'skipped', shots: pageShots() }), { tone: 'bad', figure: 'One thing isn’t working' });
   const two = pageShots({ shotResults: [{ id: 'tick-and-undo', status: 'failed', reason: SAW }, { id: 'invite-suggestions', status: 'failed', reason: 'x' }] });
-  assert.deepEqual(said({ check_state: 'passing', shots: two }), { state: 'failed', text: 'Tested · 2 things aren’t working' });
+  assert.deepEqual(said({ check_state: 'passing', shots: two }), { tone: 'bad', figure: '2 things aren’t working' });
   // A failed run that kept no results still counts, by its code.
-  assert.deepEqual(said({ check_state: 'passing', shots: { state: 'failed', failureCode: 'shots_change_failed', shotResults: [] } }).text,
-    'Tested · One thing isn’t working');
+  assert.equal(said({ check_state: 'passing', shots: { state: 'failed', failureCode: 'shots_change_failed', shotResults: [] } }).figure,
+    'One thing isn’t working');
   // Everything else reads as it did.
   assert.deepEqual(said({ check_state: 'passing', shots: pageShots({ shotResults: [{ id: 'tick-and-undo', status: 'skipped', reason: 'r' }] }) }),
-    { state: 'passed', text: 'Tested · All checks passed' }, 'a skip is not a failure');
-  assert.deepEqual(said({ check_state: 'passing', shots: pageShots({ state: 'stale' }) }).text, 'Tested · All checks passed',
+    { tone: 'done', figure: 'All checks passed' }, 'a skip is not a failure');
+  assert.equal(said({ check_state: 'passing', shots: pageShots({ state: 'stale' }) }).figure, 'All checks passed',
     'shots of an older commit say nothing about this one');
-  assert.deepEqual(said({ check_state: 'passing' }).text, 'Tested · All checks passed');
-  assert.deepEqual(said({ check_state: 'failing', shots: pageShots() }).text, 'Testing found a problem');
+  assert.equal(said({ check_state: 'passing' }).figure, 'All checks passed');
+  // A red run offers its re-run to whoever may press it (`App.user`).
+  const hadApp = Object.prototype.hasOwnProperty.call(global, 'App');
+  const previous = global.App;
+  global.App = { user: null };
+  try {
+    assert.equal(said({ check_state: 'failing', shots: pageShots() }).figure, 'Found a problem');
+  } finally {
+    if (hadApp) global.App = previous; else delete global.App;
+  }
 });
 
 test('the before & after card marks a failed change as not working, with what happened', () => {

@@ -167,7 +167,7 @@ test('"Reply here (or on the GitHub issue)" is true: a reply there is read by th
 test('"Ask for changes" is true: it posts on the change and puts its follow-up first', () => {
   // On a change the bot built, the change page leads with it ...
   const view = read('public/js/app-view.js');
-  assert.match(view, /key: 'ask-bot', cls: 'gc-vote-btn', label: 'Ask for changes',/);
+  assert.match(view, /label: 'Ask for changes', icon: 'generate',/);
   // ... which opens the bot's chat with the change attached, and a message
   // carrying it is sent to the change, not to the model to guess at.
   const dmSrc = read('src/services/homeroom-bot-dm.js');

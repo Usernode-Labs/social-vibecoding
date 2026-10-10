@@ -52,6 +52,10 @@ const ACTIONS = Object.freeze(new Set([
   // is the phone's permission refused, cancelled is "Not now". A guardrail
   // of the first-session plan: how often pushes are denied.
   'push_permission',
+  // A request/proposal/governance page opened from a link (#4524): the
+  // measure the fast-open work reports against. Keep identical with the
+  // client's ACTIONS.
+  'topic_load',
 ]));
 const KINDS = Object.freeze(new Set([
   'screen_visit', 'action_attempt', 'action_outcome', 'repeated_action',
@@ -75,6 +79,33 @@ const EVENT_KEYS = Object.freeze([
 ]);
 
 class TelemetryValidationError extends Error {}
+
+// Which language a person's browser asks for first, so the languages Homeroom
+// ships can be chosen from the people who use it (#3659). The client sends
+// nothing new: this reads the Accept-Language header of the request that
+// delivers a batch, and insertBatch notes it on that batch's shell start.
+// Kept to language, script and region ("es-MX", "zh-Hant-TW"): a tag's
+// variants and extensions say more about a device than a language list needs.
+const BROWSER_LANGUAGE_RE = /^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|\d{3}))?$/;
+const MAX_ACCEPT_LANGUAGE_LENGTH = 512;
+
+function browserLanguage(header) {
+  if (typeof header !== 'string' || !header || header.length > MAX_ACCEPT_LANGUAGE_LENGTH) return null;
+  let best = null;
+  for (const part of header.split(',')) {
+    const [range, ...parameters] = part.split(';').map((piece) => piece.trim());
+    const weight = parameters.find((piece) => /^q=/i.test(piece));
+    const q = weight === undefined ? 1 : Number(weight.slice(2));
+    // Listed first wins a tie, which is how browsers order equal preferences.
+    if (!range || range === '*' || !(q > 0) || q > 1 || (best && q <= best.q)) continue;
+    best = { range, q };
+  }
+  if (!best) return null;
+  let locale;
+  try { locale = new Intl.Locale(best.range); } catch { return null; }
+  const tag = [locale.language, locale.script, locale.region].filter(Boolean).join('-');
+  return BROWSER_LANGUAGE_RE.test(tag) ? tag : null;
+}
 
 // Browser checks use real authenticated sessions so protected screens can be
 // exercised. Their fixed handles are the authoritative boundary: role is not
@@ -257,7 +288,7 @@ function parseBatch(body, { nowMs = Date.now() } = {}) {
   return { batchId, events: parsed, delivery };
 }
 
-function eventMetadata(event) {
+function eventMetadata(event, language = null) {
   const metadata = {
     eventId: event.eventId,
     visitId: event.visitId,
@@ -268,10 +299,15 @@ function eventMetadata(event) {
   for (const key of ['attemptId', 'action', 'outcome', 'errorCode', 'durationMs', 'build', 'via']) {
     if (event[key] != null) metadata[key] = event[key];
   }
+  // Once per shell start is all browserLanguages() reads.
+  if (language && event.kind === 'screen_visit' && event.screen === 'shell_boot') {
+    metadata.language = language;
+  }
   return metadata;
 }
 
-async function insertBatch(pool, userId, batch) {
+// `language` is browserLanguage() of the delivering request, or null.
+async function insertBatch(pool, userId, batch, { language = null } = {}) {
   const client = await pool.connect();
   let accepted = 0;
   try {
@@ -283,7 +319,7 @@ async function insertBatch(pool, userId, batch) {
          ON CONFLICT DO NOTHING
          RETURNING id`,
         [userId, event.appSlug, events.EVENT_TYPES.UI_EXPERIENCE,
-          JSON.stringify(eventMetadata(event)), event.occurredAt]
+          JSON.stringify(eventMetadata(event, language)), event.occurredAt]
       );
       accepted += result.rowCount || 0;
     }
@@ -363,6 +399,32 @@ async function recordServerFailure(pool, req, { screen, action, status, message 
 function daysWindow(raw) {
   const value = Number(raw || 14);
   return [1, 7, 14, 30, 90].includes(value) ? value : 14;
+}
+
+// People per browser language over the window: each person once, under the
+// language of their most recent shell start. The same people the failure
+// report counts (no service identities, nobody who objected to recording,
+// since neither is ever stored), admins left out unless asked for.
+async function browserLanguages(pool, { days = 14, includeAdmins = false } = {}) {
+  const { rows } = await pool.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (e.user_id) e.user_id, e.metadata->>'language' AS language
+         FROM events e JOIN users u ON u.id = e.user_id
+        WHERE e.event_type = 'ui_experience'
+          AND e.metadata->>'kind' = 'screen_visit'
+          AND e.metadata->>'screen' = 'shell_boot'
+          AND e.metadata ? 'language'
+          AND e.created_at >= NOW() - ($1::int * INTERVAL '1 day')
+          AND ($3::boolean OR NOT u.is_admin)
+          AND NOT (LOWER(u.username) = ANY($2::text[]))
+        ORDER BY e.user_id, e.created_at DESC, e.id DESC
+     )
+     SELECT language, COUNT(*)::int AS people
+       FROM latest GROUP BY language ORDER BY people DESC, language`,
+    [days, [...usernames.SERVICE_IDENTITIES], !!includeAdmins]
+  );
+  const languages = rows.map((row) => ({ language: row.language, people: Number(row.people) }));
+  return { days, people: languages.reduce((sum, row) => sum + row.people, 0), languages };
 }
 
 async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
@@ -609,6 +671,8 @@ module.exports = {
   SCREENS,
   TelemetryValidationError,
   aggregate,
+  browserLanguage,
+  browserLanguages,
   daysWindow,
   insertBatch,
   isEligibleUser,

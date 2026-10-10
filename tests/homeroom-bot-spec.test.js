@@ -127,11 +127,13 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
   assert.deepEqual(out, {
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3,
+    // Each stage's own cost on its model (services/stage-costs.js).
+    stageCosts: { spec: { usd: 0.01, model: 'z-ai/glm-5.3-flash' }, build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   });
 });
 
 test('a spec starts at its title: what the model said before it is dropped (#3385)', async () => {
-  const chatty = harness({ spec: `All the code I need is verified. Writing the spec now.\n\n${SPEC}` });
+  const chatty = harness({ spec: `All the code I need is verified. Writing the plan now.\n\n${SPEC}` });
   const out = await live.buildAndPropose({ pool: chatty.pool, deps: chatty.deps, ...ARGS, onSpec: chatty.onSpec });
   assert.equal(out.specMd, SPEC);
   assert.equal(chatty.calls.published[0].content, SPEC, 'stored, and so posted, from the title on');
@@ -279,7 +281,11 @@ test('a failed build still says what it meant to build', async () => {
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false });
   assert.equal(out.ok, false);
   assert.equal(out.specMd, SPEC);
-  assert.equal(out.costUsd, 0.060000000000000005, 'both turns are the build\'s cost');
+  // A build turn that changed nothing is nudged once (buildNudgePrompt),
+  // and the nudge is a build turn too: the spec's, the build's and the
+  // nudge's turns are all the build's cost.
+  assert.equal(out.noChange.nudged, true);
+  assert.equal(out.costUsd, 0.11, 'every turn is the build\'s cost');
 });
 
 // ── What is posted ───────────────────────────────────────────────────────
@@ -287,9 +293,9 @@ test('a failed build still says what it meant to build', async () => {
 test('the GitHub comment says what the spec is for and folds the document away', () => {
   const text = live.specCommentText(SPEC);
   // B6: no approval talk while it builds.
-  assert.match(text, /^Homeroom bot wrote a spec for this request and is building it now\. The change will be linked here when it's ready to try\.\n/);
+  assert.match(text, /^Homeroom bot wrote a plan for this request and is building it now\. The change will be linked here when it's ready to try\.\n/);
   assert.ok(!/approve|proposal/i.test(text.split('<details>')[0]));
-  assert.ok(text.includes(`<details><summary>The spec</summary>\n\n${SPEC}\n\n</details>`));
+  assert.ok(text.includes(`<details><summary>The plan</summary>\n\n${SPEC}\n\n</details>`));
   const long = live.specCommentText('x'.repeat(70_000));
   assert.ok(long.length < 65_536, 'GitHub refuses a comment over 65,536 characters');
   assert.ok(!/—/.test(text));
@@ -305,11 +311,41 @@ test('the thread card is the same spec card a person\'s Share posts', () => {
     totalChars: SPEC.length,
     sharedBy: { id: 77, username: 'homeroom_bot' },
   });
-  assert.match(card.content, /Homeroom bot's spec for this request: "Hourly feed refresh"\. It is building it now\.$/);
+  assert.match(card.content, /Homeroom bot's plan for this request: "Hourly feed refresh"\. It is building it now\.$/);
   assert.match(live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT, proposed: true }).content,
-    /The spec this proposal was built from: "Hourly feed refresh"/);
+    /The plan this proposal was built from: "Hourly feed refresh"/);
   assert.equal(live.specTitle('## Only a section\n# Real title'), 'Real title');
   assert.equal(live.specTitle('no title'), null);
+});
+
+test('#4612: an updated plan\'s card says so, and its metadata is the same card a Share posts', () => {
+  const revised = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true, revised: true });
+  assert.match(revised.content, /^📋 The plan, updated for this change \(version 2\): "Hourly feed refresh"\.$/);
+  const first = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true });
+  assert.deepEqual(revised.metadata.specShare, first.metadata.specShare, 'the transcript shows the same card, as v2');
+  assert.doesNotMatch(first.content, /updated/, 'the first card says what it always said');
+  // A revised card is only ever a proposed one; without `proposed` the wording is unchanged.
+  assert.doesNotMatch(live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, revised: true }).content, /updated/);
+});
+
+test('#4612: the issue copy of an updated plan names the version and folds the document away', () => {
+  const text = live.revisedSpecCommentText(SPEC, 2);
+  assert.match(text, /^Homeroom bot updated the plan for this change to match \(version 2\)\.\n/);
+  assert.ok(text.includes(`<details><summary>The plan</summary>\n\n${SPEC}\n\n</details>`), 'the same collapsed block the first plan was posted in');
+  const long = live.revisedSpecCommentText('x'.repeat(70_000), 3);
+  assert.ok(long.length < 65_536, 'GitHub refuses a comment over 65,536 characters');
+  assert.ok(!/—/.test(text));
+});
+
+test('#4612: publishSpec says when the plan it stores is a revision', async () => {
+  const published = [];
+  const pool = { async query() { return { rows: [] }; } };
+  const sessions = { async persistScoutPublication(args) { published.push(args); return { specVersion: 4 }; } };
+  const session = { id: 5001 };
+  assert.equal(await live.publishSpec({ pool, sessions, session, specMd: SPEC, model: 'm', revised: true }), 4);
+  assert.equal(published[0].hadSpec, true, 'the transcript line says the plan was revised');
+  assert.equal(await live.publishSpec({ pool, sessions, session, specMd: SPEC, model: 'm' }), 4);
+  assert.equal(published[1].hadSpec, false, 'the first plan is stored as it always was');
 });
 
 test('live.post puts the card in the thread and the full spec on GitHub', async () => {
@@ -410,8 +446,20 @@ test('live: no spec, no spec posts; a build that fails still records the spec it
 
 // ── Recorded and shown ──────────────────────────────────────────────────
 
+// A shadow build happens only where nothing is live: outside a staging copy
+// every app but a paused one is (live.liveScope). These tests stand on one.
+function onStagingCopy(t) {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  t.after(() => {
+    if (prev === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = prev;
+  });
+}
+
 test('a shadow build records the spec on its run', async (t) => {
   bot._resetForTests();
+  onStagingCopy(t);
   const queries = [];
   const pool = {
     async query(sql, params) {
@@ -438,7 +486,7 @@ test('a shadow build records the spec on its run', async (t) => {
     sessions: { buildHeadlessSeed: () => 'seed' },
     worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
   };
-  const settings = { mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, turnSeconds: 1200 };
+  const settings = { mode: 'shadow', pausedApps: [], shadowBuilds: true, turnSeconds: 1200 };
   assert.equal(await bot.runQueuedBuild(pool, {}, {
     bot: BOT, claim: { id: 900, app_id: 9, issue_number: 12, build_note: 'x' }, settings, deps,
   }), 'shadow_built');
@@ -449,6 +497,7 @@ test('a shadow build records the spec on its run', async (t) => {
 
 test('a shadow build records a failed spec on its run, and the platform gets longer clocks (#3396)', async (t) => {
   bot._resetForTests();
+  onStagingCopy(t);
   const queries = [];
   const apps = {
     9: APP,
@@ -482,7 +531,7 @@ test('a shadow build records a failed spec on its run, and the platform gets lon
     worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
   };
   const settings = {
-    mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
+    mode: 'shadow', pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
   };
   const note = 'no spec (the spec ran past its time limit; last activity: rg -n x); the build worked from the plan';
   const record = () => queries.filter((q) => /SET build_ok = \$2/.test(q.sql)).pop();

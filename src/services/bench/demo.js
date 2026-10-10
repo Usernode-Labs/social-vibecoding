@@ -229,8 +229,9 @@ async function seedStagingBench(pool) {
 // ── #3737: the taste eval, on staging ────────────────────────────────────
 //
 // One open suite with a first-version task and a capture task on the same
-// brief, and a finished run of both, each with its sixteen screenshots
-// (drawn here: a ground in the look's colour and a few bars per state) and
+// brief, and a finished run of both, each with its nineteen screenshots
+// (drawn here: a ground in the look's colour and a few bars per state; the
+// result state's with "Plan the week" as the control it tapped) and
 // the judge's grade, so the results table shows both arms, the spot check
 // shows screenshots, and the suite's tasks show their brief and the form to
 // add another. Its run is older than the core demo's, so the console still
@@ -297,8 +298,33 @@ function demoShot(viewport, look, state) {
   const bars = state === 'empty' ? [{ y: 120, h: 40, rgb: ink }]
     : state === 'error' ? [{ y: 120, h: 56, rgb: [220, 38, 38] }]
       : state === 'loading' ? [0, 1, 2].map((i) => ({ y: 120 + i * 96, h: 72, rgb: ink }))
-        : [{ y: 64, h: 48, rgb: accent }, ...[0, 1, 2, 3].map((i) => ({ y: 160 + i * 112, h: 88, rgb: ink }))];
+        // The result: the form folded up and the answer below it.
+        : state === 'result' ? [{ y: 64, h: 48, rgb: accent }, { y: 160, h: 88, rgb: ink }, { y: 280, h: 320, rgb: accent }]
+          : [{ y: 64, h: 48, rgb: accent }, ...[0, 1, 2, 3].map((i) => ({ y: 160 + i * 112, h: 88, rgb: ink }))];
   return demoPng(width, height, ground, bars);
+}
+
+// The control the demo's result screens tapped, as the step records it.
+const DEMO_ACTION = Object.freeze({ label: 'Plan the week', rule: 'kit-primary' });
+
+/** The demo's screenshots, one per planned shot, the result screens with the control they tapped. */
+function demoShots(capture, lookOf = (p) => p.look) {
+  return capture.plannedShots().map((p) => {
+    const data = demoShot(p.viewport, lookOf(p), p.state);
+    return {
+      ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0,
+      ...(p.state === 'result' ? { action: DEMO_ACTION } : {}),
+    };
+  });
+}
+
+/** The step's account of the demo's result screens. */
+function demoPrimaryAction(capture) {
+  return capture.plannedShots().filter((p) => p.state === 'result').map((p) => ({
+    id: p.id,
+    used: { ...DEMO_ACTION, why: 'the design kit\'s primary button (.btn-primary), the only one in the main content' },
+    settled: 'network idle', changes: 3, revealed: p.viewport === 'phone', dialogs: 0, blocked: 0, ms: 1400,
+  }));
 }
 
 async function seedStagingTaste(pool) {
@@ -355,12 +381,9 @@ async function seedStagingTaste(pool) {
     ];
     for (const [i, k] of kinds.entries()) {
       const id = TASTE_TRIAL_BASE + i + 1;
-      const shots = capture.plannedShots().map((p) => {
-        const data = demoShot(p.viewport, p.look, p.state);
-        return { ...p, data, bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), status: 200, consoleErrors: 0 };
-      });
+      const shots = demoShots(capture);
       const summary = capture.summarize({
-        booted: true, steps: {}, ms: 61_000,
+        booted: true, steps: {}, ms: 61_000, primaryAction: demoPrimaryAction(capture),
         checks: {
           consoleErrors: { count: i, screens: 8, samples: i ? ['Staging demo: Failed to load resource'] : [] },
           overflow360: { light: 0, dark: i * 24, worst: i * 24 },
@@ -409,6 +432,131 @@ async function seedStagingTaste(pool) {
   }
 }
 
+// ── The App bench studio (services/bench/studio.js) ──────────────────
+//
+// One studio run over two starter briefs: each built by the live bot's model
+// with no pack and with a demo pack, beside a reference, every build with its
+// screenshots and a grade, so the Studio place's gallery has something to
+// show. Builds carry no branch, so a preview never points at one. Older than
+// both runs above, so the console still opens on the core demo.
+
+const STUDIO_SUITE_ID = 936543;
+const STUDIO_RUN_ID = 936549;
+const STUDIO_PACK_ID = 936541;
+const STUDIO_SNAPSHOT_BASE = 936590;
+const STUDIO_TASK_BASE = 936590;
+const STUDIO_TRIAL_BASE = 9365950;
+const STUDIO_GRADE_BASE = 9366950;
+
+async function seedStagingStudio(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return false;
+  try {
+    const { rows: done } = await pool.query('SELECT 1 FROM bench_suites WHERE id = $1', [STUDIO_SUITE_ID]);
+    if (done.length) return false;
+    const { rows: [app] } = await pool.query("SELECT id, slug FROM apps WHERE status = 'running' ORDER BY id LIMIT 1");
+    if (!app) return false;
+    const studio = require('./studio');
+    const snapshots = require('../homeroom-bot-snapshots');
+    const graders = require('./graders');
+    const capture = require('./capture');
+    const packs = require('./packs');
+    const token = () => crypto.randomBytes(12).toString('base64url');
+    const briefs = studio.starterBriefs().filter((b) => ['bread', 'tier-list'].includes(b.ref));
+    await pool.query(
+      `INSERT INTO bench_suites (id, name, version, kind, notes, created_at)
+       VALUES ($1, $2, 1, 'rotating', 'Staging demo: the App bench studio''s briefs, with fixture builds.', NOW() - INTERVAL '4 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [STUDIO_SUITE_ID, studio.SUITE_NAME],
+    );
+    const pack = { guidance: 'Staging demo: warm neutrals, one accent, generous spacing.', stageGuidance: {}, files: [] };
+    await pool.query(
+      `INSERT INTO bench_context_packs (id, name, version, guidance, stage_guidance, files, notes, sha256, created_at, used_at)
+       VALUES ($1, 'Staging demo theme', 1, $2, '{}'::jsonb, '[]'::jsonb, 'Staging demo pack.', $3, NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [STUDIO_PACK_ID, pack.guidance, packs.hashOf(pack)],
+    );
+    for (const [i, b] of briefs.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      const blob = await snapshots.storeBlob(pool, b.brief);
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO homeroom_bot_run_snapshots (id, run_id, stage, app_id, issue_number, base_sha, texts, extra, source)
+         VALUES ($1, NULL, 'build', $2, 1, NULL, $3::jsonb, $4::jsonb, 'import')
+         ON CONFLICT (id) DO NOTHING`,
+        [STUDIO_SNAPSHOT_BASE + i, app.id, JSON.stringify({ brief: blob }), JSON.stringify({ taste: 'first_version', appName: b.appName, template: 'empty' })],
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        `INSERT INTO bench_tasks (id, suite_id, stage, snapshot_id, app_id, issue_number, tags, reference, reference_source, label_token)
+         VALUES ($1, $2, 'first_version', $3, $4, NULL, $5::jsonb, '{}'::jsonb, 'authored', $6)
+         ON CONFLICT (id) DO NOTHING`,
+        [STUDIO_TASK_BASE + i, STUDIO_SUITE_ID, STUDIO_SNAPSHOT_BASE + i, app.id,
+          JSON.stringify({ taste: 'first_version', taste_ref: b.ref, app_slug: app.slug, studio_key: studio.studioKey(b.appName, b.brief), prompt_chars: b.brief.length }),
+          token()],
+      );
+    }
+    await pool.query(
+      `INSERT INTO bench_runs (id, suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, status, spent_usd, note,
+                               kind, context_pack_ids, references_per_brief, created_at, started_at, finished_at)
+       VALUES ($1, $2, ARRAY['today'], 'today', ARRAY['first_version'], 1, 10, 4, 'done', 4.48,
+               'Staging demo studio run: fixture screenshots, not real builds.', 'studio', ARRAY[0, $3]::int[], 1,
+               NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [STUDIO_RUN_ID, STUDIO_SUITE_ID, STUDIO_PACK_ID],
+    );
+    const arms = [
+      { model: 'today', pack: null, label: null, pass: false, critique: 'Staging demo critique: the numbers are right, but every screen is the same grey list.' },
+      { model: 'today', pack: STUDIO_PACK_ID, label: null, pass: true, critique: 'Staging demo critique: warm and clear, with an accent that leads to the one action.' },
+      { model: 'reference:ref-v1', pack: STUDIO_PACK_ID, label: 'ref-v1', pass: true, critique: 'Staging demo critique: the reference, as the target for this brief.' },
+    ];
+    const criteriaFor = (pass) => ({
+      hierarchy: true, type_scale: pass, spacing: true, accent: pass, both_looks: true, states: pass, copy: true,
+      no_tells: pass, works_at_390: true, kit_use: pass, domain_fit: true, would_ship: pass,
+    });
+    let n = 0;
+    for (const [i] of briefs.entries()) {
+      for (const arm of arms) {
+        n += 1;
+        const id = STUDIO_TRIAL_BASE + n;
+        const shots = demoShots(capture, (p) => (arm.pass ? p.look : 'dark'));
+        const summary = capture.summarize({ booted: true, steps: {}, ms: 58_000, primaryAction: demoPrimaryAction(capture), checks: {}, tells: {} }, shots, [], {});
+        const parsed = { built: true, triage: { verdict: 'ready', buildNote: 'Staging demo plan.' }, skills: { invoked: arm.pack ? ['staging-demo-theme'] : [], read: [] } };
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query(
+          `INSERT INTO bench_trials (id, run_id, task_id, model, attempt, status, item_token, est_cost_usd, parsed, cost_usd,
+                                     duration_ms, build_commits, capture, context_pack_id, reference_label,
+                                     created_at, started_at, finished_at)
+           VALUES ($1, $2, $3, $4, 1, 'ok', $5, $6, $7::jsonb, $6, $8, 3, '{}'::jsonb, $9, $10,
+                   NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days', NOW() - INTERVAL '4 days' + INTERVAL '21 minutes')
+           ON CONFLICT (id) DO NOTHING`,
+          [id, STUDIO_RUN_ID, STUDIO_TASK_BASE + i, arm.model, token(), arm.label ? 0 : 1.12, JSON.stringify(parsed),
+            arm.label ? 300_000 : 1_260_000, arm.pack, arm.label],
+        );
+        // eslint-disable-next-line no-await-in-loop
+        const ids = await capture.storeShots(pool, id, shots);
+        const stored = { ...summary, shots: summary.shots.map((sh) => ({ ...sh, artifactId: ids[sh.id] || null })) };
+        const det = graders.deterministicGrade({ stage: 'first_version', trial: { status: 'ok', parsed, capture: stored } });
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query('UPDATE bench_trials SET capture = $2::jsonb, deterministic = $3::jsonb WHERE id = $1',
+          [id, JSON.stringify(stored), JSON.stringify(det)]);
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query(
+          `INSERT INTO bench_grades (id, trial_id, grader, grader_label, verdict, critique, criteria, created_at)
+           VALUES ($1, $2, 'opus', 'opus via connector (staging demo)', $3, $4, $5::jsonb, NOW() - INTERVAL '3 days')
+           ON CONFLICT (id) DO NOTHING`,
+          [STUDIO_GRADE_BASE + n, id, arm.pass ? 'pass' : 'fail', arm.critique, JSON.stringify(criteriaFor(arm.pass))],
+        );
+      }
+    }
+    log.info('db', 'App bench studio staging fixtures seeded');
+    return true;
+  } catch (err) {
+    log.warn('db', 'App bench studio staging fixtures failed', { message: err.message });
+    return false;
+  }
+}
+
 module.exports = {
-  seedStagingBench, seedStagingTaste, demoPng, SUITE_ID, RUN_ID, TASTE_SUITE_ID, TASTE_RUN_ID,
+  seedStagingBench, seedStagingTaste, seedStagingStudio, demoPng, SUITE_ID, RUN_ID, TASTE_SUITE_ID, TASTE_RUN_ID,
+  STUDIO_SUITE_ID, STUDIO_RUN_ID,
 };

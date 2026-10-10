@@ -343,12 +343,22 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
   // The story's foot: Safari's toolbar is the large viewport less the small.
   assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-landing-scroll"\] \[data-landing-story\] \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
   assert.match(read('frontend/src/features/auth/story.tsx'), /<div data-landing-story="" className=/);
+  // #4593: with the keys down, the sheet's foot stands on the small viewport's
+  // foot, clear of Safari's toolbar, and its height is capped to that
+  // viewport; the keyboard rule above is more specific, so it still wins.
+  const svh = APP_CSS.slice(APP_CSS.indexOf('/* THE SHEET\'S BUTTON CLEARS SAFARI\'S TOOLBAR WITH THE KEYS DOWN (#4593).'));
+  assert.match(svh, /@media \(max-width: 767px\) \{\s*@supports \(height: 100svh\) \{\s*html \.platform-kb-sheet \{\s*bottom: max\(0px, calc\(100% - 100svh\)\);\s*max-height: 92svh;\s*\}/);
+  // And the sign-in screen's foot, with the story switched off.
+  assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-login-screen"\] #auth-login-screen > \.min-h-full \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
 });
 
 // ── 5. The two screens ──────────────────────────────────────────────────
 
 test('the make screen is a surface whose fields are the keyboard surface\'s, every focus without a scroll', () => {
-  assert.match(MAKE, /className="platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col/);
+  assert.match(MAKE, /export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
+  // From Create, under the platform header (#4195), still a surface.
+  assert.match(MAKE, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
+  assert.match(MAKE, /className=\{underHeader \? MAKE_ROOT_UNDER_HEADER : MAKE_ROOT\}/);
   assert.match(MAKE, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(MAKE, /\.focus\(\)/, 'no focus that lets iOS reveal on its own');
   // Make it is the form's submit button, so the reveal finds it.
@@ -373,7 +383,8 @@ test('on a touch screen the sheet opens without a caret; it moves one only while
   assert.equal(mayFocusByCode({ touch: true, keysUp: false }), false, 'the tap raises the keys, after the sheet has arrived');
   assert.equal(mayFocusByCode({ touch: true, keysUp: true }), true, 'a hop with the keys up keeps them up');
   assert.equal(mayFocusByCode({ touch: false, keysUp: false }), true, 'a desktop gets its caret');
-  assert.match(SHEET, /const focus = mayFocusByCode\(\{ touch: touchScreen\(\), keysUp: keyboardUp\(\) \}\);/);
+  assert.match(SHEET, /export function mayFocusByCodeNow\(\): boolean \{\s*return mayFocusByCode\(\{ touch: touchScreen\(\), keysUp: keyboardUp\(\) \}\);\s*\}/);
+  assert.match(SHEET, /const focus = mayFocusByCodeNow\(\);/);
   assert.match(SHEET, /if \(focus\) field\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(SHEET, /if \(focus\) currentPasswordField\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(SHEET, /root\.contains\(KB_OPEN_CLASS\) \|\| root\.contains\('un-kb'\)/);

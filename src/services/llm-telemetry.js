@@ -40,8 +40,13 @@ const COMPONENTS = new Set([
   'homeroom_bot_triage',
   // #3146: its build turn on a live app, for a request it judged ready.
   'homeroom_bot_build',
+  // The one more turn a build turn that changed nothing is sent
+  // (homeroom-bot-live.js buildNudgePrompt), on the build's own clock.
+  'homeroom_bot_build_nudge',
   // Its spec turn, just before that build (live and shadow alike).
   'homeroom_bot_spec',
+  // The reviewer's look at a first version's screenshots (services/bot-review.js).
+  'homeroom_bot_review',
   // #3654: a benchmark trial of one of its stages, on a candidate model.
   'homeroom_bench',
   // The hub's since-your-last-visit line (services/since-summary.js).
@@ -294,6 +299,30 @@ function normalizeDiagnostics(event = {}) {
     subagent_call_count: tokenCount(event.subagentCallCount),
     web_tool_call_count: tokenCount(event.webToolCallCount),
     tool_search_count: tokenCount(event.toolSearchCount),
+    // Claude Code over OpenRouter (worker.js noteCodingProviderImages): the
+    // images its requests sent, moved out of tool results, or left out.
+    image_sent_count: tokenCount(event.imageSentCount),
+    image_moved_count: tokenCount(event.imageMovedCount),
+    image_omitted_count: tokenCount(event.imageOmittedCount),
+    // Where an OpenRouter coding turn's time went (worker.js
+    // noteCodingRequestClock): the time a model request was open, the time
+    // between requests split by the kind of tool that ran in it, and when
+    // the first edit, the first app boot and the browser calls happened, in
+    // ms since the agent started. Absent when the listener sent no clock.
+    model_request_ms: finiteNonnegative(event.modelRequestMs),
+    browser_tool_ms: finiteNonnegative(event.browserToolMs),
+    shell_tool_ms: finiteNonnegative(event.shellToolMs),
+    edit_tool_ms: finiteNonnegative(event.editToolMs),
+    read_tool_ms: finiteNonnegative(event.readToolMs),
+    other_tool_ms: finiteNonnegative(event.otherToolMs),
+    first_file_change_ms: finiteNonnegative(event.firstFileChangeMs),
+    first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
+    first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
+    last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // The Homeroom bot's build turns in Claude Code: how many times the stop
+    // guard (worker/build-stop-hook.js) sent the agent back to work after it
+    // tried to end a turn that had changed nothing. Absent without the guard.
+    stop_hook_blocks: tokenCount(event.stopHookBlocks),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
   });
 }
@@ -410,6 +439,10 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'file_read_count', 'distinct_file_read_count', 'file_search_count',
   'file_change_count', 'distinct_file_change_count', 'mcp_call_count',
   'subagent_call_count', 'web_tool_call_count', 'tool_search_count',
+  'image_sent_count', 'image_moved_count', 'image_omitted_count',
+  'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
+  'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
+  'last_browser_call_ms', 'stop_hook_blocks',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 

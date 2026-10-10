@@ -176,6 +176,9 @@ function shotsRoutes(config) {
         planHash: run.plan_hash,
         shotResults: shots.isShotsVerdict(run.hard_verdict) && Array.isArray(run.hard_verdict.stories)
           ? run.hard_verdict.stories : [],
+        // What the shots agent noticed broken on the after build, as stored.
+        shotNotices: shots.isShotsVerdict(run.hard_verdict) && Array.isArray(run.hard_verdict.notices)
+          ? run.hard_verdict.notices : [],
         artifacts: artifacts.rows.map((artifact) => ({
           storyId: artifact.story_id,
           viewport: artifact.viewport,

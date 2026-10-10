@@ -1,4 +1,5 @@
-// #3146: the Homeroom bot, live on the apps in `homeroom_bot_live_apps`.
+// #3146: the Homeroom bot, live: on every app but a paused one (it started on
+// a list of apps, `homeroom_bot_live_apps`, retired since).
 //
 // What matters most here is the loop the bot must never start: a post is
 // issue activity, and issue activity re-queues the issue. Those tests come
@@ -110,6 +111,54 @@ test('its own comment is its own even when the login lookup fails (#3509)', asyn
   assert.deepEqual(out, { advanced: false, reason: 'someone_replied' });
 });
 
+test('#4530: the stamp its own comment puts on the issue is seen too, read fresh before the comments', async () => {
+  // homestead #35: the bot commented at 17:00:05, GitHub stamped the issue's
+  // updated_at 17:00:06, and the run recorded 17:00:05. Every refresh then
+  // read its own note as a change ('changed:github') and said it again.
+  const since = '2026-09-25T17:00:00Z';
+  const own = { author: 'usernode-bot', createdAt: '2026-09-25T17:00:05Z' };
+  const order = [];
+  const updates = [];
+  const pool = { async query(sql, params) { updates.push({ sql: String(sql), params }); return { rows: [] }; } };
+  const github = (updatedAt, read = { comments: [own] }) => ({
+    getBotUsername: async () => 'usernode-bot',
+    async fetchPublicIssue(owner, repo, n, opts) { order.push(['issue', n, opts]); return { issue: { number: n, updatedAt } }; },
+    async fetchIssueComments() { order.push(['comments']); return read; },
+  });
+  const threadContext = { async loadIssueThread() { return { messages: [] }; } };
+  const advance = (gh) => live.advanceSeen({
+    pool, github: gh, threadContext, app: APP, repo: REPO, issueNumber: 35, runId: 901, since, postedAt: [own.createdAt],
+  });
+  const out = await advance(github('2026-09-25T17:00:06Z'));
+  assert.deepEqual(out, { advanced: true, seen: '2026-09-25T17:00:06.000Z' });
+  assert.deepEqual(order, [['issue', 35, { fresh: true }], ['comments']],
+    'the issue first, uncached: a person whose comment moved it is in the list read after it');
+  assert.equal(bot.classifyIssue({
+    issue: { number: 35, state: 'open', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-25T17:00:06Z' },
+    lastRun: { thread_seen_at: out.seen },
+  }).reason, 'unchanged', 'so the next refresh finds nothing new');
+
+  // A stamp well after its comment is somebody else's doing (an edit, a
+  // label), and is left to be read.
+  const edited = await advance(github('2026-09-25T17:09:00Z'));
+  assert.deepEqual(edited, { advanced: true, seen: '2026-09-25T17:00:05.000Z' });
+  assert.equal(bot.classifyIssue({
+    issue: { number: 35, state: 'open', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-25T17:09:00Z' },
+    lastRun: { thread_seen_at: edited.seen },
+  }).reason, 'changed');
+  // So is one when the comments could not all be read: the person whose
+  // comment moved it may be the one missing.
+  for (const read of [{ comments: [own], truncated: true }, { comments: [], note: 'rate limited' }]) {
+    assert.deepEqual(await advance(github('2026-09-25T17:00:06Z', read)), { advanced: true, seen: '2026-09-25T17:00:05.000Z' });
+  }
+  // And a person's comment still leaves the issue to be read again.
+  const replied = await advance(github('2026-09-25T17:00:07Z', {
+    comments: [own, { author: 'alice', createdAt: '2026-09-25T17:00:07Z' }],
+  }));
+  assert.deepEqual(replied, { advanced: false, reason: 'someone_replied' });
+  assert.equal(live.OWN_STAMP_SLACK_MS, 60 * 1000);
+});
+
 test('its Homeroom posts are system messages, which the queue never counts as activity', () => {
   assert.match(LIVE_SRC, /msgType = 'system'/, 'posts default to system messages');
   const activity = BOT_SRC.slice(BOT_SRC.indexOf('async function threadActivityByIssue'));
@@ -121,51 +170,59 @@ test('its Homeroom posts are system messages, which the queue never counts as ac
 
 // ── Where it is live ─────────────────────────────────────────────────────
 
-test('it is live only on a listed app, with the mode on, and never on a staging copy', (t) => {
-  const on = { mode: 'shadow', liveApps: [APP.slug] };
-  assert.equal(live.isLiveFor(on, APP), true);
-  assert.equal(live.isLiveFor({ ...on, mode: 'off' }, APP), false, 'off means off');
-  assert.equal(live.isLiveFor({ mode: 'shadow', liveApps: ['other'] }, APP), false, 'only the listed apps');
-  assert.equal(live.isLiveFor(null, APP), false);
+test('it is live on every app with the mode on, and never on a staging copy', (t) => {
   const prior = process.env.USERNODE_ENV;
   t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  delete process.env.USERNODE_ENV;
+  const on = { mode: 'shadow' };
+  assert.equal(live.isLiveFor(on, APP), true, 'no list needed');
+  assert.equal(live.isLiveFor({ ...on, mode: 'off' }, APP), false, 'off means off');
+  assert.equal(live.isLiveFor(null, APP), false);
+  assert.equal(live.isLiveFor(on, null), false);
   process.env.USERNODE_ENV = 'staging';
   assert.equal(live.isLiveFor(on, APP), false,
     'a staging copy starts from production\'s settings and must never post on real issues');
 });
 
-test('with the everyone audience it is live on every app but a paused one and the platform\'s own', (t) => {
-  const everyone = { mode: 'shadow', audience: 'everyone', liveApps: [], pausedApps: ['quiet'], platformSlugs: ['usernode-2d5619'] };
-  assert.equal(live.isLiveFor(everyone, APP), true, 'no list needed');
-  assert.equal(live.isLiveFor(everyone, { slug: 'anything-else' }), true);
-  assert.equal(live.isLiveFor(everyone, { slug: 'quiet' }), false, 'paused stays paused');
-  assert.equal(live.isLiveFor(everyone, { slug: 'usernode-2d5619' }), false, 'the platform\'s own project has its own switch');
-  assert.equal(live.isLiveFor({ ...everyone, livePlatform: true }, { slug: 'usernode-2d5619' }), true);
-  assert.equal(live.isLiveFor({ ...everyone, mode: 'off' }, APP), false, 'off means off for everyone too');
-  assert.deepEqual(live.liveScope(everyone), { all: true, slugs: [], except: ['quiet', 'usernode-2d5619'] });
-  // The list audience reads as it always did, paused apps and all.
-  const list = { mode: 'shadow', liveApps: ['a', 'b'], firstVersionApps: ['b', 'c'], pausedApps: ['a'] };
-  assert.deepEqual(live.liveScope(list), { all: false, slugs: ['a', 'b', 'c'], except: [] });
-  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'shadow', liveApps: [] })), true);
-  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), false);
-  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
-  assert.deepEqual(live.appsScope({ ...everyone, mode: 'off' }), live.liveScope(everyone));
+test('it is live on every app but a paused one, the platform\'s own included', (t) => {
   const prior = process.env.USERNODE_ENV;
   t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  delete process.env.USERNODE_ENV;
+  const settings = { mode: 'shadow', pausedApps: ['quiet', 'quiet'] };
+  assert.equal(live.isLiveFor(settings, APP), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'anything-else' }), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'quiet' }), false, 'paused stays paused');
+  assert.equal(live.isLiveFor(settings, { slug: 'usernode-2d5619' }), true, 'Homeroom\'s own project too');
+  assert.equal(live.isLiveFor({ ...settings, mode: 'off' }, APP), false, 'off means off');
+  assert.deepEqual(live.liveScope(settings), { all: true, slugs: [], except: ['quiet'] });
+  // What the retired lists said no longer narrows it.
+  assert.deepEqual(live.liveScope({ mode: 'shadow', liveApps: ['a'], firstVersionApps: ['b'], platformSlugs: ['usernode-2d5619'] }),
+    { all: true, slugs: [], except: [] });
+  assert.equal(live.scopeIsEmpty(live.liveScope(settings)), false);
+  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'off' })), true);
+  // A scope that names its own apps (liveCandidates) still reads as those apps.
+  assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'a'), true);
+  assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'b'), false);
+  assert.equal(live.scopeIsEmpty({ all: false, slugs: [], except: [] }), true);
+  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
+  assert.deepEqual(live.appsScope({ ...settings, mode: 'off' }), live.liveScope(settings));
   process.env.USERNODE_ENV = 'staging';
-  assert.equal(live.isLiveFor(everyone, APP), false, 'never on a staging copy');
-  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), true);
+  assert.equal(live.isLiveFor(settings, APP), false, 'never on a staging copy');
+  assert.equal(live.scopeIsEmpty(live.liveScope(settings)), true);
+  assert.deepEqual(live.appsScope(settings), { all: true, slugs: [], except: ['quiet'] }, 'appsScope reads past staging');
 });
 
-test('the live list is a validated setting that ships empty', () => {
-  assert.deepEqual(bot.parseSettings([]).liveApps, []);
-  assert.deepEqual(bot.parseSettings([{ key: bot.KEY_LIVE_APPS, value: '["rss-reader-4113da", 3]' }]).liveApps, ['rss-reader-4113da']);
-  assert.equal(bot.validateSettingsPatch({ liveApps: ['Not A Slug'] }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ liveApps: 'rss-reader-4113da' }).ok, false);
-  const ok = bot.validateSettingsPatch({ liveApps: ['rss-reader-4113da', 'rss-reader-4113da'] });
-  assert.deepEqual(ok.updates, [[bot.KEY_LIVE_APPS, '["rss-reader-4113da"]']], 'deduplicated');
+test('the live list is gone: an app is left alone by pausing it', () => {
+  assert.equal(Object.hasOwn(bot.parseSettings([{ key: 'homeroom_bot_live_apps', value: '["rss-reader-4113da"]' }]), 'liveApps'), false);
+  assert.equal(bot.KEY_LIVE_APPS, undefined);
+  assert.deepEqual(bot.validateSettingsPatch({ liveApps: ['rss-reader-4113da'] }), { ok: false, error: 'Nothing to update' });
+  assert.deepEqual(bot.validateSettingsPatch({ pausedApps: ['rss-reader-4113da', 'rss-reader-4113da'] }).updates,
+    [[bot.KEY_PAUSED_APPS, '["rss-reader-4113da"]']], 'deduplicated');
+  assert.equal(bot.validateSettingsPatch({ pausedApps: ['Not A Slug'] }).ok, false);
   assert.equal(bot.validateSettingsPatch({ mode: 'live' }).ok, false, 'the global switch still refuses live');
-  assert.match(read('src/db/schema.sql'), /\('homeroom_bot_live_apps', '\[\]'\)/);
+  const schema = read('src/db/schema.sql');
+  assert.doesNotMatch(schema, /\('homeroom_bot_live_apps', '\[\]'\)/, 'never seeded again');
+  assert.match(schema, /DELETE FROM platform_settings\n WHERE key IN \('homeroom_bot_live_apps',/);
 });
 
 // ── Posting ──────────────────────────────────────────────────────────────
@@ -577,6 +634,9 @@ test('a ready request is built in a session of its own and proposed', async () =
     ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
     costUsd: 0.05,
     specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+    // What each stage cost, on its model (services/stage-costs.js): a spec
+    // turn whose cost is unknown has no line.
+    stageCosts: { build: { usd: 0.05, model: 'z-ai/glm-5.3-flash' } },
   }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
@@ -681,6 +741,43 @@ test('WP1: a build whose request was answered or closed while it ran is not prop
   assert.ok(check < fn.indexOf('await prepareProposal({') && check < fn.indexOf('const promoted = await promoteAsBot({'), 'before it is proposed');
 });
 
+// One run, one build. Linking a build's session to its run is its claim on
+// the run (homeroom-bot.js buildLive's onSession): a run another build linked
+// first refuses it, and this one stops there. A second build of homestead
+// #31 paid for a plan and a build before it stopped on the first's proposal.
+test('a build whose run refuses its session stops before its branch, its worker and its plan', async () => {
+  const h = buildHarness({ spec: SPEC });
+  const specs = [];
+  const branches = [];
+  const ensureSessionBranch = h.deps.sessionLifecycle.ensureSessionBranch;
+  h.deps.sessionLifecycle.ensureSessionBranch = async (a) => { branches.push(a.sessionId); return ensureSessionBranch(a); };
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...BUILD_ARGS,
+    onSpec: async (s) => { specs.push(s); },
+    onSession: async () => bot.LOST_CLAIM,
+    skipCheck: async () => { throw new Error('never asked'); },
+  });
+  assert.equal(out.lostClaim, true);
+  assert.equal(out.ok, false);
+  assert.equal(out.skipped, bot.LOST_CLAIM);
+  assert.equal(out.sessionId, 5001);
+  assert.equal(out.costUsd, null, 'nothing spent');
+  assert.deepEqual(branches, [], 'no branch');
+  assert.deepEqual(h.calls.ensured, [], 'no worker');
+  assert.deepEqual(h.calls.modes, [], 'no plan turn and no build turn');
+  assert.deepEqual(specs, [], 'no plan posted');
+  assert.deepEqual(h.calls.promoted, []);
+  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql) && q.params[0] === 5001), 'its session is put away');
+  // Only a reason is a refusal: a link that resolves nothing (the bench's)
+  // or the query's result builds as before.
+  for (const resolved of [undefined, null, { rows: [{ id: 900 }] }]) {
+    const go = buildHarness();
+    const built = await live.buildAndPropose({ pool: go.pool, deps: go.deps, ...BUILD_ARGS, onSession: async () => resolved });
+    assert.equal(built.ok, true);
+    assert.equal(built.lostClaim, undefined);
+  }
+});
+
 test('WP1: a check that cannot answer never stops a build, and a build with no check is built as before', async () => {
   const h = buildHarness();
   const out = await live.buildAndPropose({
@@ -756,7 +853,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   h.posts.length = 0;
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_queued');
   assert.deepEqual(h.posts, [], 'nothing built and nothing said yet');
-  assert.ok(h.queries.some((q) => /SET live_build_waiting_at = NOW\(\)/.test(q.sql) && q.params[0] === 900));
+  assert.ok(h.queries.some((q) => /SET live_build_waiting_at = COALESCE\(live_build_waiting_at, NOW\(\)\)/.test(q.sql) && q.params[0] === 900));
   // The lane builds it.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
   assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
@@ -764,7 +861,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
   assert.deepEqual(card.metadata, { vote: { sessionId: 5001, prNumber: 42 } });
-  assert.match(card.text, /https:\/\/app\.onhomeroom\.com\/#app\/rss-reader-4113da\/dev\/proposals\/5001/);
+  assert.match(card.text, /https:\/\/app\.onhomeroom\.com\/#app\/rss-reader-4113da\/dev\/changes\/42/);
   assert.ok(h.queries.some((q) => /SET proposal_session_id = \$2/.test(q.sql) && q.params[1] === 5001));
   assert.deepEqual(h.deps.limits.spend, [25], 'the build is paid for from the bot\'s weekly allowance');
 
@@ -796,6 +893,45 @@ test('WP1: a build that was not needed is recorded as a skip, and nothing is sai
   assert.deepEqual(recorded.slice(0, 3), [900, false, 'skipped: the request already has a proposal (6190)'],
     'which every reader shows as stopped');
   assert.ok(!h.queries.some((q) => /SET proposal_session_id = \$2/.test(q.sql)));
+});
+
+test('a second build of one run stops at its link and leaves the run to the first: nothing recorded, said or spent', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; live.advanceSeen = realSeen; });
+  const seen = [];
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return {}; };
+  live.advanceSeen = async () => { seen.push('seen'); return { advanced: true }; };
+  let refused;
+  live.buildAndPropose = async (args) => {
+    refused = await args.onSession({ id: 5009 });
+    // What buildAndPropose resolves once its link is refused (above).
+    if (refused) return { ok: false, sessionId: 5009, branchName: null, error: refused, skipped: refused, lostClaim: true, costUsd: null };
+    return { ok: true, sessionId: 5009, prNumber: 43, costUsd: 0.25 };
+  };
+  // The run answers no row: another build linked its session first.
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'lost_claim');
+  assert.equal(refused, bot.LOST_CLAIM);
+  const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql));
+  assert.match(claim.sql, /WHERE id = \$1\s+AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
+    'once: only a run no build has linked, still waiting for its outcome');
+  assert.deepEqual(claim.params, [900, 5009]);
+  assert.ok(!h.queries.some((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)), 'the run keeps the first build\'s record');
+  assert.ok(!h.queries.some((q) => /^UPDATE homeroom_bot_runs SET (live_build_waiting_at|build_spec_md|proposal_session_id) = /.test(q.sql)));
+  assert.deepEqual(h.posts, [], 'nothing said');
+  assert.deepEqual(seen, [], 'what the run has seen is the first build\'s to move');
+  assert.deepEqual(h.deps.limits.spend, [], 'nothing spent');
+
+  // The run's own build: its link is taken, and it builds as ever.
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/SET build_session_id = \$2/.test(String(sql))) return { rows: [{ id: 900 }] };
+    return query(sql, params);
+  };
+  assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.equal(refused, null);
 });
 
 test('WP1: what the run has seen moves past its own plan comment as soon as it is posted', async (t) => {
@@ -876,7 +1012,7 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(/);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.
@@ -900,8 +1036,8 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
   });
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
   assert.deepEqual(recorded(), [900, true, 'no spec (the spec ran past its time limit); the build worked from the plan',
-    'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null, 'm'],
-    'a proposal built without a spec says why; #3654: and the model it was built on');
+    'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null, 'm', null],
+    'a proposal built without a spec says why; #3654: and the model it was built on; and no turn that changed nothing');
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build ran past its time limit', costUsd: 0.2 });
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
@@ -937,10 +1073,17 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
       return { rows: [{ cnt: 0 }] };
     },
   };
-  const settings = { liveApps: ['a', 'b', 'c', 'd'] };
+  // Every app is live, so the automatic ceiling is a fixed one; an admin's
+  // number replaces it.
   assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
-  assert.equal(bot.botProposalCeiling(settings), 20, '5 per live app');
-  assert.equal(bot.botProposalCeiling(null), 5, 'never below one app\'s cap');
+  assert.equal(bot.botProposalCeiling({}), 100, 'the automatic ceiling');
+  assert.equal(bot.botProposalCeiling(null), 100);
+  total = 99;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
+  total = 100;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), 'proposals_total');
+  const settings = { proposalCeiling: 20 };
+  assert.equal(bot.botProposalCeiling(settings), 20, 'an admin\'s number');
   total = 19;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
   total = 20;
@@ -993,16 +1136,22 @@ test('runTriage acts only through the live module, and only when the app is live
   for (const forbidden of ['createIssueComment', 'sendSystemMessage', '/promote']) {
     assert.ok(!BOT_SRC.includes(forbidden), `homeroom-bot.js never reaches ${forbidden} itself`);
   }
-  // Two build calls: buildLive's (a live ready verdict, in its own slot),
-  // and the shadow build's, which never proposes and never posts (shadow
-  // builds leave a branch and nothing else).
-  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'buildLive, and the shadow build');
+  // Three build calls: buildLive's (a live ready verdict, in its own slot),
+  // the plan a complicated change drafts in that same slot before it asks
+  // its requester (#4488, planBeforeBuilding: the spec only, never
+  // proposed), and the shadow build's, which never proposes and never posts
+  // (shadow builds leave a branch and nothing else).
+  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 3, 'buildLive, a complicated change\'s plan, and the shadow build');
+  const planning = BOT_SRC.slice(BOT_SRC.indexOf('async function planBeforeBuilding('), BOT_SRC.indexOf('function isGoWord('));
+  assert.match(planning, /platformRepo: isPlatformRepo\(app, config\), planOnly: true,/, 'the plan\'s call drafts the spec and nothing else');
   const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
   assert.match(shadow, /propose: false,?\s*\}\);/);
   assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
-  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready' && shadowBuildsApply\(settings, app, config\)\) \{/,
+  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready'\) \{\n\s+const skip = shadowBuildSkipReason\(settings, app, config\);/,
     'and it is queued only where the live branch does not run');
-  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', liveApps: ['todo'], shadowBuilds: true }, { slug: 'todo' }),
+  assert.match(BOT_SRC, /if \(!skip\) \{\n(?:\s+\/\/.*\n)+\s+if \(await queueShadowBuild\(pool, runId\)\) acted = 'shadow_queued';/,
+    'only when nothing rules it out; otherwise the run says why (build_error "skipped: …")');
+  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', shadowBuilds: true }, { slug: 'todo' }),
     'the app is live now', 'a live app is never also shadow built');
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);

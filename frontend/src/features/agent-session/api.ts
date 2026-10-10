@@ -2,6 +2,8 @@
 // conversation screen reads and writes. Every route is owner-scoped on the
 // server (src/routes/agent-sessions.js); nothing here decides access.
 
+import type { ReleaseOutlook } from '../../lib/release-eta';
+
 /** A change's failing checks, as services/agent-sessions.js reads them (#3755). */
 export interface FailingChecks {
   /** When the failing verdict was stored: one run, one offer. */
@@ -31,6 +33,12 @@ export interface AgentChange {
   failingChecks?: FailingChecks | null;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
+  /**
+   * Merged into the platform's own app and not live yet (it reads
+   * `merging`): when the platform's next release carries it, which
+   * ../../lib/release-eta.ts words. Absent on anything else.
+   */
+  release?: ReleaseOutlook | null;
   /** Its before/after shots, while they are being taken. */
   previewCapture?: { state: string; startedAt: string | null } | null;
 }
@@ -220,6 +228,9 @@ export interface OpenRouterModel {
   /** The catalog's published prices, for the cost of a typical change. */
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  /** What a prompt-cache read and write cost, where the catalog lists them. */
+  cacheReadPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
@@ -246,10 +257,12 @@ export interface ModelCatalog {
 /**
  * The platform's per-model notes and estimates (#2570): an estimate for each
  * curated model, and the token profile of a typical change, which prices any
- * other model from its catalog prices.
+ * other model from its catalog prices. `inputTokens` is every prompt token;
+ * `cachedInputTokens` and `cacheWriteInputTokens` are the parts of it read
+ * from and written to the prompt cache, absent from an older server.
  */
 export interface ModelNotes {
-  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  typicalChange: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number } | null;
   models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
@@ -380,14 +393,26 @@ export async function loadModelCatalog(
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
-    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
+    {
+      typicalChange?: { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; cacheWriteInputTokens?: unknown } | null;
+      models?: unknown;
+    } | null,
   ];
   if (notes && notes.models && typeof notes.models === 'object') {
     const profile = notes.typicalChange;
     const input = Number(profile?.inputTokens);
     const output = Number(profile?.outputTokens);
+    const cached = Number(profile?.cachedInputTokens);
+    const written = Number(profile?.cacheWriteInputTokens);
     catalog.notes = {
-      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      typicalChange: Number.isFinite(input) && Number.isFinite(output)
+        ? {
+          inputTokens: input,
+          outputTokens: output,
+          ...(Number.isFinite(cached) ? { cachedInputTokens: cached } : {}),
+          ...(Number.isFinite(written) ? { cacheWriteInputTokens: written } : {}),
+        }
+        : null,
       models: notes.models as ModelNotes['models'],
     };
   }
@@ -615,7 +640,7 @@ export interface SpecVersion {
 export async function getSpec(changeId: number): Promise<{ spec: string; html: string | null; versions: SpecVersion[] }> {
   const body = await json<{ spec?: string; html?: string | null; versions?: SpecVersion[] }>(
     await request(`/api/sessions/${changeId}/spec`),
-    'Could not load the spec.',
+    'Could not load the plan.',
   );
   return {
     spec: typeof body.spec === 'string' ? body.spec : '',
@@ -656,7 +681,7 @@ export async function ensureChangeStaging(changeId: number): Promise<{ status: s
 export async function getSpecVersionDoc(changeId: number, version: number): Promise<{ text: string; html: string | null }> {
   const body = await json<{ spec?: { content?: string; content_html?: string | null } }>(
     await request(`/api/sessions/${changeId}/specs/${version}`),
-    'Could not load that version of the spec.',
+    'Could not load that version of the plan.',
   );
   const spec = body.spec || {};
   return {

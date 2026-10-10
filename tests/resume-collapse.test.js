@@ -1,11 +1,12 @@
 'use strict';
 
 // #3618: an app you close collapses into its Resume control, and grows back
-// out of it when you resume — the rail's Active row on the desktop (which now
-// carries a Resume pill in the accent), the strip above the tab bar on the
-// phone (#platform-parked). frontend/src/features/nav/resume-motion.ts has the
-// argument; these pin the pieces: the pill, the target, the stand-in, the
-// router's wiring and the kit's duration option.
+// out of it when you resume — the app's tile among the desktop strip's
+// recent apps (#4417; it was the rail's Active row and its Resume pill), the
+// strip above the tab bar on the phone (#platform-parked).
+// frontend/src/features/nav/resume-motion.ts has the argument; these pin the
+// pieces: the tile, the target, the stand-in, the router's wiring and the
+// kit's duration option.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -18,63 +19,19 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const motion = loadTsx('frontend/src/features/nav/resume-motion.ts');
-const { buildActive } = loadTsx('frontend/src/features/nav/recents.ts');
 
-function recentApp(slug, at, extra = {}) {
-  return { slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra };
-}
+// ── The tile ──────────────────────────────────────────────────────────
 
-// ── The pill ──────────────────────────────────────────────────────────
-
-test('a running app you left carries Resume on its Active row; the app you are in does not', () => {
-  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
-  const items = buildActive({
-    live: ['notes', 'chess'],
-    current: 'notes',
-    apps: [recentApp('notes', '2026-09-20T10:00:00Z'), recentApp('chess', '2026-09-20T09:00:00Z')],
-  });
-  const html = renderToHtml(createElement(ActiveApps, { items }));
-  const rows = html.split('<a class="platform-recent"').slice(1);
-  assert.equal(rows.length, 2);
-  assert.match(rows[0], /aria-current="true"/);
-  assert.doesNotMatch(rows[0], /platform-recent-resume/, 'resuming where you are is not an action');
-  assert.match(rows[1], /<span class="platform-recent-resume" aria-hidden="true">Resume<\/span>/);
-  // The row's accessible name already says it is still open; the pill adds
-  // nothing to it.
-  assert.match(rows[1], /aria-label="App: Chess, still open"/);
-  // Off screen entirely (on Messages, say): every running app offers Resume.
-  const away = buildActive({ live: ['notes'], current: null, apps: [recentApp('notes', '2026-09-20T10:00:00Z')] });
-  assert.match(renderToHtml(createElement(ActiveApps, { items: away })), /class="platform-recent-resume" aria-hidden="true">Resume</);
+test('a running app you left is on the strip with the still-open dot; pressing its tile notes it as the origin', () => {
+  const src = read('frontend/src/features/nav/strip-apps.tsx');
+  assert.match(src, /onClick=\{\(event\) => onAppClick\(event, app\.slug, running && !lit\)\}/,
+    'a running app you are not in grows back out of its tile; the app you are in has nothing to resume');
+  assert.match(src, /if \(live\) noteResumeOrigin\(slug, event\.currentTarget\.querySelector\('\.platform-strip-tile'\) \|\| event\.currentTarget\);/);
+  assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
 });
 
-test('Recents rows (apps no longer running) carry no Resume pill', () => {
-  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
-  const now = Date.UTC(2026, 8, 20, 12);
-  const html = renderToHtml(createElement(RecentsByDay, {
-    items: [{
-      key: 'app:notes', kind: 'app', label: 'Notes', href: '/app/notes', at: '2026-09-20T10:00:00Z',
-      unread: false, app: { slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: null },
-    }],
-    live: [],
-    showOlder: false,
-    onToggleOlder() {},
-    now,
-  }));
-  assert.match(html, /data-recent-key="app:notes"/);
-  assert.doesNotMatch(html, /platform-recent-resume/);
-});
-
-test('Resume is an action: the accent, filled, on the rail and on the phone strip', () => {
+test('Resume is an action: the accent, filled, on the phone strip', () => {
   const css = read('public/css/app.css');
-  const desk = css.indexOf('THE SAME FIVE TABS, STANDING UP');
-  const at = css.indexOf('  .platform-recent-resume {');
-  assert.ok(desk > 0 && at > desk, 'the rail pill is drawn in the desktop block');
-  const pill = css.slice(at, css.indexOf('}', at));
-  assert.match(pill, /background: var\(--accent\);/);
-  assert.match(pill, /color: var\(--accent-ink\);/);
-  assert.match(pill, /border-radius: 999px;/);
-  assert.match(css, /\.platform-recent-resume ~ \.platform-recent-live \{\s*display: none;\s*\}/,
-    'one mark per row: the pill says what the green dot said');
 
   const strip = css.slice(css.indexOf('\n.platform-parked-pill {'));
   const rule = strip.slice(0, strip.indexOf('}'));
@@ -110,7 +67,7 @@ function fakeDoc({ rows = [], byId = {}, vt = false, reduced = false } = {}) {
     defaultView: win,
     appended,
     documentElement: { hasAttribute: (k) => vt && k === 'data-un-vt' },
-    querySelectorAll: (sel) => (/platform-active/.test(sel) ? rows : []),
+    querySelectorAll: (sel) => (/platform-strip-apps/.test(sel) ? rows : []),
     getElementById: (id) => byId[id] || null,
     body: { appendChild: (el) => { appended.push(el); el.isConnected = true; } },
     createElement: (tag) => {
@@ -136,16 +93,16 @@ function fakeDoc({ rows = [], byId = {}, vt = false, reduced = false } = {}) {
 const PILL = { left: 150, top: 120, width: 60, height: 22, bottom: 142 };
 const ROW = { left: 8, top: 116, width: 208, height: 34, bottom: 150 };
 
-test('the target is the Active row\'s Resume pill, then the row, then the phone strip', () => {
+test('the target is the app\'s tile on the strip, then its row, then the phone strip', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-recent-key': 'app:chess' }, children: { '.platform-recent-resume': pill } });
-  const other = fakeEl({ rect: ROW, attrs: { 'data-recent-key': 'app:notes' } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
+  const other = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'notes' } });
   assert.equal(motion.resumeHandleFor('chess', fakeDoc({ rows: [other, row] })), pill);
-  assert.equal(motion.resumeHandleFor('notes', fakeDoc({ rows: [other, row] })), other, 'no pill: the row');
+  assert.equal(motion.resumeHandleFor('notes', fakeDoc({ rows: [other, row] })), other, 'no tile drawn: the row');
   assert.equal(motion.resumeHandleFor('dice', fakeDoc({ rows: [other, row] })), null);
 
-  // A folded rail draws no rows: nothing to land on.
-  const hiddenRow = fakeEl({ attrs: { 'data-recent-key': 'app:chess' }, children: { '.platform-recent-resume': fakeEl() } });
+  // A folded strip draws no apps: nothing to land on.
+  const hiddenRow = fakeEl({ attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': fakeEl() } });
   assert.equal(motion.resumeHandleFor('chess', fakeDoc({ rows: [hiddenRow] })), null);
 
   // The phone: the whole strip, when it offers THIS app and is showing.
@@ -182,11 +139,11 @@ test('a pressed Resume is the zoom\'s origin once, for that app, while fresh', (
 
 // ── The stand-in ──────────────────────────────────────────────────────
 
-test('closing shrinks a stand-in from where the app was into the Resume pill, 250ms ease-out, then it goes', () => {
+test('closing shrinks a stand-in from where the app was into its tile on the strip, 250ms ease-out, then it goes', () => {
   assert.equal(motion.RESUME_MOTION_MS, 250);
   assert.match(motion.RESUME_EASE, /^cubic-bezier\(0\.2, 0\.8, 0\.2, 1\)$/, 'ease-out');
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-recent-key': 'app:chess' }, children: { '.platform-recent-resume': pill } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
   const doc = fakeDoc({ rows: [row] });
   const from = { left: 0, top: 56, width: 1280, height: 744 };
   const moved = motion.collapseIntoResume({ slug: 'chess', name: 'Chess', iconEmoji: '♟️' }, from, doc);
@@ -216,7 +173,7 @@ test('closing shrinks a stand-in from where the app was into the Resume pill, 25
 
 test('the stand-in removes itself even when no animation event ever comes', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = fakeEl({ rect: ROW, attrs: { 'data-recent-key': 'app:chess' }, children: { '.platform-recent-resume': pill } });
+  const row = fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
   const doc = fakeDoc({ rows: [row] });
   assert.equal(motion.collapseIntoResume({ slug: 'chess' }, null, doc), true, 'no measured rect: under the header, edge to edge');
   const ghost = doc.appended[0];
@@ -227,7 +184,7 @@ test('the stand-in removes itself even when no animation event ever comes', () =
 
 test('nothing moves for reduced motion, a missing button, or a page transition in flight', () => {
   const pill = fakeEl({ rect: PILL });
-  const row = () => fakeEl({ rect: ROW, attrs: { 'data-recent-key': 'app:chess' }, children: { '.platform-recent-resume': pill } });
+  const row = () => fakeEl({ rect: ROW, attrs: { 'data-strip-app': 'chess' }, children: { '.platform-strip-tile': pill } });
   const from = { left: 0, top: 56, width: 1280, height: 744 };
   for (const [why, doc] of [
     ['reduced motion', fakeDoc({ rows: [row()], reduced: true })],
@@ -256,9 +213,8 @@ test('the bridge offers the motion to the router', () => {
 test('pressing Resume notes the control before the router opens the app', () => {
   const strip = read('frontend/src/features/nav/parked-strip.tsx');
   assert.match(strip, /noteResumeOrigin\(app\.slug, ref\.current\);\s*window\.App\?\.openAppTab\?\.\(app\.slug, 'app'\);/);
-  const list = read('frontend/src/features/nav/recents-list.tsx');
-  assert.match(list, /if \(resume\) \{[\s\S]{0,200}noteResumeOrigin\(slug, row\.querySelector\('\.platform-recent-resume'\) \|\| row\);[\s\S]{0,40}\}\s*\/\/[^\n]*\n[\s\S]{0,200}window\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
-  assert.match(list, /<RecentRow key=\{item\.key\} item=\{item\} live resume=\{!item\.current\} \/>/);
+  const apps = read('frontend/src/features/nav/strip-apps.tsx');
+  assert.match(apps, /if \(live\) noteResumeOrigin\([^;]*\);\s*\/\/[^\n]*\n[\s\S]{0,300}\.App\?\.openAppTab\?\.\(slug, 'app'\);/);
 });
 
 test('the router measures the app before hiding it and parks it into the button', () => {
@@ -334,11 +290,11 @@ test('the kit zooms keep the homescreen timing unless a duration is asked for', 
   assert.deepEqual(plain.timers, [480]);
 });
 
-test('a declared check pins the Resume pill on a kept app\'s Active row (folded into the kept-apps check)', () => {
+test('a declared check pins a kept app\'s still-open tile on the strip (folded into the kept-apps check)', () => {
   const manifest = JSON.parse(read('dapp.json'));
   const check = manifest.tests.find((t) => t.id === 'kept-apps.home-dot');
   assert.equal(check.path, '/?demo=1&shot=apps-kept');
   assert.match(check.expectSelector,
-    /^body:has\(#platform-recents \.platform-active > a\[data-live\]:not\(\[aria-current\]\) > \.platform-recent-resume\) /);
+    /^body:has\(#platform-strip-apps > a\.platform-strip-app\[data-live\]:not\(\[aria-current\]\) \.platform-strip-live\) /);
   assert.ok(check.impact.includes('frontend/src/features/nav/**'));
 });

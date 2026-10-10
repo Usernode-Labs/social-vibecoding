@@ -1,7 +1,7 @@
 import { memo, useRef, useState } from 'react';
 
 import {
-  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DownloadIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
@@ -15,7 +15,10 @@ import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName
 import { BotActivityCard, isActivityMessage } from './bot-activity';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
+import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
+import type { ChangeBlock } from './bot-shared';
+import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -26,6 +29,7 @@ import { MessageActionSheet, useLongPress } from '../message-actions/action-shee
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
 import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
+import { downloadLabel, downloadableImages, saveImages, useCanSaveImage } from '../image-viewer/save-image';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
@@ -84,6 +88,9 @@ export const MessageRow = memo(function MessageRow({
   inThread = false,
   threadOpen = false,
   focused = false,
+  planCardId = null,
+  hidePrompts = false,
+  block = null,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -99,6 +106,16 @@ export const MessageRow = memo(function MessageRow({
   threadOpen?: boolean;
   /** The message a link pointed at — flashed once (#2387). */
   focused?: boolean;
+  /** #4046: a plan's request's activity card, whose step the plan carries (./bot-plan.tsx planLayout). */
+  planCardId?: number | null;
+  /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
+  hidePrompts?: boolean;
+  /**
+   * #4564: this row's part of its change's outlined block, in the chat with
+   * Homeroom bot (./bot-shared.ts changeBlocks, ./index.tsx). Null anywhere
+   * else, and for a bot message about no request: those draw as before.
+   */
+  block?: ChangeBlock | null;
 }) {
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
@@ -121,6 +138,11 @@ export const MessageRow = memo(function MessageRow({
   const canThread = live && !inThread && kind !== 'direct';
   const scope = scopeKey(conversationId, inThread ? message.threadRootId : null);
   useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
+  // #4055: the message's pictures. In the app, whether its build can save
+  // one is known only once asked; asking re-renders the row so the menu's
+  // Download line can appear.
+  const images = (message.attachments || []).filter((att) => att.contentType.startsWith('image/'));
+  useCanSaveImage(images[0]?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live || editing });
 
   async function saveEdit() {
@@ -200,6 +222,9 @@ export const MessageRow = memo(function MessageRow({
   if (message.content) {
     items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, 'Message text copied'); } });
   }
+  // #4055: its pictures onto the device, whoever sent them.
+  const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
+  if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   items.push({
     key: 'link', label: 'Copy link to message', icon: LinkIcon,
     onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), 'Link copied'); },
@@ -232,10 +257,31 @@ export const MessageRow = memo(function MessageRow({
   const shortTime = timeOfDay(message.createdAt);
 
   // The words, as markdown. A Homeroom bot message about a request names its
-  // project, so its `#N` chips open that project's requests (#3770).
-  const words = message.content
-    ? <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />
+  // project, so its `#N` chips open that project's requests (#3770), and the
+  // line naming what it is about is that thing's card (#4097,
+  // ./bot-head-card.tsx), which is then not drawn again under the words.
+  const head = botHead(message.content, botMeta(message));
+  const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
+  // #4564: a row whose change block repeats the request drops its request
+  // card — the top of the block already shows that request — and its words
+  // carry the card's own label, spoken, in its place. Only on the plain
+  // words path: a card standing in place of the words (thanks, activity,
+  // plan, two questions, ready) keeps everything it draws, and the change's
+  // own card in `objects` is never a repeat.
+  const dropHead = !!block?.repeat && head?.kind === 'request' && !isThanksMessage(message)
+    && !isActivityMessage(message) && !isPlanMessage(message) && !isTwoQuestions(message) && !isReadyMessage(message);
+  // #4564: a repeated request's line goes without its card, and without the
+  // line either — the top of its block already shows that card. `head` is
+  // botHead's own fresh reading of this render's content, so the flag set
+  // here is this row's alone; after `objects`, which must still filter the
+  // card the message carries by it (a hidden head filters nothing).
+  if (dropHead && head) head.hidden = true;
+  const spokenLabel = dropHead && head
+    ? (head.title ? `Request #${head.issueNumber}: ${head.title}` : `Request #${head.issueNumber}`)
     : null;
+  const words = !message.content ? null : head
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
+    : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
@@ -247,6 +293,10 @@ export const MessageRow = memo(function MessageRow({
       {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+      ) : isThanksMessage(message) ? (
+        // #4392: the activity card Build it moved under a plan is the bot's
+        // thanks: its words over the app's card and build line.
+        <BotThanksCard message={message} words={words} />
       ) : isActivityMessage(message) ? (
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).
@@ -259,7 +309,7 @@ export const MessageRow = memo(function MessageRow({
       ) : isPlanMessage(message) ? (
         // B6: a first version's plan, and two questions at once, stand in
         // place of their words too (./bot-plan.tsx).
-        <BotPlanCard message={message} conversationId={conversationId} />
+        <BotPlanCard message={message} conversationId={conversationId} cardId={planCardId} />
       ) : isTwoQuestions(message) ? (
         <BotTwoQuestions message={message} conversationId={conversationId} />
       ) : isReadyMessage(message) ? (
@@ -275,9 +325,9 @@ export const MessageRow = memo(function MessageRow({
     <>
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
-        ? <BotQuestion message={message} conversationId={conversationId} /> : null}
+        ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
-      {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
+      {objects.length ? <div className="messages-object-list">{objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
@@ -349,13 +399,23 @@ export const MessageRow = memo(function MessageRow({
     {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
   </div> : null;
 
+  // #4564: the change block this row belongs to, as classes and data its
+  // stylesheet draws its outline from. The article's own id, its
+  // data-message-id and its existing classes are unchanged.
+  const blockClass = block ? ` messages-bot-block messages-bot-block-${block.part}` : '';
+  const blockAttrs = block ? { 'data-bot-block': block.key, 'data-bot-block-part': block.part } : {};
+
   return (
-    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...longPress}>
+    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
       {grouped
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
-      <div className="min-w-0 flex-1">
+      <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : 'min-w-0 flex-1'}>
         {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender)}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {/* #4564: the dropped card's own label, spoken: a screen reader still
+            hears which request these words are about, as the block's top
+            shows. */}
+        {dropHead ? <span className="sr-only">{spokenLabel}</span> : null}
         {body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}

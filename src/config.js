@@ -115,6 +115,39 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+// PHONE_TEST_CODE (services/firebase-phone-auth.js, "TEST NUMBERS"): the six
+// digits the fictional +1 … 555 01xx numbers sign in with, for walking a
+// newcomer's first run on a local stack. '' when unset, malformed, or in
+// production, where it would let anybody verify a number they do not hold.
+// `refused` says why it is off, for the boot line.
+function phoneTestCodeFrom(env) {
+  const raw = typeof env.PHONE_TEST_CODE === 'string' ? env.PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.NODE_ENV === 'production' || env.USERNODE_ENV === 'production') {
+    return { code: '', refused: 'production' };
+  }
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
+// SHOTS_PHONE_TEST_CODE: the same six digits, for the before & after shots
+// copies of Homeroom itself and nothing else. Those copies run the platform
+// image, whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there
+// and a change to the Join sheet's phone step had nothing to shoot. The
+// deployed platform hands each pair a fresh random code
+// (services/shots-environment.js shotsPhoneSignInEnv) and runs it as
+// USERNODE_ENV=staging. Honoured ONLY where USERNODE_ENV is exactly
+// 'staging': never in production, and app-manifest.js reserves the name, so
+// no dapp.json puts it on an ordinary staging preview either.
+function shotsPhoneTestCodeFrom(env) {
+  const raw = typeof env.SHOTS_PHONE_TEST_CODE === 'string' ? env.SHOTS_PHONE_TEST_CODE.trim() : '';
+  if (!raw) return { code: '', refused: null };
+  if (env.USERNODE_ENV === 'production') return { code: '', refused: 'production' };
+  if (env.USERNODE_ENV !== 'staging') return { code: '', refused: 'not a shots copy' };
+  if (!/^[0-9]{6}$/.test(raw)) return { code: '', refused: 'not six digits' };
+  return { code: raw, refused: null };
+}
+
 function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
   if (typeof value !== 'string' || !value) return null;
   try {
@@ -723,6 +756,26 @@ function load() {
     // knob so it can't be silently disabled along with the stale-PR sweeper.
     // Default 60s; set to 0 to disable (the hourly catch-all still runs).
     governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
+    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
+    // the governance-proposal machine decides governance proposals and the
+    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
+    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
+    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
+    // (delivery, preview teardown, included changes, closing requests, the
+    // announcements) to the merge-followups machine, and a change reads
+    // live only once production runs it. Off by default.
+    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
+    // Its own pool, so pipeline slots and the outcome listener never take
+    // request connections, and how many slots each process runs. A staging
+    // preview shares one Postgres server with the fleet: one slot, and a
+    // pool of two (the outcome listener and one working connection).
+    wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
+    wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
+    // What a write to a machine-owned column outside the pipeline does:
+    // 'raise' everywhere but production, where it is logged to
+    // wf_ownership_violations until no legacy writer is left.
+    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
+      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -835,6 +888,9 @@ function load() {
     // endpoint answering 404 not_offered, exactly as before this existed.
     firebasePhoneAuthEnabled: process.env.FIREBASE_PHONE_AUTH_ENABLED === 'true',
     firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY || '',
+    // Test numbers (phoneTestCodeFrom above, or shotsPhoneTestCodeFrom on a
+    // before & after shots copy). Never set in production.
+    phoneTestCode: phoneTestCodeFrom(process.env).code || shotsPhoneTestCodeFrom(process.env).code,
     // Platform outbound mail (login codes, waitlist confirmations,
     // waitlist release notices). src/services/mail/select.js picks the
     // transport once, here, from platform_env: Gmail API, a generic HTTP
@@ -968,6 +1024,19 @@ function load() {
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  FIREBASE_PHONE_AUTH=${config.firebasePhoneAuthEnabled ? 'enabled' : 'disabled'}${config.firebaseWebApiKey ? '' : ' (no web API key — phone endpoints answer 404 not_offered)'}`);
+  const phoneTest = phoneTestCodeFrom(process.env);
+  if (phoneTest.code) {
+    console.log('  PHONE_TEST_CODE=(set) — +1 … 555 0100–0199 sign in with it as test accounts; no text is sent');
+  } else if (phoneTest.refused) {
+    console.error(`  PHONE_TEST_CODE=(refused: ${phoneTest.refused}) — test numbers are off`);
+  }
+  // "(set)", never the code: the run's code lives in its brief only.
+  const shotsPhoneTest = shotsPhoneTestCodeFrom(process.env);
+  if (shotsPhoneTest.code && !phoneTest.code) {
+    console.log('  SHOTS_PHONE_TEST_CODE=(set) — a before & after shots copy: +1 … 555 0100–0199 sign in with the run\'s code; no text is sent');
+  } else if (shotsPhoneTest.refused) {
+    console.error(`  SHOTS_PHONE_TEST_CODE=(refused: ${shotsPhoneTest.refused}) — test numbers are off`);
+  }
   console.log(`  PLATFORM_MAIL=${config.mailTransport
     ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
     : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
@@ -1027,4 +1096,6 @@ module.exports = {
   canonicalOpenRouterApiBase,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
+  phoneTestCodeFrom,
+  shotsPhoneTestCodeFrom,
 };

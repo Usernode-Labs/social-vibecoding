@@ -113,11 +113,52 @@ test('a mention inside a reply thread opens the thread too, even without an href
   assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/thread/70']]);
 });
 
+// #4417 follow-up: a message in one of the project's TOPIC channels opens
+// that channel on its project page, on the message (brought into view and
+// marked there, tests/group-chat-topic-channel.test.js), at the address the
+// server put on the row, or the one its refs spell when there is none. It
+// used to fall through to #general.
+for (const kind of ['mention', 'reply', 'reaction']) {
+  test(`a ${kind} in a topic's channel opens that channel, on the message`, () => {
+    const { N, calls } = load();
+    N.items = [row({ kind, chatMessageId: 88, threadType: 'category', threadRef: 12,
+      href: '#messages/app/garden-ab12/c/12/m/88' })];
+    N._onItemClick(1);
+    assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/c/12/m/88']],
+      'the topic\'s own address, never #general\'s reveal');
+    const bare = load();
+    bare.N.items = [row({ kind, chatMessageId: 88, threadType: 'category', threadRef: '12' })];
+    bare.N._onItemClick(1);
+    assert.deepEqual(nav(bare.calls), [['address', '#messages/app/garden-ab12/c/12/m/88']]);
+  });
+}
+
+test('a reply in a topic message\'s reply thread opens that thread beside the topic\'s channel', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'thread_reply', chatMessageId: 90, threadType: 'message', threadRef: '70',
+    href: '#messages/app/garden-ab12/c/12/thread/70' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/c/12/thread/70']]);
+});
+
 test('a mention inside a topic thread still opens that topic, where the message is', () => {
   const { N, calls } = load();
   N.items = [row({ kind: 'mention', chatMessageId: 9, threadType: 'issue', threadRef: '44' })];
   N._onItemClick(1);
   assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 44 } }]]);
+});
+
+// #4535: a message in a request's discussion opens that request's
+// discussion, and the row names the request it talks about.
+test('a request discussion reply opens the request and names it', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'issue_thread_reply', chatMessageId: 9, threadType: 'issue', threadRef: '44', detail: '44' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'topic', ref: { kind: 'issue', id: 44 } }]]);
+  const views = N._rowView({ ...N.items[0], createdAt: new Date().toISOString() });
+  assert.equal(views.label, 'Replied on request #44');
+  assert.equal(N._rowView({ ...N.items[0], detail: null, createdAt: new Date().toISOString() }).label,
+    'Replied on a request', 'without a number on record, the row still names the kind of thing');
 });
 
 test('the other rows that landed on the app chat land on the discussion too', () => {
@@ -140,6 +181,23 @@ test('"New issue #N" opens issue #N, not the app chat', () => {
   // A row with no number to open has no better page than the discussion.
   const other = load();
   other.N.items = [row({ kind: 'issue_opened', detail: null })];
+  other.N._onItemClick(1);
+  assert.deepEqual(nav(other.calls), [['discussion', 'garden-ab12']]);
+});
+
+// #3952: named with @ in a request somebody filed. It opens the request,
+// where the words that named you are, and reads like a chat mention.
+test('"Mentioned you" in request #N opens request #N', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'issue_mention', detail: '3952', sourceUsername: 'evan' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['openAppTab', 'garden-ab12', 'dev', { subTab: 'issues', ref: 3952 }]]);
+  const view = N._rowView({ ...N.items[0], createdAt: new Date().toISOString() });
+  assert.equal(view.label, 'Mentioned you');
+  assert.deepEqual(JSON.parse(JSON.stringify(view.segments)), [{ t: 'strong', v: 'request #3952' }]);
+  assert.equal(view.by, 'evan');
+  const other = load();
+  other.N.items = [row({ kind: 'issue_mention', detail: null })];
   other.N._onItemClick(1);
   assert.deepEqual(nav(other.calls), [['discussion', 'garden-ab12']]);
 });

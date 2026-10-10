@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { StudioPage } from './admin-bench-studio';
 
 // The Homeroom bot console's Benchmark area (#admin/homeroom-bot/benchmark),
 // #3654. Rendered by admin-homeroom-bot.tsx under its Benchmark tab, so it
@@ -37,6 +38,10 @@ import { AdminUI } from './admin-console.js';
 //              with Freeze, New version and Delete where they are allowed,
 //              Core v1's own state, taste briefs edited in their row, and one
 //              Add task menu over the four ways to add a task.
+//   Studio     …/benchmark/studio: the App bench studio's gallery of first
+//              versions built from briefs, by model and context pack, beside
+//              reference builds; its runs as they move, its packs and its
+//              launcher (admin-bench-studio.tsx).
 //   New run    a sheet over any of them: the launcher in four steps (suite,
 //              stages, models, limits) beside what the run would do, asked
 //              of the server before anything is spent (POST runs/estimate,
@@ -57,7 +62,7 @@ const BASE = '/api/admin/homeroom-bot/bench';
 
 type Stage = 'triage' | 'spec' | 'build' | 'followup' | 'checks_fix' | 'dm' | 'first_version' | 'capture';
 const STAGE_LABEL: Record<Stage, string> = {
-  triage: 'Triage', spec: 'Spec', build: 'Build', followup: 'Follow-up', checks_fix: 'Checks fix', dm: 'DM',
+  triage: 'Triage', spec: 'Plan', build: 'Build', followup: 'Follow-up', checks_fix: 'Checks fix', dm: 'DM',
   first_version: 'First version', capture: 'Capture (before)',
 };
 const STAGES: Stage[] = ['triage', 'spec', 'build', 'followup', 'checks_fix', 'dm', 'first_version', 'capture'];
@@ -251,10 +256,12 @@ export type BenchRoute =
   | { view: 'overview' }
   | { view: 'runs' }
   | { view: 'run'; id: number }
-  | { view: 'suites'; id: number | null };
+  | { view: 'suites'; id: number | null }
+  | { view: 'studio' };
 
 /** The place an address names; anything it does not name is the Overview. Pure. */
 export function benchRouteFromHash(hash: string): BenchRoute {
+  if (/^#admin\/homeroom-bot\/benchmark\/studio\/?$/.test(String(hash || ''))) return { view: 'studio' };
   const m = /^#admin\/homeroom-bot\/benchmark\/(runs|suites)(?:\/(\d+))?\/?$/.exec(String(hash || ''));
   if (!m) return { view: 'overview' };
   const id = m[2] ? Number(m[2]) : null;
@@ -266,6 +273,7 @@ export function benchHash(route: BenchRoute): string {
   if (route.view === 'runs') return `${BENCH_HASH}/runs`;
   if (route.view === 'run') return `${BENCH_HASH}/runs/${route.id}`;
   if (route.view === 'suites') return route.id ? `${BENCH_HASH}/suites/${route.id}` : `${BENCH_HASH}/suites`;
+  if (route.view === 'studio') return `${BENCH_HASH}/studio`;
   return BENCH_HASH;
 }
 type Go = (route: BenchRoute) => void;
@@ -564,6 +572,13 @@ export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
 /** A suite of the taste eval's tasks (#3737). Pure. */
 export function isTasteSuite(s: Pick<Suite, 'counts'>): boolean {
   return TASTE_STAGES.some((st) => (s.counts?.[st] || 0) > 0);
+}
+// The App bench studio's own suite (services/bench/studio.js SUITE_NAME): its
+// first versions are read in the Studio place, by brief and arm, and never
+// stand in for the taste eval on the Overview.
+const STUDIO_SUITE_NAME = 'App bench studio';
+export function isStudioSuite(s: Pick<Suite, 'name'>): boolean {
+  return s.name === STUDIO_SUITE_NAME;
 }
 
 /** A suite's tasks against what it is meant to hold, in words. Pure. */
@@ -2418,7 +2433,7 @@ export async function loadBenchSummary(): Promise<{ models: Model[]; best: Best;
 
 // ── The area ────────────────────────────────────────────────────────────
 
-/** The title, the three places with their counts, and New run, over every place. */
+/** The title, the four places with their counts, and New run, over every place. */
 function BenchHeader({ route, go, runs, suites, onNew, status }: {
   route: BenchRoute; go: Go; runs: Run[] | null; suites: Suite[] | null; onNew: (() => void) | null; status: { text: string; tone: Tone } | null;
 }) {
@@ -2427,6 +2442,7 @@ function BenchHeader({ route, go, runs, suites, onNew, status }: {
     ['overview', 'Overview', null, { view: 'overview' }],
     ['runs', 'Runs', runs ? runs.length : null, { view: 'runs' }],
     ['suites', 'Suites', suites ? suites.length : null, { view: 'suites', id: null }],
+    ['studio', 'Studio', null, { view: 'studio' }],
   ];
   return (
     <div className="space-y-3" id="admin-homeroom-bench-header">
@@ -2542,7 +2558,7 @@ export function BenchmarkArea({ canWrite, active = true, inUse = null, defaultMo
   const { suiteId: matrixSuiteId, runs: matrixRuns } = matrixRunsFor(allRuns, launcher);
   const matrixSuite = (suites || []).find((s) => s.id === matrixSuiteId);
   // The taste suite the Overview reports on: the one with runs, else the newest.
-  const tasteSuite = (suites || []).filter(isTasteSuite).sort((a, b) => (Number(b.runs || 0) > 0 ? 1 : 0) - (Number(a.runs || 0) > 0 ? 1 : 0) || b.id - a.id)[0] || null;
+  const tasteSuite = (suites || []).filter((s) => isTasteSuite(s) && !isStudioSuite(s)).sort((a, b) => (Number(b.runs || 0) > 0 ? 1 : 0) - (Number(a.runs || 0) > 0 ? 1 : 0) || b.id - a.id)[0] || null;
   const tasteRuns = tasteSuite ? allRuns.filter((r) => r.suite_id === tasteSuite.id && runCounts(r).ran > 0).slice(0, 4) : [];
   // Each report the Overview reads: the matrix's, the taste suite's, and
   // the newest runs' (what waits for the judge). A finished run's report is
@@ -2608,6 +2624,8 @@ export function BenchmarkArea({ canWrite, active = true, inUse = null, defaultMo
   } else if (route.view === 'runs') {
     page = runs == null ? <p className={AdminUI.loading}>Loading…</p>
       : <RunsPage runs={runs} models={models} canWrite={canWrite} pendingOf={pendingOf} go={go} onCancel={cancelRun} />;
+  } else if (route.view === 'studio') {
+    page = <StudioPage canWrite={canWrite} say={say} />;
   } else if (route.view === 'suites') {
     page = suites == null ? <p className={AdminUI.loading}>Loading…</p> : (
       <SuitesPage suites={suites} selectedId={route.id} core={core} coreSuiteId={core?.suite?.id ?? null} canWrite={canWrite} go={go}

@@ -63,6 +63,10 @@ const EVENT_TYPES = Object.freeze({
   // The app's lock toggled (POST /api/apps/:slug/lock), with { locked }.
   // Read back by services/app-notices.js with the settings changes above.
   APP_LOCK_CHANGED: 'app_lock_changed',
+  // A project's custom domain (#4405, services/app-domains.js): metadata
+  // carries { hostname, action } with action one of added | live | removed
+  // | failed | disabled | enabled. Read back by services/app-notices.js.
+  APP_DOMAIN_CHANGED: 'app_domain_changed',
   // The Friday card (services/weekly-digest.js), its data as metadata. A
   // channel carries no activity, so this is where the card lives, and a
   // project's Workshop shows it for a few days (services/app-notices.js).
@@ -107,6 +111,13 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin sent a diagnostic text from Admin → SMS delivery
+  // (src/routes/admin.js POST /api/admin/sms/test). Metadata carries
+  // { status, providerCode, phoneLast4 } — the last four digits only,
+  // never the whole number, the code or a credential. Emitted for every
+  // outcome Firebase gave, including `refused` and `unreachable`. No
+  // backfill — the button didn't exist before this shipped.
+  SMS_TEST_SENT: 'sms_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally
@@ -181,10 +192,69 @@ const EVENT_TYPES = Object.freeze({
   //   invite_opened         a live invite link opened, once per person
   //                         (an account, else a browser) and maker and
   //                         project (services/invite-activity.js); user_id
-  //                         is the visitor when signed in. metadata:
-  //                         { inviteId, signedIn }
+  //                         is the visitor when signed in. Recorded signed
+  //                         out too, though only a signed-in open tells the
+  //                         maker (#4176). metadata: { inviteId, signedIn }
+  //   invite_signed_in      the invite funnel's middle step: somebody signed
+  //                         up or in from a live invite link (the sign-in
+  //                         carried it: communityInvites.redeemCarried, or
+  //                         dropCarried when it does not follow it), or
+  //                         opened one already signed in, before joining.
+  //                         Once per person per link (the unique index in
+  //                         schema.sql), written by
+  //                         journey-events.noteInviteSignedIn. metadata:
+  //                         { inviteId, how: 'signed_up' | 'signed_in' |
+  //                         'was_signed_in' }; the first two are the
+  //                         sign-ins the link brought, the last somebody
+  //                         already signed in (#4272)
+  //   first_session_looked_around
+  //                         the first session's question, "What do you want
+  //                         to make?", answered with "Look around first"
+  //                         (#4039): the other outcome beside a project made
+  //                         from it (app_created with from 'first-session').
+  //                         Written once, with the answer itself
+  //                         (services/first-session.js answerJoinScreen).
+  //                         metadata: { via } (how the question reached
+  //                         them: 'story' or 'sign_in')
   FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
   INVITE_OPENED: 'invite_opened',
+  INVITE_SIGNED_IN: 'invite_signed_in',
+  FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  PLATFORM_INCIDENT: 'platform_incident',
+  // The Homeroom bot's build turns that quit early, and their nudges
+  // (homeroom-bot-live.js recordNoChange), so a weekly query can read the
+  // early-quit rate per OpenRouter provider and how often a nudge saves the
+  // build. Both carry the turn's facts: { lane, runId, trialId,
+  // issueNumber, turn ('build' | 'nudge'), ended, provider, providers,
+  // model, harness, requests, toolCalls, fileEdits, outputTokens, seconds,
+  // recovered }. Never what the agent said: that is kept on its run.
+  //   bot_build_no_change  a build turn that ended cleanly and pushed
+  //                        nothing new; the build's own adds { nudged,
+  //                        notNudged }
+  //   bot_build_nudged     a nudge, once it ended; adds { committed }
+  BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
+  BOT_BUILD_NUDGED: 'bot_build_nudged',
+  // #4449: Live, the new app shown taking shape while its first version is
+  // built (services/first-version-live.js). Written to compare build times
+  // with and without the watcher, and to see how often Live showed nothing.
+  //   first_version_build_turn  every first version's build turn, once it
+  //                        ends: { runId, buildTurnMs (its first turn),
+  //                        turnsMs (with a nudge), nudged, watcher (whether
+  //                        the watcher ran), setting (whether Live was on) }
+  //   live_build_stream    per run, when its watcher stops: { runId,
+  //                        restartsKept, restartsFailed, goodFrame (ever had
+  //                        one), memoryStop, stoppedWhy, bytes }
+  //   live_build_opened    a member opened Live: { runId }
+  //   live_build_watched   how long they watched, sent when they close or
+  //                        hide it: { runId, seconds, goodFrame }
+  FIRST_VERSION_BUILD_TURN: 'first_version_build_turn',
+  LIVE_BUILD_STREAM: 'live_build_stream',
+  LIVE_BUILD_OPENED: 'live_build_opened',
+  LIVE_BUILD_WATCHED: 'live_build_watched',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

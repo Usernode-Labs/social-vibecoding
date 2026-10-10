@@ -27,7 +27,9 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //   `{ recorded: false, reason }` and reads "not recorded yet", never 0;
 // - Hear back arrives as `{ status: 'coming' }` and reads "coming";
 // - every mark carries its count, and no share is printed as a percentage:
-//   at one to six people a rate claims more than the data holds.
+//   at one to six people a rate claims more than the data holds. The one
+//   exception is the invite funnel's conversion from step to step (#4176),
+//   printed beside its counts and only from FUNNEL_RATE_FROM people.
 //
 // Analytics is a separate section with its own definitions; this one does
 // not read or change it. On screen it is "project", never "app".
@@ -165,6 +167,8 @@ type MilePerson = {
   // Getting started: the tour and the season's First challenges, x of n.
   // `null` without an account; `shown: false` when the card was never drawn.
   onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
+  // What the admit mail's tracking saw; `null` when it was not tracked.
+  mail?: { opened: boolean; clicked: boolean } | null;
 };
 type Summary = {
   demo?: boolean;
@@ -335,6 +339,7 @@ type Cohorts = { cohorts: Array<{ day: string; admitted: number; withAccount: nu
 type FirstMile = {
   cohort: string; people: MilePerson[];
   steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
+  mail?: { tracked: number; opened: number; clicked: number } | NotRecorded;
   notRecorded?: Record<string, NotRecorded>;
 };
 
@@ -383,18 +388,24 @@ type NextSteps = {
 
 const UNIT_MAX = 24;
 
-function UnitBar({ n, of, fill, rest = JUI.empty }: { n: number; of: number; fill: string; rest?: string }) {
+// `also` more after the first `n`, in `alsoFill`: one count in two parts.
+function UnitBar({ n, of, fill, rest = JUI.empty, also = 0, alsoFill = fill }: {
+  n: number; of: number; fill: string; rest?: string; also?: number; alsoFill?: string;
+}) {
   if (of <= 0) return <div className={`h-2 rounded-sm ${JUI.empty}`} />;
   if (of > UNIT_MAX) {
     return (
-      <div className={`h-2 rounded-sm overflow-hidden ${rest}`}>
+      <div className={`flex h-2 rounded-sm overflow-hidden ${rest}`}>
         <div className={`h-2 ${fill}`} style={{ width: `${Math.round((n / of) * 100)}%` }} />
+        {also > 0 ? <div className={`h-2 ${alsoFill}`} style={{ width: `${Math.round((also / of) * 100)}%` }} /> : null}
       </div>
     );
   }
   return (
     <div className="flex gap-0.5">
-      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : rest}`} />)}
+      {Array.from({ length: of }, (_, i) => (
+        <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : i < n + also ? alsoFill : rest}`} />
+      ))}
     </div>
   );
 }
@@ -606,7 +617,7 @@ const MILE_KEYS = Object.keys(MILE_STEPS);
 // "mail" is the provider taking the message, not the inbox getting it.
 const MILE_HELP: Record<string, string> = {
   admitted: 'Let in from the waitlist.',
-  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. That does not prove it reached the inbox.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link. An open is approximate, and no open is not proof it went unread.',
   code_asked: 'A sign-in code was asked for. The mail\u2019s button asks for one as it opens, so this is the first proof the link was followed.',
   account: 'Account created and finished.',
   access: 'The account has platform access.',
@@ -702,6 +713,15 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
   const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
+  // The admit mail's tracking, on the card's own meta line: counts over the
+  // people whose mail was tracked, the gap said as a gap, and nothing when
+  // nobody here was sent one (all came in another way).
+  const mailed = people.filter((p) => p.steps.some((st) => st.key === 'mail_sent'));
+  const tracked = mailed.flatMap((p) => (p.mail ? [p.mail] : []));
+  const mailNote = !mailed.length ? ''
+    : tracked.length
+      ? ` \u00b7 mail: ${tracked.filter((m) => m.opened).length} opened \u00b7 ${tracked.filter((m) => m.clicked).length} clicked of ${tracked.length} tracked`
+      : ' \u00b7 mail opens not tracked';
   // One column note open at a time, and how it opened: a tap keeps it until
   // the next tap, a hover only while the mouse stays.
   const [help, setHelp] = useState<{ id: string; how: 'tap' | 'hover' } | null>(null);
@@ -723,7 +743,7 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
       onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
   );
   return (
-    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
+    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week${mailNote}`}>
       {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands
@@ -1099,20 +1119,28 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
 // somebody who joined one through an invite link, each timed from the start
 // of that session. The aha in the first session: the maker sent an invite,
 // or the person who joined wrote in its chat or filed a request, within the
-// hour.
+// hour. The question's other answer, "Look around first", is counted as its
+// own outcome beside Made a project (#4039), with whether they made one of
+// their own later. Under them, the invite funnel: links opened, sign-ins through one
+// (in their two ways: from the link, or already signed in), joins, and what
+// dropped off between each.
 
 type FirstSessionStep = {
   key: string; reached: number; inSession: number; medianSeconds: number | null;
   targetSeconds: number | null; withinTarget: number | null;
 };
+type InviteFunnel = {
+  from: string; opened: number; signedIn: number; signedInByInvite: number; signedInAlready: number; joined: number;
+};
 type FirstSessionData = {
   week: string; finished: boolean; sessionMinutes: number;
   make: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[]; aha: number };
   join: { people: number; steps: FirstSessionStep[]; aha: number };
-  opens: { opened: Count; joined: number };
-  recordedFrom: { make: string | null; reward: string | null; opens: string | null };
+  look: { people: number; notRecorded: NotRecorded | null; steps: FirstSessionStep[] };
+  opens: InviteFunnel | NotRecorded;
+  recordedFrom: { make: string | null; reward: string | null; opens: string | null; signedIn: string | null; look: string | null };
   examples: Array<{
-    path: 'make' | 'join'; userId: number; name: string; slug: string; project: string; startedAt: string | null;
+    path: 'make' | 'join' | 'look'; userId: number; name: string; slug: string | null; project: string | null; startedAt: string | null;
     steps: Record<string, number | null>;
   }>;
 };
@@ -1123,7 +1151,10 @@ const FIRST_SESSION_STEPS: Record<string, [string, string]> = {
   running: ['Running', 'their project ran for the first time'],
   said: ['Wrote in its chat', 'their first message in the project\'s chat'],
   suggested: ['Filed a request', 'their first request on the project'],
+  made: ['Made a project later', 'a project of their own, after looking around'],
 };
+
+const FIRST_SESSION_PATHS: Record<string, string> = { make: 'made it', join: 'joined', look: 'looked around' };
 
 function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[]; people: number; minutes: number }) {
   return (
@@ -1150,11 +1181,86 @@ function FirstSessionRows({ steps, people, minutes }: { steps: FirstSessionStep[
   );
 }
 
+// The invite funnel (journey.js inviteFunnelReading): [key, label, what it
+// counts]. Everyone's only: an open signed out names nobody, so it is in no
+// cohort, and a cohort view leaves the funnel out.
+const FUNNEL_STEPS: Array<['opened' | 'signedIn' | 'joined', string, string]> = [
+  ['opened', 'Opened the link', 'opened an invite link, signed in or not: a person, or a browser, once per project'],
+  ['signedIn', 'Signed in', 'reached Homeroom signed in through an invite link: from the link, or already signed in'],
+  ['joined', 'Joined', 'joined a project through an invite link'],
+];
+
+// Signed in, in its two ways (#4272): [key, label, what it counts, fill].
+// Signing up or in from the link is what the link brought about, so it is
+// the step's conversion, out of everyone who opened a link. Somebody already
+// signed in had nothing to convert: they are counted, never a share.
+const SIGNED_IN_WAYS: Array<['signedInByInvite' | 'signedInAlready', string, string, string]> = [
+  ['signedInByInvite', 'From the link', 'opened the link signed out, then signed up or in', 'bg-violet-500'],
+  ['signedInAlready', 'Already signed in', 'were signed in when they opened the link', 'bg-violet-300 dark:bg-violet-400/50'],
+];
+
+// A step's share of the one before it is printed only from this many
+// people: below it, "2 of 3" says all there is.
+const FUNNEL_RATE_FROM = 10;
+
+/** "5 of 11", with its share as a percentage once that can mean something. */
+function conversion(n: number, of: number): string {
+  if (of < FUNNEL_RATE_FROM) return `${n} of ${of}`;
+  return `${n} of ${of} · ${Math.round((n / of) * 100)}%`;
+}
+
+function InviteFunnelRows({ funnel }: { funnel: InviteFunnel }) {
+  const most = Math.max(funnel.opened, funnel.signedIn, funnel.joined);
+  return (
+    <div className="space-y-2.5">
+      {FUNNEL_STEPS.map(([key, label, means], i) => {
+        const n = funnel[key];
+        const before = i ? funnel[FUNNEL_STEPS[i - 1][0]] : null;
+        // Signed in is the total of its two ways, each on a line of its own,
+        // and its conversion is the first of them.
+        const ways = key === 'signedIn';
+        return (
+          <div key={key} data-journey-invite-funnel-step={key} title={means}>
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span>{label}</span>
+              <span className="tabular-nums shrink-0">{before == null || ways ? plural(n, 'person', 'people') : conversion(n, before)}</span>
+            </div>
+            {ways ? (
+              <UnitBar n={funnel.signedInByInvite} also={funnel.signedInAlready} of={most}
+                fill={SIGNED_IN_WAYS[0][3]} alsoFill={SIGNED_IN_WAYS[1][3]} />
+            ) : <UnitBar n={n} of={most} fill={key === 'joined' ? 'bg-emerald-500' : 'bg-violet-500'} />}
+            {ways ? (
+              <div className="mt-1 space-y-0.5">
+                {SIGNED_IN_WAYS.map(([way, wayLabel, wayMeans, fill]) => (
+                  <div key={way} data-journey-invite-funnel-way={way} title={wayMeans}
+                    className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300"><Dot cls={fill} />{wayLabel}</span>
+                    <span className="tabular-nums shrink-0">
+                      {way === 'signedInByInvite' ? conversion(funnel[way], funnel.opened) : plural(funnel[way], 'person', 'people')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {before == null ? null : (
+              <div className={`mt-0.5 ${JUI.fine}`}>{before > n ? `${before - n} dropped off` : 'nobody dropped off'}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
   const { data, failed } = useJourney<FirstSessionData>(scoped('/api/admin/journey/first-session', scope));
   if (!data) return <Card id="admin-journey-first-session" title="First session"><Loading failed={failed} what="the first session" /></Card>;
   const minutes = data.sessionMinutes;
   const rewardTarget = data.make.steps.find((st) => st.key === 'reward')?.targetSeconds ?? null;
+  // The funnel counts from its first sign-in through an invite: said when
+  // that is later than the start of what is shown.
+  const funnelDay = isNotRecorded(data.opens) ? null : data.opens.from.slice(0, 10);
+  const funnelFrom = funnelDay && (data.week === 'all' || funnelDay > data.week) ? funnelDay : null;
   return (
     <Card id="admin-journey-first-session" title="First session"
       note={`${data.week === 'all' ? 'all time' : `week of ${weekLabel(data.week)}`} · timed from the start of it`}>
@@ -1178,11 +1284,26 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
             <span className={JUI.fine}>{`of ${plural(data.join.people, 'person', 'people')} wrote or asked for something within ${minutes} min`}</span>
           </div>
           <div className="mt-3"><FirstSessionRows steps={data.join.steps} people={data.join.people} minutes={minutes} /></div>
-          <p className={`${JUI.fine} mt-2`} id="admin-journey-first-session-opens">
-            Invite links opened: <Num v={data.opens.opened} /> · joined: {data.opens.joined}
-          </p>
+        </div>
+        <div id="admin-journey-first-session-look">
+          <div className={`${JUI.label} mb-1.5`}>Looked around first</div>
+          {data.look.notRecorded ? <Num v={data.look.notRecorded} /> : (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className={JUI.headline}>{data.look.people}</span>
+                <span className={JUI.fine}>{`chose Look around first, beside ${plural(data.make.people, 'project', 'projects')} made`}</span>
+              </div>
+              <div className="mt-3"><FirstSessionRows steps={data.look.steps} people={data.look.people} minutes={minutes} /></div>
+            </>
+          )}
         </div>
       </div>
+      {scope.cohort ? null : (
+        <div id="admin-journey-first-session-opens">
+          <div className={`${JUI.label} mt-4 mb-1.5`}>{funnelFrom ? `Invite links · from ${weekLabel(funnelFrom)}` : 'Invite links'}</div>
+          {isNotRecorded(data.opens) ? <Num v={data.opens} /> : <InviteFunnelRows funnel={data.opens} />}
+        </div>
+      )}
       <div className={`${JUI.label} mt-4 mb-1.5`}>Newest first sessions</div>
       {data.examples.length ? (
         <div className="space-y-2" id="admin-journey-first-session-examples">
@@ -1190,8 +1311,8 @@ function FirstSessionCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson 
             <div key={`${e.path}-${e.userId}`} data-journey-first-session-example={e.path}>
               <div className="flex flex-wrap items-center gap-1.5">
                 <PersonChip person={{ userId: e.userId, name: e.name }} onOpen={onOpen} />
-                <span className="text-sm font-medium truncate min-w-0">{e.project}</span>
-                <span className={AdminUI.badge.outline}>{e.path === 'make' ? 'made it' : 'joined'}</span>
+                {e.project ? <span className="text-sm font-medium truncate min-w-0">{e.project}</span> : null}
+                <span className={AdminUI.badge.outline}>{FIRST_SESSION_PATHS[e.path] || e.path}</span>
               </div>
               <div className={`mt-0.5 flex flex-wrap gap-x-2 ${JUI.fine}`}>
                 {Object.entries(e.steps).map(([key, seconds]) => (
@@ -1768,4 +1889,5 @@ const AdminJourney = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
-export { AdminJourney };
+// InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
+export { AdminJourney, InviteFunnelRows };

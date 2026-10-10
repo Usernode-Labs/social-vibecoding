@@ -93,6 +93,7 @@ function botMomentCopy(detail, message) {
     stopped_empty: app ? `${app}: I couldn't find anything to build. Tell me more` : 'I couldn\'t find anything to build. Tell me more',
     stopped_first: app ? `${app}: I couldn't start building it. You can still post a request` : 'I couldn\'t start building it',
     stopped_preview: app ? `${app}: the preview didn't start. I'm trying again` : 'The preview didn\'t start. I\'m trying again',
+    stopped_look: app ? `${app}: it's built, but it needs a look before you can try it` : 'It\'s built, but it needs a look before you can try it',
     held: app ? `${app}: I'll start it on Monday` : 'I\'ve paused until Monday',
     live: app ? `Your change to ${app} is live` : 'Your change is live',
     live_first: app ? `${app} is live` : 'Your project is live',
@@ -119,9 +120,9 @@ function truncate(value, max) {
 }
 
 const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'Spec ready. Review it in the app',
+  spec: 'Plan ready. Review it in the app',
   code: "Code ready. Review and promote when you're happy",
-  spec_code: "Spec and code ready. Review and promote when you're happy",
+  spec_code: "Plan and code ready. Review and promote when you're happy",
 });
 
 function daysSince(value, now) {
@@ -142,6 +143,39 @@ function minutesSince(value, now) {
 // Parsed here rather than required from there: that module reaches the
 // database helpers, and copy assembly stays dependency-free.
 const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+
+// services/platform-incident-alerts.js tokens (#4296), parsed here for the
+// same reason: "digest:<total>:<kind>=<n>,..." or "hour:<kind>:<n>".
+const INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
+const INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
+
+function incidentKindLabel(kind) {
+  return String(kind).replace(/_/g, ' ');
+}
+
+function platformIncidentCopy(detail) {
+  const hour = INCIDENT_HOUR_RE.exec(detail);
+  if (hour) {
+    const [, kind, n] = hour;
+    return {
+      title: 'Unexpected events piling up',
+      body: `${n} ${incidentKindLabel(kind)} in the last hour. Admin \u2192 Unexpected events has each one`,
+    };
+  }
+  const digest = INCIDENT_DIGEST_RE.exec(detail);
+  if (!digest) {
+    return { title: 'Unexpected events', body: 'Open Admin \u2192 Unexpected events to see what happened' };
+  }
+  const total = Number(digest[1]);
+  const parts = digest[2] ? digest[2].split(',').map((p) => p.split('=')) : [];
+  const listed = parts.reduce((sum, [, n]) => sum + Number(n), 0);
+  const kinds = parts.map(([kind, n]) => `${incidentKindLabel(kind)} ${n}`);
+  if (total > listed) kinds.push(`other ${total - listed}`);
+  return {
+    title: `${total} unexpected event${total === 1 ? '' : 's'} yesterday`,
+    body: kinds.length ? kinds.join(', ') : 'Open Admin \u2192 Unexpected events to see what happened',
+  };
+}
 
 function platformLimitCopy(detail) {
   const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
@@ -264,6 +298,14 @@ function buildCopy(kind, context, now) {
           ? `@${actor} mentioned you in ${quotedTitle}` : `@${actor} mentioned you`),
         body: message,
       };
+    // #3952: named with @ in a request somebody filed. `detail` is its number.
+    case 'issue_mention': {
+      const issue = /^\d+$/.test(detail) ? ` #${detail}` : '';
+      return actor && {
+        title: withApp(`@${actor} mentioned you in request${issue}`),
+        body: 'Open the request to see what they wrote',
+      };
+    }
     case 'reply':
       return actor && {
         title: withApp(quotedTitle
@@ -277,6 +319,16 @@ function buildCopy(kind, context, now) {
         title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
+    // #4535: somebody posted in a request's discussion you filed or posted
+    // in. `detail` is the request's number, so the title says which one;
+    // without it, "a request". The reply itself is the body.
+    case 'issue_thread_reply': {
+      const issue = /^\d+$/.test(detail) ? `request #${detail}` : 'a request';
+      return actor && {
+        title: withApp(`@${actor} replied on ${issue}`),
+        body: message,
+      };
+    }
     // A person's message in a small private group's discussion
     // (services/group-channel-notify.js). Only a fresh row rings, so this is
     // nearly always the one message; `detail` counts the messages folded in
@@ -361,9 +413,9 @@ function buildCopy(kind, context, now) {
     case 'spec_shared':
       return {
         title: withApp(actor
-          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a spec with you`)
-          : 'A spec was shared with you'),
-        body: detail ? `Spec v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
+          ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a plan with you`)
+          : 'A plan was shared with you'),
+        body: detail ? `Plan v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
       };
     case 'session_done':
       return {
@@ -584,6 +636,10 @@ function buildCopy(kind, context, now) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // #4296: errors that should not happen, a daily digest or one kind past
+    // its hourly line (services/platform-incident-alerts.js). Full admins.
+    case 'platform_incident':
+      return platformIncidentCopy(detail);
     default:
       return null;
   }

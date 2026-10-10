@@ -37,10 +37,18 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 // not sent. The audience still needs to know something moved, so they get the
 // nudge their own reconnect path already handles — `resyncCurrentView` in
 // public/js/app.js — rather than a truncated event.
-function _onBusMessage({ kind, routing, data, oversize }) {
+function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
   const r = routing || {};
   const payload = oversize ? { type: 'resync_hint' } : data;
   if (payload == null) return;
+  // A workflow machine names a notification instead of carrying it: the
+  // relay reads it for the recipient's open tabs, outside the transition
+  // that created it (src/workflow/merge-followups/machine.ts).
+  if (fromWorkflow && kind === 'user' && !oversize && payload.type === 'notification_new'
+      && payload.notificationId != null && !payload.notification) {
+    relayNotification(r.userId, payload.notificationId);
+    return;
+  }
   switch (kind) {
     case 'global':
       deliverGlobal(payload);
@@ -62,6 +70,11 @@ function _onBusMessage({ kind, routing, data, oversize }) {
     case 'user':
       if (r.userId != null) deliverToUser(r.userId, payload);
       return;
+    case 'session':
+      // #4318: the same routing the emitting pod ran, against THIS pod's
+      // sockets and THIS pod's watch list.
+      if (r.sessionId != null) deliverSessionEvent(payload, r);
+      return;
     case 'account_deleted':
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
@@ -79,6 +92,18 @@ function _onBusMessage({ kind, routing, data, oversize }) {
     default:
       log.warn('ws', 'unknown bus kind', { kind });
   }
+}
+
+// #4177: the bus listener has just been subscribed again, so whatever other
+// instances published while it was down never reached this instance's sockets
+// (services/ws-bus.js `_listening`). Every one of them gets the nudge an
+// oversize payload becomes: the events socket answers it with
+// `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
+// only "re-read", so it leaks nothing to anyone in any room.
+function _onBusListening() {
+  const hint = { type: 'resync_hint' };
+  deliverGlobal(hint);
+  for (const appId of rooms.keys()) deliverToRoom(appId, hint);
 }
 
 // The Homeroom bot follows issue activity. Best-effort by construction: the
@@ -247,6 +272,7 @@ function attach(server, config) {
     pool,
     connectionString: config.databaseUrl,
     onMessage: _onBusMessage,
+    onListening: _onBusListening,
   });
 
   wss = new WebSocketServer({ noServer: true });
@@ -296,8 +322,17 @@ function attach(server, config) {
         // the handshake, not from its next poll.
         sendPlatformVersion(ws, 'connected');
 
+        // #4318: the one thing a tab says on this socket — which sessions
+        // it has on screen (see handleEventsFrame).
+        ws.on('message', (raw) => {
+          void handleEventsFrame(pool, client, raw)
+            .catch((err) => log.warn('ws', 'events frame failed', { err: err.message }));
+        });
+
         ws.on('close', () => {
           globalClients.delete(client);
+          unwatchAllSessions(client);
+          laggingClients.delete(client);
           log.debug('ws', 'Global events client disconnected', { userId: user.id });
         });
       });
@@ -609,10 +644,7 @@ function deliverGlobal(data) {
   const payload = JSON.stringify(data);
   let sent = 0;
   for (const client of globalClients) {
-    if (client.ws.readyState === 1) {
-      client.ws.send(payload);
-      sent++;
-    }
+    if (sendToEventsClient(client, payload)) sent++;
   }
   if (data.event === 'cc_progress' && sent === 0 && globalClients.size === 0) {
     log.debug('ws', 'broadcastGlobal: no clients connected');
@@ -621,8 +653,325 @@ function deliverGlobal(data) {
 }
 
 function broadcastGlobal(data) {
+  // #4318: a session's live events are routed by session, not sent to
+  // every socket on the platform. Every caller that streams a run (agent
+  // runs, Mayor turns, checks, previews, sync-main, recovery) reaches it
+  // through here, so the routing is decided in one place.
+  if (data && data.type === 'session_event' && positiveSessionId(data.sessionId) != null) {
+    broadcastSessionEvent(data);
+    return;
+  }
   deliverGlobal(data);
   wsBus.publish('global', null, data);
+}
+
+// ── Session events, routed by session (#4318) ──────────────────────────
+//
+// `session_event` is the live stream of one session: the coding agent's
+// progress lines, the Mayor's status rows and replies, checks, previews.
+// It used to go to EVERY /ws/events socket, so the work grew as open tabs ×
+// running sessions × events. Now each event goes to:
+//
+//   * the session owner's sockets (as before, and also what keeps a tab
+//     still running an older build working: it sends no watch frames);
+//   * sockets that WATCH the session: a tab sends `watch_session` while it
+//     has that session open (DevChat — the session chat and the Mayor chat
+//     — on the owner's or an admin's screen) and `unwatch_session` when it
+//     leaves, and re-sends its watches whenever the socket reconnects;
+//   * for the few events lists and boards also draw (SESSION_FANOUT_EVENTS:
+//     a checks run's progress and verdict, a preview built or failed),
+//     everyone who may VIEW the app as well — the broadcastGlobalScoped
+//     audience. Those are the events App.handleSessionEvent handles before
+//     its "is this the open session" gate; every other event it drops
+//     unless DevChat has that session open.
+//
+// The owner and app are read once per session (sessionMetaFor, cached),
+// not per event. The bus carries the resolved routing, and the receiving
+// pod applies it against its own sockets and its own watch list.
+const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
+const sessionWatchers = new Map(); // sessionId -> Set<client>
+
+function positiveSessionId(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 && n <= 2147483647 ? n : null;
+}
+
+/** Pure routing decision for one session event: 'app' | 'session'. */
+function sessionEventAudience(data) {
+  return data && SESSION_FANOUT_EVENTS.has(data.event) ? 'app' : 'session';
+}
+
+// sessionId -> { settled, value, expiresAt, promise, queued }
+const SESSION_META_TTL_MS = 60 * 1000;
+const SESSION_META_MISS_TTL_MS = 5 * 1000;
+const SESSION_META_MAX = 5000;
+const sessionMetaCache = new Map();
+
+function sessionMetaFor(sessionId) {
+  const now = Date.now();
+  const hit = sessionMetaCache.get(sessionId);
+  if (hit && (!hit.settled || hit.expiresAt > now)) return hit;
+  if (sessionMetaCache.size >= SESSION_META_MAX) {
+    for (const [id, entry] of sessionMetaCache) {
+      if (entry.settled && entry.expiresAt <= now) sessionMetaCache.delete(id);
+    }
+    if (sessionMetaCache.size >= SESSION_META_MAX) {
+      sessionMetaCache.delete(sessionMetaCache.keys().next().value);
+    }
+  }
+  const entry = { settled: false, value: null, expiresAt: 0, promise: null, queued: 0 };
+  const lookup = _pool
+    ? Promise.resolve().then(() => _pool.query(
+      `SELECT cs.user_id, cs.app_id, a.slug AS app_slug
+         FROM chat_sessions cs LEFT JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1`, [sessionId]))
+      .then((res) => {
+        const row = res && res.rows && res.rows[0];
+        return row ? {
+          userId: row.user_id == null ? null : Number(row.user_id),
+          appId: row.app_id == null ? null : Number(row.app_id),
+          appSlug: row.app_slug || null,
+        } : null;
+      })
+    : Promise.resolve(null);
+  entry.promise = lookup.catch((err) => {
+    log.warn('ws', 'session event routing lookup failed', { sessionId, err: err.message });
+    return null;
+  }).then((value) => {
+    entry.value = value;
+    entry.settled = true;
+    entry.expiresAt = Date.now() + (value ? SESSION_META_TTL_MS : SESSION_META_MISS_TTL_MS);
+    return value;
+  });
+  sessionMetaCache.set(sessionId, entry);
+  return entry;
+}
+
+function sessionRouting(sessionId, meta, data) {
+  return {
+    sessionId,
+    userId: meta && meta.userId != null ? meta.userId : null,
+    appId: meta && meta.appId != null ? meta.appId : null,
+    appSlug: meta && meta.appSlug ? meta.appSlug : null,
+    fanout: sessionEventAudience(data) === 'app',
+  };
+}
+
+function broadcastSessionEvent(data) {
+  const sessionId = positiveSessionId(data.sessionId);
+  const run = (meta) => {
+    const routing = sessionRouting(sessionId, meta, data);
+    deliverSessionEvent(data, routing);
+    // One queue per session, so a run's stream costs a few NOTIFYs a
+    // second however fast it writes (ws-bus.js publishBatched).
+    wsBus.publishBatched(`session:${sessionId}`, 'session', routing, data);
+  };
+  const entry = sessionMetaFor(sessionId);
+  // Events of one session keep their order: while an earlier one still
+  // waits on the lookup, a later one queues behind it rather than
+  // overtaking it on the cached path.
+  if (entry.settled && entry.queued === 0) {
+    run(entry.value);
+    return;
+  }
+  entry.queued++;
+  entry.promise.then((meta) => {
+    entry.queued--;
+    run(meta);
+  }).catch((err) => log.warn('ws', 'session event dropped', { sessionId, err: err.message }));
+}
+
+// LOCAL delivery of one session event (also what a bus message replays).
+function deliverSessionEvent(data, routing) {
+  const r = routing || {};
+  const sessionId = positiveSessionId(r.sessionId);
+  if (sessionId == null) return;
+  const json = JSON.stringify(data);
+  const targets = new Set(sessionWatchers.get(sessionId) || []);
+  if (r.userId != null) {
+    const ownerId = Number(r.userId);
+    for (const client of globalClients) {
+      if (Number(client.user.id) === ownerId) targets.add(client);
+    }
+  }
+  // The session's own audience first and synchronously, so its stream stays
+  // in order with the session's other events.
+  for (const client of targets) sendToEventsClient(client, json);
+  if (!r.fanout) return;
+  // Lists and boards: everyone who may view the app. With no app resolved
+  // (the lookup failed) this falls back to what every session event did
+  // before #4318 — the event names a session and nothing else.
+  if ((r.appId == null && !r.appSlug) || !_pool) {
+    for (const client of globalClients) {
+      if (!targets.has(client)) sendToEventsClient(client, json);
+    }
+    return;
+  }
+  appAccess.getWsVisibility(_pool, { appId: r.appId, appSlug: r.appSlug })
+    .then((info) => {
+      if (!info || info.suspended) return;
+      for (const client of globalClients) {
+        if (targets.has(client)) continue;
+        if (info.blockedUserIds?.has(client.user.id)) continue;
+        if (info.viewPrivate && !client.user.isAdmin && !info.memberIds?.has(client.user.id)) continue;
+        sendToEventsClient(client, json);
+      }
+    })
+    .catch((err) => {
+      log.warn('ws', 'session event fan-out dropped', { event: data.event, err: err.message });
+    });
+}
+
+// Who may watch a session's live events: exactly who may open its live
+// stream, GET /api/sessions/:id/events in routes/sessions.js — its owner or
+// an admin. (The session chat itself, GET /api/sessions/:id, is the same.)
+function canWatchSessionRow(row, user) {
+  if (!row || !user) return false;
+  return !!user.isAdmin || (row.user_id != null && Number(row.user_id) === Number(user.id));
+}
+
+async function canWatchSession(pool, user, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  return canWatchSessionRow(rows[0], user);
+}
+
+function watchSession(client, sessionId) {
+  if (!client.watching) client.watching = new Set();
+  client.watching.add(sessionId);
+  let set = sessionWatchers.get(sessionId);
+  if (!set) { set = new Set(); sessionWatchers.set(sessionId, set); }
+  set.add(client);
+}
+
+function unwatchSession(client, sessionId) {
+  if (client.watching) client.watching.delete(sessionId);
+  const set = sessionWatchers.get(sessionId);
+  if (!set) return;
+  set.delete(client);
+  if (!set.size) sessionWatchers.delete(sessionId);
+}
+
+function unwatchAllSessions(client) {
+  if (client.wantWatch) client.wantWatch.clear();
+  for (const sessionId of [...(client.watching || [])]) unwatchSession(client, sessionId);
+}
+
+function replyToEventsClient(client, frame) {
+  try {
+    if (client.ws && client.ws.readyState === 1) client.ws.send(JSON.stringify(frame));
+  } catch { /* closed between the frame and the answer */ }
+}
+
+// A tab's frames on /ws/events. Small, few (a tab sends one when it opens
+// or leaves a session), and capped per socket so a script cannot make one
+// socket cost a query per frame for long.
+const EVENTS_FRAME_MAX_BYTES = 512;
+const EVENTS_FRAME_BUDGET = 120; // per socket per minute
+async function handleEventsFrame(pool, client, raw) {
+  const size = typeof raw === 'string' ? Buffer.byteLength(raw) : (raw && raw.length) || 0;
+  if (size > EVENTS_FRAME_MAX_BYTES) return;
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type !== 'watch_session' && msg.type !== 'unwatch_session') return;
+  const now = Date.now();
+  if (!client.frameWindow || client.frameWindow.resetAt <= now) {
+    client.frameWindow = { used: 0, resetAt: now + SOCKET_RATE_WINDOW_MS };
+  }
+  if (++client.frameWindow.used > EVENTS_FRAME_BUDGET) return;
+  const sessionId = positiveSessionId(msg.sessionId);
+  if (sessionId == null) return;
+  if (!client.wantWatch) client.wantWatch = new Map();
+  if (msg.type === 'unwatch_session') {
+    client.wantWatch.delete(sessionId);
+    unwatchSession(client, sessionId);
+    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false });
+    return;
+  }
+  if (client.watching && client.watching.has(sessionId)) {
+    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: true });
+    return;
+  }
+  if (client.wantWatch.size >= MAX_WATCHED_SESSIONS_PER_SOCKET && !client.wantWatch.has(sessionId)) {
+    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'too_many' });
+    return;
+  }
+  // A token, so an unwatch that lands while this check is in flight wins.
+  const token = Symbol('watch');
+  client.wantWatch.set(sessionId, token);
+  let allowed = false;
+  try {
+    allowed = await canWatchSession(pool, client.user, sessionId);
+  } catch (err) {
+    log.warn('ws', 'session watch check failed', { sessionId, err: err.message });
+  }
+  if (client.wantWatch.get(sessionId) !== token) return;
+  if (!allowed || !globalClients.has(client)) {
+    client.wantWatch.delete(sessionId);
+    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'not_found' });
+    return;
+  }
+  watchSession(client, sessionId);
+  replyToEventsClient(client, { type: 'session_watch', sessionId, watching: true });
+}
+
+// ── A slow socket is skipped, then told to re-read (#4318) ─────────────
+//
+// `ws.send` never refuses: what the peer has not read piles up in the
+// socket's buffer (`bufferedAmount`), in this process's memory. A tab on a
+// stalled connection used to grow it by every event on the platform. Over
+// SLOW_CLIENT_MAX_BUFFERED a socket is marked lagging and skipped; once it
+// has drained below SLOW_CLIENT_RESUME_BUFFERED it gets ONE `resync_hint` —
+// the nudge its reconnect path already answers with App.resyncCurrentView —
+// and ordinary delivery resumes.
+const SLOW_CLIENT_MAX_BUFFERED = 1024 * 1024;
+const SLOW_CLIENT_RESUME_BUFFERED = 64 * 1024;
+const LAGGING_CHECK_MS = 1000;
+const laggingClients = new Set();
+let laggingTimer = null;
+
+function sendToEventsClient(client, json) {
+  const socket = client && client.ws;
+  if (!socket || socket.readyState !== 1) return false;
+  if (client.lagging || Number(socket.bufferedAmount) > SLOW_CLIENT_MAX_BUFFERED) {
+    markLagging(client);
+    return false;
+  }
+  socket.send(json);
+  return true;
+}
+
+function markLagging(client) {
+  if (!client.lagging) {
+    client.lagging = true;
+    laggingClients.add(client);
+    log.debug('ws', 'events socket lagging, skipping it', { userId: client.user && client.user.id });
+  }
+  if (!laggingTimer) {
+    laggingTimer = setInterval(checkLaggingClients, LAGGING_CHECK_MS);
+    if (typeof laggingTimer.unref === 'function') laggingTimer.unref();
+  }
+}
+
+function checkLaggingClients() {
+  for (const client of laggingClients) {
+    const socket = client.ws;
+    if (!socket || socket.readyState !== 1 || !globalClients.has(client)) {
+      laggingClients.delete(client);
+      client.lagging = false;
+      continue;
+    }
+    if (Number(socket.bufferedAmount) > SLOW_CLIENT_RESUME_BUFFERED) continue;
+    laggingClients.delete(client);
+    client.lagging = false;
+    try { socket.send(JSON.stringify({ type: 'resync_hint' })); } catch { /* gone */ }
+  }
+  if (!laggingClients.size && laggingTimer) {
+    clearInterval(laggingTimer);
+    laggingTimer = null;
+  }
 }
 
 // ── The build this process is, told over the socket (#2545) ───────────
@@ -668,7 +1017,24 @@ function pushPlatformVersion({ sha, reason = 'rollout' } = {}) {
 // general-stream message a person wrote in THIS app (so a reply can never
 // be a root: no nesting), and — when `viewerId` is given — not by somebody
 // the poster blocked, whose message they cannot see to answer.
-const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+//
+// #4417: 'category' is a topic's channel, ref = its app_category_registry
+// row (origin 'topic') of THIS app. A live topic takes posts; an archived or
+// merged one is read-only, and comes back marked `closed` so the sender is
+// told rather than silently dropped. A reply thread under a message of a
+// retired topic is closed with it.
+const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
+
+const TOPIC_CLOSED_MESSAGE = 'This topic is archived. Its history stays here to read.';
+
+async function topicChannelState(pool, appId, ref) {
+  const { rows } = await pool.query(
+    `SELECT topic_state FROM app_category_registry
+      WHERE id = $1 AND app_id = $2 AND origin = 'topic'`,
+    [ref, appId]
+  );
+  return rows[0] ? (rows[0].topic_state || 'live') : null;
+}
 
 async function validateThread(pool, appId, thread, viewerId = null) {
   if (!thread || typeof thread !== 'object') return null;
@@ -689,6 +1055,15 @@ async function validateThread(pool, appId, thread, viewerId = null) {
       );
       if (!rows.length) return null;
     }
+    if (root.thread_type === appChat.CATEGORY_THREAD) {
+      const state = await topicChannelState(pool, appId, Number(root.thread_ref));
+      if (!state) return null;
+      if (state !== 'live') return { type, ref, closed: true };
+    }
+  } else if (type === appChat.CATEGORY_THREAD) {
+    const state = await topicChannelState(pool, appId, ref);
+    if (!state) return null;
+    if (state !== 'live') return { type, ref, closed: true };
   } else if (type === 'session') {
     const { rows } = await pool.query(
       'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
@@ -772,6 +1147,19 @@ async function handleMessage(pool, client, msg) {
     let archived = false;
     try {
       archived = await communities.channelArchived(pool, client.appId);
+      // #4417: a reply thread under a message in one of the project's
+      // TOPIC channels is that topic's, not the old channel's: Homeroom's
+      // topics are threads on this same app chat, and they take posts.
+      if (archived && msg.thread && msg.thread.type === 'message') {
+        const rootId = Number(msg.thread.ref);
+        if (Number.isInteger(rootId) && rootId > 0 && rootId <= 2147483647) {
+          const { rows: roots } = await pool.query(
+            'SELECT thread_type FROM chat_messages WHERE id = $1 AND app_id = $2',
+            [rootId, client.appId]
+          );
+          if (roots[0] && roots[0].thread_type === appChat.CATEGORY_THREAD) archived = false;
+        }
+      }
     } catch (err) {
       log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
     }
@@ -814,6 +1202,16 @@ async function handleMessage(pool, client, msg) {
             appId: client.appId, userId: client.user.id,
           });
           return { ok: false, code: 'invalid_thread' };
+        }
+        // #4417: a retired topic's channel is read-only. Answered, like the
+        // archived channel above, so the composer can say why.
+        if (thread.closed) {
+          try {
+            if (client.ws && client.ws.readyState === 1) {
+              client.ws.send(JSON.stringify({ type: 'error', code: 'topic_closed', message: TOPIC_CLOSED_MESSAGE }));
+            }
+          } catch { /* a closed socket has nobody to tell */ }
+          return { ok: false, code: 'topic_closed' };
         }
       }
 
@@ -863,7 +1261,7 @@ async function handleMessage(pool, client, msg) {
               let author;
               if (r.msg_type === 'spec_share') {
                 const sm = (r.metadata || {}).specShare || {};
-                snippet = sm.title || `Spec v${sm.version || ''}`.trim();
+                snippet = sm.title || `Plan v${sm.version || ''}`.trim();
                 author = sm.sharedBy?.username || r.username || null;
               } else if (r.msg_type === 'system' || r.msg_type === 'vote' || r.msg_type === 'conflict') {
                 snippet = r.content;
@@ -978,6 +1376,10 @@ async function handleMessage(pool, client, msg) {
           threadRoot = {
             id: Number(root.id), username: root.username || null,
             content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+            // #4417: where the root is: the general stream (null), or one of
+            // the project's topic channels, whose stream draws the reply.
+            thread_type: root.thread_type || null,
+            thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
           };
         }
       }
@@ -1003,10 +1405,10 @@ async function handleMessage(pool, client, msg) {
       // for something (services/homeroom-bot-chat.js). Not awaited: the read
       // takes a moment, and the room has the message already. Never an edit
       // (that is chat_edit), and never a connector's post.
-      if (!thread) {
+      if (!thread || thread.type === appChat.CATEGORY_THREAD) {
         void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
           appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        });
+        }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
       }
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
@@ -1036,7 +1438,9 @@ async function handleMessage(pool, client, msg) {
 
       // #2387: everyone who already got a more specific row for this message
       // (quoted → 'reply', @named → 'mention'). A reply-thread participant in
-      // this set gets that row, not a second 'thread_reply' one.
+      // this set gets that row, not a second 'thread_reply' one, and a
+      // request-discussion participant not a second 'issue_thread_reply'
+      // one either (#4535).
       const directlyNotified = new Set();
 
       // #15: reply notification — ping the author of the quoted message
@@ -1050,11 +1454,18 @@ async function handleMessage(pool, client, msg) {
         });
         for (const r of replyRows) directlyNotified.add(Number(r.user_id));
         if (replyRows.length) {
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1100,11 +1511,18 @@ async function handleMessage(pool, client, msg) {
           // serialize() works for both fresh and history rows — kudos
           // added session_id / pr_title / pr_number on top of the
           // original mention shape.
+          // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+          // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+          // static SQL), so a row about a reply in a topic's thread opens beside it.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
                     cm.thread_type, cm.thread_ref,
+                    (SELECT thread_root.thread_type FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                    (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                      WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -1173,6 +1591,27 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
+      // #4535: a message in a request's discussion thread pings the
+      // request's filer and the people who posted there before
+      // ('issue_thread_reply'), the same fan-out as a reply thread above
+      // minus the sender and anybody this message already reached with a
+      // mention or a quote — a mention wins. Proposal and governance
+      // threads are left as they are.
+      if (thread && thread.type === 'issue') {
+        try {
+          const issueRows = await notifications.createIssueThreadNotifications(pool, {
+            appId: client.appId,
+            messageId: rows[0].id,
+            issueNumber: thread.ref,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+          await Promise.all(issueRows.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (err) {
+          log.warn('ws', 'issue thread notify failed', { err: err.message });
+        }
+      }
+
       // Posting a message in this app's group chat is the "I've engaged
       // with this thread" action: clear every unread mention/reply/reaction
       // notification this user has for this app (the reply-clears-all
@@ -1214,6 +1653,15 @@ async function handleMessage(pool, client, msg) {
           await appChat.advanceReadCursor(pool, client.appId, client.user.id, rows[0].id);
         } catch (err) {
           log.warn('ws', 'read cursor advance failed', {
+            appId: client.appId, userId: client.user.id, err: err.message,
+          });
+        }
+      } else if (thread.type === appChat.CATEGORY_THREAD) {
+        // #4417: and posting in a topic's channel is reading that channel.
+        try {
+          await appChat.advanceCategoryCursor(pool, client.appId, thread.ref, client.user.id, rows[0].id);
+        } catch (err) {
+          log.warn('ws', 'topic read cursor advance failed', {
             appId: client.appId, userId: client.user.id, err: err.message,
           });
         }
@@ -1348,11 +1796,18 @@ async function handleMessage(pool, client, msg) {
             emoji,
           });
           if (notifRows.length) {
+            // #4417 follow-up: root_thread_type/_ref say where a reply thread starts
+            // (notifications.THREAD_ROOT_COLUMNS_SQL, spelled out so this read stays
+            // static SQL), so a row about a reply in a topic's thread opens beside it.
             const { rows: hydrated } = await pool.query(
               `SELECT n.id, n.kind, n.read_at, n.created_at,
                       n.app_id, a.slug AS app_slug, a.name AS app_name,
                       n.chat_message_id, cm.content AS message_content,
                       cm.thread_type, cm.thread_ref,
+                      (SELECT thread_root.thread_type FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+                      (SELECT thread_root.thread_ref FROM chat_messages thread_root
+                        WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref,
                       n.session_id, cs.pr_title, cs.pr_number,
                       su.username AS source_username, n.user_id, n.detail
                FROM notifications n
@@ -1602,6 +2057,47 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
   return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
+/**
+ * #4238: the ONE line Homeroom writes into a project's channel. When a new
+ * project's first version goes live, Homeroom bot says so there, once, as
+ * its own message (a bubble with its name, not a system line), with an Open
+ * button (metadata.actions). Everything else Homeroom says still goes to a
+ * thread (sendSystemMessage, sendBotMessage): a channel is what people said,
+ * and this is the bot telling the people there that what they asked for is
+ * made. Once per project: a second call finds the first and writes nothing.
+ * Not wired to handleMessage, for the reasons sendBotMessage gives.
+ */
+const FIRST_VERSION_KIND = 'first_version';
+async function sendFirstVersionMessage(pool, appId, { user, content, metadata = null } = {}) {
+  if (!user || !Number.isInteger(Number(user.id)) || !Number.isInteger(Number(appId))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const meta = { ...(metadata || {}), kind: FIRST_VERSION_KIND };
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
+     SELECT $1, $2, $3, 'message', $4::jsonb
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages
+         WHERE app_id = $1 AND user_id = $2 AND thread_type IS NULL
+           AND metadata->>'kind' = '${FIRST_VERSION_KIND}')
+     RETURNING id, created_at`,
+    [Number(appId), Number(user.id), text, JSON.stringify(meta)]
+  );
+  if (!rows.length) return null;
+  await broadcastFromSender(pool, Number(appId), {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    metadata: meta,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
 function getOnlineUsers(appId) {
   const room = rooms.get(appId);
   if (!room) return [];
@@ -1643,7 +2139,7 @@ function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
         if (client.ws.readyState !== 1) continue;
         if (!info.blockedUserIds?.has(client.user.id)
             && (!info.viewPrivate || client.user.isAdmin || info.memberIds.has(client.user.id))) {
-          client.ws.send(json);
+          sendToEventsClient(client, json);
         }
       }
     })
@@ -1721,6 +2217,18 @@ function pushSessionUpdate(data) {
   broadcastGlobalScoped({ type: 'session_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
   noteBoardChange(data);
+}
+
+// Read only where the recipient has an events socket (what deliverToUser
+// writes to); the notification's access predicates run now, at relay time.
+function relayNotification(userId, notificationId) {
+  if (userId == null || !_pool) return;
+  let here = false;
+  for (const client of globalClients) if (Number(client.user.id) === Number(userId)) { here = true; break; }
+  if (!here) return;
+  require('./notifications').hydrateNotification(_pool, notificationId)
+    .then((shown) => { if (shown) deliverToUser(shown.userId, { type: 'notification_new', notification: shown.notification }); })
+    .catch((err) => log.warn('ws', 'could not read a notification to relay', { notificationId, err: err.message }));
 }
 
 // #1038: live working-state for one session (services/session-state.js).
@@ -1829,10 +2337,7 @@ function deliverToAdmins(payload) {
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
-    if (client.user && client.user.isAdmin && client.ws.readyState === 1) {
-      client.ws.send(json);
-      sent++;
-    }
+    if (client.user && client.user.isAdmin && sendToEventsClient(client, json)) sent++;
   }
   return sent;
 }
@@ -1863,10 +2368,7 @@ function deliverToUser(userId, payload) {
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
-    if (client.user.id === userId && client.ws.readyState === 1) {
-      client.ws.send(json);
-      sent++;
-    }
+    if (client.user.id === userId && sendToEventsClient(client, json)) sent++;
   }
   return sent;
 }
@@ -1929,4 +2431,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

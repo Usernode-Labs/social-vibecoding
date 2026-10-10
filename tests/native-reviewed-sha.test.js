@@ -172,6 +172,7 @@ test('a clean merge of main keeps the approvals and carries the checks', async (
     assert.equal(out.epoch, 0, 'a merge nobody edited must not move the epoch');
     assert.equal(out.headSha, r.featureHead());
     assert.equal(pool.kickedChecks(), true, 'the passing verdict is stamped onto the merged commit');
+    assert.equal(out.checksCarry, true, 'and says so, for a caller that reports it');
     assert.deepEqual(rebuilds, [], 'and nothing is rebuilt');
   } finally { restore(); r.cleanup(); }
 });
@@ -193,6 +194,7 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
       assert.equal(out.kind, 'mechanical');
       assert.equal(out.votesKept, true, `${state}: the votes still stand — only the checks policy differs`);
       assert.equal(pool.kickedChecks(), false, `${state}: an unfinished verdict is not carried`);
+      assert.equal(out.checksCarry, false, `${state}: and the answer says it did not carry`);
       assert.deepEqual(rebuilds, [r.featureHead()], `${state}: the checks re-run against the merged commit`);
     } finally { restore(); r.cleanup(); }
   }
@@ -258,6 +260,7 @@ test('a resolved conflict keeps the approvals but re-checks the merged tree', as
     assert.equal(out.epoch, 0);
     assert.equal(pool.kickedChecks(), false,
       'a Claude-edited tree is unverified, so its verdict must NOT be carried');
+    assert.equal(out.checksCarry, false);
   } finally { restore(); r.cleanup(); }
 });
 

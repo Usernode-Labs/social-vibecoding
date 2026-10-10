@@ -26,6 +26,7 @@ import type {
   UserSearchResult,
 } from './types';
 import { countOf } from './approval-words';
+import { releaseOf } from '../../lib/release-eta';
 import type { HomeroomLink } from './homeroom-links';
 import { botRowPreview, plainText } from './plain-text';
 
@@ -107,7 +108,8 @@ const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
 // HomeroomBotAction). An unknown one is dropped, never drawn as a dead button.
 // B7: a change's ready card adds three: its preview (Try it), the person's
 // own Yes (Approve) and a reply quoting the card (Change something).
-const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply']);
+// #4231: and `invite`, under a new project's first version going live.
+const BOT_ACTION_TYPES = new Set(['server', 'open', 'prompt', 'preview', 'vote', 'reply', 'invite']);
 const MAX_BOT_ACTIONS = 3;
 
 /** B3: a bot message's buttons, as types.ts HomeroomBotAction: at most three, one primary. */
@@ -134,6 +136,7 @@ function normalizeBotActions(input: unknown): HomeroomBotAction[] {
       ...(target ? { target } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(epoch !== null ? { epoch } : {}),
+      ...(type === 'prompt' && pick(row, 'quote') === true ? { quote: true } : {}),
     });
   }
   return out;
@@ -311,6 +314,7 @@ function normalizeObject(input: unknown): SharedObjectCard {
     appSlug: text(pick(ref, 'appSlug', 'app_slug')) || undefined,
     issueNumber: strictId(pick(ref, 'issueNumber', 'issue_number')) || undefined,
     sessionId: strictId(pick(ref, 'sessionId', 'session_id')) || undefined,
+    prNumber: strictId(pick(ref, 'prNumber', 'pr_number')) || undefined,
     proposalId: strictId(pick(ref, 'proposalId', 'proposal_id', 'governanceId', 'governance_id')) || undefined,
     version: strictId(pick(ref, 'version', 'specVersion', 'spec_version')) || undefined,
     available: pick(row, 'available') !== false && !bool(pick(row, 'unavailable')),
@@ -469,8 +473,13 @@ function demoQuery(path: string): string {
  * bot's DM is where it showed, because its page is the slowest to answer.
  *
  * `cache: 'no-store'` is the worker's existing "leave this to the network"
- * signal: its fetch handler returns before classifying such a request. A
- * first open keeps the ordinary read, and with it the offline copy.
+ * signal: its fetch handler returns before classifying such a request.
+ *
+ * Opening a conversation reads fresh too while the browser is online
+ * (#4243): its offline copy was the last visit's transcript, drawn for a
+ * moment before the newest messages snapped in. The open takes the ordinary
+ * read, and with it the offline copy, only when the browser is offline or
+ * the fresh read failed (store.ts loadThread).
  */
 export interface ReadOptions {
   fresh?: boolean;
@@ -711,12 +720,13 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
  * unavailable one for a page they cannot see. Only the parsed page goes up
  * (./homeroom-links.ts), never the link itself.
  */
-export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'>>): Promise<SharedObjectCard[]> {
+export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'> & { prNumber?: number }>): Promise<SharedObjectCard[]> {
   const refs = links.map((link) => ({
     type: link.type,
     app_slug: link.appSlug,
     ...(link.issueNumber ? { issue_number: link.issueNumber } : {}),
     ...(link.sessionId ? { session_id: link.sessionId } : {}),
+    ...(link.prNumber ? { pr_number: link.prNumber } : {}),
     ...(link.proposalId ? { proposal_id: link.proposalId } : {}),
   }));
   const data = record(await request<unknown>('/api/link-cards', { method: 'POST', body: JSON.stringify({ refs }) }));
@@ -824,12 +834,19 @@ export async function listBlocks(): Promise<ConversationUser[]> {
 const ACTIVITY_OUTCOMES = new Set<HomeroomBotActivityOutcome>([
   'question', 'proposed', 'live', 'closed', 'blocked', 'build_failed',
   'person', 'empty', 'failed', 'held', 'stopped', 'answer', 'revise',
+  'checking', 'needs_look', 'going_live',
 ]);
 
 /** An in-app address (`#app/…`), or null: a card's link never leaves the shell. */
 function inAppHref(value: unknown): string | null {
   const href = text(value);
   return href.startsWith('#app/') ? href : null;
+}
+
+/** #4201: an app's icon as the platform serves it (`/app-icons/<id>`), or null. */
+function appIconUrl(value: unknown): string | null {
+  const src = text(value);
+  return /^\/app-icons\/[\w-]+$/.test(src) ? src : null;
 }
 
 const BOT_PHASES = new Set<HomeroomBotPhase>([
@@ -852,6 +869,8 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
     appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,
     title: text(pick(row, 'title')) || null,
     firstVersion,
@@ -880,8 +899,10 @@ function normalizeBotPastJob(entry: unknown): HomeroomBotPastJob | null {
   const known = ACTIVITY_OUTCOMES.has(outcome);
   const doing = text(pick(row, 'doing')) || null;
   if (!known && !doing && !outcome) return null;
+  const release = outcome === 'going_live' ? releaseOf(pick(row, 'release')) : null;
   return {
     ...normalizeBotJob(row),
+    ...(release ? { release } : {}),
     id: strictId(pick(row, 'id')) || 0,
     outcome: known ? outcome : (outcome ? 'failed' : null),
     doing,
@@ -897,8 +918,11 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
     const step = strictId(pick(row, 'step'));
     const of = strictId(pick(row, 'of'));
     const whole = !!step && !!of && step <= of && of <= 12;
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = phase === 'merging' ? releaseOf(pick(row, 'release')) : null;
     return {
       ...normalizeBotJob(row),
+      ...(release ? { release } : {}),
       phase: BOT_PHASES.has(phase) ? phase : 'looking',
       step: whole ? step : null,
       of: whole ? of : null,
@@ -945,6 +969,8 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
     const to = strictId(pick(typical, 'to'));
     const workedFrom = text(pick(row, 'workedFrom'));
     const waitedFor = text(pick(row, 'waitedFor'));
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = !working && outcome === 'going_live' ? releaseOf(pick(row, 'release')) : null;
     return {
       messageId,
       state: working ? 'working' : 'done',
@@ -961,6 +987,7 @@ export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {
       endedAt: working ? null : text(pick(row, 'endedAt')) || null,
       // Whole minutes, the shorter first, and under two hours.
       ...(working && from && to && from <= to && to <= 120 ? { typicalMinutes: { from, to } } : {}),
+      ...(release ? { release } : {}),
     };
   }).filter((card): card is HomeroomBotActivity => !!card);
 }
@@ -984,6 +1011,8 @@ export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
     const missing = approval ? countOf(pick(approval, 'missing')) : null;
     const needed = approval ? countOf(pick(approval, 'needed')) : null;
     const goesLive = normalizeGoesLive(pick(row, 'goesLive'));
+    // A merge of Homeroom itself going live: when its release comes.
+    const release = state === 'going_live' ? releaseOf(pick(row, 'release')) : null;
     return {
       messageId,
       state,
@@ -1000,6 +1029,7 @@ export function normalizeBotReadyNow(input: unknown): HomeroomBotReadyNow[] {
         },
       } : {}),
       ...(state === 'open' && goesLive ? { goesLive } : {}),
+      ...(release ? { release } : {}),
     };
   }).filter((entry): entry is HomeroomBotReadyNow => !!entry);
 }

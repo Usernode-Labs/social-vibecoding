@@ -94,8 +94,9 @@
   }
 
   // A checks error the merge gate still counts as in progress: the run
-  // overlapped a platform update and goes again on its own
-  // (visuals.settleCaptureRun). Every other error blocks on the author.
+  // overlapped a platform update and goes again on its own. Nothing records
+  // that any more (#3828); rows stored before still read this way. Every
+  // other error blocks on the author.
   function checksWillRetry(p) {
     if (!p || p.check_state !== 'error') return false;
     var mr = (p.mergeRequirements && typeof p.mergeRequirements === 'object') ? p.mergeRequirements : null;
@@ -264,6 +265,15 @@
       });
     }
 
+    // 1a — merged, its deploy still to come: live_at is null until production
+    // runs it (the merge-followups workflow machine). A row without the
+    // field (undefined) reads as it always did.
+    if (status === 'merged' && p.live_at === null) {
+      return descriptor('going_live', 'Going live\u2026', 'amber', true, {
+        votes: votes,
+        title: 'This change is merged. Production is being updated to run it.',
+      });
+    }
     // 1 — terminal: merged.
     if (status === 'merged') {
       return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });
@@ -361,8 +371,8 @@
     }
     // 5b — checks blocked the merge (a test broke).
     if (check === 'failing') {
-      // BLOCKING failures only. Advisory rows are checks that have never
-      // been observed passing on this app — they report but do not block,
+      // BLOCKING failures only. Advisory rows are checks that have not yet
+      // passed on a change that merged — they report but do not block,
       // so counting them here would tell a reviewer the merge is held up by
       // failures that are not holding it up. Rows written before advisory
       // existed carry no flag and count, which is the old behaviour.
@@ -388,6 +398,20 @@
           + 'were not run: they would judge a tree that cannot merge. They run automatically '
           + 'once it merges cleanly.',
       });
+    }
+    if (check === 'pending' && p.check_phase === 'queued') {
+      // Built, and waiting its turn: the platform runs a few proposals'
+      // checks at a time (services/checks-queue.js). In progress, nobody has
+      // to act, so it keeps the running treatment, and says its place.
+      var q = p.checks_progress && p.checks_progress.queue;
+      var ahead = q && typeof q.ahead === 'number' && q.ahead >= 0 && Math.floor(q.ahead) === q.ahead ? q.ahead : null;
+      return descriptor('checks_queued',
+        ahead === null ? 'Checks waiting' : (ahead === 0 ? 'Checks waiting · next' : 'Checks waiting · ' + ahead + ' ahead'),
+        'neutral', true, {
+          votes: votes,
+          title: 'The preview is up, and its checks are waiting for a slot: Homeroom runs a few proposals\u2019 '
+            + 'checks at a time. They start on their own. It can\u2019t go live until they pass.',
+        });
     }
     if (check === 'pending') {
       // A run that has been going a while says for how long, so "pending for

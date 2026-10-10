@@ -52,8 +52,37 @@ export type NeedsFeedItem = {
   at: string | null;
   yes: number | null;
   no: number | null;
+  /**
+   * #4270: a change on a project that is just yours whose Yes is the one it
+   * needs (B7, the server's rule for `_cardVoteButtonSpecs`' `approve`).
+   */
+  approve?: boolean;
+  /**
+   * #4490: the card's picture, as a project's Needs you draws it: the
+   * change's before & after shots run and legacy capture pair (shaped by
+   * `AppView._workshopVisuals`, as there), its author's diagram, "What it
+   * touches", and a group decision's own facts.
+   */
+  shots?: unknown;
+  visuals?: unknown;
+  diagram?: unknown;
+  diagram_source?: string | null;
+  touches?: unknown;
+  nothing_visible?: boolean;
+  decision?: unknown;
   app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
 };
+
+/**
+ * The shots and legacy pair as the item draws them: the project page's own
+ * shaping (`AppView._workshopVisuals`), so the two feeds cannot differ.
+ * Null when AppView is not loaded or there is nothing to show.
+ */
+function feedVisuals(item: NeedsFeedItem): FeedRow['visuals'] {
+  if (item.kind === 'governance' || (!item.shots && !item.visuals)) return null;
+  const out = callAppView('_workshopVisuals', item.visuals || null, item.shots || null);
+  return out && typeof out === 'object' ? (out as FeedRow['visuals']) : null;
+}
 
 type FeedRow = DevWorkshopView['queue'][number];
 
@@ -79,7 +108,9 @@ export function plainSummary(md: string | null | undefined): string {
  * (app-view.js `_workshopView`'s queue): the card's page, the question and
  * what Yes and No DO, who asked and when, the words, the ask box's address
  * and the thread's. A change's pair is `_cardVoteButtonSpecs`' (castVote with
- * the epoch); a group decision has none, and the vote sheet opens its page.
+ * the epoch, and on a project that is just yours the Yes marked `approve`, so
+ * the item says Approve and Don't approve as its card does, #4270); a group
+ * decision has none, and the vote sheet opens its page.
  * `html` renders a summary for the Description sheet (DevChat's renderer,
  * through AppView, where it is loaded).
  */
@@ -118,7 +149,7 @@ export function reelRows(
       },
       kind: 'vote',
       ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] } } : null,
+      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
       no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
@@ -126,7 +157,11 @@ export function reelRows(
       body: null,
       summary,
       descriptionHtml: item.summary ? html(item.summary) : '',
-      visuals: null,
+      visuals: feedVisuals(item),
+      ...(item.diagram ? { diagram: item.diagram, diagramSource: item.diagram_source || 'author' } : {}),
+      ...(item.touches ? { touches: item.touches } : {}),
+      ...(item.nothing_visible ? { nothingVisible: true } : {}),
+      ...(item.decision ? { decision: item.decision } : {}),
       askAbout: { kind: change ? 'proposal' : 'gov', ref: item.id },
       thread: { type: change ? 'session' : 'governance', ref: item.id },
       app: item.app,

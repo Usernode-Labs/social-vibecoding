@@ -1,7 +1,9 @@
 'use strict';
 
-// The three connector tools that let a full platform admin make, list and
-// retire test accounts for first-run testing (services/test-accounts.js).
+// The five connector tools that let a full platform admin make, list and
+// retire test accounts for first-run testing, mint a one-time phone sign-in
+// for a test number, and send the waitlist's release mail to a test address
+// (services/test-accounts.js).
 // Admin-only three times over, like the benchmark's tools: registered only for
 // a full admin, refused in the handler, refused by the route (which
 // tests/test-accounts-postgres.test.js and tests/mcp-connector-policy.test.js
@@ -14,7 +16,8 @@ const assert = require('node:assert/strict');
 const tools = require('../src/services/mcp-tools');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
-const TOOLS = ['create_test_account', 'list_test_accounts', 'retire_test_account'];
+const TOOLS = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'list_test_accounts', 'retire_test_account'];
+const WRITES = ['create_test_account', 'create_test_phone_sign_in', 'send_test_release_email', 'retire_test_account'];
 
 function register({ user, scopes = [READ_SCOPE, WRITE_SCOPE], origin = 'https://homeroom.example' }) {
   const specs = new Map();
@@ -52,14 +55,12 @@ test('only a full admin\'s connector has the test-account tools at all', () => {
   const { specs } = register({ user: { ...ADMIN } });
   for (const name of TOOLS) assert.ok(specs.has(name), `${name} is offered to a full admin`);
   assert.equal(specs.get('list_test_accounts').annotations.readOnlyHint, true);
-  assert.equal(specs.get('create_test_account').annotations.readOnlyHint, false);
-  assert.equal(specs.get('retire_test_account').annotations.readOnlyHint, false);
-  // The two writes are acting tools (out of the setup hint and the shipped
+  for (const name of WRITES) assert.equal(specs.get(name).annotations.readOnlyHint, false, name);
+  // The writes are acting tools (out of the setup hint and the shipped
   // read-only allow rules); the read is named list_ so those rules cover it.
-  assert.ok(tools.ACTING_TOOLS.includes('create_test_account'));
-  assert.ok(tools.ACTING_TOOLS.includes('retire_test_account'));
+  for (const name of WRITES) assert.ok(tools.ACTING_TOOLS.includes(name), name);
   assert.ok(!tools.ACTING_TOOLS.includes('list_test_accounts'));
-  for (const name of ['create_test_account', 'retire_test_account']) {
+  for (const name of WRITES) {
     assert.doesNotMatch(name, /^(get|list)_/, `${name} must not borrow a read-only prefix`);
   }
 });
@@ -75,7 +76,7 @@ test('a handler refuses before any call when the user is no longer a full admin,
     assert.equal(out.structuredContent.code, 'admin_only', name);
   }
   const readOnly = register({ user: { ...ADMIN }, scopes: [READ_SCOPE] });
-  for (const name of ['create_test_account', 'retire_test_account']) {
+  for (const name of WRITES) {
     // eslint-disable-next-line no-await-in-loop
     const refused = await readOnly.handlers.get(name)({ userId: 5, confirm: 'RETIRE' });
     assert.equal(refused.structuredContent.code, 'insufficient_scope', `${name} needs the write scope`);
@@ -88,22 +89,22 @@ test('create_test_account hands back the account once, with sign-in steps on thi
     body: {
       account: {
         userId: 1234, username: 'member_3f9a1c', password: 'one-time-Secret_1',
-        needsUsernameChoice: true, platformAccess: true, homeroomBotDm: true, welcomeDm: false,
+        needsUsernameChoice: true, platformAccess: true, welcomeDm: false,
       },
     },
   }));
   const { handlers } = register({ user: { ...ADMIN }, origin: 'https://staging.homeroom.example' });
-  const out = await handlers.get('create_test_account')({ homeroomBotDm: true, note: 'Plant Pal first run' });
+  const out = await handlers.get('create_test_account')({ welcomeDm: false, note: 'Plant Pal first run' });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts');
-  assert.deepEqual(calls[0].body, { homeroomBotDm: true, note: 'Plant Pal first run' });
+  assert.deepEqual(calls[0].body, { welcomeDm: false, note: 'Plant Pal first run' });
   const sc = out.structuredContent;
   assert.equal(sc.userId, 1234);
   assert.equal(sc.username, 'member_3f9a1c');
   assert.equal(sc.password, 'one-time-Secret_1');
   assert.equal(sc.needsUsernameChoice, true);
-  assert.equal(sc.homeroomBotDm, true);
+  assert.equal(Object.hasOwn(sc, 'homeroomBotDm'), false, 'the bot works for any account let in: nothing to report');
   assert.equal(sc.signIn.url, 'https://staging.homeroom.example/#login');
   assert.match(sc.signIn.steps[0], /sign out first/);
   assert.equal(sc.retireWith, 'retire_test_account({ userId: 1234, confirm: "RETIRE" })');
@@ -157,7 +158,7 @@ test('the route\'s refusals reach the session with their own codes', async (t) =
 
 test('retire_test_account needs confirm "RETIRE" before any call, and reports what it removed', async (t) => {
   const calls = stubFetch(t, () => ({
-    body: { retired: { userId: 7, username: 'tester_7', appsDeleted: ['plant-pal-1'], homeroomBotDm: true } },
+    body: { retired: { userId: 7, username: 'tester_7', appsDeleted: ['plant-pal-1'] } },
   }));
   const { handlers } = register({ user: { ...ADMIN } });
   for (const confirm of [undefined, 'retire', 'DELETE', '']) {
@@ -171,7 +172,6 @@ test('retire_test_account needs confirm "RETIRE" before any call, and reports wh
   assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/7/retire');
   assert.deepEqual(calls[0].body, { confirm: 'RETIRE' });
   assert.deepEqual(out.structuredContent.appsDeleted, ['plant-pal-1']);
-  assert.equal(out.structuredContent.homeroomBotDm, true);
 });
 
 test('list_test_accounts returns the live accounts, with the note inside the untrusted envelope', async (t) => {
@@ -208,4 +208,140 @@ test('the charter tells the session how to handle the password and when to retir
   assert.match(section.text, /sign out on the device/);
   assert.match(section.text, /retire the account with retire_test_account/);
   assert.match(section.text, /seen by everyone/);
+});
+
+test('create_test_phone_sign_in hands back a number and a one-time code once, with the Join steps', async (t) => {
+  const calls = stubFetch(t, () => ({
+    body: { signIn: { phoneNumber: '+14155550142', code: '482913', expiresAt: '2026-10-07T19:00:00.000Z', signsInTo: null } },
+  }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const out = await handlers.get('create_test_phone_sign_in')({});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/phone-sign-ins');
+  const r = out.structuredContent;
+  assert.equal(r.phoneNumber, '+14155550142');
+  assert.equal(r.code, '482913');
+  assert.equal(r.signsInTo, null);
+  assert.ok(r.steps.some((s) => /No text is sent/.test(s)));
+  assert.match(r.nextStep, /once/);
+  assert.match(r.nextStep, /retire_test_account/);
+
+  const named = stubFetch(t, () => ({
+    body: { signIn: { phoneNumber: '+12125550150', code: '111222', expiresAt: '2026-10-07T19:00:00.000Z', signsInTo: 'ben_ito' } },
+  }));
+  const again = await handlers.get('create_test_phone_sign_in')({ phoneNumber: '+1 212 555 0150' });
+  assert.deepEqual(named[0].body, { phoneNumber: '+1 212 555 0150' });
+  assert.match(again.structuredContent.nextStep, /@ben_ito/);
+});
+
+test('create_test_phone_sign_in passes the route\'s refusals on with their own codes', async (t) => {
+  stubFetch(t, () => ({ status: 400, body: { error: 'Use a test number: +1, any area code, then 555 0100 to 0199.', code: 'not_test_number' } }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const out = await handlers.get('create_test_phone_sign_in')({ phoneNumber: '+447700900123' });
+  assert.equal(out.structuredContent.code, 'not_test_number');
+  assert.match(out.structuredContent.message || out.content[0].text, /test number/);
+});
+
+test('send_test_release_email sends what it was given and hands back the address, the outcome and the sign-up steps', async (t) => {
+  const calls = stubFetch(t, () => ({
+    body: {
+      release: {
+        email: 'evan+test1a2b3c@example.com', signupId: 88, hasAccount: false, signsInTo: null,
+        welcomeDm: false, note: 'copy round 2', mail: { status: 'sent', error: null },
+      },
+    },
+  }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const out = await handlers.get('send_test_release_email')({ note: 'copy round 2' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'http://platform.internal/api/test-accounts/release-emails');
+  assert.deepEqual(calls[0].body, { note: 'copy round 2' }, 'no address: the platform picks a +test alias');
+  const sc = out.structuredContent;
+  assert.equal(sc.email, 'evan+test1a2b3c@example.com');
+  assert.equal(sc.signupId, 88);
+  assert.equal(sc.hasAccount, false);
+  assert.deepEqual(sc.mail, { status: 'sent', error: null });
+  assert.ok(sc.steps.some((s) => /evan\+test1a2b3c@example\.com/.test(s)), 'the steps name the inbox');
+  assert.ok(sc.steps.some((s) => /Create my account/.test(s)));
+  assert.ok(sc.steps.some((s) => /signs in once by itself/.test(s)));
+  assert.ok(sc.steps.some((s) => /6-digit code/.test(s)), 'and the code it falls back to');
+  assert.match(sc.nextStep, /on its way/);
+  assert.match(sc.nextStep, /retire_test_account/);
+  assert.equal(JSON.stringify(sc).includes('password"'), false, 'no credential comes back');
+});
+
+test('send_test_release_email says when the mail did not go out, and which version an existing account gets', async (t) => {
+  let next = null;
+  stubFetch(t, () => next);
+  const { handlers } = register({ user: { ...ADMIN } });
+  const release = (mail, extra = {}) => ({
+    body: { release: { email: 'qa+x@example.com', signupId: 3, hasAccount: false, signsInTo: null, welcomeDm: false, mail, ...extra } },
+  });
+
+  next = release({ status: 'suppressed_rate_limit', error: 'another waitlist_released mail went to this address 20s ago' });
+  let sc = (await handlers.get('send_test_release_email')({ email: 'qa+x@example.com' })).structuredContent;
+  assert.equal(sc.mail.status, 'suppressed_rate_limit');
+  assert.match(sc.mail.error, /^<untrusted-content>[\s\S]*<\/untrusted-content>$/, 'the throttle\'s or provider\'s words are data');
+  assert.match(sc.nextStep, /throttle/);
+  assert.doesNotMatch(sc.nextStep, /on its way/);
+
+  next = release({ status: 'skipped_staging', error: null });
+  sc = (await handlers.get('send_test_release_email')({ email: 'qa+x@example.com' })).structuredContent;
+  assert.match(sc.nextStep, /only logs mail/);
+
+  next = release({ status: 'sent', error: null }, { hasAccount: true, signsInTo: 'release_tester' });
+  sc = (await handlers.get('send_test_release_email')({ email: 'qa+x@example.com', welcomeDm: true })).structuredContent;
+  assert.equal(sc.hasAccount, true);
+  assert.equal(sc.signsInTo, 'release_tester');
+  assert.ok(sc.steps.some((s) => /sign in as @release_tester/.test(s)));
+  assert.ok(!sc.steps.some((s) => /Create my account/.test(s)));
+  assert.match(sc.nextStep, /"sign in" version/);
+});
+
+test('send_test_release_email refuses an over-long note before any call, and passes the route\'s refusals on', async (t) => {
+  let next = { body: {} };
+  const calls = stubFetch(t, () => next);
+  const { handlers } = register({ user: { ...ADMIN } });
+  const long = await handlers.get('send_test_release_email')({ note: 'x'.repeat(201) });
+  assert.equal(long.structuredContent.code, 'note_too_long');
+  assert.equal(calls.length, 0);
+
+  for (const [status, code] of [[409, 'real_account'], [409, 'real_signup'], [400, 'invalid_email'], [400, 'email_required']]) {
+    next = { status, body: { error: `Refused: ${code}.`, code } };
+    // eslint-disable-next-line no-await-in-loop
+    const out = await handlers.get('send_test_release_email')({ email: 'someone@example.com' });
+    assert.equal(out.structuredContent.code, code);
+  }
+  next = { status: 429, body: { error: 'There are already 25 live test accounts.', code: 'at_capacity' } };
+  assert.equal((await handlers.get('send_test_release_email')({})).structuredContent.code, 'at_capacity');
+});
+
+test('list_test_accounts carries each account\'s address and the releases nobody has signed up from', async (t) => {
+  stubFetch(t, () => ({
+    body: {
+      max: 25,
+      accounts: [{ userId: 9, username: 'release_tester', email: 'evan+test1a2b3c@example.com', createdBy: 'evan', apps: [] }],
+      releases: [{
+        signupId: 41, email: 'evan+test9f8e7d@example.com', createdBy: 'evan',
+        lastSentAt: '2026-10-09T10:00:00.000Z', expiresAt: '2026-10-16T10:00:00.000Z', note: 'copy round 3',
+      }],
+    },
+  }));
+  const { handlers } = register({ user: { ...ADMIN } });
+  const sc = (await handlers.get('list_test_accounts')({})).structuredContent;
+  assert.equal(sc.accounts[0].email, 'evan+test1a2b3c@example.com');
+  assert.equal(sc.releases.length, 1);
+  const [rel] = sc.releases;
+  assert.equal(rel.signupId, 41);
+  assert.equal(rel.email, 'evan+test9f8e7d@example.com');
+  assert.equal(rel.expiresAt, '2026-10-16T10:00:00.000Z');
+  assert.match(rel.note, /^<untrusted-content>copy round 3<\/untrusted-content>$/);
+});
+
+test('the charter names the release email and who it may go to', () => {
+  const section = require('../src/services/mcp-charter').CHARTER_SECTIONS.find((s) => s.id === 'test-accounts');
+  assert.match(section.text, /send_test_release_email/);
+  assert.match(section.text, /never to somebody else's/);
 });

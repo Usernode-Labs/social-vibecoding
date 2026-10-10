@@ -86,6 +86,8 @@ spec:
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: PREVIEW_LIFECYCLE_ENABLED, value: {{ .Values.platform.previewLifecycleEnabled | default false | quote }}}
             - {name: SHOTS_ENABLED, value: {{ .Values.platform.shotsEnabled | quote }}}
+            - {name: WF_GOVERNANCE_ENABLED, value: {{ .Values.platform.workflowGovernanceEnabled | quote }}}
+            - {name: WF_MERGE_FOLLOWUPS_ENABLED, value: {{ .Values.platform.workflowMergeFollowupsEnabled | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}
@@ -124,6 +126,7 @@ spec:
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
+            - {name: CHECKS_MAX_CONCURRENT_RUNS, value: {{ .Values.config.checksMaxConcurrentRuns | int64 | quote }}}
             - {name: DB_POOL_MAX, value: {{ .Values.config.dbPoolMax | int64 | quote }}}
             - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
             - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}

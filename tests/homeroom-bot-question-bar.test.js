@@ -243,41 +243,13 @@ test('live: a blocked build is said on the issue like a question, to whoever fil
 
 // ── Comparing old against new ────────────────────────────────────────────
 
-test('re-triage queues the latest question of each issue, on shadow apps only', async () => {
-  const seen = [];
-  const pool = {
-    async query(sql, params) {
-      const s = String(sql);
-      seen.push({ s, params });
-      if (/FROM platform_settings/.test(s)) {
-        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }, { key: 'homeroom_bot_live_apps', value: '["rss-reader-4113da"]' }] };
-      }
-      if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) {
-        return {
-          rows: [
-            { app_id: 1, issue_number: 3250, verdict: 'question', slug: 'usernode-2d5619' },
-            { app_id: 1, issue_number: 3251, verdict: 'ready', slug: 'usernode-2d5619' },
-            { app_id: 2, issue_number: 24, verdict: 'question', slug: 'rss-reader-4113da' },
-            { app_id: 3, issue_number: 13, verdict: 'question', slug: 'pulse-2f06de' },
-          ],
-        };
-      }
-      return { rows: [] };
-    },
-  };
-  const out = await bot.retriageQuestions(pool, { actorId: 5 });
-  assert.deepEqual(out, { ok: true, queued: 2, live: 1 });
-  const ins = seen.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.deepEqual(ins.params, [[1, 3], [3250, 13], 5]);
-  assert.match(ins.s, /SELECT app_id, issue_number, 0, 'retriage', \$3/, 'priority 0: a refresh keeps it until it runs');
-  const latest = seen.find((q) => /SELECT DISTINCT ON/.test(q.s)).s;
-  assert.match(latest, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');
-  assert.match(latest, /r\.verdict IN \('question', 'ready', 'person', 'empty'\)/, 'a later failed run does not hide it');
-
-  const src = read('src/routes/admin.js');
-  assert.match(src, /router\.post\('\/api\/admin\/homeroom-bot\/retriage-questions', requireAdminWrite, drainGuard,/);
+test('re-triaging every question is gone with the shadow apps it worked on; the dashboard still shows the bar', () => {
+  // It only ever queued questions on apps the bot did not act on, and every
+  // app but a paused one is live now, so the button and its route went.
+  assert.equal(bot.retriageQuestions, undefined);
+  assert.doesNotMatch(read('src/routes/admin.js'), /retriage-questions/);
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /id="admin-homeroom-bot-retriage"/);
+  assert.doesNotMatch(tsx, /id="admin-homeroom-bot-retriage"|retriage-questions/);
   assert.match(tsx, /data-question-blocker/);
   assert.match(tsx, /data-demoted-question/);
 });

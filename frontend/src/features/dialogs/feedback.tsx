@@ -27,15 +27,21 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
+import { useRef, useState } from 'react';
+
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { CameraIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
+import { CameraIcon, ChatIcon, DescriptionIcon, PaperclipIcon, PhotoIcon, VideoCameraIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
+import { HostDropOverlay } from '../attachments/file-drag';
+import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
+import { formOffersComment, openCommentMode } from '../improve/suggest-shortcut';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
 
@@ -51,15 +57,66 @@ interface OpenOptions {
    * 'app': open with "This app" chosen, when it can be. For a caller whose
    * own button named the open app (Getting started's Suggest).
    */
-  target?: 'app';
+  target?: 'app' | 'platform';
+  /**
+   * The experimental C comment handing itself over (features/comment-pin/):
+   * its words, added after anything already typed, and its screenshot,
+   * attached as Photos would. 'platform' above comes only from it: the
+   * person chose that destination on the comment.
+   */
+  description?: string;
+  screenshotBlob?: Blob;
+  /**
+   * Comment mode handing a box over (features/comment-pin/post.ts
+   * `handOverOptions`): its pictures, the pages' with their pins beside them as
+   * data (#4482), the title the box showed, and its Kudos.
+   */
+  screenshots?: Array<{ blob: Blob; pins?: Array<{ x: number; y: number; n?: number | null; note: string }> }>;
+  title?: string;
+  bounty?: boolean;
+  /** 'form': this form, even where "Suggest an improvement" would open comment mode. */
+  mode?: 'form';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
+/** The form the drop zone listens on; the controller's node, found by id. */
+function feedbackForm(): HTMLElement | null {
+  return typeof document !== 'undefined' ? document.getElementById('feedback-form') : null;
+}
+
+/** The controller locks the description while a post or an upload runs. */
+function feedbackLocked(): boolean {
+  const text = typeof document !== 'undefined' ? document.getElementById('feedback-text') as HTMLTextAreaElement | null : null;
+  return !!text?.readOnly;
+}
+
 export function FeedbackDialog() {
+  // Experimental (#4289): the form's switch to comment mode, offered where
+  // the device's switch is on (not in the side panel). Read on every open,
+  // since the setting lives on the device and can change between opens.
+  const [offersComment, setOffersComment] = useState(false);
+  // The card, as a bottom sheet on a phone (#4554): `useKeyboardSurface`
+  // rides the keyboard with it the way the sign-in sheet's does, and the
+  // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
+  const cardRef = useRef<HTMLDivElement>(null);
   const dialog = useDialog<OpenOptions>('feedback', {
-    onOpen: (opts) => Feedback._open(opts || {}),
+    phoneSheet: true,
+    onOpen: (opts) => {
+      setOffersComment(formOffersComment());
+      Feedback._open(opts || {});
+    },
     onClose: () => Feedback._reset(),
   });
+  useKeyboardSurface(cardRef, { ride: true });
+  // Comment mode instead, taking the form's draft: the words wait for the
+  // first click on the page, and the pictures, title, Kudos and destination
+  // go into that comment's box.
+  const toComment = () => {
+    const carry = Feedback._takeDraft();
+    dialog.close();
+    const any = carry.text.trim() || carry.title || carry.images.length || carry.bounty;
+    openCommentMode({ via: 'switch', carry: any ? carry : null });
+  };
 
   // Was the middle of `App.bindEvents`. Layout effect, so the header's
   // speech-bubble button and the ?shot=feedback deep link are both live
@@ -74,12 +131,22 @@ export function FeedbackDialog() {
       ref={dialog.rootRef}
       {...dialog.backdropProps}
     >
-      <DialogCard size="sm">
+      <DialogCard size="sm" ref={cardRef}>
+        {/* The sheet's handle (#4554), shown only in the phone sheet's
+            presentation (app.css's `[data-dialog-sheet]` rules). No id: the
+            prerendered shell gains nothing it has to name. */}
+        <div aria-hidden="true" className="feedback-sheet-grabber" />
         {/* #3907: Return in the title goes on to the description, where it is
             a new line (the iOS keyboard's chevrons are gone). A handler, not
             markup: nothing here is written, so the controller still owns
             every node inside. ⌘/Ctrl+Enter still posts, from the controller. */}
         <div id="feedback-form" onKeyDown={returnKeyHandler()}>
+        {/* #4065: the drop zone while a file is held over the form. The
+            controller's own `drop` listener attaches the files (images to the
+            screenshot row, a clip to the video slot); this draws the outline
+            only, and nothing in the controller writes this node. Off while
+            the form is locked for a submit or an upload, as its drop is. */}
+        <HostDropOverlay host={feedbackForm} label="Drop images or a clip to attach" isDisabled={feedbackLocked} />
         {/* SUGGEST AN IMPROVEMENT, from every way in. It was "Send
             feedback", then "Ask for a change" from the hub's ⋯ (QA
             2026-09-24) and from every way in (UI overhaul); people read
@@ -94,6 +161,39 @@ export function FeedbackDialog() {
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           Members can see it, vote on it and pick it up.
         </p>
+        {/* Experimental (#4289): this form, or comment mode, where a click on
+            the page is the comment. With the switch on, "Suggest an
+            improvement" opens comment mode, and this form is reached from its
+            Form switch; this is the way back. React's own node, which the
+            controller never writes; hidden in the prerendered shell (the
+            class, as the rest of this card is), since the switch is off until
+            a person turns it on. */}
+        <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
+          <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it">
+            <button
+              type="button"
+              role="radio"
+              aria-checked="true"
+              title="Suggest it with this form"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
+            >
+              <DescriptionIcon className="h-4 w-4" />
+              Form
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked="false"
+              title="Comment on the page"
+              onClick={toComment}
+              className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+            >
+              <ChatIcon className="h-4 w-4" />
+              Comment
+            </button>
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">Click on the page to comment</span>
+        </div>
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button
@@ -224,7 +324,7 @@ export function FeedbackDialog() {
           <Textarea
             id="feedback-text"
             rows={4}
-            maxLength={2000}
+            maxLength={FEEDBACK_DESCRIPTION_MAX}
             aria-required="true"
             placeholder="Describe the change, or the problem you hit"
             className="resize-none"
@@ -247,8 +347,20 @@ export function FeedbackDialog() {
             takes several files at once (`multiple`); the controller keeps
             only as many as there is room for.
         */}
+        {/*
+            #4127: one line again. "Choose from Photos" and "Add video" were
+            two more buttons beside the capture one, and the row wrapped onto
+            a second line. They are now the two rows of a small popover under
+            one paperclip button (#feedback-attach-btn), drawn in the vote
+            popover's frame. The rows keep their ids, so the controller's
+            handlers, limits and disabled states are what they were; it also
+            opens and closes the popover (outside click, Escape, a choice).
+            Popover, rows and paperclip all render hidden for the same
+            hydration reason as the rest of the row: the controller shows
+            them on open.
+        */}
         <div className="mt-2">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               id="feedback-screenshot-btn"
               type="button"
@@ -257,19 +369,53 @@ export function FeedbackDialog() {
               <CameraIcon className="w-3.5 h-3.5" />
               <span data-screenshot-label="">Attach screenshot</span>
             </button>
-            <button
-              id="feedback-screenshot-picker-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <PhotoIcon className="w-3.5 h-3.5" />
-              Choose from Photos
-            </button>
+            <div className="relative">
+              <button
+                id="feedback-attach-btn"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="feedback-attach-menu"
+                aria-label="Attach a photo or video"
+                title="Attach a photo or video"
+                className="hidden inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 transition-colors"
+              >
+                <PaperclipIcon className="w-5 h-5" aria-hidden="true" />
+              </button>
+              <div id="feedback-attach-menu" role="menu" aria-label="Attach" className="feedback-attach-pop hidden">
+                <button
+                  id="feedback-screenshot-picker-btn"
+                  type="button"
+                  role="menuitem"
+                  className="feedback-attach-option hidden"
+                >
+                  <PhotoIcon aria-hidden="true" />
+                  Photo
+                </button>
+                <button
+                  id="feedback-video-btn"
+                  type="button"
+                  role="menuitem"
+                  className="feedback-attach-option hidden"
+                >
+                  <VideoCameraIcon aria-hidden="true" />
+                  <span data-video-label="">Video</span>
+                </button>
+              </div>
+            </div>
             <input
               id="feedback-screenshot-input"
               type="file"
               accept="image/png,image/jpeg"
               multiple
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <input
+              id="feedback-video-input"
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime"
               className="hidden"
               tabIndex={-1}
               aria-hidden="true"
@@ -281,31 +427,13 @@ export function FeedbackDialog() {
           </div>
           {/*
             #3940: video clips. One clip per issue, chosen alongside the
-            images above: #feedback-video-btn picks an MP4/WebM/MOV file
-            (never `multiple`), #feedback-video-preview renders its
-            thumbnail row (first-frame preview, upload state, its own 48px
-            remove button) — both filled by the controller on open, hidden
-            for the same hydration reason as the screenshot controls.
+            images above: the popover's Video row (#feedback-video-btn) picks
+            an MP4/WebM/MOV file (never `multiple`), #feedback-video-preview
+            renders its thumbnail row (first-frame preview, upload state, its
+            own 48px remove button), filled by the controller, hidden for the
+            same hydration reason as the screenshot controls.
           */}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              id="feedback-video-btn"
-              type="button"
-              className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
-            >
-              <VideoCameraIcon className="w-3.5 h-3.5" />
-              <span data-video-label="">Add video</span>
-            </button>
-            <input
-              id="feedback-video-input"
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime"
-              className="hidden"
-              tabIndex={-1}
-              aria-hidden="true"
-            />
-            <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
-            </div>
+          <div id="feedback-video-preview" className="hidden mt-2 flex-wrap items-center gap-2">
           </div>
         </div>
         {/*
@@ -370,7 +498,22 @@ export function FeedbackDialog() {
         </div>
         <div id="feedback-status" className="text-sm mt-2 hidden">
         </div>
-        <div className="flex gap-3 mt-4">
+        {/* #3994: a message saved on this device that has not sent yet is
+            sent again on a press, instead of only when the outbox's own
+            triggers fire. The controller shows it while anything is waiting
+            and words it while a try is running. */}
+        <button
+          id="feedback-queue-retry"
+          type="button"
+          className="hidden mt-1 min-h-[44px] text-sm font-semibold text-violet-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
+        >
+          Try again
+        </button>
+        {/* #4033: Cancel and Post stay on screen while the form above them
+            scrolls (a long description, the kudos row). `.feedback-actions`
+            in app.css pins the row to the bottom of the kit modal, which is
+            the scroller. */}
+        <div className="feedback-actions flex gap-3 mt-4">
           {/*
               The controller's success and save-for-later paths still close
               the dialog by clicking this button after their 1500 ms grace
@@ -415,9 +558,9 @@ export function FeedbackDialog() {
             line, and the dialog closed itself 1.5 s later; now it is this
             section, drawn like the first-feedback moment above, and it stays
             until Done. The controller names where it went in the heading
-            ("Posted to Run Club", "Posted to Homeroom") and fills the notice
-            with any bounty outcome, so the notice renders empty and hidden
-            for the reason #feedback-status does.
+            ("Thanks! Posted to Run Club", "Thanks! Posted to Homeroom") and
+            fills the notice with any bounty outcome, so the notice renders
+            empty and hidden for the reason #feedback-status does.
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
@@ -425,18 +568,32 @@ export function FeedbackDialog() {
           </h2>
           <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           {/* B8: where Homeroom bot builds it, this says so ("Homeroom bot is
-              on it, usually about 8 minutes."), Open chat leads, and building
-              it yourself is the small link at the foot. The controller words
-              the line and shows the two. */}
+              building it now, usually about 8 minutes. ...", #3971), Open
+              chat leads, and building it yourself is the small link at the
+              foot. The controller words the line and shows the two. */}
           <p id="feedback-sent-line" className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Find it on your profile, under Your requests.
+            Your idea is on the board now. Find it on your profile, under Your requests.
           </p>
+          {/* #3971: a person's first request, where Homeroom bot builds it.
+              B8 answered that with the bot's confirmation alone, so nobody it
+              built for heard about their first request; this brings the moment
+              back beside it rather than in place of it (the moment's own next
+              steps would compete with Open chat). The controller shows it and
+              names the app in the line. */}
+          <div id="feedback-sent-first" className="hidden mb-4 rounded-lg bg-emerald-50 px-3 py-2.5 dark:bg-emerald-500/10">
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+              Your first request!
+            </p>
+            <p id="feedback-sent-first-line" className="text-sm text-zinc-600 dark:text-zinc-400">
+              You just helped shape this app.
+            </p>
+          </div>
           <div className="flex flex-col gap-3">
             <Button id="feedback-sent-chat" className="hidden min-h-[44px]">Open chat</Button>
             <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
             <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
             <button id="feedback-sent-fix" type="button" className="hidden self-center text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
-              Build it yourself with a coding agent
+              Build it now with a coding agent
             </button>
           </div>
         </section>

@@ -106,9 +106,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify([evan.username]));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify([app.slug]));
   const opened = await conversations.ensureAdmittedDirect(pool, homeroomBot.id, evan.id);
 
   let viewer = evan;
@@ -128,18 +126,43 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     return res.json();
   };
   const fv = (over) => ({
-    step: 1, of: 7, step_name: 'Set up the project', ready: false, mine: true, creator: evan.username,
-    waits_on: null, conversation_id: opened.conversationId, session_id: null, ...over,
+    step: 1, of: 7, line: 'planning', ready: false, mine: true, creator: evan.username,
+    waits_on: null, conversation_id: opened.conversationId, session_id: null, plan: null, ...over,
   });
-  // The step's name as firstVersionState names it for this viewer: what
-  // the App tab and the made screen say, whatever a step is called.
-  const named = async (who) => (await dm.firstVersionState(pool, app.id, { viewerId: who.id })).stepName;
+  // #4053: the build line as firstVersionState says it for this viewer: what
+  // the App tab and the made screen say.
+  const named = async (who) => (await dm.firstVersionState(pool, app.id, { viewerId: who.id })).line;
 
   await t.test('a project made with no description says nothing about what it is, and has no build to show', async () => {
     const body = await get();
     assert.equal(body.audience, 'solo');
     assert.equal(body.description, null);
     assert.equal(body.first_version, null);
+    assert.equal(body.first_week, true, '#4045: made today, so in its first week');
+  });
+
+  await t.test('#4045: an invite link makes the hub draw open seats, for the person whose link it is, while it is live', async () => {
+    assert.equal((await get()).invite_link, false, 'no link yet: Just you');
+    const link = async (by, over = '') => (await pool.query(
+      `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, expires_at)
+       VALUES ($1, $2, $3, $4, 25, ${over || "NOW() + INTERVAL '7 days'"}) RETURNING id`,
+      [crypto.randomBytes(12).toString('hex'), app.community_id, app.id, by.id],
+    )).rows[0].id;
+    // Somebody else's link, an ended one and a used up one are not the viewer's live link.
+    await link(sam);
+    await link(evan, "NOW() - INTERVAL '1 hour'");
+    await pool.query(
+      `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, uses, expires_at)
+       VALUES ($1, $2, $3, $4, 1, 1, NOW() + INTERVAL '7 days')`,
+      [crypto.randomBytes(12).toString('hex'), app.community_id, app.id, evan.id],
+    );
+    assert.equal((await get()).invite_link, false);
+    const id = await link(evan);
+    const body = await get();
+    assert.equal(body.invite_link, true, 'their live link is out');
+    assert.equal(body.audience, 'solo', 'the audience is still derived from people, not links');
+    await pool.query('UPDATE community_invites SET revoked_at = NOW() WHERE id = $1', [id]);
+    assert.equal((await get()).invite_link, false, 'turned off: back to Just you');
   });
 
   await t.test('being set up: the first sentence of what it was made from, and step 1 of 7', async () => {
@@ -163,6 +186,26 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     assert.equal((await get()).description, 'Plan hikes around Geneva with friends');
   });
 
+  await t.test('its card\'s tagline stands in before the first sentence, and dapp.json\'s line still wins (#4235)', async () => {
+    await pool.query(
+      `INSERT INTO app_sketches (app_id, user_id, status) VALUES ($1, $2, 'pending')`,
+      [app.id, evan.id],
+    );
+    assert.equal((await get()).description, 'Plan hikes around Geneva with friends', 'a card still being drawn says nothing');
+    await pool.query(
+      `UPDATE app_sketches SET status = 'ready', design = $2::jsonb, ready_at = NOW() WHERE app_id = $1`,
+      [app.id, JSON.stringify({ kind: 'card', emoji: '🥾', tagline: 'Group hikes around Geneva', points: [] })],
+    );
+    assert.equal((await get()).description, 'Group hikes around Geneva');
+    await pool.query(
+      `UPDATE apps SET manifest_snapshot = $2 WHERE id = $1`,
+      [app.id, JSON.stringify({ description: 'Group hikes around Lake Geneva', secrets: [] })],
+    );
+    assert.equal((await get()).description, 'Group hikes around Lake Geneva');
+    await pool.query('UPDATE apps SET manifest_snapshot = NULL WHERE id = $1', [app.id]);
+    await pool.query('DELETE FROM app_sketches WHERE app_id = $1', [app.id]);
+  });
+
   let run;
   await t.test('its plan waits on its maker: step 3, and what it waits on, for them alone', async () => {
     await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [app.id]);
@@ -175,7 +218,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
        VALUES ($1, 1, $2, 'First version of Geneva hike planner', TRUE, $3)`,
       [app.id, evan.id, BRIEF],
     );
-    assert.deepEqual((await get()).first_version, fv({ step: 2, step_name: 'Read the description' }),
+    assert.deepEqual((await get()).first_version, fv({ step: 2, line: 'planning' }),
       'filed, and next to be read');
     ({ rows: [run] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note)
@@ -184,9 +227,34 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     ));
     // The bot's own plan path, as the made screen's test drives it.
     const plan = { bullets: ['A list of trails near Geneva', 'Who is coming, and when'], questions: [] };
-    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), true);
-    assert.deepEqual((await get()).first_version, fv({ step: 3, step_name: await named(evan), waits_on: 'plan' }),
+    assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan }, bot: homeroomBot }), 'waiting');
+    assert.deepEqual((await get()).first_version, fv({ step: 3, line: await named(evan), waits_on: 'plan' }),
       'named as the App tab names it for its maker, and no build time');
+
+    // #4074: somebody who joined reads the plan while it waits, read only:
+    // its lines and each question's suggested answer, nothing of its maker's.
+    const outsider = await user('ola_t1006');
+    viewer = outsider;
+    try {
+      const res = await fetch(`http://127.0.0.1:${listening.address().port}/api/apps/${app.slug}/community`);
+      assert.equal(res.status, 404, 'a private project is invisible to somebody not in it');
+    } finally {
+      viewer = evan;
+    }
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, sam.id]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, [app.id, sam.id]);
+    viewer = sam;
+    try {
+      const body = await get();
+      assert.deepEqual(body.first_version, fv({
+        step: 3, line: 'plan-member', mine: false, conversation_id: null,
+        plan: { bullets: ['A list of trails near Geneva', 'Who is coming, and when'], questions: [] },
+      }), 'Planning it, and the plan to read');
+      assert.doesNotMatch(JSON.stringify(body), /actionId|messageId|build_plan/);
+    } finally {
+      viewer = evan;
+    }
+    assert.equal((await get()).first_version.plan, null, 'its maker answers it in their chat, not here');
   });
 
   await t.test('ready to try: the change, and no promise of when', async () => {
@@ -203,7 +271,8 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
       [app.id, proposal.id],
     );
     assert.deepEqual((await get()).first_version,
-      fv({ step: 6, step_name: await named(evan), ready: true, session_id: proposal.id }));
+      fv({ step: 6, line: await named(evan), ready: true, session_id: proposal.id }));
+    assert.equal(await named(evan), 'ready');
 
     // A project with people in it: the same step for everyone, and nothing
     // of its maker's (their chat, what it waits on from them).
@@ -214,15 +283,19 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
       const body = await get();
       assert.equal(body.audience, 'invited');
       assert.deepEqual(body.first_version,
-        fv({ step: 6, step_name: await named(sam), ready: true, mine: false, conversation_id: null, session_id: proposal.id }));
+        fv({ step: 6, line: await named(sam), ready: true, mine: false, conversation_id: null, session_id: proposal.id }));
       assert.equal(body.description, 'Plan hikes around Geneva with friends');
     } finally {
       viewer = evan;
     }
 
-    // Live: the hub has no build to show, and still says what it is.
+    // #4045: live in its first week, the card stays as Live, with Open app.
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
+    assert.deepEqual((await get()).first_version, fv({ step: null, of: null, line: 'live', conversation_id: null }));
+    // After its first week, the hub has no build to show, and still says what it is.
+    await pool.query(`UPDATE apps SET created_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [app.id]);
     const live = await get();
+    assert.equal(live.first_week, false);
     assert.equal(live.first_version, null);
     assert.equal(live.description, 'Plan hikes around Geneva with friends');
   });

@@ -7,6 +7,7 @@
 // revisions; people decide whether those shots show the change.
 
 const crypto = require('crypto');
+const dbRetry = require('./db-retry');
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 
@@ -92,6 +93,23 @@ function interruptedRetryAllowed({ interrupted_retries: retries, unexplained_int
 function currentCode(code) {
   if (typeof code !== 'string' || !code.includes('evidence')) return code;
   return RENAMED_CODES[code] || code.replace(/visual_evidence/g, 'shots').replace(/evidence/g, 'shots');
+}
+
+// #4575: the codes a dispatch fails with when another turn (the Homeroom
+// bot's, say) holds the proposal's agent. The worker's own wording ("durable
+// active turn could not be persisted") means nothing to a person reading the
+// card, so a run that ended on one of these says so in plain words, even one
+// stored before this copy existed.
+const AGENT_BUSY_CODES = new Set([
+  'session_busy',
+  'TURN_IN_FLIGHT',
+  'durable_turn_persist_failed',
+  'durable_retry_persist_failed',
+]);
+const AGENT_BUSY_REASON = 'The proposal\u2019s agent was busy with another turn, so the shots didn\u2019t start. Take the shots again.';
+
+function agentBusyCode(code) {
+  return typeof code === 'string' && AGENT_BUSY_CODES.has(code);
 }
 
 class ShotsStateError extends Error {
@@ -387,7 +405,9 @@ function runSummary(row, artifactSummary = []) {
     baseSha: row.base_sha,
     headSha: row.head_sha,
     failureCode: currentCode(row.failure_code) || null,
-    failureReason: row.failure_reason || null,
+    failureReason: agentBusyCode(row.failure_code)
+      ? AGENT_BUSY_REASON
+      : (row.failure_reason || null),
     // Any finished run on the current head can be taken again; an explicit
     // no-visible-change declaration or a stop has nothing to retry.
     repairAvailable: row.state === 'failed' && currentCode(row.failure_code) !== 'visible_changes_conflict',
@@ -417,6 +437,12 @@ function runSummary(row, artifactSummary = []) {
         note: story?.status === 'ready' ? (story?.note || null) : null,
       }))
       : [],
+    // What the shots agent noticed broken on the after build besides the
+    // declared changes (shots-files.notice). Advisory only: brokenOnHead and
+    // everything that gates a change read shotResults, never these. Runs
+    // from before them have none.
+    shotNotices: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.notices)
+      ? row.hard_verdict.notices : [],
     progress: progress && typeof progress.phase === 'string'
       && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
       ? { phase: progress.phase, at: progress.at || null } : null,
@@ -626,12 +652,18 @@ function assertTransitionPayload(row, next, patch) {
   if (next === 'cancelled' || next === 'stale') patch.completedAt = patch.completedAt || new Date();
 }
 
-async function transitionRun(pool, runId, nextState, rawPatch = {}) {
+// The transition locks the run, then its proposal (FOR UPDATE OF r, s), while
+// createRun and markStaleForHead lock the proposal first: two of them on one
+// proposal at once can deadlock, and Postgres rolls one back (40P01). The
+// transition re-reads and re-checks everything under its lock, so a rolled-
+// back one is run again, a bounded number of times, from a fresh copy of
+// the patch.
+async function transitionRun(pool, runId, nextState, rawPatch = {}, { retry = {} } = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
     throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
-  const patch = { ...rawPatch };
-  const next = await withTransaction(pool, async (client) => {
+  const next = await dbRetry.withDbRetry(() => withTransaction(pool, async (client) => {
+    const patch = { ...rawPatch };
     const selected = await client.query(
       `SELECT r.*, s.shots_run_id AS current_run_id
          FROM shot_runs r
@@ -726,7 +758,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
       );
     }
     return next;
-  });
+  }), { label: 'Shots run transition', ...retry });
   if (TERMINAL_STATES.has(next?.state)) noteSettled(pool, next.session_id);
   return next;
 }
@@ -1091,6 +1123,9 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
 module.exports = {
   storeArtifacts,
   currentCode,
+  AGENT_BUSY_CODES,
+  AGENT_BUSY_REASON,
+  agentBusyCode,
   INTERRUPTED_RETRY_TRIGGER,
   MAX_INTERRUPTED_RETRIES,
   MAX_UNEXPLAINED_RETRIES,

@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
+import { ProgressRing } from '@/components/ui/progress-ring';
+
+import { changeHref } from '../../lib/change-href';
+import { releaseSentence } from '../../lib/release-eta';
+import { useReleaseNow } from '../../lib/use-release-now';
 
 import * as api from './api';
 import { afterYesWords, countOf, waitingWords } from './approval-words';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
-import { openAppTarget } from './bot-shared';
 import { scopeKey, setReply } from './store';
 import type {
   ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
@@ -28,8 +32,11 @@ import type {
  *   Change something  quotes the card in the composer, for the bot to
  *                     change it (its revise path).
  *
- * Under its title it says what the change is (changeLine): the change's own
- * title, else the request's, then what its person asked, if they did.
+ * Under its title it says what the change is (changeLine): which request it
+ * is for ("Request #4537: …", when the card knows it) and the change's own
+ * title, else the request's, then what its person asked, if they did. When
+ * the card knows where the change lives (changeLink) that line links to its
+ * page, so Try it is not the only way in.
  *
  * A change its before & after shots showed part of failing, which the bot
  * could not fix in its own round, says what does not work instead of
@@ -50,8 +57,9 @@ import type {
  * each ready card's change stands now (services/homeroom-bot-dm.js
  * readyStates, kept by ./bot-activity-store.ts, read again on the bot's news,
  * on a merge or a close, and on any vote on the change): once it is live the
- * card says so and its one button opens the app (readyCardState: `live`);
- * while it is merged it is going live; closed, it says it was closed; and
+ * card says so (readyCardState: `live`), with no button: #4228, the news
+ * that it went live, right under it, carries the one Open; while it is
+ * merged it is going live; closed, it says it was closed; and
  * while it is up for approval, who it waits on and what happens next are
  * the counts as they are now, not as they were when it was sent.
  */
@@ -81,13 +89,33 @@ const same = (a: string, b: string) => a.trim().toLowerCase().replace(/[\s.!?]+$
 /**
  * Pure (#3870): what the change is, under the title: its own title (the
  * proposal's), else the request it answers. Null when there is neither, or
- * when it only repeats what they asked ("You asked: …" says it already).
+ * when it only repeats what they asked ("You asked: …" says it already) and
+ * the card cannot even name the request. When the card knows the request
+ * (a positive integer `issueNumber`, #4537) it leads with it, so the card
+ * says which change is ready: "Request #2: Weekly watering reminder", or
+ * just "Request #2" when there is no title of its own to say.
  */
 export function changeLine(meta: HomeroomBotMeta): string | null {
+  const n = Number(meta.issueNumber);
+  const numbered = Number.isInteger(n) && n > 0;
   const what = (meta.changeTitle || meta.issueTitle || '').trim();
+  if (numbered) return what && !(meta.askedText && same(what, meta.askedText)) ? `Request #${n}: ${what}` : `Request #${n}`;
   if (!what) return null;
   if (meta.askedText && same(what, meta.askedText)) return null;
   return what;
+}
+
+/**
+ * Pure (#4537): where the card's line under the title links, the change's
+ * page in the app: the session the card was sent for (`meta.sessionId`),
+ * else the Try it action's. Null when there is no app slug or no positive
+ * session id, so the line stays plain text, as older cards show it.
+ */
+export function changeLink(meta: HomeroomBotMeta, actions: HomeroomBotAction[] = []): string | null {
+  const preview = actions.find((action) => action.type === 'preview' && typeof action.sessionId === 'number' && action.sessionId > 0);
+  const sessionId = typeof meta.sessionId === 'number' && meta.sessionId > 0 ? meta.sessionId : preview?.sessionId;
+  if (!meta.appSlug || !sessionId) return null;
+  return changeHref(meta.appSlug, sessionId);
 }
 
 /**
@@ -179,12 +207,22 @@ export function goesLiveFromReady(ready: HomeroomBotReady | undefined): Homeroom
   return { soon: false, at: null, missing, waitingOn: ready.waitingOn, more: ready.more };
 }
 
-/** What the line under a card that is not open says. `goesLive`: what happens next, once it is approved. */
+/**
+ * What the line under a card that is not open says. `goesLive`: what happens
+ * next, once it is approved. `release`: a merge of the platform's own app,
+ * which waits for the platform's next release and says when ("Merged; goes
+ * live in the next release (about 8 minutes)", ../../lib/release-eta.ts),
+ * where a child app's goes live in a minute or two and says so now.
+ */
 export function readyLine(
   state: ReadyCardState, goesLive: HomeroomBotGoesLive | null = null, now: Date = new Date(Date.now()), locale?: string,
+  release: unknown = null,
 ): string | null {
   if (state === 'live') return 'It’s live.';
-  if (state === 'going_live') return 'It’s approved and going live now.';
+  if (state === 'going_live') {
+    const words = release ? releaseSentence(release, now.getTime()) : null;
+    return words ? `${words}.` : 'It’s approved and going live now.';
+  }
   if (state === 'withdrawn') return 'This change was closed without going live.';
   if (state === 'approved') return goesLive ? approvedLine(goesLive, now, locale) : 'You approved it.';
   if (state === 'stale') return 'This change was updated. Try the new version first.';
@@ -244,6 +282,15 @@ export interface ReadyCardViewProps {
   locale?: string;
 }
 
+/**
+ * Pure (#4227): whether a card says something is under way right now, and
+ * leads with the spinner instead of its check: going live, or approved with
+ * nothing left but going live in a minute or two.
+ */
+export function readyMoving(state: ReadyCardState, next: HomeroomBotGoesLive | null): boolean {
+  return state === 'going_live' || (state === 'approved' && !!next?.soon);
+}
+
 /** One card, from its message and its state: pure, so a test can draw every state. */
 export function ReadyCardView({
   meta, state, actions, fresh = null, error = null, busy = false, onPress, goesLive = null, now, locale,
@@ -255,21 +302,42 @@ export function ReadyCardView({
   const next = fresh?.goesLive || meta.goesLive || goesLive || goesLiveFromReady(meta.ready);
   const broken = state === 'open' ? brokenLine(meta.ready) : null;
   const what = changeLine(meta);
-  const line = readyLine(state, next, now || new Date(Date.now()), locale);
+  const changeUrl = what ? changeLink(meta, actions) : null;
+  // A merge of Homeroom itself counts down to the platform's next release.
+  const release = state === 'going_live' ? fresh?.release || null : null;
+  const tick = useReleaseNow(release);
+  const line = readyLine(state, next, now || new Date(tick), locale, release);
+  // #4564: the request this card names — "Request #N: …", what changeLine
+  // leads with — so a `#N` chip elsewhere in its block finds this card
+  // (./ref-cards.tsx findRequestCard) when the block's lead row dropped its
+  // own request card. Nothing visible; no key when the card names no request.
+  const n = Number(meta.issueNumber);
+  const requestKey = meta.appSlug && Number.isInteger(n) && n > 0 && !meta.firstVersion
+    ? `${meta.appSlug}#${n}`
+    : undefined;
   return (
     <div
       className="mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
       role="group"
       aria-label={readyTitle(meta)}
       data-bot-ready={state}
+      data-bot-ready-request={requestKey}
     >
       <div className="flex items-center gap-3">
-        <IconTile size="xs" className="h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]">
-          <CheckIcon aria-hidden="true" />
-        </IconTile>
+        {readyMoving(state, next) ? (
+          <ProgressRing pct={0} title="Going live" spinning trackClassName="dark:stroke-zinc-700" />
+        ) : (
+          <IconTile size="xs" className="h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]">
+            <CheckIcon aria-hidden="true" />
+          </IconTile>
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-[0.9375rem] font-semibold text-zinc-900 dark:text-zinc-100" data-bot-ready-title="">{readyTitle(meta)}</div>
-          {what ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-change="">{what}</p> : null}
+          {what ? (
+            <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-change="">
+              {changeUrl ? <a href={changeUrl} className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200" data-bot-ready-change-link="">{what}</a> : what}
+            </p>
+          ) : null}
           {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
           {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
@@ -325,19 +393,14 @@ export function BotReadyCard({ message, conversationId }: { message: Conversatio
 
   const state = readyCardState({ meta, fresh, approved, stale: !!stale });
   // Stale: Try it, and Approve back (on the version it is at now) once
-  // tried. Live: the one button that opens the app.
+  // tried. Live: none, the news under it opens the app (#4228).
   const actions = state === 'open' ? all
     : state === 'stale' ? all.filter((action) => action.type === 'preview' || (stale?.tried && action.type === 'vote'))
-      : state === 'live' ? (fresh?.actions || [])
-        : [];
+      : [];
 
   async function press(action: HomeroomBotAction) {
     if (!meta) return;
     setError(null);
-    if (action.type === 'open') {
-      openAppTarget(action.target);
-      return;
-    }
     if (action.type === 'preview' && action.sessionId) {
       tryChange(meta, action.sessionId);
       if (stale) setStale({ ...stale, tried: true });

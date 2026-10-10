@@ -21,6 +21,8 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
   }
   vm.runInContext('globalThis.av = AppView', c);
   c.av.appData = { slug: 'example', can_collaborate: true };
+  // #4524: the board lists answer only for the app they were loaded for.
+  c.av._devDataSlug = 'example';
   c.av._ghIssues = [{ number: 1993, title: 'Wait for authentication before opening previews' }];
   return c.av;
 }
@@ -181,7 +183,13 @@ test('before review the author reads the spec under About this change (#2371)', 
   const own = av._topicViewFor('session', draft);
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
-  assert.match(own.body.summaryHtml, /spec this change is built from is under Details/);
+  // #4479: and the plan is on the page itself, as a request's plan card,
+  // so the summary points at the card rather than at a hidden sheet.
+  assert.match(own.body.summaryHtml, /plan this change is built from is below/);
+  assert.doesNotMatch(own.body.summaryHtml, /under Details/);
+  assert.equal(own.body.plan.read.kind, 'text');
+  assert.match(own.body.plan.read.markdown, /Authenticate previews/);
+  assert.equal(own.body.plan.version, null);
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
@@ -194,6 +202,22 @@ test('before review the author reads the spec under About this change (#2371)', 
   assert.doesNotMatch(readerView.body.summaryHtml, /spec this change/);
   const promoted = av._topicViewFor('proposal', { ...draft, status: 'promoted' });
   assert.doesNotMatch(promoted.body.summaryHtml || '', /spec this change/);
+  assert.equal(readerView.body.plan, null, 'no readable plan, no card');
+});
+
+test('a change built from a plan shows the plan card with its Read (#4479)', () => {
+  const draft = { ...failing, source: null, proposal_state: undefined, pr_body: null, pr_summary_md: null,
+    pr_title: 'Spec for topics', plan: { version: 3, at: '2026-10-08T21:58:00Z' } };
+  // A reader with a shared version: the card opens that version.
+  const reader = context({ id: 99 })._topicViewFor('session', { ...draft, shared_at: '2026-10-08' });
+  assert.deepEqual({ ...reader.body.plan.read }, { kind: 'shared', sessionId: draft.id, version: 3, previewTitle: 'Spec for topics' });
+  assert.equal(reader.body.plan.version, 3);
+  assert.equal(reader.body.plan.title, 'Spec for topics');
+  assert.match(reader.body.summaryHtml, /plan this change is built from is below/);
+  // Up for review with a summary: the card stays, the summary is its own.
+  const promoted = context()._topicViewFor('proposal', { ...draft, status: 'promoted', pr_summary_md: 'Topics hold discussions.' });
+  assert.equal(promoted.body.plan.version, 3);
+  assert.doesNotMatch(promoted.body.summaryHtml, /built from/);
 });
 
 test('readers cannot promote, sync, or open the private workspace', () => {
@@ -297,21 +321,22 @@ test('actual shared component renders the entire card and escapes the issue titl
   const v = av._topicViewFor('session', failing);
   // B10b: the steps are in Details, a body-mounted sheet the page keeps; it
   // is drawn here after the page, as the document holds it.
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }))
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing }))
     + renderToHtml(createElement(DetailsBody, { prRef: v.body.hero.ref, steps: v.body.steps, help: false, html: '' }));
-  // The Needs-you page: the summary, the issues line, the steps sheet (with
-  // the failing check's reason behind its door), and the Discussion. The
-  // Build is a pill that LEAVES this page (#2605), not a sheet on it.
-  for (const label of ['Addresses', 'Waiting on you', 'Submitted for review', 'Discussion', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
+  // #4455: the change as a thread's root post: the summary, the requests it
+  // addresses, the Votes and Testing cards; the steps sheet (with the failing
+  // check's reason behind its door) in Details. Its discussion is the
+  // thread's own stream. The Build is a ⋯ row that LEAVES this page (#2605).
+  for (const label of ['Addresses', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
   assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
-  assert.match(html, />Edit requests</, 'the owner can manage associations after creation');
+  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Edit requests'), 'the owner can manage associations after creation, from the ⋯');
   // The issue is a chip on the "Addresses" line, in the Needs-you chip's
   // accent tint: the number bold, the title after it, the issue's own page
   // behind it.
   assert.match(html, /<a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"[^>]*><b>#1993<\/b><span>&lt;script&gt;issue&lt;\/script&gt;<\/span><\/a>/);
-  assert.match(html, /class="dev-topic-hero-issues-k">Addresses</);
+  assert.match(html, /class="dev-change-chips-lead">Addresses</);
   assert.doesNotMatch(html, /dev-issue-ref/, 'the event-box row is the ISSUE page\u2019s (AddressedBy), not the change page\u2019s');
   // #2193: a long title truncates instead of scrolling the page sideways.
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
@@ -319,15 +344,17 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.ok(chipRule, 'the issue chip\u2019s title rule exists');
   assert.match(chipRule[0], /text-overflow: ellipsis/);
   assert.match(chipRule[0], /white-space: nowrap/);
-  // No tabs and no Build sheet: the Discussion is the ONE sheet under the
-  // card, and the Build door is a pill that navigates to the dev session's
-  // own page (#2605).
+  // No tabs, no Build sheet and no Discussion sheet: the page IS the thread
+  // (#4455), and the Build door is a ⋯ row that navigates to the dev
+  // session's own page (#2605).
   assert.doesNotMatch(html, /role="tablist"/);
-  assert.match(html, /<section class="dev-topic-sheet dev-conversation" data-change-conversation="4073" aria-label="Discussion">/);
+  assert.match(html, /data-change-root="4073"/);
+  assert.doesNotMatch(html, /data-change-conversation/);
   assert.doesNotMatch(html, /data-change-build/, 'no Build sheet under the Discussion');
   assert.doesNotMatch(html, /aria-label="Build"/);
   assert.doesNotMatch(html, /id="dc-view"/, 'the dev session is not embedded in the card page');
-  assert.equal((html.match(/>Continue building</g) || []).length, 1, 'the Build door is one pill on the card');
+  assert.equal((html.match(/>Continue building</g) || []).length, 0, 'the Build door is not on the page');
+  assert.equal(av._cardMenuItems(v.card.rail.menuKey).filter((a) => a.label === 'Continue building').length, 1, 'it is one ⋯ row');
   assert.ok(!html.includes('Open discussion'));
   assert.doesNotMatch(html, />Activity</, 'Activity is gone: the meta line carries its stamp');
 });
@@ -340,8 +367,8 @@ test('issue and governance topic bodies are not rebuilt as proposals without a s
     AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
   try {
     const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
-    const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: { ...v.body, comments: true }, item: null }));
-    assert.match(html, /id="dev-issue-comments"/);
+    const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: null }));
+    assert.match(html, /^<div class="dev-change-head">/);
   } finally {
     if (previousWindow === undefined) delete global.window;
     else global.window = previousWindow;
@@ -428,22 +455,27 @@ test('the same detail URL resolves native/imported underway work and changes lif
   assert.equal(av._findItem('session', 4073).status, 'promoted', 'legacy shared link still resolves');
 });
 
-test('all change routes mount the full card, leaving discussion loading to its privacy-aware tab', () => {
+test('every change route mounts its thread, and an unshared change reads no discussion (#4455)', () => {
   const av = context();
   av._devTopic = { kind: 'proposal', id: failing.id };
   av._mySessions = [{ ...failing }];
   const source = fs.readFileSync('public/js/app-view.js', 'utf8');
   const calls = [];
   const c = { AppView: av, document: { getElementById: () => ({}) },
-    GroupChat: { mountThread: () => calls.push('public'), unmountThread: () => calls.push('detach') } };
-  av._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage: () => calls.push('change') });
+    GroupChat: { mountThread: (opts) => calls.push(opts), unmountThread: () => calls.push('detach') } };
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
-  assert.deepEqual(calls, ['detach', 'change']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].language, 'change');
+  assert.equal(calls[0].type, 'session');
+  assert.equal(calls[0].withHeader, true);
+  assert.equal(calls[0].readOnly, true, 'nobody else can see it yet, so there is nobody to reply to');
+  assert.match(calls[0].closed, /^Only you can see this change\./);
   av._mySessions[0].shared_at = '2026-09-11';
   calls.length = 0;
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
-  assert.deepEqual(calls, ['detach', 'change']);
+  assert.equal(calls[0].closed, undefined);
+  assert.equal(calls[0].readOnly, false);
 });
 
 test('the Build door distinguishes owners, published transcripts, private chats and imports', () => {
@@ -467,14 +499,16 @@ test('the Build door distinguishes owners, published transcripts, private chats 
     'Read the build');
 });
 
-test('the Discussion is the only sheet a change page draws, for a reader as for its author', () => {
-  const { ChangeConversation } = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
+test('a change page draws no build surface, for a reader as for its author (#2605, #4455)', () => {
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const av = context();
-  const own = av._topicViewFor('session', failing).body;
-  const other = context({ id: 99 })._topicViewFor('session', { ...failing, shared_at: '2026-09-11', transcript_shared: true }).body;
-  for (const body of [own, other]) {
-    const html = renderToHtml(createElement(ChangeConversation, { item: failing, body }));
-    assert.match(html, /data-change-conversation="4073" aria-label="Discussion"/);
+  const reader = context({ id: 99 });
+  const ownItem = failing;
+  const otherItem = { ...failing, shared_at: '2026-09-11', transcript_shared: true };
+  for (const [view, item] of [[av, ownItem], [reader, otherItem]]) {
+    const v = view._topicViewFor('session', item);
+    const html = renderToHtml(createElement(ChangeDetail, { ...v, item }));
+    assert.match(html, /data-change-root="4073"/);
     assert.doesNotMatch(html, /data-change-build/, 'the Build sheet is gone');
     assert.doesNotMatch(html, /id="dc-view"/, 'no workspace is embedded under the discussion');
     assert.doesNotMatch(html, /data-transcript-body/, 'no published chat is embedded either');
@@ -513,9 +547,10 @@ test('Continue in agent session goes straight to the conversation (#3712)', () =
   // The board's copy as /promoted served it before: no agent_session_id.
   av._proposals = [{ ...promoted }];
   const page = av._topicViewFor('proposal', { ...promoted, agent_session_id: 7301 });
-  const door = page.card.actions.find((a) => a.key === 'build');
-  assert.equal(door.label, 'Continue in agent session');
-  av[door.act.fn](...door.act.args);
+  // #4455: the Build door is a row of the page's ⋯.
+  const door = av._cardMenuItems(page.card.rail.menuKey).find((a) => a.label === 'Continue in agent session');
+  assert.ok(door);
+  door.act();
   // Assigned, not replaced: Back from the conversation is the change page.
   assert.equal(location.hash, '#messages/agent/7301');
   assert.deepEqual(sessions, [], 'never by way of the dev session page');
@@ -549,9 +584,10 @@ test('only the owner is sent to the agent session; everyone else keeps their doo
   // A published chat is read where it was published, the dev session page.
   const published = { ...change, transcript_shared: true };
   reader.av._proposals = [published];
-  const door = reader.av._topicViewFor('proposal', published).card.actions.find((a) => a.key === 'build');
-  assert.equal(door.label, 'Read the build');
-  reader.av[door.act.fn](...door.act.args);
+  const readerPage = reader.av._topicViewFor('proposal', published);
+  const door = reader.av._cardMenuItems(readerPage.card.rail.menuKey).find((a) => a.label === 'Read the build');
+  assert.ok(door);
+  door.act();
   assert.equal(reader.location.hash, '');
   assert.deepEqual(reader.sessions, [['dev', change.id, 'sessions']]);
   // The owner's change with no conversation behind it keeps its dev session,
@@ -634,15 +670,16 @@ test('full card has one submission, one preview, contextual recovery and an inde
   assert.equal(v.card.rail.preview, null);
   assert.equal(row(v, 'review').actions, undefined);
   const menu = av._cardMenuItems(v.card.rail.menuKey);
-  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 0, 'B10b: GitHub is in Details');
+  // #4455: the page has no PR link of its own any more, so GitHub is one ⋯ row.
+  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 1);
   assert.ok(menu.some((a) => a.label === 'Details'));
   assert.ok(menu.some((a) => a.label === 'Make visible'));
   assert.ok(!menu.some((a) => ['View checks', 'Re-run checks', 'Open session'].includes(a.label)));
   assert.ok(compactMenu.some((a) => a.label === 'View checks'));
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item }));
   assert.equal((html.match(/>Submit for review</g) || []).length, 1);
-  assert.equal((html.match(/>Continue building</g) || []).length, 1, 'one Build door, the pill on the card');
+  assert.equal(menu.filter((a) => a.label === 'Continue building').length, 1, 'one Build door, a ⋯ row');
   assert.doesNotMatch(html, /dev-topic-gh/);
 });
 
@@ -654,18 +691,15 @@ test('merged card opens the live app instead of an expired preview', () => {
 });
 
 
-test('the change page has no panel to auto-open, and says so in its source', () => {
-  // The Build sheet's auto-open rules (the author's own underway change,
-  // `?conversation=workspace`, a shared session's published chat) went with
-  // the sheet in #2605 — a page cannot open a panel it does not have. What
-  // is left of the module is the Discussion.
-  const src = fs.readFileSync('frontend/src/features/dev-board/topic/conversation.tsx', 'utf8');
+test('the change page has no panel to auto-open: the conversation module is gone (#2605, #4455)', () => {
+  // The Build sheet's auto-open rules went with the sheet in #2605, and the
+  // Discussion sheet that was left went with #4455: the page is the thread.
+  assert.ok(!fs.existsSync('frontend/src/features/dev-board/topic/conversation.tsx'));
+  const src = fs.readFileSync('frontend/src/features/dev-board/topic/change-head.tsx', 'utf8');
   for (const gone of ['initialBuildOpen', 'initialConversationTab', 'workspaceKind',
-    'addEventListener', 'data-change-build', 'dc-view', 'data-transcript-body']) {
-    assert.ok(!src.includes(gone), `${gone} is gone from the conversation module`);
+    'data-change-build', 'dc-view', 'data-transcript-body']) {
+    assert.ok(!src.includes(gone), `${gone} is not on the change page`);
   }
-  const mod = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
-  assert.deepEqual(Object.keys(mod).sort(), ['ChangeConversation', 'mountChangeDiscussion']);
 });
 
 test('the issue picker normalizes, searches and ranks the local issue catalog', () => {
@@ -703,21 +737,20 @@ test('the issue picker computes bounded add/remove deltas for the existing PATCH
   assert.match(src, /JSON\.stringify\(\{ addIssues, removeIssues \}\)/);
 });
 
-test('an unlinked owner gets the empty editor affordance while a reader sees no empty aside', () => {
+test('an unlinked owner adds a request from the ⋯, and a reader sees no empty row', () => {
   const av = context();
   const item = { ...failing, linked_issues: [] };
   const v = av._topicViewFor('session', item);
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
-  assert.match(html, /No requests linked yet/);
-  assert.match(html, />Add request</);
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item }));
+  assert.doesNotMatch(html, /No requests linked yet|dev-change-chips/);
+  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Add a request'));
 
   const reader = context({ id: 99 });
   const readView = reader._topicViewFor('session', item);
-  const readHtml = renderToHtml(createElement(ChangeDetail, {
-    ...readView, item, conversation: true,
-  }));
+  const readHtml = renderToHtml(createElement(ChangeDetail, { ...readView, item }));
   assert.doesNotMatch(readHtml, /No requests linked yet|Requests this change addresses|Edit requests/);
+  assert.ok(!reader._cardMenuItems(readView.card.rail.menuKey).some((a) => /request/.test(a.label)));
 });
 
 test('imported underway PR archive is owner-only and works from compact and full cards', async () => {

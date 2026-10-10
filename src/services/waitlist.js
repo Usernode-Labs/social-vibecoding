@@ -402,8 +402,11 @@ async function setVerifiedHandle(pool, token, provider, handle) {
 // access: existing users, and anybody an invite link let in, get no skips
 // from being released again. The invite tree writes its own generations and
 // never comes through here.
+//
+// Returns true only when this call is what let the account in, so a caller
+// can say so ("you're in") exactly once; a re-grant returns false.
 async function grantPlatformAccess(pool, userId, { manualRelease = false } = {}) {
-  await pool.query(
+  const result = await pool.query(
     `UPDATE users
         SET has_platform_access = TRUE,
             platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
@@ -411,6 +414,7 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
       WHERE id = $1 AND has_platform_access = FALSE`,
     [userId, manualRelease === true]
   );
+  return !!(result && result.rowCount > 0);
 }
 
 // Account-creation linkage: point the email's waitlist row (if any) at
@@ -418,17 +422,30 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
 // access on the spot — this is the doc's "released off the waitlist,
 // create an account if you haven't already" arrow. Best-effort: a
 // failure here must never fail the signup itself.
-async function linkUserByEmail(pool, { userId, email }) {
+//
+// `newAccount` is true when the sign-up calling this just MADE the account.
+// Only such an account is linked to a test release (services/test-accounts.js
+// sendRelease, an admin's test of the "you're in" mail), and it is let in as
+// a test account, marked before access arrives; an account that already
+// existed is never linked to one, so a test release cannot let it in.
+async function linkUserByEmail(pool, { userId, email, newAccount = false }) {
   const normalized = normalizeEmail(email);
   if (!normalized || !userId) return;
   try {
     const { rows } = await pool.query(
-      `UPDATE waitlist_signups
+      `UPDATE waitlist_signups w
           SET linked_user_id = $1
         WHERE email = $2
-        RETURNING released_at`,
-      [userId, normalized]
+          AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id))
+        RETURNING w.id, w.released_at,
+                  EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id) AS test_release`,
+      [userId, normalized, newAccount === true]
     );
+    if (rows[0] && rows[0].test_release) {
+      const letIn = await require('./test-accounts').adoptReleasedAccount(pool, { userId, signupId: rows[0].id });
+      if (letIn) log.info('waitlist', 'Test release address registered — test account let in', { userId });
+      return;
+    }
     if (rows[0] && rows[0].released_at) {
       await grantPlatformAccess(pool, userId, { manualRelease: true });
       log.info('waitlist', 'Released waitlist email registered — access granted', { userId });
@@ -438,12 +455,121 @@ async function linkUserByEmail(pool, { userId, email }) {
   }
 }
 
+// Every account without access has a spot on the waitlist, however it was
+// made (#4083). An account whose own address is confirmed (an email code, a
+// Google/Apple sign-in, Settings' email code) gets one when no row holds it
+// yet: linked, confirmed, in line from that moment. Run AFTER
+// linkUserByEmail, so an address the waitlist already released (and so let
+// in) gets none; an account that already has a row (an email one, or a phone
+// one) keeps it. The address is the account's own, read here, never one a
+// caller passes. Cheap and idempotent, so a sign-in that runs it again heals
+// a run that failed. Best-effort, like the link: it never fails the sign-in.
+async function ensureAccountSignup(pool, { userId }) {
+  if (!userId) return;
+  try {
+    // No conflict target: both the address's UNIQUE (email) and the
+    // case-folded index count, and either means the address has a row.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token)
+       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2
+         FROM users u
+        WHERE u.id = $1
+          AND u.has_platform_access = FALSE
+          AND u.is_admin IS NOT TRUE
+          AND u.email_confirmed = TRUE
+          AND u.email IS NOT NULL AND TRIM(u.email) <> ''
+          AND NOT EXISTS (SELECT 1 FROM waitlist_signups w WHERE w.linked_user_id = u.id)
+       ON CONFLICT DO NOTHING`,
+      [userId, crypto.randomBytes(24).toString('hex')]
+    );
+  } catch (err) {
+    log.error('waitlist', 'ensureAccountSignup failed', { userId, message: err.message });
+  }
+}
+
+// A direct grant (POST /api/v4/admin/users/:id/grant-access) lets an account
+// in without Admit. Its waitlist rows are marked released with it, so the
+// queue shows it let in and a later Admit is a re-release that mails nothing.
+// Returns the release to tell them about, in releaseWaitlistSignup's shape
+// (`email` null when the account has no address: the SMS hook's case), or
+// null when one of its rows was already released, whose release already sent
+// the "you're in" mail.
+async function releaseRowsForGrant(pool, userId) {
+  // Only an address the account proved may claim an unlinked row by email:
+  // an unconfirmed one could name somebody else's spot.
+  const { rows: users } = await pool.query(
+    'SELECT email, email_confirmed FROM users WHERE id = $1', [userId]);
+  const accountEmail = users[0] && users[0].email_confirmed === true
+    ? normalizeEmail(users[0].email) : null;
+  const { rows } = await pool.query(
+    `WITH prev AS (
+        SELECT id, released_at FROM waitlist_signups
+         WHERE linked_user_id = $1
+            OR ($2::varchar IS NOT NULL AND email = $2 AND linked_user_id IS NULL)
+     )
+     UPDATE waitlist_signups w
+        SET released_at = COALESCE(w.released_at, NOW()),
+            linked_user_id = $1
+       FROM prev
+      WHERE w.id = prev.id
+      RETURNING w.id, w.email, (prev.released_at IS NOT NULL) AS was_released`,
+    [userId, accountEmail]
+  );
+  if (rows.some((r) => r.was_released)) return null;
+  const listed = rows.find((r) => r.email) || rows[0] || null;
+  return {
+    id: listed ? listed.id : null,
+    email: accountEmail || (listed && listed.email) || null,
+    linked_user_id: userId,
+    more_token: null,
+  };
+}
+
+// ── Phone rows and outbound SMS (#4223, #4096) ────────────────────────
+//
+// A phone row (email NULL, joined from Home's card with a verified phone,
+// services/member-waitlist.js) has no address to send "you're in" to, and
+// Homeroom has no outbound SMS yet: Firebase only sends sign-in codes. The
+// author's call is that phone-only people are not let in before they can be
+// told, so their release is HELD: releaseWaitlistSignup refuses such a row,
+// Admin -> Waitlist shows it with Admit disabled, and a batch skips it.
+//
+// THE SMS HOOK. When #4096 lands, `sendReleaseText` sends the "you're in"
+// text to the linked account's verified number (user_phone_identities) and
+// `phoneReleaseReady` returns true; nothing else has to move. The admin
+// routes already call sendReleaseText for every newly released row without
+// an address.
+const SMS_ISSUE = 4096;
+
+function phoneReleaseReady() {
+  return false;
+}
+
+async function sendReleaseText(_pool, signup) {
+  log.info('waitlist', `"You're in" text not sent: outbound SMS is #${SMS_ISSUE}`, {
+    signupId: signup && signup.id != null ? Number(signup.id) : null,
+  });
+  return false;
+}
+
+class WaitlistReleaseError extends Error {
+  constructor(code, message, status = 409) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+const NEEDS_SMS = `This signup joined with a phone number and has no email. It can be admitted once Homeroom can send texts (#${SMS_ISSUE}).`;
+
 // Admin release of a waitlist row. Sets released_at (idempotent) and, if
 // an account is already linked (or one exists with the same email),
 // grants it platform access immediately. Returns the updated row or
 // null when the id doesn't exist. `newly_released` distinguishes the
 // first release from an idempotent re-release so the caller can send
-// the "you're in" notification exactly once.
+// the "you're in" notification exactly once. A phone row (no email) is
+// refused with WaitlistReleaseError 'needs_sms' while phoneReleaseReady()
+// says no; a phone row released before that is a no-op re-release.
 async function releaseWaitlistSignup(pool, signupId) {
   const { rows } = await pool.query(
     `WITH prev AS (
@@ -452,15 +578,23 @@ async function releaseWaitlistSignup(pool, signupId) {
      UPDATE waitlist_signups w
         SET released_at = COALESCE(w.released_at, NOW())
       WHERE w.id = $1
+        AND (w.email IS NOT NULL OR w.released_at IS NOT NULL OR $2::boolean)
       RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
-    [signupId]
+    [signupId, phoneReleaseReady()]
   );
   const row = rows[0];
-  if (!row) return null;
+  if (!row) {
+    const { rows: held } = await pool.query(
+      'SELECT 1 FROM waitlist_signups WHERE id = $1 AND email IS NULL',
+      [signupId]
+    );
+    if (held.length) throw new WaitlistReleaseError('needs_sms', NEEDS_SMS);
+    return null;
+  }
 
   let userId = row.linked_user_id;
-  if (!userId) {
+  if (!userId && row.email) {
     // The account may predate the waitlist row (or linkage was missed) —
     // resolve by email and backfill the link.
     const { rows: userRows } = await pool.query(
@@ -498,5 +632,11 @@ module.exports = {
   setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
+  ensureAccountSignup,
+  releaseRowsForGrant,
   releaseWaitlistSignup,
+  WaitlistReleaseError,
+  SMS_ISSUE,
+  phoneReleaseReady,
+  sendReleaseText,
 };

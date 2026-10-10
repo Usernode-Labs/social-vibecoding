@@ -192,6 +192,52 @@ test('describePushFailure tolerates a missing error object', () => {
   assert.ok(out.text.length > 0);
 });
 
+// ── #3229: a slug of what the session is about ─────────────────────────
+
+test('devBranchName without a label keeps the old shape exactly', () => {
+  assert.equal(branchNames.devBranchName('evan', 1787444512068), 'dev/evan-1787444512068');
+  assert.equal(branchNames.devBranchName('evan', 1787444512068, null), 'dev/evan-1787444512068');
+  assert.equal(branchNames.devBranchName('evan', 1787444512068, '  '), 'dev/evan-1787444512068');
+});
+
+test('devBranchName puts a slug of the label between owner and timestamp', () => {
+  assert.equal(
+    branchNames.devBranchName('evan', 1787444512068, 'Add a dark-mode toggle'),
+    'dev/evan-add-a-dark-mode-toggle-1787444512068',
+  );
+  assert.equal(
+    branchNames.devBranchName('koenigup@gmail.com', 1787444512068, 'Café menu: prix fixe!'),
+    'dev/koenigup@gmail.com-cafe-menu-prix-fixe-1787444512068',
+  );
+});
+
+test('branchLabelSlug is short, lower-case ASCII, and cut at a word', () => {
+  const slug = branchNames.branchLabelSlug(
+    'Session branch names are meaningless timestamps instead of feature names',
+  );
+  assert.equal(slug, 'session-branch-names-are');
+  assert.ok(slug.length <= branchNames.MAX_LABEL_SLUG_LEN);
+  assert.equal(branchNames.branchLabelSlug('x'.repeat(80)).length, branchNames.MAX_LABEL_SLUG_LEN);
+  for (const nothing of ['', '   ', null, undefined, '!!!', '日本語', '…']) {
+    assert.equal(branchNames.branchLabelSlug(nothing), '', JSON.stringify(nothing));
+  }
+});
+
+test('no label a person can type produces an unpushable name', () => {
+  const hostile = [
+    '..', '.hidden', '-flag', 'trailing.', 'x.lock', 'a..b', '@{now}', 'a@{0}b',
+    'has space', 'wéï ünïcode', 'colon:name', 'tilde~name', 'caret^name',
+    'star*name', 'question?name', 'back\\slash', 'brack[et]', 'slash/inside',
+    'double//slash', '`rm -rf /`', "it's $(whoami)", 'line\nbreak', '\u0000nul',
+    '🚀 launch', 'x'.repeat(500), '-'.repeat(40), 'a-'.repeat(40),
+  ];
+  for (const label of hostile) {
+    const name = branchNames.devBranchName('evan', 1787444512068, label);
+    assert.ok(branchNames.isValidBranchName(name), `${JSON.stringify(label)} -> ${name}`);
+    assert.match(name, /^dev\/evan-(?:[a-z0-9]+(?:-[a-z0-9]+)*-)?1787444512068$/, name);
+  }
+});
+
 // ── the call sites ──────────────────────────────────────────────────────
 
 test('no route interpolates a raw username into a branch name', () => {

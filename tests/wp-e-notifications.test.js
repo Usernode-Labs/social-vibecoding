@@ -91,12 +91,11 @@ test('a build moment in the bell is the bot\'s, in its own words', () => {
   assert.deepEqual(row, { label: 'Homeroom bot', subject: 'Run Club is ready to try', by: null });
 });
 
-test('the invite page says the maker sees a join; the made screen promises no time', () => {
-  const { seenLine } = loadTsx('frontend/src/features/auth/invite-card.tsx');
-  assert.equal(seenLine({ inviterName: 'Maya', inviter: 'maya' }), 'Maya will see that you joined.');
-  assert.equal(seenLine({ inviter: 'maya' }), '@maya will see that you joined.');
-  assert.equal(seenLine({}), '');
-  assert.match(read('public/js/app.js'), /will see that you joined\./, 'and the signed-in confirm says it too');
+test('no invite surface says the maker sees a join; the made screen promises no time', () => {
+  const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
+  assert.equal(card.seenLine, undefined, 'the signed-out invite page names nobody who will see the join (owner, 8 October)');
+  assert.doesNotMatch(read('frontend/src/features/auth/invite-card.tsx'), /will see that you joined/);
+  assert.doesNotMatch(read('public/js/app.js'), /will see that you joined/, 'nor does the signed-in confirm (#4395)');
   // WP-E said "usually in about 8 minutes" here, an ordinary request's
   // typical build; a first version took 50 (first-session run-through, 5
   // October 2026), and Evan asked for no average at all.
@@ -134,7 +133,9 @@ test('the browser an open came from: a random HttpOnly cookie, kept only as its 
 test('opens are counted from the page\'s own reads, once per person, never from the unfurled HTML', () => {
   const routes = read('src/routes/community-invites.js');
   assert.match(routes, /if \(preview\.live\) countOpen\(req, res, req\.params\.token\);/);
-  assert.match(routes, /if \(standing\.live && !standing\.mine\) countOpen\(req, res, req\.params\.token, req\.user\.id\);/);
+  // The signed-in read is also the invite funnel's "signed in" step for the
+  // admin Journey (journey-events.noteInviteSignedIn, once per person per link).
+  assert.match(routes, /if \(standing\.live && !standing\.mine\) \{\s*countOpen\(req, res, req\.params\.token, req\.user\.id\);\s*void journeyEvents\.noteInviteSignedIn\(pool, \{ token: req\.params\.token, userId: req\.user\.id \}\);\s*\}/);
   // Every read is handed to the service with the browser it came from; the
   // service decides whether it is somebody new (invite-activity-postgres).
   assert.match(routes, /const browser = inviteActivity\.ensureBrowser\(req, res\);\s*void inviteActivity\.noteOpened\(pool, \{ token, viewerId, browser, seenBefore \}\);/);

@@ -23,7 +23,7 @@
  *     `id` here is a presentation key and the other persisted values are
  *     untouched — 'claude_code' / 'codex_openrouter' in
  *     chat_sessions.agent_backend, 'claude-code' / 'codex' in
- *     users.dev_flow_preference and external_agent, 'imported' in
+ *     users.dev_flow_preference (unused since #4311) and external_agent, 'imported' in
  *     chat_sessions.source. `mechanism` on each row is the mapping, and
  *     it is the only place the two vocabularies meet. The exception is
  *     chat_sessions.build_venue, which stores one of these ids verbatim
@@ -89,7 +89,7 @@
   //
   //   backend  → POST /api/apps/:slug/sessions { backend } and
   //              chat_sessions.agent_backend
-  //   flow     → users.dev_flow_preference + external_agent_tasks
+  //   flow     → chat_sessions.build_venue + external_agent_tasks
   //   lease    → session_agent_leases (#907), set up from the CLI card
   //   import   → POST /api/apps/:slug/pr-import → source='imported'
   //

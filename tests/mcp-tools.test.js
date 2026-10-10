@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const tools = require('../src/services/mcp-tools');
+const unitSuiteRow = require('../src/services/unit-suite-row');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
@@ -1793,6 +1794,104 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
   }
 });
 
+// ── #4263: revising a proposal by patch, through its update task ────────
+//
+// The update work order now prints `submit_work` with taskId + patch and no
+// proposalId. The service sends that to the update route; this module has to
+// report it as the update it is, not as a new proposal "now up for a vote".
+
+function updateTaskConnector(platformAnswer, task) {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const real = { gh: gh.isEnabled, link: githubLink.isEnabled };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  const pool = {
+    async query(sql) {
+      // The task, for both loadOpenTask and loadAnyTask; nothing else is read.
+      if (/FROM external_agent_tasks t/.test(sql)) return { rows: [task] };
+      return { rows: [] };
+    },
+  };
+  const c = connector(platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  return {
+    ...c,
+    restore: () => { c.restore(); gh.isEnabled = real.gh; githubLink.isEnabled = real.link; },
+  };
+}
+
+const UPDATE_TASK_ROW = {
+  id: 44, user_id: 7, app_id: 3, status: 'open', target_session_id: 3140, issue_number: null,
+  base_sha: 'a'.repeat(40), app_slug: 'recipe-box', repo_url: 'https://github.com/o/recipe-box',
+  fork_owner: 'ada-gh', fork_repo: 'recipe-box', branch_name: 'usernode/recipe-box-update-3140-ab12',
+};
+
+test('submit_work with an update task\'s taskId + patch advances that proposal, and says so', async () => {
+  const PATCH = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n';
+  const { handlers, calls, restore } = updateTaskConnector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', previousHeadSha: 'a'.repeat(40),
+    votesCleared: 2, submittedVia: 'update_patch', targetKind: 'proposal', previewRebuilding: true,
+  }), UPDATE_TASK_ROW);
+  try {
+    const res = await handlers.get('submit_work')({ taskId: 44, patch: PATCH, source: 'work_order' });
+    assert.notEqual(res.isError, true, JSON.stringify(res.content));
+    // One call, to the UPDATE route of the proposal the task names: no
+    // pull request opened, no import, no second proposal.
+    assert.deepEqual(calls.map((c) => c.pathname), ['/api/apps/recipe-box/proposals/3140/update-from-fork']);
+    assert.equal(calls[0].body.patch, PATCH);
+    assert.equal(calls[0].body.expectedHeadSha, 'a'.repeat(40), 'applied at the head the work order named');
+    assert.equal(calls[0].body.branch, undefined);
+    // The update's own answer, word for word what a branch update says.
+    const out = res.structuredContent;
+    assert.equal(out.proposalId, 3140);
+    assert.equal(out.headSha, 'b1344508506dd8dc4a655f10c96c51389fcc30bb');
+    assert.equal(out.votesCleared, 2);
+    assert.equal(out.submittedVia, 'update_patch');
+    assert.match(out.nextStep, /^PR #52 \(proposal 3140\) now points at your new commit/);
+    assert.match(out.nextStep, /2 votes it had collected were cleared/);
+    assert.doesNotMatch(out.nextStep, /It is now up for a vote/, 'not reported as a new proposal');
+  } finally { restore(); }
+});
+
+test('propose: true on an update task promotes the session the task names', async () => {
+  const { handlers, calls, restore } = updateTaskConnector((method, pathname) => (
+    pathname.endsWith('/promote')
+      ? { prNumber: 61, prUrl: 'https://github.com/o/recipe-box/pull/61' }
+      : {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_patch', targetKind: 'session', previewRebuilding: true,
+      }
+  ), UPDATE_TASK_ROW);
+  try {
+    const res = await handlers.get('submit_work')({ taskId: 44, patch: 'diff --git a/x b/x\n', propose: true });
+    assert.notEqual(res.isError, true, JSON.stringify(res.content));
+    assert.ok(calls.some((c) => c.pathname === '/api/sessions/3140/promote'),
+      'the id comes from the task, since the call carried no proposalId');
+    assert.equal(res.structuredContent.proposed, true);
+  } finally { restore(); }
+});
+
+test('submit_work documents what description and summary do on an update', () => {
+  const block = registration('submit_work');
+  const desc = block.slice(block.indexOf('description: z.string()'), block.indexOf('summary: z.string()'));
+  assert.match(desc, /REPLACES the pull request body wholesale; it is not merged with the old one/);
+  assert.match(desc, /`Closes #N` lines and the before\/after screenshots block/);
+  assert.match(desc, /omit it to leave the body exactly as it is/);
+  assert.match(desc, /no_pr_yet/);
+  assert.match(desc, /imported_pr/);
+  const summary = block.slice(block.indexOf('summary: z.string()'), block.indexOf('testingPaths: z.array'));
+  assert.match(summary, /REPLACES the proposal\\u2019s current summary/);
+  assert.match(summary, /marks it stale/);
+  // And the shape itself, in the tool description and on the fields.
+  const toolDesc = block.slice(block.indexOf('description:'), block.indexOf('inputSchema:'));
+  assert.match(toolDesc, /A task prepare_work made WITH `proposalId` updates that proposal/);
+  assert.match(toolDesc, /its patch is applied on the proposal's current commit, no push needed/);
+  assert.doesNotMatch(block, /Cannot be combined with prNumber or patch/);
+  assert.match(block, /send `patch` with the taskId of this proposal\u2019s update work order/);
+});
+
 // ── #2066: advancing a shared in-progress card ──────────────────────────
 //
 // A draft landed with `share: true`, more commits were pushed onto it, and
@@ -1900,6 +1999,45 @@ test('a proposal update keeps its own wording', async () => {
     assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+test('a proposal update the classifier kept says the votes still stand', async () => {
+  // A push that only brings the approved code up to date with main keeps its
+  // approvals. It used to read "Any votes it had collected were cleared ...
+  // reviewers have been asked to look again", because votesCleared was 0.
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const submitted = (over) => connector(() => Object.assign({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    votesCleared: 0, votesClearing: 'none', votesAtRisk: 2, votesKept: true,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: false,
+  }, over), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    let { handlers, restore } = submitted({});
+    try {
+      const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+      const step = res.structuredContent.nextStep;
+      assert.match(step, /^PR #52 \(proposal 3140\) now points at your new commit/);
+      assert.match(step, /2 votes it had collected still stand/);
+      assert.match(step, /passing checks carry over/);
+      assert.doesNotMatch(step, /were cleared/);
+      assert.doesNotMatch(step, /reviewers/i, 'nobody was asked to look again');
+      assert.equal(res.structuredContent.votesCleared, 0);
+    } finally { restore(); }
+
+    // A resolved conflict keeps the votes too, but its tree is re-checked.
+    ({ handlers, restore } = submitted({ previewRebuilding: true }));
+    try {
+      const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
+      assert.match(res.structuredContent.nextStep, /still stand/);
+      assert.match(res.structuredContent.nextStep, /rebuilding against the merged code/);
+    } finally { restore(); }
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
   }
 });
 
@@ -2332,6 +2470,60 @@ test('submit_work refuses an invalid declaration before anything reaches the pla
   } finally { c.restore(); }
 });
 
+// #4490: the author's diagram rides submit_work, checked against the same
+// call's declared impact before anything reaches the platform.
+test('submit_work refuses an invalid diagram, and Mermaid beside a visible change, before any platform call', async () => {
+  const fixture = require('./fixtures/shots');
+  for (const [args, why] of [
+    [{ diagram: { version: 1, kind: 'svg', svg: '<svg/>' } }, /rename, flow, changes or numbers/],
+    [{ diagram: { version: 1, kind: 'mermaid', source: 'flowchart TD\n  A --> B' }, visibleChanges: fixture.motionIntent() }, /only for a change nobody sees/],
+    [{ diagram: { version: 1, kind: 'mermaid', source: 'flowchart TD\n  A --> B' } }, /declares no visibleChanges/],
+  ]) {
+    const c = shotsUpdateConnector({ updated: true });
+    try {
+      const res = await c.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', ...args });
+      assert.equal(res.isError, true);
+      assert.match(res.content[0].text, /invalid_diagram/);
+      assert.match(res.content[0].text, why);
+      assert.equal(c.calls.length, 0, 'refused before any platform call');
+    } finally { c.restore(); }
+  }
+});
+
+test('submit_work stores the diagram on the proposal and carries its text in the description', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const real = { gh: gh.isEnabled, link: githubLink.isEnabled };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  const writes = [];
+  const pool = {
+    async query(sql, params) {
+      if (/pr_diagram/.test(sql)) { writes.push({ sql, params }); return { rowCount: 1, rows: [] }; }
+      return { rows: [{ app_slug: 'recipe-box' }] };
+    },
+  };
+  const c = connector(() => ({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    headSha: 'b'.repeat(40), votesCleared: 0, submittedVia: 'update_branch', descriptionUpdated: true,
+  }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+  try {
+    const diagram = { version: 1, kind: 'rename', from: 'spec', to: 'plan', places: ['Chat cards'] };
+    const res = await c.handlers.get('submit_work')({
+      proposalId: 3140, branch: 'my-fix', description: 'Renames spec to plan.', diagram,
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(res.structuredContent.diagramAccepted, true);
+    assert.equal(writes.length, 1);
+    assert.match(writes[0].sql, /UPDATE chat_sessions SET pr_diagram = \$2::jsonb, pr_diagram_source = \$3 WHERE id = \$1/);
+    assert.equal(writes[0].params[0], 3140);
+    assert.deepEqual(JSON.parse(writes[0].params[1]), diagram);
+    const sent = JSON.stringify(c.calls.at(-1).body);
+    assert.match(sent, /usernode:diagram/);
+    assert.match(sent, /spec → plan \(Chat cards\)/);
+  } finally { c.restore(); gh.isEnabled = real.gh; githubLink.isEnabled = real.link; }
+});
+
 test('submit_work reports no evidence fields when no declaration was sent', async () => {
   const c = shotsUpdateConnector({
     updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
@@ -2479,33 +2671,54 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
+    'add_bench_task',
     'answer_questions',
     // #3654. Cancelling a benchmark run: full platform admins only.
     'cancel_bench_run',
-    'claim_request', 'create_request',
+    // The App bench studio (services/bench/studio.js), the benchmark's suites,
+    // the live Homeroom bot and the recent before/after screenshots: every
+    // one registered only for a full platform admin, and every route behind
+    // them (routes/bench-studio.js) refuses anybody else.
+    'cancel_bench_trial',
+    'claim_request',
+    // #4266. Puts away one of the user's own unsubmitted work orders, freeing
+    // its slot; list_my_work_orders, below, is the list it is chosen from.
+    'close_work_order',
+    'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
-    // list_test_accounts, retire_test_account): registered only for a full
-    // platform admin, and every route behind them refuses anybody else.
-    'create_test_account',
+    // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
+    // retire_test_account):
+    // registered only for a full platform admin, and every route behind them
+    // refuses anybody else.
+    'create_test_account', 'create_test_phone_sign_in',
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
-    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
-    'get_bench_item',
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
+    'deploy_bench_preview', 'edit_bench_task', 'get_app',
+    'get_bench_context_pack', 'get_bench_gallery',
+    'get_bench_item', 'get_bench_reference_order',
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
+    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
+    // The Homeroom bot's first-version configurations (routes/bot-configs.js):
+    // the next blind pair to pick. Full platform admins only, like the rest.
+    'get_bot_config_pair',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
+    // #3978. One failing check's whole stored output: the excerpt previews
+    // get_proposal carries are first-three-and-clipped.
+    'get_check_output',
     'get_checkout_status',
     'get_connector_guidance', 'get_demo_status',
     // #3556. One app discussion thread, read through the transcript route.
-    'get_discussion',
+    'get_discussion', 'get_homeroom_bot',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
-    'get_request',
+    'get_recent_shots', 'get_request',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
-    'get_spec', 'get_spec_format',
+    'get_spec', 'get_spec_format', 'keep_bench_trial',
     // #3654. The Homeroom bot benchmark's judge (get_bench_item above it,
     // list_bench_grading_queue and submit_bench_grade below): registered only
     // for a full platform admin, and every route behind them refuses anybody
@@ -2513,9 +2726,13 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'label_bench_task',
     // #3654. Running the benchmark (launch_bench_run, list_bench_runs, with
     // get_bench_run and cancel_bench_run above): the same full-admin gate.
-    'launch_bench_run',
-    'list_apps', 'list_bench_grading_queue', 'list_bench_runs',
-    'list_my_proposals', 'list_requests', 'list_test_accounts',
+    'launch_bench_run', 'launch_bench_studio',
+    'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
+    'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
+    'list_my_proposals',
+    // #4266. Exactly the work orders prepare_work's open-work-order cap counts.
+    'list_my_work_orders',
+    'list_recent_shots', 'list_requests', 'list_test_accounts',
     // #1405. They write a row, but only into the CALLER'S OWN notification
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
@@ -2535,11 +2752,20 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
     'propose_close_request',
+    'rate_homeroom_bot_run',
     'recheck_change',
     'release_request',
+    'rerun_bench_trial',
     'retire_test_account',
+    // The configurations' writes: a version saved, a role set, a scope's
+    // side-build budget set, a pick.
+    'save_bot_config',
+    // The waitlist's "you're in" mail sent to a test address: full platform
+    // admins only, like the other test-account tools.
+    'send_test_release_email',
+    'set_bot_config_budget', 'set_bot_config_role',
     'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_platform_build', 'submit_work',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_work',
     'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
@@ -2746,13 +2972,19 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'cancel_bench_run',
-    'create_request', 'create_test_account',
+    'add_bench_task',
+    'cancel_bench_run', 'cancel_bench_trial',
+    'close_work_order',
+    'create_bench_context_pack', 'create_request', 'create_test_account', 'create_test_phone_sign_in',
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
-    'label_bench_task', 'launch_bench_run',
-    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change',
-    'retire_test_account', 'start_change',
-    'start_platform_build', 'submit_bench_grade',
+    'deploy_bench_preview', 'edit_bench_task', 'keep_bench_trial',
+    'label_bench_task', 'launch_bench_run', 'launch_bench_studio',
+    'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
+    'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
+    'retire_test_account',
+    // The Homeroom bot's configurations: full admins only.
+    'save_bot_config', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
+    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);
@@ -3077,6 +3309,40 @@ test('the unit suite row leads the failure reasons and keeps its whole file list
   assert.equal(shaped.failures.length, 10);
   assert.equal(shaped.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
   assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
+});
+
+test('a failing unit suite returns each test\'s error excerpt beside its unchanged reason (#3978)', () => {
+  const reason = 'tests/b.test.js (1): bot hello | # fail 1';
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      { name: 'Board loads', status: 'fail', failureReason: 'selector not found' },
+      {
+        index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason,
+        failureDetails: [
+          { file: 'tests/b.test.js', test: 'bot hello', excerpt: "error: |-\n  1 !== 2\nexpected: 2\nactual: 1" },
+          { file: null, test: 'no excerpt', excerpt: '' },
+          ...Array.from({ length: 20 }, (_, i) => ({ file: 'tests/c.test.js', test: `t${i}`, excerpt: 'y'.repeat(4000) })),
+        ],
+      },
+    ],
+  });
+  const unit = shaped.failures[0];
+  assert.equal(unit.reason, `<untrusted-content>${reason}</untrusted-content>`, 'reason reads exactly as before');
+  // The row stored 22 excerpts; the answer previews the first few and
+  // get_check_output returns the whole stored set. The field itself is on
+  // every entry — the zod output schema reads it on each one (#2137).
+  assert.equal(unit.details.length, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS, 'preview holds only the first excerpts');
+  assert.equal(unit.details[0].file, '<untrusted-content>tests/b.test.js</untrusted-content>');
+  assert.equal(unit.details[0].test, '<untrusted-content>bot hello</untrusted-content>');
+  assert.match(unit.details[0].excerpt, /^<untrusted-content>error: \|-\n {2}1 !== 2/);
+  // 4000-character excerpts are re-capped at read time: the wrapper adds 37
+  // characters around the clipped text, and clip() marks the cut.
+  const wrap = '<untrusted-content></untrusted-content>'.length;
+  const cut = '… [truncated]'.length;
+  assert.ok(unit.details.every((d) => (d.excerpt || '').length <= unitSuiteRow.MAX_INLINE_EXCERPT_CHARS + wrap + cut),
+    'each excerpt re-capped at read time');
+  assert.deepEqual(shaped.failures[1].details, [], 'a row without excerpts keeps its old shape');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {
@@ -3793,9 +4059,10 @@ test('submit_work reaches the update through the platform route, not around it',
   assert.match(block, /proposals\/\$\{id\}\/update-from-fork/);
   assert.match(block, /callPlatform\(\s*\n?\s*baseUrl, accessToken, 'POST'/);
   assert.doesNotMatch(block, /force-with-lease|verifyForkBranch|pushForkBranchToAppBranch/);
-  // An update needs the branch it is advancing FROM.
+  // An update needs the new commits: the branch it is advancing FROM, or
+  // (#4263) a patch sent with the update work order's taskId.
   assert.match(block, /const updating = Number\.isInteger\(proposalId\) && proposalId > 0/);
-  assert.match(block, /if \(updating && !branch\)/);
+  assert.match(block, /if \(updating && !branch && !patch\)/);
   // The vote consequence is reported, because it is the one thing the user
   // must hear before it happens again.
   assert.match(block, /votesCleared/);
@@ -4271,6 +4538,44 @@ test('get_proposal carries before/after shot results through its own output sche
   } finally { c.restore(); }
 });
 
+test('get_proposal carries the problems the shots agent noticed beside the shot results', async () => {
+  const evidence = {
+    state: 'verified', required: true, impact: 'ui', rationale: 'A sort control.',
+    claims: [{
+      id: 'board-sort', claim: 'The board has a Newest sort control.', persona: 'member',
+      viewports: ['desktop', 'phone'], steps: ['Open the board'], baseState: 'not_present', animation: 'none',
+    }],
+    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
+    failureCode: null, failureReason: null, repairAvailable: false,
+    planHash: 'c'.repeat(64), verifiedReason: null,
+    shotResults: [{ id: 'board-sort', status: 'ready', reason: null, note: null }],
+    shotNotices: [
+      { text: 'The sort control overlaps the Done heading.', change: 'board-sort', screen: 'desktop', shot: 'screen', alsoBefore: true },
+      { text: 'The last column is cut off.', change: 'board-sort', screen: 'phone', shot: null, alsoBefore: 'unknown' },
+    ],
+    overriddenBy: null, overriddenAt: null, overrideReason: null,
+    artifacts: [],
+    updatedAt: '2026-10-09T10:00:00.000Z',
+  };
+  const c = connector(() => ({ session: { id: 4302, app_slug: 'recipe-box', shots: evidence } }));
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 4302 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.deepEqual(parsed.data.shots.shotNotices, evidence.shotNotices);
+    assert.deepEqual(parsed.data.shots.shotResults, evidence.shotResults, 'the results are untouched by them');
+    const shape = z.object(c.specs.get('get_proposal').outputSchema).shape.shots.unwrap().shape;
+    // alsoBefore is true, false or "unknown"; a shot is a screen or an element shot.
+    assert.equal(shape.shotNotices.safeParse([{ ...evidence.shotNotices[0], alsoBefore: 'maybe' }]).success, false);
+    assert.equal(shape.shotNotices.safeParse([{ ...evidence.shotNotices[0], shot: 'clip' }]).success, false);
+    // A view from before notices still parses.
+    assert.equal(shape.shotNotices.safeParse(undefined).success, true);
+    assert.match(c.specs.get('get_proposal').description, /`shotNotices`: other problems it saw on the after build, advisory/);
+    assert.match(shape.shotNotices.description, /whether the before build has it too \(alsoBefore\)\. Advisory/);
+  } finally { c.restore(); }
+});
+
 test('#2137 — nextStep says the verdict is waiting on a sync with main, and where to look', () => {
   const step = tools.shapeProposal(DEFERRED_ROW, ORIGIN).nextStep;
   assert.match(step, /DEFERRED, not running/, 'a decision, not a run in flight');
@@ -4604,8 +4909,18 @@ test('#2136 — a work order that revises a proposal names its pull request, and
     assert.equal(revise.proposalId, 4223);
     assert.equal(revise.prNumber, 2151, 'the number the person will recognise, beside the id');
     assert.match(revise.nextStep, /REVISES PR #2151 \(proposal 4223\), and it starts at that proposal's own current/);
-    assert.match(revise.nextStep, /submit_work with proposalId 4223 and the branch you pushed/,
-      'the argument is still spelled as the argument');
+    // #4263: an app-repo proposal is revised by patch first, with the update
+    // task's id, and the branch keeps the proposal id. Each argument is still
+    // spelled as the argument.
+    assert.match(revise.nextStep, /submit_work with taskId 88 and the patch you produced, or the branch/);
+    assert.match(revise.nextStep, /\(with proposalId 4223\)/, 'the argument is still spelled as the argument');
+    assert.match(revise.nextStep, /never ask the user to choose between a patch and a branch/);
+    // A head in the author's own fork still moves only by their push.
+    extra = { branchHome: 'user_fork' };
+    const forkHome = await run({ proposalId: 4223, brief: 'fix the failing test' }, [PR_ROW]);
+    assert.match(forkHome.nextStep, /submit_work with proposalId 4223 and the branch you pushed/);
+    assert.doesNotMatch(forkHome.nextStep, /and its patch|the patch you produced/);
+    extra = {};
 
     // A continued session has no pull request yet: null, and no "PR #null".
     const session = await run(
@@ -5042,5 +5357,168 @@ test('submit_work forwards an update\'s summary and reports whether it landed', 
     assert.equal('summary' in silent.update.body, false, 'a blank summary is "said nothing", never "blank it"');
   } finally {
     gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+// ── #3978 — failing checks return their error excerpts ───────────────────
+//
+// The names were the diagnosis once (change 4868) and the file list is the
+// diagnosis still; what an agent needs NEXT is the assertion under a name.
+// shapeChecks previews the unit row's first excerpts inline, and
+// get_check_output reads one row whole.
+
+const excerptUnitRow = (overrides = {}) => Object.assign({
+  index: -3,
+  name: 'Repo unit suite (npm test) passes',
+  path: 'package.json',
+  status: 'fail',
+  advisory: false,
+  consoleErrors: [],
+  failureReason: 'tests/a.test.js (2): t1; t2 | # tests 3 | # fail 2 | # cancelled 0',
+  failureDetails: [
+    { file: 'tests/a.test.js', test: 't1', excerpt: "error: 'expected 42 to equal 41', code: 'ERR_ASSERTION'" },
+    { file: 'tests/a.test.js', test: 't2', excerpt: "error: 'boom'" },
+    { file: 'tests/a.test.js', test: 't3', excerpt: "error: 'boom again'" },
+    { file: 'tests/a.test.js', test: 't4', excerpt: "error: 'boom yet again'" },
+  ],
+  failureDetailsTruncated: true,
+}, overrides);
+
+test('the unit-suite row previews its excerpts inline; declared rows keep details empty', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      { name: 'Board shows the snap toggle', path: '/dev', status: 'fail', failureReason: 'Expected element "[data-x]" was not found' },
+      excerptUnitRow(),
+    ],
+  });
+  assert.equal(shaped.detailsTruncated, true, 'the run kept fewer excerpts than the preview cap');
+  // The unit row leads; its preview holds the first three excerpts, wrapped
+  // like every other borrowed string.
+  const unit = shaped.failures[0];
+  assert.equal(unit.details.length, unitSuiteRow.MAX_INLINE_EXCERPT_TESTS);
+  assert.match(unit.details[0].excerpt, /<untrusted-content>error: 'expected 42 to equal 41/);
+  assert.equal(unit.details[0].file, '<untrusted-content>tests/a.test.js</untrusted-content>');
+  assert.match(unit.details[0].test, /<untrusted-content>t1/);
+  // A declared check's reason IS its diagnosis: it keeps the empty array,
+  // never a missing field — a conditional one fails the whole response (#2137).
+  const declared = shaped.failures[1];
+  assert.deepEqual(declared.details, []);
+});
+
+test('detailsTruncated stays false when the preview holds the whole run', () => {
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [excerptUnitRow({ failureDetails: excerptUnitRow().failureDetails.slice(0, 2), failureDetailsTruncated: undefined })],
+  });
+  assert.equal(shaped.detailsTruncated, false);
+  assert.equal(shaped.failures[0].details.length, 2);
+});
+
+const checkOutputConnector = (testResults, checkState = 'failing') => connector((method, pathname) => {
+  assert.equal(method, 'GET');
+  assert.match(pathname, /^\/api\/sessions\/\d+$/);
+  return { session: Object.assign({}, DEFERRED_ROW, {
+    check_state: checkState, test_results: testResults,
+  }) };
+});
+
+test('get_check_output returns the unit row in full, wrapped as untrusted', async () => {
+  const c = checkOutputConnector([excerptUnitRow()]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.equal(out.proposalId, 4208);
+    assert.equal(out.prNumber, DEFERRED_ROW.pr_number || null, 'a session with no PR answers null');
+    assert.match(out.check.name, /Repo unit suite/);
+    assert.equal(out.check.advisory, false);
+    assert.match(out.reason, /tests\/a\.test\.js \(2\): t1; t2/);
+    assert.equal(out.tests.length, 4, 'the whole stored inventory, not the preview cap');
+    assert.match(out.tests[0].excerpt, /<untrusted-content>error: 'expected 42 to equal 41/);
+    assert.equal(out.tests[0].file, '<untrusted-content>tests/a.test.js</untrusted-content>');
+    assert.equal(out.testsTruncated, true);
+    assert.deepEqual(out.consoleErrors, [], 'the unit row carries no console errors');
+  } finally { c.restore(); }
+});
+
+test('get_check_output answers a declared check by name: reason and console errors', async () => {
+  const declared = {
+    name: 'Board shows the snap toggle', path: '/dev', status: 'fail', advisory: false,
+    failureReason: 'Expected element "[data-x]" was not found',
+    consoleErrors: [{ kind: 'pageerror', message: 'TypeError: x is not a function', source: '/js/dev.js:10' }],
+  };
+  const c = checkOutputConnector([declared, excerptUnitRow()]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check: 'Board shows the snap toggle' });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_check_output'), result);
+    assert.ok(parsed.success, `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.match(out.check.name, /Board shows the snap toggle/);
+    assert.match(out.reason, /Expected element "\[data-x\]" was not found/);
+    assert.deepEqual(out.tests, [], 'a declared check carries no per-test excerpts');
+    assert.equal(out.testsTruncated, false);
+    assert.equal(out.consoleErrors.length, 1);
+    assert.match(out.consoleErrors[0].message, /TypeError: x is not a function/);
+    assert.equal(out.consoleErrors[0].source, '<untrusted-content>/js/dev.js:10</untrusted-content>');
+    // The unit row rides along but the explicit name wins.
+    assert.ok(!out.check.name.includes('Repo unit suite'));
+  } finally { c.restore(); }
+});
+
+test('get_check_output refuses a name no failing check carries, and names them', async () => {
+  const c = checkOutputConnector([
+    { name: 'Board shows the snap toggle', path: '/dev', status: 'fail' },
+    excerptUnitRow(),
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208, check: 'nope' });
+    assert.ok(result.isError);
+    assert.equal(result.structuredContent.code, 'unknown_check');
+    assert.match(result.structuredContent.message, /Board shows the snap toggle/, 'the failing names are listed');
+  } finally { c.restore(); }
+});
+
+test('get_check_output without a name defaults to the unit row when one is failing', async () => {
+  const c = checkOutputConnector([
+    { name: 'Board shows the snap toggle', path: '/dev', status: 'fail' },
+    excerptUnitRow(),
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(!result.isError);
+    assert.match(result.structuredContent.check.name, /Repo unit suite/);
+  } finally { c.restore(); }
+});
+
+test('get_check_output says when several non-unit checks failed and none was named', async () => {
+  const c = checkOutputConnector([
+    { name: 'First fails', path: '/a', status: 'fail' },
+    { name: 'Second fails', path: '/b', status: 'fail' },
+  ]);
+  try {
+    const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+    assert.ok(result.isError);
+    assert.equal(result.structuredContent.code, 'unknown_check');
+    assert.match(result.structuredContent.message, /First fails/);
+    assert.match(result.structuredContent.message, /Second fails/);
+  } finally { c.restore(); }
+});
+
+test('get_check_output answers no_failing_checks for a green or pending run', async () => {
+  for (const [state, rows] of [
+    ['passing', [{ name: 'fine', path: '/x', status: 'pass' }]],
+    ['pending', []],
+  ]) {
+    const c = checkOutputConnector(rows, state);
+    try {
+      const result = await c.handlers.get('get_check_output')({ proposalId: 4208 });
+      assert.ok(result.isError);
+      assert.equal(result.structuredContent.code, 'no_failing_checks');
+      assert.match(result.structuredContent.message, new RegExp(state), 'the state is named, not guessed');
+    } finally { c.restore(); }
   }
 });

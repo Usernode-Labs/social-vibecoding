@@ -137,12 +137,17 @@ const EXEMPT = new Map([
   ['apps.js POST /api/apps/:slug/visibility-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/admins-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/governance-pr', JSON_FIELD],
+  // #4417: a topics proposal needs its `op` (and the topic's fields) in a
+  // JSON body, like the rename and visibility PRs beside it.
+  ['apps.js POST /api/apps/:slug/topics-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/favorite', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/membership', JSON_FIELD],
   ['auth.js POST /api/auth/login', JSON_FIELD],
   ['auth.js POST /api/auth/otp/request', JSON_FIELD],
   ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
   ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
+  // #4594: the release mail's one-time link, read from the JSON body.
+  ['auth.js POST /api/auth/release-link', JSON_FIELD],
   ['auth.js POST /api/auth/register', JSON_FIELD],
   ['auth.js POST /api/me/api-key', JSON_FIELD],
   ['auth.js POST /api/me/password', JSON_FIELD],
@@ -204,6 +209,9 @@ const EXEMPT = new Map([
   ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
+  // #4264: a coding agent's sandbox, authenticated by the task's one-time
+  // upload token in Authorization; no cookie is read.
+  ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
   ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
@@ -211,7 +219,9 @@ const EXEMPT = new Map([
   ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/note', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/problem', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/diagram', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visual-evidence-intent', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/push', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/pr', TOKEN],
@@ -269,6 +279,8 @@ const EXEMPT = new Map([
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
   ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
   ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+  // #4313: the ?demo=1 Needs-you cards' vote, answered and never cast (staging only).
+  ['workshop-overview.js POST /api/sessions/:id/vote', JSON_FIELD],
   // Declarations the literal-path scan used to miss.
   ['anthropic-proxy.js ALL `${ROUTE_PREFIX}*`', TOKEN],
   ['app-illustrations.js POST /api/apps/:slug/featured-illustration', RAW],

@@ -231,6 +231,50 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
   { method: 'POST', pattern: '/api/bot-bench/runs' },
   { method: 'POST', pattern: '/api/bot-bench/runs/:id/cancel' },
+  // The App bench studio, and the rest of the benchmark and the bot's own
+  // data for the same admin's session (routes/bench-studio.js). The same gate
+  // first on every handler (requireAdminWrite), reads included: they read
+  // tasks, builds, previews and screenshots of every app, private ones too.
+  // Every write is then limited per person and refused to a browser on
+  // another origin; a launch must name its cap. They change no app: they
+  // launch, steer and preview benchmark builds on the studio's own private
+  // host app, save context packs, add or edit benchmark tasks, and rate a bot
+  // run.
+  { method: 'GET', pattern: '/api/bot-studio' },
+  { method: 'GET', pattern: '/api/bot-studio/gallery' },
+  { method: 'GET', pattern: '/api/bot-studio/runs/:id/watch' },
+  { method: 'GET', pattern: '/api/bot-studio/runs/:id/reference-order' },
+  { method: 'POST', pattern: '/api/bot-studio/launch' },
+  { method: 'POST', pattern: '/api/bot-studio/runs/:id/references' },
+  { method: 'POST', pattern: '/api/bot-studio/trials/:id/rerun' },
+  { method: 'POST', pattern: '/api/bot-studio/trials/:id/cancel' },
+  { method: 'POST', pattern: '/api/bot-studio/trials/:id/keep' },
+  { method: 'POST', pattern: '/api/bot-studio/trials/:id/preview' },
+  { method: 'GET', pattern: '/api/bot-studio/packs' },
+  { method: 'GET', pattern: '/api/bot-studio/packs/:id' },
+  { method: 'POST', pattern: '/api/bot-studio/packs' },
+  { method: 'GET', pattern: '/api/bot-studio/suites' },
+  { method: 'GET', pattern: '/api/bot-studio/suites/:id' },
+  { method: 'POST', pattern: '/api/bot-studio/suites/:id/tasks' },
+  { method: 'POST', pattern: '/api/bot-studio/tasks/:id/taste' },
+  { method: 'GET', pattern: '/api/bot-studio/runs/:id/trials' },
+  { method: 'GET', pattern: '/api/bot-studio/trials/:id' },
+  { method: 'GET', pattern: '/api/bot-studio/bot' },
+  { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
+  { method: 'GET', pattern: '/api/bot-studio/shots' },
+  { method: 'GET', pattern: '/api/bot-studio/shots/:id' },
+  // The Homeroom bot's configurations, first versions' and later changes'
+  // (routes/bot-configs.js): the same gate first on every handler, reads
+  // included (a pair shows screenshots of any app, private ones too); every
+  // write limited per person and refused to a browser on another origin.
+  // They change no app: they save a configuration version, set its role, set
+  // a scope's side-build budget, and record a pick.
+  { method: 'GET', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs' },
+  { method: 'POST', pattern: '/api/bot-configs/:id/role' },
+  { method: 'POST', pattern: '/api/bot-configs/budget' },
+  { method: 'GET', pattern: '/api/bot-configs/pairs/next' },
+  { method: 'POST', pattern: '/api/bot-configs/pairs/:token/pick' },
   // Test accounts for first-run testing (routes/test-accounts.js). The third
   // deliberate exception: these make, list and retire ACCOUNTS — a new
   // sign-in, handed back once to the admin who asked. They may because of the
@@ -245,6 +289,13 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/test-accounts' },
   { method: 'GET', pattern: '/api/test-accounts' },
   { method: 'POST', pattern: '/api/test-accounts/:id/retire' },
+  // A one-time phone sign-in for a test number, the same gate: what it signs
+  // in to is a test account (services/test-accounts.js mintPhoneSignIn).
+  { method: 'POST', pattern: '/api/test-accounts/phone-sign-ins' },
+  // The waitlist's "you're in" mail sent to a test address, the same gate:
+  // the account its link makes is a test account (services/test-accounts.js
+  // sendRelease), and the mail goes through the ordinary throttle.
+  { method: 'POST', pattern: '/api/test-accounts/release-emails' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

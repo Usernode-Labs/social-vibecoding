@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { withResourceUse } = require('./build-retention-guard');
 const { STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 const log = require('./logger');
@@ -282,6 +284,19 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
   };
 }
 
+// A root-only checkout (the Kubernetes lane, below) has no files under the
+// root, so a root entry that is a link into a subdirectory points at nothing
+// there: a dapp.json kept behind a link to `config/dapp.json` would read as
+// "no manifest". True when the directory holds such a link.
+function rootHasDanglingLink(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .some((entry) => entry.isSymbolicLink() && !fs.existsSync(path.join(dir, entry.name)));
+  } catch {
+    return false;
+  }
+}
+
 async function buildAndDeployStagingInner(config, session, app, commitHash) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
@@ -341,6 +356,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       );
     }
 
+    // A Kubernetes build fetches the commit from GitHub itself, so a whole
+    // clone here downloads the same source a second time: for the self-app
+    // 22 MB and 3,254 files, written to /tmp and deleted again once the
+    // image is back. Everything read from this directory on that lane sits
+    // at its root: dapp.json below, and inside the runtime's build the
+    // scripts in package.json and which Dockerfile the tree carries. So the
+    // clone there carries the commit's directory listing and its root files,
+    // nothing under them and no submodules (the build fetches none either).
+    // Docker builds FROM this directory and keeps the whole tree.
+    const rootOnly = !applicationRuntime.buildReadsWholeSource(config);
+
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
@@ -348,7 +374,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // submodules. Timeout bumped to absorb worst-case submodule fetch.
     await docker.execFileAsync('git', [
       'clone', '--depth', '1',
-      '--recurse-submodules', '--shallow-submodules',
+      ...(rootOnly
+        ? ['--filter=blob:none', '--sparse']
+        : ['--recurse-submodules', '--shallow-submodules']),
       ...(viaPullRef ? [] : ['--branch', session.branch_name]),
       cloneUrl, cloneDir,
     ], { timeout: 120000 });
@@ -364,9 +392,25 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // without any). Scoped strictly to this checkout step — the rest of the
     // build (secrets gating, DB clone, container run, teardown) is unchanged.
     if (pinnedSha) {
+      // The root-only checkout fetches the commit's root files as it detaches,
+      // so it gets a network timeout.
       const detach = () => docker.execFileAsync('git', [
         '-C', cloneDir, 'checkout', '--detach', pinnedSha,
-      ], { timeout: 30000 });
+      ], { timeout: rootOnly ? 120000 : 30000 });
+      // A whole-tree clone fails to detach at a commit it lacks, and that
+      // failure is what sends the loop below to its shallow fetch. A clone
+      // made with a filter does not fail: it fetches the commit on demand,
+      // with its history (2,582 commits and about four seconds for the
+      // self-app). So on the root-only path a commit is detached at only
+      // once a ref of this clone is known to name it. The clone holds one
+      // commit per fetch, and asking what that one is costs nothing.
+      const holdsPinned = async (ref) => {
+        if (!rootOnly) return true;
+        const { stdout } = await docker.execFileAsync('git', [
+          '-C', cloneDir, 'rev-parse', ref,
+        ], { timeout: 5000 });
+        return String(stdout || '').trim().toLowerCase().startsWith(pinnedSha.toLowerCase());
+      };
       const fetchRefs = [
         ...(viaPullRef ? [`refs/pull/${prNumber}/head`] : []),
         pinnedSha,
@@ -378,6 +422,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       // it can only ever fail.
       if (!viaPullRef) {
         try {
+          if (!await holdsPinned('HEAD')) throw new Error(`The branch tip is not ${pinnedSha}`);
           await detach();
           checkedOut = true;
         } catch { /* fall through to the fetch attempts below */ }
@@ -389,14 +434,35 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
           await docker.execFileAsync('git', [
             '-C', cloneDir, 'fetch', '--depth', '1', 'origin', ref,
           ], { timeout: 120000 });
+          if (!await holdsPinned('FETCH_HEAD')) throw new Error(`${ref} is not at ${pinnedSha}`);
           await detach();
           checkedOut = true;
         } catch (err) { lastErr = err; }
       }
       if (!checkedOut) throw lastErr || new Error(`Could not check out ${pinnedSha}`);
+      if (!rootOnly) {
+        await docker.execFileAsync('git', [
+          '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
+        ], { timeout: 120000 }).catch(() => {});
+      }
+    }
+
+    // A tree whose root links into a subdirectory needs that subdirectory
+    // for the reads below to see what a whole clone shows them. Rare enough
+    // not to work out which one: give such a tree all of its files, and its
+    // submodules' with them. The directory linked into can be a submodule,
+    // whose files are in another repository: with the sparse checkout off
+    // it is still an empty directory, and a dapp.json kept behind such a
+    // link read as "no manifest", so the preview was built without the
+    // secrets it requires. A submodule that cannot be fetched fails the
+    // build here, as it fails the whole clone.
+    if (rootOnly && rootHasDanglingLink(cloneDir)) {
+      await docker.execFileAsync('git', [
+        '-C', cloneDir, 'sparse-checkout', 'disable',
+      ], { timeout: 120000 });
       await docker.execFileAsync('git', [
         '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
-      ], { timeout: 120000 }).catch(() => {});
+      ], { timeout: 120000 });
     }
 
     // 2. Read the dapp's manifest from the PR branch and check that all
@@ -901,8 +967,20 @@ function serializeRebuild(slug, fn) {
 // gates it there; a general "deploy the artifact the checks ran against"
 // needs that difference resolved rather than tolerated.
 async function rebuildProduction(config, app, options = {}) {
-  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+  const result = await serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
     () => rebuildProductionInner(config, app, options)));
+  // Every deploy that succeeds, whoever asked for it (a merge, the drift
+  // poller, "Check for updates", a heal): merges of this app still waiting
+  // to go live hear which build now runs, and check whether it contains them
+  // (the merge-followups workflow machine). Never a reason the deploy fails.
+  if (result?.sha) {
+    try {
+      await require('../workflow/platform.ts').productionDeployed(app.id, result.sha);
+    } catch (err) {
+      log.warn('staging', 'Could not report the deploy to waiting merges', { app: app.slug, err: err.message });
+    }
+  }
+  return result;
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the
@@ -1050,6 +1128,12 @@ async function rebuildProductionInner(config, app, options = {}) {
     // explicit [] clears the roster. Best-effort.
     await appManifest.reconcileAppAdmins(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Admins reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `topics` array (#4417), after the name, visibility
+    // and governance: a merged topics PR (a new topic, a rename, a merge, an
+    // archive) applies here, on the rebuild its merge triggered. An absent
+    // block is a no-op. Best-effort.
+    await appManifest.reconcileAppTopics(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Topics reconcile failed', { app: app.slug, err: err.message }));
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360): a
     // merged PR that toggles the capture density applies here on the
     // rebuild it triggered. readScreenshot defaults to 2×, so this keeps
