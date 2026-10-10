@@ -143,12 +143,15 @@ test('the sweep fails a test that only holds on weekdays, and passes it on a Mon
   assert.equal(green.code, 0, green.failed.join('\n'));
 });
 
-test('the calendar-sensitive suites pass at every instant', { concurrency: 2 }, async (t) => {
+test('the calendar-sensitive suites pass at every instant', async () => {
   const concurrency = Math.max(1, Math.min(2, Math.floor(os.cpus().length / 4)));
-  for (const { label, at } of instants(Date.now())) {
-    t.test(`at ${label} (${new Date(at).toISOString()})`, async () => {
-      const { code, failed } = await runAt(SWEPT, at, { concurrency });
-      assert.equal(code, 0, `failed with the clock at ${new Date(at).toISOString()}:\n${failed.join('\n')}`);
-    });
-  }
+  // One test, not one per instant: a failure's message is then the
+  // top-level error the unit suite's own report keeps, naming each test
+  // that failed and the instant it failed at.
+  const runs = await Promise.all(instants(Date.now()).map(async ({ label, at }) => ({
+    label, at, ...(await runAt(SWEPT, at, { concurrency })),
+  })));
+  const red = runs.filter((r) => r.code !== 0);
+  assert.equal(red.length, 0, red.map((r) => `At ${r.label} (${new Date(r.at).toISOString()}), exit ${r.code}:\n`
+    + (r.failed.length ? r.failed.map((f) => `  ${f}`).join('\n') : '  (no failing test was named)')).join('\n'));
 });
