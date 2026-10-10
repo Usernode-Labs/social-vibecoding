@@ -1656,12 +1656,12 @@
     "description": "Heading shown in place of the message box after your first message to someone who has not accepted a conversation with you yet. A \"message request\" is that first message, which they must accept."
   },
   "composer.requestSent.waitingNamed": {
-    "text": "Waiting for @{{username}} to accept your message request. You can send more once they do.",
-    "description": "Text under \"Message request sent\", in place of the message box. {{username}} is the person the request went to; keep the @."
+    "text": "Waiting for {{username}} to accept your message request. You can send more once they do.",
+    "description": "Notice in place of the message box of a direct message whose first message was sent as a message request. {{username}} is the other person's username, written bare as a direct message names people (#4655)."
   },
   "composer.requestSent.waitingUnknown": {
-    "text": "Waiting for @unknown to accept your message request. You can send more once they do.",
-    "description": "Text under \"Message request sent\", in place of the message box. Used when the person's username is not known; \"unknown\" is written as it has always been shown."
+    "text": "Waiting for unknown to accept your message request. You can send more once they do.",
+    "description": "Notice in place of the message box of a direct message whose first message was sent as a message request, when the other person's username did not come with the conversation. \"unknown\" stands where the username would be, written bare as a direct message names people."
   },
   "composer.requestSent.waitingUnnamed": {
     "text": "Waiting for them to accept your message request. You can send more once they do.",
@@ -1672,12 +1672,12 @@
     "description": "Shown in place of the message box in a conversation the person may read but not write in."
   },
   "composer.firstMessageHintNamed": {
-    "text": "@{{username}} gets your first message as a message request. You can send more once they accept.",
-    "description": "Hint above the message box before your first message to someone who has not talked with you before. {{username}} is that person; keep the @."
+    "text": "{{username}} gets your first message as a message request. You can send more once they accept.",
+    "description": "Line above the message box of a new direct message to someone who has not accepted you yet. {{username}} is their username, written bare as a direct message names people (#4655)."
   },
   "composer.firstMessageHintUnknown": {
-    "text": "@unknown gets your first message as a message request. You can send more once they accept.",
-    "description": "Hint above the message box before your first message to someone who has not talked with you before. Used when the person's username is not known; \"unknown\" is written as it has always been shown."
+    "text": "unknown gets your first message as a message request. You can send more once they accept.",
+    "description": "Line above the message box of a new direct message when the other person's username did not come with the conversation. \"unknown\" stands where the username would be, written bare as a direct message names people."
   },
   "composer.firstMessageHintUnnamed": {
     "text": "They get your first message as a message request. You can send more once they accept.",
