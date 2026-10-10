@@ -139,6 +139,9 @@ export interface PlaceChannel {
   /** Open requests filed under it; null for #general and retired topics. */
   requests: number | null;
   unread: number;
+  /** The figures its channel shows above the room (topic-figures.tsx);
+      empty for #general and for a topic that names none. */
+  figures?: string[];
 }
 
 export interface PlacesPayload {

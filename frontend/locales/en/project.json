@@ -4435,6 +4435,42 @@
     "text": "{{about}} · <0>{{requests}}</0>",
     "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
   },
+  "places.topicFigures.label": {
+    "text": "This topic's figures",
+    "description": "Accessible name of the card of numbers at the top of a topic's chat channel, such as how long checks take or how often the bot's answers fail."
+  },
+  "places.topicFigures.window_one": {
+    "text": "Last day",
+    "description": "Small heading over the card of numbers at the top of a topic's chat channel: says the numbers cover the last day. Shown in capitals."
+  },
+  "places.topicFigures.window_other": {
+    "text": "Last {{count}} days",
+    "description": "Small heading over the card of numbers at the top of a topic's chat channel: says how many days the numbers cover, for example \"Last 7 days\". {{count}} is that number. Shown in capitals."
+  },
+  "places.topicFigures.scopeLabel": {
+    "text": "Which projects these figures cover",
+    "description": "Accessible name of the dropdown beside the card of numbers at the top of a topic's chat channel: picks whether the numbers cover every project, only Homeroom itself, or every other project."
+  },
+  "places.topicFigures.scope.all": {
+    "text": "All projects",
+    "description": "Choice in the dropdown beside the card of numbers at the top of a topic's chat channel: the numbers cover every project on the platform, Homeroom included."
+  },
+  "places.topicFigures.scope.homeroom": {
+    "text": "Homeroom",
+    "description": "Choice in the dropdown beside the card of numbers at the top of a topic's chat channel: the numbers cover only Homeroom's own project. Homeroom is the product's name and is not translated."
+  },
+  "places.topicFigures.scope.others": {
+    "text": "Other projects",
+    "description": "Choice in the dropdown beside the card of numbers at the top of a topic's chat channel: the numbers cover every project except Homeroom's own."
+  },
+  "places.topicFigures.whatItMeans": {
+    "text": "What {{label}} means",
+    "description": "Accessible name of the small information button beside one number's name at the top of a topic's chat channel: shows a sentence explaining that number. {{label}} is the number's name, for example \"Reply time\"."
+  },
+  "places.topicFigures.demo": {
+    "text": "Staging demo figures, not real numbers.",
+    "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
+  },
   "topic.request.shots.hideComment": {
     "text": "Hide comment",
     "description": "Small button on the corner of a screenshot in a request, while the comment pinned to the picture is drawn over it: hides the comment."

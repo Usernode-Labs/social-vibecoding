@@ -43,10 +43,19 @@ const FOUR = [
   { id: 'infra', handle: 'infra', name: 'Infra', icon: '\u{1F6E0}️', about: 'Builds, staging, deploys and the servers the apps run on' },
 ];
 
-// Homeroom's own topics: the four it started with, then #project-workflows
-// (from #4417's discussion: how work moves before it is a proposal).
+// The figures each of the four shows above its room (services/topic-figures.js).
+const HOMEROOM_FIGURES = {
+  onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
+  'homeroom-bot': ['bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal'],
+  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.couldnt-tell', 'pipeline.shots', 'pipeline.vote-to-merged'],
+  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.limits-filled'],
+};
+
+// Homeroom's own topics: the four it started with, each with its figures,
+// then #project-workflows (from #4417's discussion: how work moves before
+// it is a proposal), which names none.
 const HOMEROOM = [
-  ...FOUR,
+  ...FOUR.map((t) => ({ ...t, figures: HOMEROOM_FIGURES[t.id] })),
   { id: 'project-workflows', handle: 'project-workflows', name: 'Project workflows', icon: '\u{1F9ED}', about: 'How work moves before it\'s a proposal: request types, triage, discussion and decisions' },
 ];
 

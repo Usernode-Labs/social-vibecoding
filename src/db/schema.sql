@@ -2412,6 +2412,10 @@ ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_state VARCHAR(8
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_into TEXT;
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_order INTEGER;
+-- topic_figures: dapp.json's `figures` for the topic, the numbers its
+-- channel shows above the room (services/topic-figures.js). Written by the
+-- same reconcile, so changing them is a proposal like the topic itself.
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_figures TEXT[] NOT NULL DEFAULT '{}';
 -- The read the places list, the channel lookup and the tally's exclusion
 -- make: one app's topics, in order.
 CREATE INDEX IF NOT EXISTS idx_app_category_registry_topics
