@@ -9201,9 +9201,10 @@ span.gc-vote-btn-icon { cursor: default; }
 
 /* Inline chips for PR#N / #N tokens in user messages, also reused as the
    number badge in the reference-autocomplete dropdown so the dropdown
-   teaches the rendering. Plain spans (role="link"), so iOS long-press
-   text selection still works around them; navigation is wired in
-   GroupChat._attachQuoteHandlers → AppView.revealInDrawer. */
+   teaches the rendering. Plain spans (role="link") when the chat names no
+   project — so iOS long-press text selection still works around them — and
+   real anchors (same classes, no role) where it does (#4668); navigation is
+   wired in GroupChat._attachQuoteHandlers → GroupChat._openRef. */
 .gc-ref {
   display: inline-flex;
   align-items: center;
