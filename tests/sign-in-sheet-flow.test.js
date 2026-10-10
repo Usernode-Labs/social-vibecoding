@@ -145,10 +145,13 @@ test('the link\'s one-time sign-in (#4594) is kept for the sheet, off the addres
   assert.equal(enterHarness({ search: '?signup=1&key=short' }).auth._releaseLink.signIn, null);
 });
 
-test('the landing takes the link on show and opens the sheet at its step', () => {
+test('the landing takes the link on show: Sign in opens at once, a new account waits for Get started', () => {
   const src = read(LANDING);
   const onShow = src.slice(src.indexOf('const landingOnShow = useCallback(() => {'), src.indexOf('}, [loadLandingApps, refreshHeader, runAnonBackShot, st]);'));
-  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+setSheet\(link\.route === 'signup' \? 'start' : 'signin'\);/);
+  // Evan, 10 Oct 2026: the story first, and the sheet on Get started, which
+  // is when the one-time sign-in is spent.
+  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
   // Get started's sheet carries the token; Sign in's never does.
   assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}/);
   assert.match(src, /releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}/);

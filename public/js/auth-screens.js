@@ -240,14 +240,14 @@
       // `?signup=1[&t=<token>]` and `?login=1` are the waitlist's "you're
       // in" mail (sendWaitlistReleaseMail), and they no longer go to the
       // sign-in screen. They open the STORY, the screen everybody else
-      // starts on, with the sign-in sheet over it at the step the link asked
-      // for (features/auth/landing.tsx takes this on show): for a new
-      // account, the address the token names filled in and the code sent;
-      // for one that exists, Sign in. So the address goes back to `/`, the
-      // landing's own, and the link waits on this object rather than in it,
-      // which also keeps the token out of the address bar. With the story
-      // switched off the landing hands it on to `#signup` / `#login`, as
-      // before.
+      // starts on (features/auth/landing.tsx takes this on show): for a new
+      // account, its Get started opens the sheet, which spends the one-time
+      // sign-in or fills in the address the token names and sends the code;
+      // for one that exists, the Sign in sheet is open over it. So the
+      // address goes back to `/`, the landing's own, and the link waits on
+      // this object rather than in it, which also keeps the token out of the
+      // address bar. With the story switched off the landing hands it on to
+      // `#signup` / `#login`, as before.
       try {
         if (!location.hash) {
           const params = new URLSearchParams(location.search);

@@ -569,7 +569,8 @@ export async function passwordSignIn(username: string, password: string): Promis
  * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
  * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
  * the query, keeps it here and puts the address back to `/`, so the story
- * (./landing.tsx) opens with the sign-in sheet over it at this step.
+ * (./landing.tsx) opens with it: a new account's Get started takes it to
+ * the sheet, and an existing account's Sign in sheet is open over it.
  */
 export interface ReleaseLink {
   route: 'signup' | 'login';
