@@ -65,7 +65,9 @@ function abandon(config, entry, why) {
   log.info('early-unit-suite', 'Stopped an early unit suite', {
     sessionId: entry.sessionId, commitHash: entry.commitHash, why, adopted: entry.adopted,
   });
-  require('./kubernetes').deleteCheckJob(config, jobName(entry.sessionId, entry.runId)).catch(() => {});
+  // Every Job of the run: one, or one per shard of a split suite.
+  require('./kubernetes').deleteRunCheckJobs(config, { sessionId: entry.sessionId, previewRunId: entry.runId })
+    .catch(() => {});
 }
 
 /**
@@ -90,7 +92,7 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
     const db = pool || require('../db/pool').getPool(config);
     const { rows } = await db.query(
       `SELECT id, status, check_state, checks_commit_sha, branch_name, pr_number, source,
-              handoff_head_sha, imported_pr_head_sha
+              handoff_head_sha, imported_pr_head_sha, consecutive_check_failures
          FROM chat_sessions WHERE id = $1`,
       [sessionId]
     );
@@ -99,6 +101,18 @@ async function maybeStart(config, { session, app, commitHash, pool = null, deps 
     // still pending, on a session that can still be judged.
     if (!row || row.check_state !== 'pending' || row.checks_commit_sha !== sha
         || !['active', 'paused', 'promoted', 'merging'].includes(row.status)) return null;
+    // Not a head whose last checks errored. That is mostly a preview that
+    // does not boot, rebuilt by the heal sweep every few minutes: in the
+    // first hour of this module, one platform proposal 860 failures deep
+    // started a full unit suite on every rebuild, and nothing ever read one.
+    // The counter resets with a new head (staging-recovery), so the next
+    // commit starts early again.
+    if (Number(row.consecutive_check_failures) > 0) {
+      log.info('early-unit-suite', 'Not starting the unit suite early: the last checks of this head errored', {
+        sessionId, commitHash: sha, failures: Number(row.consecutive_check_failures),
+      });
+      return null;
+    }
     const ref = (deps.sessionGitRef || require('./visuals').sessionGitRef)({ ...session, ...row }, sha);
     if (!ref) return null;
 
