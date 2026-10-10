@@ -3129,7 +3129,7 @@
       "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all:last-child"
     },
     {
-      "name": "A filtered tab's footer link goes to All rather than paging the filter",
+      "name": "The Unread footer shows older notifications in place rather than jumping to All",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] #notifications-see-older",
       "expectText": "See older notifications"

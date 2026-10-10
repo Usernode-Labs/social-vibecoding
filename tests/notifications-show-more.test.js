@@ -49,6 +49,7 @@ const MIGRATE_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'db', 'migrate.js'),
   'utf8'
 );
+const { message } = require('./lib/platform-i18n');
 
 // The "X is gone" assertions below are about CODE, not prose: several comments
 // in these files deliberately NAME the thing they replaced, and that history is
@@ -182,6 +183,53 @@ test('the pager renders after the rows and is wired to loadOlder', () => {
   assert.match(block, /snap\.screenCanLoadMore/, 'offered only when a page exists');
   assert.doesNotMatch(LIST_CODE, /notifications-older-toggle/,
     'the drawer-era reveal toggle stays gone');
+});
+
+// ── #4700: the Unread footer reveals older rows IN PLACE ────────────────
+//
+// The footer used to jump a filtered tab to All. Messages keeps that jump;
+// Unread now reveals the older rows under the unread ones and collapses
+// again, which is what the four tests below pin.
+
+test('the Unread footer reveals older notifications on the tab instead of jumping to All', () => {
+  const block = listBlock();
+  // The collapsed Unread footer, found by its guard so the Messages branch
+  // (which shares the button id) cannot satisfy this test.
+  const m = block.match(/\) : tab === 'unread' && !olderShown[\s\S]*?<\/button>/);
+  assert.ok(m, 'the collapsed Unread footer branch found');
+  assert.match(m[0], /id="notifications-see-older"/, 'same id the footer always used');
+  assert.match(m[0], /setOlderShown\(true\);\s*\n\s*controller\(\)\?\.loadOlder\(\)/,
+    'expands in place and walks the existing loadOlder cursor');
+  assert.doesNotMatch(m[0], /setTab\('all'\)/, 'stays on Unread — no jump to All');
+  // Exactly one jump remains in the footer: the Messages branch's, which the
+  // request did not touch. (The other is the All tab button itself.)
+  assert.equal((block.match(/setTab\('all'\)/g) || []).length, 2,
+    'one setTab(\'all\') is the All tab button, one is the Messages footer');
+});
+
+test('Hide older notifications collapses the expanded Unread list', () => {
+  const block = listBlock();
+  assert.match(block, /id="notifications-hide-older"/, 'the collapse button exists');
+  assert.match(block, /onClick=\{\(\) => setOlderShown\(false\)\}/, 'wired to collapse');
+  // The list drawn on Unread expands to `all` only through this one
+  // expression, and only while the reveal is showing.
+  assert.match(LIST_CODE, /const shown = tab === 'unread' && olderShown \? all : rows/);
+  assert.match(LIST_CODE, /: shown\.map\(\(view\) => \(\{ type: 'notif'/,
+    'the non-Messages entries render from `shown`');
+});
+
+test('the expanded Unread view is a per-visit state, forgotten on close or tab change', () => {
+  // Starts collapsed, so the prerendered markup is unchanged.
+  assert.match(LIST_CODE, /\[olderShown, setOlderShown\] = useState\(false\)/);
+  assert.match(LIST_CODE, /if \(!open \|\| tab !== 'unread'\) setOlderShown\(false\)/,
+    'an effect collapses it when the sheet closes or the tab changes');
+});
+
+test('the Unread footer reads its words from the catalog', () => {
+  assert.equal(message('notifications:sheet.older.reveal'), 'See older notifications');
+  assert.equal(message('notifications:sheet.older.hide'), 'Hide older notifications');
+  // The old label is the Messages footer's alone now; the words are unchanged.
+  assert.equal(message('notifications:sheet.older.showAll'), 'See older notifications');
 });
 
 // ── staging seed (unchanged) ────────────────────────────────────────────
