@@ -19538,12 +19538,17 @@ const AppView = {
     }
     // B8: under the bot's button on the request's page, how long it takes.
     // #4530: or, while the bot is waiting on an answer there, what for.
+    // Once a change for it already waits for approval the ask button is
+    // gone (_issuePrimaryActionSpec), so nothing is about to be built and
+    // the "Usually ready…" line goes with it.
     if (noNav && !closed && !issue.bot && AppView._botDoor() && !AppView.readOnly) {
       const waiting = AppView._botWaiting(issue);
-      extra.push({
-        t: 'note', key: 'bot-door',
-        text: waiting ? AppView._botWaitingHint(waiting) : AppView._botDoorHint(AppView._botDoor()),
-      });
+      if (waiting || !AppView._issueAwaitingApproval(issue)) {
+        extra.push({
+          t: 'note', key: 'bot-door',
+          text: waiting ? AppView._botWaitingHint(waiting) : AppView._botDoorHint(AppView._botDoor()),
+        });
+      }
     }
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without SQL.
@@ -19746,6 +19751,11 @@ const AppView = {
           act: { fn: 'answerBotOnRequest', args: [n, Number(waiting.messageId) || 0, noNav ? 1 : 0] },
         };
       }
+      // A change for this request already waits for approval — the bot built
+      // it, and it is up for a vote. Asking again would build it twice, so
+      // nothing is offered here: the status card falls back to "See the
+      // change" (_requestStatusView), as the non-door path below does.
+      if (AppView._issueAwaitingApproval(issue)) return null;
       return {
         key: 'primary', cls: 'gc-vote-btn', label: 'Ask Homeroom bot to build this',
         title: AppView._botDoorHint(door),
