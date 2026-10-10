@@ -148,11 +148,12 @@ function mayorFor(model) {
 async function runTurn({
   steps, shim = fakeShim(), pool = recordingPool({ 'RETURNING id': () => ({ rows: [{ id: 99 }] }) }),
   agentSessions, actionsDeps, message = 'What is on the board?', followUp = null, extra = {}, mayor = mayorFor,
+  res = fakeRes(),
 }) {
   const model = scriptedModel(steps);
   const opened = [];
   const { deps, spend, events } = turnDeps({ model, shim, opened, agentSessions, actionsDeps, extra });
-  const res = fakeRes();
+  res = res || fakeRes();
   await agentTurn.runAgentTurn({
     pool, config: CONFIG, user: USER, agentSessionId: 5, turnId: 'turn-0001-aaaa',
     messageText: message, followUp, mayor: mayor(model), res, deps,
@@ -409,6 +410,63 @@ test('a failed turn says so, records it, and still releases everything', async (
   assert.deepEqual(events.map((e) => e.event), ['turn_failed']);
   assert.deepEqual(released, ['turn-0001-aaaa']);
   assert.deepEqual(shim.closed, ['turn_finished']);
+});
+
+test('#4729: a failed turn bells "Session stopped before finishing" against its change, when nobody watches', async () => {
+  const steps = [() => { throw new Error('provider down'); }];
+  // The user left: the turn's stream is closed and nobody follows the events.
+  const left = fakeRes();
+  left.destroyed = true;
+  const stalled = [];
+  const done = [];
+  const { events } = await runTurn({
+    steps,
+    res: left,
+    extra: {
+      notifyStalled: async (_pool, changeId) => { stalled.push(changeId); },
+      notifyDone: async (_pool, changeId) => { done.push(changeId); },
+    },
+  });
+  assert.deepEqual(events.map((e) => e.event), ['turn_failed']);
+  assert.deepEqual(stalled, [50], 'the change the turn was on');
+  assert.deepEqual(done, [], 'a turn that did not finish is not a finished one');
+
+  // Somebody watching — the conversation screen following its events — sees
+  // it happen, and the bell says nothing.
+  const watchingRes = fakeRes();
+  watchingRes.destroyed = true;
+  const watched = [];
+  await runTurn({
+    steps,
+    res: watchingRes,
+    extra: {
+      notifyStalled: async (_pool, id) => { watched.push(id); },
+      sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
+    },
+  });
+  assert.deepEqual(watched, []);
+
+  // A stop was answered where it happened, with the composer's own words:
+  // it stays out of the bell.
+  const stopRes = fakeRes();
+  stopRes.destroyed = true;
+  let started;
+  const running = new Promise((resolve) => { started = resolve; });
+  const step = (args) => new Promise((_resolve, reject) => {
+    args.onToken('I was about to say ');
+    started();
+    args.signal.addEventListener('abort', () => reject(new Error('aborted')));
+  });
+  const stopped = [];
+  const turn = runTurn({
+    steps: [step],
+    res: stopRes,
+    extra: { notifyStalled: async (_pool, id) => { stopped.push(id); } },
+  });
+  await running;
+  agentTurn.stopAgentTurn(5, { by: 'ada' });
+  await turn;
+  assert.deepEqual(stopped, []);
 });
 
 test('stop aborts the model call and is not reported as a failure', async () => {

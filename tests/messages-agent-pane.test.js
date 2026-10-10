@@ -28,6 +28,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
@@ -89,6 +90,36 @@ test('the rows link to the inbox addresses and mark the open one', () => {
   // The row no longer records the session's origin itself: on a desktop the
   // session is not left for, and on a phone the router records it.
   assert.doesNotMatch(SCREEN, /onNavigate=\{\(\) => \{\s*if \(session\.kind === 'session'\) Improve\.enterSessionFrom/);
+});
+
+test('#4729: the Agents list folds its archived chats behind Show archived at its foot', () => {
+  // The toggle, in the channels' "Show N more" shape, shows for somebody who
+  // has had an agent session on the Agents list with no query — search does
+  // not cover the archived — and after mount only, so the hydrating render
+  // matches the prerender.
+  assert.match(SCREEN, /id="messages-show-archived"/);
+  assert.match(SCREEN, /className="messages-more-channels"\s*aria-expanded=\{archivedOpen\}/);
+  assert.match(SCREEN, /const showArchivedToggle = mounted && !!agentChatsShown && snap\.filter === 'agents' && !deferredQuery\.trim\(\);/);
+  assert.match(SCREEN, /\{archivedOpen \? t\('messages:inbox\.archived\.hide'\) : t\('messages:inbox\.archived\.show'\)\}/);
+  // Opening it reads the archived list from the same route the open list
+  // reads, ?status=archived, and reads it again on EVERY open, so a session
+  // archived or unarchived meanwhile is where it now belongs.
+  assert.match(read('frontend/src/features/agent-session/api.ts'),
+    /export async function listArchivedSessions\(\)[\s\S]{0,400}'\/api\/agent-sessions\?status=archived&limit=50'/);
+  assert.match(SCREEN, /useEffect\(\(\) => \{\s*if \(archivedOpen\) readArchived\(\);\s*\}, \[archivedOpen, readArchived\]\);/);
+  // The open group is a section like the others: headed, carded, with its
+  // own empty line and the list's error-and-retry shape, and its rows mark
+  // the one that is open.
+  assert.match(SCREEN, /<h3 className="messages-section-head" data-inbox-section="archived">\{t\('messages:inbox\.archived\.heading'\)\}<\/h3>/);
+  assert.match(SCREEN, /<div className="messages-section-card" data-inbox-card="archived">/);
+  assert.match(SCREEN, /active=\{openAgent\?\.kind === 'agent' && openAgent\.id === session\.id\}/);
+  assert.match(SCREEN, /<div className="messages-state"><p>\{t\('messages:inbox\.archived\.empty'\)\}<\/p><\/div>/);
+  assert.match(SCREEN, /archivedError \? \(\s*<div className="messages-state messages-state-error">/);
+  // The words, in English, in the catalog.
+  assert.equal(message('messages:inbox.archived.show'), 'Show archived');
+  assert.equal(message('messages:inbox.archived.hide'), 'Hide archived');
+  assert.equal(message('messages:inbox.archived.heading'), 'Archived');
+  assert.equal(message('messages:inbox.archived.empty'), 'No archived agent chats.');
 });
 
 test('the router opens agent threads in the pane on a desktop and swaps them on a phone', () => {

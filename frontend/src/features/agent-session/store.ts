@@ -166,9 +166,9 @@ export interface AgentSessionState {
   sessionsLoaded: boolean;
   /**
    * The viewer has had an agent session, archived ones included: they have
-   * built something themselves. The Homeroom menu's Agent chats section is
-   * shown only then (useAgentChatsShown). Set by the list's read and by the
-   * first message of a new one, and never cleared in this document.
+   * built something themselves. Messages' Agents list shows its "Show
+   * archived" group only then (useAgentChatsShown). Set by the list's read
+   * and by the first message of a new one, and never cleared in this document.
    */
   sessionsStarted: boolean;
   /** The picker's options, read once per page. */
@@ -398,12 +398,12 @@ export function useAgentSessions(): AgentSession[] {
 }
 
 /**
- * Whether the Homeroom menu shows its Agent chats section (Build it now
- * and your sessions): once the viewer has had an agent session, from any
- * door (the hub's ⋯, a request's Build it now, Messages' new chat, the
- * filed request's link). A first-time user's menu stays short (first-session
- * run-through, 5 Oct 2026). A listed session counts at once, so the section
- * is there from the moment the first one is created.
+ * Whether the viewer has had an agent session, from any door (the hub's ⋯,
+ * a request's Build it now, Messages' new chat, the filed request's link):
+ * Messages' Agents list shows its "Show archived" group only then, so a
+ * first-time user's list has no quiet tail that would always be empty.
+ * A listed session counts at once, so the group is there from the moment
+ * the first one exists.
  */
 export function agentChatsShown(current: Pick<AgentSessionState, 'sessionsStarted' | 'sessions'>): boolean {
   return current.sessionsStarted || current.sessions.length > 0;
@@ -1131,7 +1131,8 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   try {
     const session = await api.createSession(draft.hint, draft.agent);
     telemetry?.outcome?.(attemptId, 'success');
-    // `sessionsStarted`: the Homeroom menu's Agent chats is theirs from now.
+    // `sessionsStarted`: Messages' Agents list is theirs from now, archived
+    // ones included.
     publish((current) => ({
       sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)],
       sessionsStarted: true,
@@ -1683,39 +1684,6 @@ export async function archiveCurrentSession() {
     void loadAgentSessions();
   } catch (error) {
     if (state.id === id) publish({ error: errorText(error, t('agent:session.error.archiveFailed')) });
-  }
-}
-
-/**
- * Archive a session from a LIST rather than from its own screen (#3515): a
- * left swipe on a row of the Homeroom menu's Agent sessions. The same
- * confirm and the same route as the ⋯'s Archive above; what differs is
- * where the answer lands. The row leaves every list at once (the menu,
- * Recents and Messages all read `sessions`), and the list is read again so
- * the next session fills the place it left. When it is also the
- * conversation on screen, that screen takes the archived session, read-only
- * with Unarchive, exactly as if its own ⋯ had done it.
- *
- * Resolves whether it was archived. False is a Cancel or a refusal, and the
- * caller puts its row back; a refusal also says why, in a toast, because a
- * list has no error line of its own to say it in, and reads the list again
- * all the same: the likeliest refusal is "already archived" (another tab
- * did it), and then the row the caller puts back is gone on that read.
- */
-export async function archiveListedSession(id: number): Promise<boolean> {
-  if (!id || !(await confirmArchive())) return false;
-  try {
-    const session = await api.archiveSession(id);
-    publish((current) => ({
-      sessions: current.sessions.filter((s) => s.id !== id),
-      ...(current.id === id ? { session } : {}),
-    }));
-    void loadAgentSessions();
-    return true;
-  } catch (error) {
-    window.PlatformUI?.toast?.(errorText(error, t('agent:session.error.archiveFailed')));
-    void loadAgentSessions();
-    return false;
   }
 }
 

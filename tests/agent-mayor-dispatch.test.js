@@ -237,10 +237,19 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
   ];
   // The user left: this turn's stream is closed and nobody follows the events.
   const notified = [];
+  const notStalled = [];
   const left = fakeRes();
   left.destroyed = true;
-  await runTurn({ steps, res: left, extra: { notifyDone: async (_pool, changeId) => { notified.push(changeId); } } });
+  await runTurn({
+    steps,
+    res: left,
+    extra: {
+      notifyDone: async (_pool, changeId) => { notified.push(changeId); },
+      notifyStalled: async (_pool, changeId) => { notStalled.push(changeId); },
+    },
+  });
   assert.deepEqual(notified, [50], 'the dev chat\'s own "Session finished", on the change the run was on');
+  assert.deepEqual(notStalled, [], 'a run that finished is not a stopped one (#4729)');
 
   // Still watching, through the turn's stream or the conversation's events.
   const watched = [];
@@ -252,6 +261,7 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     res: followed,
     extra: {
       notifyDone: async (_pool, id) => { watched.push(id); },
+      notifyStalled: async (_pool, id) => { watched.push(id); },
       sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
     },
   });
@@ -263,9 +273,29 @@ test('a run that finishes while nobody is watching lands in the bell, once per c
     steps,
     res: left,
     stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, toolResultText: 'stopped' } }),
-    extra: { notifyDone: async (_pool, id) => { stopped.push(id); } },
+    extra: {
+      notifyDone: async (_pool, id) => { stopped.push(id); },
+      notifyStalled: async (_pool, id) => { stopped.push(id); },
+    },
   });
   assert.deepEqual(stopped, []);
+
+  // An errored run is the bell's other line (#4729): "Session stopped
+  // before finishing", against the change the run was on — and the
+  // finished line stays silent.
+  const stalled = [];
+  const doneToo = [];
+  await runTurn({
+    steps,
+    res: left,
+    stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: true, stopped: false, toolResultText: 'The build failed.' } }),
+    extra: {
+      notifyDone: async (_pool, id) => { doneToo.push(id); },
+      notifyStalled: async (_pool, id) => { stalled.push(id); },
+    },
+  });
+  assert.deepEqual(stalled, [50]);
+  assert.deepEqual(doneToo, []);
 });
 
 test('one dispatch per turn; one the change cannot take is refused to the model', async () => {

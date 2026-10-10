@@ -2767,6 +2767,22 @@
     "text": "Show {{count}} more",
     "description": "Button in the conversation list: unfolds the channels that are hidden by default. {{count}} is how many are hidden."
   },
+  "inbox.archived.show": {
+    "text": "Show archived",
+    "description": "Button at the foot of the Agents list in Messages: opens the group of archived agent chats, which search does not cover."
+  },
+  "inbox.archived.hide": {
+    "text": "Hide archived",
+    "description": "Button at the foot of the Agents list in Messages, once the archived group is open: folds it away again."
+  },
+  "inbox.archived.heading": {
+    "text": "Archived",
+    "description": "Heading over the group of archived agent chats in the Agents list, shown while \"Show archived\" is open."
+  },
+  "inbox.archived.empty": {
+    "text": "No archived agent chats.",
+    "description": "Shown in place of the archived group's rows in the Agents list when nothing has been archived yet."
+  },
   "inbox.listName": {
     "text": "Conversations",
     "description": "Accessible name of the pane that holds the conversation list."

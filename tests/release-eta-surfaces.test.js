@@ -166,18 +166,11 @@ test('an agent session\'s change: the drawer says when, the rows say it short', 
   assert.match(child, />Going live<\/span>/);
   assert.doesNotMatch(child, /data-agent-session-release|next release/);
 
-  // Messages' agent rows and the Homeroom menu's Agent chats read the same words.
+  // Messages' agent rows read the same words.
   const messages = read('frontend/src/features/messages/index.tsx');
   const row = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
   // The change's name, then where it stands, as two facts on one line (bot-shared dotText).
   assert.match(row, /dotText\(\[\s*change\.title \|\|[^\n]*\n\s*changeRowWords\(change\),\s*\]\)/);
-  const model = loadTsx('frontend/src/features/app-context/continue-model.ts');
-  const listed = (activeChange) => ({
-    id: 7, title: 'Say when', status: 'open', lastActivityAt: new Date(now).toISOString(), focusApp: null, activeChange,
-  });
-  assert.equal(model.continueRows([listed({ ...HOMEROOM_CHANGE, release })], 5, now).rows[0].sub,
-    'Homeroom · goes live in about 8 minutes');
-  assert.equal(model.continueRows([listed(HOMEROOM_CHANGE)], 5, now).rows[0].sub, 'Homeroom · going live');
 });
 
 // ── The Homeroom bot's DM: the ready card, the activity card, the tray ──
