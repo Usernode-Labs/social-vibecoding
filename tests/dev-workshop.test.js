@@ -2616,6 +2616,9 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.match(html, /dev-ws-needs-done-sub">You skipped 5\. They stay above if you change your mind\.</);
   assert.match(html, /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
   assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one you skipped</, 'and back up the feed');
+  // #4680: the quiet way into the Suggest an improvement form, on a project's
+  // feed alone. No id — a data-* inside the island is not the prerender's.
+  assert.match(html, /dev-ws-done-back" data-ws-done-suggest=""[^>]*>Suggest an improvement</, 'and the form, under the way back');
   // The ring states where the viewer stands against everything they could
   // vote on: three promoted, none answered.
   assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open changes voted on"/);
@@ -2662,6 +2665,26 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.ok(!endCard.some((text) => /proposal/i.test(text)), 'no proposal wording left on the end card');
   assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
+  // #4680: with nothing waiting the end card is the whole screen, and the
+  // form's link is on it there too.
+  assert.match(empty, /dev-ws-done-back" data-ws-done-suggest=""[^>]*>Suggest an improvement</,
+    'the empty feed\'s end card still offers the form');
+});
+
+test('#4680: the Communities screen’s feed carries no suggest link', () => {
+  // The Communities screen's Needs you mixes every project's rows
+  // (features/workshop/needs-reel.tsx), and there it would not be clear
+  // which project the suggestion is for — so its NeedsFeed passes no
+  // onSuggest, and the link is DoneItem's opt-in, not its default.
+  const { NeedsFeed } = devCardApi();
+  const html = renderToHtml(createElement(NeedsFeed, {
+    rows: [], total: 0, models: { list: [], selected: null }, slug: '', canPost: true,
+    onDone: () => {},
+    doneLabel: 'Back to your communities',
+  }));
+  assert.match(html, /dev-ws-needs-done/, 'the end card is the whole screen with no items');
+  assert.match(html, /dev-ws-done-cta"[^>]*>Back to your communities</, 'its way on is the caller’s own');
+  assert.ok(!html.includes('data-ws-done-suggest'), 'and no suggest link without a single project');
 });
 
 test('the footnote says what is actually happening to the grouping', () => {

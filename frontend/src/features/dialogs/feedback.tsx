@@ -166,6 +166,15 @@ export function FeedbackDialog() {
         <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
           {t('dialogs:feedback.intro')}
         </p>
+        {/* #4680: the way to see what is already asked for, before writing a
+            new one. The confirmation's small-link look (#feedback-sent-fix)
+            without its hidden/self-center: it shows with the form. Bound to
+            openMine by the controller, the same split as #feedback-sent-mine
+            — React owns the words, the listener is the controller's. Closing
+            keeps the draft (#2796), so half a thought survives the look. */}
+        <button id="feedback-form-mine" type="button" className="-mt-3 mb-4 block text-xs text-zinc-500 underline underline-offset-2 dark:text-zinc-400">
+          {t('dialogs:feedback.form.mine')}
+        </button>
         {/* Experimental (#4289): this form, or comment mode, where a click on
             the page is the comment. With the switch on, "Suggest an
             improvement" opens comment mode, and this form is reached from its
