@@ -4,8 +4,13 @@
  * changes, closing a request the request and the reason. The facts are the
  * few fields the server names one by one (routes/workshop-overview.js
  * decisionFacts, app-view.js `_decisionFacts`); anything else draws nothing.
+ *
+ * The facts are the decision's own words; the few Homeroom adds (where a
+ * rename shows, what a secret is) are `project:diagram.decision.*` messages,
+ * read when the record is made.
  */
 
+import { t } from '../i18n/runtime';
 import type { DiagramRecord } from './types';
 
 export type DecisionFacts =
@@ -29,7 +34,7 @@ export function decisionDiagram(facts: DecisionFacts | null | undefined, appName
     const old = typeof facts.fromName === 'string' && facts.fromName.trim() ? facts.fromName : appName;
     const from = typeof old === 'string' ? fit(old) : '';
     if (!to || !from || from === to) return null;
-    return { version: 1, kind: 'rename', from, to, places: ['Project name'] };
+    return { version: 1, kind: 'rename', from, to, places: [t('project:diagram.decision.projectName')] };
   }
   if (facts.kind === 'close_issue') {
     const title = facts.issueTitle ? fit(facts.issueTitle) : null;
@@ -48,8 +53,8 @@ export function decisionDiagram(facts: DecisionFacts | null | undefined, appName
       version: 1,
       kind: 'changes',
       rows: [facts.action === 'delete'
-        ? { op: 'removed', what: key, detail: 'A secret setting' }
-        : { op: 'changed', what: key, detail: 'A secret setting, value not shown' }],
+        ? { op: 'removed', what: key, detail: t('project:diagram.decision.secretRemoved') }
+        : { op: 'changed', what: key, detail: t('project:diagram.decision.secretChanged') }],
     };
   }
   return null;

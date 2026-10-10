@@ -40,6 +40,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
 import { changeHref } from '../../lib/change-href';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { reloadCommunity, useCommunity, type PlaceChannel } from '../dev-board/workshop/community-card';
 import { channelsOf, liveTopics } from '../dev-board/workshop/places';
 import { useDialog } from './use-dialog';
@@ -67,12 +69,14 @@ export function handleFromName(name: string): string {
 export function topicRowLine(topic: PlaceChannel, channels: PlaceChannel[] = []): string {
   if (topic.state === 'merged') {
     const into = channels.find((c) => c.kind === 'topic' && c.key === topic.merged_into);
-    return `#${topic.handle} · merged into ${into ? `#${into.handle}` : 'another topic'}`;
+    return into
+      ? translate('dialogs:topics.row.mergedInto', { handle: topic.handle, into: into.handle })
+      : translate('dialogs:topics.row.mergedIntoAnother', { handle: topic.handle });
   }
-  if (topic.state === 'archived') return `#${topic.handle} · archived`;
+  if (topic.state === 'archived') return translate('dialogs:topics.row.archived', { handle: topic.handle });
   // A zero says nothing (AGENTS.md, "let zero say nothing").
   const n = Number(topic.requests) || 0;
-  return n > 0 ? `#${topic.handle} · ${n} ${n === 1 ? 'request' : 'requests'}` : `#${topic.handle}`;
+  return n > 0 ? translate('dialogs:topics.row.requests', { handle: topic.handle, count: n }) : `#${topic.handle}`;
 }
 
 function TopicTile({ icon }: { icon: string }) {
@@ -84,6 +88,7 @@ function TopicTile({ icon }: { icon: string }) {
 }
 
 export function TopicsDialog() {
+  const t = useMessages('dialogs');
   const nameRef = useRef<HTMLInputElement>(null);
   const handleRef = useRef<HTMLInputElement>(null);
   const aboutRef = useRef<HTMLTextAreaElement>(null);
@@ -104,7 +109,7 @@ export function TopicsDialog() {
   const live = liveTopics(places);
   const retired = channels.filter((c) => c.kind === 'topic' && c.state !== 'live');
   const proposals = places?.proposals || [];
-  const subject = mode.op === 'add' ? null : live.find((t) => t.key === mode.key) || null;
+  const subject = mode.op === 'add' ? null : live.find((topic) => topic.key === mode.key) || null;
 
   const dialog = useDialog<{ slug?: string }>('topics', {
     onOpen: (payload) => {
@@ -133,10 +138,10 @@ export function TopicsDialog() {
   useEffect(() => {
     if (!dialog.isOpen) return;
     handleTouched.current = mode.op === 'rename';
-    const t = mode.op === 'rename' ? subject : null;
-    if (nameRef.current) nameRef.current.value = t ? t.name : '';
-    if (handleRef.current) handleRef.current.value = t ? t.handle : '';
-    if (aboutRef.current) aboutRef.current.value = t ? t.about : '';
+    const topic = mode.op === 'rename' ? subject : null;
+    if (nameRef.current) nameRef.current.value = topic ? topic.name : '';
+    if (handleRef.current) handleRef.current.value = topic ? topic.handle : '';
+    if (aboutRef.current) aboutRef.current.value = topic ? topic.about : '';
     if (intoRef.current) intoRef.current.value = '';
     // `subject` is read once per change of mode, deliberately: a record that
     // lands while someone is typing must not overwrite what they typed.
@@ -163,22 +168,22 @@ export function TopicsDialog() {
       const name = (nameRef.current?.value || '').trim();
       const handle = (handleRef.current?.value || '').trim().replace(/^#/, '').toLowerCase();
       const about = (aboutRef.current?.value || '').trim();
-      if (name.length < 3) return setError('A topic needs a name of at least 3 characters.');
-      if (name.length > 48) return setError('A topic\'s name is 48 characters at most.');
-      if (about.length > 140) return setError('What it is for is one line: 140 characters at most.');
+      if (name.length < 3) return setError(t('dialogs:topics.error.nameShort'));
+      if (name.length > 48) return setError(t('dialogs:topics.error.nameLong'));
+      if (about.length > 140) return setError(t('dialogs:topics.error.aboutLong'));
       if (mode.op === 'add') {
         body = { op: 'add', name, handle: handle || handleFromName(name), about };
       } else {
-        if (!subject) return setError('That topic is not live any more.');
+        if (!subject) return setError(t('dialogs:topics.error.notLive'));
         body = { op: 'rename', id: mode.key };
         if (name !== subject.name) body.name = name;
         if (handle && handle !== subject.handle) body.handle = handle;
         if (about !== subject.about) body.about = about;
-        if (Object.keys(body).length === 2) return setError('Change the name, the channel or what it is for first.');
+        if (Object.keys(body).length === 2) return setError(t('dialogs:topics.error.unchanged'));
       }
     } else if (mode.op === 'merge') {
       const into = intoRef.current?.value || '';
-      if (!into) return setError('Choose the topic to merge it into.');
+      if (!into) return setError(t('dialogs:topics.error.chooseInto'));
       body = { op: 'merge', id: mode.key, into };
     } else {
       body = { op: 'archive', id: mode.key };
@@ -196,15 +201,17 @@ export function TopicsDialog() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Could not open the proposal. Try again.');
+        setError(data.error || t('dialogs:topics.error.open'));
         return;
       }
-      setStatus(`"${data.title || 'Topic change'}" is up for a vote. It applies once voted in.`);
+      setStatus(data.title
+        ? t('dialogs:topics.status.opened', { title: data.title })
+        : t('dialogs:topics.status.openedUntitled'));
       setMode({ op: 'add' });
       void reloadCommunity(slug);
       (window.AppView?.refreshDevData as ((reason: string) => void) | undefined)?.('vote');
     } catch {
-      setError('Network error while opening the proposal.');
+      setError(t('dialogs:topics.error.network'));
     } finally {
       pending.current = false;
       setBusy(false);
@@ -216,17 +223,18 @@ export function TopicsDialog() {
     dialog.closeForNavigation();
   };
 
-  const formTitle = mode.op === 'add' ? 'New topic'
-    : mode.op === 'rename' ? `Rename #${subject?.handle || ''}`
-      : mode.op === 'merge' ? `Merge #${subject?.handle || ''} into…`
-        : `Archive #${subject?.handle || ''}`;
+  // The heading over a change to a topic; a new topic's form has none.
+  const formTitle = mode.op === 'add' ? null
+    : mode.op === 'rename' ? t('dialogs:topics.form.rename', { handle: subject?.handle || '' })
+      : mode.op === 'merge' ? t('dialogs:topics.form.merge', { handle: subject?.handle || '' })
+        : t('dialogs:topics.form.archive', { handle: subject?.handle || '' });
 
   return (
     <DialogRoot id="topics-modal" ref={dialog.rootRef} {...dialog.backdropProps}>
       <DialogCard size="sm">
-        <h2 className="text-lg font-bold mb-1">Topics</h2>
+        <h2 className="text-lg font-bold mb-1">{t('dialogs:topics.title')}</h2>
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Each change is a proposal the group votes on. It applies once voted in.
+          {t('dialogs:topics.intro')}
         </p>
         <p
           id="topics-error"
@@ -240,44 +248,44 @@ export function TopicsDialog() {
               <p id="topics-status" role="status" className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">{status}</p>
             ) : null}
             {!places ? (
-              <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Loading…</p>
+              <p role="status" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">{t('core:common.loading')}</p>
             ) : (
               <>
                 {live.length ? (
                   <GroupedList className="mb-4" data-topics-list="live">
-                    {live.map((t) => (
-                      <div key={t.key || t.handle} data-topic-row={t.key || t.handle}>
+                    {live.map((topic) => (
+                      <div key={topic.key || topic.handle} data-topic-row={topic.key || topic.handle}>
                         <ListRow
-                          leading={<TopicTile icon={t.icon} />}
-                          title={t.name}
-                          subtitle={topicRowLine(t, channels)}
+                          leading={<TopicTile icon={topic.icon} />}
+                          title={topic.name}
+                          subtitle={topicRowLine(topic, channels)}
                           chevron={false}
                           className="py-2.5"
                           trailing={(
                             <button
                               type="button"
                               className="topics-row-more"
-                              aria-label={`Change ${t.name}`}
-                              aria-expanded={menuFor === t.key}
-                              data-topic-more={t.key || ''}
-                              onClick={() => setMenuFor(menuFor === t.key ? null : t.key)}
+                              aria-label={t('dialogs:topics.row.more', { topic: topic.name })}
+                              aria-expanded={menuFor === topic.key}
+                              data-topic-more={topic.key || ''}
+                              onClick={() => setMenuFor(menuFor === topic.key ? null : topic.key)}
                             >⋯</button>
                           )}
                         />
-                        {menuFor === t.key && t.key ? (
-                          <div className="topics-row-actions" role="group" aria-label={`Change ${t.name}`}>
-                            <button type="button" data-topic-op="rename" onClick={() => choose({ op: 'rename', key: t.key as string })}>Rename</button>
+                        {menuFor === topic.key && topic.key ? (
+                          <div className="topics-row-actions" role="group" aria-label={t('dialogs:topics.row.actions', { topic: topic.name })}>
+                            <button type="button" data-topic-op="rename" onClick={() => choose({ op: 'rename', key: topic.key as string })}>{t('dialogs:topics.action.rename')}</button>
                             {live.length > 1 ? (
-                              <button type="button" data-topic-op="merge" onClick={() => choose({ op: 'merge', key: t.key as string })}>Merge into…</button>
+                              <button type="button" data-topic-op="merge" onClick={() => choose({ op: 'merge', key: topic.key as string })}>{t('dialogs:topics.action.merge')}</button>
                             ) : null}
-                            <button type="button" data-topic-op="archive" onClick={() => choose({ op: 'archive', key: t.key as string })}>Archive</button>
+                            <button type="button" data-topic-op="archive" onClick={() => choose({ op: 'archive', key: topic.key as string })}>{t('dialogs:topics.action.archive')}</button>
                           </div>
                         ) : null}
                       </div>
                     ))}
                   </GroupedList>
                 ) : (
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">No topics yet. Propose the first below.</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">{t('dialogs:topics.empty')}</p>
                 )}
 
                 <form id="topics-form" className="space-y-3" data-topics-op={mode.op} onSubmit={submit}>
@@ -286,7 +294,7 @@ export function TopicsDialog() {
                     <>
                       <div>
                         <label htmlFor="topics-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                          {mode.op === 'add' ? 'New topic' : 'Name'}
+                          {mode.op === 'add' ? t('dialogs:topics.field.nameNew') : t('dialogs:topics.field.name')}
                         </label>
                         <Input
                           id="topics-name"
@@ -297,13 +305,13 @@ export function TopicsDialog() {
                           box="dialog"
                           hint="muted"
                           ring="seamless"
-                          placeholder="What it is about, in a few words"
+                          placeholder={t('dialogs:topics.field.namePlaceholder')}
                           onInput={followName}
                         />
                       </div>
                       <div>
                         <label htmlFor="topics-handle" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                          Channel
+                          {t('dialogs:topics.field.channel')}
                         </label>
                         <Input
                           id="topics-handle"
@@ -316,16 +324,16 @@ export function TopicsDialog() {
                           box="dialog"
                           hint="muted"
                           ring="seamless"
-                          placeholder="Made from the name"
+                          placeholder={t('dialogs:topics.field.channelPlaceholder')}
                           onInput={() => { handleTouched.current = true; }}
                         />
                         {mode.op === 'rename' ? (
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Links to the old name keep working.</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{t('dialogs:topics.field.channelRenameHint')}</p>
                         ) : null}
                       </div>
                       <div>
                         <label htmlFor="topics-about" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                          What it is for
+                          {t('dialogs:topics.field.about')}
                         </label>
                         <Textarea
                           id="topics-about"
@@ -336,7 +344,7 @@ export function TopicsDialog() {
                           hint="muted"
                           ring="seamless"
                           className="resize-none"
-                          placeholder="One line people see at the top of the channel"
+                          placeholder={t('dialogs:topics.field.aboutPlaceholder')}
                         />
                       </div>
                     </>
@@ -344,22 +352,22 @@ export function TopicsDialog() {
                   {mode.op === 'merge' ? (
                     <div>
                       <label htmlFor="topics-into" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                        Merge into
+                        {t('dialogs:topics.field.into')}
                       </label>
                       <select id="topics-into" ref={intoRef} defaultValue="" className="topics-into">
-                        <option value="" disabled>Choose a topic</option>
-                        {live.filter((t) => t.key !== mode.key).map((t) => (
-                          <option key={t.key || t.handle} value={t.key || ''}>{`${t.icon ? `${t.icon} ` : ''}${t.name} (#${t.handle})`}</option>
+                        <option value="" disabled>{t('dialogs:topics.field.intoPlaceholder')}</option>
+                        {live.filter((topic) => topic.key !== mode.key).map((topic) => (
+                          <option key={topic.key || topic.handle} value={topic.key || ''}>{`${topic.icon ? `${topic.icon} ` : ''}${topic.name} (#${topic.handle})`}</option>
                         ))}
                       </select>
                       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                        Its requests and their votes move to the topic you choose. Its channel stays, read only, with its history.
+                        {t('dialogs:topics.merge.hint')}
                       </p>
                     </div>
                   ) : null}
                   {mode.op === 'archive' ? (
                     <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                      Its channel stays, read only, with its history. Its requests are sorted into the other topics again.
+                      {t('dialogs:topics.archive.hint')}
                     </p>
                   ) : null}
                   <div className="flex gap-3">
@@ -370,16 +378,16 @@ export function TopicsDialog() {
                       layout="flex"
                       disabled={busy}
                       onClick={() => (mode.op === 'add' ? dialog.close() : choose({ op: 'add' }))}
-                    >Cancel</Button>
+                    >{t('core:common.cancel')}</Button>
                     <Button id="topics-submit" type="submit" layout="flex" disabled={busy}>
-                      {busy ? 'Opening PR…' : 'Open PR'}
+                      {busy ? t('dialogs:topics.submit.busy') : t('dialogs:topics.submit.idle')}
                     </Button>
                   </div>
                 </form>
 
                 {proposals.length ? (
                   <>
-                    <SectionHeader className="px-0 pt-5">Waiting for a vote</SectionHeader>
+                    <SectionHeader className="px-0 pt-5">{t('dialogs:topics.proposals.heading')}</SectionHeader>
                     <GroupedList data-topics-list="proposals">
                       {proposals.map((p) => (
                         <ListRow
@@ -387,8 +395,8 @@ export function TopicsDialog() {
                           as="a"
                           href={changeHref(slug, p.session_id, p.pr_number)}
                           onClick={leave}
-                          title={p.title || 'Topic change'}
-                          subtitle={p.pr_number ? `Change #${p.pr_number}` : undefined}
+                          title={p.title || t('dialogs:topics.proposals.untitled')}
+                          subtitle={p.pr_number ? t('dialogs:topics.proposals.number', { number: p.pr_number }) : undefined}
                         />
                       ))}
                     </GroupedList>
@@ -397,14 +405,14 @@ export function TopicsDialog() {
 
                 {retired.length ? (
                   <>
-                    <SectionHeader className="px-0 pt-5">Archived</SectionHeader>
+                    <SectionHeader className="px-0 pt-5">{t('dialogs:topics.archived.heading')}</SectionHeader>
                     <GroupedList data-topics-list="archived">
-                      {retired.map((t) => (
+                      {retired.map((topic) => (
                         <ListRow
-                          key={t.key || t.handle}
-                          leading={<TopicTile icon={t.icon} />}
-                          title={t.name}
-                          subtitle={topicRowLine(t, channels)}
+                          key={topic.key || topic.handle}
+                          leading={<TopicTile icon={topic.icon} />}
+                          title={topic.name}
+                          subtitle={topicRowLine(topic, channels)}
                           chevron={false}
                           className="py-2.5"
                         />

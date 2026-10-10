@@ -18,6 +18,8 @@
 
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 
+import { useMessages } from '../i18n/react';
+import { t as translate } from '../i18n/runtime';
 import { DIAGRAM_LABELS, diagramText, figure, type DiagramRecord, type DiagramSource } from './types';
 import { renderMermaid } from './mermaid';
 
@@ -27,9 +29,9 @@ export { decisionDiagram, type DecisionFacts } from './decision';
 
 /** The foot under a picture: where it came from. */
 export function sourceWords(source: DiagramSource, mermaid = false): string {
-  if (source === 'decision') return 'From the group decision';
-  if (source === 'files') return 'Drawn from the change’s files';
-  return `Diagram by the change’s author${mermaid ? ' · Mermaid' : ''}`;
+  if (source === 'decision') return translate('project:diagram.source.decision');
+  if (source === 'files') return translate('project:diagram.source.files');
+  return mermaid ? translate('project:diagram.source.authorMermaid') : translate('project:diagram.source.author');
 }
 
 function Arrow(): ReactNode {
@@ -76,25 +78,32 @@ function FlowRow({ label, steps, other, side }: { label: string; steps: string[]
 }
 
 function Flow({ d }: { d: Extract<DiagramRecord, { kind: 'flow' }> }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
       <div className="dev-ws-diagram-flow">
-        <FlowRow label="Before" steps={d.before} other={d.after} side="before" />
-        <FlowRow label="After" steps={d.after} other={d.before} side="after" />
+        <FlowRow label={t('project:diagram.flow.before')} steps={d.before} other={d.after} side="before" />
+        <FlowRow label={t('project:diagram.flow.after')} steps={d.after} other={d.before} side="after" />
       </div>
       {d.note ? <p className="dev-ws-diagram-note">{d.note}</p> : null}
     </>
   );
 }
 
-const OP_WORDS = { added: 'Added', changed: 'Changed', removed: 'Removed' } as const;
+/** Each kind of change's word, as a message id read when it is drawn. */
+const OP_WORDS = {
+  added: 'project:diagram.changes.added',
+  changed: 'project:diagram.changes.changed',
+  removed: 'project:diagram.changes.removed',
+} as const;
 
 function Changes({ d }: { d: Extract<DiagramRecord, { kind: 'changes' }> }): ReactNode {
+  const t = useMessages('project');
   return (
     <ul className="dev-ws-diagram-rows">
       {d.rows.map((r, i) => (
         <li key={`${i}-${r.what}`} className="dev-ws-diagram-change" data-op={r.op}>
-          <span className="dev-ws-diagram-op">{OP_WORDS[r.op]}</span>
+          <span className="dev-ws-diagram-op">{t(OP_WORDS[r.op])}</span>
           <span className="dev-ws-diagram-what">
             <span className={r.op === 'removed' ? 'dev-ws-diagram-old' : r.op === 'added' ? 'dev-ws-diagram-new' : undefined}>{r.what}</span>
             {r.detail ? <span className="dev-ws-diagram-detail">{r.detail}</span> : null}
@@ -168,6 +177,7 @@ export function Diagram({ d, source, onOpen, onFail, className, defer = false }:
    */
   defer?: boolean;
 }): ReactNode {
+  const t = useMessages('project');
   const mermaid = d.kind === 'mermaid';
   const body = d.kind === 'rename' ? <Rename d={d} />
     : d.kind === 'flow' ? <Flow d={d} />
@@ -187,10 +197,10 @@ export function Diagram({ d, source, onOpen, onFail, className, defer = false }:
       className={className ? `dev-ws-diagram ${className}` : 'dev-ws-diagram'}
       data-ws-diagram={d.kind}
       data-diagram-source={source}
-      aria-label={`${DIAGRAM_LABELS[d.kind]}. ${diagramText(d)}`}
+      aria-label={t('project:diagram.label', { kind: t(DIAGRAM_LABELS[d.kind]), text: diagramText(d) })}
       {...door}
     >
-      <span className="dev-ws-diagram-kicker" aria-hidden="true">{DIAGRAM_LABELS[d.kind]}</span>
+      <span className="dev-ws-diagram-kicker" aria-hidden="true">{t(DIAGRAM_LABELS[d.kind])}</span>
       <div className="dev-ws-diagram-body" aria-hidden={mermaid ? undefined : 'true'}>{body}</div>
       <p className="dev-ws-diagram-src">{sourceWords(source, mermaid)}</p>
     </div>
