@@ -18,11 +18,112 @@ const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v))
 
 const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise', 'budget']);
 const SLUG_RE = /^[a-z0-9-]{1,120}$/;
+const USERNAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+// A person's week lists at most this many runs; its total is always the
+// whole week's.
+const MAX_PERSON_RUNS = 200;
+
+// One person's charged runs this week, newest first: the runs whose cost
+// counts toward their weekly building time (homeroom-bot-dm.js
+// weeklySpentCents reads the same rows): charged, and theirs as the payer,
+// or as the requester when nobody else asked the bot to start it.
+const PERSON_USER_SQL = 'SELECT id, username FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1';
+const PERSON_RUNS_SQL = `
+  SELECT r.id, a.slug AS app_slug, r.issue_number, r.mode, r.verdict, r.read_reason,
+         r.cost_usd::float8 AS cost_usd, r.build_cost_usd::float8 AS build_cost_usd,
+         r.payer_user_id, r.build_ok, r.build_error, r.build_at, r.build_queued_at, r.build_branch, r.created_at
+    FROM homeroom_bot_runs r
+    JOIN apps a ON a.id = r.app_id
+    LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+   WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2
+   ORDER BY r.id DESC
+   LIMIT $3`;
 const MAX_SHOT_IMAGES = 12;
 const MAX_SHOT_IMAGE_BYTES = 8 * 1024 * 1024;
 // A failed run's reason in full: the gallery stores up to 2000 characters, and
 // the cause is usually past the first 200.
 const MAX_SHOT_FAILURE = 1200;
+
+/**
+ * Whose weekly building time a run counts toward (homeroom-bot-dm.js
+ * weeklySpentCents): none when it is not charged (a shadow run, or one the
+ * bot caused itself); else its payer, 'asked' when somebody asked the bot
+ * to start or change it, 'requester' when it is the request's own. Pure.
+ */
+function billingOf(r) {
+  if (r.charged === false) return { charged: false, payer: null, paidAs: null };
+  if (r.charged == null) return null;
+  return {
+    charged: true,
+    payer: r.payer_username || null,
+    paidAs: r.payer_user_id != null ? 'asked' : 'requester',
+  };
+}
+
+/** The person a request names (`username`), checked, or null. Pure. */
+function personFilter(q = {}) {
+  const name = typeof q.username === 'string' ? q.username.trim().replace(/^@/, '') : '';
+  return USERNAME_RE.test(name) ? name : null;
+}
+
+/**
+ * One person's week of building time: their cap, what they have spent of it
+ * since Monday 00:00 UTC, and the charged runs that spent it, newest first,
+ * with each request's total. `found: false` for a username nobody has.
+ */
+async function personWeek(pool, settings, username, deps = {}) {
+  const dm = deps.dm || require('../homeroom-bot-dm');
+  const weekStart = (deps.weekStartUtc || require('../limits').weekStartUtc)();
+  const { rows: users } = await pool.query(PERSON_USER_SQL, [username]);
+  if (!users[0]) return { username, found: false };
+  const userId = Number(users[0].id);
+  const [capCents, spentCents, { rows }] = await Promise.all([
+    dm.weeklyCapCents(pool, settings, userId),
+    dm.weeklySpentCents(pool, userId),
+    pool.query(PERSON_RUNS_SQL, [userId, weekStart, MAX_PERSON_RUNS + 1]),
+  ]);
+  const runs = rows.slice(0, MAX_PERSON_RUNS).map((r) => {
+    const costUsd = num(r.cost_usd);
+    const buildCostUsd = num(r.build_cost_usd);
+    return {
+      id: Number(r.id),
+      app: r.app_slug || null,
+      issueNumber: num(r.issue_number),
+      verdict: r.verdict || null,
+      readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+      paidAs: r.payer_user_id != null ? 'asked' : 'requester',
+      costUsd,
+      buildCostUsd,
+      totalUsd: Math.round(((costUsd || 0) + (buildCostUsd || 0)) * 1e6) / 1e6,
+      buildState: buildStateOf(r),
+      createdAt: iso(r.created_at),
+    };
+  });
+  const byRequest = new Map();
+  for (const run of runs) {
+    const key = `${run.app}#${run.issueNumber}`;
+    const row = byRequest.get(key) || { app: run.app, issueNumber: run.issueNumber, runs: 0, usd: 0 };
+    row.runs += 1;
+    row.usd += run.totalUsd;
+    byRequest.set(key, row);
+  }
+  const cap = num(capCents);
+  const spent = num(spentCents) || 0;
+  return {
+    username: users[0].username,
+    found: true,
+    weekStart: iso(weekStart),
+    capCents: cap,
+    spentCents: spent,
+    leftCents: cap && cap > 0 ? Math.max(0, cap - spent) : null,
+    usedUp: !!(cap && cap > 0 && spent >= cap),
+    requests: [...byRequest.values()]
+      .map((r) => ({ ...r, usd: Math.round(r.usd * 100) / 100 }))
+      .sort((a, b) => b.usd - a.usd),
+    runs,
+    runsComplete: rows.length <= MAX_PERSON_RUNS,
+  };
+}
 
 /** The run filters the console's verdict ledger takes, checked. Pure. */
 function botFilters(q = {}) {
@@ -84,9 +185,12 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     } : null,
     reviewRounds: num(r.review_rounds),
     reviewStop: r.review_stop || null,
+    // Whose weekly building time it counted toward, if anybody's.
+    billing: billingOf(r),
     issueUrl: r.issueUrl || null,
     createdAt: iso(r.created_at),
   }));
+  const person = personFilter(query);
   return {
     ok: true,
     settings: {
@@ -159,6 +263,8 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       fault: p.builds.fault ? { error: clipText(p.builds.fault.error || '', 200) || null, retryAt: p.builds.fault.retryAt || null } : null,
     } : null,
     runs,
+    // One person's week of building time, when the request names them.
+    person: person ? await personWeek(pool, s, person, deps) : null,
     filters: { app: f.app, verdict: query.verdict && VERDICTS.includes(query.verdict) ? query.verdict : null },
     nextBefore: runs.length === f.limit ? runs[runs.length - 1].id : null,
   };
@@ -376,9 +482,13 @@ async function shotImages(pool, sessionId) {
 module.exports = {
   VERDICTS,
   MAX_SHOT_IMAGES,
+  MAX_PERSON_RUNS,
+  billingOf,
   botFilters,
   botOverview,
   buildStateOf,
+  personFilter,
+  personWeek,
   rateRun,
   recentShots,
   shotStats,
