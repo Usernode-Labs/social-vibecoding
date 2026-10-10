@@ -618,7 +618,7 @@ const FIGURES = Object.freeze({
   'infra.merge-to-live': {
     kind: 'duration', covers: 'split', sources: { homeroom: 'homeroomLive', others: 'mergeLive' }, label: 'Merge → live',
     tip: 'How long from a change merging to it running in production. Half are faster. A project deploys as part of the merge; Homeroom goes out in its next release, so its changes wait for one.',
-    target: { atMost: 900 },
+    target: { atMost: 120 },
     measure: (r) => ({ secs: r.median_secs, n: r.n, since: r.since }),
   },
   'infra.deploys-failed': {
@@ -1010,7 +1010,7 @@ const DEMO_MEASURES = Object.freeze({
   'pipeline.checks-couldnt-run': { homeroom: { hits: 3, total: 143 }, others: { hits: 2, total: 262 } },
   'pipeline.shots': { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } },
   'pipeline.vote-to-merged': { homeroom: { secs: 540, n: 18 }, others: { secs: 240, n: 13 } },
-  'infra.merge-to-live': { homeroom: { secs: 1140, n: 18 }, others: { secs: 150, n: 56 } },
+  'infra.merge-to-live': { homeroom: { secs: 1140, n: 18 }, others: { secs: 80, n: 56 } },
   'infra.deploys-failed': { hits: 3, total: 74 },
   'infra.apps-up': { hits: 1204, total: 1213 },
   'infra.restarts': { n: 4, apps: 3 },

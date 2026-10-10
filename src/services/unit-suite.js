@@ -53,7 +53,7 @@ const log = require('./logger');
 const {
   UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
   MAX_TEST_EXCERPT_CHARS, MAX_UNIT_EXCERPTS, MAX_UNIT_DETAILS_BYTES,
-  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES,
+  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES, NOT_RUN_LEAD,
 } = require('./unit-suite-row');
 // The same scrubbing the check logs and the logger use: an excerpt is
 // persisted in test_results and read back by agents, so a credential a test
@@ -578,11 +578,8 @@ function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
 // Output this cannot place, such as a log that lost its start and holds no
 // test line, keeps the failing verdict it had before.
 
-const NOT_RUN_LEAD = Object.freeze({
-  start: 'The unit suite could not start',
-  run: 'The unit suite could not run',
-  setup: 'The unit suite stopped before any test ran',
-});
+// NOT_RUN_LEAD (services/unit-suite-row.js) opens each sentence: the
+// error lane reads it to tell the platform's faults from the rest.
 // The card caps check_error_detail at 280 characters, and so does this.
 const NOT_RUN_DETAIL_MAX = 280;
 const NOT_RUN_RAW_MAX = 400;
@@ -928,15 +925,6 @@ fi
 exit "$TEST_STATUS"
 `;
 
-// Live progress of a run, read off the container's stdout as it streams
-// (docker.runOneShot's onStdoutLine). node:test, tap and most TAP-emitting
-// runners print one `ok N` / `not ok N` line per test, nested ones indented,
-// and a `# tests / # pass / # fail / # skipped / # cancelled` block at the
-// end; jest prints neither, and then the phase is all this can say. The
-// running counts are an approximation on purpose — a parent test's own
-// `not ok` repeats a child's failure, and a describe() suite gets an `ok`
-// of its own — so the summary block, when it arrives, REPLACES them. None
-// of it touches the verdict, which stays the exit code.
 // The TAP summary counters a run ends with. `duration_ms` is the longest
 // shard's, the rest add up.
 const SUMMARY_LINE = /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) (\d+(?:\.\d+)?)\s*$/;
@@ -1011,6 +999,22 @@ function combineUnitSnapshots(snaps, expected = null) {
   };
 }
 
+// Live progress of a run, read off the container's stdout as it streams
+// (docker.runOneShot's onStdoutLine). node:test, tap and most TAP-emitting
+// runners print one `ok N` / `not ok N` line per test, nested ones indented,
+// and a `# tests / # pass / # fail / # skipped / # cancelled` block at the
+// end; jest prints neither, and then the phase is all this can say. The
+// running counts are an approximation on purpose — a parent test's own
+// `not ok` repeats a child's failure — so the summary block, when it
+// arrives, REPLACES them. A describe() suite also gets an `ok` of its own
+// with `type: 'suite'` in the YAML block right under it; `# tests` leaves
+// suites out, so the tracker takes that one line back off the running count
+// (node:test's `t.test` parents say `type: 'test'` and stay counted), which
+// makes the running count the same population as `# tests`. Until the
+// summary arrives, `expected` is the stored last-run figure as a FLOOR: a
+// run with more tests than the last one grows it to `ran`, so the row never
+// reads more than 100% done. None of it touches the verdict, which stays
+// the exit code.
 function makeUnitSuiteTracker(expected = null) {
   let phase = 'cloning';
   let passed = 0;
@@ -1018,6 +1022,10 @@ function makeUnitSuiteTracker(expected = null) {
   let skipped = 0;
   let summary = null;
   let recap = false;
+  // Which counter the most recent result line bumped ('pass' | 'fail' |
+  // 'skip'), for the suite line that owns it to take back; the YAML block
+  // comes straight after its own result line.
+  let lastCounter = null;
   const total = Number.isInteger(expected) && expected > 0 ? expected : null;
   return {
     // Returns true when the line changed the state.
@@ -1028,12 +1036,21 @@ function makeUnitSuiteTracker(expected = null) {
       // The recap repeats failures already counted.
       if (l.startsWith(`${RECAP_SENTINEL}=`)) { recap = true; return false; }
       if (recap) return false;
+      // A describe() suite's YAML block says `type: 'suite'`: take its own
+      // result line back off the count, so suites are not counted as tests.
+      if (/^\s*type:\s*'suite'\s*$/.test(l) && lastCounter) {
+        if (lastCounter === 'pass') passed -= 1;
+        else if (lastCounter === 'fail') failed -= 1;
+        else skipped -= 1;
+        lastCounter = null;
+        return true;
+      }
       const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
       if (m) {
         if (phase !== 'running') phase = 'running';
-        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) skipped += 1;
-        else if (m[1] === 'ok') passed += 1;
-        else failed += 1;
+        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) { skipped += 1; lastCounter = 'skip'; }
+        else if (m[1] === 'ok') { passed += 1; lastCounter = 'pass'; }
+        else { failed += 1; lastCounter = 'fail'; }
         return true;
       }
       const sm = /^# (tests|pass|fail|skipped|cancelled|todo) (\d+)\s*$/.exec(l);
@@ -1067,7 +1084,10 @@ function makeUnitSuiteTracker(expected = null) {
       return {
         phase,
         ran, passed: p, failed: f, skipped: k,
-        expected: s && Number.isInteger(s.tests) ? s.tests : total,
+        // Before the summary, the stored estimate is a floor: a run with
+        // more tests than the last one grows the total with the count,
+        // so the bar never reads past 100%.
+        expected: s && Number.isInteger(s.tests) ? s.tests : (total == null ? null : Math.max(total, ran)),
         done: phase === 'done',
         ...(phase === 'done' ? { exitOk: !!this.exitOk } : {}),
         ...(phase === 'done' && this.notRun ? { notRun: true } : {}),
