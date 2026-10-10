@@ -96,6 +96,15 @@ const freezeClock = (t) => {
   t.after(() => { Date.now = realNow; });
 };
 
+// This week's clock is the earlier of a card's end and the end of the week
+// (Monday 00:00 UTC, #3869). A card ending 71 hours out reads "3d left" on a
+// weekday and less from Saturday 00:00 UTC on, so a This week expectation is
+// worked out the same way rather than written down: hard-coded, these failed
+// every weekend (first on Saturday 10 Oct 2026, pausing main's merges).
+const weekClock = (pane, raw) => {
+  const weekEnd = pane._weekEnd();
+  return pane._timeLeft(Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw);
+};
 const ch = (id, label, extra = {}) => ({ id, card_preview: { label, goal: `Challenge ${id}` }, ...extra });
 const DONE = { progress: { done: true } };
 
@@ -214,13 +223,14 @@ test('a card in a later group opens its own challenge', () => {
 test('each header counts its group and gives its clock', (t) => {
   freezeClock(t);
   const event = { id: 10, name: 'Season 2', ends_at: inHours(143) };
+  const weekCardEnd = inHours(71);
   const { pane, store } = loadPane({
     event,
     challenges: [
       ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING', DONE),
       // Done, and ending soonest: a finished challenge is not the clock.
       ch(3, 'WEEKLY', { ...DONE, effective: { schedule_end: inHours(10) } }),
-      ch(4, 'WEEKLY', { effective: { schedule_end: inHours(71) } }),
+      ch(4, 'WEEKLY', { effective: { schedule_end: weekCardEnd } }),
       // Not open yet, and an organiser-closed step the viewer never finished:
       // neither is open, so neither sets the clock.
       ch(5, 'WEEKLY', { effective: { schedule_start: inHours(5), schedule_end: inHours(20) } }),
@@ -232,7 +242,7 @@ test('each header counts its group and gives its clock', (t) => {
   pane._renderGrid();
   assert.deepEqual(headers(gridOf(store)), {
     setup: { meta: '2/2 done', allDone: true, collapsed: true },
-    week: { meta: '1/4 · 3d left', allDone: false, collapsed: false },
+    week: { meta: `1/4 · ${weekClock(pane, weekCardEnd)}`, allDone: false, collapsed: false },
     always: { meta: '0/2 · no deadline', allDone: false, collapsed: false },
     other: { meta: '0/1 · 6d left', allDone: false, collapsed: false },
   }, 'Always open never borrows the event’s end; Season challenges does');
@@ -358,13 +368,13 @@ test('a header with a clock takes the deadline off its cards and the page; First
     [['setup', '3d left'], ['week', null], ['always', null], ['other', null]]);
 
   const page = (c) => { const d = pageOf(pane, c); return [d.eyebrow, d.deadline]; };
-  assert.deepEqual(page(challenges[1]), ['This week · 3d left', null], 'the group and its clock, composed once');
+  assert.deepEqual(page(challenges[1]), [`This week · ${weekClock(pane, event.ends_at)}`, null], 'the group and its clock, composed once');
   assert.deepEqual(page(challenges[2]), ['Always open', null], '"no deadline" is not a clock for the eyebrow');
   assert.deepEqual(page(challenges[3]), ['Season challenges · 3d left', null]);
   assert.deepEqual(page(challenges[0]), ['First challenges', '3d left'], 'First challenges has no clock, so its page keeps the deadline');
 
   pane._openIdx(groupOf(grid, 'week').cards[0].idx);
-  assert.equal(store.get().detail.eyebrow, 'This week · 3d left', 'the published descriptor says the same');
+  assert.equal(store.get().detail.eyebrow, `This week · ${weekClock(pane, event.ends_at)}`, 'the published descriptor says the same');
 
   const finished = loadPane({ challenges: [ch(5, 'WEEKLY', DONE), ch(6, 'ONBOARDING')], event });
   const d = pageOf(finished.pane, finished.pane._challenges[0]);
