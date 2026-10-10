@@ -16573,14 +16573,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    baseline aligned to the bottom of the ring and the two read as two rows. */
 .dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
-/* LATELY IN THIS PROJECT (dev-board/workshop/notices.tsx): this week's card
-   and the settings changed lately, one line each, 15 over 13 like a list
-   row — what changed, then who and when, muted. */
-.dev-ws-notices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.dev-ws-notice { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.dev-ws-notice-text { font-size: 15px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere; }
-.dev-ws-notice-text b { font-weight: 650; }
-.dev-ws-notice-meta { font-size: 13px; color: var(--text-muted); }
 /* ── ONE HEADING, FOR EVERY SECTION ON THE TAB ───────────────────────────
    There were two vocabularies doing one job: three panes wore
    `.dev-ws-eyebrow` — 11px, caps, letterspaced, muted — and the fourth wore
