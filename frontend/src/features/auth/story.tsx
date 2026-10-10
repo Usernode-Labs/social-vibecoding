@@ -55,21 +55,22 @@ export function fitStyle(fit: number) {
 // new width, starts again.
 const TOOLBAR_SLACK = 120;
 
-// The space under the foot is the story's to use, all but this much. Under
-// "Sign in" the page keeps its own bottom air and, in iPhone Safari, room
-// for the toolbar (the story's padding, css/app.css). Counting all of it as
-// out of bounds dropped the third example on an iPhone 13 mini with about
-// 100px left empty above the toolbar (Evan, 10 Oct 2026). So the story may
-// run into that space, scrolling a little if it must, as long as "Sign in"
-// keeps its own 12px and this much more above the bottom of the screen.
-const FOOT_AIR = 18;
-
+// The space under the foot is the story's to use. Under "Sign in" the page
+// keeps its own bottom air and, in iPhone Safari, room for the toolbar (the
+// story's padding, css/app.css). Counting all of it as out of bounds dropped
+// the third example on an iPhone 13 mini with about 100px left empty above
+// the toolbar (Evan, 10 Oct 2026); holding 18px of it back still did, as
+// that phone keeps only about 38px for the toolbar (#4691). So the story
+// may run into all of it, scrolling a little if it must. "Sign in" still
+// ends above the foot of the page's own box, which in Safari is above the
+// toolbar, with the foot's own 12px under it.
+//
 // The step a fit settles on, once step `fit` is the first that fits with
 // `room` to spare above and below its group: the earliest step whose story
 // (`heights`, one per step taken) is no taller than that room plus the space
-// under the foot it may use (`under`, less FOOT_AIR).
+// under the foot (`under`).
 export function settledStep(heights: number[], fit: number, room: number, under: number) {
-  const tallest = heights[fit] + 2 * room + Math.max(0, under - FOOT_AIR);
+  const tallest = heights[fit] + 2 * room + Math.max(0, under);
   const best = heights.findIndex((h) => h <= tallest);
   return best >= 0 && best < fit ? best : fit;
 }

@@ -1098,7 +1098,15 @@
   "firstSession.tour.maker.bot.tap": {
     "text": "Tap Messages",
     "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about Homeroom bot: asks the person to tap the Messages tab, and taps it for them when pressed. Messages is the tab's name."
+  },  "firstSession.tour.maker.meetBot.title": {
+    "text": "Meet Homeroom bot",
+    "description": "Card of the short tour a new member is walked through after making a project, for a project Homeroom bot is not building (a ready-made app), title: points at the Messages tab, where the assistant called Homeroom bot is. Homeroom bot is a name."
   },
+  "firstSession.tour.maker.meetBot.text": {
+    "text": "Tell it what {{app}} should do next, and it starts building it. It's always here in Messages.",
+    "description": "Card of the short tour a new member is walked through after making a project, for a project Homeroom bot is not building (a ready-made app): text about Homeroom bot. \"It\" is Homeroom bot, {{app}} is the project's name and Messages is the name of a tab."
+  },
+
   "firstSession.tour.maker.working.title": {
     "text": "Homeroom bot is working on {{app}}",
     "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card, shown over their chat with Homeroom bot. {{app}} is the project's name. Homeroom bot is a name."

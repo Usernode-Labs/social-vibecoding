@@ -6,9 +6,9 @@
 //    toolbar under that. Its fill now carries on below it, past the foot of
 //    the screen, with nothing in it moved.
 // 2. The make and made screens are fixed boxes that ended above the
-//    toolbar, cutting off what scrolled (Make it in half). They now run to
-//    the foot of the screen, with the toolbar's height kept after the last
-//    line so it scrolls clear.
+//    toolbar, cutting off what scrolled (Make it in half). They now run on
+//    past the foot of the screen, with as much kept after the last line, so
+//    the end scrolls up to where it stopped before.
 //
 // Run with: node --test tests/first-run-safari-toolbar.test.js
 
@@ -40,11 +40,15 @@ test('the make and made screens run on under the toolbar and scroll clear of it'
   const block = APP_CSS.slice(APP_CSS.indexOf('/* THE MAKE AND MADE SCREENS RUN ON UNDER SAFARI\'S TOOLBAR'));
   const rules = block.slice(block.indexOf('@media (max-width: 767px) {'), block.indexOf('\n}\n') + 2);
   // In a phone browser on iOS, with the keys down (the keyboard surface
-  // measures against the box as it was): to the large viewport's foot.
+  // measures against the box as it was): 200px past its foot, a fixed
+  // length, since on a 13 mini in Safari 26 `100lvh` came out shorter than
+  // the box and `100% - 100lvh` extended nothing (#4691's first try).
   const scope = 'html.un-ios.web-browser-chrome:not(.platform-kb-open)';
-  assert.ok(rules.includes(`${scope} :is([data-first-session-make], [data-first-session-made]) {\n    bottom: min(0px, calc(100% - 100lvh));\n  }`));
-  // The toolbar's height after the last line, in whatever scrolls.
-  assert.ok(rules.includes(`${scope} :is([data-first-session-make-scroll], [data-first-session-made]) {\n    padding-bottom: max(0px, calc(100lvh - 100svh));\n  }`));
+  assert.ok(rules.includes(`${scope} :is([data-first-session-make], [data-first-session-made]) {\n    bottom: -200px;\n  }`));
+  // The same 200px after the last line, in whatever scrolls, so the end
+  // scrolls up to where it stopped before.
+  assert.ok(rules.includes(`${scope} :is([data-first-session-make-scroll], [data-first-session-made]) {\n    padding-bottom: 200px;\n  }`));
+  assert.doesNotMatch(rules, /lvh|svh/);
   // Those are the boxes: the make screen's root and scroller, the made
   // screen's root (which scrolls itself).
   const make = read('frontend/src/features/first-session/make.tsx');
