@@ -99,12 +99,13 @@ test('one failure of its own beside main\'s keeps a proposal for its author', ()
   assert.equal(skipped[1], 'own_failure', 'the picker check fails on it alone');
 });
 
-test('only the unit suite failing, an imported head, a moved head or a head already synced: no sync', () => {
+test('only the unit suite failing (main not green since), an imported head, a moved head or a head already synced: no sync', () => {
   const passes = new Set([key(DOMAIN)]);
   // Two others failing it, so the check is main's whatever row 1 says.
   const others = [verdict(9, [DOMAIN]), verdict(10, [DOMAIN])];
   for (const [row, why] of [
-    [verdict(1, [UNIT]), 'nothing_fixed'],
+    [verdict(1, [UNIT]), 'unit_suite_only'],
+    [verdict(1, [{ ...UNIT, advisory: true }]), 'nothing_fixed'],
     [verdict(1, [DOMAIN], { source: 'imported' }), 'imported'],
     [verdict(1, [DOMAIN], { reviewed_head_sha: NEW_HEAD }), 'head_moved'],
     [verdict(1, [DOMAIN], { fixed_check_sync_head: HEAD.toUpperCase() }), 'already_tried'],
@@ -114,6 +115,42 @@ test('only the unit suite failing, an imported head, a moved head or a head alre
     assert.deepEqual(candidates.map((c) => c.id), [9, 10], why);
     assert.equal(skipped[1], why);
   }
+});
+
+// 10 Oct 2026: five challenge tests failed every weekend until #4648 fixed
+// them on main. Two approved Homeroom bot proposals cut before it failed only
+// the unit suite on them and stayed red: the rule above needs a named check
+// that fails across proposals, and the unit-suite row names none. Main watch
+// runs the same suite on main itself, so main green AFTER a proposal's run is
+// the evidence instead.
+test('a proposal failing only the unit suite is synced once main watch has passed since its run', () => {
+  const ran = '2026-10-10T08:46:04.000Z';
+  const row = verdict(7629, [UNIT], { checks_checked_at: ran });
+  const greenAfter = { passing: true, at: Date.parse('2026-10-10T11:01:15Z') };
+
+  const { candidates } = subject.select([row], new Set(), greenAfter);
+  assert.deepEqual(candidates, [{ id: 7629, head: HEAD, keys: [subject.UNIT_KEY] }],
+    'synced once, recorded under the unit suite\'s own key');
+
+  for (const [watch, why] of [
+    [{ passing: true, at: Date.parse('2026-10-10T08:00:00Z') }, 'green before its run: main has not moved since'],
+    [{ passing: false, at: Date.parse('2026-10-10T11:01:15Z') }, 'main is red itself'],
+    [null, 'no main watch on this app'],
+  ]) {
+    const out = subject.select([row], new Set(), watch);
+    assert.deepEqual(out.candidates, [], why);
+    assert.equal(out.skipped[7629], 'unit_suite_only', why);
+  }
+
+  const synced = verdict(7629, [UNIT], {
+    checks_checked_at: ran, fixed_check_sync_head: NEW_HEAD, fixed_check_sync_keys: [subject.UNIT_KEY],
+  });
+  assert.equal(subject.select([synced], new Set(), greenAfter).skipped[7629], 'already_tried',
+    'still failing on a head that contains main: the proposal\'s own');
+
+  // A named check of its own beside it is still the author's.
+  const mixed = verdict(7630, [UNIT, PICKER], { checks_checked_at: ran });
+  assert.equal(subject.select([mixed], new Set([key(PICKER)]), greenAfter).skipped[7630], 'own_failure');
 });
 
 test('a check a proposal was already synced for is never a reason to sync it again', () => {
