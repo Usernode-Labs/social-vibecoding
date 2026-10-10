@@ -68,15 +68,38 @@ test('the first render is step 0, with all three examples and nothing pinned', (
 test('it steps before the browser paints, while the story is taller than its room', () => {
   // A layout effect, so the steps are never seen; measured only once the
   // story is laid out (a hidden screen has no height).
-  assert.match(SOURCE, /useLayoutEffect\(\(\) => \{\s+const story = storyRef\.current;\s+const group = groupRef\.current;\s+if \(!story \|\| !group \|\| !story\.offsetHeight\) return;/);
+  assert.match(SOURCE, /useLayoutEffect\(\(\) => \{\s+const story = storyRef\.current;\s+const group = groupRef\.current;\s+const foot = footRef\.current;\s+if \(!story \|\| !group \|\| !foot \|\| !story\.offsetHeight\) return;/);
   // The group's auto margins are the room left: zero means the story is
   // taller than its screen, the cue for the next step.
-  assert.match(SOURCE, /const room = group\.getBoundingClientRect\(\)\.top - story\.getBoundingClientRect\(\)\.top;\s+if \(room < 1 && fit < FIT_STEPS\) setFit\(fit \+ 1\);/);
+  assert.match(SOURCE, /const room = group\.getBoundingClientRect\(\)\.top - story\.getBoundingClientRect\(\)\.top;\s+if \(room < 1\) \{\s+if \(fit < FIT_STEPS\) setFit\(fit \+ 1\);/);
   assert.match(SOURCE, /<div ref=\{groupRef\} className=\{`my-auto flex flex-col items-center \$\{s\.group\}`\}>/);
+  // What may run under the foot: the story's own padding (Safari's toolbar
+  // allowance) and the page's bottom air under it.
+  assert.match(SOURCE, /const under = parseFloat\(getComputedStyle\(story\)\.paddingBottom\)\s+\+ \(story\.parentElement \? parseFloat\(getComputedStyle\(story\.parentElement\)\.paddingBottom\) : 0\);/);
   // A turned phone or a resized window starts again from full size; Safari's
   // toolbar coming and going does not.
   assert.match(SOURCE, /const TOOLBAR_SLACK = 120;/);
-  assert.match(SOURCE, /if \(window\.innerWidth !== at\.width \|\| window\.innerHeight - at\.height >= TOOLBAR_SLACK\) setFit\(0\);\s+setMeasure\(\(n\) => n \+ 1\);/);
+  assert.match(SOURCE, /if \(window\.innerWidth === f\.width && Math\.abs\(window\.innerHeight - f\.height\) < TOOLBAR_SLACK\) return;\s+fitting\.current = null;\s+setFit\(0\);/);
   // The two examples left are the first two: the tier list and the game.
   assert.match(SOURCE, /TEMPLATES\.slice\(0, s\.count\)\.map/);
+});
+
+// Evan, 10 Oct 2026, iPhone 13 mini in Safari: the fit took all four steps
+// and dropped the third example with about 100px empty above the toolbar,
+// because it counted the space under the foot as out of bounds.
+test('a fit may use the space under the foot, keeping "Sign in" clear of the bottom', () => {
+  const { settledStep } = loadTsx(STORY);
+  assert.match(SOURCE, /const FOOT_AIR = 18;/);
+  // That phone's story, measured at each step (the third row is 60px), with
+  // step 4 the first to fit and 3px of room either side of its group.
+  const heights = [636, 588, 528, 485, 425];
+  // Safari: the toolbar allowance (52) and the page's bottom air (34) under
+  // the foot. Step 3 runs 54px into that 86, leaving more than FOOT_AIR.
+  assert.equal(settledStep(heights, 4, 3, 52 + 34), 3);
+  // In the app there is only the bottom air: 54px is too far, so step 4.
+  assert.equal(settledStep(heights, 4, 3, 34), 4);
+  // Never past the step that fit, never earlier than the room allows.
+  assert.equal(settledStep(heights, 2, 40, 34), 1, '588 <= 528 + 80 + 16');
+  assert.equal(settledStep(heights, 0, 10, 86), 0);
+  assert.equal(settledStep([700, 650], 1, 0.5, 0), 1);
 });
