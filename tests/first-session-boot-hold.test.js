@@ -45,10 +45,12 @@ function holdScript() {
   return hold[0];
 }
 
-function runHold(flag) {
+function runHold(flag, { search = '', hash = '' } = {}) {
   const classes = new Set();
   const timers = [];
   const sandbox = {
+    URLSearchParams,
+    location: { search, hash },
     sessionStorage: { getItem: (k) => (k === MAKE_FLAG ? flag : null) },
     document: { documentElement: { classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } } },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); },
@@ -60,7 +62,7 @@ function runHold(flag) {
 test('the head holds the body only while the make flag is set, with a floor', () => {
   // The same key the story's sheet sets and the first session reads.
   assert.ok(LANDING.includes(`sessionStorage.setItem('${MAKE_FLAG}', '1')`), 'the sheet sets the flag');
-  assert.ok(holdScript().includes(`sessionStorage.getItem('${MAKE_FLAG}') !== '1'`), 'the head reads the same key');
+  assert.ok(holdScript().includes(`sessionStorage.getItem('${MAKE_FLAG}') === '1'`), 'the head reads the same key');
 
   const held = runHold('1');
   assert.deepEqual([...held.classes], ['first-session-boot']);
@@ -73,6 +75,19 @@ test('the head holds the body only while the make flag is set, with a floor', ()
     const free = runHold(flag);
     assert.equal(free.classes.size, 0, `no hold for ${JSON.stringify(flag)}`);
     assert.equal(free.timers.length, 0);
+  }
+
+  // A "You're in" mail's link opens signed out on the landing (Evan, 10 Oct
+  // 2026: from the phone app, Home showed first): held too, on either of the
+  // two shapes sendWaitlistReleaseMail writes, and only on those.
+  const MAIL = read('src/services/mail/index.js');
+  assert.match(MAIL, /`\$\{PRODUCTION_ORIGIN\}\/\?login=1`/);
+  assert.match(MAIL, /`\$\{PRODUCTION_ORIGIN\}\/\?signup=1/);
+  for (const search of ['?signup=1&t=abc&key=def', '?signup=1', '?login=1']) {
+    assert.deepEqual([...runHold(null, { search }).classes], ['first-session-boot'], search);
+  }
+  for (const [search, hash] of [['', ''], ['?shot=dark', ''], ['?signup=1', '#login']]) {
+    assert.equal(runHold(null, { search, hash }).classes.size, 0, `${search}${hash}: no hold`);
   }
 
   // Inline, beside the page ground, so it holds with no stylesheet at all.

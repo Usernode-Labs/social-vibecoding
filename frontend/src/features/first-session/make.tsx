@@ -661,7 +661,7 @@ export function MakeScreen({
                   setError(null);
                   setMissing(null);
                 }}
-                placeholder={t('onboarding:firstSession.make.namePlaceholder')}
+                placeholder={t(template ? template.namePlaceholder : 'onboarding:firstSession.make.namePlaceholderOwn')}
                 className={INPUT}
               />
               {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
