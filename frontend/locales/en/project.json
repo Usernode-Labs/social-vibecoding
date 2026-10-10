@@ -600,8 +600,16 @@
     "description": "Line under the title of a finished week's page in a project's Workshop tab, when the count is known to be incomplete: the week's dates, then how many changes went live. {{start}} is its Monday and {{end}} its Sunday. {{count}} is how many changes went live (were approved and became part of the running project) in that week; the tag makes the number bold. Keep the plus sign after the number: it means \"at least\"."
   },
   "weekPage.none": {
-    "text": "Nothing in this week is on the board any more.",
-    "description": "Line on a week's page in a project's Workshop tab when none of that week's requests and changes can be listed any longer. The board is the project's full list of requests and changes."
+    "text": "Nothing happened in this week.",
+    "description": "Line on a week's page in a project's Workshop tab when that week genuinely holds no requests, changes or other activity. Shown only after the week's list has finished loading and came back empty."
+  },
+  "weekPage.loading": {
+    "text": "Loading this week…",
+    "description": "Line on a week's page in a project's Workshop tab while the page fetches what happened in that week. Shown under the week's summary line, in place of the list, until the rows arrive."
+  },
+  "weekPage.failed": {
+    "text": "Some of this week could not be loaded. Open it again to try once more.",
+    "description": "Line on a week's page in a project's Workshop tab when part of the week's history failed to load. Opening the week again retries; there is no separate retry button."
   },
   "weekPage.group.new": {
     "text": "New since your last visit",

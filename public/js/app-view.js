@@ -10847,6 +10847,14 @@ const AppView = {
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
   // the since-strip is computed against. See _workshopBaseline.
   _workshopSince: {},
+  // The week whose page is open on the Workshop tab, and its fetch:
+  // { slug, startMs, endMs, loading, failed, seq }, or null. The since-strip
+  // caps its lists and rides on the merged page that happens to be loaded, so
+  // a week further back than those rows would draw nothing — this state is
+  // what backs the page with the week's own history instead (see
+  // openWorkshopWeek and _workshopView's `week`).
+  _workshopWeek: null,
+  _workshopWeekSeq: 0,
   // The last themes answer: { slug, themes, source, generatedAt, stale,
   // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
   // app's grouping over this one's cards.
@@ -10899,6 +10907,64 @@ const AppView = {
     try {
       window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${s}`, String(stamp));
     } catch { /* private mode — cleared for this page session only */ }
+    const react = AppView._reactDevBoard();
+    if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
+      react.publishWorkshop(AppView._workshopView());
+    }
+  },
+
+  // A week page needs the merged history to reach back past its Monday, and
+  // the board only loads the first page of it. This pages /merged (the same
+  // pager a manual "Show more" uses) until the oldest loaded row is OLDER
+  // than the week or history runs out, while _workshopView files every entry
+  // in the week's range. The page shows "Loading this week…" meanwhile, and
+  // the empty line only once this has finished and the week holds nothing.
+  //
+  // A later open (a fresh seq), a close (null) or the viewer leaving the app
+  // stops a running loop: each round re-reads the state and compares both
+  // seq and slug, so a stale loop never pages on behind a closed page.
+  async openWorkshopWeek(startMs, endMs) {
+    const slug = App.currentApp || '';
+    const seq = (AppView._workshopWeekSeq += 1);
+    AppView._workshopWeek = { slug, startMs, endMs, loading: true, failed: false, seq };
+    AppView._publishWorkshop();
+    while (true) {
+      const wk = AppView._workshopWeek;
+      if (!wk || wk.seq !== seq || wk.slug !== slug || (App.currentApp || '') !== slug) return;
+      if (!AppView._mergedHasMore) break;
+      const merged = AppView._merged || [];
+      // The rows come newest first, so the last one is the oldest loaded.
+      const oldest = merged.length ? Date.parse(AppView._completedAt(merged[merged.length - 1]) || '') || 0 : 0;
+      if (merged.length && oldest < startMs) break;
+      const ok = await AppView.loadMoreMerged({ limit: 50 });
+      if (!ok) {
+        // A page that did not land while history continues is a part-loaded
+        // week, and the page says so. A pager that stopped advancing throws
+        // inside loadMoreMerged, which resolves false — the loop cannot
+        // stall on it.
+        const cur = AppView._workshopWeek;
+        if (cur && cur.seq === seq && cur.slug === slug && AppView._mergedHasMore) cur.failed = true;
+        break;
+      }
+    }
+    const wk = AppView._workshopWeek;
+    if (wk && wk.seq === seq && wk.slug === slug) {
+      wk.loading = false;
+      AppView._publishWorkshop();
+    }
+  },
+
+  // The week page closed: drop the state, so _workshopView stops building
+  // `week` and the page is the tab's own list again.
+  closeWorkshopWeek() {
+    if (!AppView._workshopWeek) return;
+    AppView._workshopWeek = null;
+    AppView._publishWorkshop();
+  },
+
+  // The publish a week's open and close use — the same one _workshopClearSince
+  // makes when the tab is up.
+  _publishWorkshop() {
     const react = AppView._reactDevBoard();
     if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
       react.publishWorkshop(AppView._workshopView());
@@ -11397,7 +11463,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
+      since: null, week: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -11837,6 +11903,42 @@ const AppView = {
       };
     }
 
+    // ── The open week's page ──
+    //
+    // `since` is capped and rides on whatever merged page happens to be
+    // loaded, so a week further back than those rows drew its digest heading
+    // and nothing else (weekGroups() found no rows and the page said so).
+    // When a week page is open, this files EVERY entry the week's range
+    // holds, uncapped: an entry belongs to the week when it was created or
+    // completed in it, or when something happened on it in it (`created` or
+    // `t` in the range). A change that went live that week is listed even if
+    // people commented on it later; a request filed that week and closed
+    // since arrives through the change that closed it. The page's groups
+    // (weekGroups) split these on the same baseline `since` uses, and the
+    // loading and failure lines are the fetch's (openWorkshopWeek).
+    let week = null;
+    {
+      const wk = AppView._workshopWeek;
+      if (wk && wk.slug === slug) {
+        const now = Date.now();
+        const inWeek = (e) => (e.created >= wk.startMs && e.created < wk.endMs)
+          || (e.t >= wk.startMs && e.t < wk.endMs);
+        const picked = entries.filter(inWeek).sort((a, b) => b.t - a.t);
+        week = {
+          startMs: wk.startMs,
+          endMs: wk.endMs,
+          loading: !!wk.loading,
+          failed: !!wk.failed,
+          fresh: [],
+          seen: [],
+        };
+        for (const e of picked) {
+          const row = { ...e.row, key: `week:${e.row.key}`, at: Math.min(e.t, now) };
+          (baseline && e.t > baseline ? week.fresh : week.seen).push(row);
+        }
+      }
+    }
+
     // ── The dashboard, and the one thing to pick up ──
     //
     // This was `welcome`: the same four numbers, shown ONLY on a first visit,
@@ -12062,6 +12164,7 @@ const AppView = {
       votes,
       mine,
       since,
+      week,
       dashboard,
       // The hub's Recently live: the newest changes that merged, each with
       // its after shot when the checks took one.

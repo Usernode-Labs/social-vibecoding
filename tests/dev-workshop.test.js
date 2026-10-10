@@ -1022,6 +1022,76 @@ test('#4457: a week is one row that opens its own page, grouped, with the way ba
   assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /endMs - 86400000/);
 });
 
+// ── #4717: the page fetches its week, and says so while it does ───────
+
+test('#4717: a week page draws its fetched rows, and says loading, failed or empty', async () => {
+  const { WeekPage } = loadTsx('frontend/src/features/dev-board/workshop/week-pages.tsx');
+  const WEEK = 7 * 86400000;
+  const startMs = Date.UTC(2026, 8, 7); // last week's Monday
+  const week = {
+    key: 'lastWeek', title: '', startMs, endMs: startMs + WEEK, live: false,
+    line: 'The week\'s line.', counts: { closed: 2, partial: false }, fresh: [], seen: [],
+  };
+  const render = (fetched) => renderToHtml(createElement(WeekPage, {
+    week, fetched, slug: 'demo-app', openKey: null, onOpen: () => {}, onBack: () => {},
+  }));
+  // Real card models: a group's row is drawn by WorkRow, which reads the
+  // card, so a bare object will not do.
+  const AppView = await loadWith(responseBody({}));
+  const brief = (over) => ({ kind: 'request', noun: 'Request', n: 1, by: 'maya', mine: false, requested: false, category: '', replies: 0, linked: [], closed: [], stage: 'request', at: startMs + 86400000, tags: [], vote: null, ...over });
+  const row = (key, at, over) => ({ t: 'card', key, card: AppView._issueCardModel(AppView._ghIssues[0]), at, brief: brief({ at, ...over }) });
+
+  // WHILE IT LOADS: the loading line, and neither the empty line nor groups.
+  const loading = render({ loading: true, failed: false, fresh: [], seen: [] });
+  assert.match(loading, /<p class="dev-ws-none" data-ws-week-loading="">Loading this week…<\/p>/);
+  assert.ok(!loading.includes('data-ws-week-group'), 'no groups before rows arrive');
+  assert.ok(!loading.includes('data-ws-week-failed'));
+  assert.ok(!loading.includes(message('project:weekPage.none')), 'the empty line waits for the fetch to finish');
+
+  // ROWS AS THEY ARRIVE: the unchanged groups file them, and the week's own
+  // (capped) rows stand down in favour of the fetched ones.
+  const fetched = {
+    loading: false, failed: false, fresh: [],
+    seen: [
+      row('week:l', startMs + 2 * 86400000, { kind: 'live', noun: 'Change', stage: 'live' }),
+      row('week:r', startMs + 86400000),
+    ],
+  };
+  const withRows = render(fetched);
+  const groups = [...withRows.matchAll(/data-ws-week-group="([a-z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(groups, ['live', 'requests'], 'went live, then the week\'s new requests');
+  assert.ok(!withRows.includes('data-ws-week-loading') && !withRows.includes('data-ws-week-failed'));
+  assert.ok(!withRows.includes('data-ws-week-none'), 'and the week loaded, so no empty line');
+
+  // A FINISHED, EMPTY FETCH: only then does the empty line show — and it
+  // says nothing happened, not that the board dropped it.
+  const empty = render({ loading: false, failed: false, fresh: [], seen: [] });
+  assert.match(empty, /<p class="dev-ws-none">Nothing happened in this week\.<\/p>/);
+  assert.ok(!empty.includes('data-ws-week-loading') && !empty.includes('data-ws-week-failed'));
+
+  // A FETCH THAT FAILED PART WAY: what it got stays, and the line says to
+  // open the week again.
+  const failed = render({ ...fetched, failed: true });
+  assert.match(failed, /<p class="dev-ws-none" data-ws-week-failed="">Some of this week could not be loaded\. Open it again to try once more\.<\/p>/);
+  assert.deepEqual([...failed.matchAll(/data-ws-week-group="([a-z]+)"/g)].map((m) => m[1]), ['live', 'requests'],
+    'the rows that did land stay listed');
+  assert.ok(!failed.includes(message('project:weekPage.none')));
+
+  // WITHOUT AppView's fetch the page is what it was: the week's own rows.
+  const plain2 = render(null);
+  assert.ok(!plain2.includes('data-ws-week-loading') && !plain2.includes('data-ws-week-failed'));
+  assert.match(plain2, /<p class="dev-ws-none">Nothing happened in this week\.<\/p>/, 'an empty week with no fetch is the empty line');
+});
+
+test('#4717: opening a week asks AppView for the week, closing tells it the page shut', () => {
+  assert.match(WORKSHOP, /const week = weeks\.find\(\(w\) => sinceWeekStateKey\(w\) === key\);\s*if \(week\) callAppView\('openWorkshopWeek', week\.startMs, week\.endMs\);/,
+    'openWeekPage hands AppView the week\'s range');
+  assert.match(WORKSHOP, /const closeWeekPage = \(\) => \{\s*setOpenWeek\(null\);\s*callAppView\('closeWorkshopWeek'\);/,
+    'and closeWeekPage retires the fetch state with the page');
+  assert.match(WORKSHOP, /fetched=\{v\.week && v\.week\.startMs === weekUp\.startMs/,
+    'the page draws only the fetch for the week that is open');
+});
+
 test('an empty window is no week at all', async () => {
   // An empty string is how the server says the window held nothing, and a
   // week saying "nothing landed" is worse than none: the same space to say less.
