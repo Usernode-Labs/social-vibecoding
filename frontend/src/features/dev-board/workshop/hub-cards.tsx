@@ -135,8 +135,9 @@ const ACTION_WORDS: Record<Exclude<FirstVersionAction, 'see'>, string> = {
  *
  * While the first-session tour runs (../../first-session/tour-running.ts)
  * there is no Review the plan: the card shows the build line, "Homeroom bot
- * is working on it", and the tour's last card is what names the plan
- * (requests #4391, #4393). After the tour, it is as above.
+ * is working on it": the tour asks for nothing but its own cards (requests
+ * #4391, #4393), and its last card, here on the hub, is Open app. After the
+ * tour, it is as above.
  *
  * No event marks each step, so while the card is on screen the record is
  * read again every FIRST_VERSION_POLL_MS, as the App tab and the made screen
@@ -162,9 +163,8 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
     }, FIRST_VERSION_POLL_MS);
     return () => window.clearInterval(timer);
   }, [building, slug]);
-  // While the first-session tour runs, its last card is what names the plan
-  // (../../first-session/tour-running.ts): no Review the plan here, only the
-  // build line saying the bot is on it.
+  // While the first-session tour runs (../../first-session/tour-running.ts),
+  // no Review the plan here, only the build line saying the bot is on it.
   const touring = useTourRunning();
   const t = useMessages('project');
   if (!fv) return null;

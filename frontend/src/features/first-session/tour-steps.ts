@@ -7,9 +7,9 @@
  * Three tours. Starting a community and joining one share their first seven
  * cards, word for word: the project on Home, the project opened, Suggest an
  * improvement in its Homeroom menu, ✕ back to Home, where to find it under
- * Communities, and its hub. The maker's ends
- * on the plan in Homeroom bot's chat, which waits there until the tour is
- * over (decision C); the invited one ends in Discussion. "Look around first"
+ * Communities, and its hub. The maker's meets Homeroom bot on the way and
+ * ends on that hub by opening the app (makerSteps); the invited one ends in
+ * Discussion. "Look around first"
  * has its own four cards on Home (decision E, #4072): where to start a
  * project later, and what the tab bar's places are. A private member, let in
  * by an invite link before the waitlist let them in, gets the maker's walk
@@ -72,24 +72,12 @@ export type TourStep = {
    */
   ringed?: boolean;
   /**
-   * What the card says instead while `when` is on screen: the maker's last
-   * step, once the plan it waits for has come into the chat.
-   */
-  instead?: { when: string; title: string; text: string };
-  /**
    * A control that draws the target when the screen holds it back, pressed
    * once if the target is not there: Home's "Show all N apps", behind which
    * a full collapsed grid keeps the New project tile (home.js createHidden).
    * The product's own handler draws it, as a finger on it would.
    */
   revealWith?: string;
-  /**
-   * A transcript in the cut-out: the newest of its `rows` begins just under
-   * the coach card (./index.tsx showNewestBelow), so the plan's title and
-   * first lines are never under the card, and as much of the rest as the
-   * screen holds, its Build it included, shows below them.
-   */
-  newestBelowCard?: { scroller: string; rows: string };
   /**
    * The card's words say where the app opens ("<project> opens here"), so
    * the App tab's own "It opens here when it's ready." hides while the card
@@ -104,28 +92,19 @@ export type TourStep = {
    * then, which on touch is a kit sheet above the tour's usual layer.
    */
   inMenu?: boolean;
+  /**
+   * The tour's last card. A last tap step ends the tour when its control is
+   * pressed, and the press goes on to the control (the maker's Open app).
+   */
   last?: boolean;
 };
-
-/**
- * The maker's last step: their chat with Homeroom bot, its header (the bot's
- * name and what it is doing for them) with its messages under it, as one
- * cut-out. It used to be the messages alone, under a dimmed header, and its
- * newest card began part-way down: "the chat with Homeroom bot is missing the
- * header" (Evan, on his phone, 5 October 2026). The conversation's own
- * section scopes both, so no other pane's header or transcript is measured.
- * The platform's top bar above them is drawn in too (SCREEN_HEADER).
- */
-export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
-export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
 
 /**
  * The platform's top bar, drawn with the screen under it (TourStep.alongside).
  * Its top padding is the status bar's inset, so its box starts at the top of
  * the screen inside the iOS app's WebView too. The steps that show a screen
  * whole cut it out with that screen: "include the header", on the app's
- * close step, the hub and the chat with Homeroom bot (Evan, on his phone,
- * 5 October 2026).
+ * close step and the hub (Evan, on his phone, 5 October 2026).
  */
 export const SCREEN_HEADER = '#platform-header';
 
@@ -136,14 +115,11 @@ export const SCREEN_HEADER = '#platform-header';
  */
 export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
 
-
 /**
- * The plan waiting for its maker's Build it, in the chat with Homeroom bot
- * (../messages/bot-plan-view.tsx draws `data-bot-plan` with its state). The
- * conversation's own section scopes it, so the App tab's copy of the card
- * never counts.
+ * The hub's Open app (../dev-board/workshop/community-card.tsx), where the
+ * maker's tour ends (makerSteps).
  */
-export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
+export const OPEN_APP = '[data-ws-community-open-app]';
 
 /**
  * The app screen's Suggest steps, the same on the invited and maker paths
@@ -336,64 +312,36 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
 }
 
 /**
- * Starting a community, after "Invite people later" or "Go to the Homeroom
- * app": the same first seven cards, then Messages, ending on the plan in
- * Homeroom bot's chat (when the project has one: the bot builds for this
- * account), and otherwise on the hub. The plan waits there for Build it, and
- * nothing asks for it before the tour ends (decision C): the last card says
- * the bot is working on it until a plan is in the chat, and how to answer it
- * once it is. Nothing else in the tour names the plan (./tour-running.ts).
- *
- * A project with no chat (a ready-made app, with nothing for the bot to
- * build) still meets the bot (Evan, 10 Oct 2026: a ready-made tier list's
- * tour ended on the hub without it): one card on Home, before the
- * Communities tab, says what it is for and where it always is.
+ * Starting a community, after "Invite people later" or "Start the tour": the
+ * same first seven cards, with one more before the Communities tab, "Meet
+ * Homeroom bot", which says what it is for and where it always is (Evan, 10
+ * Oct 2026: a ready-made tier list's tour ended without it). The tour ends on
+ * the hub, its last card asking them to tap Open app, which opens their new
+ * app and ends the tour: "that's probably where they want to go anyway"
+ * (Evan, 10 Oct 2026). A ready-made app runs by then (the made screen waits
+ * for it); one Homeroom bot is building opens on its build, which takes the
+ * maker to the bot's chat when a plan or a question waits for them
+ * (AppView._firstVersionView). That chat used to be the tour's last two
+ * cards, Messages and then the plan, for a project the bot builds.
  */
-export function makerSteps({ slug, name, conversationId }: TourProject): TourStep[] {
+export function makerSteps({ slug, name }: TourProject): TourStep[] {
   const steps = sharedSteps(slug, name);
-  if (!conversationId) {
-    const communities = steps.findIndex((step) => step.target === '#platform-tab-workshop');
-    steps.splice(communities, 0, {
-      screen: 'home',
-      target: '#platform-tab-messages',
-      ringed: true,
-      title: translate('onboarding:firstSession.tour.maker.meetBot.title'),
-      text: translate('onboarding:firstSession.tour.maker.meetBot.text', { app: name }),
-    });
-    steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
-    return steps;
-  }
-  steps.push(
-    {
-      screen: 'hub',
-      target: '#platform-tab-messages',
-      title: translate('onboarding:firstSession.tour.maker.bot.title'),
-      text: translate('onboarding:firstSession.tour.maker.bot.text', { app: name }),
-      tap: translate('onboarding:firstSession.tour.maker.bot.tap'),
-      opensNext: true,
-    },
-    {
-      screen: 'bot',
-      target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
-      alongside: SCREEN_HEADER,
-      // The card at the top, under the chat's header, and the plan just
-      // under the card: at the foot of the screen the card covered the very
-      // buttons it names, and over the plan's top it covered its title and
-      // first lines (the owner, 6 and 7 October 2026).
-      newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
-      // Until a plan waits, nothing on the card says there is one coming:
-      // the bot may ask a question first (requests #4391, #4393).
-      title: translate('onboarding:firstSession.tour.maker.working.title', { app: name }),
-      text: translate('onboarding:firstSession.tour.maker.working.text'),
-      instead: {
-        when: PLAN_WAITING,
-        title: translate('onboarding:firstSession.tour.maker.plan.title'),
-        text: translate('onboarding:firstSession.tour.maker.plan.text'),
-      },
-      place: { below: BOT_CHAT_HEADER },
-      last: true,
-    },
-  );
+  const communities = steps.findIndex((step) => step.target === '#platform-tab-workshop');
+  steps.splice(communities, 0, {
+    screen: 'home',
+    target: '#platform-tab-messages',
+    ringed: true,
+    title: translate('onboarding:firstSession.tour.maker.meetBot.title'),
+    text: translate('onboarding:firstSession.tour.maker.meetBot.text', { app: name }),
+  });
+  const hub = steps[steps.length - 1];
+  steps[steps.length - 1] = {
+    ...hub,
+    press: OPEN_APP,
+    text: translate('onboarding:firstSession.tour.maker.hub.text', { app: name }),
+    tap: translate('onboarding:firstSession.tour.maker.hub.tap'),
+    last: true,
+  };
   return steps;
 }
 

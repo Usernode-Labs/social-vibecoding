@@ -1091,41 +1091,21 @@
     "text": "Join the waitlist to get your spot.",
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access, text of the last card: joining the waitlist is how they get to make apps of their own."
   },
-  "firstSession.tour.maker.bot.title": {
-    "text": "Homeroom bot is in Messages",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title: points at the Messages tab. Homeroom bot is the name of the assistant and Messages the name of the tab."
-  },
-  "firstSession.tour.maker.bot.text": {
-    "text": "It makes {{app}} with you. You can always find it here.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project: text about Homeroom bot. \"It\" is Homeroom bot and {{app}} the project's name."
-  },
-  "firstSession.tour.maker.bot.tap": {
-    "text": "Tap Messages",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about Homeroom bot: asks the person to tap the Messages tab, and taps it for them when pressed. Messages is the tab's name."
-  },  "firstSession.tour.maker.meetBot.title": {
+  "firstSession.tour.maker.meetBot.title": {
     "text": "Meet Homeroom bot",
-    "description": "Card of the short tour a new member is walked through after making a project, for a project Homeroom bot is not building (a ready-made app), title: points at the Messages tab, where the assistant called Homeroom bot is. Homeroom bot is a name."
+    "description": "Card of the short tour a new member is walked through after making a project, title: points at the Messages tab, where the assistant called Homeroom bot is. Homeroom bot is a name."
   },
   "firstSession.tour.maker.meetBot.text": {
     "text": "Tell it what {{app}} should do next, and it starts building it. It's always here in Messages.",
-    "description": "Card of the short tour a new member is walked through after making a project, for a project Homeroom bot is not building (a ready-made app): text about Homeroom bot. \"It\" is Homeroom bot, {{app}} is the project's name and Messages is the name of a tab."
+    "description": "Card of the short tour a new member is walked through after making a project: text about Homeroom bot. \"It\" is Homeroom bot, {{app}} is the project's name and Messages is the name of a tab."
   },
-
-  "firstSession.tour.maker.working.title": {
-    "text": "Homeroom bot is working on {{app}}",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card, shown over their chat with Homeroom bot. {{app}} is the project's name. Homeroom bot is a name."
+  "firstSession.tour.maker.hub.text": {
+    "text": "The discussion and the app's changes are here. Now open your new app.",
+    "description": "Card of the short tour a new member is walked through after making a project, text of the last card, under the title naming the community's hub: asks them to open the app they just made from the hub's Open app button. \"changes\" is a noun: the changes proposed to the app."
   },
-  "firstSession.tour.maker.working.text": {
-    "text": "It'll let you know here when there's something to look at.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card. \"It\" is Homeroom bot and \"here\" is this chat."
-  },
-  "firstSession.tour.maker.plan.title": {
-    "text": "Homeroom bot has a plan for you",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card when Homeroom bot's plan is already waiting in the chat. Homeroom bot is a name."
-  },
-  "firstSession.tour.maker.plan.text": {
-    "text": "Answer it here: tap Build it, or tell it what to change.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card when a plan is waiting. \"Build it\" is the name of a button under the plan; the first \"it\" is the plan and the last is Homeroom bot."
+  "firstSession.tour.maker.hub.tap": {
+    "text": "Tap Open app",
+    "description": "Card of the short tour a new member is walked through after making a project, link on the last card: asks the person to tap the hub's Open app button, and taps it for them when pressed, which opens their app and ends the tour. Open app is the button's name."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",
