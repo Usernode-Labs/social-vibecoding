@@ -307,18 +307,20 @@ function waitlistCode(payload) {
 
 // Waitlist release, the "you're in" welcome. #4570 restyled it after the
 // signed-out landing page (frontend/src/features/auth/landing.tsx) and cut it
-// to its one job: get the person in now that their spot is open. The
-// no-account link carries the released address, and opening it asks for a
-// sign-in code straight away, so say so: the recipient should be expecting a
-// second email rather than hunting for a button. The 10-minute figure must
-// match OTP_TTL_MS in src/services/email-signup.js.
+// to its one job: get the person in now that their spot is open. A
+// no-account link without a one-time sign-in carries only the released
+// address, and opening it asks for a sign-in code straight away, so say so:
+// the recipient should be expecting a second email rather than hunting for a
+// button. The 10-minute figure must match OTP_TTL_MS in
+// src/services/email-signup.js.
+//
+// A link WITH the one-time sign-in (#4594, services/release-links.js) gets no
+// note: the button signs them in, and the screen its fallback opens says
+// itself that a code was sent. The link is bound to the released address and
+// the fallback fills it in, so the mail does not ask them to remember which
+// address they joined with either.
 const RELEASE_CODE_NOTE = 'Opening it emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes.';
-// #4594: the link signs you in once (services/release-links.js; 7 days must
-// match RELEASE_LINK_TTL_MS there). After that, or once it has expired, it
-// falls back to the code above, so say so.
-const RELEASE_LINK_NOTE = 'The button signs you in once, with no code to type, and works for 7 days. '
-  + 'After that, opening it emails you a 6-digit code to sign in with instead.';
 
 const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
 
@@ -403,16 +405,18 @@ function waitlistReleased(payload) {
   const mobile = payload.mobile || {};
   const platforms = RELEASE_MOBILE.filter((m) => mobile[m.os]);
 
+  const action = hasAccount ? 'Sign in' : 'Create my account';
   const how = hasAccount
     ? 'Your account now has access. Sign in with your waitlist email.'
-    : 'Create your account with the email you joined the waitlist with.';
+    : null;
+  // #1548: a no-account link with no one-time sign-in sends a code the
+  // moment it is opened, so say so. Somebody who is not told to expect a
+  // SECOND email goes hunting for a button that is not there.
+  const note = !hasAccount && !payload.signInLink ? RELEASE_CODE_NOTE : null;
 
-  const note = payload.signInLink ? RELEASE_LINK_NOTE : RELEASE_CODE_NOTE;
-  let text = `You're in.\n${RELEASE_HEADLINE}\n\n${how}\n${url}`;
-  // #1548: the no-account link sends a code the moment it is opened, so say
-  // so here. Somebody who is not told to expect a SECOND email goes hunting
-  // for a button that is not there.
-  if (!hasAccount) text += `\n\n${note}`;
+  // The text part has no button, so it names the action over the link.
+  let text = `You're in.\n${RELEASE_HEADLINE}\n\n${how || `${action}:`}\n${url}`;
+  if (note) text += `\n\n${note}`;
   text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${c.line}`).join('\n');
 
   let html = releaseCentered(
@@ -422,11 +426,11 @@ function waitlistReleased(payload) {
       + `text-transform:uppercase;color:${NEUTRAL_SECONDARY_INK}">You're in</p>`
     + `<p style="margin:10px 0 0;font-size:28px;line-height:32px;font-weight:800;`
       + `color:${NEUTRAL_INK}">${esc(RELEASE_HEADLINE)}</p>`
-    + `<p style="margin:10px 0 0;font-size:16px;line-height:22px;`
-      + `color:${NEUTRAL_SECONDARY_INK}">${esc(how)}</p>`
-    + releasePill(url, hasAccount ? 'Sign in' : 'Create my account')
-    + (hasAccount ? '' : `<p style="margin:10px 0 0;font-size:13px;`
-      + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>`)
+    + (how ? `<p style="margin:10px 0 0;font-size:16px;line-height:22px;`
+      + `color:${NEUTRAL_SECONDARY_INK}">${esc(how)}</p>` : '')
+    + releasePill(url, action)
+    + (note ? `<p style="margin:10px 0 0;font-size:13px;`
+      + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>` : '')
   )
     + RELEASE_CAN_DO.map((c, i) => releaseChip(c, i === 0 ? 24 : 0)).join('');
 

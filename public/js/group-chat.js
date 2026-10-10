@@ -195,6 +195,18 @@ const GroupChat = {
   _historyFailed: false,
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
+  // #4640: the container the open thread was mounted INTO. The Workshop side
+  // panel is portalled to the end of <body>, while #messages-screen's reply
+  // pane keeps a hidden thread shell of its own — so a lookup by document
+  // id found the hidden pane and drew the panel's discussion into it, leaving
+  // the panel's own box empty. Every thread lookup goes through `_threadEl`,
+  // which scopes to this container when one is mounted.
+  _threadHost: null,
+  _threadEl(id) {
+    return GroupChat._threadHost
+      ? GroupChat._threadHost.querySelector('#' + id)
+      : document.getElementById(id);
+  },
 
   // ── #4417 follow-up: the channel the general pane shows ─────────────
   //
@@ -369,6 +381,11 @@ const GroupChat = {
   },
 
   connect(appSlug, channel = null) {
+    // #4640: a thread open on THIS app survives the reset. connect() used to
+    // null activeThread unconditionally, so a Workshop side-panel discussion
+    // (or any mounted thread) opened before a reconnect was orphaned:
+    // renderThread no-oped from then on and the panel never filled in.
+    const keep = GroupChat.appSlug === appSlug ? GroupChat.activeThread : null;
     GroupChat.disconnect();
     GroupChat.appSlug = appSlug;
     // #4417 follow-up: the channel the general stream is (null: the app's own).
@@ -399,6 +416,7 @@ const GroupChat = {
     GroupChat._pressActive = false;
     GroupChat._clearPressTimer();
     GroupChat._closeReactionBar();
+    GroupChat.activeThread = keep;
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
@@ -410,6 +428,16 @@ const GroupChat = {
     if (!GroupChat._botWorkListener && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       GroupChat._botWorkListener = () => GroupChat.botWorkChanged();
       window.addEventListener('homeroom-bot-work-changed', GroupChat._botWorkListener);
+    }
+    // #4640: the thread this reset kept was read against the map the reset
+    // dropped. The same pair refreshAfterBlock uses: repaint the shell (its
+    // host, `#gc-thread-messages`, travels in `_threadHost`) and re-read the
+    // history, whose per-thread cache went with the old map. A thread of
+    // another app still starts with no thread, as before.
+    if (keep) {
+      GroupChat.renderThread();
+      // A `closed` change's thread is not read at all (see mountThread).
+      if (!keep.closed) void GroupChat.loadThreadHistory(keep.type, keep.ref);
     }
   },
 
@@ -813,7 +841,7 @@ const GroupChat = {
     if (st.loaded && !st.stale) st.syncedMax = Math.max(st.syncedMax ?? -Infinity, Number(msg.id) || -Infinity);
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
-      const el = document.getElementById('gc-thread-messages');
+      const el = GroupChat._threadEl('gc-thread-messages');
       const scroll = GroupChat._threadScrollEl();
       if (el && scroll) {
         // #363: only stick to the newest message when the reader is already
@@ -1354,6 +1382,11 @@ const GroupChat = {
     if (!(GroupChat.appSlug === slug && liveWs)) {
       // #4417 follow-up: a reconnect of the same app keeps the channel its
       // pane shows (a reply thread opened beside a topic's channel).
+      // #4640: this mount replaces whatever thread was open, so drop it
+      // before connect() — connect keeps an open thread of the same app
+      // alive, and restoring the one being replaced here would render it
+      // over this mount's host.
+      GroupChat.activeThread = null;
       GroupChat.connect(slug, GroupChat.appSlug === slug ? GroupChat._channel : null);
     }
     // `language: 'chat'` was the change page's Discussion (bubbles, and every
@@ -1375,6 +1408,9 @@ const GroupChat = {
     GroupChat.activeThread = {
       type, ref: Number(ref), language, ...(closed ? { closed } : {}), ...(markers ? { markers } : {}),
     };
+    // #4640: the thread renders into the container it was mounted in, not
+    // whichever `#gc-thread-messages` a document-wide lookup finds first.
+    GroupChat._threadHost = container;
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -1556,6 +1592,7 @@ const GroupChat = {
     // general composer (replyDraft is global).
     if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
+    GroupChat._threadHost = null;
     // #4517: nothing typed into a left thread's composer may still post to it.
     GroupChat._threadComposerWiring?.abort();
     GroupChat._threadComposerWiring = null;
@@ -1595,12 +1632,27 @@ const GroupChat = {
     }
     const thread = { type, ref };
     const isFirstPage = !st.oldestId;
+    // #4640: a first page that never answers held "Loading…" up forever —
+    // nothing else re-reads a thread that is neither loaded nor failed. The
+    // abort lands in the catch below, so the state records the failure and
+    // the transcript offers "Try again". Later pages keep the browser's own
+    // timeout; "Load earlier" and catch-ups are unchanged.
+    let abort = null;
+    let timeout = null;
+    const init = {};
+    if (isFirstPage && typeof AbortController === 'function') {
+      try {
+        abort = new AbortController();
+        init.signal = abort.signal;
+        timeout = setTimeout(() => abort.abort(), GroupChat.THREAD_FIRST_PAGE_TIMEOUT_MS);
+      } catch { /* no timeout: the browser's own applies */ }
+    }
     // #4177: as in loadHistory, socket events during the read are replayed.
     const events = GroupChat._openLiveLog(st.messages);
     try {
       const res = await fetch(st.oldestId
         ? `${GroupChat._threadQuery(slug, thread)}&limit=50&before=${st.oldestId}`
-        : GroupChat._firstPageUrl(slug, thread));
+        : GroupChat._firstPageUrl(slug, thread), init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const messages = Array.isArray(data.messages) ? data.messages : [];
@@ -1615,6 +1667,7 @@ const GroupChat = {
       st.failed = false;
       if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread({ flush: true });
     } catch { /* surfaced below */ } finally {
+      if (timeout) clearTimeout(timeout);
       GroupChat._closeLiveLog(events);
       st.loading = false;
       // #2992: a failed FIRST page used to leave the thread on "Loading…"
@@ -1624,6 +1677,20 @@ const GroupChat = {
       if (!ok && !st.loaded && GroupChat.threads.get(GroupChat.threadKey(type, ref)) === st) {
         st.failed = true;
         if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread();
+      }
+      // #4640: the answer was thrown away because connect() or
+      // refreshAfterBlock swapped the cache while it was on the wire (a
+      // dropped success had already set ok, so the failure branch above
+      // passed it by; a failure that was swapped records into a discarded
+      // state), and nothing started a load for the state the open thread now
+      // reads. Run one, and let its `st.loading` guard stand down when
+      // refreshAfterBlock already did. One re-run per swap: connect,
+      // disconnect and refreshAfterBlock are the only swaps, so this cannot
+      // spin.
+      if (!st.loaded
+          && GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st
+          && GroupChat.appSlug === slug && GroupChat._isOpenThread(type, ref)) {
+        void GroupChat.loadThreadHistory(type, ref);
       }
       // #4177: a catch-up asked for while this page was on the wire.
       if (st.loaded && st.again && GroupChat._isOpenThread(type, ref)) void GroupChat._refreshLatest(thread);
@@ -1723,6 +1790,11 @@ const GroupChat = {
     return init;
   },
   CATCH_UP_TIMEOUT_MS: 30_000,
+
+  // #4640: the first page of a thread's history gives up after this long, so
+  // a request that never settles shows "Couldn't load this thread." with its
+  // Try again control instead of "Loading…" forever.
+  THREAD_FIRST_PAGE_TIMEOUT_MS: 20_000,
 
   // The service worker stamps its saved copies (CACHED_AT_HEADER in sw.js).
   _fromSavedCopy(res) {
@@ -1964,6 +2036,16 @@ const GroupChat = {
     if (GroupChat._streamLoaded || GroupChat._historyLoad) void GroupChat._refreshLatest(null);
     else void GroupChat.loadHistory();
     for (const [key, st] of GroupChat.threads) GroupChat._resyncThread(key, st);
+    // #4640: the open thread the loop above skipped — one that is neither
+    // loaded nor reading (a first page still on the wire when the socket
+    // dropped, or one that failed) is never re-read by `_resyncThread`. Read
+    // it now: on reconnect this also retries a failed load, and the
+    // `st.loading` guard keeps it off the back of one already in flight.
+    const a = GroupChat.activeThread;
+    if (a && !a.closed) {
+      const st = GroupChat.threads.get(GroupChat.threadKey(a.type, a.ref));
+      if (!st || (!st.loaded && !st.loading)) void GroupChat.loadThreadHistory(a.type, a.ref);
+    }
   },
 
   // A re-read live-reads.ts asks for: everything (`urls` null), or the streams
@@ -2022,8 +2104,8 @@ const GroupChat = {
   },
 
   _threadScrollEl() {
-    return document.getElementById('gc-thread-scroll')
-      || document.getElementById('gc-thread-messages');
+    return GroupChat._threadEl('gc-thread-scroll')
+      || GroupChat._threadEl('gc-thread-messages');
   },
 
   // How near the bottom a thread counts as followed (thread-shell.tsx's
@@ -2089,7 +2171,9 @@ const GroupChat = {
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread(opts) {
     const a = GroupChat.activeThread;
-    const el = document.getElementById('gc-thread-messages');
+    // #4640: scoped to the mount's own host — a hidden Messages reply pane's
+    // shell must not win a document-wide id lookup over the side panel's.
+    const el = GroupChat._threadEl('gc-thread-messages');
     if (!a || !el) return;
     const scroll = GroupChat._threadScrollEl();
     // Unified topic layout: header + messages share #gc-thread-scroll.
@@ -2870,12 +2954,14 @@ const GroupChat = {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ message_id: newest, ...GroupChat._cursorScope(channel) }),
       });
-      // A topic's channel counts its unread in the project's places list
-      // (dev-board/workshop/place-store.ts); #general in Messages' list.
+      // A channel's unread count lives in the project's places list
+      // (dev-board/workshop/place-store.ts): a topic's by its ref, #general
+      // by `ref` null. Messages' list re-reads #general's count besides.
       if (channel) {
         if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref);
       } else {
         window.UsernodeReact?.messages?.refresh?.();
+        if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, null);
       }
       // Drained, so the request ends: an answer nobody reads stays open in
       // the browser, and a page that reads its channel never went idle.
@@ -2927,7 +3013,10 @@ const GroupChat = {
     GroupChat._unreadHold = slug;
     GroupChat._readUpTo = 0;
     if (channel) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref, true);
-    else window.UsernodeReact?.messages?.refresh?.();
+    else {
+      window.UsernodeReact?.messages?.refresh?.();
+      window.UsernodeReact?.places?.channelRead?.(slug, null, true);
+    }
   },
 
   _paintBookmark(messageId, on) {
