@@ -2007,13 +2007,16 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
 
 // #4738: on a wide window the four-column grid sat in a ~250px-wide cell
 // around a 56px icon, so a few apps spread across the whole page column.
-// The cap is on #app-list's box, so the overlay — inset by the same
-// padding, sized by the same engine — keeps lining up with zero arithmetic.
-test('the My apps grid is capped at 36rem on wide windows, overlay untouched (#4738)', () => {
+// Softened in review: the whole My apps area (heading, grid, Show all) is
+// capped at 48rem and centred, not the first cut's 36rem hug to the left.
+// The cap is on the area's box, so the overlay — inside #app-list, inset
+// by the same padding, sized by the same engine — keeps lining up with
+// zero arithmetic.
+test('the My apps area is capped at 48rem and centred on wide windows, overlay untouched (#4738)', () => {
   const wide = CSS.slice(CSS.indexOf('@media (min-width: 640px) {\n  .home-grid-overlay'),
-    CSS.indexOf('\n}\n', CSS.indexOf('#app-list:not([data-view="search"])')));
-  assert.match(wide, /#app-list:not\(\[data-view="search"\]\) \{\s*max-width: 36rem;\s*\}/,
-    'the grid box is capped, search results keep the full column');
+    CSS.indexOf('\n}\n', CSS.indexOf('#home-apps-section:not(:has(')));
+  assert.match(wide, /#home-apps-section:not\(:has\(#app-list\[data-view="search"\]\)\) \{\s*max-width: 48rem;\s*margin-inline: auto;\s*\}/,
+    'the area is capped and centred; a search hands the full column back');
   // The overlay's inset and gap are unchanged: it is inset by #app-list's
   // own padding, so any drift here is a jump at the end of the drop glide.
   const overlay = wide.match(/\.home-grid-overlay \{[^}]*\}/)[0];
