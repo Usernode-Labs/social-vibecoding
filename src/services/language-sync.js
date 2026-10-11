@@ -183,6 +183,15 @@ function userPrompt(items) {
   });
 }
 
+// Structured outputs (output_config.format) accept an object only when it is
+// closed: every object says `additionalProperties: false`. An open map of
+// strings (`additionalProperties: { type: 'string' }`) is refused, and that
+// refusal failed every request this step sent, so no translation was ever
+// written (#4641). A counted message's forms are therefore the six CLDR
+// plural categories, each optional; acceptItem reads the ones the language
+// uses and refuses an answer that leaves one out.
+const PLURAL_CATEGORIES = Object.freeze(['zero', 'one', 'two', 'few', 'many', 'other']);
+
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
@@ -193,7 +202,11 @@ const RESPONSE_SCHEMA = {
         properties: {
           id: { type: 'string' },
           text: { type: 'string' },
-          forms: { type: 'object', additionalProperties: { type: 'string' } },
+          forms: {
+            type: 'object',
+            properties: Object.fromEntries(PLURAL_CATEGORIES.map((category) => [category, { type: 'string' }])),
+            additionalProperties: false,
+          },
         },
         required: ['id'],
         additionalProperties: false,
@@ -367,6 +380,9 @@ async function syncTranslations({
   };
 
   let pending = requests;
+  // What sent each retry back, so a message that is not retried still says
+  // why it failed (a refused request reads as the API's own words).
+  const retryProblems = new Map();
   for (let round = 0; round < 2 && pending.length; round += 1) {
     const answers = await translate(pending, { round });
     const retry = [];
@@ -383,10 +399,14 @@ async function syncTranslations({
       if (round === 0) {
         // Asked again one at a time: one malformed message no longer takes
         // its neighbours down with it.
-        retry.push(...failed.map(({ item }, index) => ({
-          ...buildRequests(request.language, config.languages[request.language], [item], glossary, { chunkSize: 1 })[0],
-          customId: `${request.customId}-retry-${index}`,
-        })));
+        retry.push(...failed.map(({ item, problem }, index) => {
+          const again = {
+            ...buildRequests(request.language, config.languages[request.language], [item], glossary, { chunkSize: 1 })[0],
+            customId: `${request.customId}-retry-${index}`,
+          };
+          retryProblems.set(again.customId, problem);
+          return again;
+        }));
       } else {
         for (const { item, problem } of failed) summary.languages[request.language].failed.push({ id: item.id, problem });
       }
@@ -396,7 +416,10 @@ async function syncTranslations({
     // request per message. Those stay English, and the next pass tries again.
     if (retry.length > maxRetries) {
       for (const request of retry) {
-        for (const item of request.items) summary.languages[request.language].failed.push({ id: item.id, problem: 'not retried' });
+        const problem = retryProblems.get(request.customId);
+        for (const item of request.items) {
+          summary.languages[request.language].failed.push({ id: item.id, problem: problem ? `${problem}; not retried` : 'not retried' });
+        }
       }
       log(`${retry.length} message(s) failed; too many to retry one at a time`);
       break;
@@ -413,6 +436,7 @@ async function syncTranslations({
 module.exports = {
   CHUNK_SIZE,
   MODEL,
+  PLURAL_CATEGORIES,
   RESPONSE_SCHEMA,
   acceptItem,
   buildRequests,
