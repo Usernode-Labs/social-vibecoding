@@ -19997,6 +19997,27 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    call — stays in text ink. */
 .dev-ws-dash-cell-good b { color: var(--state-ok); }
 .dev-ws-dash-cell-warn b { color: var(--state-attention); }
+/* #4745: AND WHEN SOMETHING WAITS, THE VOTES FIGURE IS A BUTTON. The reset
+   takes the browser's button chrome off without taking the cell's own look
+   with it: the left border is the hairline between figures and stays
+   (:first-child still removes it), and font-size, line-height and colour all
+   keep coming from .dev-ws-dash-cell above — which is why the font reset is
+   the family and weight longhands, not the `font:` shorthand, whose
+   font-size would override the cell's. */
+button.dev-ws-dash-cell {
+  appearance: none;
+  background: none;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+button.dev-ws-dash-cell:hover .dev-ws-dash-label { color: var(--accent); }
+button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
    are alternatives over one board, and a shared rail says that where a gap
    between pills would read as two unrelated toggles. Deliberately NOT

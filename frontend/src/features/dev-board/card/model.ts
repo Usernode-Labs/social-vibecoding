@@ -732,6 +732,13 @@ export interface DevWorkshopView {
     open: number;
     themes: number;
     votesWaiting: number;
+    /**
+     * #4745: the waiting items' own addresses, in the same order the count
+     * reads them. The "waiting on a vote" figure opens the single one's page,
+     * or All items when several wait. Optional so older view objects still
+     * type-check.
+     */
+    votesWaitingRefs?: { kind: 'proposal' | 'gov'; id: number }[];
     /** Merges in the last 7 days, and in the 7 before them — a rate. */
     shippedWeek: number;
     shippedPrevWeek: number;

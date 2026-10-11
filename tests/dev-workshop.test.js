@@ -378,6 +378,10 @@ test('the dashboard is drawn every visit; "since" needs a baseline read once', (
   assert.equal(first.dashboard.open, 3);
   assert.equal(first.dashboard.themes, 1);
   assert.equal(first.dashboard.votesWaiting, 1);
+  // #4745: the figure routes its tap through these refs — the same bucket
+  // the count reads, each carrying the address its page opens on, in the
+  // bucket's order.
+  assert.deepEqual(plain(first.dashboard.votesWaitingRefs), [{ kind: 'proposal', id: 34 }]);
   assert.equal(first.dashboard.shippedWeek, 1);
   assert.equal(first.dashboard.people, 1, 'from the merge context, not a new request');
 
@@ -538,11 +542,30 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   };
   assert.ok(!cell('unclaimed').includes('dev-ws-dash-dot'), 'the unclaimed figure carries no mark');
 
+  // #4745: WITH SOMETHING WAITING, THE VOTES FIGURE IS A BUTTON. One waiting
+  // change is on the seeded board, so the tap has somewhere to go: the cell
+  // renders as a button carrying `data-ws-dash-open`, with the same class,
+  // the same figure and the same "on you" line the span had. The other three
+  // stay spans — only the votes figure routes a tap.
+  assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-warn" data-ws-dash-cell="votes" data-ws-dash-open="">/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="open"/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed"/);
+  assert.match(html, /<span class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped"/);
+
   // UNDER WAITING ON VOTES, HOW MANY WAIT ON YOU (After-Workshop-B): the
   // place bar's own count, in the accent, because it asks for the viewer.
   assert.match(cell('votes'), /<span class="dev-ws-dash-sub" data-ws-dash-sub="owed">1 on you<\/span>/);
   assert.match(CSS, /\.dev-ws-dash-sub\[data-ws-dash-sub="owed"\] \{ color: var\(--accent-wash-ink\); \}/);
-  assert.match(WORKSHOP, /<DashTiles d=\{v\.dashboard\} owed=\{owed\} \/>/, 'the same number the place bar counts');
+  // #4745: the tile routes its own tap — one waiting ref opens that item's
+  // page, anything else (several waiting, or a ref the count has but the
+  // refs lost) opens All items, where every waiting change is listed.
+  assert.match(WORKSHOP, /refs\.length === 1\) callAppView\('openTopic', refs\[0\]\.kind, refs\[0\]\.id\)/,
+    'one waiting opens that item\'s page');
+  assert.match(WORKSHOP, /else openTab\('all'\)/, 'several waiting open All items');
+  assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
+    'a keyboard focus ring, the chips\' own');
+  assert.match(CSS, /button\.dev-ws-dash-cell:hover \.dev-ws-dash-label \{ color: var\(--accent\); \}/,
+    'and the hover affordance beside it');
   // Open and unclaimed have no line: nothing stores what they were last week.
   assert.ok(!cell('open').includes('dev-ws-dash-sub') && !cell('unclaimed').includes('dev-ws-dash-sub'),
     'no trend nobody can stand behind');
@@ -562,6 +585,10 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.ok(!/dev-ws-dash-cell-(good|warn)/.test(calm), 'no tone on a resting figure');
   assert.ok(!calm.includes('dev-ws-dash-dot'), 'and no mark either');
   assert.ok(!calm.includes('data-ws-dash-sub'), 'and a zero says nothing under it');
+  // #4745: nothing waiting, nothing to open — the figure is the span it
+  // always was, with no tap affordance anywhere on the strip.
+  assert.ok(!calm.includes('data-ws-dash-open'), 'a resting figure does nothing when tapped');
+  assert.ok(!/<button type="button" class="dev-ws-dash-cell/.test(calm), 'and no figure is a button');
 
   // WHERE THE OPEN WORK IS, in chips, under the figures: it took the place
   // of the model's paragraph and of the sentence derived from the counts,
