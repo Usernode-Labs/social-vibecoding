@@ -22941,8 +22941,13 @@ html.in-side-panel body {
    title on one line in This week's weight, and at its end the card's status
    pill and Vote (#4486's pair, unchanged), then ☰; the line is as tall as
    Vote, so the glyph and ☰ centre on it whether or not the row has one. The
-   second line is the board's words, then the tags. On a narrow card the
-   title wraps (two lines at most) and the pill and Vote end the row, at its
+   second line is the item's number (and the requests it is for), its tags
+   most important first, then Homeroom bot's tag on a change it built for
+   you (#4716; your own work names nobody), on one line that scrolls
+   sideways and fades at its end, so nothing wraps; it sits above the row's
+   stretched link to take the swipe, and a click on it opens the item
+   (work-row.tsx). On a narrow card the title wraps (two lines at most)
+   and the pill and Vote end the row, at its
    far end, as they do on a phone today (#4718): the first line lets go of
    its box (`display: contents`) so the title and the pair are the column's
    own items, and the pair is ordered after the tags. */
@@ -22957,8 +22962,15 @@ html.in-side-panel body {
 }
 .dev-ws-lrow:has(.dev-ws-wrow-link:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-lrow-line > .dev-ws-wvote { flex: none; margin-left: 0; }
-.dev-ws-lrow .dev-ws-wrow-status { margin-top: 0; column-gap: 8px; }
-.dev-ws-lrow .dev-ws-wrow-sub { flex: 0 1 auto; min-width: 0; }
+.dev-ws-lrow .dev-ws-wrow-status {
+  position: relative; z-index: 1; margin-top: 0; column-gap: 8px; flex-wrap: nowrap; min-width: 0;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; cursor: pointer;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.dev-ws-lrow .dev-ws-wrow-status::-webkit-scrollbar { display: none; }
+.dev-ws-lrow .dev-ws-wrow-status > * { flex: none; }
+.dev-ws-lrow .dev-ws-wrow-sub { overflow: visible; }
 .dev-ws-lrow > .dev-ws-wrow-menu { margin-top: 1px; }
 @container (max-width: 520px) {
   .dev-ws-lrow > .dev-ws-hrow-glyph { height: 20px; }

@@ -51,7 +51,7 @@
  * names the item instead), as they never have.
  */
 
-import type { MouseEvent, ReactNode } from 'react';
+import { useRef, type MouseEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -141,6 +141,8 @@ export function rowWords(b: RowBrief, opts: {
   by?: boolean;
   /** Say how many replies it has, in words ("5 comments"). */
   replies?: boolean;
+  /** Say how long ago it was made (the default). Your work leaves it out (#4716). */
+  ago?: boolean;
 } = {}): string {
   const parts: string[] = [];
   for (const lead of typeof opts.lead === 'string' ? [opts.lead] : (opts.lead || [])) if (lead) parts.push(lead);
@@ -153,7 +155,7 @@ export function rowWords(b: RowBrief, opts: {
     parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
   }
   if (opts.replies && b.replies > 0) parts.push(translate('project:workRow.replies', { count: b.replies }));
-  if (b.ago) parts.push(b.ago);
+  if (b.ago && opts.ago !== false) parts.push(b.ago);
   return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
 }
 
@@ -178,6 +180,14 @@ function Tag({ t }: { t: RowTag }): ReactNode {
     </span>
   );
 }
+
+/**
+ * Your work's tags line, most important first (#4716): what is wrong, then
+ * what needs attention, what is running, what is done, then the rest. The
+ * line keeps to one line and scrolls sideways, so what comes first is what
+ * shows. A tag's tone says how much it matters, whatever its words.
+ */
+const TAG_RANK: Record<RowTag['tone'], number> = { bad: 0, warn: 1, run: 2, ok: 3, plain: 4 };
 
 /**
  * A change's vote on the Workshop tab (#4486): the card's own status pill,
@@ -214,6 +224,8 @@ export function WorkRow({
 }): ReactNode {
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
+  // The line row's title link, which a click on its tags line opens (#4716).
+  const linkRef = useRef<HTMLAnchorElement>(null);
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -244,7 +256,8 @@ export function WorkRow({
     // #4716: Your work in This week's one-line row. The first line is the
     // small glyph, the title on one line and, at its end, the card's status
     // pill with Vote (live work: its "✓ Live" bar), as This week ends its
-    // line with the time; the second is the board's words, then the tags.
+    // line with the time; the second is the item's number and what it is
+    // for, its tags most important first, then who made it, on one line.
     // A narrow card wraps the title and moves the pill and Vote to the
     // row's end, under the tags, as a phone has them today (app.css
     // `.dev-ws-lrow`).
@@ -252,8 +265,21 @@ export function WorkRow({
     // Live work's bar is on the first line, so its tags drop the one that
     // restates it: a merged item's settled tag is that pill's own label
     // (AppView._workshopBrief `settled`), "Going live…" on a release still
-    // under way.
-    const lineTags = live && pill ? tags.filter((t) => t.label !== pill.label) : tags;
+    // under way. The preview tag stays on the item's page: Your work is
+    // what the work needs, and a preview is there to open, not to act on.
+    const lineTags = (live && pill ? tags.filter((t) => t.label !== pill.label) : tags)
+      .filter((t) => t.glyph !== 'eye');
+    // Who made it is said at most once, never as a name in the words. What
+    // you made says nothing: everything in Your work is yours unless it
+    // says otherwise. Homeroom bot's change from your request says so with
+    // its tag (#4728), and a private session of yours keeps its "Only you";
+    // either goes after the status tags. A request you are working on keeps
+    // whoever asked for it in its words: it is often somebody else's, and
+    // its "Picked up · you" already says you are on it.
+    const request = b.kind === 'request';
+    const maker = request ? null
+      : lineTags.find((t) => t.glyph === 'bot') || (b.mine ? lineTags.find((t) => t.glyph === 'lock') : undefined) || null;
+    const ranked = lineTags.filter((t) => t !== maker).sort((x, y) => TAG_RANK[x.tone] - TAG_RANK[y.tone]);
     return (
       <div
         className="dev-ws-wrow dev-ws-lrow"
@@ -267,6 +293,7 @@ export function WorkRow({
           <span className="dev-ws-lrow-line">
             {href ? (
               <a
+                ref={linkRef}
                 className="dev-ws-wrow-link"
                 href={href}
                 aria-current={on ? 'true' : undefined}
@@ -277,11 +304,21 @@ export function WorkRow({
             ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
             {end}
           </span>
-          <span className="dev-ws-wrow-status">
-            <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
+          {/* One line that scrolls sideways (app.css), so it sits above the
+              row's stretched link; a click on it that is not on a chip opens
+              the item, as a click anywhere else on the row does. */}
+          <span
+            className="dev-ws-wrow-status"
+            onClick={(e) => {
+              if ((e.target as Element).closest('a, button')) return;
+              linkRef.current?.click();
+            }}
+          >
+            <span className="dev-ws-wrow-sub">{rowWords(b, { by: request || !(maker || b.mine), ago: false })}</span>
+            {ranked.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {maker ? <Tag t={maker} /> : null}
             {chip}
             {chat}
-            {lineTags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
           </span>
         </span>
         {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}

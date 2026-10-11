@@ -2244,10 +2244,11 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   const html = workshopHtml(AppView, 'workshop');
   const lane = html.split('data-ws-lane="mine"')[1] || '';
   // The row names the bot as its maker and the request it is for — never
-  // "yours", because the bot made it. #4486: in the board's words, with its
-  // PR number and its age.
+  // "yours", because the bot made it. #4716: its PR number and the request
+  // it is for in words, and the bot once, as its tag; no age.
   assert.match(lane, /Dark mode toggle/);
-  assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · Homeroom bot · for #208 · [^<]+ ago<\/span>/);
+  assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · for #208<\/span>/);
+  assert.equal(lane.split('Homeroom bot').length - 1, 1, 'the bot is named once, by its tag');
   assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
 
   // #4728: the row's first tag says the bot built it from the viewer's
@@ -2442,8 +2443,12 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   const from = html.indexOf('data-ws-lane="mine"');
   const lane = html.slice(from, html.indexOf('</section>', from));
   assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow dev-ws-lrow" data-ws-row="mine:/);
-  assert.match(lane, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><\/span><span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">Change(?: · [^<·]+)? · for #12 · [^<]+ ago<\/span><span class="dev-ws-tag" data-tone=/,
-    'the title on its line, then the board\'s words leading its tags line');
+  assert.match(lane, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><\/span><span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">Change · for #12<\/span><span class="dev-ws-tag" data-tone=/,
+    'the title on its line, then what it is and what it is for leading its tags line, with no maker and no age (#4716)');
+  // #4716: a private session of yours is yours by its "Only you" tag, last
+  // on the line, rather than a You tag beside it.
+  assert.match(lane, /Started<\/span><span class="dev-ws-tag" data-tone="plain" title="[^"]*"><svg[^>]*>[\s\S]*?<\/svg>Only you<\/span><\/span>/);
+  assert.ok(!/<\/svg>You<\/span>/.test(lane), 'and no You tag beside it');
   assert.ok(lane.includes('<span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true">'), 'This week\'s small glyph');
   assert.ok(!lane.includes('dev-ws-wrow-tile'), 'not the tile');
   assert.ok(lane.includes('dev-ws-wrow-menu'), 'and its ☰');
@@ -2522,9 +2527,10 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   assert.match(html, /^<div class="dev-ws-wrow dev-ws-lrow" data-ws-row="[^"]+" data-ws-kind="change" data-ws-open="proposal:34"><span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true"><svg/);
   assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34">[^<]+<\/a><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state [^"]*dev-ws-wvote-state"[^>]*>[^<]+<\/span><span class="dev-ws-wvote-btn"><button type="button" class="dev-vote-btn"[^]*?<\/button><\/span><\/span><\/span>/,
     'the title, then the pill, then Vote, closing the first line');
-  // The second: the board's words, then the tags, and no vote.
+  // The second: the number and its maker (somebody else's, so named), then
+  // the tags, and no vote. No age (#4716).
   const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
-  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR #34 · bob · 4m ago<\/span><span class="dev-ws-tag" data-tone="run"/);
+  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR #34 · bob<\/span><span class="dev-ws-tag" data-tone="run"/);
   assert.ok(!second.includes('dev-ws-wvote'), 'the tags line holds no vote');
   assert.ok(!html.includes('dev-ws-wrow-votes') && !html.includes('dev-ws-wrow-tile'), 'no votes line and no tile');
   assert.ok(html.includes('dev-ws-wrow-menu'), 'and its ☰');
@@ -2543,6 +2549,64 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   assert.match(CSS, /\.dev-ws-lrow-line > :not\(\.dev-ws-wrow-link\) \{ order: 1; align-self: flex-end; margin-top: 4px; \}/);
   // The nested link still rings the row when it has focus.
   assert.match(CSS, /\.dev-ws-lrow:has\(\.dev-ws-wrow-link:focus-visible\) \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/);
+});
+
+test('#4716: Your work\'s tags line names the bot once and you never, drops the preview and the age, and keeps to one line, most important first', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const base = { kind: 'change', noun: 'change', n: 4724, by: message('changes:workshop.row.byBot'), mine: false, category: '', replies: 0,
+    linked: [4716], closed: [], stage: 'vote', at: 0, ago: '17h ago', vote: { yes: 1, need: 1, ask: false } };
+  const botName = message('changes:workshop.row.tag.homeroomBot');
+  const tags = [
+    { label: botName, tone: 'plain', glyph: 'bot' },
+    { label: 'Conflicts with main · 3 files', tone: 'warn' },
+    { label: 'Checks failing · 1', tone: 'bad' },
+    { label: 'Preview ready to try', short: 'Preview', tone: 'plain', glyph: 'eye' },
+    { label: 'Taking shots', tone: 'run' },
+  ];
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...base, tags } }, slug: 'demo-app', variant: 'line' }));
+  const second = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'));
+  // The words: its number and what it is for. Who made it is its tag, and
+  // its age is on its page.
+  assert.match(second, /^<span class="dev-ws-wrow-status"><span class="dev-ws-wrow-sub">PR #4724 · for #4716<\/span>/);
+  // The tags by how much they matter, by tone: what is wrong, what needs
+  // attention, what is running; then who made it.
+  assert.deepEqual([...second.matchAll(/<span class="dev-ws-tag" data-tone="(\w+)"/g)].map((m) => m[1]), ['bad', 'warn', 'run', 'plain']);
+  assert.match(second, new RegExp(`Taking shots</span><span class="dev-ws-tag" data-tone="plain"><svg[^>]*>[\\s\\S]*?</svg>${botName}</span>`),
+    'the bot\'s tag after the status tags');
+  assert.equal(html.split(botName).length - 1, 1, 'the bot is named once');
+  assert.ok(!html.includes('Preview'), 'no preview tag');
+  // Yours names nobody: everything in Your work is yours unless it says
+  // otherwise, so neither your name nor a tag for you.
+  const mine = renderToHtml(createElement(WorkRow, {
+    row: { ...row, brief: { ...base, by: 'evan', mine: true, tags: [{ label: 'Checks', tone: 'run' }] } }, slug: 'demo-app', variant: 'line',
+  }));
+  assert.match(mine, /<span class="dev-ws-wrow-sub">PR #4724 · for #4716<\/span><span class="dev-ws-tag" data-tone="run">[\s\S]*?Checks<\/span><\/span>/);
+  assert.ok(!mine.includes('evan'));
+  assert.ok(!/<\/svg>You<\/span>/.test(mine), 'no You tag');
+  // A request you are working on keeps whoever asked for it, often somebody
+  // else, and has no maker tag: "Picked up · you" already says you.
+  const req = renderToHtml(createElement(WorkRow, {
+    row: { ...row, brief: { ...base, kind: 'request', noun: 'request', n: 12, by: 'alice', mine: true, linked: [], vote: null,
+      tags: [{ label: 'Picked up · you', tone: 'plain' }] } }, slug: 'demo-app', variant: 'line',
+  }));
+  assert.match(req, /<span class="dev-ws-wrow-sub">#12 · alice<\/span><span class="dev-ws-tag" data-tone="plain">Picked up · you<\/span>/);
+  assert.ok(!/<\/svg>You<\/span>/.test(req));
+  // The week pages keep the board's words in full, and the preview.
+  const list = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...base, tags } }, slug: 'demo-app' }));
+  assert.match(list, new RegExp(`<span class="dev-ws-wrow-sub">PR #4724 · ${base.by} · for #4716 · 17h ago</span>`));
+  assert.ok(list.includes('Preview'));
+  // One line that scrolls sideways and fades at its end, above the row's
+  // stretched link so it takes the swipe; a click on it that is not on a
+  // chip opens the item.
+  assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-status \{\s*position: relative; z-index: 1; margin-top: 0; column-gap: 8px; flex-wrap: nowrap; min-width: 0;\s*overflow-x: auto;/);
+  assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-status > \* \{ flex: none; \}/);
+  assert.match(read('frontend/src/features/dev-board/workshop/work-row.tsx'),
+    /if \(\(e\.target as Element\)\.closest\('a, button'\)\) return;\s*linkRef\.current\?\.click\(\);/);
 });
 
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
