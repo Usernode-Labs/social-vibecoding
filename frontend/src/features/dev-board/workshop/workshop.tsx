@@ -96,7 +96,7 @@ import {
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { ProjectPlaces } from './project-places';
-import { clearPlace, publishPlace, publishSide, registerPlaceOpener } from './place-store';
+import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
@@ -4236,9 +4236,25 @@ export function DevWorkshop(): ReactNode {
     });
     return () => { undo(); clearPlace(mine); };
   }, [v.slug]);
+  // What waits elsewhere: the channel on screen is being read. Computed ahead
+  // of the publish below so the merged header's button carries it too (#4703).
+  const here = isChannelPlace(tab) ? findChannel(community?.places, placeHandle(tab)) : null;
+  const unreadElsewhere = Math.max(0, unreadTotal(community?.places)
+    - (here && here.state === 'live' ? Math.max(0, Number(here.unread) || 0) : 0));
   useEffect(() => {
-    if (v.slug && !v.loading) publishPlace(v.slug, tab, owed);
-  }, [v.slug, v.loading, tab, owed]);
+    if (v.slug && !v.loading) publishPlace(v.slug, tab, owed, unreadElsewhere, trayOpen);
+  }, [v.slug, v.loading, tab, owed, unreadElsewhere, trayOpen]);
+  // #4703: the merged header's places button (place-bar.tsx HeaderPlace)
+  // presses the same toggle the bar's button does, published here so the
+  // header need not own the tray.
+  const trayToggleRef = useRef(() => {});
+  trayToggleRef.current = () => { trayNav.current = false; setTrayOpen((open) => !open); };
+  useEffect(() => {
+    if (!v.slug) return undefined;
+    const mine = v.slug;
+    const undo = registerTrayToggle(mine, () => trayToggleRef.current());
+    return () => { undo(); };
+  }, [v.slug]);
   const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all');
   useEffect(() => {
     if (v.slug) publishSide(v.slug, sideOpen);
@@ -4286,10 +4302,6 @@ export function DevWorkshop(): ReactNode {
      what the pinned pane head and its band are measured against (`setBar`).
      The back bar scrolls away under it. */
   const projectName = app.name || community?.name || slug;
-  const here = isChannelPlace(tab) ? findChannel(community?.places, placeHandle(tab)) : null;
-  // What waits elsewhere: the channel on screen is being read.
-  const unreadElsewhere = Math.max(0, unreadTotal(community?.places)
-    - (here && here.state === 'live' ? Math.max(0, Number(here.unread) || 0) : 0));
   const choosePlace = (key: TabKey) => {
     trayNav.current = true;
     setTrayOpen(false);
@@ -4314,7 +4326,16 @@ export function DevWorkshop(): ReactNode {
       id={trayId}
       label={t('project:places.tray.name', { project: projectName })}
       onClose={() => { trayNav.current = false; setTrayOpen(false); }}
-      returnTo={() => placesBtn.current}
+      // #4703: focus returns to the button that opened the tray — the merged
+      // header's on a phone, the bar's own on a wide window — whichever is
+      // connected and visible (the band's button is display:none under 768px,
+      // so its offsetParent is null there).
+      returnTo={() => {
+        const header = trayButton();
+        if (header && header.isConnected && header.offsetParent) return header;
+        const bar = placesBtn.current;
+        return bar && bar.isConnected && bar.offsetParent ? bar : null;
+      }}
       navigating={() => trayNav.current}
     >
       <ProjectPlaces
