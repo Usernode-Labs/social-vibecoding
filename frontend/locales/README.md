@@ -104,7 +104,8 @@ other change.
   message. A pass that wrote less than it asked for logs one `language-sync`
   line at warn level: how many requests failed, counted by reason
   (`errored: invalid_request_error`), one error message as the API worded it
-  (cut to 300 characters and masked for secrets like any log line), the
+  (masked for secrets like any log line, then cut to 300 characters at
+  most, where the logger's own masking cannot lengthen it again), the
   batch's own request counts, and what the checks refused, by kind. The step
   itself puts no message text in that line; the API's wording is the API's.
   A request that failed while others were answered has its messages asked

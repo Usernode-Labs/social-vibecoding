@@ -1412,6 +1412,35 @@ function catalogAnswer(message) {
 }
 
 /**
+ * An error's wording as it may be logged, stored or returned: one line,
+ * masked for secrets like any log line, at most `max` characters, and
+ * unchanged by masking it again. The whole text is masked before any cut,
+ * because a cut can take the closing quote off a quoted secret. The cut is
+ * then moved back until masking the result again leaves it as it is: a cut
+ * that splits a mask (`TOKEN=**`) would be grown back past the limit by the
+ * logger's own masking, and one that ends on `TOKEN=` or on a mask would
+ * have the logger mask whatever follows it on the line.
+ */
+function boundedErrorText(text, max = 300) {
+  const masked = redactString(String(text ?? '').replace(/\s+/g, ' ').trim());
+  // The logger masks its whole line, with this text inside its JSON data, so
+  // the text must also come through unchanged from there.
+  const settled = (candidate) => {
+    if (candidate.length > max || redactString(candidate) !== candidate) return false;
+    const inData = JSON.stringify({ example: candidate, next: 'value' });
+    return redactString(inData) === inData;
+  };
+  for (let length = Math.min(masked.length, max); length > 0; length -= 1) {
+    const cut = redactString(masked.slice(0, length)).trimEnd();
+    if (settled(cut)) return cut;
+    // A mask at the very end would take the rest of the logger's line for
+    // its value; a mark after it keeps the mask and the line.
+    if (settled(`${cut} …`)) return `${cut} …`;
+  }
+  return '';
+}
+
+/**
  * Why a request produced no message, for the step's log and its status:
  * `kind` is how it ended (a batch entry's result type, or 'request' for a
  * direct call), `type` the API's error type, `message` the API's own wording.
@@ -1425,9 +1454,7 @@ function catalogFailure(kind, response, fallback, status) {
   const detail = response && typeof response === 'object'
     ? (response.error && typeof response.error === 'object' ? response.error : response)
     : {};
-  // Masked whole, then cut: cutting first can take the closing quote off a
-  // quoted secret, and masking can lengthen the text.
-  const message = redactString(String(detail.message || fallback || '').replace(/\s+/g, ' ').trim()).slice(0, 300);
+  const message = boundedErrorText(detail.message || fallback);
   const failure = { kind };
   if (typeof detail.type === 'string' && detail.type !== 'error') failure.type = detail.type.slice(0, 60);
   else if (status) failure.type = `http_${status}`;
@@ -3446,7 +3473,7 @@ module.exports = {
   FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
   generateSinceSummary, SINCE_SUMMARY_VERSION,
   // The translation step's transport — see services/language-sync.js.
-  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers, catalogFailure,
+  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers, catalogFailure, boundedErrorText,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,

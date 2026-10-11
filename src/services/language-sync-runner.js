@@ -153,16 +153,14 @@ function spendCents(answers, { batch = false } = {}) {
 // ── A pass that produced nothing, or less than it asked for ───────────
 
 const MAX_REASONS = 6;
-const MAX_MESSAGE = 300;
 
 /**
  * An error's wording as the step logs, keeps and returns it: one line,
- * masked for secrets like any log line, then cut. Masked whole before the
- * cut, because a cut can take the closing quote off a quoted secret and
- * masking can lengthen the text.
+ * masked for secrets, at most 300 characters, and unchanged by the logger's
+ * own masking (llm.boundedErrorText).
  */
 function bounded(text) {
-  return log.redactString(String(text ?? '').replace(/\s+/g, ' ').trim()).slice(0, MAX_MESSAGE);
+  return llm.boundedErrorText(text);
 }
 
 /** The commonest entries of a { reason: count } tally. */

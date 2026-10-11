@@ -715,7 +715,7 @@ test('an error message is masked whole and then cut to 300 characters', async (t
     for (const out of [viaTransport, runner.bounded(text), runner.bounded(viaTransport)]) {
       assert.ok(out.length <= 300, `${out.length} characters`);
       assert.doesNotMatch(out, /synthetic|credential|continues|TOKEN=a/);
-      assert.match(out, /TOKEN=\*+$|TOKEN=\*{4}/);
+      assert.doesNotMatch(out, /TOKEN=(?!\*{4}(\s|$)|\s)/, 'no split mask, and nothing but a mask after the sign');
     }
   }
   assert.equal(runner.bounded('one\n  two '), 'one two');
@@ -735,6 +735,93 @@ test('an error message is masked whole and then cut to 300 characters', async (t
   await q.run();
   assert.ok(q.db.state.failure.example.length <= 300);
   assert.doesNotMatch(JSON.stringify([q.logged, q.db.state]), /TOKEN=a/);
+});
+
+test('what the real logger emits and keeps of an error stays masked and within 300 characters', async (t) => {
+  const llm = require('../src/services/llm');
+  const logger = require('../src/services/logger');
+  const { redactString } = require('../src/services/log-redaction');
+  // The property: masking the bounded text again changes nothing, so no later
+  // masking (the logger's own) can lengthen it. Cuts that land inside a
+  // mask, inside a quoted value, right after the "=", and inside a key.
+  const pad = (n) => 'y'.repeat(n);
+  const adversarial = [
+    `${pad(291)} TOKEN=a`,
+    `${pad(292)} TOKEN=a`,
+    `${pad(293)} TOKEN=abcdef`,
+    `${pad(294)} TOKEN=abcdef`,
+    `${pad(289)} TOKEN="a b c d e f"`,
+    `${pad(274)} TOKEN="synthetic credential value continues beyond cutoff"`,
+    `${pad(280)} password: hunter2hunter2`,
+    `${pad(285)} sk-ant-api03-${'A'.repeat(40)}`,
+    `${pad(250)} postgres://role:secretsecret@db.internal:5432/app and more text after it`,
+    `${pad(296)} API_KEY=zzzzzzzz TOKEN=b`,
+    `TOKEN=a ${pad(400)}`,
+    `${pad(299)}=`,
+  ];
+  for (let n = 280; n <= 300; n += 1) adversarial.push(`${pad(n)} SECRET_KEY=abc123 trailing`);
+  for (const text of adversarial) {
+    for (const out of [
+      runner.bounded(text),
+      llm.catalogFailure('errored', { type: 'error', error: { type: 'api_error', message: text } }).message,
+    ]) {
+      assert.ok(out.length <= 300, `${out.length} characters`);
+      assert.equal(redactString(out), out, `masking again changes it: …${out.slice(-24)}`);
+      const inData = JSON.stringify({ example: out, next: 'value' });
+      assert.equal(redactString(inData), inData, `the logger's line masks differently: …${out.slice(-24)}`);
+      assert.doesNotMatch(out, /TOKEN=a|abcdef|hunter2|synthetic|secretsecret|sk-ant-api03-A|abc123|zzzz/);
+    }
+  }
+  assert.equal(runner.bounded(pad(400)), pad(300), 'plain text keeps all 300');
+  assert.equal(runner.bounded(`${pad(100)} TOKEN=a`), `${pad(100)} TOKEN=**** …`, 'a mask at the end is followed by a mark');
+  assert.equal(runner.bounded(`TOKEN=a ${pad(10)}`), `TOKEN=**** ${pad(10)}`);
+
+  // Through the real logger: the printed line, the Recent events buffer, the saved state and the tool's answer.
+  const grows = `${pad(291)} TOKEN=a`;
+  const printed = [];
+  const warn = console.warn;
+  console.warn = (line) => printed.push(String(line));
+  t.after(() => { console.warn = warn; });
+  const emitted = (message) => {
+    const event = logger.tail(200).find((e) => e.category === 'language-sync' && e.message.startsWith(message));
+    assert.ok(event, message);
+    const line = printed.find((text) => text.includes(message));
+    assert.ok(line, 'printed');
+    return { event, line };
+  };
+  const check = async (p, message) => {
+    p.deps.log = logger;
+    printed.length = 0;
+    await p.run();
+    const { event, line } = emitted(message);
+    const shown = (await runner.status(p.pool, { now: p.clock.now })).failure;
+    for (const example of [event.data.example, p.db.state.failure.example, shown.example]) {
+      assert.ok(example.length <= 300, `${example.length} characters`);
+      assert.doesNotMatch(example, /TOKEN=a/);
+    }
+    assert.equal(event.data.example, p.db.state.failure.example, 'the buffer holds what the state holds');
+    assert.ok(line.includes(JSON.stringify(p.db.state.failure.example)), 'and the printed line carries the same text');
+  };
+  // A direct request refused.
+  const direct = platform(t);
+  direct.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, {
+    error: 'refused', failure: llm.catalogFailure('request', { type: 'error', error: { type: 'invalid_request_error', message: grows } }),
+  }]));
+  await check(direct, 'Every translation request failed');
+  // A batch whose entries errored.
+  const batch = platform(t, { english: bulk(t) });
+  await batch.run();
+  Object.assign(batch.batches[0], {
+    status: 'ended',
+    answers: (requests) => new Map(requests.map((request) => [request.customId, { error: 'errored', failure: { kind: 'errored', type: 'invalid_request_error', message: grows } }])),
+  });
+  await check(batch, 'Every translation request failed');
+  // A batch the API would not take.
+  const refused = platform(t, { english: bulk(t) });
+  refused.llm.submitCatalogBatch = async () => {
+    throw Object.assign(new Error(`400 ${grows}`), { status: 400, error: { type: 'error', error: { type: 'invalid_request_error', message: grows } } });
+  };
+  await check(refused, 'The translation batch was refused');
 });
 
 /** 61 plain messages: two direct requests. */
