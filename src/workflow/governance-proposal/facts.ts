@@ -2,13 +2,17 @@
 // instance lock: the issue and its app, the gate's inputs, the voter, and
 // whether applying now would fail. Read fresh every event; nothing cached.
 
-import { legacy } from '../legacy.ts';
 import type { Event, Tx } from '../kernel/index.ts';
+import { electorate } from '../rules/electorate.ts';
+import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
+import { GOVERNANCE_KINDS as KINDS } from '../rules/governance-kinds.ts';
+import { parseGithubUrl } from '../rules/github-url.ts';
+import { missingProposalImage } from '../rules/illustrations.ts';
+import { isWritableKey, normalizeValue, validateValue } from '../rules/platform-vars.ts';
+import { decrypt } from '../rules/secrets.ts';
 import type { GateInputs, Vote, Voter } from './gate.ts';
 
-export const GOVERNANCE_KINDS: ReadonlySet<string> = new Set(
-  legacy('services/governance-kinds').GOVERNANCE_KINDS as string[],
-);
+export const GOVERNANCE_KINDS: ReadonlySet<string> = new Set(KINDS);
 
 export interface Issue {
   id: number;
@@ -33,7 +37,7 @@ export interface Facts {
 
 // The platform's own parser: https, ssh, a .git suffix, and dotted names.
 function parseRepo(url: string | null): Issue['app']['repo'] {
-  return legacy('services/github').parseGithubUrl(url || '');
+  return parseGithubUrl(url || '');
 }
 
 // One vote on the proposal, as the facts read it.
@@ -107,13 +111,11 @@ export function countVotes(votes: VoteRow[], approverIds: number[] | null, autho
   };
 }
 
-// The electorate is [main]'s JavaScript (governance.getElectorate), with
-// the app row passed in so it costs one query.
+// The electorate (rules/electorate.ts, which services/governance.js uses
+// too), with the app row passed in so it costs one query.
 async function readGate(tx: Tx, issue: Issue, v: any): Promise<{ gate: GateInputs; approverIds: number[] | null }> {
-  const governance = legacy('services/governance');
-  const gov = governance.governanceFromRow(v);
-  const { active, approverIds } = await governance.getElectorate(tx, issue.appId, gov,
-    legacy('services/active-users').appMetaFromRow(v));
+  const gov = governanceFromRow(v);
+  const { active, approverIds } = await electorate(tx, issue.appId, gov, appMetaFromRow(v));
   const explicitApproval = issue.kind === 'secret_change';
   const votes = v.votes as VoteRow[];
   const counts = countVotes(votes, approverIds, issue.createdBy);
@@ -150,16 +152,18 @@ async function readRefusal(tx: Tx, issue: Issue, dataKey: string): Promise<strin
     case 'maintenance_campaign':
       return typeof p.instructions === 'string' && p.instructions.trim() ? null : 'missing_instructions';
     case 'featured_illustration':
-      return legacy('services/illustration-proposals').missingProposalImage(tx, issue.appId, p, issue.id);
+      return missingProposalImage(tx, issue.appId, p, issue.id);
     case 'secret_change': {
-      const platformEnv = legacy('services/platform-env');
       const key = String(p.key || '').trim();
       if (!key) return 'missing_key';
-      if (issue.app.selfHosted && !platformEnv.isWritableKey(key)) return 'unwritable';
+      if (issue.app.selfHosted && !isWritableKey(key)) return 'unwritable';
       if (p.action === 'delete') return null;
-      const plaintext = legacy('services/secrets').decrypt(p.valueEnc, dataKey);
+      // Without the data key every value reads as unreadable: a fault of
+      // this process's configuration, never a verdict on the proposal.
+      if (!dataKey) throw new Error('The data encryption key is not configured; the proposed value cannot be read');
+      const plaintext = decrypt(p.valueEnc, dataKey);
       if (!plaintext) return 'undecryptable';
-      if (issue.app.selfHosted && platformEnv.validateValue(platformEnv.normalizeValue(plaintext))) return 'invalid_value';
+      if (issue.app.selfHosted && validateValue(normalizeValue(plaintext))) return 'invalid_value';
       return null;
     }
     default:

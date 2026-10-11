@@ -1335,10 +1335,15 @@ async function becomeLeader() {
   // Resume fleet maintenance campaigns interrupted by the restart —
   // campaign state is a DB state machine (maintenance_campaign_apps),
   // so re-entering the loop just continues from the first pending app.
+  // Again every two minutes: a driver that stopped anywhere (a follower's
+  // run, a process that died) lets its lease lapse, and this takes it up;
+  // one still running keeps it (fleet-maintenance.runCampaign).
   const { resumeRunningCampaigns } = require('./src/services/fleet-maintenance');
-  resumeRunningCampaigns(config, getPool(config)).catch((err) => {
+  const resumeCampaigns = () => resumeRunningCampaigns(config, getPool(config)).catch((err) => {
     log.warn('server', 'Campaign resume failed', { err: err.message });
   });
+  resumeCampaigns();
+  setInterval(resumeCampaigns, 2 * 60 * 1000).unref?.();
 
   // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
   // side) works on every color; only the leader drains the queue.

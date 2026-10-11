@@ -12,8 +12,13 @@ import type {
   Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { legacy } from '../legacy.ts';
-import { appVersion, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
+import { changeClosed } from '../rules/agent-notes.ts';
+import { resolveIssueBounty } from '../rules/bounties.ts';
+import { createPrMergedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
+import { authorLine, closingComment, liveLine, threadLine } from '../rules/included-lines.ts';
+import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
+import { applyInTransaction } from '../rules/pending-secret-apply.ts';
+import { appVersion, chatLine, issuesClosed, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -130,6 +135,9 @@ const EVENTS = {
       },
       carrierState: p.carrierState as 'delivering' | 'live' | 'deploy_failed',
       deliveredSha: sha(p?.deliveredSha, 'deliveredSha'),
+      // The head the carrier found among its commits (absent from a message
+      // sent before it was carried: then the head is not compared).
+      head: sha(p?.head, 'head'),
     };
   },
   // Production of this app now runs `sha` (a rebuild that succeeded, or the
@@ -147,13 +155,16 @@ const EVENTS = {
 
 // How far before a merge a recorded boot still counts as possibly after it.
 const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
+// How long to wait before looking again at a shots run that keeps the
+// change's worker (worker.retire).
+const RETIRE_RECHECK_MS = 2 * 60 * 1000;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
 const prRef = (d: { prNumber: number | null; sessionId: number }) => `PR #${d.prNumber || d.sessionId}`;
 const label = (d: { prNumber: number | null; sessionId: number; prTitle: string | null }) =>
   (d.prTitle ? `${prRef(d)}: ${d.prTitle}` : prRef(d));
-const legacyRow = (r: { sessionId: number; prNumber: number | null; prTitle: string | null }) =>
+const prRow = (r: { sessionId: number; prNumber: number | null; prTitle: string | null }) =>
   ({ id: r.sessionId, pr_number: r.prNumber, pr_title: r.prTitle });
 
 function failureLine(d: Data, message: string): string {
@@ -229,11 +240,16 @@ function deliverWork(d: Data, f: Facts | null): WorkRequest {
   return { kind: WORK.deliver, key, input: { appId: d.appId, sessionId: d.sessionId, mergeSha: d.mergeSha, prNumber: d.prNumber, reuse } };
 }
 
+// Its preview goes. For a merge that is delivered here, only once the
+// delivery has its result: in demo mode the delivery deploys the preview's
+// own build, and the teardown drops the preview's reference to it.
+const teardownWork = (d: Data): WorkRequest => ({ kind: WORK.teardown, key: 'teardown', input: { sessionId: d.sessionId } });
+
 // What every merged change has to have done: its preview and worker go, the
 // bot stops its other work on the request, and the requests close.
-function settleWork(d: Data, linkedIssues: number[], closeOnly: boolean): WorkRequest[] {
+function settleWork(d: Data, linkedIssues: number[], closeOnly: boolean, { teardown = true } = {}): WorkRequest[] {
   const work: WorkRequest[] = [
-    { kind: WORK.teardown, key: 'teardown', input: { sessionId: d.sessionId } },
+    ...(teardown ? [teardownWork(d)] : []),
     { kind: WORK.retire, key: 'worker', input: { sessionId: d.sessionId } },
     { kind: WORK.bot, key: 'bot', input: { sessionId: d.sessionId, before: d.mergedAt } },
   ];
@@ -272,7 +288,7 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // The platform's own app is released by its pipeline, not by this
   // process: its release booting appends Deployed.
   const work: WorkRequest[] = app.selfHosted ? [] : [deliverWork(d, f)];
-  work.push(...settleWork(d, s.linkedIssues, false));
+  work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
@@ -280,9 +296,14 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
     { type: 'badgeSync', sessionId: d.sessionId }];
   if (app.selfHosted) notify.push({ type: 'nudgeDeployer', sha: d.mergeSha, prNumber: d.prNumber });
+  // The requests it closes stop showing as open in every web process at
+  // once, as [main]'s merge had its own process do (GitHub closes
+  // `Closes #N` late); issues.closeAfterMerge makes sure they close.
+  const push: Push[] = [voteUpdate(d, {})];
+  if (d.repo && s.linkedIssues.length) push.push(issuesClosed({ ...d.repo, numbers: s.linkedIssues }));
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
-    work, notify, push: [voteUpdate(d, {})],
+    work, notify, push,
   };
   // The platform's own release reports itself when it boots, to the merges
   // waiting then. A merge recorded after such a boot (recovery finding it
@@ -304,12 +325,21 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
 // and MARK_SQL conditions, now read under the change's own lock. The
 // message is then refused and no instance is made, so the change can still
 // merge on its own, or be included by a later merge.
-function notIncludable(f: Facts, carrierAppId: number | null): string | null {
+//
+// What is working on it is read from the durable record of each: the turn's
+// journal (active_turn), a live shots run, checks running, and the head the
+// carrier matched (a change revised since it was listed merges on its own).
+// The operations that keep no durable record while they run are left out by
+// the search before this (services.ts included.find, isSessionBusy).
+function notIncludable(f: Facts, carrierAppId: number | null, head: string | null): string | null {
   const s = f.session;
   if (!s) return 'no_session';
   if (carrierAppId != null && s.appId !== carrierAppId) return 'other_app';
   if (s.status !== 'promoted') return 'moved_on';
   if (s.activeTurn) return 'turn_running';
+  if (head && s.head !== head) return 'head_moved';
+  if (s.shotsRunning) return 'shots_running';
+  if (s.checksRunning) return 'checks_running';
   if (s.isHeadless) return 'headless';
   if (!s.prNumber) return 'no_pull_request';
   if (s.pendingSecrets) return 'holds_secret_values';
@@ -328,18 +358,17 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     tally: null, selfHosted: app.selfHosted, includedIn: ref, included: [], deliveries: 0,
     deliveredSha: null, liveAt: null, failure: null, followups: {},
   };
-  const changes = legacy('services/included-changes');
   // "Went live" only when it has: until its carrier is live, it is merged and
   // goes live with it (the thread says so again on CarrierDelivered).
   const live = p.carrierState === 'live';
   const work = settleWork(d, s.linkedIssues, true);
   if (d.repo && d.prNumber) {
     work.unshift({ kind: WORK.closePr, key: 'close-pr', input: {
-      ...d.repo, number: d.prNumber, comment: changes.closingComment(legacyRow(ref), { live }), marker: `homeroom-included-${d.sessionId}`,
+      ...d.repo, number: d.prNumber, comment: closingComment(prRow(ref), { live }), marker: `homeroom-included-${d.sessionId}`,
     } });
   }
   const x: Extra = {
-    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, changes.threadLine(legacyRow(d), legacyRow(ref), { live }),
+    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, threadLine(prRow(d), prRow(ref), { live }),
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
@@ -350,53 +379,86 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
   return outcome('delivering', d, x);
 }
 
+// More work, added to an outcome already decided.
+function andWork(out: Outcome<MFState>, work: WorkRequest[]): Outcome<MFState> {
+  if (!work.length || out.next.name === NONE) return out;
+  const next = out.next as Going;
+  return { ...out, next: { name: next.name, data: track(next.data, work) }, work: [...(out.work || []), ...work] };
+}
+
 // A work result updates its follow-up; app.deliver and delivery.verify can
 // also make the change live, and included.find hands the carried changes on.
+// Delivery's first result, whatever it is, lets the preview go.
 function workResult(status: Followup['status']) {
+  const decide = resultOf(status);
   return {
     guard: (s: any, e: Event<WorkResultPayload>): Check =>
       (s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
     to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
-      const p = e.payload;
-      const prev = s.data.followups[p.workKey]!;
-      const d: Data = { ...s.data, followups: { ...s.data.followups,
-        [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
-      const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[] };
-      if (p.kind === WORK.deliver && s.name !== 'live') {
-        if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
-        if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
-      }
-      if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
-        return toLive(e, d, result.sha || null, ctx);
-      }
-      if (p.kind === WORK.find && status === 'done') {
-        const found = (Array.isArray(result.ids) ? result.ids : []).filter((id) => Number.isInteger(id) && !d.included.includes(id));
-        const next = { ...d, included: [...d.included, ...found] };
-        return { next: { name: s.name, data: next }, messages: found.map((id) => ({
-          to: { machine: MACHINE, key: sessionKey(id) },
-          event: { type: 'Included', payload: {
-            sessionId: id, carrier: { ...carrierRef(d), mergeSha: d.mergeSha, mergedAt: d.mergedAt, force: d.force },
-            carrierState: s.name, deliveredSha: d.deliveredSha,
-          } },
-        })) };
-      }
-      // The requests it closed: the open-issues lists re-read. (The handler
-      // used to say so midway; it is said when the work ends.)
-      // Only when it ran: GitHub off skips it, as [main]'s merge did.
-      if (p.kind === WORK.issues && status === 'done' && !(result as { skipped?: string }).skipped
-        && !(prev.input as { closeOnly?: boolean } | null)?.closeOnly) {
-        return { next: { name: s.name, data: d }, push: [issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })],
-          notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
-      }
-      return { next: { name: s.name, data: d } };
+      const out = decide(s, e, f, ctx);
+      return e.payload.kind === WORK.deliver && !s.data.followups.teardown ? andWork(out, [teardownWork(s.data)]) : out;
     },
+  };
+}
+
+function resultOf(status: Followup['status']) {
+  return (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
+    const p = e.payload;
+    const prev = s.data.followups[p.workKey]!;
+    const d: Data = { ...s.data, followups: { ...s.data.followups,
+      [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
+    const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[]; found?: { id: number; head: string }[] };
+    if (p.kind === WORK.deliver && s.name !== 'live') {
+      if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
+      if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
+    }
+    if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
+      return toLive(e, d, result.sha || null, ctx);
+    }
+    // A shots run still works in the worker: the same retire, later.
+    if (p.kind === WORK.retire && status === 'done' && (result as { waiting?: string }).waiting) {
+      return outcome(s.name, d, { work: [{ kind: WORK.retire, key: `worker~${ctx.version + 1}`, input: prev.input,
+        notBefore: new Date(ctx.now.getTime() + RETIRE_RECHECK_MS) }] });
+    }
+    if (p.kind === WORK.find && status === 'done') {
+      // `found` carries each change's matched head; a result from before
+      // it did names ids only.
+      const named = Array.isArray(result.found) ? result.found
+        : (Array.isArray(result.ids) ? result.ids : []).map((id) => ({ id, head: null as string | null }));
+      const found = named.filter((c) => Number.isInteger(c.id) && !d.included.includes(c.id));
+      const next = { ...d, included: [...d.included, ...found.map((c) => c.id)] };
+      return { next: { name: s.name, data: next }, messages: found.map((c) => ({
+        to: { machine: MACHINE, key: sessionKey(c.id) },
+        event: { type: 'Included', payload: {
+          sessionId: c.id, carrier: { ...carrierRef(d), mergeSha: d.mergeSha, mergedAt: d.mergedAt, force: d.force },
+          carrierState: s.name, deliveredSha: d.deliveredSha, ...(c.head ? { head: c.head } : {}),
+        } },
+      })) };
+    }
+    // The requests it closed: every web process forgets its copy of the
+    // open issues (an included change's own closes are named), and the
+    // lists re-read. Only when it ran: GitHub off skips it, as [main]'s
+    // merge did.
+    // What the work closed, and what it found still open (shown again),
+    // in every process: the handler's own updates reached only its own.
+    // (`skipped` is a reason when the work did not run, GitHub off; the
+    // watcher's own result carries a list of that name.)
+    if (p.kind === WORK.issues && status === 'done' && typeof (result as { skipped?: unknown }).skipped !== 'string' && d.repo) {
+      const numbers = (v: unknown) => (Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      const r = result as { closed?: unknown; stillOpen?: unknown };
+      return { next: { name: s.name, data: d }, push: [
+        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open: numbers(r.stillOpen) }),
+        issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' }),
+      ], notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
+    }
+    return { next: { name: s.name, data: d } };
   };
 }
 
 // An included change whose carrier is now live: it is live too, and its
 // thread, which said it goes live with the carrier, says it is.
 function carrierLive(e: Event<any>, d: Data, ctx: TransitionContext): Outcome<MFState> {
-  const line = legacy('services/included-changes').liveLine(legacyRow(d), legacyRow(d.includedIn!));
+  const line = liveLine(prRow(d), prRow(d.includedIn!));
   return toLive(e, d, e.payload.sha, ctx, { writes: [chat(e, d.appId, d.sessionId, line)] });
 }
 
@@ -464,7 +526,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
 
   return defineMachine<MFState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: the retire waits on the shots run's row and asks again later, the
+    // carried head and busy refusals, teardown after the delivery's result,
+    // the issue lists' push. During a rollout an older Pod leaves the
+    // instances this version wrote alone.
+    version: 2,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -494,7 +560,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         Included: {
           guard: (s, e, f, ctx) => {
             if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
-            const reason = notIncludable(f, e.appId);
+            const reason = notIncludable(f, e.appId, e.payload.head);
             return reason ? reject(reason) : ok();
           },
           to: (s, e, f, ctx) => included(e, f, ctx),
@@ -543,14 +609,18 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       bounties: writeBounties,
       agentNote: async (tx, w) => {
         if (!w.agentSessionId) return;
-        await legacy('services/agent-sessions').noteChangeClosed(tx,
+        await changeClosed(tx,
           { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
       },
-      // Everyone with a bell row about the change re-reads their bell.
+      // Everyone whose bell the decision changed re-reads it: the asks it
+      // settled, digests it was the last one waiting in (those name no
+      // session), and every row about the change, whose wording follows its
+      // status (going live, then live).
       bell: async (tx, w, ctx) => {
-        await legacy('services/notifications').settleDecidedChange(tx, w.sessionId, { status: 'merged', push: false });
+        const told = new Set(await settleDecidedChange(tx, w.sessionId, { status: 'merged' }));
         const { rows } = await tx.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [w.sessionId]);
-        for (const r of rows) ctx.push(toUser(r.user_id, { type: 'notifications_changed' }));
+        for (const r of rows) told.add(Number(r.user_id));
+        for (const userId of told) ctx.push(toUser(userId, { type: 'notifications_changed' }));
       },
       mergedLine: writeMergedLine,
       mergedNotification: writeMergedNotification,
@@ -592,7 +662,7 @@ const line = (tx: Tx, ctx: WriteContext, eventId: number, appId: number, session
 
 // The values this proposal declared, written with the merge.
 async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) {
-  const { applied, refused } = await legacy('services/pending-secrets').applyInTransaction(tx, { sessionId: w.sessionId, dataKey });
+  const { applied, refused } = await applyInTransaction(tx, { sessionId: w.sessionId, dataKey });
   for (const a of applied) {
     if (!a.hadValue) continue;
     await line(tx, ctx, w.eventId, w.appId, w.sessionId, a.scope === 'platform'
@@ -612,9 +682,8 @@ async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) 
 // Bounties on the requests it closes go to its author, with their events
 // and lines in the same transaction.
 async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
-  const votes = legacy('routes/votes');
   for (const n of w.numbers as number[]) {
-    const { awarded } = await votes.resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
+    const { awarded } = await resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
     if (!awarded.length) continue;
     await tx.query(
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, 'bounty_awarded', $4::jsonb)`,
@@ -628,15 +697,14 @@ async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
 // "<title> is live (PR #n). Built by …, backed by … (yes/active votes)",
 // with the names as metadata, as [main]'s merge wrote it.
 async function writeMergedLine(tx: Tx, w: any, ctx: WriteContext) {
-  const votes = legacy('routes/votes');
   const session = { id: w.sessionId, app_id: w.appId, user_id: w.userId };
-  const credits = w.force ? null : await votes.mergeCredits(tx, session, { before: w.mergedAt });
+  const credits = w.force ? null : await mergeCredits(tx, session, { before: w.mergedAt });
   const d = { sessionId: w.sessionId, prNumber: w.prNumber, prTitle: w.prTitle };
   const yes = w.tally?.yes ?? 0;
   const active = w.tally?.active ?? w.tally?.required ?? yes;
   const content = w.force
     ? `${label(d)} force-merged by admin ${w.forcedBy || 'an admin'} (${yes}/${active} vote${yes === 1 ? '' : 's'} at the time)`
-    : `${w.prTitle || prRef(d)} ${w.prTitle ? `is live (${prRef(d)})` : 'is live'}. ${credits ? votes.creditsSentence(credits) : 'Thanks to everyone who voted'} (${yes}/${active} votes)`;
+    : `${w.prTitle || prRef(d)} ${w.prTitle ? `is live (${prRef(d)})` : 'is live'}. ${credits ? creditsSentence(credits) : 'Thanks to everyone who voted'} (${yes}/${active} votes)`;
   const metadata = credits ? { merged: {
     sessionId: w.sessionId, prNumber: w.prNumber || null, title: w.prTitle || '', author: credits.author || '',
     backers: credits.backers, shapers: credits.shapers, votes: `${yes}/${active}`,
@@ -650,13 +718,12 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
   if (!w.userId) return;
   let credits: string | null = null;
   if (w.includedIn) {
-    credits = legacy('services/included-changes').authorLine(legacyRow(w.includedIn));
+    credits = authorLine(prRow(w.includedIn));
   } else if (!w.force) {
-    const votes = legacy('routes/votes');
-    const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
-    credits = votes.creditsSentence(c, { withAuthor: false }) || null;
+    const c = await mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
+    credits = creditsSentence(c, { withAuthor: false }) || null;
   }
-  const created = await legacy('services/notifications').createPrMergedNotification(tx, {
+  const created = await createPrMergedNotification(tx, {
     userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
   });
   // Named, not carried: the relaying web process reads the row for the

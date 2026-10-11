@@ -32,8 +32,9 @@ function adminWorkflowRoutes(config) {
   router.get('/api/admin/workflow', async (req, res) => {
     try {
       const { inspect } = kernel();
-      const [problems, counts] = await Promise.all([inspect.problems(pool), inspect.stateCounts(pool)]);
-      res.json({ running: platform().workflowRunning(), actions: platform().adminEvents(), problems, counts });
+      const [problems, counts, guards] = await Promise.all([
+        inspect.problems(pool), inspect.stateCounts(pool), platform().guards(pool, config)]);
+      res.json({ running: platform().workflowRunning(), actions: platform().adminEvents(), problems, counts, guards });
     } catch (err) { fail(res, err, 'Workflow overview'); }
   });
 
@@ -89,6 +90,18 @@ function adminWorkflowRoutes(config) {
         payload && typeof payload === 'object' ? payload : {}, req.user);
       res.status(outcome.status === 'pending' ? 202 : 200).json(outcome);
     } catch (err) { fail(res, err, 'Workflow admin event'); }
+  });
+
+  // Turn a machine's ownership guard off. A boot with its flag off leaves it
+  // on (the flag is per process, the guard is the cluster's), so after a
+  // rollback an admin says when no process runs the machine any more.
+  router.post('/api/admin/workflow/guard-off', requireAdminWrite, async (req, res) => {
+    const { machine } = req.body || {};
+    if (!text(machine, 64)) return res.status(400).json({ error: 'machine is required' });
+    try {
+      await platform().turnGuardOff(pool, config, machine, req.user);
+      res.json({ ok: true });
+    } catch (err) { fail(res, err, 'Workflow guard off'); }
   });
 
   return router;

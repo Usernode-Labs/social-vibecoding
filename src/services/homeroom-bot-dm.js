@@ -2613,8 +2613,9 @@ async function liveAfterMerge(config, app, { sha = null, deps = {} } = {}) {
   return false;
 }
 
-function noteChatLive(pool, run) {
-  return require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live' });
+function noteChatLive(pool, run, deps = {}) {
+  return require('./homeroom-bot-chat').noteRequestStatus(pool,
+    { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live', deps: deps.strict ? { strict: true } : {} });
 }
 
 // WP-F: how often, and how far apart, a merged app that did not answer yet
@@ -2670,6 +2671,7 @@ async function announceFirstVersion(pool, run, { live = false, deps = {} } = {})
       metadata: { appSlug: run.slug, ...(open ? { actions: [open] } : {}) },
     });
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not announce a first version in its channel', { app: run?.slug, err: err.message });
     return null;
   }
@@ -2688,7 +2690,9 @@ async function announceFirstVersion(pool, run, { live = false, deps = {} } = {})
  *
  * `live: true` is the merge-followups workflow machine's word that production
  * runs a build containing the change: then nothing is probed, and nothing is
- * re-read later.
+ * re-read later. Its durable work also passes `deps.strict`: the chip and the
+ * first-version line throw what they could not write, so the work is retried
+ * (the DM itself is sent once, by its idempotency key).
  */
 async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
   // What was still asked of it goes: it can no longer change.
@@ -2709,7 +2713,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   // it is (WP-F): an app that did not answer yet is asked again a little
   // later. The platform's own app has no health check to read here, so its
   // chip moves on the merge, as it always did.
-  if (live || platform) await noteChatLive(pool, run);
+  if (live || platform) await noteChatLive(pool, run, deps);
   else laterChatLive(pool, run, { config, sha, deps });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.

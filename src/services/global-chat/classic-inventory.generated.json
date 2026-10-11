@@ -797,6 +797,21 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/admin-workflow.js",
+      "method": "POST",
+      "path": "/api/admin/workflow/guard-off",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.workflow.guard.off.76d33de4",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
       "source": "src/routes/admin.js",
       "method": "GET",
       "path": "/api/admin/llm-telemetry",

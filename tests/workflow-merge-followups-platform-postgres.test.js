@@ -65,7 +65,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     },
     async teardownStaging(row) { calls.push(['teardown', row.id, row.status]); return { removed: true }; },
   });
-  stub('../src/services/worker', { ...require('../src/services/worker'), retireWorker: async (id) => { calls.push(['retire', id]); return {}; } });
+  stub('../src/services/worker', { ...require('../src/services/worker'), destroyCcVolume: async (id) => { calls.push(['retire', id]); } });
   stub('../src/services/main-watch', { ...require('../src/services/main-watch'), afterMerge: async (c, p, o) => { calls.push(['main-check', o.mergeSha]); return null; } });
   stub('../src/services/issue-close-watcher', {
     ...require('../src/services/issue-close-watcher'),
@@ -143,7 +143,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.ok(calls.some((c) => c[0] === 'rebuild' && c[2].reuseRunningRevision === SHA('a')), 'the merge commit, not main\'s tip');
     await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM');
     assert.deepEqual(calls.find((c) => c[0] === 'dm' && c[1] === s.id).slice(2), [true, SHA('a')]);
+    // The preview goes once the delivery has its result (demo mode deploys its build).
+    await until(async () => calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'the teardown');
     assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
+    assert.ok(calls.findIndex((c) => c[0] === 'rebuild') < calls.findIndex((c) => c[0] === 'teardown' && c[1] === s.id),
+      'after the delivery');
     assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
     const { rows: [m] } = await pool.query('SELECT main_sha FROM apps WHERE id = $1', [app.id]);
     assert.equal(m.main_sha, SHA('a'));
@@ -199,8 +203,24 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.startWorkflow(off, { loops: true });
     assert.equal(platform.workflowRunning(), true, 'it runs to finish what it accepted');
     assert.equal(platform.mergeFollowupsEnabled(), false, 'but takes no new merges');
-    const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`);
-    assert.equal(rows.length, 0, 'the legacy merge path may move rows into merged again');
+    // In 'raise' mode (one process: development, previews, tests) a flag-off
+    // boot turns the guard off, so the legacy merge path may move rows into
+    // merged again.
+    const guard = async () => (await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`)).rows.length;
+    assert.equal(await guard(), 0, 'raise mode: the flag-off boot turned it off');
+    // In 'log' mode (production, Pods overlap) it stays: a process booting
+    // with its flag off cannot tell that no other one runs the machine. An
+    // admin turns it off, not while the flag is on in the serving process.
+    await platform.syncSettings(pool, config);
+    const logOff = { ...off, wfOwnershipMode: 'log' };
+    await platform.syncSettings(pool, logOff);
+    assert.equal(await guard(), 1, 'log mode: a flag-off boot leaves the guard on');
+    await assert.rejects(platform.turnGuardOff(pool, config, 'merge-followups', { id: 1 }), /WF_MERGE_FOLLOWUPS_ENABLED is on in this process/);
+    assert.deepEqual((await platform.guards(pool, logOff)).find((g) => g.machine === 'merge-followups'),
+      { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: false });
+    await platform.turnGuardOff(pool, logOff, 'merge-followups', { id: 1 });
+    assert.equal(await guard(), 0, 'turned off by the admin');
+    await platform.syncSettings(pool, off);   // back to raise mode for what follows
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
     // And every follow-up of it, the DM and journey record that follow live included.
     await quiet();

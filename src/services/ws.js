@@ -83,6 +83,19 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
         .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
       return;
+    case 'issues_closed':
+      // From a workflow transition only: issues it closed on GitHub, for
+      // this process's own copy of the open-issues list (github.js keeps one
+      // per process). Nothing is sent to sockets; the transition's own
+      // issue_update tells browsers to re-read.
+      if (fromWorkflow && r.owner && r.repo) {
+        const github = require('./github');
+        const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
+        if (numbers.length) github.noteIssuesClosed(r.owner, r.repo, numbers);
+        if (Array.isArray(payload.open) && payload.open.length) github.unsuppressIssues(r.owner, r.repo, payload.open);
+        github.invalidateIssuesCache(r.owner, r.repo);
+      }
+      return;
     case 'homeroom_bot':
       // Not a socket event at all: the Homeroom bot's loop runs on one Pod
       // and an issue event can land on any, so the wake rides this bus.

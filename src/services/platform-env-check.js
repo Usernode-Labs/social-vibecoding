@@ -65,13 +65,14 @@ function platformEnvFromManifestSource(raw) {
 // set" despite being unsettable by construction.
 //
 // The fix is to make the reserved lists head-scoped, the same way the manifest
-// diff already is: read them out of the branch's own app-manifest.js and union
-// them with the running platform's.
+// diff already is: read them out of the branch's own source and union them
+// with the running platform's. They live in src/workflow/rules/platform-keys.ts;
+// a branch cut before they moved there still has them in app-manifest.js, so
+// both files are read and their lists united.
 //
 // WHY THIS DOESN'T WEAKEN THE GATE. Becoming unwritable is not something a
 // manifest can ask for — it requires editing the reserved list in
-// src/services/app-manifest.js, a reviewed code change to a file the self-edit
-// refuse-list already covers. And once a key IS unwritable, the DAO, the route
+// src/workflow/rules/platform-keys.ts, a reviewed code change. And once a key IS unwritable, the DAO, the route
 // and the vote path all refuse to store it, so "block the merge until someone
 // sets a value" is demanding something structurally impossible: the value can
 // only ever come from the deploy. A genuinely console-settable required
@@ -82,6 +83,9 @@ function platformEnvFromManifestSource(raw) {
 // ---------------------------------------------------------------------------
 
 const MANIFEST_MODULE_PATH = 'src/services/app-manifest.js';
+const KEY_LISTS_PATH = 'src/workflow/rules/platform-keys.ts';
+// Where a branch may keep the lists: their home, then where they were.
+const KEY_LIST_SOURCES = [KEY_LISTS_PATH, MANIFEST_MODULE_PATH];
 
 // Env-var-shaped tokens only. Anything else in the literal is not a key we
 // would honour, so dropping it is both safe and a parse-sanity signal.
@@ -277,16 +281,22 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   // capped and therefore proves nothing — otherwise the running list already
   // is the branch's list and an extra API call would buy nothing.
   let overlay = null;
-  if (!filesComplete || (files || []).includes(MANIFEST_MODULE_PATH)) {
+  for (const source of KEY_LIST_SOURCES) {
+    if (filesComplete && !(files || []).includes(source)) continue;
     try {
-      overlay = unwritableOverlayFromSource(
-        await github.getFileContent(owner, repo, MANIFEST_MODULE_PATH, headRef)
+      const found = unwritableOverlayFromSource(
+        await github.getFileContent(owner, repo, source, headRef)
       );
+      if (found) {
+        overlay = overlay
+          ? { keys: new Set([...overlay.keys, ...found.keys]), prefixes: [...new Set([...overlay.prefixes, ...found.prefixes])] }
+          : found;
+      }
     } catch (err) {
       // Non-fatal and fail-CLOSED: without the overlay we fall back to the
       // running list, which can only over-block, never under-block.
       log.warn('platform-env-check', 'Reserved-list fetch failed; using the deployed list', {
-        sessionId: session?.id, err: err.message,
+        sessionId: session?.id, source, err: err.message,
       });
     }
   }
@@ -434,6 +444,7 @@ module.exports = {
   headRefForSession,
   platformEnvFromManifestSource,
   MANIFEST_MODULE_PATH,
+  KEY_LISTS_PATH,
   stringLiteralsIn,
   unwritableOverlayFromSource,
   isUnwritableWithOverlay,

@@ -1,10 +1,10 @@
 // The governance gate as a pure function of facts read under the instance
-// lock. services/governance.js computeGate is the rule (pure, shared with
+// lock. rules/governance-gate.ts computeGate is the rule (pure, shared with
 // every other merge path); this module folds in the vote being cast, so a
 // vote and the evaluation it triggers are one transition, and adds the
 // locked-app condition.
 
-import { legacy } from '../legacy.ts';
+import { computeGate } from '../rules/governance-gate.ts';
 
 export type Vote = 'up' | 'down';
 
@@ -58,7 +58,7 @@ export function withVote(g: GateInputs, voter: Voter, vote: Vote | null): GateIn
 }
 
 export function evaluate(g: GateInputs, now: Date): Evaluation {
-  const gate = legacy('services/governance').computeGate(
+  const gate = computeGate(
     g.gov, g.active, g.yes, g.no, g.openedAt, now.getTime(),
     { explicitApproval: g.explicitApproval, otherYes: g.otherYes, memberCount: g.memberCount },
   );

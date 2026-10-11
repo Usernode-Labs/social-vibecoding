@@ -58,9 +58,11 @@ module.exports = function install(fakes) {
         return { comments: (await comments(number)).map((c) => ({ body: c.body })), truncated: false };
       },
       async closePR(owner, repo, number) { await fakes.record('github.closePR', { repo: `${owner}/${repo}`, number }); },
-      // A pull request's commits, as the test recorded them (`github.prCommits`).
+      // A pull request's commits, as the test recorded them (`github.prCommits`);
+      // the `github.prCommits` point is after GitHub listed them.
       async listPullRequestCommitShas(owner, repo, number) {
         const shas = (await fakes.read('github.prCommits')).filter((c) => c.number === number).flatMap((c) => c.shas);
+        await fakes.pause('github.prCommits');
         return { shas, complete: true };
       },
       async getCommitTree() { return null; },

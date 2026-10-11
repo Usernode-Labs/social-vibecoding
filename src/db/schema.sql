@@ -2177,6 +2177,14 @@ CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   updated_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, app_id)
 );
+-- One driver per campaign, in any process (fleet-maintenance.runCampaign):
+-- the driver's lease on the campaign row, renewed while it runs and let go
+-- when it stops, and the driver that claimed each app row ('running'),
+-- the only one that writes that row's result. They replace an in-process
+-- set, which a second process or a restarted one never saw.
+ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS runner_id TEXT;
+ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE maintenance_campaign_apps ADD COLUMN IF NOT EXISTS runner_id TEXT;
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (
@@ -13212,7 +13220,11 @@ COMMENT ON TABLE wf_work_attempts IS 'staging:private';
 -- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
 -- mode a write to an owned legacy column without the writer marker is
 -- allowed and recorded in wf_ownership_violations instead of refused.
--- 'enabled:<machine>' exists while that machine's flag is on.
+-- 'enabled:<machine>' is the machine's ownership guard: a boot with the
+-- machine's flag on writes it. In 'log' mode (production, where Pods
+-- overlap) a boot with the flag off leaves it, and an admin removes it
+-- (Admin → Workflows) once no process runs the machine; in 'raise' mode a
+-- flag-off boot removes it.
 CREATE TABLE IF NOT EXISTS wf_settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -13276,15 +13288,24 @@ CREATE TRIGGER wf_events_writer
 --
 -- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
 -- rows whose instance exists (key = prefix || id), and only while the
--- machine is switched on (wf_settings 'enabled:<machine>', written at boot
--- from its flag). A machine rolled out behind a flag owns a row from the
--- moment it enrolls it; the legacy writers keep the rows it has not, and
--- every row again while the flag is off.
+-- machine's guard is on (wf_settings 'enabled:<machine>', see wf_settings
+-- above; wf_holds asks the same question). A machine rolled out behind a
+-- flag owns a row from the moment it enrolls it; the legacy writers keep
+-- the rows it has not, and every row again once its guard is off.
 --
 -- A first argument '@enabled=<machine>' guards every row the trigger's WHEN
 -- clause selects, but only while the machine is switched on: for a change
 -- only the machine may make, whether or not the row is enrolled yet (the
 -- move of a proposal into 'merged' is what enrolls it).
+-- Whether a machine holds this instance and is on: what an `@enrolled=`
+-- guard below checks before it guards a row. Code outside the machine that
+-- must leave such a row alone (a legacy migration, a backfill) asks the same
+-- question in its WHERE clause, so the two cannot disagree.
+CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
+  SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
+     AND EXISTS (SELECT 1 FROM wf_instances WHERE machine = machine_name AND key = instance_key)
+$$ LANGUAGE sql STABLE;
+
 CREATE OR REPLACE FUNCTION wf_guard_owned_columns() RETURNS TRIGGER AS $$
 DECLARE
   owned TEXT;
@@ -13307,12 +13328,7 @@ BEGIN
     END IF;
   ELSIF TG_ARGV[0] LIKE '@enrolled=%' THEN
     enrolled := substr(TG_ARGV[0], length('@enrolled=') + 1);
-    IF NOT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || split_part(enrolled, '/', 1)) THEN
-      RETURN NEW;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM wf_instances
-                    WHERE machine = split_part(enrolled, '/', 1)
-                      AND key = split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
+    IF NOT wf_holds(split_part(enrolled, '/', 1), split_part(enrolled, '/', 2) || (before ->> 'id')) THEN
       RETURN NEW;
     END IF;
   END IF;
