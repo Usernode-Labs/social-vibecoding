@@ -2185,7 +2185,7 @@
       "name": "Invited-approver proposal: the Votes card says how many yeses are advisory (#695, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000025",
       "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
-      "expectText": "2 more yeses are advisory"
+      "expectText": "2 yeses so far are from people who aren’t approvers, so they don’t count"
     },
     {
       "name": "Explicit-approval proposal: the Votes card says it needs another member’s Yes, and shows no merge countdown (#788, #3826, #4455)",
