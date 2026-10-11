@@ -260,6 +260,7 @@ test('a round in which every request failed is counted by reason and asked nothi
   });
   assert.equal(calls.length, 1, 'no retry, though maxRetries allows any number');
   assert.equal(summary.nothingAnswered, true);
+  assert.equal(summary.unanswered, 4);
   assert.deepEqual(summary.requests, {
     sent: 1, failed: 1, reasons: { 'errored: invalid_request_error': 1 }, example: refused.message,
   });
@@ -267,27 +268,43 @@ test('a round in which every request failed is counted by reason and asked nothi
   assert.ok(summary.languages.es.failed.every((f) => f.problem === 'errored: invalid_request_error'));
   assert.deepEqual(summary.files, []);
 
-  // One request of two fails: the other's messages are written, the failed
-  // one's wait for the next pass, and nothing is asked message by message.
+  // One request of two fails while the other is answered: that is not the
+  // request's shape, so the failed one's messages are asked again one by one.
   const partial = [];
   const model = fakeModel((item) => SPANISH[item.id]);
   const mixed = await sync.syncTranslations({
     root,
     chunkSize: 2,
-    translate: async (requests) => {
-      partial.push(requests);
+    translate: async (requests, { round }) => {
+      partial.push(requests.map((request) => request.items.length));
       const answers = await model.translate(requests);
-      answers.set(requests[0].customId, { error: 'expired', failure: { kind: 'expired' } });
+      if (round === 0) answers.set(requests[0].customId, { error: 'expired', failure: { kind: 'expired' } });
       return answers;
     },
   });
-  assert.equal(partial.length, 1);
+  assert.deepEqual(partial, [[2, 2], [1, 1]]);
   assert.equal(mixed.nothingAnswered, false);
-  assert.deepEqual(mixed.requests, { sent: 2, failed: 1, reasons: { expired: 1 }, example: null });
-  assert.equal(mixed.languages.es.written, 2);
-  assert.deepEqual(mixed.languages.es.failed.map((f) => f.problem), ['expired', 'expired']);
+  assert.deepEqual(mixed.requests, { sent: 4, failed: 1, reasons: { expired: 1 }, example: null });
+  assert.equal(mixed.languages.es.written, 4);
+  assert.equal(mixed.unanswered, 0);
+  // It fails again on its own: those messages end the sync unanswered.
+  const twice = await sync.syncTranslations({
+    root: checkout(t).root,
+    chunkSize: 2,
+    translate: async (requests, { round }) => {
+      const answers = await model.translate(requests);
+      for (const request of requests) {
+        if (round === 1 || request === requests[0]) answers.set(request.customId, { error: 'expired', failure: { kind: 'expired' } });
+      }
+      return answers;
+    },
+  });
+  assert.equal(twice.languages.es.written, 2);
+  assert.equal(twice.unanswered, 2);
+  assert.deepEqual(twice.languages.es.failed.map((f) => f.problem), ['expired', 'expired']);
+  assert.deepEqual(twice.requests.reasons, { expired: 3 });
   // A request the transport lost altogether counts as failed too.
-  const lost = await sync.syncTranslations({ root, languages: ['es'], translate: async () => new Map() });
+  const lost = await sync.syncTranslations({ root: checkout(t).root, languages: ['es'], translate: async () => new Map() });
   assert.equal(lost.nothingAnswered, true);
   assert.deepEqual(lost.requests.reasons, { 'no answer': 1 });
 });
@@ -554,7 +571,7 @@ test('a batch in which every request failed is logged with its reason and is not
   assert.equal(p.logged.filter((line) => line.level === 'warn').length, 1);
 
   // The admin connector's status shows it.
-  assert.deepEqual((await runner.status(p.pool)).failure, {
+  assert.deepEqual((await runner.status(p.pool, { now: p.clock.now })).failure, {
     at: '2026-10-11T12:00:00.000Z',
     requests,
     reasons: { 'errored: invalid_request_error': requests },
@@ -564,7 +581,8 @@ test('a batch in which every request failed is logged with its reason and is not
   });
 
   // A day on it is tried again, and a good batch opens the proposal and clears the failure.
-  p.clock.now = Date.parse('2026-10-12T12:00:01Z');
+  p.clock.now = Date.parse('2026-10-12T12:00:00Z');
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, null, 'due: the day has passed');
   assert.equal((await p.run()).submitted, 'batch_2');
   assert.ok(p.db.state.failure, 'kept until a pass gets an answer');
   p.batches[1].status = 'ended';
@@ -572,7 +590,7 @@ test('a batch in which every request failed is logged with its reason and is not
   assert.ok(opened.opened, 'the proposal opens');
   assert.equal(p.pushed[0].at, 'd'.repeat(40));
   assert.equal(p.db.state.failure, undefined);
-  assert.equal((await runner.status(p.pool)).failure, null);
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure, null);
 });
 
 test('a failure stops holding the step back as soon as a request is made differently', async (t) => {
@@ -585,7 +603,7 @@ test('a failure stops holding the step back as soon as a request is made differe
   const before = sync.REQUEST_OPTIONS.max_tokens;
   sync.REQUEST_OPTIONS.max_tokens = before + 1;
   t.after(() => { sync.REQUEST_OPTIONS.max_tokens = before; });
-  assert.equal((await runner.status(p.pool)).failure.retryAfter, null, 'due on the next pass');
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, null, 'due on the next pass');
   assert.equal((await p.run()).submitted, 'batch_2');
 });
 
@@ -600,7 +618,7 @@ test('a failed batch sent by an earlier version does not hold this one back', as
   assert.match(warning.message, /made by an earlier version, so the next pass sends them as this one makes them$/);
   assert.equal(warning.detail.retryAfter, undefined);
   assert.equal(warning.detail.example, REFUSED.message, 'the reason is logged all the same');
-  assert.equal((await runner.status(p.pool)).failure.retryAfter, null);
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, null);
   assert.equal((await p.run()).submitted, 'batch_2', 'sent again at once, as this version makes it');
 });
 
@@ -629,6 +647,22 @@ test('a direct pass in which every request failed is logged and held back the sa
 });
 
 test('a pass that wrote only part, or nothing the checks would pass, says why at warn level and is not held back', async (t) => {
+  // Three messages pass, one is refused twice: the proposal opens, with a warning.
+  const part = platform(t);
+  part.llm.translateCatalogDirect = fakeModel((item) => (item.id === 'core:button.leave' ? { text: 'Salir — ahora' } : SPANISH[item.id])).translate;
+  assert.ok((await part.run()).opened);
+  const partWarnings = part.logged.filter((line) => line.level === 'warn');
+  assert.equal(partWarnings.length, 1);
+  assert.equal(partWarnings[0].message, 'Translation pass wrote less than it asked for');
+  assert.deepEqual(partWarnings[0].detail, { requests: 2, failedRequests: 0, reasons: {}, leftInEnglish: { 'an em dash': 1 } });
+  assert.equal(part.db.state.failure, undefined);
+
+  // Everything written: no warning.
+  const whole = platform(t);
+  assert.ok((await whole.run()).opened);
+  assert.equal(whole.logged.filter((line) => line.level === 'warn').length, 0);
+
+  // Every request answered, nothing the checks pass.
   const p = platform(t);
   p.llm.translateCatalogDirect = fakeModel(() => ({ text: 'Salir — ahora' })).translate;
   const result = await p.run();
@@ -640,6 +674,123 @@ test('a pass that wrote only part, or nothing the checks would pass, says why at
   assert.equal(warning.detail.leftInEnglish['an em dash'], 1);
   assert.equal(p.db.state.failure, undefined, 'the requests were answered');
   assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+});
+
+/** 61 plain messages: two direct requests. */
+const sixtyOne = () => Object.fromEntries(Array.from({ length: 61 }, (_, i) => [`msg.m${i}`, says('A')]));
+const emptyAnswers = (requests) => requests.map((request) => [request.customId, {
+  text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: '' })) }),
+  usage: { input_tokens: 100, output_tokens: 100 },
+}]);
+const OUTAGE = { kind: 'request', type: 'api_error', message: 'Internal server error' };
+
+test('a pass that wrote nothing while requests went unanswered does not call main read', async (t) => {
+  // Direct: the first request fails, and so does every retry of its
+  // messages; the second is answered with nothing the checks pass.
+  const p = platform(t, { english: sixtyOne() });
+  p.llm.translateCatalogDirect = async (requests, _options) => new Map(requests.map((request, index) => (
+    (index === 0 && requests.length === 2) || request.customId.startsWith('es-0-retry')
+      ? [request.customId, { error: '500', failure: OUTAGE }]
+      : emptyAnswers([request])[0])));
+  const mixed = await p.run();
+  assert.equal(mixed.failed, true);
+  assert.equal(p.db.state.checkedSha, null, 'the work is not done');
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.match(warning.message, /^Translation requests failed and nothing was written; not sending them again until/);
+  assert.equal(warning.detail.failedRequests, 61, 'the request, then each of its 60 messages');
+  assert.deepEqual(await p.run(), { skipped: 'failed_before' });
+  // Main has not moved. A day later the same work is sent again, and opens the proposal.
+  p.clock.now += 25 * HOUR;
+  p.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, {
+    text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: 'B' })) }),
+    usage: { input_tokens: 100, output_tokens: 100 },
+  }]));
+  assert.ok((await p.run()).opened, 'not "unchanged"');
+  assert.equal(p.db.state.failure, undefined);
+
+  // The first request fails once and its messages are answered on the second try: a proposal, as before this change.
+  const q = platform(t, { english: sixtyOne() });
+  q.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request, index) => (
+    index === 0 && requests.length === 2
+      ? [request.customId, { error: '500', failure: OUTAGE }]
+      : [request.customId, { text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: 'B' })) }), usage: { input_tokens: 100, output_tokens: 100 } }])));
+  assert.ok((await q.run()).opened);
+  assert.match(q.db.inserted[0][5], /^Translations: 61 interface messages/);
+
+  // A batch: one request expired, the rest answered with nothing usable,
+  // and too many messages are left to ask one at a time.
+  const b = platform(t, { english: bulk(t) });
+  await b.run();
+  Object.assign(b.batches[0], {
+    status: 'ended',
+    answers: async (requests) => new Map(requests.map((request, index) => (index === 0
+      ? [request.customId, { error: 'expired', failure: { kind: 'expired' } }]
+      : emptyAnswers([request])[0]))),
+  });
+  assert.equal((await b.run()).failed, true);
+  assert.equal(b.db.state.checkedSha, null);
+  assert.equal(b.db.state.batch, undefined);
+  assert.deepEqual(await b.run(), { skipped: 'failed_before' });
+  b.clock.now += 25 * HOUR;
+  assert.equal((await b.run()).submitted, 'batch_2', 'due again on the same main');
+});
+
+test('a batch the API will not take is logged, kept and held back like any failed pass', async (t) => {
+  const p = platform(t, { english: bulk(t) });
+  let creates = 0;
+  const refuse = (status, type, message) => async () => {
+    creates += 1;
+    throw Object.assign(new Error(`${status} ${message}`), { status, error: { type: 'error', error: { type, message } } });
+  };
+  const submit = p.llm.submitCatalogBatch;
+  p.llm.submitCatalogBatch = refuse(401, 'authentication_error', `invalid x-api-key sk-ant-api03-${'A'.repeat(40)} ${'x'.repeat(900)}`);
+  const refused = await p.run();
+  assert.deepEqual(refused, { failed: true, reasons: { 'submit: authentication_error': 1 }, messages: runner.DIRECT_LIMIT + 5, spentCents: 0 });
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.match(warning.message, /^The translation batch was refused; not sending them again until the request changes or a day has passed$/);
+  assert.ok(warning.detail.example.length <= 300, 'the API\'s message is cut short');
+  assert.doesNotMatch(JSON.stringify([warning, p.db.state]), /sk-ant-api03-A/, 'and a key in it is masked, in the log and in the state');
+  assert.ok(p.db.state.failure.requests > 1, 'the batch\'s requests');
+  assert.equal(p.db.state.checkedSha, null);
+  for (const sha of ['b', 'c']) {
+    p.moveMain(sha.repeat(40));
+    assert.deepEqual(await p.run(), { skipped: 'failed_before' });
+  }
+  assert.equal(creates, 1, 'one submission, not one a merge');
+  const shown = (await runner.status(p.pool, { now: p.clock.now })).failure;
+  assert.deepEqual(shown.reasons, { 'submit: authentication_error': 1 });
+  assert.equal(shown.retryAfter, '2026-10-12T12:00:00.000Z');
+
+  // A rate limit or a server error is not a refusal: it is thrown to the pass's own log, and tried next pass.
+  p.clock.now += 25 * HOUR;
+  p.llm.submitCatalogBatch = refuse(529, 'overloaded_error', 'Overloaded');
+  await assert.rejects(p.run(), /529 Overloaded/);
+  p.llm.submitCatalogBatch = refuse(429, 'rate_limit_error', 'Slow down');
+  await assert.rejects(p.run(), /429/);
+  p.llm.submitCatalogBatch = submit;
+  assert.equal((await p.run()).submitted, 'batch_1');
+});
+
+test('the day is counted from when the failure was known, not from when the pass began', async (t) => {
+  const p = platform(t);
+  p.llm.translateCatalogDirect = async (requests) => {
+    p.clock.now += HOUR; // the requests take an hour to time out
+    return new Map(requests.map((request) => [request.customId, { error: 'timeout', failure: { kind: 'request', message: 'Request timed out.' } }]));
+  };
+  const started = p.clock.now;
+  assert.equal((await p.run()).failed, true);
+  assert.equal(p.db.state.failure.at, new Date(started + HOUR).toISOString());
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.equal(warning.detail.retryAfter, new Date(started + 25 * HOUR).toISOString());
+  let calls = 0;
+  p.llm.translateCatalogDirect = async (requests) => { calls += 1; return new Map(requests.map((request) => [request.customId, { error: 'timeout', failure: { kind: 'request' } }])); };
+  p.clock.now = started + 24 * HOUR;
+  assert.deepEqual(await p.run(), { skipped: 'failed_before' }, '23 hours after the failure');
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, new Date(started + 25 * HOUR).toISOString());
+  p.clock.now = started + 25 * HOUR;
+  assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, null, 'due: no past deadline is shown');
+  assert.equal((await p.run()).failed, true);
+  assert.equal(calls, 1);
 });
 
 // ── The transport (services/llm.js) ───────────────────────────────────

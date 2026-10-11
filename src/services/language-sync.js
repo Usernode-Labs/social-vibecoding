@@ -377,21 +377,23 @@ function failureReason(failure) {
  * Map of customId -> { text } (the model's answer) or { error }, with
  * `failure: { kind, type, message }` when the request itself failed and no
  * answer was written. Items whose answer fails a check are asked again once,
- * on their own; what fails twice stays English and is reported. A first round
- * in which every request failed is not asked again at all.
+ * on their own, and so are the items of a request that failed while others
+ * were answered; what fails twice stays English and is reported. A first
+ * round in which every request failed is not asked again at all.
  *
  * Returns { files, languages: { tag: { requested, written, failed: [{ id, problem }] } },
- * requests: { sent, failed, reasons: { reason: count }, example }, nothingAnswered }.
- * `requests` counts the requests that failed and why, with one error message
- * as the API worded it; `nothingAnswered` is true when the first round got no
- * answer to any request.
+ * requests: { sent, failed, reasons: { reason: count }, example }, nothingAnswered, unanswered }.
+ * `requests` counts the requests that failed and why, over both rounds, with
+ * one error message as the API worded it; `nothingAnswered` is true when the
+ * first round got no answer to any request; `unanswered` is how many messages
+ * ended the sync without any request for them having been answered.
  */
 async function syncTranslations({
   root, translate, languages = null, onlyIds = null, chunkSize = CHUNK_SIZE, log = () => {},
   maxRetries = Infinity,
 }) {
   const { config, glossary, english, targets, plans, requests } = prepareSync(root, { languages, onlyIds, chunkSize });
-  const summary = { files: [], languages: {}, requests: { sent: 0, failed: 0, reasons: {}, example: null }, nothingAnswered: false };
+  const summary = { files: [], languages: {}, requests: { sent: 0, failed: 0, reasons: {}, example: null }, nothingAnswered: false, unanswered: 0 };
   for (const [language, items] of plans) summary.languages[language] = { requested: items.length, written: 0, failed: [] };
   if (!requests.length) return summary;
   const total = [...plans.values()].reduce((sum, items) => sum + items.length, 0);
@@ -408,12 +410,15 @@ async function syncTranslations({
   for (let round = 0; round < 2 && pending.length; round += 1) {
     const answers = await translate(pending, { round });
     const retry = [];
-    let unanswered = 0;
+    const answerTo = (request) => answers.get(request.customId) || { error: 'no answer', failure: { kind: 'no answer' } };
+    // No request of the first round was answered: what is wrong is the
+    // request or the account, and asking again message by message would send
+    // the same refused request once per message.
+    const allFailed = pending.every((request) => answerTo(request).failure);
     for (const request of pending) {
-      const answer = answers.get(request.customId) || { error: 'no answer', failure: { kind: 'no answer' } };
+      const answer = answerTo(request);
       summary.requests.sent += 1;
       if (answer.failure) {
-        unanswered += 1;
         summary.requests.failed += 1;
         const reason = failureReason(answer.failure);
         summary.requests.reasons[reason] = (summary.requests.reasons[reason] || 0) + 1;
@@ -427,22 +432,23 @@ async function syncTranslations({
         else failed.push({ item, problem: answer.error || result.problem });
       }
       if (!failed.length) continue;
-      if (answer.failure) {
-        // The request failed, not the answer: asking again message by
-        // message would send the same refused request once per message.
+      if (answer.failure && (allFailed || round > 0)) {
         for (const { item } of failed) summary.languages[request.language].failed.push({ id: item.id, problem: failureReason(answer.failure) });
+        summary.unanswered += failed.length;
       } else if (round === 0) {
         // Asked again one at a time: one malformed message no longer takes
-        // its neighbours down with it.
+        // its neighbours down with it, and a request that failed while
+        // others were answered (an outage, a timeout) gets a second try.
         retry.push(...failed.map(({ item }, index) => ({
           ...buildRequests(request.language, config.languages[request.language], [item], glossary, { chunkSize: 1 })[0],
           customId: `${request.customId}-retry-${index}`,
+          unanswered: Boolean(answer.failure),
         })));
       } else {
         for (const { item, problem } of failed) summary.languages[request.language].failed.push({ id: item.id, problem });
       }
     }
-    if (round === 0 && unanswered === pending.length) {
+    if (round === 0 && allFailed) {
       summary.nothingAnswered = true;
       log(`all ${pending.length} request(s) failed: ${Object.entries(summary.requests.reasons).map(([reason, n]) => `${reason} (${n})`).join(', ')}`);
     }
@@ -452,6 +458,7 @@ async function syncTranslations({
     if (retry.length > maxRetries) {
       for (const request of retry) {
         for (const item of request.items) summary.languages[request.language].failed.push({ id: item.id, problem: 'not retried' });
+        if (request.unanswered) summary.unanswered += request.items.length;
       }
       log(`${retry.length} message(s) failed; too many to retry one at a time`);
       break;

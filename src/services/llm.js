@@ -1417,14 +1417,16 @@ function catalogAnswer(message) {
  * `response` is the API's error body ({ error: { type, message } }): a batch
  * entry's `result.error`, or the SDK error's `.error`. The message is the
  * API's description of the request, cut short; it is never a model's output.
+ * `status` is the HTTP status, used as the type when the body names none.
  */
-function catalogFailure(kind, response, fallback) {
+function catalogFailure(kind, response, fallback, status) {
   const detail = response && typeof response === 'object'
     ? (response.error && typeof response.error === 'object' ? response.error : response)
     : {};
   const message = String(detail.message || fallback || '').replace(/\s+/g, ' ').trim().slice(0, 300);
   const failure = { kind };
   if (typeof detail.type === 'string' && detail.type !== 'error') failure.type = detail.type.slice(0, 60);
+  else if (status) failure.type = `http_${status}`;
   if (message) failure.message = message;
   return failure;
 }
@@ -1445,8 +1447,7 @@ async function translateCatalogDirect(requests, { concurrency = 4, telemetryCont
         });
         answers.set(request.customId, catalogAnswer(response));
       } catch (err) {
-        const failure = catalogFailure('request', err?.error, err?.message);
-        if (!failure.type && err?.status) failure.type = `http_${err.status}`;
+        const failure = catalogFailure('request', err?.error, err?.message, err?.status);
         answers.set(request.customId, { error: err?.message || 'request failed', failure });
       }
     }
@@ -3441,7 +3442,7 @@ module.exports = {
   FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
   generateSinceSummary, SINCE_SUMMARY_VERSION,
   // The translation step's transport — see services/language-sync.js.
-  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
+  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers, catalogFailure,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,

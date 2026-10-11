@@ -103,16 +103,22 @@ other change.
 - **When requests fail.** A failed request keeps the API's error type and
   message. A pass that wrote less than it asked for logs one `language-sync`
   line at warn level: how many requests failed, counted by reason
-  (`errored: invalid_request_error`), one error message as the API worded it,
-  the batch's own request counts, and what the checks refused. It never logs a
-  message's text. A request that failed is not asked again message by message;
-  its messages wait for the next pass.
-- **When every request fails.** Nothing was translated, so nothing is opened
-  and main is not marked as read. The step keeps the failure and does not send
-  the same requests again for a day, however often main moves. A change to
-  what a request is made of (the model, the token limit, the schema) is tried
-  on the next pass. The failure is cleared by the next pass that gets an
-  answer.
+  (`errored: invalid_request_error`), one error message as the API worded it
+  (cut to 300 characters and masked for secrets like any log line), the
+  batch's own request counts, and what the checks refused, by kind. The step
+  itself puts no message text in that line; the API's wording is the API's.
+  A request that failed while others were answered has its messages asked
+  again one by one, like an answer that failed a check.
+- **When a pass writes nothing because requests failed.** Every request
+  failed, or the API would not take the batch (a bad key, no credit), or some
+  failed twice and nothing else passed. Nothing is opened and main is not
+  marked as read. The step keeps the failure and does not send the same
+  requests again for a day from the failure, however often main moves. A
+  change to what a request is made of (the model, the token limit, the
+  schema) is tried on the next pass. When every request of a round failed,
+  none is asked again message by message. The failure is cleared by the next
+  pass that ends without one. A rate limit or a server error while submitting
+  a batch is not kept: the next pass tries again.
 - **One at a time.** While a translation proposal is open no other is opened.
   One the community closes is not offered again until the English changes.
 - **Why not on each proposal's own branch.** A commit the platform adds to a

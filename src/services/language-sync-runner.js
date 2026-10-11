@@ -29,11 +29,12 @@
 // without merging it, the same English is not offered again: the sweep waits
 // until the English changes.
 //
-// A pass in which every request failed (a request the API refuses, a key out
-// of credit, an outage) opens nothing, so it is logged at warn with the
-// reason and kept in the state. The same requests are then not sent again
-// for a day; a change to what a request is made of (language-sync.js
-// requestShape) is tried on the next pass.
+// A pass that wrote nothing because requests failed (a request the API
+// refuses, a key out of credit, an outage, a batch the API would not take)
+// opens nothing, so it is logged at warn with the reason and kept in the
+// state, and main is not marked as read. The same requests are then not sent
+// again for a day from the failure; a change to what a request is made of
+// (language-sync.js requestShape) is tried on the next pass.
 //
 // Off with LANGUAGE_SYNC_ENABLED=false, and idle without an Anthropic key.
 // Spend counts against the system budget (limits.checkSystemBudget).
@@ -56,8 +57,8 @@ const FIRST_PASS_DELAY_MS = 10 * 60 * 1000;
 // Up to this many messages are translated directly, in the pass that finds
 // them; more go as a Message Batch.
 const DIRECT_LIMIT = 400;
-// After a pass in which every request failed, how long the same requests
-// wait before they are sent again.
+// After a pass that wrote nothing because requests failed, how long the
+// same requests wait before they are sent again.
 const RETRY_AFTER_FAILURE_MS = 24 * 60 * 60 * 1000;
 const STATE_KEY = 'language_sync_state';
 const SOURCE = 'translation';
@@ -80,7 +81,8 @@ function parseRepo(url) {
 //   batch       { id, baseSha, submittedAt, messages } while a batch runs
 //   proposal    { sessionId, englishDigest } the last proposal opened
 //   failure     { at, shape, baseSha, requests, reasons, example, batch } the
-//               last pass in which every request failed; gone once one answers
+//               last pass that wrote nothing because requests failed; gone
+//               once a pass ends without one
 
 async function readState(pool) {
   try {
@@ -173,7 +175,9 @@ function explain(summary, batch = null) {
     failedRequests: summary.requests.failed,
     reasons: commonest(summary.requests.reasons),
   };
-  if (summary.requests.example) out.example = summary.requests.example;
+  // The API's wording is free text: masked like any log line before it is
+  // logged, kept in the state or returned by status().
+  if (summary.requests.example) out.example = log.redactString(summary.requests.example);
   if (Object.keys(problems).length) out.leftInEnglish = commonest(problems);
   if (batch) {
     out.batchId = batch.id;
@@ -182,38 +186,64 @@ function explain(summary, batch = null) {
   return out;
 }
 
-/** Logs a pass that failed in part or whole, and returns what the state keeps of a whole failure. */
-function reportFailures({ logger, summary, baseSha, batch = null, shape = sync.requestShape(), now }) {
+/**
+ * Logs a pass that wrote less than it asked for. When it wrote nothing and
+ * messages are left that no request answered, returns what the state keeps:
+ * the work is not done, and is held back. `at` is when the outcome was known.
+ */
+function reportFailures({ logger, summary, baseSha, batch = null, shape = sync.requestShape(), at }) {
   const wrote = summary.files.length > 0;
-  if (wrote && !summary.requests.failed) return null;
+  const refused = Object.values(summary.languages).some((result) => result.failed.length > 0);
+  if (wrote && !summary.requests.failed && !refused) return null;
   const detail = explain(summary, batch);
-  if (!summary.nothingAnswered) {
-    logger.warn('language-sync', wrote ? 'Some translation requests failed' : 'Translation pass produced nothing', detail);
+  if (wrote || !summary.unanswered) {
+    logger.warn('language-sync', wrote
+      ? 'Translation pass wrote less than it asked for'
+      : 'Translation pass produced nothing', detail);
     return null;
   }
+  return recordFailure({
+    logger, detail, baseSha, batch, shape, at, requests: summary.requests.sent,
+    what: summary.nothingAnswered ? 'Every translation request failed' : 'Translation requests failed and nothing was written',
+  });
+}
+
+/** Logs a failure that leaves the work undone, and returns what the state keeps of it. */
+function recordFailure({ logger, what, detail, baseSha, batch = null, shape = sync.requestShape(), at, requests }) {
   const held = shape === sync.requestShape();
   logger.warn('language-sync', held
-    ? 'Every translation request failed; not sending them again until the request changes or a day has passed'
-    : 'Every translation request failed; they were made by an earlier version, so the next pass sends them as this one makes them',
-  held ? { ...detail, retryAfter: new Date(now + RETRY_AFTER_FAILURE_MS).toISOString() } : detail);
+    ? `${what}; not sending them again until the request changes or a day has passed`
+    : `${what}; they were made by an earlier version, so the next pass sends them as this one makes them`,
+  held ? { ...detail, retryAfter: new Date(at + RETRY_AFTER_FAILURE_MS).toISOString() } : detail);
   return {
-    at: new Date(now).toISOString(),
+    at: new Date(at).toISOString(),
     // What the failed requests were made of. A batch sent by an earlier
     // version keeps that version's shape, so it never holds this one back.
     shape,
     baseSha,
-    requests: summary.requests.sent,
+    requests,
     reasons: detail.reasons,
     example: detail.example || null,
     batch: batch ? { id: batch.id, counts: batch.counts || null } : null,
   };
 }
 
-/** True while the last whole failure still holds the same requests back. */
-function heldBack(failure, now) {
-  if (!failure || failure.shape !== sync.requestShape()) return false;
+/** When the same requests are due again after `failure`, in ms, or null when nothing holds them. */
+function heldUntil(failure, now) {
+  if (!failure || failure.shape !== sync.requestShape()) return null;
   const at = Date.parse(failure.at);
-  return Number.isFinite(at) && now - at < RETRY_AFTER_FAILURE_MS;
+  if (!Number.isFinite(at) || now - at >= RETRY_AFTER_FAILURE_MS) return null;
+  return at + RETRY_AFTER_FAILURE_MS;
+}
+
+/**
+ * A batch the API would not take for a reason that asking again does not
+ * change: the request, the key, the account. Rate limits, timeouts and
+ * server errors are left to the next pass.
+ */
+function submissionRefused(err) {
+  const status = Number(err?.status);
+  return status >= 400 && status < 500 && ![408, 409, 429].includes(status);
 }
 
 // ── The proposal ───────────────────────────────────────────────────────
@@ -349,7 +379,7 @@ async function runOnce({ config, pool, deps = {} }) {
   const model = deps.llm || llm;
   const gh = deps.github || github;
   const logger = deps.log || log;
-  const now = deps.now ? deps.now() : Date.now();
+  const clock = deps.now || Date.now;
   if (!model.isEnabled()) return { skipped: 'no_key' };
   const app = await platformApp(pool);
   const repo = app && parseRepo(app.repo_url);
@@ -390,12 +420,13 @@ async function runOnce({ config, pool, deps = {} }) {
       await limits.recordSystemSpend(pool, spent);
       const digest = englishDigest(root);
       const failure = reportFailures({
-        logger, summary, baseSha: state.batch.baseSha, now, shape: state.batch.shape || null,
+        logger, summary, baseSha: state.batch.baseSha, at: clock(), shape: state.batch.shape || null,
         batch: { id: state.batch.id, counts: status.counts || null },
       });
       if (failure) {
-        // Nothing was translated, so main is not marked as read: the same
-        // work is due again once the failure stops holding it back.
+        // Nothing was written and requests went unanswered, so main is not
+        // marked as read: the same work is due again once the failure stops
+        // holding it back.
         await writeState(pool, { checkedSha: null, proposal: state.proposal, failure });
         return { failed: true, reasons: failure.reasons, spentCents: spent };
       }
@@ -413,8 +444,8 @@ async function runOnce({ config, pool, deps = {} }) {
     }
   }
 
-  // Every request failed lately and a request is still made the same way.
-  if (heldBack(state.failure, now)) return { skipped: 'failed_before' };
+  // Requests failed lately and a request is still made the same way.
+  if (heldUntil(state.failure, clock()) !== null) return { skipped: 'failed_before' };
 
   const mainSha = await gh.getBranchSha(repo.owner, repo.repo, 'main');
   if (!mainSha || mainSha === state.checkedSha) return { skipped: 'unchanged' };
@@ -436,10 +467,27 @@ async function runOnce({ config, pool, deps = {} }) {
     if (budget.error) return { skipped: 'budget' };
 
     if (messages > DIRECT_LIMIT) {
-      const batch = await model.submitCatalogBatch(prepared.requests);
+      let batch;
+      try {
+        batch = await model.submitCatalogBatch(prepared.requests);
+      } catch (err) {
+        if (!submissionRefused(err)) throw err;
+        // Refused before it ran: no batch exists to report on later, so this
+        // is the failure, kept and held back like any other.
+        const refusal = llm.catalogFailure('submit', err.error, err.message, err.status);
+        const reason = [refusal.kind, refusal.type].filter(Boolean).join(': ');
+        const detail = { requests: prepared.requests.length, failedRequests: prepared.requests.length, reasons: { [reason]: 1 } };
+        if (refusal.message) detail.example = log.redactString(refusal.message);
+        const failure = recordFailure({
+          logger, detail, baseSha: mainSha, at: clock(), requests: prepared.requests.length,
+          what: 'The translation batch was refused',
+        });
+        await writeState(pool, { checkedSha: null, proposal: state.proposal, failure });
+        return { failed: true, reasons: failure.reasons, messages, spentCents: 0 };
+      }
       await writeState(pool, {
         ...state,
-        batch: { id: batch.id, baseSha: mainSha, submittedAt: new Date(now).toISOString(), messages, shape: sync.requestShape() },
+        batch: { id: batch.id, baseSha: mainSha, submittedAt: new Date(clock()).toISOString(), messages, shape: sync.requestShape() },
       });
       log.info('language-sync', 'Translation batch submitted', { batchId: batch.id, messages, requests: prepared.requests.length });
       return { submitted: batch.id, messages };
@@ -455,7 +503,7 @@ async function runOnce({ config, pool, deps = {} }) {
       },
     });
     await limits.recordSystemSpend(pool, spent);
-    const failure = reportFailures({ logger, summary, baseSha: mainSha, now });
+    const failure = reportFailures({ logger, summary, baseSha: mainSha, at: clock() });
     if (failure) {
       await writeState(pool, { checkedSha: null, proposal: state.proposal, failure });
       return { failed: true, reasons: failure.reasons, messages, spentCents: spent };
@@ -477,10 +525,11 @@ async function runOnce({ config, pool, deps = {} }) {
 /**
  * Where the step stands, for a full admin (get_browser_languages): the main
  * commit it last read, a batch still running, the last proposal it opened
- * with that proposal's status, and the last pass in which every request
- * failed (when, how many requests, why, and when they are due again).
+ * with that proposal's status, and the last pass that wrote nothing because
+ * requests failed (when, how many requests, why, and when they are due
+ * again: null when the next pass sends them).
  */
-async function status(pool) {
+async function status(pool, { now = Date.now() } = {}) {
   const state = await readState(pool);
   let proposal = null;
   if (state.proposal?.sessionId) {
@@ -498,10 +547,9 @@ async function status(pool) {
       reasons: state.failure.reasons || {},
       example: state.failure.example || null,
       batchCounts: state.failure.batch?.counts || null,
-      // Null once a request is made differently: the next pass sends again.
-      retryAfter: state.failure.shape === sync.requestShape() && Number.isFinite(Date.parse(state.failure.at))
-        ? new Date(Date.parse(state.failure.at) + RETRY_AFTER_FAILURE_MS).toISOString()
-        : null,
+      // Null once a request is made differently or the day has passed: the
+      // next pass sends again.
+      retryAfter: heldUntil(state.failure, now) === null ? null : new Date(heldUntil(state.failure, now)).toISOString(),
     } : null,
   };
 }
@@ -515,7 +563,7 @@ function start(config, pool) {
     if (inFlight) return inFlight;
     inFlight = runOnce({ config, pool })
       .then((result) => { if (!result.skipped) log.info('language-sync', 'Translation pass', result); })
-      .catch((err) => log.warn('language-sync', 'Translation pass stopped', { err: err.message }))
+      .catch((err) => log.warn('language-sync', 'Translation pass stopped', { err: String(err?.message || err).replace(/\s+/g, ' ').slice(0, 300) }))
       .finally(() => { inFlight = null; });
     return inFlight;
   };
