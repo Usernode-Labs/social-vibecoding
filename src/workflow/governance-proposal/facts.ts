@@ -75,7 +75,12 @@ async function readIssue(tx: Tx, issueId: number) {
 // from them once the electorate is known (countVotes).
 async function readOpen(tx: Tx, issue: Issue, voterId: number | null) {
   const { rows: [r] } = await tx.query(
-    `SELECT a.approver_policy, a.approvals_required, a.self_hosted, a.collab_visibility, a.locked,
+    `SELECT a.approver_policy, a.approvals_required, a.governance_rules, a.self_hosted, a.collab_visibility, a.locked,
+            -- #4666: what a project's own rules read (governance-rules.js): its
+            -- creator, everyone in its community, and its admins.
+            a.created_by,
+            (SELECT COUNT(*)::int FROM community_members cm WHERE cm.community_id = a.community_id) AS all_members,
+            COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids,
             (SELECT COALESCE(json_agg(json_build_object(
                       'userId', v.user_id, 'vote', v.vote,
                       'counts', counts_toward_issue_outcome(v.user_id, v.issue_id),
@@ -117,6 +122,29 @@ async function readGate(tx: Tx, issue: Issue, v: any): Promise<{ gate: GateInput
   const explicitApproval = issue.kind === 'secret_change';
   const votes = v.votes as VoteRow[];
   const counts = countVotes(votes, approverIds, issue.createdBy);
+  // #4666: a project with rules decides by who voted, and by the facts its
+  // rules read, all from the row above (governance.js rulesFacts is the same
+  // read for every other path). The active people are not read here: a share
+  // of a named group's active people counts the whole group instead, which
+  // only ever asks for more yeses.
+  let rulesFacts: unknown = null;
+  let voters: { yes: number[]; no: number[] } | null = null;
+  if (gov.rules) {
+    const rules = gov.rules as { groups: Array<{ key: string; ids: number[] }> };
+    rulesFacts = {
+      creatorId: !v.self_hosted && v.created_by ? Number(v.created_by) : null,
+      memberCount: Number(v.all_members) || 0,
+      membersActive: active,
+      adminIds: ((v.admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
+      groups: new Map(rules.groups.map((g) => [g.key, g.ids])),
+      activeIds: null,
+    };
+    const counted = votes.filter((x) => x.counts);
+    voters = {
+      yes: counted.filter((x) => x.vote === 'up').map((x) => x.userId),
+      no: counted.filter((x) => x.vote === 'down').map((x) => x.userId),
+    };
+  }
   return {
     approverIds,
     gate: {
@@ -124,6 +152,7 @@ async function readGate(tx: Tx, issue: Issue, v: any): Promise<{ gate: GateInput
       explicitApproval, memberCount: explicitApproval ? Number(v.member_count) || 0 : null,
       authorId: issue.createdBy, openedAt: issue.createdAt, locked: issue.app.locked,
       adminUpVoters: votes.filter((x) => x.vote === 'up' && x.admin).map((x) => x.userId),
+      voters, rulesFacts,
     },
   };
 }

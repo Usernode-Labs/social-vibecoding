@@ -61,8 +61,11 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // menu of a read-only viewer, who has no settings. #4405: Custom domain,
   // under App settings, for whoever manages the project. #4417: Topics,
   // after the display name, the other change that is a proposal to dapp.json.
-  assert.equal(rows.length, 18,
-    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
+  // #4666: "Make it public" and "Make it private" became one row, "Who can
+  // see & change it", which opens the sheet that sets both who can see it and
+  // how its changes are approved.
+  assert.equal(rows.length, 17,
+    'new-change, issue, import-pr, settings, who-decides, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written

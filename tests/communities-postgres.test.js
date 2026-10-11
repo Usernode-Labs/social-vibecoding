@@ -229,7 +229,14 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.body.is_member, false);
       assert.equal(got.body.audience_label, 'Public community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
-      assert.deepEqual(got.body.approval, { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 });
+      // #4666: the rule by name too (an app on the two columns' default rule is
+      // Group vote), and its creator, for the line said from the reader's side.
+      assert.deepEqual(got.body.approval, {
+        policy: 'anyone', approvals_required: null, electorate: 1, required: 1,
+        mode: 'columns', preset: 'group_vote', rules: null, groups: [],
+        creator: { id: owner.id, username: owner.username, display_name: null },
+      });
+      assert.deepEqual(got.body.visibility, { build: 'public', view: 'public' });
       assert.deepEqual(got.body.channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,
         recent: [], href: `#messages/app/${a.slug}`, handle: null,

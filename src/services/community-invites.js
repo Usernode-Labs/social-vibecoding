@@ -297,13 +297,45 @@ function joiningRuleText({ approvalsRequired = null, approverPolicy = 'anyone', 
 }
 
 /**
- * joiningRuleText for `app` (carrying id and locked), with its rule and its
- * headcount read. Never throws; null when the rule cannot be read.
+ * #4666: the same line for a project on a preset or rules of its own
+ * (services/governance-rules.js), said to the person inviting: the creator
+ * reads "you", everyone else reads the creator's name. Group vote is the
+ * default rule and keeps joiningRuleText's numbers.
  */
-async function joiningRule(pool, app) {
+function rulesJoiningText({ preset, creatorName = null, viewerIsCreator = false, locked = false } = {}) {
+  const admin = locked ? ' An admin has to say yes too.' : '';
+  const who = viewerIsCreator ? 'you say' : (creatorName ? `${creatorName} says` : 'its creator says');
+  if (preset === 'you_or_the_group') return `A change goes live when ${who} yes, or when most of the group does.${admin}`;
+  if (preset === 'two_yeses') return `A change goes live once two people say yes: whoever makes it, and one more.${admin}`;
+  if (preset === 'open_floor') return `Any member’s yes puts a change live, even their own.${admin}`;
+  return `A change goes live when any one of its rules passes.${admin}`;
+}
+
+/**
+ * joiningRuleText for `app` (carrying id, locked and created_by), with its
+ * rule and its headcount read. `viewerId` is the person reading it. Never
+ * throws; null when the rule cannot be read.
+ */
+async function joiningRule(pool, app, viewerId = null) {
   try {
     const governance = require('./governance');
     const gov = await governance.getGovernance(pool, app.id);
+    if (gov.rules) {
+      const preset = gov.rules.preset || require('./governance-rules').matchPreset(gov.rules.rules);
+      if (preset !== 'group_vote' || gov.rules.groups.length) {
+        let creatorName = null;
+        if (app.created_by && !app.self_hosted) {
+          const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [app.created_by]);
+          creatorName = rows[0]?.username || null;
+        }
+        return rulesJoiningText({
+          preset: gov.rules.groups.length ? null : preset,
+          creatorName,
+          viewerIsCreator: !!viewerId && viewerId === app.created_by,
+          locked: !!app.locked,
+        });
+      }
+    }
     let people = 1;
     let invited = 0;
     if (gov.approvalsRequired == null && gov.approverPolicy !== 'invited') {
@@ -964,6 +996,7 @@ module.exports = {
   firstVersionPending,
   joiningRule,
   joiningRuleText,
+  rulesJoiningText,
   NO_LIMIT,
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,

@@ -371,9 +371,10 @@ test('#4527: the approval rule\'s line carries Rules, for exactly whom the rule 
     const viewer = renderToHtml(createElement(ApprovalLine, { slug: 'rules-viewer' }));
     assert.doesNotMatch(viewer, /data-ws-rules-edit/);
     assert.match(viewer, /data-ws-community-rule="">/);
-    // The click asks the dialog to land on Proposal approvals.
+    // #4666: the click opens the Who can see & change it sheet, where the
+    // rule is proposed alongside who can see the project.
     const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalLine('));
-    assert.match(src, /\(window as any\)\.AppView\?\.openMembersModal\?\.\(\{ focus: 'approvals' \}\)/);
+    assert.match(src, /window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)/);
     assert.equal(message('project:communityCard.rule.rules'), 'Rules');
   } finally {
     globalThis.fetch = realFetch;
@@ -392,101 +393,57 @@ test('a person who has not joined reads the same What happened, its rows and Mar
   assert.match(LANDER, /\{v\.since \? \(\s*<button\s+type="button"\s+className="dev-ws-since-clear un-touch-target"\s+data-ws-since-clear=""/);
 });
 
-test('Make it public and Make it private are the ⋯\'s (Make it public stays on Share it), and both are a proposal', () => {
-  const { audienceChangeLine, canMakePrivate, canMakePublic, canLeave, MAKE_PRIVATE_LINE, MAKE_PUBLIC_LINE } = loadTsx(CARD);
+test('Make it public stays on Share it; who can see a project otherwise is the Who can see & change it sheet, from the ⋯ (#4666)', () => {
+  const { audienceChangeLine, canLeave, MAKE_PUBLIC_LINE } = loadTsx(CARD);
   assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is waiting for approval');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is waiting for approval');
   assert.equal(audienceChangeLine(null), 'A change to who it is for is waiting for approval');
 
-  // One proposal for both directions.
-  const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PRIVATE_LINE'));
+  // Share it's popup still proposes it, through the visibility PR.
+  const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PUBLIC_LINE'));
   assert.match(propose, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
-  assert.match(propose, /to === 'private'\s*\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
-    'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
   assert.match(propose, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
 
   // MAKE IT PUBLIC (it was "Open it up"): a button on a just-yours project's
-  // Share it card, asking under itself; on a private community's hub it is a
-  // row of the ⋯ (#4045, decision D), asking through the platform's confirm.
-  const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
+  // Share it card, asking under itself.
+  const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function InviteCard('));
   assert.match(pub, />\s*\{t\('project:communityCard\.share\.makePublic'\)\}\s*</);
   assert.equal(message('project:communityCard.share.makePublic'), 'Make it public');
   assert.match(pub, /const proposed = await proposeAudience\(slug, 'public'\);/);
   assert.match(pub, /<p className="dev-ws-vote-sub">\{t\(MAKE_PUBLIC_LINE\)\}<\/p>/);
-  // The constant is the message's id; the catalog holds the words.
   assert.equal(MAKE_PUBLIC_LINE, 'project:communityCard.makePublic.explain');
   assert.equal(message(MAKE_PUBLIC_LINE), 'Anyone can find it on Discover, join, and propose changes. '
     + 'Members vote on this first, and it applies once it merges.', 'it says it is a proposal, not a switch');
-  assert.doesNotMatch(CARD_SRC, /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
   const hero = CARD_SRC.slice(CARD_SRC.indexOf('export function CommunityCard('), CARD_SRC.indexOf('export function shareItLine('));
-  assert.doesNotMatch(hero, /<MakePublic /, 'not a button in the hero any more');
+  assert.doesNotMatch(hero, /<MakePublic /, 'not a button in the hero');
   assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<MakePublic /);
-  assert.match(CARD_SRC, /\? translate\('project:communityCard\.share\.lineBuilding'\)\s*: translate\('project:communityCard\.share\.line'\);/);
-  for (const id of ['project:communityCard.share.lineBuilding', 'project:communityCard.share.line']) {
-    assert.match(message(id), /or make it public so anyone can join\.$/);
-  }
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: null }), true);
-  assert.equal(canMakePublic({ audience: 'open', can_manage: true, audience_change: null }), false);
-  assert.equal(canMakePublic({ audience: 'solo', can_manage: true, audience_change: null }), false, 'Share it has its own');
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: false, audience_change: null }), false);
-  assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: { session_id: 4 } }), false);
-  const conf = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePublic('), CARD_SRC.indexOf('export function canMakePublic('));
-  assert.match(conf, /ui\.confirm\(\{\s*title: translate\('project:communityCard\.makePublic\.question', \{ project: name \}\),\s*message: translate\(MAKE_PUBLIC_LINE\),\s*confirmLabel: translate\('project:communityCard\.makePublic\.propose'\),\s*cancelLabel: translate\('project:communityCard\.makePublic\.notNow'\),/);
-  assert.equal(message('project:communityCard.makePublic.question', { project: 'Recipe Box' }), 'Make Recipe Box a public community?');
-  assert.equal(message('project:communityCard.makePublic.propose'), 'Propose making it public');
-  assert.equal(message('project:communityCard.makePublic.notNow'), 'Not now');
-  // #4378: an owner still to verify is asked first; Not now (false) leaves it private.
-  assert.match(conf, /if \(!ok\) return;\s*try \{\s*if \(!\(await proposeAudience\(slug, 'public'\)\)\) return;/);
+
+  // The ⋯'s Make it public and Make it private rows are one row now.
+  assert.doesNotMatch(CARD_SRC, /export (async )?function (confirmMakePrivate|confirmMakePublic|canMakePrivate|canMakePublic)\(/);
+  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
+  assert.doesNotMatch(menu, /data-plus="make-(public|private)"/);
+  assert.match(menu, /\{onWhoDecides \? \(\s*<PlusRow\s+data-plus="who-decides"[\s\S]{0,140}title=\{t\('project:menu\.whoDecides\.title'\)\}\s+sub=\{t\('project:menu\.whoDecides\.sub'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onWhoDecides\(\); \}\}/);
+  assert.equal(message('project:menu.whoDecides.title'), 'Who can see & change it');
+  assert.ok(menu.indexOf('data-plus="who-decides"') > menu.indexOf('id="dev-plus-settings"'), 'in the Settings & rules panel');
+
   // LEAVE (#4045): the Joined pill's way out, as a row of the ⋯, for a
   // member who did not start it.
   assert.equal(canLeave({ is_member: true, is_creator: false }), true);
   assert.equal(canLeave({ is_member: true, is_creator: true }), false);
   assert.equal(canLeave({ is_member: false, is_creator: false }), false);
   assert.equal(canLeave(null), false);
-
-  // MAKE IT PRIVATE: not a hero button, a row of the ⋯, for a public
-  // community, to whoever may open the proposal, while none is up.
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: null }), true);
-  assert.equal(canMakePrivate({ audience: 'invited', can_manage: true, audience_change: null }), false);
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: false, audience_change: null }), false);
-  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: { session_id: 4 } }), false);
-  assert.equal(canMakePrivate(null), false);
-  const priv = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePrivate('), CARD_SRC.indexOf('export async function confirmMakePublic('));
-  assert.match(priv, /ui\.confirm\(\{\s*title: translate\('project:communityCard\.makePrivate\.question', \{ project: name \}\),\s*message: translate\(MAKE_PRIVATE_LINE\),\s*confirmLabel: translate\('project:communityCard\.makePrivate\.propose'\),/);
-  assert.equal(message('project:communityCard.makePrivate.question', { project: 'Recipe Box' }), 'Make Recipe Box a private community?');
-  assert.equal(message('project:communityCard.makePrivate.propose'), 'Propose making it private');
-  assert.match(priv, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
-  assert.match(priv, /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
-  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title=\{t\('project:menu\.makePrivate\.title'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
-  assert.equal(message('project:menu.makePrivate.title'), 'Make it private');
-  assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('id="dev-plus-settings"'), 'in the Settings & rules panel');
-  assert.match(menu, /\{onMakePublic \? \(\s*<PlusRow\s+data-plus="make-public"[\s\S]{0,140}title=\{t\('project:menu\.makePublic\.title'\)\}\s+sub=\{t\('project:menu\.makePublic\.sub'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePublic\(\); \}\}/);
-  assert.equal(message('project:menu.makePublic.title'), 'Make it public');
-  assert.equal(message('project:menu.makePublic.sub'), 'Anyone can find it on Discover and join.');
-  assert.ok(menu.indexOf('data-plus="make-public"') > menu.indexOf('id="dev-plus-settings"')
-    && menu.indexOf('data-plus="make-public"') < menu.indexOf('data-plus="make-private"'), 'the first of Settings & rules, beside Make it private');
   assert.match(menu, /\{onLeave \? \(\s*<PlusRow\s+data-plus="leave"[\s\S]{0,140}title=\{appName \? t\('project:menu\.leave\.named', \{ project: appName \}\) : t\('project:menu\.leave\.plain'\)\}[\s\S]{0,200}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onLeave\(\); \}\}/);
-  assert.equal(message('project:menu.leave.named', { project: 'Recipe Box' }), 'Leave Recipe Box');
-  assert.equal(message('project:menu.leave.plain'), 'Leave');
-  assert.ok(menu.indexOf('data-plus="leave"') > menu.indexOf('data-plus="make-private"'), 'Leave follows them');
-  // Private decides who can OPEN it. Every repository is public on GitHub
-  // (services/github.js createRepo), so both say the code stays public.
-  assert.equal(MAKE_PRIVATE_LINE, 'project:communityCard.makePrivate.explain');
-  assert.equal(message(MAKE_PRIVATE_LINE), 'Only people who are invited can open it and build it. '
-    + 'Its code stays public on GitHub. Members vote on this first, and it applies once it merges.');
-  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub=\{t\('project:menu\.makePrivate\.sub'\)\}/);
-  assert.equal(message('project:menu.makePrivate.sub'), 'Only invited people can open and build it. Code stays public on GitHub.');
+  assert.ok(menu.indexOf('data-plus="leave"') > menu.indexOf('data-plus="who-decides"'), 'Leave follows it');
+
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
-  assert.match(lander, /onMakePublic=\{canMakePublic\(community\)\s*\? \(\) => \{ void confirmMakePublic\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
+  assert.match(lander, /onWhoDecides=\{community\?\.can_manage\s*\? \(\) => \{ window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\); \}\s*: null\}/);
   assert.match(lander, /onLeave=\{canLeave\(community\) \? \(\) => \{ void leaveCommunity\(slug\); \} : null\}/);
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.
   assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
   assert.match(CARD_SRC, /href=\{changeHref\(slug, data\.audience_change\.session_id, data\.audience_change\.pr_number\)\}/);
-  // The server offers it to exactly whom POST /visibility-pr accepts.
+  // The server offers it to exactly whom the proposal routes accept.
   const route = read('src/routes/apps.js');
   assert.match(route, /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);
   assert.match(route, /await renamePr\.findVisibilityPr\(pool, app\.id\)/);
