@@ -782,8 +782,14 @@ function pace(d: Dash): string {
  *
  * "Live this week" wears a `+` when the merged history is paged, because the
  * number is then a floor and not a total.
+ *
+ * ── AND THE VOTES FIGURE OPENS THE VOTE (#4745) ──
+ * With a change or a group decision up for a vote, "waiting on a vote" is a
+ * button: one waiting opens that item's page, several open All items, where
+ * every one of them is listed. The other three figures stay spans, and a
+ * zero stays a plain number — there is nothing to open.
  */
-function DashTiles({ d, owed }: { d: Dash; owed: number }): ReactNode {
+function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -816,24 +822,43 @@ function DashTiles({ d, owed }: { d: Dash; owed: number }): ReactNode {
   ];
   return (
     <div className="dev-ws-dash" data-ws-dash="">
-      {cells.map((c) => (
-        <span
-          key={c.key}
-          className={c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell'}
-          data-ws-dash-cell={c.key}
-          title={c.title}
-        >
-          <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
-          <span className="dev-ws-dash-label">
-            {/* A GRID in app.css, not an inline run: the label wraps at phone
-                widths, and a centred mark floated to the middle of a two-line
-                label while its second line ran back underneath the dot. */}
-            {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
-            <span>{c.label}</span>
+      {cells.map((c) => {
+        // #4745: only the votes figure, only while something actually waits,
+        // and only when the caller can route the tap. The markup is otherwise
+        // like-for-like with the span — the same class, the same attribute.
+        const tappable = c.key === 'votes' && c.n > 0 && !!onVotes;
+        const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
+        const content = (
+          <>
+            <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
+            <span className="dev-ws-dash-label">
+              {/* A GRID in app.css, not an inline run: the label wraps at phone
+                  widths, and a centred mark floated to the middle of a two-line
+                  label while its second line ran back underneath the dot. */}
+              {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
+              <span>{c.label}</span>
+            </span>
+            {c.sub}
+          </>
+        );
+        return tappable ? (
+          <button
+            key={c.key}
+            type="button"
+            className={cls}
+            data-ws-dash-cell={c.key}
+            data-ws-dash-open=""
+            onClick={onVotes}
+            title={c.title}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={c.key} className={cls} data-ws-dash-cell={c.key} title={c.title}>
+            {content}
           </span>
-          {c.sub}
-        </span>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -4631,7 +4656,19 @@ export function DevWorkshop(): ReactNode {
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </div>
-          <DashTiles d={v.dashboard} owed={owed} />
+          {/* #4745: the votes figure routes its tap — the one waiting item's
+              page when exactly one waits, All items otherwise, where every
+              waiting change is listed. With nothing waiting the figure is
+              not a button and the handler is never called. */}
+          <DashTiles
+            d={v.dashboard}
+            owed={owed}
+            onVotes={() => {
+              const refs = v.dashboard?.votesWaitingRefs || [];
+              if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
+              else openTab('all');
+            }}
+          />
           {/* Where the open work is: the categories with the most of it, as
               chips. It replaced the model's paragraph about the open work
               and the sentence derived from the counts, and the caption that

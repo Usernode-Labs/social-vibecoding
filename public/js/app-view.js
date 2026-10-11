@@ -12061,6 +12061,12 @@ const AppView = {
       open: openEntries.length,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
+      // #4745: the votes figure is tappable. It opens the one waiting item's
+      // page, or All items when several wait — these refs follow the bucket's
+      // order, so `refs.length === 1` and `votesWaiting === 1` agree.
+      votesWaitingRefs: buckets.inReview
+        .map((x) => ({ kind: x.kind, id: Number(x.item && x.item.id) }))
+        .filter((r) => r.id > 0),
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
