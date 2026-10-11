@@ -1,14 +1,16 @@
 /**
  * The Workshop's row (#4457, #4486): one item, in one hairline-divided list.
  *
- * ONE ROW, THREE SURFACES. A week's page on the Workshop tab, All items'
- * board columns and its By category lanes all draw this row now (#4486);
- * the Workshop tab's Your work and New for you draw its shorter sibling,
- * `ActRow`, below (After-Workshop-B), and its What happened its own one-line
- * row (./week-pages.tsx HappenedRow). The board and By category
- * used to draw the folded card (../card/fold.tsx), which wore a coloured
- * edge and a coloured glyph the column already said, named its author and
- * its provenance twice, and unfolded in place under a ⇕. A row here is:
+ * ONE ROW, FOUR SURFACES. A week's page on the Workshop tab, All items'
+ * board columns and its By category lanes all draw this row now (#4486),
+ * and the Workshop tab's Your work draws it in What happened's one-line
+ * shape (variant `line`, #4716); the Workshop tab's New for you draws its
+ * shorter sibling, `ActRow`, below (After-Workshop-B), and its What happened
+ * its own one-line row (./week-pages.tsx HappenedRow). The board and By
+ * category used to draw the folded card (../card/fold.tsx), which wore a
+ * coloured edge and a coloured glyph the column already said, named its
+ * author and its provenance twice, and unfolded in place under a ⇕. A row
+ * here is:
  *
  *   - on the Workshop tab, a neutral tile (what kind of thing it is: the tab
  *     mixes requests, changes and live work in one list); none on the board,
@@ -66,11 +68,15 @@ import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../car
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
 /**
- * Which surface draws the row. `list`: the Workshop tab's lists, with the
- * tile and the bar beside Vote on the tags line. `board`: All items' columns
- * and By category's lanes, with no tile and the card's bar across the row.
+ * Which surface draws the row. `list`: the Workshop tab's week pages, with
+ * the tile, the tags line and the vote on a line of its own under it.
+ * `board`: All items' columns and By category's lanes, with no tile and the
+ * card's bar across the row. `line`: the Workshop tab's Your work (#4716),
+ * in This week's one-line row (./week-pages.tsx HappenedRow): the small
+ * glyph, the title on one line and, at its end, the status pill and Vote;
+ * under it a second line with the words and the tags.
  */
-export type RowVariant = 'list' | 'board';
+export type RowVariant = 'list' | 'board' | 'line';
 
 /** Which page a row opens: the kind `AppView.openTopic` takes, and its id. */
 export interface TopicRef {
@@ -234,6 +240,54 @@ export function WorkRow({
   const status = live || hasChip || hasChat || tags.length > 0;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;
+  if (variant === 'line') {
+    // #4716: Your work in This week's one-line row. The first line is the
+    // small glyph, the title on one line and, at its end, the card's status
+    // pill with Vote (live work: its "✓ Live" bar), as This week ends its
+    // line with the time; the second is the board's words, then the tags.
+    // A narrow card wraps the title and moves the pill and Vote to the
+    // row's end, under the tags, as a phone has them today (app.css
+    // `.dev-ws-lrow`).
+    const end = votes || (live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null);
+    // Live work's bar is on the first line, so its tags drop the one that
+    // restates it: a merged item's settled tag is that pill's own label
+    // (AppView._workshopBrief `settled`), "Going live…" on a release still
+    // under way.
+    const lineTags = live && pill ? tags.filter((t) => t.label !== pill.label) : tags;
+    return (
+      <div
+        className="dev-ws-wrow dev-ws-lrow"
+        data-ws-row={row.key}
+        data-ws-kind={b.kind}
+        data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
+        data-on={on ? '1' : undefined}
+      >
+        <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>
+        <span className="dev-ws-wrow-main">
+          <span className="dev-ws-lrow-line">
+            {href ? (
+              <a
+                className="dev-ws-wrow-link"
+                href={href}
+                aria-current={on ? 'true' : undefined}
+                onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+              >
+                {card.title.text}
+              </a>
+            ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+            {end}
+          </span>
+          <span className="dev-ws-wrow-status">
+            <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
+            {chip}
+            {chat}
+            {lineTags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+          </span>
+        </span>
+        {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
+      </div>
+    );
+  }
   return (
     <div
       className={board ? 'dev-ws-wrow dev-ws-brow' : 'dev-ws-wrow'}
