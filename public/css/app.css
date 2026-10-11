@@ -18730,8 +18730,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    taps: its track is collapsed to nothing, the h2 stays in the DOM for
    screen readers and the declared checks, and the band's button is hidden.
    The header draws its own button (place-bar.tsx HeaderPlace), 28px like the
-   header's other controls, and the place's name beside the switcher; the
-   tint they sit on and the dot's ring are the community's, as the band's
+   header's other controls, and the place's name beside the switcher as a
+   small lowered label, a subscript to the chip rather than a second title;
+   the tint they sit on and the dot's ring are the community's, as the band's
    were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
    community name shortens in the switcher first, which is the name the old
    second row did not show. On Homeroom's own pages that name is the
@@ -18754,7 +18755,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     display: inline-block;
     flex-shrink: 0; min-width: 0; max-width: 45%; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
-    font-size: 16px; font-weight: 600; color: #fff;
+    /* A subscript-style label (evan's ask): small, like the header's own
+       subtitle tuning, and dropped to the chip's foot rather than centred
+       as a second title would be. White still, on the tint it sits on. */
+    align-self: flex-end; margin-bottom: 2px;
+    font-size: 11px; font-weight: 600; line-height: 1; color: #fff;
   }
 }
 

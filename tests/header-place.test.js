@@ -155,8 +155,10 @@ test('the header\'s merged controls are the bar\'s, sized to the header\'s row',
     'the name paints nowhere by default');
   assert.match(CSS, /@media \(max-width: 767\.98px\) \{[^@]*?#platform-header \.header-place-name \{\n    display: inline-block;/,
     'and only a phone shows it');
-  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*font-size: 16px; font-weight: 600; color: #fff;/,
-    'in the header\'s white ink');
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*align-self: flex-end;/,
+    'lowered to the chip\'s foot, a subscript beside the switcher');
+  assert.match(CSS, /#platform-header \.header-place-name \{[^}]*font-size: 11px; font-weight: 600; line-height: 1; color: #fff;/,
+    'small, the header subtitle\'s size, still in the header\'s white ink');
   // The dot's ring is the community tint it sits on, as the band's was.
   assert.match(CSS, /\.dev-ws-places-dot \{[^}]*box-shadow: 0 0 0 2px var\(--community-tint, #2a2e34\);/);
 });
