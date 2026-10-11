@@ -1493,6 +1493,11 @@ const Notifications = {
   // welcome has been shown for this project, the chat opens as before.
   async _acceptInvite(appId, slug, kind) {
     const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
+    // The row's own name for the project, read before the local removal (and
+    // the refresh that replaces the list) takes it away (#4740).
+    const invite = Notifications.invites.find(
+      (i) => i.appId === appId && (i.kind || 'collab') === (kind || 'collab')
+    );
     try {
       const res = await fetch(`${base}/${appId}/accept`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
@@ -1515,7 +1520,17 @@ const Notifications = {
         // presented over the screen this opens (#1329). The people you just
         // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
-        if (kind !== 'approver' && Notifications._welcome(data.welcome, target)) return;
+        if (kind !== 'approver') {
+          if (Notifications._welcome(data.welcome, target)) return;
+          // #4740: an accept that lands where the viewer already was said
+          // nothing — say what the tap did. When "You're in" opened, that
+          // welcome is the confirmation instead. An approver accept is
+          // unchanged: it says nothing new.
+          const project = (invite && invite.appName) || '';
+          window.PlatformUI?.toast?.(project
+            ? t('notifications:invite.acceptedBuild', { project })
+            : t('notifications:invite.acceptedBuildUnnamed'));
+        }
         Notifications._openAppDiscussion(target);
       }
     } catch (err) {
@@ -1544,6 +1559,8 @@ const Notifications = {
         return;
       }
       Notifications._removeInviteLocal(appId, kind);
+      // #4740: the tap used to only take the row away; say so.
+      window.PlatformUI?.toast?.(t('notifications:invite.declined'));
       Notifications.refresh();
     } catch (err) {
       console.warn('[notifications] declineInvite failed', err);
@@ -1911,7 +1928,13 @@ function inviteView(inv) {
       (inv.invitedBy ? 0 : 2) + (project ? 0 : 1)],
     appName: project,
     note: !isApprover && inv.note ? String(inv.note) : '',
-    members: !isApprover && count ? t('notifications:invite.members', { count }) : '',
+    // #4740: on a project the viewer already joined (by a link or the Join
+    // button) a build invite still offers something they do not have — the
+    // right to build it — so the row stays, and its meta line says they are
+    // already in it instead of a headcount they are part of.
+    members: isApprover ? '' : (inv.inCommunity
+      ? t('notifications:invite.alreadyIn')
+      : (count ? t('notifications:invite.members', { count }) : '')),
     ...stampFields(inv.createdAt),
   };
 }
