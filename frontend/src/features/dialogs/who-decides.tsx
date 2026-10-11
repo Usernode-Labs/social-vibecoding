@@ -345,7 +345,7 @@ export function WhoDecidesDialog() {
 
         {waiting ? (
           <p className="mt-3 rounded-2xl bg-white px-4 py-3 text-[13px] leading-snug shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" data-who-waiting="">
-            {t('dialogs:whoDecides.waiting')}{' '}
+            {`${t('dialogs:whoDecides.waiting')} `}
             <a className={`font-semibold ${ACCENT_TEXT}`} href={changeHref(slug, waiting.session_id)} onClick={() => dialog.closeForNavigation()}>
               {t('dialogs:whoDecides.open')}
             </a>
