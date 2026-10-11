@@ -463,6 +463,22 @@
     "text": "A potluck planner",
     "description": "One-line description saved with a new project made from the \"Potlucks\" option of the organizer idea, shown under the project's name. At most 90 characters."
   },
+  "firstSession.template.organizer.study.label": {
+    "text": "Study timer",
+    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.organizer.study.sentence": {
+    "text": "An app to organize our <0>study sessions</0>: a 25 minute focus timer, and how many each of us finished today.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Study timer\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.organizer.study.name": {
+    "text": "Study Timer",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Study timer\" option of the organizer idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.organizer.study.description": {
+    "text": "A study timer",
+    "description": "One-line description saved with a new project made from the \"Study timer\" option of the organizer idea, shown under the project's name. At most 90 characters."
+  },
   "firstSession.template.organizer.own.sentence": {
     "text": "An app to organize our <0>{{words}}</0>, so everyone can see what's where and who's on it.",
     "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Your own…\" chip are picked. A text field stands where <0>{{words}}</0> is, and {{words}} is what the maker types there, for example \"camping gear\". It is also sent as the description of what to make."

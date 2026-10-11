@@ -24,7 +24,7 @@
  * shown, so the words follow the language on screen.
  *
  * READY-MADE. Every choice that needs no typing (the tier list's four, the
- * organizer's four) names a `template`: one of Homeroom's ready-made apps
+ * organizer's five) names a `template`: one of Homeroom's ready-made apps
  * (services/app-templates.js), which Make it makes instead of asking
  * Homeroom bot to build a first version, so the project is usable as soon
  * as it runs. Its `emoji` is that app's icon. Your own words, and every
@@ -148,6 +148,7 @@ export const TEMPLATES: readonly Template[] = [
       { key: 'chores', label: 'onboarding:firstSession.template.organizer.chores.label', sentence: 'onboarding:firstSession.template.organizer.chores.sentence', name: 'onboarding:firstSession.template.organizer.chores.name', description: 'onboarding:firstSession.template.organizer.chores.description', template: 'chore-list', emoji: '🧹' },
       { key: 'library', label: 'onboarding:firstSession.template.organizer.library.label', sentence: 'onboarding:firstSession.template.organizer.library.sentence', name: 'onboarding:firstSession.template.organizer.library.name', description: 'onboarding:firstSession.template.organizer.library.description', template: 'lending-library', emoji: '📚' },
       { key: 'potlucks', label: 'onboarding:firstSession.template.organizer.potlucks.label', sentence: 'onboarding:firstSession.template.organizer.potlucks.sentence', name: 'onboarding:firstSession.template.organizer.potlucks.name', description: 'onboarding:firstSession.template.organizer.potlucks.description', template: 'potluck-planner', emoji: '🍲' },
+      { key: 'study', label: 'onboarding:firstSession.template.organizer.study.label', sentence: 'onboarding:firstSession.template.organizer.study.sentence', name: 'onboarding:firstSession.template.organizer.study.name', description: 'onboarding:firstSession.template.organizer.study.description', template: 'study-timer', emoji: '⏱️' },
     ],
     own: { sentence: 'onboarding:firstSession.template.organizer.own.sentence', example: 'onboarding:firstSession.template.organizer.own.example', name: 'onboarding:firstSession.template.organizer.own.name', description: 'onboarding:firstSession.template.organizer.own.description' },
     note: 'onboarding:firstSession.template.organizer.note',
