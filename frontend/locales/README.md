@@ -93,6 +93,26 @@ other change.
   request at a time and are up for a vote the same pass. More, a whole new
   language, go as one Message Batch at half the price; a later pass opens the
   proposal once the batch has ended.
+- **What an answer looks like.** Every request asks for JSON in one fixed
+  schema (`RESPONSE_SCHEMA`): a plain message's `text`, or a counted message's
+  `forms`, with the six plural categories (`zero`, `one`, `two`, `few`, `many`,
+  `other`) named one by one. The API refuses a schema with an object whose keys
+  are open, and a Message Batch reports that only after it has ended, on every
+  request in it, so `tests/language-sync.test.js` walks the schema against
+  what the API documents as supported. Check it there before changing it.
+- **When requests fail.** A failed request keeps the API's error type and
+  message. A pass that wrote less than it asked for logs one `language-sync`
+  line at warn level: how many requests failed, counted by reason
+  (`errored: invalid_request_error`), one error message as the API worded it,
+  the batch's own request counts, and what the checks refused. It never logs a
+  message's text. A request that failed is not asked again message by message;
+  its messages wait for the next pass.
+- **When every request fails.** Nothing was translated, so nothing is opened
+  and main is not marked as read. The step keeps the failure and does not send
+  the same requests again for a day, however often main moves. A change to
+  what a request is made of (the model, the token limit, the schema) is tried
+  on the next pass. The failure is cleared by the next pass that gets an
+  answer.
 - **One at a time.** While a translation proposal is open no other is opened.
   One the community closes is not offered again until the English changes.
 - **Why not on each proposal's own branch.** A commit the platform adds to a
@@ -102,12 +122,13 @@ other change.
   English, one at a time.
 - `LANGUAGE_SYNC_ENABLED=false` turns it off. Its spend counts against the
   platform's daily system budget. A full admin's connector reads where it
-  stands with `get_browser_languages`.
+  stands with `get_browser_languages`, the last such failure included.
 
 `node scripts/language-sync.js --plan` shows what each language needs on a
 checkout, and the same script translates by hand with an `ANTHROPIC_API_KEY`
 (`--batch` for a Message Batch, `--changed-from <ref>` for one change's
-messages).
+messages). It prints why requests failed, and exits with an error when none
+was answered.
 
 ## Using a message
 

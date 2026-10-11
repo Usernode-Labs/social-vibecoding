@@ -1410,6 +1410,25 @@ function catalogAnswer(message) {
   return { text, usage };
 }
 
+/**
+ * Why a request produced no message, for the step's log and its status:
+ * `kind` is how it ended (a batch entry's result type, or 'request' for a
+ * direct call), `type` the API's error type, `message` the API's own wording.
+ * `response` is the API's error body ({ error: { type, message } }): a batch
+ * entry's `result.error`, or the SDK error's `.error`. The message is the
+ * API's description of the request, cut short; it is never a model's output.
+ */
+function catalogFailure(kind, response, fallback) {
+  const detail = response && typeof response === 'object'
+    ? (response.error && typeof response.error === 'object' ? response.error : response)
+    : {};
+  const message = String(detail.message || fallback || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const failure = { kind };
+  if (typeof detail.type === 'string' && detail.type !== 'error') failure.type = detail.type.slice(0, 60);
+  if (message) failure.message = message;
+  return failure;
+}
+
 async function translateCatalogDirect(requests, { concurrency = 4, telemetryContext } = {}) {
   if (!client) throw new Error('LLM not initialized');
   const answers = new Map();
@@ -1426,7 +1445,9 @@ async function translateCatalogDirect(requests, { concurrency = 4, telemetryCont
         });
         answers.set(request.customId, catalogAnswer(response));
       } catch (err) {
-        answers.set(request.customId, { error: err?.message || 'request failed' });
+        const failure = catalogFailure('request', err?.error, err?.message);
+        if (!failure.type && err?.status) failure.type = `http_${err.status}`;
+        answers.set(request.customId, { error: err?.message || 'request failed', failure });
       }
     }
   };
@@ -1461,7 +1482,11 @@ async function catalogBatchAnswers(id, { telemetryContext } = {}) {
       });
       answers.set(entry.custom_id, catalogAnswer(message));
     } else {
-      answers.set(entry?.custom_id, { error: entry?.result?.type || 'failed' });
+      // errored (with the API's reason), canceled or expired: no message was
+      // written and nothing is charged. A batch validates each request only
+      // when it runs, so a malformed request is first heard of here.
+      const kind = entry?.result?.type || 'failed';
+      answers.set(entry?.custom_id, { error: kind, failure: catalogFailure(kind, entry?.result?.error) });
     }
   }
   return answers;

@@ -149,6 +149,149 @@ test('a round that failed wholesale is not retried one message at a time', async
   assert.ok(summary.languages.es.failed.every((f) => f.problem === 'not retried'));
 });
 
+// What structured outputs accept in a schema, from Anthropic's documentation
+// ("JSON Schema limitations": https://platform.claude.com/docs/en/build-with-claude/structured-outputs).
+// Everything else there is listed as not supported and answers 400; in a
+// Message Batch that 400 arrives on every request, after the batch has ended.
+const SCHEMA_KEYWORDS = new Set([
+  'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'const',
+  'anyOf', 'allOf', '$ref', '$defs', 'definitions', 'default', 'format', 'minItems', 'description', 'title',
+]);
+const SCHEMA_TYPES = new Set(['object', 'array', 'string', 'integer', 'number', 'boolean', 'null']);
+const STRING_FORMATS = new Set(['date-time', 'time', 'date', 'duration', 'email', 'hostname', 'uri', 'ipv4', 'ipv6', 'uuid']);
+
+/** Every way `schema` breaks those rules, as "path: problem" lines, plus the counts the API limits. */
+function schemaProblems(schema) {
+  const problems = [];
+  const counts = { optional: 0, unions: 0 };
+  const walk = (node, at) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) { problems.push(`${at}: not a schema object`); return; }
+    for (const keyword of Object.keys(node)) {
+      if (!SCHEMA_KEYWORDS.has(keyword)) problems.push(`${at}: "${keyword}" is not supported`);
+    }
+    const types = node.type === undefined ? [] : [].concat(node.type);
+    for (const type of types) if (!SCHEMA_TYPES.has(type)) problems.push(`${at}: type "${type}"`);
+    if (Array.isArray(node.type) || node.anyOf) counts.unions += 1;
+    if (typeof node.$ref === 'string' && !node.$ref.startsWith('#')) problems.push(`${at}: an external $ref`);
+    if (node.format !== undefined && !STRING_FORMATS.has(node.format)) problems.push(`${at}: format "${node.format}"`);
+    if (node.minItems !== undefined && node.minItems !== 0 && node.minItems !== 1) problems.push(`${at}: minItems ${node.minItems}`);
+    if (node.enum && !node.enum.every((value) => value === null || ['string', 'number', 'boolean'].includes(typeof value))) {
+      problems.push(`${at}: a complex value in enum`);
+    }
+    if (types.includes('object') || node.properties !== undefined) {
+      if (node.additionalProperties !== false) problems.push(`${at}: an object without additionalProperties: false`);
+      const properties = node.properties || {};
+      const required = node.required || [];
+      for (const name of required) if (!(name in properties)) problems.push(`${at}: requires "${name}", which it does not define`);
+      for (const [name, child] of Object.entries(properties)) {
+        if (!required.includes(name)) counts.optional += 1;
+        walk(child, `${at}.${name}`);
+      }
+    }
+    if (node.items !== undefined) walk(node.items, `${at}[]`);
+    for (const keyword of ['anyOf', 'allOf']) (node[keyword] || []).forEach((child, index) => walk(child, `${at}.${keyword}[${index}]`));
+    for (const keyword of ['$defs', 'definitions']) {
+      for (const [name, child] of Object.entries(node[keyword] || {})) walk(child, `${at}.${keyword}.${name}`);
+    }
+  };
+  walk(schema, '$');
+  return { problems, counts };
+}
+
+test('the answer schema is one structured outputs accept: every object closed, no unsupported keyword', () => {
+  const { problems, counts } = schemaProblems(sync.RESPONSE_SCHEMA);
+  assert.deepEqual(problems, []);
+  // The API's limits across a request's schemas: 24 optional properties, 16 with a union type.
+  assert.ok(counts.optional <= 24, `${counts.optional} optional properties`);
+  assert.ok(counts.unions <= 16);
+  // The walk itself refuses what the step shipped with: an object with open keys.
+  const open = { type: 'object', properties: { forms: { type: 'object', additionalProperties: { type: 'string' } } }, required: [], additionalProperties: false };
+  assert.deepEqual(schemaProblems(open).problems, ['$.forms: an object without additionalProperties: false']);
+  assert.match(schemaProblems({ type: 'string', maxLength: 5 }).problems[0], /"maxLength" is not supported/);
+  assert.match(schemaProblems({ type: 'array', items: { type: 'object', properties: {} } }).problems[0], /\$\[\]: an object without/);
+  // Every plural category a language can use is a form the schema names, and no other.
+  const forms = sync.RESPONSE_SCHEMA.properties.translations.items.properties.forms;
+  assert.deepEqual(Object.keys(forms.properties), ['zero', 'one', 'two', 'few', 'many', 'other']);
+  for (const language of ['ar', 'cy', 'ru', 'pl', 'ja', 'es', 'fr', 'pt-BR', 'id', 'vi']) {
+    for (const category of new Intl.PluralRules(language).resolvedOptions().pluralCategories) {
+      assert.ok(category in forms.properties, `${language}: ${category}`);
+    }
+  }
+  // Every request is built from that schema, and the shape the runner remembers follows it.
+  assert.equal(sync.REQUEST_OPTIONS.output_config.format.schema, sync.RESPONSE_SCHEMA);
+  assert.match(sync.requestShape(), /^[0-9a-f]{16}$/);
+});
+
+test('a counted message\'s forms come back through the schema\'s shape, in every category the language uses', async (t) => {
+  const english = {
+    'files_one': says('{{count}} file', 'Count of files.'),
+    'files_other': says('{{count}} files', 'Count of files.'),
+  };
+  const ARABIC = { zero: 'لا ملفات {{count}}', one: 'ملف {{count}}', two: 'ملفان {{count}}', few: '{{count}} ملفات', many: '{{count}} ملفًا', other: '{{count}} ملف' };
+  const { root, readLanguage } = checkout(t, { languages: { en: 'English', ar: 'العربية' }, english, glossary: { doNotTranslate: [], terms: {}, style: {} } });
+  const [request] = sync.prepareSync(root).requests;
+  assert.deepEqual([...JSON.parse(request.params.messages[0].content).messages[0].categories].sort(), Object.keys(ARABIC).sort(), 'the request names the categories');
+  assert.match(request.params.system[0].text, /A counted message has "forms" and no "text", with exactly the categories it lists\./);
+  // A form the language uses but the answer lacks is still refused.
+  const glossary = sync.readGlossary(root);
+  const [plural] = sync.planLanguage(root, 'ar');
+  const { few, ...short } = ARABIC;
+  assert.deepEqual(sync.acceptItem(plural, { id: plural.id, forms: short }, glossary), { problem: 'few: empty' });
+  assert.deepEqual(sync.acceptItem(plural, { id: plural.id, text: 'ملفات' }, glossary), { problem: 'no plural forms' });
+  // An answer exactly as the schema lets the model write it.
+  const answerText = JSON.stringify({ translations: [{ id: 'core:files', forms: ARABIC }] });
+  const answer = JSON.parse(answerText).translations[0];
+  const item = sync.RESPONSE_SCHEMA.properties.translations.items;
+  assert.deepEqual(Object.keys(answer).filter((key) => !(key in item.properties)), []);
+  assert.deepEqual(Object.keys(answer.forms).filter((key) => !(key in item.properties.forms.properties)), []);
+  const summary = await sync.syncTranslations({ root, translate: async (requests) => new Map(requests.map((r) => [r.customId, { text: answerText }])) });
+  assert.deepEqual(summary.languages.ar, { requested: 1, written: 1, failed: [] });
+  const written = readLanguage('ar');
+  for (const [category, text] of Object.entries(ARABIC)) assert.equal(written[`files_${category}`].text, text, category);
+});
+
+test('a round in which every request failed is counted by reason and asked nothing more', async (t) => {
+  const { root } = checkout(t);
+  const calls = [];
+  const refused = { kind: 'errored', type: 'invalid_request_error', message: 'output_config.format.schema: additionalProperties must be false' };
+  const summary = await sync.syncTranslations({
+    root,
+    translate: async (requests) => { calls.push(requests); return new Map(requests.map((r) => [r.customId, { error: 'errored', failure: refused }])); },
+  });
+  assert.equal(calls.length, 1, 'no retry, though maxRetries allows any number');
+  assert.equal(summary.nothingAnswered, true);
+  assert.deepEqual(summary.requests, {
+    sent: 1, failed: 1, reasons: { 'errored: invalid_request_error': 1 }, example: refused.message,
+  });
+  assert.equal(summary.languages.es.failed.length, 4);
+  assert.ok(summary.languages.es.failed.every((f) => f.problem === 'errored: invalid_request_error'));
+  assert.deepEqual(summary.files, []);
+
+  // One request of two fails: the other's messages are written, the failed
+  // one's wait for the next pass, and nothing is asked message by message.
+  const partial = [];
+  const model = fakeModel((item) => SPANISH[item.id]);
+  const mixed = await sync.syncTranslations({
+    root,
+    chunkSize: 2,
+    translate: async (requests) => {
+      partial.push(requests);
+      const answers = await model.translate(requests);
+      answers.set(requests[0].customId, { error: 'expired', failure: { kind: 'expired' } });
+      return answers;
+    },
+  });
+  assert.equal(partial.length, 1);
+  assert.equal(mixed.nothingAnswered, false);
+  assert.deepEqual(mixed.requests, { sent: 2, failed: 1, reasons: { expired: 1 }, example: null });
+  assert.equal(mixed.languages.es.written, 2);
+  assert.deepEqual(mixed.languages.es.failed.map((f) => f.problem), ['expired', 'expired']);
+  // A request the transport lost altogether counts as failed too.
+  const lost = await sync.syncTranslations({ root, languages: ['es'], translate: async () => new Map() });
+  assert.equal(lost.nothingAnswered, true);
+  assert.deepEqual(lost.requests.reasons, { 'no answer': 1 });
+});
+
 test('what the checks refuse', () => {
   const ok = (english, text, options) => assert.equal(sync.textProblem(english, text, options), null, text);
   const refuses = (english, text, pattern, options) => assert.match(String(sync.textProblem(english, text, options)), pattern, text);
@@ -207,6 +350,8 @@ test('no build calls a model: the builder and the shell build never load the tra
 function platform(t, { translations = {}, english = ENGLISH, state = null, sessions = {} } = {}) {
   const repo = checkout(t, { translations, english });
   const db = { state, sessions: { ...sessions }, inserted: [], spend: 0 };
+  const logged = [];
+  const clock = { now: Date.parse('2026-10-11T12:00:00Z') };
   const pool = {
     async query(sql, params = []) {
       const text = String(sql);
@@ -254,13 +399,24 @@ function platform(t, { translations = {}, english = ENGLISH, state = null, sessi
     isEnabled: () => true,
     translateCatalogDirect: model.translate,
     async submitCatalogBatch(requests) { batches.push({ requests, status: 'in_progress' }); return { id: `batch_${batches.length}` }; },
-    async catalogBatchStatus(id) { return { status: batches[Number(id.split('_')[1]) - 1].status }; },
-    async catalogBatchAnswers(id) { return model.translate(batches[Number(id.split('_')[1]) - 1].requests); },
+    async catalogBatchStatus(id) {
+      const batch = batches[Number(id.split('_')[1]) - 1];
+      return { status: batch.status, counts: batch.counts || null };
+    },
+    async catalogBatchAnswers(id) {
+      const batch = batches[Number(id.split('_')[1]) - 1];
+      return batch.answers ? batch.answers(batch.requests) : model.translate(batch.requests);
+    },
   };
   const kicked = [];
   const deps = {
     github,
     llm,
+    now: () => clock.now,
+    log: {
+      info: (scope, message, detail) => logged.push({ level: 'info', scope, message, detail }),
+      warn: (scope, message, detail) => logged.push({ level: 'warn', scope, message, detail }),
+    },
     maintenance: {
       PLATFORM_USERNAME: 'usernode-platform',
       ensurePlatformUser: async () => 1,
@@ -270,7 +426,7 @@ function platform(t, { translations = {}, english = ENGLISH, state = null, sessi
     notifications: { createPrProposedNotifications: async () => [], serialize: (row) => row },
   };
   return {
-    repo, db, pool, deps, pushed, kicked, batches, model, reads,
+    repo, db, pool, deps, pushed, kicked, batches, model, reads, logged, clock, llm,
     moveMain: (sha) => { main = sha; },
     run: () => runner.runOnce({ config: {}, pool, deps }),
   };
@@ -331,6 +487,216 @@ test('a whole language goes as a Message Batch, and its proposal opens on the pa
   assert.equal(p.reads.at(-1), 'a'.repeat(40), 'the answers are matched against the catalogs the batch was built from');
   assert.equal(p.pushed[0].at, 'a'.repeat(40), 'at the commit the batch translated, not today\'s main');
   assert.equal(p.db.state.batch, undefined);
+});
+
+/** A catalog too large to translate directly, with its Spanish, removed after the test. */
+function bulk(t) {
+  const english = { ...ENGLISH };
+  for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) english[`bulk.m${i}`] = says(`Message ${i}`, 'Bulk fixture message.');
+  for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) SPANISH[`core:bulk.m${i}`] = { text: `Mensaje ${i}` };
+  t.after(() => { for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) delete SPANISH[`core:bulk.m${i}`]; });
+  return english;
+}
+
+const REFUSED = {
+  kind: 'errored',
+  type: 'invalid_request_error',
+  message: 'output_config.format.schema: For \'object\' type, \'additionalProperties\' must be explicitly set to false',
+};
+const refuseAll = (requests) => new Map(requests.map((r) => [r.customId, { error: 'errored', failure: REFUSED }]));
+const HOUR = 60 * 60 * 1000;
+
+test('a batch in which every request failed is logged with its reason and is not sent again on the next merge', async (t) => {
+  const p = platform(t, { english: bulk(t) });
+  assert.equal((await p.run()).submitted, 'batch_1');
+  assert.equal(p.db.state.batch.shape, sync.requestShape(), 'the batch remembers what its requests were made of');
+  const requests = p.batches[0].requests.length;
+  Object.assign(p.batches[0], {
+    status: 'ended',
+    answers: refuseAll,
+    counts: { processing: 0, succeeded: 0, errored: requests, canceled: 0, expired: 0 },
+  });
+  const failed = await p.run();
+  assert.deepEqual(failed, { failed: true, reasons: { 'errored: invalid_request_error': requests }, spentCents: 0 });
+  assert.equal(p.model.calls.length, 0, 'nothing is asked again one message at a time');
+  assert.equal(p.pushed.length, 0, 'no proposal');
+
+  const warnings = p.logged.filter((line) => line.level === 'warn');
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].scope, 'language-sync');
+  assert.match(warnings[0].message, /^Every translation request failed; not sending them again until the request changes or a day has passed$/);
+  assert.deepEqual(warnings[0].detail, {
+    requests,
+    failedRequests: requests,
+    reasons: { 'errored: invalid_request_error': requests },
+    example: REFUSED.message,
+    leftInEnglish: { 'errored: invalid_request_error': runner.DIRECT_LIMIT + 5 },
+    batchId: 'batch_1',
+    batchCounts: { processing: 0, succeeded: 0, errored: requests, canceled: 0, expired: 0 },
+    retryAfter: '2026-10-12T12:00:00.000Z',
+  });
+  // Counts and the API's words only: no message, English or translated.
+  assert.doesNotMatch(JSON.stringify(warnings), /Message \d|Mensaje|Hello|Leave/);
+
+  // The state keeps the failure and does not call main read.
+  assert.equal(p.db.state.batch, undefined);
+  assert.equal(p.db.state.checkedSha, null);
+  assert.equal(p.db.state.failure.shape, sync.requestShape());
+  assert.equal(p.db.state.failure.baseSha, 'a'.repeat(40));
+
+  // Main moves, as it does on every merge: the same requests are not sent.
+  for (const sha of ['b', 'c', 'd']) {
+    p.moveMain(sha.repeat(40));
+    p.clock.now += 3 * HOUR;
+    assert.deepEqual(await p.run(), { skipped: 'failed_before' });
+  }
+  assert.equal(p.batches.length, 1, 'one batch, not one a merge');
+  assert.equal(p.logged.filter((line) => line.level === 'warn').length, 1);
+
+  // The admin connector's status shows it.
+  assert.deepEqual((await runner.status(p.pool)).failure, {
+    at: '2026-10-11T12:00:00.000Z',
+    requests,
+    reasons: { 'errored: invalid_request_error': requests },
+    example: REFUSED.message,
+    batchCounts: { processing: 0, succeeded: 0, errored: requests, canceled: 0, expired: 0 },
+    retryAfter: '2026-10-12T12:00:00.000Z',
+  });
+
+  // A day on it is tried again, and a good batch opens the proposal and clears the failure.
+  p.clock.now = Date.parse('2026-10-12T12:00:01Z');
+  assert.equal((await p.run()).submitted, 'batch_2');
+  assert.ok(p.db.state.failure, 'kept until a pass gets an answer');
+  p.batches[1].status = 'ended';
+  const opened = await p.run();
+  assert.ok(opened.opened, 'the proposal opens');
+  assert.equal(p.pushed[0].at, 'd'.repeat(40));
+  assert.equal(p.db.state.failure, undefined);
+  assert.equal((await runner.status(p.pool)).failure, null);
+});
+
+test('a failure stops holding the step back as soon as a request is made differently', async (t) => {
+  const p = platform(t, { english: bulk(t) });
+  await p.run();
+  Object.assign(p.batches[0], { status: 'ended', answers: refuseAll });
+  await p.run();
+  assert.deepEqual(await p.run(), { skipped: 'failed_before' });
+  // The fix merges: the schema, the model or the token limit changes.
+  const before = sync.REQUEST_OPTIONS.max_tokens;
+  sync.REQUEST_OPTIONS.max_tokens = before + 1;
+  t.after(() => { sync.REQUEST_OPTIONS.max_tokens = before; });
+  assert.equal((await runner.status(p.pool)).failure.retryAfter, null, 'due on the next pass');
+  assert.equal((await p.run()).submitted, 'batch_2');
+});
+
+test('a failed batch sent by an earlier version does not hold this one back', async (t) => {
+  const p = platform(t, { english: bulk(t) });
+  await p.run();
+  // As the version before this one recorded a batch: no shape.
+  delete p.db.state.batch.shape;
+  Object.assign(p.batches[0], { status: 'ended', answers: refuseAll });
+  assert.equal((await p.run()).failed, true);
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.match(warning.message, /made by an earlier version, so the next pass sends them as this one makes them$/);
+  assert.equal(warning.detail.retryAfter, undefined);
+  assert.equal(warning.detail.example, REFUSED.message, 'the reason is logged all the same');
+  assert.equal((await runner.status(p.pool)).failure.retryAfter, null);
+  assert.equal((await p.run()).submitted, 'batch_2', 'sent again at once, as this version makes it');
+});
+
+test('a direct pass in which every request failed is logged and held back the same way', async (t) => {
+  const p = platform(t);
+  const calls = [];
+  const direct = p.llm.translateCatalogDirect;
+  p.llm.translateCatalogDirect = async (requests) => {
+    calls.push(requests.length);
+    return new Map(requests.map((r) => [r.customId, { error: '400 refused', failure: { ...REFUSED, kind: 'request' } }]));
+  };
+  const failed = await p.run();
+  assert.deepEqual(failed, { failed: true, reasons: { 'request: invalid_request_error': 1 }, messages: 4, spentCents: 0 });
+  assert.deepEqual(calls, [1], 'one request, not one more per message');
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.equal(warning.detail.example, REFUSED.message);
+  assert.equal(warning.detail.batchId, undefined);
+  p.moveMain('b'.repeat(40));
+  assert.deepEqual(await p.run(), { skipped: 'failed_before' });
+  assert.deepEqual(calls, [1]);
+  // The next day the API answers: the proposal opens.
+  p.clock.now += 25 * HOUR;
+  p.llm.translateCatalogDirect = direct;
+  assert.ok((await p.run()).opened);
+  assert.equal(p.db.state.failure, undefined);
+});
+
+test('a pass that wrote only part, or nothing the checks would pass, says why at warn level and is not held back', async (t) => {
+  const p = platform(t);
+  p.llm.translateCatalogDirect = fakeModel(() => ({ text: 'Salir — ahora' })).translate;
+  const result = await p.run();
+  assert.equal(result.nothingUsable, true);
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.equal(warning.message, 'Translation pass produced nothing');
+  assert.equal(warning.detail.failedRequests, 0);
+  assert.deepEqual(warning.detail.reasons, {});
+  assert.equal(warning.detail.leftInEnglish['an em dash'], 1);
+  assert.equal(p.db.state.failure, undefined, 'the requests were answered');
+  assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+});
+
+// ── The transport (services/llm.js) ───────────────────────────────────
+
+test('a failed batch entry or direct request keeps the API\'s error type and message', async (t) => {
+  const llm = require('../src/services/llm');
+  const message = (text) => ({ model: sync.MODEL, stop_reason: 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 10, output_tokens: 5 } });
+  const lines = [
+    { custom_id: 'es-0', result: { type: 'succeeded', message: message('{"translations":[]}') } },
+    // An errored entry as the API writes it: the error response a direct call would have had.
+    { custom_id: 'es-1', result: { type: 'errored', error: { type: 'error', request_id: 'req_1', error: { type: 'invalid_request_error', message: 'output_config.format.schema:\n  additionalProperties must be false' } } } },
+    { custom_id: 'es-2', result: { type: 'expired' } },
+    { custom_id: 'es-3', result: { type: 'canceled' } },
+    { custom_id: 'es-4', result: { type: 'errored', error: { type: 'error', error: { type: 'api_error', message: 'x'.repeat(900) } } } },
+  ];
+  const sent = [];
+  llm._setClientForTests({
+    messages: {
+      batches: {
+        async results() { return (async function* entries() { yield* lines; }()); },
+        async retrieve(id) { return { id, processing_status: 'ended', request_counts: { processing: 0, succeeded: 1, errored: 2, canceled: 1, expired: 1 } }; },
+      },
+      async create(params) {
+        sent.push(params);
+        if (params.messages[0].content === 'refused') {
+          // The SDK's APIError: the status, the parsed body, and a message that repeats it.
+          throw Object.assign(new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"bad schema"}}'), {
+            status: 400, error: { type: 'error', error: { type: 'invalid_request_error', message: 'bad schema' } },
+          });
+        }
+        if (params.messages[0].content === 'offline') throw new Error('Connection error.');
+        return message('{"translations":[]}');
+      },
+    },
+  });
+  t.after(() => llm._setClientForTests(null));
+
+  const answers = await llm.catalogBatchAnswers('msgbatch_1');
+  assert.equal(answers.get('es-0').failure, undefined);
+  assert.equal(answers.get('es-0').text, '{"translations":[]}');
+  assert.deepEqual(answers.get('es-1'), {
+    error: 'errored',
+    failure: { kind: 'errored', type: 'invalid_request_error', message: 'output_config.format.schema: additionalProperties must be false' },
+  });
+  assert.deepEqual(answers.get('es-2'), { error: 'expired', failure: { kind: 'expired' } });
+  assert.deepEqual(answers.get('es-3'), { error: 'canceled', failure: { kind: 'canceled' } });
+  assert.equal(answers.get('es-4').failure.type, 'api_error');
+  assert.equal(answers.get('es-4').failure.message.length, 300, 'a long message is cut short');
+  assert.deepEqual((await llm.catalogBatchStatus('msgbatch_1')).counts, { processing: 0, succeeded: 1, errored: 2, canceled: 1, expired: 1 });
+
+  const request = (customId, content) => ({ customId, params: { model: sync.MODEL, max_tokens: 100, messages: [{ role: 'user', content }] } });
+  const direct = await llm.translateCatalogDirect([request('a', 'fine'), request('b', 'refused'), request('c', 'offline')], { concurrency: 1 });
+  assert.equal(direct.get('a').failure, undefined);
+  assert.deepEqual(direct.get('b').failure, { kind: 'request', type: 'invalid_request_error', message: 'bad schema' });
+  assert.match(direct.get('b').error, /^400 /);
+  assert.deepEqual(direct.get('c').failure, { kind: 'request', message: 'Connection error.' });
+  assert.equal(sent.length, 3);
 });
 
 test('the sweep is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and runs only on the leader', () => {

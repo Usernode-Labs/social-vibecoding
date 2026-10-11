@@ -74,7 +74,14 @@ async function main() {
     console.log(`${language}: ${result.written} of ${result.requested} written, ${result.failed.length} left in English`);
     for (const { id, problem } of result.failed.slice(0, 20)) console.log(`  ${id}: ${problem}`);
   }
+  if (summary.requests.failed) {
+    console.log(`[language-sync] ${summary.requests.failed} of ${summary.requests.sent} request(s) failed:`);
+    for (const [reason, n] of Object.entries(summary.requests.reasons)) console.log(`  ${reason}: ${n}`);
+    if (summary.requests.example) console.log(`  for example: ${summary.requests.example}`);
+  }
   console.log(`[language-sync] ${summary.files.length} file(s) written`);
+  // Nothing answered at all: the request itself is wrong, or the key is.
+  if (summary.nothingAnswered) process.exitCode = 1;
 }
 
 main().catch((err) => {

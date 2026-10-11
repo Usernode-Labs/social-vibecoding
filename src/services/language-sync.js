@@ -20,6 +20,7 @@
 // Everything here works on a checkout on disk and takes the model call as a
 // parameter (`translate`), so tests drive it with a fake model.
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const packs = require('../../scripts/language-packs');
@@ -166,7 +167,7 @@ function systemPrompt(language, languageName, glossary) {
   ];
   if (style) parts.push(`Style: ${style}`);
   if (terms.length) parts.push(`Use these translations for Homeroom's own terms, inflected as the sentence needs:\n${terms.join('\n')}`);
-  parts.push('Answer with JSON only: {"translations": [{"id": "...", "text": "..."}, {"id": "...", "forms": {"one": "...", "other": "..."}}]}, one entry for every id you were given.');
+  parts.push('Answer with JSON only: {"translations": [{"id": "...", "text": "..."}, {"id": "...", "forms": {"one": "...", "other": "..."}}]}, one entry for every id you were given. A plain message has "text" and no "forms". A counted message has "forms" and no "text", with exactly the categories it lists.');
   return parts.join('\n\n');
 }
 
@@ -183,6 +184,13 @@ function userPrompt(items) {
   });
 }
 
+// The plural categories a language can use (CLDR). A counted message's forms
+// are named in the schema one by one: structured outputs refuse an object
+// with open keys (`additionalProperties` must be false on every object), and
+// a Message Batch only says so once it has ended, on every request in it.
+// tests/language-sync.test.js walks this schema against what the API accepts.
+const PLURAL_CATEGORIES = ['zero', 'one', 'two', 'few', 'many', 'other'];
+
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
@@ -193,7 +201,11 @@ const RESPONSE_SCHEMA = {
         properties: {
           id: { type: 'string' },
           text: { type: 'string' },
-          forms: { type: 'object', additionalProperties: { type: 'string' } },
+          forms: {
+            type: 'object',
+            properties: Object.fromEntries(PLURAL_CATEGORIES.map((category) => [category, { type: 'string' }])),
+            additionalProperties: false,
+          },
         },
         required: ['id'],
         additionalProperties: false,
@@ -203,6 +215,23 @@ const RESPONSE_SCHEMA = {
   required: ['translations'],
   additionalProperties: false,
 };
+
+// Everything in a request that is not the text being translated. A request
+// the API refuses as malformed is refused for something here.
+const REQUEST_OPTIONS = {
+  model: MODEL,
+  max_tokens: MAX_TOKENS,
+  output_config: { effort: 'low', format: { type: 'json_schema', schema: RESPONSE_SCHEMA } },
+};
+
+/**
+ * A digest of REQUEST_OPTIONS. The runner keeps it with a pass in which every
+ * request failed: the same requests are not sent again at once, and a change
+ * here (a fix) is tried on the next pass.
+ */
+function requestShape() {
+  return crypto.createHash('sha256').update(JSON.stringify(REQUEST_OPTIONS)).digest('hex').slice(0, 16);
+}
 
 /** One model request per chunk of a language's items. */
 function buildRequests(language, languageName, items, glossary, { chunkSize = CHUNK_SIZE } = {}) {
@@ -215,11 +244,9 @@ function buildRequests(language, languageName, items, glossary, { chunkSize = CH
       language,
       items: chunk,
       params: {
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
+        ...REQUEST_OPTIONS,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userPrompt(chunk) }],
-        output_config: { effort: 'low', format: { type: 'json_schema', schema: RESPONSE_SCHEMA } },
       },
     });
   }
@@ -339,21 +366,32 @@ function prepareSync(root, { languages = null, onlyIds = null, chunkSize = CHUNK
   return { config, glossary, english, targets, plans, requests };
 }
 
+/** A failed request's reason, as it is counted and logged: "errored: invalid_request_error". */
+function failureReason(failure) {
+  return [failure.kind || 'failed', failure.type].filter(Boolean).join(': ');
+}
+
 /**
  * Plan, translate, check and write, for every configured language (or
  * `languages`). `translate(requests)` sends the requests and resolves to a
- * Map of customId -> { text } (the model's answer) or { error }. Items whose
- * answer fails a check are asked again once, on their own; what fails twice
- * stays English and is reported.
+ * Map of customId -> { text } (the model's answer) or { error }, with
+ * `failure: { kind, type, message }` when the request itself failed and no
+ * answer was written. Items whose answer fails a check are asked again once,
+ * on their own; what fails twice stays English and is reported. A first round
+ * in which every request failed is not asked again at all.
  *
- * Returns { files, languages: { tag: { requested, written, failed: [{ id, problem }] } } }.
+ * Returns { files, languages: { tag: { requested, written, failed: [{ id, problem }] } },
+ * requests: { sent, failed, reasons: { reason: count }, example }, nothingAnswered }.
+ * `requests` counts the requests that failed and why, with one error message
+ * as the API worded it; `nothingAnswered` is true when the first round got no
+ * answer to any request.
  */
 async function syncTranslations({
   root, translate, languages = null, onlyIds = null, chunkSize = CHUNK_SIZE, log = () => {},
   maxRetries = Infinity,
 }) {
   const { config, glossary, english, targets, plans, requests } = prepareSync(root, { languages, onlyIds, chunkSize });
-  const summary = { files: [], languages: {} };
+  const summary = { files: [], languages: {}, requests: { sent: 0, failed: 0, reasons: {}, example: null }, nothingAnswered: false };
   for (const [language, items] of plans) summary.languages[language] = { requested: items.length, written: 0, failed: [] };
   if (!requests.length) return summary;
   const total = [...plans.values()].reduce((sum, items) => sum + items.length, 0);
@@ -370,8 +408,17 @@ async function syncTranslations({
   for (let round = 0; round < 2 && pending.length; round += 1) {
     const answers = await translate(pending, { round });
     const retry = [];
+    let unanswered = 0;
     for (const request of pending) {
-      const answer = answers.get(request.customId) || { error: 'no answer' };
+      const answer = answers.get(request.customId) || { error: 'no answer', failure: { kind: 'no answer' } };
+      summary.requests.sent += 1;
+      if (answer.failure) {
+        unanswered += 1;
+        summary.requests.failed += 1;
+        const reason = failureReason(answer.failure);
+        summary.requests.reasons[reason] = (summary.requests.reasons[reason] || 0) + 1;
+        if (!summary.requests.example && answer.failure.message) summary.requests.example = answer.failure.message;
+      }
       const parsed = answer.error ? new Map() : parseAnswer(answer.text);
       const failed = [];
       for (const item of request.items) {
@@ -380,7 +427,11 @@ async function syncTranslations({
         else failed.push({ item, problem: answer.error || result.problem });
       }
       if (!failed.length) continue;
-      if (round === 0) {
+      if (answer.failure) {
+        // The request failed, not the answer: asking again message by
+        // message would send the same refused request once per message.
+        for (const { item } of failed) summary.languages[request.language].failed.push({ id: item.id, problem: failureReason(answer.failure) });
+      } else if (round === 0) {
         // Asked again one at a time: one malformed message no longer takes
         // its neighbours down with it.
         retry.push(...failed.map(({ item }, index) => ({
@@ -391,9 +442,13 @@ async function syncTranslations({
         for (const { item, problem } of failed) summary.languages[request.language].failed.push({ id: item.id, problem });
       }
     }
-    // A whole round that failed (a batch that errored, a model refusing
-    // everything) is not retried message by message: that would be one
-    // request per message. Those stay English, and the next pass tries again.
+    if (round === 0 && unanswered === pending.length) {
+      summary.nothingAnswered = true;
+      log(`all ${pending.length} request(s) failed: ${Object.entries(summary.requests.reasons).map(([reason, n]) => `${reason} (${n})`).join(', ')}`);
+    }
+    // A whole round whose answers failed (a model refusing everything) is
+    // not retried message by message: that would be one request per message.
+    // Those stay English, and the next pass tries again.
     if (retry.length > maxRetries) {
       for (const request of retry) {
         for (const item of request.items) summary.languages[request.language].failed.push({ id: item.id, problem: 'not retried' });
@@ -413,6 +468,8 @@ async function syncTranslations({
 module.exports = {
   CHUNK_SIZE,
   MODEL,
+  PLURAL_CATEGORIES,
+  REQUEST_OPTIONS,
   RESPONSE_SCHEMA,
   acceptItem,
   buildRequests,
@@ -422,6 +479,7 @@ module.exports = {
   prepareSync,
   readEnglishEntries,
   readGlossary,
+  requestShape,
   syncTranslations,
   systemPrompt,
   textProblem,
