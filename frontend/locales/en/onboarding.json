@@ -587,6 +587,38 @@
     "text": "Import from a GitHub repo",
     "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
   },
+  "firstSession.make.rule.line": {
+    "text": "Who can change it: <0>{{preset}}</0>",
+    "description": "One line under the description and name fields on the \"What do you want to make?\" screen, before the project exists: the approval rule it will be made with. <0>…</0> is bold. {{preset}} is the rule's name, such as \"You or the group\" or \"Two yeses\"."
+  },
+  "firstSession.make.rule.intro": {
+    "text": "Pick how changes go live. You can change this later on the project’s page.",
+    "description": "Line under the title of the four approval presets sheet, opened from Change on the \"What do you want to make?\" screen, before the project is made."
+  },
+  "firstSession.make.rule.change": {
+    "text": "Change",
+    "description": "Link at the end of the Make it step's \"Who can change it\" line: opens the four approval presets."
+  },
+  "firstSession.make.rule.title": {
+    "text": "Who says yes?",
+    "description": "Title of the sheet with the four approval presets, opened from Change on the \"What do you want to make?\" screen."
+  },
+  "firstSession.make.rule.plays": {
+    "text": "How it plays out",
+    "description": "Section label over two rows showing what the picked preset means."
+  },
+  "firstSession.make.rule.close": {
+    "text": "Close",
+    "description": "Accessible name of the presets sheet's close button."
+  },
+  "firstSession.make.rule.done": {
+    "text": "Done",
+    "description": "Button: close the presets sheet without changing anything."
+  },
+  "firstSession.make.rule.use": {
+    "text": "Use {{preset}}",
+    "description": "Button: make the new project with the picked preset instead. {{preset}} is its name. Nothing is proposed: the project does not exist yet."
+  },
   "firstSession.make.lookAround": {
     "text": "Not sure yet? <0>Look around first</0>",
     "description": "Line under the Make it button on a new member's first screen. <0>…</0> is a link that skips making a project and shows a short tour of Home instead."

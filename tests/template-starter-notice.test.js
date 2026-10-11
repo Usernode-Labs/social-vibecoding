@@ -132,12 +132,12 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
   const path = require('node:path');
   const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  // B8: the menu leads with Suggest an improvement; making it yourself is its own row.
+  // B8: the menu leads with Suggest an improvement. #4729 took the menu's
+  // Build it now row to Messages (the Agents list, the "+" there), so the
+  // copy's one named row is the one the menu still has.
   assert.match(read('frontend/src/features/improve/actions.tsx'), /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}/,
     'the menu still has Suggest an improvement');
-  assert.equal(message('agent:appContext.agentChats.buildNow'), 'Build it now');
-  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,600}label=\{t\('agent:appContext\.agentChats\.buildNow'\)\}/,
-    'and the agent-session row is called Build it now');
+  assert.doesNotMatch(sheet, /improve-row-new-session/, 'and no Build it now row any more');
   assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label=\{t\('core:header\.homeroomMenu'\)\}/);
   assert.equal(message('core:header.homeroomMenu'), 'Homeroom menu', 'the header control is still the Homeroom mark');
 });

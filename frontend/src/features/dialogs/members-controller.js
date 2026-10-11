@@ -124,9 +124,15 @@ const MembersDialog = {
     const govSection = document.getElementById('members-governance-section');
     const govStatus = document.getElementById('members-governance-error');
     if (govStatus) { govStatus.textContent = ''; govStatus.className = 'text-red-400 text-sm hidden'; }
+    // #4666: every project but the platform's own sets its rule (and who can
+    // see it) in the Who can see & change it sheet; this dialog points there.
+    const ownRule = !!appData.can_manage && !appData.self_hosted;
+    const whoRow = document.getElementById('members-who-decides');
+    if (whoRow) whoRow.classList.toggle('hidden', !ownRule);
     if (govSection) {
-      govSection.classList.toggle('hidden', !appData.can_manage);
-      if (appData.can_manage) {
+      const showGov = !!appData.can_manage && !!appData.self_hosted;
+      govSection.classList.toggle('hidden', !showGov);
+      if (showGov) {
         AppView._renderMembersGovPills();
         // Set (rather than only add) disabled state on every open so a
         // repo-less app cannot leave stale controls behind for the next app.

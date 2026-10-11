@@ -3227,6 +3227,17 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
 
+-- Who says yes (#4666): the approval rule a project chose by name (a preset)
+-- or built from groups and rules of its own, from dapp.json's `governance`
+-- block (`preset`, or `groups` + `rules`; services/governance-rules.js).
+-- `{ preset, groups: [{ name, people, ids }], rules: [{ group, kind, n }] }`,
+-- with each named group's people resolved to user ids at reconcile. NULL is
+-- every project that never chose one: approver_policy and
+-- approvals_required above decide, exactly as before. Reconciled with them
+-- (services/app-manifest.js reconcileAppGovernance); a block with rules
+-- puts those two back to their defaults.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS governance_rules JSONB;
+
 -- Per-app admins (#788), display side. The last reconciled *declared*
 -- username list from dapp.json's top-level `admins` block — INCLUDING
 -- names that resolved to no registered user, which is exactly why this
@@ -9312,7 +9323,11 @@ CREATE INDEX IF NOT EXISTS chat_sessions_checks_earned_unsettled_idx
 --   fixed_check_sync_keys  every check it was synced for. A check that
 --                          still fails once the proposal contains a main
 --                          that passes it is the proposal's own, and is
---                          never a reason to sync it again.
+--                          never a reason to sync it again. The unit suite,
+--                          one row for every test, is the exception: each
+--                          sync for it is recorded as <key>@<main's tip>,
+--                          and a main that moved on and is green may sync
+--                          it again, up to three times in all.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_head TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_keys TEXT[];
 

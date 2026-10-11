@@ -536,14 +536,28 @@ export async function handoffStatus(slug: string, change: { id: number; kind: 's
 
 /**
  * The viewer's open sessions, and `started`: whether they have ever had one,
- * archived ones included (the Homeroom menu's Agent chats shows only then).
- * A server from before `started` existed answers without it, and a session
- * in the list says it as well.
+ * archived ones included (Messages' Agents list shows its "Show archived"
+ * group only then). A server from before `started` existed answers without
+ * it, and a session in the list says it as well.
  */
 export async function listSessions(): Promise<{ sessions: AgentSession[]; started: boolean }> {
   const body = await json<{ sessions: AgentSession[]; started?: boolean }>(await request('/api/agent-sessions'), t('agent:session.error.listFailed'));
   const sessions = body.sessions || [];
   return { sessions, started: body.started === true || sessions.length > 0 };
+}
+
+/**
+ * The viewer's archived sessions (GET /api/agent-sessions?status=archived),
+ * for Messages' Agents list's "Show archived" group: the 50 most recent,
+ * oldest work not paged in this read. Until #4729 an archived session was
+ * in no list at all.
+ */
+export async function listArchivedSessions(): Promise<AgentSession[]> {
+  const body = await json<{ sessions: AgentSession[] }>(
+    await request('/api/agent-sessions?status=archived&limit=50'),
+    t('agent:session.error.listFailed'),
+  );
+  return body.sessions || [];
 }
 
 export async function getSession(id: number): Promise<{ session: AgentSession; turn: AgentTurnState | null }> {

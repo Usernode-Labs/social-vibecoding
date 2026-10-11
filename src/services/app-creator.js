@@ -51,6 +51,15 @@ function endPhases(slug) {
 // The approval rule a new app's row carries (POST /api/apps writes the
 // create screen's choice there), for the template's dapp.json.
 function governanceOf(row) {
+  // #4666: a preset or rules of its own, as the row stores them.
+  const rules = require('./governance').rulesFromColumn(row?.governance_rules);
+  if (rules) {
+    return {
+      preset: rules.preset,
+      groups: rules.groups.map((g) => ({ name: g.name, people: g.people })),
+      rules: rules.rules,
+    };
+  }
   return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
 }
 

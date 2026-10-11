@@ -1,14 +1,16 @@
 /**
  * The Workshop's row (#4457, #4486): one item, in one hairline-divided list.
  *
- * ONE ROW, THREE SURFACES. A week's page on the Workshop tab, All items'
- * board columns and its By category lanes all draw this row now (#4486);
- * the Workshop tab's Your work and New for you draw its shorter sibling,
- * `ActRow`, below (After-Workshop-B), and its What happened its own one-line
- * row (./week-pages.tsx HappenedRow). The board and By category
- * used to draw the folded card (../card/fold.tsx), which wore a coloured
- * edge and a coloured glyph the column already said, named its author and
- * its provenance twice, and unfolded in place under a ⇕. A row here is:
+ * ONE ROW, FOUR SURFACES. A week's page on the Workshop tab, All items'
+ * board columns and its By category lanes all draw this row now (#4486),
+ * and the Workshop tab's Your work draws it in What happened's one-line
+ * shape (variant `line`, #4716); the Workshop tab's New for you draws its
+ * shorter sibling, `ActRow`, below (After-Workshop-B), and its What happened
+ * its own one-line row (./week-pages.tsx HappenedRow). The board and By
+ * category used to draw the folded card (../card/fold.tsx), which wore a
+ * coloured edge and a coloured glyph the column already said, named its
+ * author and its provenance twice, and unfolded in place under a ⇕. A row
+ * here is:
  *
  *   - on the Workshop tab, a neutral tile (what kind of thing it is: the tab
  *     mixes requests, changes and live work in one list); none on the board,
@@ -49,11 +51,12 @@
  * names the item instead), as they never have.
  */
 
-import type { MouseEvent, ReactNode } from 'react';
+import { useRef, type MouseEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
+  SparklesIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
@@ -65,11 +68,15 @@ import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../car
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
 /**
- * Which surface draws the row. `list`: the Workshop tab's lists, with the
- * tile and the bar beside Vote on the tags line. `board`: All items' columns
- * and By category's lanes, with no tile and the card's bar across the row.
+ * Which surface draws the row. `list`: the Workshop tab's week pages, with
+ * the tile, the tags line and the vote on a line of its own under it.
+ * `board`: All items' columns and By category's lanes, with no tile and the
+ * card's bar across the row. `line`: the Workshop tab's Your work (#4716),
+ * in This week's one-line row (./week-pages.tsx HappenedRow): the small
+ * glyph, the title on one line and, at its end, the status pill and Vote;
+ * under it a second line with the words and the tags.
  */
-export type RowVariant = 'list' | 'board';
+export type RowVariant = 'list' | 'board' | 'line';
 
 /** Which page a row opens: the kind `AppView.openTopic` takes, and its id. */
 export interface TopicRef {
@@ -134,6 +141,8 @@ export function rowWords(b: RowBrief, opts: {
   by?: boolean;
   /** Say how many replies it has, in words ("5 comments"). */
   replies?: boolean;
+  /** Say how long ago it was made (the default). Your work leaves it out (#4716). */
+  ago?: boolean;
 } = {}): string {
   const parts: string[] = [];
   for (const lead of typeof opts.lead === 'string' ? [opts.lead] : (opts.lead || [])) if (lead) parts.push(lead);
@@ -146,7 +155,7 @@ export function rowWords(b: RowBrief, opts: {
     parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
   }
   if (opts.replies && b.replies > 0) parts.push(translate('project:workRow.replies', { count: b.replies }));
-  if (b.ago) parts.push(b.ago);
+  if (b.ago && opts.ago !== false) parts.push(b.ago);
   return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
 }
 
@@ -165,11 +174,20 @@ function Tag({ t }: { t: RowTag }): ReactNode {
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}
+      {t.glyph === 'bot' ? <SparklesIcon aria-hidden="true" /> : null}
       {t.short ? <><span aria-hidden="true">{t.short}</span><span className="sr-only">{t.label}</span></> : t.label}
       {t.progress ? <ChecksBar progress={t.progress} /> : null}
     </span>
   );
 }
+
+/**
+ * Your work's tags line, most important first (#4716): what is wrong, then
+ * what needs attention, what is running, what is done, then the rest. The
+ * line keeps to one line and scrolls sideways, so what comes first is what
+ * shows. A tag's tone says how much it matters, whatever its words.
+ */
+const TAG_RANK: Record<RowTag['tone'], number> = { bad: 0, warn: 1, run: 2, ok: 3, plain: 4 };
 
 /**
  * A change's vote on the Workshop tab (#4486): the card's own status pill,
@@ -206,6 +224,8 @@ export function WorkRow({
 }): ReactNode {
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
+  // The line row's title link, which a click on its tags line opens (#4716).
+  const linkRef = useRef<HTMLAnchorElement>(null);
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -232,6 +252,79 @@ export function WorkRow({
   const status = live || hasChip || hasChat || tags.length > 0;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;
+  if (variant === 'line') {
+    // #4716: Your work in This week's one-line row. The first line is the
+    // small glyph, the title on one line and, at its end, the card's status
+    // pill with Vote (live work: its "✓ Live" bar), as This week ends its
+    // line with the time; the second is the item's number and what it is
+    // for, its tags most important first, then who made it, on one line.
+    // A narrow card wraps the title and moves the pill and Vote to the
+    // row's end, under the tags, as a phone has them today (app.css
+    // `.dev-ws-lrow`).
+    const end = votes || (live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null);
+    // Live work's bar is on the first line, so its tags drop the one that
+    // restates it: a merged item's settled tag is that pill's own label
+    // (AppView._workshopBrief `settled`), "Going live…" on a release still
+    // under way. The preview tag stays on the item's page: Your work is
+    // what the work needs, and a preview is there to open, not to act on.
+    const lineTags = (live && pill ? tags.filter((t) => t.label !== pill.label) : tags)
+      .filter((t) => t.glyph !== 'eye');
+    // Who made it is said at most once, never as a name in the words. What
+    // you made says nothing: everything in Your work is yours unless it
+    // says otherwise. Homeroom bot's change from your request says so with
+    // its tag (#4728), and a private session of yours keeps its "Only you";
+    // either goes after the status tags. A request you are working on keeps
+    // whoever asked for it in its words: it is often somebody else's, and
+    // its "Picked up · you" already says you are on it.
+    const request = b.kind === 'request';
+    const maker = request ? null
+      : lineTags.find((t) => t.glyph === 'bot') || (b.mine ? lineTags.find((t) => t.glyph === 'lock') : undefined) || null;
+    const ranked = lineTags.filter((t) => t !== maker).sort((x, y) => TAG_RANK[x.tone] - TAG_RANK[y.tone]);
+    return (
+      <div
+        className="dev-ws-wrow dev-ws-lrow"
+        data-ws-row={row.key}
+        data-ws-kind={b.kind}
+        data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
+        data-on={on ? '1' : undefined}
+      >
+        <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>
+        <span className="dev-ws-wrow-main">
+          <span className="dev-ws-lrow-line">
+            {href ? (
+              <a
+                ref={linkRef}
+                className="dev-ws-wrow-link"
+                href={href}
+                aria-current={on ? 'true' : undefined}
+                onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+              >
+                {card.title.text}
+              </a>
+            ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+            {end}
+          </span>
+          {/* One line that scrolls sideways (app.css), so it sits above the
+              row's stretched link; a click on it that is not on a chip opens
+              the item, as a click anywhere else on the row does. */}
+          <span
+            className="dev-ws-wrow-status"
+            onClick={(e) => {
+              if ((e.target as Element).closest('a, button')) return;
+              linkRef.current?.click();
+            }}
+          >
+            <span className="dev-ws-wrow-sub">{rowWords(b, { by: request || !(maker || b.mine), ago: false })}</span>
+            {ranked.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {maker ? <Tag t={maker} /> : null}
+            {chip}
+            {chat}
+          </span>
+        </span>
+        {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
+      </div>
+    );
+  }
   return (
     <div
       className={board ? 'dev-ws-wrow dev-ws-brow' : 'dev-ws-wrow'}

@@ -1201,6 +1201,11 @@ function readVerdict(text) {
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
+      // A request whose ask is already there (in the app, or done by a merged
+      // change): its requester is offered a vote on closing it, not left at a
+      // "person decides" with nothing to decide. A person or empty verdict
+      // carries it; one about Homeroom itself is offered the move instead.
+      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
@@ -1806,9 +1811,16 @@ ${designGuidance}
 // The last thing the model reads says what it is doing and restates the one
 // format parseVerdict accepts, so the verdict does not depend on it
 // remembering instructions from earlier in the turn.
+// The one shape parseVerdict reads, as the end of every triage prompt says
+// it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
+// without it, a re-read answered in keys of its own (`next_step`,
+// `ask_reporter`) that nothing reads, and so did the ask to repair it.
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}';
+const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
+
 function triageClosing(issueNumber) {
   return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
-{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
+${VERDICT_FORMAT}`;
 }
 
 /**
@@ -1962,35 +1974,88 @@ async function projectMembers(pool, app) {
  * member, the person who asked IS the group: Ear Trainer #13 (sounds from a
  * MIDI instrument) was left for a group of one, who was told someone in the
  * group would have to take it up. There, a decision they can make is a
- * question to them with choices to tap, and their answer decides it. A
- * project with more people keeps the rule as it was. Pure; null says
- * nothing.
+ * question to them with choices to tap, and their answer decides it.
+ * On a project with more people, its creator and its admins steer what gets
+ * built (the group still votes on every change): a request one of them made
+ * is decided the same way, and anyone else's names them, so a go-ahead from
+ * one of them decides it and nobody's go-ahead loops back to "a person"
+ * (Geneva hike planner #2, read three times to the same answer). Pure; null
+ * says nothing.
  */
 function deciderNote(decider) {
-  if (!decider?.requesterDecides) return null;
+  if (decider?.requesterDecides) {
+    const who = decider.role === 'creator'
+      ? `@${decider.requester} asked for this, and made this project: the decisions its group would make before building are theirs. The group still votes on the change it becomes.`
+      : decider.role === 'admin'
+        ? `@${decider.requester} asked for this, and is an admin of this project: the decisions its group would make before building are theirs. The group still votes on the change it becomes.`
+        : `@${decider.requester} asked for this, and is the only member of this project: the decisions its group would make are theirs.`;
+    return [
+      '==== WHO DECIDES ON THIS PROJECT ====',
+      '',
+      who,
+      '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
+      '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
+      '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+      rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
+    ].join('\n');
+  }
+  const deciders = (Array.isArray(decider?.deciders) ? decider.deciders : []).filter((d) => d?.username);
+  if (!deciders.length) return null;
+  const named = spokenList(deciders.map((d) => `@${d.username} (${d.role === 'creator' ? 'who made it' : 'an admin'})`), 'and');
+  const either = spokenList(deciders.map((d) => `@${d.username}`), 'or');
   return [
     '==== WHO DECIDES ON THIS PROJECT ====',
     '',
-    `@${decider.requester} asked for this, and is the only member of this project: the decisions its group would make are theirs.`,
-    '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
-    '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
+    `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
+    `- A request that fails a \`ready\` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
+    `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
     '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+    rulesLine(`${either} can`),
   ].join('\n');
 }
+
+/**
+ * #4666: how a project's changes are approved, and who can see it, are set
+ * in its Who can see & change it sheet by whoever may manage it, as one
+ * proposal; a request to change them is never built (Homeroom Maps #30 was
+ * read five times to "the group decides"). `who` says who can, by name.
+ */
+function rulesLine(who) {
+  return `- A request to change how this project's changes are approved (who says yes, how many yeses) or who can see it is not code: ${who} change it on the project's page, under ⋯, Settings & rules, Who can see & change it, as one proposal for the group. It is \`person\`, and \`reason\` says where and who.`;
+}
+
+/** "a", "a and b", "a, b and c". */
+function spokenList(items, word) {
+  if (items.length < 2) return items.join('');
+  return `${items.slice(0, -1).join(', ')} ${word} ${items[items.length - 1]}`;
+}
+
+// How many of a project's creator and admins the note names.
+const DECIDERS_SHOWN = 4;
 
 /**
  * #3772: whether the person a request is for decides on its project alone:
  * they are its only member (or, on a project not in a community, its
  * creator). { requester, members, requesterDecides }, or null.
+ * On a project with more people, its creator and admins decide what gets
+ * built: a requester who is one of them decides (`role` 'creator' or
+ * 'admin'), and anyone else's request names them (`deciders`, the creator
+ * first). Homeroom's own project keeps the rule as it was: its group is
+ * everyone, and its admins are the platform's.
  */
 async function whoDecides(pool, app, requester) {
   if (!app?.id || !requester?.userId) return null;
   const { rows } = await pool.query(
-    `SELECT a.created_by,
+    `SELECT a.created_by, a.self_hosted, cu.username AS creator,
             (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members,
             EXISTS (SELECT 1 FROM community_members m
-                     WHERE m.community_id = a.community_id AND m.user_id = $2) AS member
-       FROM apps a WHERE a.id = $1`,
+                     WHERE m.community_id = a.community_id AND m.user_id = $2) AS member,
+            EXISTS (SELECT 1 FROM app_admins aa WHERE aa.app_id = a.id AND aa.user_id = $2) AS admin,
+            ARRAY(SELECT u.username FROM app_admins aa JOIN users u ON u.id = aa.user_id
+                   WHERE aa.app_id = a.id AND aa.user_id IS DISTINCT FROM a.created_by
+                   ORDER BY aa.created_at, u.username) AS admins
+       FROM apps a LEFT JOIN users cu ON cu.id = a.created_by
+      WHERE a.id = $1`,
     [app.id, requester.userId],
   );
   const row = rows[0];
@@ -1999,7 +2064,16 @@ async function whoDecides(pool, app, requester) {
   const alone = members === 0
     ? Number(row.created_by) === Number(requester.userId)
     : members === 1 && row.member === true;
-  return { requester: requester.username, members, requesterDecides: alone };
+  const decider = { requester: requester.username, members, requesterDecides: alone };
+  if (alone || row.self_hosted === true) return decider;
+  if (app.slug && (await platformAppSlugs(pool)).includes(app.slug)) return decider;
+  if (Number(row.created_by) === Number(requester.userId)) return { ...decider, requesterDecides: true, role: 'creator' };
+  if (row.admin === true) return { ...decider, requesterDecides: true, role: 'admin' };
+  const deciders = [
+    ...(row.creator ? [{ username: row.creator, role: 'creator' }] : []),
+    ...(Array.isArray(row.admins) ? row.admins : []).filter(Boolean).map((username) => ({ username, role: 'admin' })),
+  ].slice(0, DECIDERS_SHOWN);
+  return deciders.length ? { ...decider, deciders } : decider;
 }
 
 /**
@@ -2511,7 +2585,7 @@ function continuedTriagePrompt({ seed, issueNumber }) {
     live.screenshotNote(seed).join('\n').trim() || null,
     '==== DECIDE IT AGAIN ====',
     'Decide it again, by the same instructions as before, taking in what is new. You have already read the code it touches: read only what the change needs, and do not repeat reads you made before. The app\'s code may have changed since then, so check any file your verdict depends on rather than relying on memory.',
-    `END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #${issueNumber}, and nothing after it.`,
+    `END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #${issueNumber}, and nothing after it:\n${VERDICT_FORMAT}\n${VERDICT_KEYS_LINE}`,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -2567,7 +2641,9 @@ const VERDICT_REPAIR_MS = 3 * 60 * 1000;
 const VERDICT_REPAIR_PROMPT = [
   'Your reply ended without the fenced JSON block your instructions asked for, so it could not be read.',
   'Do not read any more files and do not use any tool.',
-  'Reply now with ONLY that one fenced ```json block, for the verdict you reached, in exactly the format your instructions gave, with nothing before or after it.',
+  'Reply now with ONLY that one fenced ```json block, for the verdict you reached, in exactly the format your instructions gave, with nothing before or after it:',
+  VERDICT_FORMAT,
+  VERDICT_KEYS_LINE,
 ].join('\n');
 
 /**
@@ -3005,7 +3081,8 @@ async function runTriage(pool, config, {
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   // #3772: on a project of one, the person who asked decides what the group
-  // would. Only on a project the bot acts on, where it says its verdict.
+  // would; on a project with more, its creator and admins do. Only on a
+  // project the bot acts on, where it says its verdict.
   const decider = liveMode && requester
     ? await whoDecides(pool, app, requester).catch((err) => {
       log.warn('homeroom-bot', 'Could not read who decides on a project', { app: app.slug, err: err.message });
@@ -3074,7 +3151,7 @@ async function runTriage(pool, config, {
     },
     extra: {
       model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null,
-      ...(decider?.requesterDecides ? { decider } : {}),
+      ...(deciderNote(decider) ? { decider } : {}),
       // So the benchmark rebuilds the prompt this look read (bench/runner.js).
       ...(members ? { members } : {}),
       ...(starter ? { starter } : {}),
@@ -3573,6 +3650,8 @@ async function runTriage(pool, config, {
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
         firstVersion: !!requester?.firstVersion,
+        // Who a person hand-off waits on, for the requester's DM.
+        decider,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -6882,7 +6961,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [], deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [],
+  decider = null, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -6945,10 +7025,20 @@ async function actOnVerdict({
     });
   } else if (parsed.verdict === 'person') {
     // #4239: about Homeroom itself, the requester's DM offers to move it to
-    // Homeroom's own board (homeroom-bot-dm.js relayIssuePost).
-    await say('person', live.personText(parsed), { dm: { reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}) } });
+    // Homeroom's own board (homeroom-bot-dm.js relayIssuePost). A requester
+    // who does not decide on the project is told who does, rather than
+    // offered a Go ahead that would only read it again (whoDecides).
+    const deciders = decider && !decider.requesterDecides && Array.isArray(decider.deciders)
+      ? decider.deciders.map((d) => d?.username).filter(Boolean)
+      : [];
+    await say('person', live.personText(parsed), {
+      dm: {
+        reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
+        ...(parsed.done ? { done: true } : {}),
+      },
+    });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
+    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}) } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. #4175: it is never built without it. A plan that
@@ -7554,8 +7644,9 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
 
 /**
  * B6: a plan nobody tapped Build it under for PLAN_WAIT_DAYS stops waiting.
- * Its card keeps its bullets and says so; a reply to it brings a new plan.
- * Nothing notifies. Resolves how many stopped. Never throws.
+ * Its card keeps its bullets and says so, and one message under it says so
+ * too (homeroom-bot-dm.js closePlanCards); a reply to it brings a new plan.
+ * Nothing rings. Resolves how many stopped. Never throws.
  */
 async function settleStalePlans(pool, deps = {}) {
   try {
@@ -10014,6 +10105,9 @@ module.exports = {
   previousRead,
   rememberRead,
   continuedTriagePrompt,
+  VERDICT_FORMAT,
+  VERDICT_REPAIR_PROMPT,
+  triageClosing,
   MAX_CONTINUED_READS,
   CONTINUE_READ_MAX_AGE_MS,
   wasStoppedRecently,

@@ -1442,6 +1442,11 @@ async function createApproverInviteAcceptedNotification(pool, { appId, recipient
 // JOIN the project (`joins`: a private one, where being invited in is how
 // you join; services/collab-invites.js) or only to build it, the inviter's
 // note, and how many people are in it. An approver invite has none of them.
+// #4740: `inCommunity` says the viewer is already one of the project's
+// people (they joined through a link or the Join button while the build
+// invite was still waiting), so the drawer words its meta line as "You're
+// already in it" instead of a headcount the viewer is part of. FALSE for an
+// approver invite, which has no community membership of its own to read.
 async function listPendingInvites(pool, userId) {
   if (!userId) return [];
   const { rows } = await pool.query(
@@ -1450,7 +1455,9 @@ async function listPendingInvites(pool, userId) {
             (a.view_visibility IS DISTINCT FROM 'public') AS joins,
             ac.invite_note AS note,
             (SELECT COUNT(*)::int FROM community_members m
-              WHERE m.community_id = a.community_id) AS member_count
+              WHERE m.community_id = a.community_id) AS member_count,
+            EXISTS (SELECT 1 FROM community_members m
+              WHERE m.community_id = a.community_id AND m.user_id = $1) AS in_community
        FROM app_collaborators ac
        JOIN apps a ON a.id = ac.app_id
        LEFT JOIN users inv ON inv.id = ac.invited_by
@@ -1458,7 +1465,8 @@ async function listPendingInvites(pool, userId) {
      UNION ALL
      SELECT 'approver' AS kind, ap.app_id, a.slug AS app_slug, a.name AS app_name,
             ap.created_at, inv.username AS invited_by,
-            FALSE AS joins, NULL::text AS note, NULL::int AS member_count
+            FALSE AS joins, NULL::text AS note, NULL::int AS member_count,
+            FALSE AS in_community
        FROM app_approvers ap
        JOIN apps a ON a.id = ap.app_id
        LEFT JOIN users inv ON inv.id = ap.invited_by
@@ -1476,6 +1484,7 @@ async function listPendingInvites(pool, userId) {
     joins: !!r.joins,
     note: r.note || null,
     memberCount: r.member_count == null ? null : Number(r.member_count),
+    inCommunity: !!r.in_community,
   }));
 }
 

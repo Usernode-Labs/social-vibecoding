@@ -27,6 +27,7 @@
 
 const { contentLine, MAX_LISTED } = require('./weekly-digest');
 const { describeGovernance, describeAdmins } = require('./app-manifest');
+const { PRESET_NAMES } = require('./governance-rules');
 
 const SETTINGS_DAYS = 7;
 const WEEK_DAYS = 3;
@@ -86,9 +87,13 @@ function settingsLine(row) {
     case 'visibility_changed':
       return { kind: 'visibility', text: `Who can see it changed: ${visibilityWords(to)}`, by, at };
     case 'governance_changed':
-      return to
-        ? { kind: 'governance', text: `Approval rule changed: ${describeGovernance(to.approverPolicy, to.approvalsRequired)}`, by, at }
-        : null;
+      if (!to) return null;
+      // #4666: a preset by its name; a project's own rules as such.
+      if (typeof to.rules === 'string') {
+        const named = PRESET_NAMES[to.rules];
+        return { kind: 'governance', text: `Approval rule changed: ${named || 'its own rules'}`, by, at };
+      }
+      return { kind: 'governance', text: `Approval rule changed: ${describeGovernance(to.approverPolicy, to.approvalsRequired)}`, by, at };
     case 'app_admins_changed':
       return { kind: 'admins', text: `Admins changed: ${describeAdmins(Array.isArray(to) ? to : [])}`, by, at };
     case 'app_lock_changed':

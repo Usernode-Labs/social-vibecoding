@@ -126,9 +126,15 @@ test('#4378: making a project public needs a verified owner, on the server and t
 
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /if \(body && body\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return false;\s+res = await send\(\);/);
-  const conf = card.slice(card.indexOf('export async function confirmMakePublic('));
-  assert.match(conf, /if \(!\(await verifiedToGoPublic\(\)\)\) return;\s+const ok = await ui\.confirm\(/);
   assert.match(card, /void verifiedToGoPublic\(\)\.then\(\(go\) => \{ if \(go\) setOpen\(true\); \}\);/);
+  // #4666: Who can see & change it proposes Public community through its own
+  // route, refused the same way before any PR is opened, and asks the same
+  // verify sheet before it sends again; Not now leaves it as it was.
+  const who = apps.slice(apps.indexOf("router.post('/api/apps/:slug/who-decides-pr'"));
+  assert.match(who, /if \(diff\.visibility === 'public' && app\.view_visibility !== 'public'\) \{\s+const identityRefusal = await communities\.identityPublicRefusal\(pool, req\.user\?\.id\);\s+if \(identityRefusal\) return res\.status\(403\)\.json\(identityRefusal\);\s+\}/);
+  assert.ok(who.indexOf('identityPublicRefusal') < who.indexOf('createWhoDecidesPR'), 'refused before any PR is opened');
+  const propose = read('frontend/src/features/who-decides/propose.ts');
+  assert.match(propose, /if \(data && data\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return \{ state: 'notVerified' \};\s+res = await send\(\);/);
 
   const verify = loadTsx('frontend/src/features/auth/verify-identity.tsx');
   const html = renderToHtml(createElement(verify.VerifyIdentityBody, {

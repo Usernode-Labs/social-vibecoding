@@ -1659,50 +1659,6 @@
     "text": "Unavailable",
     "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app cannot be opened and its state is not known."
   },
-  "appContext.continue.detail.session": {
-    "text": "Agent session",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the conversation has no code change yet. Used when no app can be named."
-  },
-  "appContext.continue.detail.approval": {
-    "text": "Waiting for approval",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change is up for the community's vote. Used when no app can be named."
-  },
-  "appContext.continue.detail.goingLive": {
-    "text": "Going live",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change was approved and is being released. Used when no app can be named."
-  },
-  "appContext.continue.detail.live": {
-    "text": "Live",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change has been released; an adjective. Used when no app can be named."
-  },
-  "appContext.continue.detail.inProgress": {
-    "text": "In progress",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change is being worked on. Used when no app can be named."
-  },
-  "appContext.continue.sub.session": {
-    "text": "{{app}} · agent session",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (the conversation has no code change yet). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.approval": {
-    "text": "{{app}} · waiting for approval",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change is up for the community's vote). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.goingLive": {
-    "text": "{{app}} · going live",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change was approved and is being released). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.live": {
-    "text": "{{app}} · live",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change has been released; an adjective). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.inProgress": {
-    "text": "{{app}} · in progress",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change is being worked on). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.untitled": {
-    "text": "Agent session",
-    "description": "Title of a row under \"Agent chats\" in the app menu when the conversation with the coding agent has no title."
-  },
   "appContext.invite.error.generic": {
     "text": "Something went wrong. Try again.",
     "description": "Error in the Invite pane of the app menu when making, reading or turning off an invite link failed and the server gave no reason."
@@ -1974,22 +1930,6 @@
   "appContext.about.liveSince": {
     "text": "Live since {{when}}",
     "description": "Tooltip of the version line in the About pane of the app menu. {{when}} is the date and time the running version was released, already formatted."
-  },
-  "appContext.agentChats.archive": {
-    "text": "Archive",
-    "description": "Action revealed by swiping left on a row under \"Agent chats\" in the app menu (the sheet opened from the app's name in the header), on a phone: a verb, archives that conversation with the coding agent."
-  },
-  "appContext.agentChats.heading": {
-    "text": "Agent chats",
-    "description": "Small heading in the app menu (the sheet opened from the app's name in the header) over the person's recent conversations with the coding agent."
-  },
-  "appContext.agentChats.buildNow": {
-    "text": "Build it now",
-    "description": "Row under \"Agent chats\" in the app menu (the sheet opened from the app's name in the header): starts a new conversation with the coding agent to make a change to this app oneself, rather than suggesting it to others."
-  },
-  "appContext.agentChats.showMore": {
-    "text": "Show more",
-    "description": "Small link under the rows of \"Agent chats\" in the app menu (the sheet opened from the app's name in the header), followed by a chevron: opens the full list of agent conversations in Messages."
   },
   "appContext.thisApp": {
     "text": "this app",
@@ -2350,46 +2290,6 @@
   "session.changeRow.inProgress": {
     "text": "In progress",
     "description": "Where an agent session's current code change stands, on the session's row in Messages (after the change's name) and in the Homeroom menu's Agent chats: it is being worked on and has not been put up for a vote."
-  },
-  "appContext.continue.detail.releaseWaiting": {
-    "text": "Waiting for a release",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change to Homeroom itself was merged and waits for a Homeroom release, with no time promised. Used when no app can be named."
-  },
-  "appContext.continue.detail.releaseNow": {
-    "text": "Going live now",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change to Homeroom itself was merged and the Homeroom release that carries it is rolling out now. Used when no app can be named."
-  },
-  "appContext.continue.detail.releaseNext": {
-    "text": "Goes live in the next release",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change to Homeroom itself was merged and goes live in Homeroom's next release, with no time known yet. Used when no app can be named."
-  },
-  "appContext.continue.detail.releaseMinutes_one": {
-    "text": "Goes live in about a minute",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change to Homeroom itself was merged and goes live in Homeroom's next release, expected in about {{count}} minute. English spells the one minute out; a translation may use {{count}}. Used when no app can be named."
-  },
-  "appContext.continue.detail.releaseMinutes_other": {
-    "text": "Goes live in about {{count}} minutes",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change to Homeroom itself was merged and goes live in Homeroom's next release, expected in about {{count}} minutes. Used when no app can be named."
-  },
-  "appContext.continue.sub.releaseWaiting": {
-    "text": "{{app}} · waiting for a release",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change to Homeroom itself was merged and waits for a Homeroom release, with no time promised). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.releaseNow": {
-    "text": "{{app}} · going live now",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change to Homeroom itself was merged and the Homeroom release that carries it is rolling out now). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.releaseNext": {
-    "text": "{{app}} · goes live in the next release",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change to Homeroom itself was merged and goes live in Homeroom's next release, with no time known yet). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.releaseMinutes_one": {
-    "text": "{{app}} · goes live in about a minute",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change to Homeroom itself was merged and goes live in Homeroom's next release, expected in about {{count}} minute; English spells the one minute out, a translation may use {{count}}). {{app}} is the app's name. Keep the middle dot."
-  },
-  "appContext.continue.sub.releaseMinutes_other": {
-    "text": "{{app}} · goes live in about {{count}} minutes",
-    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change to Homeroom itself was merged and goes live in Homeroom's next release, expected in about {{count}} minutes). {{app}} is the app's name. Keep the middle dot."
   },
   "session.release.line": {
     "text": "{{release}}.",

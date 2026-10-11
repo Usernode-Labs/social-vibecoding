@@ -32,9 +32,19 @@ export interface PlaceState {
    * (../../nav/section-column.tsx).
    */
   side: boolean;
+  /**
+   * #4703: unread across the project's channels less the one on screen, and
+   * whether the places tray is open — what the header's places button draws
+   * on a phone, where the merged header carries the button (place-bar.tsx
+   * HeaderPlace).
+   */
+  unread: number;
+  tray: boolean;
 }
 
-export const placeStore = createStore<PlaceState>({ slug: null, place: 'status', owed: 0, side: false });
+export const placeStore = createStore<PlaceState>({
+  slug: null, place: 'status', owed: 0, side: false, unread: 0, tray: false,
+});
 
 let opener: { slug: string; open: (key: PlaceKey) => void } | null = null;
 
@@ -45,10 +55,43 @@ export function registerPlaceOpener(slug: string, open: (key: PlaceKey) => void)
   return () => { if (opener === mine) opener = null; };
 }
 
+/** How the page opens its places tray, while it is mounted (#4703). */
+let trayToggle: { slug: string; toggle: () => void } | null = null;
+/** The element the last tray toggle came from, for focus to return to. */
+let trayReturn: HTMLElement | null = null;
+
+/** The page says how its tray opens, while it is mounted. Returns the undo. */
+export function registerTrayToggle(slug: string, toggle: () => void): () => void {
+  const mine = { slug, toggle };
+  trayToggle = mine;
+  return () => { if (trayToggle === mine) trayToggle = null; };
+}
+
+/**
+ * The merged header's places button (place-bar.tsx HeaderPlace) presses this:
+ * it names the page's own tray toggle, and hands the button over so the tray
+ * can return focus to it when it closes.
+ */
+export function toggleTray(el: HTMLElement | null): void {
+  trayReturn = el;
+  if (trayToggle && placeStore.get().slug === trayToggle.slug) trayToggle.toggle();
+}
+
+/** Where focus in the tray returns to: the header's button, if it drew one. */
+export function trayButton(): HTMLElement | null {
+  return trayReturn;
+}
+
 /** The page says where it is. */
-export function publishPlace(slug: string | null, place: PlaceKey, owed: number): void {
+export function publishPlace(
+  slug: string | null, place: PlaceKey, owed: number, unread = 0, tray = false,
+): void {
   const was = placeStore.get();
-  placeStore.set({ slug, place, owed: Math.max(0, Number(owed) || 0), side: was.slug === slug && was.side });
+  placeStore.set({
+    slug, place, owed: Math.max(0, Number(owed) || 0),
+    unread: Math.max(0, Number(unread) || 0), tray,
+    side: was.slug === slug && was.side,
+  });
 }
 
 /** The page says whether an item's page is open beside its list. */
@@ -59,7 +102,9 @@ export function publishSide(slug: string, side: boolean): void {
 
 /** The page is gone (unmounted, or another project is on it). */
 export function clearPlace(slug: string): void {
-  if (placeStore.get().slug === slug) placeStore.set({ slug: null, place: 'status', owed: 0, side: false });
+  if (placeStore.get().slug === slug) {
+    placeStore.set({ slug: null, place: 'status', owed: 0, side: false, unread: 0, tray: false });
+  }
 }
 
 type ViewApi = {

@@ -372,14 +372,17 @@ export interface ChecksProgress {
   total: number;
   /** True until the run knows its total: a pulsing bar, not a filling one. */
   indeterminate?: boolean;
+  /** The run's real checks position in percent (the slower of its two halves, #4727): the fill follows it when present, the aria counts stay `done`/`total`. */
+  pct?: number;
   text: string;
 }
 
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
-  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
-  glyph?: 'eye' | 'lock';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486).
+   *  `bot`: Homeroom bot built it from the viewer's request (#4728). */
+  glyph?: 'eye' | 'lock' | 'bot';
   /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
    *  the chip's tooltip and what a screen reader says. */
   short?: string;
@@ -729,6 +732,13 @@ export interface DevWorkshopView {
     open: number;
     themes: number;
     votesWaiting: number;
+    /**
+     * #4745: the waiting items' own addresses, in the same order the count
+     * reads them. The "waiting on a vote" figure opens the single one's page,
+     * or All items when several wait. Optional so older view objects still
+     * type-check.
+     */
+    votesWaitingRefs?: { kind: 'proposal' | 'gov'; id: number }[];
     /** Merges in the last 7 days, and in the 7 before them — a rate. */
     shippedWeek: number;
     shippedPrevWeek: number;

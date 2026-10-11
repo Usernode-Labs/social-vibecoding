@@ -526,8 +526,12 @@ export function AppGrid() {
           changes identity under the viewer. The mode's other entry, the
           "Add apps" sheet, lives in the heading's action seat instead
           (index.tsx), beside "Done".
+
+          A held-back tile (#4757) draws nothing HERE: that grid state's
+          compact New project entry lives on the "Show all N apps" line
+          outside this canvas, so the markup in every state is what it was.
       */}
-      {state.create ? (
+      {state.create && !state.create.heldBack ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>
