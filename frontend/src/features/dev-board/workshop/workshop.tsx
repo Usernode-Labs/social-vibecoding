@@ -4682,9 +4682,11 @@ export function DevWorkshop(): ReactNode {
           changes and their votes, never what is already live (#4715: a
           merged change of theirs still going live stays, with its tag,
           until the release lands) (AppView
-          ._workshopView), in the shared work rows (./work-row.tsx WorkRow):
-          the title, the board's words, its tags and its vote, and its ☰. A
-          request your change addresses is drawn as that change. Its first
+          ._workshopView), in the shared work rows (./work-row.tsx WorkRow)
+          in This week's one-line shape (#4716, variant `line`): the glyph,
+          the title on one line, its status pill and Vote at the line's end
+          and its ☰; under it the board's words and its tags. A request your
+          change addresses is drawn as that change. Its first
           WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
@@ -4713,6 +4715,7 @@ export function DevWorkshop(): ReactNode {
               slug={slug}
               openKey={sideKey}
               onOpen={openItem}
+              variant="line"
             />
             {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
               <button
