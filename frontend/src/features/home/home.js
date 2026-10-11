@@ -257,12 +257,27 @@ const Home = {
   // header): the flag goes down and `_rerenderPending` takes the flush, which
   // onSettle already drains — so on touch, where the lift happens mid-gesture,
   // the wiggle starts when the finger comes up.
+  //
+  // The paint is also held back while the hold's own menu is up. The mouse
+  // hold opens the card menu and THEN starts edit mode; a synchronous render
+  // here would expand the grid (edit mode shows every tile), re-run the
+  // placement effect whose deps include items.length, and the detach that
+  // cleanup calls is closeCardMenu — killing the menu the same press opened.
+  // The paint waits for the menu's dismiss instead, so the popover finishes
+  // its life anchored to the tile that opened it.
   setEditing(on) {
     const next = !!on;
     if (Home._editing === next) return;
     Home._editing = next;
     if (Home._dragActive) {
       Home._rerenderPending = true;
+      return;
+    }
+    if (Home._menu) {
+      Home._menu.then(() => {
+        if (Home._dragActive) { Home._rerenderPending = true; return; }
+        Home.render();
+      });
       return;
     }
     Home.render();
@@ -967,10 +982,18 @@ const Home = {
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all —
-      // except in edit mode (#4669), where the tile is "Add apps" and is on
-      // every account's grid, whatever it can create.
-      if (App.user?.privateMember && !editing) create = null;
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
+      // Edit mode (#4669) hands it back: there the tile is "Add apps" and is
+      // on every account's grid, whatever it can create. Same shape and cell
+      // the block above filled in, so the shelf's trailing tile lines up.
+      if (editing && !create) {
+        create = {
+          enabled: canCreate,
+          hint: message(Home.CREATE_DISABLED_HINT),
+          placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+        };
+      }
     }
 
     // The search view is a flat, transient list — it must not inherit the
