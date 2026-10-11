@@ -54,6 +54,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
+  SparklesIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
@@ -165,6 +166,7 @@ function Tag({ t }: { t: RowTag }): ReactNode {
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}
+      {t.glyph === 'bot' ? <SparklesIcon aria-hidden="true" /> : null}
       {t.short ? <><span aria-hidden="true">{t.short}</span><span className="sr-only">{t.label}</span></> : t.label}
       {t.progress ? <ChecksBar progress={t.progress} /> : null}
     </span>
