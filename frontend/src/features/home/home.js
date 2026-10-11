@@ -90,6 +90,12 @@ const Home = {
   _loadQueued: null,
 
   load() {
+    // Edit mode (#4669) does not survive a reload of the catalog. The router
+    // calls load() on every visit to Home, so leaving the screen and coming
+    // back starts clean; a WS-triggered refresh ends it too, which is the
+    // honest reading of "the shelf changed under you". A failure inside
+    // toggleAdded also lands here, ending edit mode with the revert.
+    Home._editing = false;
     if (Home._loadInFlight) {
       if (!Home._loadQueued) {
         const rerun = () => { Home._loadQueued = null; return Home.load(); };
@@ -196,6 +202,8 @@ const Home = {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null, create: null,
+            // load() has already cleared edit mode; the merge would keep it.
+            editing: false,
             notice: {
               text: message('home:grid.notice.offline'),
               tone: 'muted',
@@ -210,6 +218,8 @@ const Home = {
         // No Create tile beside a load notice: the notice is the grid's whole
         // answer (offline, or the error card and its Retry) until apps load.
         resultsHeading: null, emptyQuery: null, create: null,
+        // load() has already cleared edit mode; the merge would keep it.
+        editing: false,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
@@ -230,6 +240,65 @@ const Home = {
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
   _query: '',
+
+  // ── Edit mode (#4669) ──────────────────────────────────────────────
+  //
+  // Long-pressing a tile of your own puts My apps into edit mode, like a
+  // phone's home screen: the tiles wiggle, each one grows a remove button,
+  // and the trailing tile becomes "Add apps". The menu the hold opens is
+  // unchanged — edit mode rides along with it. Pure UI state, per visit:
+  // load() clears it, so it is never remembered between visits, and nothing
+  // here writes a preference.
+  _editing: false,
+
+  // The one setter. Render is the same call every other path funnels through,
+  // so the wiggle, the remove buttons and the "Done" link all arrive in one
+  // paint. While a drag is live render() must not run (grid-store.ts's
+  // header): the flag goes down and `_rerenderPending` takes the flush, which
+  // onSettle already drains — so on touch, where the lift happens mid-gesture,
+  // the wiggle starts when the finger comes up.
+  setEditing(on) {
+    const next = !!on;
+    if (Home._editing === next) return;
+    Home._editing = next;
+    if (Home._dragActive) {
+      Home._rerenderPending = true;
+      return;
+    }
+    Home.render();
+  },
+
+  // The remove button's action. It is the tile menu's own "Remove from My
+  // apps" by another door: _menuToggleFavorite(app, false) unfavourites a
+  // pinned app and, for a collaborator, hides the member pin — exactly the
+  // two branches the menu's item passes (line ~3679). The toast and the
+  // "Leave … too?" prompt for members come from toggleAdded unchanged.
+  _editRemove(slug) {
+    const app = (Home._apps || []).find((a) => a && a.slug === slug);
+    if (!app) return;
+    return Home._menuToggleFavorite(app, false);
+  },
+
+  // Escape ends edit mode. Wired once, lazily, from render() like the search
+  // bar — the listener reads the flag at event time, so it costs nothing
+  // while edit mode is off.
+  _editExitWired: false,
+  _wireEditExit() {
+    if (Home._editExitWired) return;
+    if (typeof document === 'undefined'
+      || typeof document.addEventListener !== 'function') return;
+    Home._editExitWired = true;
+    document.addEventListener('keydown', (e) => {
+      if (!e || e.key !== 'Escape' || !Home._editing) return;
+      // A presented sheet or modal owns the keyboard: the Add-apps sheet
+      // sits above edit mode, and Escape must not end the state behind it.
+      // The kit's own Escape path works off its modal stack, which a sheet
+      // is not on, so read the presented surfaces directly.
+      if (document.querySelector('.un-sheet, .un-backdrop')) return;
+      Home.setEditing(false);
+    });
+  },
+
 
   // Slugs the Discover rails keep showing even though they now count as
   // "yours" (#1567). Adding an app from a rail repaints "Your apps"
@@ -757,8 +826,14 @@ const Home = {
     const apps = Home._apps || [];
     Home._wireSearch();
     Home._wireRowBudget();
+    Home._wireEditExit();
 
     const query = (Home._query || '').trim();
+    // EDIT MODE (#4669) is a grid-view state only: a search is a transient
+    // list of matches, not the shelf, so nothing there wiggles or offers a
+    // remove button. The flag itself is cleared by the search input's own
+    // listener (see _wireSearch) the moment it is given a value.
+    const editing = !!Home._editing && !query;
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
@@ -834,7 +909,7 @@ const Home = {
         const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
         if (landed && landed.row > rowBound) Home._appsExpanded = true;
       }
-      const hiddenRows = !Home._appsExpanded
+      const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
@@ -845,7 +920,7 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !Home._appsExpanded
+      const createHidden = !editing && !Home._appsExpanded
         && HomeLayout.createTileCollapsed(shown, cols, rowBound);
       const collapsed = hiddenRows || createHidden;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
@@ -892,8 +967,10 @@ const Home = {
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all.
-      if (App.user?.privateMember) create = null;
+      // waitlist (their Home's waitlist card says so), so no tile at all —
+      // except in edit mode (#4669), where the tile is "Add apps" and is on
+      // every account's grid, whatever it can create.
+      if (App.user?.privateMember && !editing) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -905,7 +982,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
     // its own section, because a full-width flow item cannot coexist with the
@@ -1132,6 +1209,12 @@ const Home = {
         if (Home._cardPointerType === 'touch') {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
+          // EDIT MODE (#4669). The recognizer's itemSelector is
+          // `.app-card[data-yours]:not([data-demo])`, so the hold that reaches
+          // here is already on a tile of the viewer's own. The flag goes down
+          // while `_dragActive` holds and setEditing defers the paint to the
+          // settle flush — the wiggle starts when the finger comes up.
+          Home.setEditing(true);
         } else {
           Home.closeCardMenu();
           Home._showGridOverlay(listEl, cols, item);
@@ -1968,6 +2051,9 @@ const Home = {
       // Typing pins the bar open — a re-render must never scroll the
       // field the user is typing into off the top of the screen.
       Home._searchReveal.pin();
+      // EDIT MODE (#4669): a value in the field ends it, so arranging the
+      // shelf and searching never happen at once.
+      if (Home._editing && input.value) Home._editing = false;
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
     });
@@ -5101,7 +5187,10 @@ const Home = {
       cleanup();
       if ((e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse')
           || e.button !== 0 || e.isPrimary === false) return;
-      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')
+        // #4669: a press on the edit-mode remove button is not a hold on the
+        // tile — it removes the app, and must never arm the 400ms menu timer.
+        || e.target.closest('.app-card-remove')) return;
       // Placed touch tiles share the kit's lift/drag sequence above. Pen,
       // mouse and search/demo tiles have no touch placement recognizer to do
       // the hold.
@@ -5120,6 +5209,13 @@ const Home = {
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
+        // EDIT MODE (#4669): the same hold starts it, for mouse and pen (touch
+        // enters through the kit recognizer's onLift above). Search results,
+        // demo tiles and Discover cards carry no data-yours, and a hold on
+        // them is a menu and nothing else, exactly as before.
+        if (card.hasAttribute('data-yours') && !card.hasAttribute('data-demo')) {
+          Home.setEditing(true);
+        }
       }, 400);
       cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }

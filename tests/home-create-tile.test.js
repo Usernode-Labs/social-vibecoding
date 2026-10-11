@@ -280,7 +280,9 @@ test('#3047: the tile goes behind "Show all" when it would add a row past 2 rows
 
 test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
-  assert.match(HOME, /const createHidden = !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
+  // #4669 added the `!editing` half: edit mode shows every tile and its
+  // trailing tile, so the collapsed-grid gates step aside while it holds.
+  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
   assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
   assert.match(HOME, /create = createHidden \? null : \{/);
@@ -382,10 +384,11 @@ test('it cannot be dragged, rearranged or stored', () => {
   // Nothing about it reaches the layout model or its persistence.
   assert.doesNotMatch(LAYOUT_SRC.slice(LAYOUT_SRC.indexOf('  toWire(layout) {')), /create/i);
   // While something is lifted it stays out of the hit-test (the overlay cell
-  // under it is a target) and steps back visually.
+  // under it is a target) and steps back visually. #4669's "Add apps" tile
+  // is the same trailing cell in the same drag, so both rules name it too.
   const css = read('public/css/app.css');
-  assert.match(css, /#app-list > \.home-create-tile \{\n  position: relative;\n  z-index: 1;\n  align-self: start;\n\}/);
-  assert.match(css, /#app-list\.un-reordering > \.home-create-tile \{\n  pointer-events: none;\n  opacity: 0\.4;\n\}/);
+  assert.match(css, /#app-list > \.home-create-tile,\n#app-list > \.home-add-apps-tile \{\n  position: relative;\n  z-index: 1;\n  align-self: start;\n\}/);
+  assert.match(css, /#app-list\.un-reordering > \.home-create-tile,\n#app-list\.un-reordering > \.home-add-apps-tile \{\n  pointer-events: none;\n  opacity: 0\.4;\n\}/);
 });
 
 test('its cell is written as an attribute, like the app tiles\'', () => {
@@ -393,10 +396,13 @@ test('its cell is written as an attribute, like the app tiles\'', () => {
   assert.match(src, /el\.setAttribute\('style', style\)/);
   assert.doesNotMatch(src, /style=\{style\}/,
     'the style prop would fold grid-column + grid-row into a grid-area shorthand');
-  // …from the same template the tiles use, handed down by AppGrid.
+  // …from the same template the tiles use, handed down by AppGrid. #4669:
+  // while edit mode holds, the trailing tile is AddAppsTile instead, with
+  // the same derived placement.
   const grid = read(GRID);
   assert.match(grid, /<CreateTile view=\{state\.create\} style=\{placementStyle\(state\.create\.placement\)\} \/>/);
-  assert.ok(grid.indexOf('<CreateTile') > grid.indexOf('state.items.map('),
+  assert.match(grid, /<AddAppsTile style=\{placementStyle\(state\.create\.placement\)\} \/>/);
+  assert.ok(grid.indexOf('<AddAppsTile') > grid.indexOf('state.items.map('),
     'rendered after the app tiles, so it is the last child');
 });
 
@@ -427,4 +433,47 @@ test('the declared Create checks select the grid\'s last child', () => {
     const sel = (t.expectSelector || '').replace(/:not\(:has\(#home-create-section\)\)/g, '');
     assert.doesNotMatch(sel, /home-create-section/, t.name);
   }
+});
+
+// ── EDIT MODE (#4669): the trailing tile is "Add apps" ────────────────
+
+test('while editing, the trailing tile is AddAppsTile and never the Create tile', () => {
+  const items = ['a', 'b'].map((slug, col) => ({
+    kind: 'card', placement: { col, row: 0, w: 1, h: 1 }, app: { ...CARD, slug, name: slug },
+  }));
+  const html = renderGrid({
+    ready: true, editing: true, items,
+    create: { ...CREATE, placement: { col: 2, row: 0, w: 1, h: 1 } },
+  });
+  const kids = childrenOf(html, 'app-list');
+  assert.deepEqual(kids.map((k) => k.attrs['data-slug'] || k.attrs.id
+    || (/\bhome-add-apps-tile\b/.test(k.attrs.class || '') ? 'add-apps-tile' : null)),
+    ['a', 'b', 'add-apps-tile'], 'the Add tile carries no id and no data-slug');
+  const tile = kids[kids.length - 1];
+  assert.equal(tile.tag, 'button');
+  assert.match(tile.attrs.class, /\bhome-add-apps-tile\b/);
+  assert.doesNotMatch(tile.attrs.class, /\bhome-create-tile\b/,
+    'the Create tile\'s own class stays the Create tile\'s');
+  assert.equal(tile.attrs['data-panel-slot'], undefined,
+    'the declared checks select the Create entry by this hook; the Add tile is not it');
+  assert.equal(tile.attrs['data-create-enabled'], undefined);
+  assert.equal(tile.attrs['aria-label'], 'Add apps');
+  // Same dashed face as the Create tile's, different words.
+  assert.match(html, /home-create-glyph/);
+  assert.match(html, />Add apps</);
+  assert.doesNotMatch(html, /New project/);
+  // The grid itself is marked for the wiggle's CSS.
+  assert.match(html, /data-editing="true"/);
+});
+
+test('not editing, the trailing tile is the Create tile as before', () => {
+  const html = renderGrid({
+    ready: true, items: [],
+    create: { ...CREATE, placement: null },
+  });
+  assert.match(html, /id="home-create-tile"/);
+  assert.doesNotMatch(html, /home-add-apps-tile/);
+  assert.doesNotMatch(html, /data-editing=/, 'the attribute is absent, not "false"');
+  // The initial store renders neither tile and no editing mark.
+  assert.doesNotMatch(renderGrid({}), /home-add-apps-tile|data-editing/);
 });

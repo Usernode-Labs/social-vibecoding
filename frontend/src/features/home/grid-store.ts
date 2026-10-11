@@ -147,6 +147,14 @@ export interface HomeGridState {
    * it would add a row to (#3047) — there it is behind "Show all N apps".
    */
   create: CreateTileView | null;
+  /**
+   * EDIT MODE (#4669): the launcher is being arranged. The tiles wiggle, each
+   * one shows its remove button, and the trailing tile is "Add apps" rather
+   * than "New project". False in the search view even while the flag holds —
+   * a search is a transient list, not the shelf — and false in INITIAL_GRID,
+   * so the prerendered document is unchanged.
+   */
+  editing: boolean;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -158,6 +166,7 @@ export const INITIAL_GRID: HomeGridState = {
   emptyQuery: null,
   notice: null,
   create: null,
+  editing: false,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

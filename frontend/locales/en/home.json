@@ -818,5 +818,45 @@
   "tone.gray": {
     "text": "Gray",
     "description": "Name of a card colour, a neutral grey: tooltip and accessible name of its swatch in the featured illustration editor."
+  },
+  "edit.done": {
+    "text": "Done",
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press: ends edit mode."
+  },
+  "edit.removeNamed": {
+    "text": "Remove {{app}} from My apps",
+    "description": "Accessible name of the small round remove button on an app tile while the My apps grid on Home is in edit mode. {{app}} is the app's name."
+  },
+  "edit.addTile": {
+    "text": "Add apps",
+    "description": "Label of the dashed trailing tile at the end of the My apps grid on Home while it is in edit mode; it opens the sheet of apps to add. Replaces \"New project\" while edit mode lasts."
+  },
+  "addSheet.title": {
+    "text": "Add to My apps",
+    "description": "Title of the sheet that lists apps to put on My apps, opened from the Add apps tile in edit mode. The same words as the tile menu's add action."
+  },
+  "addSheet.yours": {
+    "text": "Your other apps",
+    "description": "Small-caps section label in the Add to My apps sheet, over the apps this person belongs to that have no tile on My apps."
+  },
+  "addSheet.popular": {
+    "text": "Popular",
+    "description": "Small-caps section label in the Add to My apps sheet, over the popular public communities the person has not joined."
+  },
+  "addSheet.add": {
+    "text": "Add",
+    "description": "Button on a row of the Add to My apps sheet: puts that app at the end of My apps."
+  },
+  "addSheet.added": {
+    "text": "Added",
+    "description": "What a row of the Add to My apps sheet reads once its app is on My apps."
+  },
+  "addSheet.empty": {
+    "text": "Nothing to add right now",
+    "description": "Shown in the Add to My apps sheet when there is no app to offer: everything the person can reach is already on My apps."
+  },
+  "addSheet.browse": {
+    "text": "Browse all apps",
+    "description": "Link under the empty line in the Add to My apps sheet, to the full app directory. The same words as the link beside the Discover heading."
   }
 }

@@ -96,7 +96,9 @@ import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { gridStore } from './grid-store';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -110,6 +112,11 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
+  // EDIT MODE's (#4669) one read here: the "Done" that ends it, beside the
+  // heading. The store's initial value is false, so the prerender and the
+  // first client render render no action at all — the markup is unchanged
+  // until a hold actually starts edit mode.
+  const grid = useStoreState(gridStore);
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -257,7 +264,21 @@ export function HomeScreen() {
               (the tile menus' "Add to My apps", the browse screen's badge),
               because two names for one collection is worse than either.
           */}
-          <SectionHeading>{t('home:grid.heading')}</SectionHeading>
+          <SectionHeading action={grid.editing ? (
+            /* The screen's one job while the tiles wiggle is arranging them,
+               and this is its primary action. The treatment is BrowseLink's
+               own — 14px semibold in the accent, the seat at the heading's
+               right end — because it is the third link in that seat on this
+               screen and the three should read as one row type. */
+            <button
+              type="button"
+              className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+              aria-label={t('home:edit.done')}
+              onClick={() => { (window as any).Home?.setEditing?.(false); }}
+            >
+              <span className="whitespace-nowrap">{t('home:edit.done')}</span>
+            </button>
+          ) : undefined}>{t('home:grid.heading')}</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

@@ -51,6 +51,7 @@ import { PlusWideIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { openAddAppsSheet } from './add-apps-sheet';
 import type { CreateTileView } from './grid-store';
 
 function win(): any {
@@ -133,6 +134,57 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
         <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
       </span>
       <span className={on ? LABEL_ON : LABEL_OFF}>{t(CREATE_TILE_LABEL)}</span>
+    </button>
+  );
+}
+
+// ── "Add apps" (#4669) ────────────────────────────────────────────────
+//
+// The trailing tile as EDIT MODE draws it: the Create tile's own dashed
+// plus face with a different label, because both tiles end the shelf with
+// a way to grow it — one makes a new project, the other puts an app you
+// already have access to back on it.
+//
+// Everything structural carries over: not a layout item, no id (nothing
+// outside edit mode selects it, and #home-create-tile must stay the Create
+// tile's alone), no data-panel-slot for the same reason. app.css adds the
+// class to the `un-reordering` hit-test rule the Create tile carries, so a
+// drag over it still resolves to the empty cell beneath.
+//
+// The tile renders ONLY while editing, so the resting grid's markup — and
+// therefore the prerender — is unchanged.
+const ADD_APPS_TILE = 'home-add-apps-tile home-create-btn group relative flex select-none flex-col '
+  + 'items-center gap-1.5 rounded-xl p-2 text-center transition-colors sm:p-3';
+
+export const ADD_APPS_TILE_LABEL = 'home:edit.addTile';
+
+export function AddAppsTile({ style }: { style?: string }) {
+  const t = useMessages('home');
+  const node = useRef<HTMLButtonElement | null>(null);
+
+  // Same attribute-written cell as the Create tile above: the CSSOM would
+  // fold grid-column + grid-row into a grid-area shorthand through a style
+  // prop, and the declared checks read the longhand spelling.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+
+  return (
+    <button
+      ref={node}
+      type="button"
+      className={ADD_APPS_TILE}
+      aria-label={t(ADD_APPS_TILE_LABEL)}
+      title={t(ADD_APPS_TILE_LABEL)}
+      onClick={() => { openAddAppsSheet(); }}
+    >
+      <span className={`${FACE} ${FACE_ON}`} aria-hidden="true">
+        <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
+      </span>
+      <span className={LABEL_ON}>{t(ADD_APPS_TILE_LABEL)}</span>
     </button>
   );
 }
