@@ -1461,7 +1461,12 @@ async function catalogBatchAnswers(id, { telemetryContext } = {}) {
       });
       answers.set(entry.custom_id, catalogAnswer(message));
     } else {
-      answers.set(entry?.custom_id, { error: entry?.result?.type || 'failed' });
+      // An errored request carries the API's own reason (a refused
+      // parameter, an overload); keep it, so a pass that wrote nothing
+      // says why instead of a bare "errored".
+      const result = entry?.result || {};
+      const detail = result.error?.error?.message || result.error?.message || '';
+      answers.set(entry?.custom_id, { error: detail ? `${result.type || 'failed'}: ${detail}` : (result.type || 'failed') });
     }
   }
   return answers;

@@ -146,7 +146,34 @@ test('a round that failed wholesale is not retried one message at a time', async
   assert.equal(model.calls.length, 1, 'no second round');
   assert.equal(summary.languages.es.written, 0);
   assert.equal(summary.languages.es.failed.length, 4);
-  assert.ok(summary.languages.es.failed.every((f) => f.problem === 'not retried'));
+  assert.deepEqual(summary.languages.es.failed.map((f) => f.problem), [
+    'empty; not retried', 'empty; not retried', 'empty; not retried', 'no plural forms; not retried',
+  ], 'the reason that sent each one back is kept');
+});
+
+test('the answer schema is one structured outputs accept: every object is closed (#4641)', () => {
+  // An open map (`additionalProperties: { type: 'string' }`) is refused by
+  // the API, which failed every request the step ever sent.
+  const objects = [];
+  const walk = (node, where) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'object') objects.push(where);
+    if (node.type === 'object') assert.equal(node.additionalProperties, false, `${where} is closed`);
+    for (const [key, child] of Object.entries(node.properties || {})) walk(child, `${where}.${key}`);
+    if (node.items) walk(node.items, `${where}[]`);
+  };
+  walk(sync.RESPONSE_SCHEMA, 'answer');
+  assert.deepEqual(objects, ['answer', 'answer.translations[]', 'answer.translations[].forms']);
+  const forms = sync.RESPONSE_SCHEMA.properties.translations.items.properties.forms;
+  assert.deepEqual(Object.keys(forms.properties), ['zero', 'one', 'two', 'few', 'many', 'other']);
+  assert.equal(forms.required, undefined, 'each form is optional: a language uses only some');
+  // Every category a configured language counts in has a slot.
+  const configured = Object.keys(JSON.parse(read('frontend/locales/config.json')).languages);
+  for (const language of configured) {
+    for (const category of new Intl.PluralRules(language).resolvedOptions().pluralCategories) {
+      assert.ok(sync.PLURAL_CATEGORIES.includes(category), `${language} ${category}`);
+    }
+  }
 });
 
 test('what the checks refuse', () => {
@@ -331,6 +358,34 @@ test('a whole language goes as a Message Batch, and its proposal opens on the pa
   assert.equal(p.reads.at(-1), 'a'.repeat(40), 'the answers are matched against the catalogs the batch was built from');
   assert.equal(p.pushed[0].at, 'a'.repeat(40), 'at the commit the batch translated, not today\'s main');
   assert.equal(p.db.state.batch, undefined);
+});
+
+test('a pass that could use nothing says why, in the state an admin reads, and opens nothing (#4641)', async (t) => {
+  const p = platform(t);
+  const refused = '400 output_config.format.schema: additionalProperties must be false';
+  p.deps.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, { error: refused }]));
+  const result = await p.run();
+  assert.equal(result.nothingUsable, true);
+  assert.equal(p.db.inserted.length, 0, 'no proposal');
+  assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+  const { lastPass } = p.db.state;
+  assert.equal(lastPass.requested, 4);
+  assert.equal(lastPass.written, 0);
+  assert.equal(lastPass.failed, 4);
+  assert.equal(lastPass.problems[0].count, 4);
+  assert.match(lastPass.problems[0].problem, /additionalProperties must be false/, 'the API\'s own words, not "no answer"');
+  const status = await runner.status(p.pool);
+  assert.deepEqual(status.lastPass, lastPass);
+});
+
+test('a pass that wrote translations records what it used too', async (t) => {
+  const p = platform(t);
+  await p.run();
+  assert.deepEqual(
+    { requested: p.db.state.lastPass.requested, written: p.db.state.lastPass.written, failed: p.db.state.lastPass.failed },
+    { requested: 4, written: 4, failed: 0 },
+  );
+  assert.deepEqual(p.db.state.lastPass.problems, []);
 });
 
 test('the sweep is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and runs only on the leader', () => {
