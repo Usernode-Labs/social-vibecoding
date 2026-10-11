@@ -1571,15 +1571,17 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
 
 // The entry point is BORROWED, not rebuilt: two copies of "navigate to the
 // app, then create a proposal" is the duplication this reuses away.
-test('#2573: the banner presses the same Start a new change the menu does', () => {
+test('#2573: the banner presses the same Start a new change the hub\'s ⋯ does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
   // The other one was the Improve panel's row, then the mark menu's button;
-  // since the UI overhaul it is "Start a new change" under the menu's Agent
-  // sessions. Same method, which is the whole point of asserting both: two
-  // controls saying "start a new change" have to mean it.
-  assert.match(SHEET_TSX, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'which is the method the menu\'s row calls');
+  // the menu's left with its Agent chats section (#4729), and the hub's ⋯
+  // keeps the method. Same method, which is the whole point of asserting
+  // both: two controls saying "start a new change" have to mean it.
+  assert.match(read('frontend/src/features/dev-board/actions-row.tsx'),
+    /data-plus="new-change"[\s\S]{0,300}Improve\.startSession\(\)/,
+    'which is the method the hub\'s row calls');
+  assert.doesNotMatch(SHEET_TSX, /improve-row-new-session/, 'the menu no longer carries one');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {

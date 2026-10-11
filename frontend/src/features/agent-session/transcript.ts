@@ -610,10 +610,9 @@ export function changeReleaseLine(
 
 /**
  * Where a session's change stands, in the words a list row says after the
- * change's name (Messages' agent rows, the Homeroom menu's Agent chats):
- * "Waiting for approval", "Going live", "Live", "In progress". A merge of the
- * platform's own app says when its release comes instead of "Going live":
- * "Goes live in about 8 minutes".
+ * change's name (Messages' agent rows): "Waiting for approval", "Going
+ * live", "Live", "In progress". A merge of the platform's own app says when
+ * its release comes instead of "Going live": "Goes live in about 8 minutes".
  */
 export function changeRowWords(
   change: { status?: string | null; release?: unknown },

@@ -1590,12 +1590,6 @@
       "expectText": "Suggest an improvement"
     },
     {
-      "name": "Build it now leads the menu's Agent chats section, for a viewer who has had an agent session (the check viewer has), where New change went (#1490, #2718 review, UI overhaul, B8, first-session run-through)",
-      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
-      "expectText": "Build it now"
-    },
-    {
       "name": "Suggest an improvement is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
@@ -2303,11 +2297,6 @@
       "name": "#2761: the mark's menu offers the Workshop as a plain row, not an App | Workshop toggle",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
-    },
-    {
-      "name": "The app-context sheet carries Build it now under Agent chats for a viewer who has had an agent session (Streamlined Concept, UI overhaul, B8, first-session run-through)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
     {
       "name": "The header names the app it is in, as a heading (#2718)",
@@ -3203,22 +3192,16 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu, and it lists the app's own options, then Agent chats (it was More) for a viewer who has had an agent session, with no discussion or invite row (#2718, #3362, first-session run-through)",
+      "name": "The mark opens the menu with no agent entries: Agent chats and its Build it now row moved to Messages' Agents list (#2718, #3362, #4729, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions",
-      "expectText": "Agent chats"
+      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-sessions, #improve-row-new-session)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about",
+      "expectText": "About"
     },
     {
       "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
       "expectText": "Go to community"
-    },
-    {
-      "name": "Agent chats leads with Build it now (UI overhaul; it was Continue, then Agent sessions, then More; B8; shown once you have had an agent session, first-session run-through)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
-      "expectText": "Build it now"
     },
     {
       "id": "workshop.all-apps",

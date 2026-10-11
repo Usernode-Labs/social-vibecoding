@@ -15,10 +15,11 @@
 //      user to pause something.
 //   2. A CONVERSATION STANDS FOR THE CHANGES IT STARTED: they are opened
 //      through it, and not listed again beside it.
-//   3. The platform mark's menu offers your five most recent agent sessions,
-//      on every app and on Home, then "Show more" when there are others,
-//      and every session that is working, as Recents shows it (#3073);
-//      Recents lists agent sessions on its one clock.
+//   3. The platform mark's menu lists no agent entries any more (#4729):
+//      Agent chats — its heading, Build it now, the session rows and "Show
+//      more" — moved whole to Messages, whose Agents list is their one home,
+//      with the archived ones folded behind "Show archived" at its foot;
+//      Messages' "+" still starts one.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,96 +31,10 @@ const { loadTsx } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
-const model = loadTsx('frontend/src/features/app-context/continue-model.ts');
-
 const conversation = (over = {}) => ({
   id: 7, title: 'Dark mode', status: 'open', lastActivityAt: '2026-09-24T10:00:00Z',
   focusApp: { slug: 'notes' }, activeChange: { appSlug: 'notes', status: 'paused', title: 'Dark mode toggle' },
   ...over,
-});
-test('the mark\'s Continue rows: agent sessions only, newest first, paused like any other', () => {
-  const { rows, more } = model.continueRows([
-    conversation(),
-    conversation({ id: 8, title: null, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'notes', status: 'active', title: null }, busy: true }),
-    conversation({ id: 11, title: null, lastActivityAt: '2026-09-24T12:00:00Z', activeChange: null }),
-    conversation({ id: 10, status: 'archived' }),
-    conversation({ id: 12, lastActivityAt: '2026-09-24T09:00:00Z', activeChange: null, doneUnseen: true }),
-  ]);
-  assert.deepEqual(rows.map((r) => r.key), ['agent:8', 'agent:7', 'agent:12']);
-  assert.equal(more, false, 'every one of them is shown');
-  assert.deepEqual(rows.map((r) => r.href), ['#messages/agent/8', '#messages/agent/7', '#messages/agent/12'],
-    'a conversation opens itself');
-  assert.equal(rows[0].title, 'Agent session', 'an untitled conversation still says what it is');
-  assert.ok(!rows.some((r) => r.key === 'agent:11'), 'one nothing was said in yet is not work in progress');
-  assert.equal(rows[1].detail, 'In progress', 'a paused change reads as the work in progress it is');
-  assert.deepEqual(rows.map((r) => r.activity), ['working', null, 'done'], 'each with the lists\' mark');
-});
-
-test('each Agent sessions row says the app it is on and where it stands, under its title', () => {
-  const { rows } = model.continueRows([
-    conversation({ id: 1, lastActivityAt: '2026-09-24T12:00:00Z', activeChange: { appSlug: 'run', appName: 'Run Club', status: 'active', title: 'x' } }),
-    conversation({ id: 2, lastActivityAt: '2026-09-24T11:00:00Z', focusApp: { slug: 'run', name: 'Run Club' }, activeChange: { appSlug: 'run', status: 'promoted', title: 'y' } }),
-    conversation({ id: 3, lastActivityAt: '2026-09-24T10:00:00Z', focusApp: null, activeChange: { appSlug: null, status: 'active', title: 'z' } }),
-  ]);
-  assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · waiting for approval', 'In progress'],
-    'the change\'s app, else the one it started from; alone, where it stands');
-  assert.equal(model.agentSub('Notes', 'session'), 'Notes · agent session');
-  assert.equal(model.agentSub(null, 'session'), 'Agent session', 'alone, the line starts with a capital: its own message');
-  // A change that went live says so in the newcomer's word, not "merged".
-  const [live] = model.continueRows([conversation({
-    activeChange: { appSlug: 'run', appName: 'Run Club', status: 'merged', title: 'x' },
-  })]).rows;
-  assert.equal(live.sub, 'Run Club · live');
-});
-
-test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whether there are more', () => {
-  // Not only the app the menu is open on: another app's session, one whose
-  // change names no app, and one with only a focus app are all yours.
-  const { rows } = model.continueRows([
-    conversation({ id: 1, lastActivityAt: '2026-09-24T10:00:00Z' }),
-    conversation({ id: 2, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'recipes', status: 'active', title: 'x' } }),
-    conversation({ id: 3, lastActivityAt: '2026-09-24T12:00:00Z', focusApp: null, activeChange: { appSlug: null, status: 'active', title: 'y' } }),
-    conversation({ id: 4, lastActivityAt: '2026-09-24T09:00:00Z', focusApp: { slug: 'recipes' }, activeChange: null }),
-  ]);
-  assert.deepEqual(rows.map((r) => r.key), ['agent:3', 'agent:2', 'agent:1', 'agent:4']);
-
-  const many = Array.from({ length: 7 }, (_, i) => conversation({
-    id: i + 1, lastActivityAt: `2026-09-24T1${i}:00:00Z`,
-  }));
-  const list = model.continueRows(many);
-  assert.equal(model.CONTINUE_MAX, 5);
-  assert.deepEqual(list.rows.map((r) => r.key), ['agent:7', 'agent:6', 'agent:5', 'agent:4', 'agent:3'],
-    'the five most recent');
-  assert.equal(list.more, true, 'and there are more');
-  assert.equal(model.continueRows(many.slice(0, 5)).more, false, 'exactly five is all of them');
-  assert.deepEqual(model.continueRows([]), { rows: [], more: false });
-  assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /=== slug|appOf\(/,
-    'no per-app filter left');
-  assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /improve/i, 'classic changes are the Workshop\'s, one row up');
-});
-
-test('#3073: a working session is always among the Continue rows', () => {
-  // Five newer sessions used to push a working one out of the menu's rows
-  // while the rail's Recents (thirty rows, same clock) still showed it
-  // spinning. #4417 retired Recents; the rows still keep a working session.
-  const sessions = [
-    conversation({ id: 1, lastActivityAt: '2026-09-24T08:00:00Z', busy: true }),
-    ...Array.from({ length: 6 }, (_, i) => conversation({ id: i + 2, lastActivityAt: `2026-09-24T1${i}:00:00Z` })),
-  ];
-  const list = model.continueRows(sessions);
-  assert.deepEqual(list.rows.map((r) => r.key), ['agent:7', 'agent:6', 'agent:5', 'agent:4', 'agent:1'],
-    'the working one takes a place, the newest others fill the rest, newest first');
-  assert.equal(list.rows[4].activity, 'working');
-  assert.equal(list.more, true);
-
-  assert.deepEqual(list.rows.filter((r) => r.activity === 'working').map((r) => r.href), ['#messages/agent/1'],
-    'the working one spins');
-
-  const allWorking = Array.from({ length: 7 }, (_, i) => conversation({ id: i + 1, lastActivityAt: `2026-09-24T1${i}:00:00Z`, busy: true }));
-  const busy = model.continueRows(allWorking);
-  assert.equal(busy.rows.length, 7, 'every working session is listed');
-  assert.equal(busy.more, false);
-  assert.equal(model.continueRows(sessions.slice(1, 6)).more, false, 'five idle ones are still all of them');
 });
 
 test('#3073: only the newest read of the list is published, so an older answer cannot stop a spinner', async () => {
@@ -152,53 +67,37 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
     'a click the side panel took, or a modified one, only closes the menu');
   const row = sheet.slice(sheet.indexOf('function MenuRow('), sheet.indexOf('export function AppsSwitcherSheet('));
   assert.match(row, /if \(onClick\) \{ onClick\(e\); return; \}\s*followThenDismiss\(e, href\);/,
-    'every plain row, the Continue rows among them');
-  assert.match(sheet, /setMessagesFilter\('agents'\);\s*followThenDismiss\(e, '#messages'\);/, 'and "Show more"');
+    'every plain row');
 });
 
-test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount only, with "Show more" when there are more', () => {
+test('the mark\'s menu lists no agent entries: Agent chats moved whole to Messages (#4729)', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
-    'never in the prerender (the hydrating render matches it), and not keyed on the app');
-  assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
-    'for any signed-in viewer: the flag never hides a conversation that exists');
-  // The section, after mount too, and only for somebody who has had an agent
-  // session (first-session run-through, 5 Oct 2026; tests/agent-chats-menu.test.js).
-  assert.match(sheet, /const showAgentChats = mounted && agentChats;/);
+  // A menu that lists an inbox's CONTENTS was the decay this file's header
+  // warns of. Agent chats — its heading, Build it now, the session rows and
+  // "Show more" — left whole, and Messages' Agents list is their one home.
+  assert.doesNotMatch(sheet, /app-menu-sessions/, 'no Agent chats section');
+  assert.doesNotMatch(sheet, /improve-row-new-session/, 'and no Build it now row');
+  assert.doesNotMatch(sheet, /function AgentChats|<AgentChats/, 'no section component left');
+  assert.doesNotMatch(sheet, /continueRows|continue-model/, 'the model that fed it went with it');
+  // The app's own rows keep their order and now close the list: About is
+  // the last of them, with the agent section that followed gone.
   const menu = sheet.slice(sheet.indexOf('export function AppsSwitcherSheet('));
   const at = (needle) => menu.indexOf(needle);
-  assert.ok(at('id="app-menu-row-workshop"') < at('id="app-menu-row-about"')
-    && at('id="app-menu-row-about"') < at('{showAgentChats ? <AgentChats readOnly={!!readOnly} continuing={continuing} /> : null}'),
-    'Go to community and About are the app\'s section; Agent chats follow');
-  const section = sheet.slice(sheet.indexOf('export function AgentChats('), sheet.indexOf('export function AppsSwitcherSheet('));
-  const inSection = (id) => section.indexOf(`id="${id}"`);
-  assert.ok(inSection('app-menu-sessions') < inSection('improve-row-new-session')
-    && inSection('improve-row-new-session') < inSection('app-menu-continue'),
-    'led by Build it now, then the sessions');
-  // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
-  // sessions", then "More", a plain word for a newcomer, who no longer sees
-  // the section at all.
-  assert.match(section, /<div className=\{SECTION\}>\{t\('agent:appContext\.agentChats\.heading'\)\}<\/div>/, 'it was "Continue", then "Agent sessions", then "More"');
-  assert.equal(message('agent:appContext.agentChats.heading'), 'Agent chats');
-  assert.doesNotMatch(sheet, /<div className=\{SECTION\}>(?:More|Agent sessions)<\/div>/);
-  assert.doesNotMatch(sheet, />Continue</);
-  // Each session says what app it is on and where it stands, under its title.
-  assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
-  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*\{t\('agent:appContext\.agentChats\.showMore'\)\}\s*<ChevronRightIcon /,
-    'only when there are more, and it opens Messages\' Agents list');
-  assert.equal(message('agent:appContext.agentChats.showMore'), 'Show more',
-    'only when there are more, and it opens Messages\' Agents list');
-  // #3405: a link under the list in the action accent, not one more row.
-  assert.match(sheet, /const CONTINUE_ALL = 'inline-flex[^;]*text-violet-700 dark:text-violet-300/);
-  assert.doesNotMatch(sheet, /<MenuRow\s+id="app-menu-continue-all"/);
-  assert.doesNotMatch(sheet, /See all sessions/);
-  assert.match(sheet, /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
-  assert.doesNotMatch(sheet, /See all your work|continue-change/);
+  assert.ok(at('id="app-menu-row-workshop"') > -1 && at('id="app-menu-row-about"') > -1
+    && at('id="app-menu-row-workshop"') < at('id="app-menu-row-about"'),
+    'Go to community and About are the app\'s section, and the list ends there');
+  // Starting a new agent chat is Messages' "+", whose "Build it now" choice
+  // has opened one since B8.
+  assert.match(read('frontend/src/features/messages/index.tsx'), /startAgentSession\(\{ entry: 'messages' \}\)/);
+  // The catalog entries the menu's rows read are gone with them.
+  assert.throws(() => message('agent:appContext.agentChats.heading'), undefined, 'the heading is no longer in the catalog');
+  assert.throws(() => message('agent:appContext.agentChats.buildNow'));
+  assert.throws(() => message('agent:appContext.agentChats.showMore'));
 });
 
 // #4417: "Recents lists open agent sessions on its one clock" went with the
-// rail's Recents: agent sessions are listed in Messages (the Agents filter)
-// and in the mark's Continue rows above.
+// rail's Recents: agent sessions are listed in Messages (the Agents filter),
+// which is their one home since #4729.
 
 test('Messages and the bell list paused sessions, and a conversation\'s change opens the conversation', () => {
   const improve = read('frontend/src/features/improve/improve-controller.js');
