@@ -70,7 +70,7 @@ import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-app
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
-import { CreateTile, AddAppsTile } from './create-tile';
+import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
@@ -521,14 +521,14 @@ export function AppGrid() {
           value — so the prerender and the first client render agree on this
           node's children. Its cell comes from the same paint as the tiles'.
 
-          In EDIT MODE (#4669) the trailing tile is "Add apps" instead: the
-          same dashed cell, opening the sheet of apps that are not on the
-          shelf. It takes the same derived placement the Create tile had.
+          In EDIT MODE (#4669) it stays exactly what it is at rest — same
+          face, same label, same cell — so the shelf's last tile never
+          changes identity under the viewer. The mode's other entry, the
+          "Add apps" sheet, lives in the heading's action seat instead
+          (index.tsx), beside "Done".
       */}
       {state.create ? (
-        state.editing
-          ? <AddAppsTile style={placementStyle(state.create.placement)} />
-          : <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
+        <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>
   );

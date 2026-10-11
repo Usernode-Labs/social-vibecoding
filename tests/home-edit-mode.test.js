@@ -2,11 +2,13 @@
 
 // EDIT MODE (#4669): long-pressing a tile of your own on Home puts the My
 // apps grid into edit mode — the tiles wiggle, each one grows a remove
-// button, the trailing tile becomes "Add apps", and "Done" beside the
-// heading ends it. This pins the STATE side of that in the real Home module
-// (the same vm harness tests/home-create-tile.test.js uses), because the
-// markup side is only half the feature: the decision of when the grid is
-// editable, what a remove button does, and what ends the state.
+// button, and "Done" beside the heading ends it, with "Add apps" beside it
+// opening the sheet of apps that are not on the shelf. The trailing Create
+// tile keeps its place and its whole at-rest identity. This pins the STATE
+// side of that in the real Home module (the same vm harness
+// tests/home-create-tile.test.js uses), because the markup side is only half
+// the feature: the decision of when the grid is editable, what a remove
+// button does, and what ends the state.
 //
 // Run with: node --test tests/home-edit-mode.test.js
 
@@ -122,7 +124,7 @@ test('while editing the grid shows EVERY tile and no expander', () => {
   assert.equal(state.editing, true);
   assert.equal(state.items.length, 11, 'edit mode shows every tile, so all are reachable');
   assert.equal(moreCount(), 0, 'and nothing is held back');
-  assert.ok(state.create, 'the trailing tile is there for "Add apps"');
+  assert.ok(state.create, 'the trailing Create tile keeps its place in edit mode');
   // ...and leaving puts the collapse back.
   Home._editing = false;
   Home.render();
@@ -130,7 +132,7 @@ test('while editing the grid shows EVERY tile and no expander', () => {
   assert.ok(moreCount() > 0);
 });
 
-test('while editing the trailing tile is offered to every account, private members included', () => {
+test('while editing the trailing tile keeps its at-rest presence, private members included', () => {
   const { Home, model, sandbox } = makeHome();
   sandbox.App.user.privateMember = true;
   Home._apps = mine(2);
@@ -138,7 +140,7 @@ test('while editing the trailing tile is offered to every account, private membe
   assert.equal(model().create, null, 'a private member gets no Create tile at rest');
   Home._editing = true;
   Home.render();
-  assert.ok(model().create, 'edit mode offers Add apps to them too');
+  assert.equal(model().create, null, 'and none in edit mode: Add apps is the heading button now');
   // ...and a normal account keeps its Create tile's facts.
   const { Home: H2, model: m2 } = makeHome();
   H2._apps = mine(2);
@@ -235,11 +237,17 @@ test('both long-press entry sites start it, and only for own non-demo tiles', ()
 
 // ── the markup side, where source is the honest check ─────────────────
 
-test('the Done action and the wiggle are on the screen they serve', () => {
+test('the heading actions and the wiggle are on the screen they serve', () => {
   const index = read('frontend/src/features/home/index.tsx');
   assert.match(index, /home-edit-done/);
   assert.match(index, /grid\.editing \?/, 'no action at all while edit mode is off');
   assert.match(index, /Home\?\.setEditing\?\.\(false\)/);
+  // "Add apps" rides beside Done (#4669): the sheet opens from the heading,
+  // not from a stand-in trailing tile.
+  assert.match(index, /home-edit-add/);
+  assert.match(index, /openAddAppsSheet\(\)/);
+  assert.doesNotMatch(read('frontend/src/features/home/app-grid.tsx'), /AddAppsTile/);
+  assert.doesNotMatch(read('frontend/src/features/home/create-tile.tsx'), /AddAppsTile/);
   const css = read('public/css/app.css');
   assert.match(css, /@keyframes home-wiggle/);
   assert.match(css, /#app-list\[data-editing\] > \.app-card > \.relative \{\n  animation: home-wiggle 260ms ease-in-out infinite alternate;\n\}/);

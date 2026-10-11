@@ -5428,17 +5428,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    tile is not in the layout; the next paint moves it along). It also fades
    while a drag is live: it is the one thing on the canvas that does not move
    with the preview, and at full strength it read as a tile being displaced. */
-/* #4669: the edit-mode "Add apps" tile is the same trailing cell, so it
-   stacks above the drag overlay — and is hit-tested away while a drag is
-   live — the same way the Create tile is. */
-#app-list > .home-create-tile,
-#app-list > .home-add-apps-tile {
+#app-list > .home-create-tile {
   position: relative;
   z-index: 1;
   align-self: start;
 }
-#app-list.un-reordering > .home-create-tile,
-#app-list.un-reordering > .home-add-apps-tile {
+#app-list.un-reordering > .home-create-tile {
   pointer-events: none;
   opacity: 0.4;
 }

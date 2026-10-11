@@ -829,11 +829,11 @@
   },
   "edit.addTile": {
     "text": "Add apps",
-    "description": "Label of the dashed trailing tile at the end of the My apps grid on Home while it is in edit mode; it opens the sheet of apps to add. Replaces \"New project\" while edit mode lasts."
+    "description": "Button beside the My apps heading on Home while the grid is in edit mode after a long press, next to Done: it opens the sheet of apps to add."
   },
   "addSheet.title": {
     "text": "Add to My apps",
-    "description": "Title of the sheet that lists apps to put on My apps, opened from the Add apps tile in edit mode. The same words as the tile menu's add action."
+    "description": "Title of the sheet that lists apps to put on My apps, opened from the Add apps button beside the My apps heading in edit mode. The same words as the tile menu's add action."
   },
   "addSheet.yours": {
     "text": "Your other apps",

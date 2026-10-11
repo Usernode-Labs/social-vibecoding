@@ -88,6 +88,7 @@ import { useRef } from 'react';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
+import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
@@ -266,18 +267,31 @@ export function HomeScreen() {
           */}
           <SectionHeading action={grid.editing ? (
             /* The screen's one job while the tiles wiggle is arranging them,
-               and this is its primary action. The treatment is BrowseLink's
+               and "Done" is its primary action. The treatment is BrowseLink's
                own — 14px semibold in the accent, the seat at the heading's
-               right end — because it is the third link in that seat on this
-               screen and the three should read as one row type. */
-            <button
-              type="button"
-              className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-              aria-label={t('home:edit.done')}
-              onClick={() => { (window as any).Home?.setEditing?.(false); }}
-            >
-              <span className="whitespace-nowrap">{t('home:edit.done')}</span>
-            </button>
+               right end — because it is the link in that seat on this screen
+               and the row should read as one row type. "Add apps" rides
+               beside it (#4669): the mode's second entry, opening the same
+               sheet the tile menu's "Add to My apps" opens, so growing the
+               shelf does not cost the trailing tile its place. */
+            <>
+              <button
+                type="button"
+                className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                aria-label={t('home:edit.addTile')}
+                onClick={() => { openAddAppsSheet(); }}
+              >
+                <span className="whitespace-nowrap">{t('home:edit.addTile')}</span>
+              </button>
+              <button
+                type="button"
+                className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                aria-label={t('home:edit.done')}
+                onClick={() => { (window as any).Home?.setEditing?.(false); }}
+              >
+                <span className="whitespace-nowrap">{t('home:edit.done')}</span>
+              </button>
+            </>
           ) : undefined}>{t('home:grid.heading')}</SectionHeading>
           <AppGrid />
           {/*

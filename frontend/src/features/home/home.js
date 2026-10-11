@@ -982,18 +982,11 @@ const Home = {
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all.
+      // waitlist (their Home's waitlist card says so), so no tile at all —
+      // in edit mode too (#4669): the mode's own entry, "Add apps", is the
+      // button beside the heading, not this tile, so the trailing tile keeps
+      // exactly the presence it has at rest.
       if (App.user?.privateMember) create = null;
-      // Edit mode (#4669) hands it back: there the tile is "Add apps" and is
-      // on every account's grid, whatever it can create. Same shape and cell
-      // the block above filled in, so the shelf's trailing tile lines up.
-      if (editing && !create) {
-        create = {
-          enabled: canCreate,
-          hint: message(Home.CREATE_DISABLED_HINT),
-          placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
-        };
-      }
     }
 
     // The search view is a flat, transient list — it must not inherit the
