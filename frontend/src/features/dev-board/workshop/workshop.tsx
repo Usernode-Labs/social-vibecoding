@@ -83,9 +83,9 @@ import { VotePicker } from '../card/dev-card';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
-import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
+import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, ShareItCard, canLeave, canMakePrivate, canMakePublic, confirmMakePrivate, confirmMakePublic,
+  ApprovalLine, CommunityCard, ShareItCard, canLeave,
   leaveCommunity, useCommunity,
 } from './community-card';
 import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
@@ -782,8 +782,14 @@ function pace(d: Dash): string {
  *
  * "Live this week" wears a `+` when the merged history is paged, because the
  * number is then a floor and not a total.
+ *
+ * ── AND THE VOTES FIGURE OPENS THE VOTE (#4745) ──
+ * With a change or a group decision up for a vote, "waiting on a vote" is a
+ * button: one waiting opens that item's page, several open All items, where
+ * every one of them is listed. The other three figures stay spans, and a
+ * zero stays a plain number — there is nothing to open.
  */
-function DashTiles({ d, owed }: { d: Dash; owed: number }): ReactNode {
+function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -816,24 +822,43 @@ function DashTiles({ d, owed }: { d: Dash; owed: number }): ReactNode {
   ];
   return (
     <div className="dev-ws-dash" data-ws-dash="">
-      {cells.map((c) => (
-        <span
-          key={c.key}
-          className={c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell'}
-          data-ws-dash-cell={c.key}
-          title={c.title}
-        >
-          <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
-          <span className="dev-ws-dash-label">
-            {/* A GRID in app.css, not an inline run: the label wraps at phone
-                widths, and a centred mark floated to the middle of a two-line
-                label while its second line ran back underneath the dot. */}
-            {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
-            <span>{c.label}</span>
+      {cells.map((c) => {
+        // #4745: only the votes figure, only while something actually waits,
+        // and only when the caller can route the tap. The markup is otherwise
+        // like-for-like with the span — the same class, the same attribute.
+        const tappable = c.key === 'votes' && c.n > 0 && !!onVotes;
+        const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
+        const content = (
+          <>
+            <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
+            <span className="dev-ws-dash-label">
+              {/* A GRID in app.css, not an inline run: the label wraps at phone
+                  widths, and a centred mark floated to the middle of a two-line
+                  label while its second line ran back underneath the dot. */}
+              {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
+              <span>{c.label}</span>
+            </span>
+            {c.sub}
+          </>
+        );
+        return tappable ? (
+          <button
+            key={c.key}
+            type="button"
+            className={cls}
+            data-ws-dash-cell={c.key}
+            data-ws-dash-open=""
+            onClick={onVotes}
+            title={c.title}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={c.key} className={cls} data-ws-dash-cell={c.key} title={c.title}>
+            {content}
           </span>
-          {c.sub}
-        </span>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -2454,6 +2479,10 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   const approveOpenRef = useRef<'approve' | 'diagram' | 'touches' | null>(endOnOpen ? null : shotTarget());
   // Still owed the open on `openOn`'s row (the effect below).
   const landRef = useRef<string | null>(endOnOpen ? null : openOn);
+  // Still owed the resume open (#4753, the effect below): true only when no
+  // other open is owed — the route asked for neither the end card
+  // (`endOnOpen`), a shot target nor a New for you row (`openOn`).
+  const resumeRef = useRef<boolean>(!endOnOpen && !approveOpenRef.current && !openOn);
   const moreRef = useRef<HTMLButtonElement>(null);
   const voteRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
@@ -2616,6 +2645,31 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     if (idx < 0) return;
     landRef.current = null;
     curKeyRef.current = key;
+    setAt(idx);
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = idx * el.clientHeight;
+    el.style.scrollBehavior = '';
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * #4753: come back to a feed you have already been part way through, and it
+   * opens on the first item you have not already passed over or answered —
+   * `firstUnseenIndex`, read off the record needs-seen.ts keeps — rather than
+   * on the first one. The rows it jumps past are the seen ones, still in
+   * place and reachable by swiping back up. Once, on the first publish that
+   * has rows and a laid-out scroller, as the opens above land; after that the
+   * re-sync follows the row by key. Off when another open is owed: the end
+   * card, a shot target and `openOn` land where they ask. The jump does not
+   * go through `landOn`, so the rows it passes are not marked seen HERE —
+   * they were already seen, which is how the index was found.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!resumeRef.current || !el || !el.clientHeight || !items.length) return;
+    resumeRef.current = false;
+    const idx = firstUnseenIndex(items, (r) => rowSlug(r, slug));
+    if (idx <= 0) return;
+    curKeyRef.current = items[idx].key;
     setAt(idx);
     el.style.scrollBehavior = 'auto';
     el.scrollTop = idx * el.clientHeight;
@@ -3851,9 +3905,6 @@ export function DevWorkshop(): ReactNode {
   const [openWeek, setOpenWeek] = useState<string | null>(null);
   // New for you's rows past its first WORKSHOP_WORK_FIRST, put out in place.
   const [freshAll, setFreshAll] = useState(false);
-  // The vote New for you's Vote opened Needs you on, by its queue key, until
-  // the page leaves Needs you (NeedsFeed `openOn`).
-  const [needsLanding, setNeedsLanding] = useState<string | null>(null);
   // The category an Overview chip opened on All items, unfolded and brought
   // into view once the page is up.
   const [focusTheme, setFocusTheme] = useState<string | null>(null);
@@ -4105,11 +4156,6 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     setSideItem(null);
     if (tab !== 'workshop') setOpenWeek(null);
-  }, [tab]);
-  // New for you's Vote lands on its row once; any other way into Needs you
-  // opens it where it opens.
-  useEffect(() => {
-    if (tab !== 'needs') setNeedsLanding(null);
   }, [tab]);
   useEffect(() => {
     if (!sideWide) setSideItem(null);
@@ -4374,11 +4420,12 @@ export function DevWorkshop(): ReactNode {
   // (week-pages.tsx `catchUp`, which files the dots and "N new" the same way.)
   const sinceRows = (v.since ? v.since.rows : [])
     .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && catchUp(r.brief));
-  // NEW FOR YOU: of what moved since your last visit, what asks something of
-  // you — a vote that waits on yours, and a request filed since — newest
-  // first. Your own are Your work's.
+  // NEW FOR YOU: of what moved since your last visit, the requests filed
+  // since, newest first. Your own are Your work's. A vote waiting on yours is
+  // Needs you's (#4716): it was here too, a second Vote for the same vote,
+  // whose press only opened Needs you on it.
   const freshRows = sinceRows.filter((r) => !!r.brief && !r.brief.mine && !r.brief.requested
-    && ((!!r.brief.vote && r.brief.vote.ask) || (r.brief.kind === 'request' && !!r.fresh)));
+    && r.brief.kind === 'request' && !!r.fresh);
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     // A week further back than the since-list's capped rows draws nothing on
@@ -4394,36 +4441,15 @@ export function DevWorkshop(): ReactNode {
     callAppView('closeWorkshopWeek');
     scrollToHead(hostRef.current);
   };
-  // New for you's Vote: the item in Needs you, landed on (NeedsFeed
-  // `openOn`), by the key the queue gives a vote (AppView._workshopView).
-  const voteInNeeds = (row: WorkCardRow) => {
-    setNeedsLanding(`vote:${row.card.key}`);
-    openTab('needs');
-  };
   // New for you's rows: lit while their page is open beside the list, as
   // WorkList lights its own.
   const rowOn = (r: WorkCardRow): boolean => {
     const ref = topicRef(r.card);
     return !!sideKey && !!ref && sideKey === `${ref.kind}:${ref.id}`;
   };
-  // New for you's: Vote, into Needs you; or Build it, the request card's own
-  // act when that act is building it (asking Homeroom bot, or yourself).
+  // New for you's: Build it, the request card's own act when that act is
+  // building it (asking Homeroom bot, or yourself).
   const freshAct = (r: WorkCardRow): ReactNode => {
-    const b = r.brief!;
-    if (b.vote && b.vote.ask) {
-      return (
-        <Button
-          type="button"
-          variant="pillAccent"
-          size="sm"
-          className="un-touch-target"
-          data-ws-fresh-vote=""
-          onClick={() => voteInNeeds(r)}
-        >
-          {t('project:workshop.fresh.vote')}
-        </Button>
-      );
-    }
     const a = primaryAct(r.card);
     if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
@@ -4497,15 +4523,13 @@ export function DevWorkshop(): ReactNode {
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
               inHero
-              // A public community's "Make it private" is the ⋯'s, not a
-              // hero button (./community-card.tsx confirmMakePrivate).
-              onMakePrivate={canMakePrivate(community)
-                ? () => { void confirmMakePrivate(slug, app.name || community?.name || slug); }
-                : null}
-              // #4045: "Make it public" and Leave are the ⋯'s too, so the
-              // hero's row is what you do with people: Invite.
-              onMakePublic={canMakePublic(community)
-                ? () => { void confirmMakePublic(slug, app.name || community?.name || slug); }
+              // #4666: who can see it and how its changes are approved, one
+              // row and one sheet (features/dialogs/who-decides.tsx), for
+              // whoever may propose it. It took "Make it public" and "Make it
+              // private" in; Leave stays the ⋯'s, so the hero's row is what
+              // you do with people: Invite.
+              onWhoDecides={community?.can_manage
+                ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); }
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
@@ -4659,7 +4683,19 @@ export function DevWorkshop(): ReactNode {
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </div>
-          <DashTiles d={v.dashboard} owed={owed} />
+          {/* #4745: the votes figure routes its tap — the one waiting item's
+              page when exactly one waits, All items otherwise, where every
+              waiting change is listed. With nothing waiting the figure is
+              not a button and the handler is never called. */}
+          <DashTiles
+            d={v.dashboard}
+            owed={owed}
+            onVotes={() => {
+              const refs = v.dashboard?.votesWaitingRefs || [];
+              if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
+              else openTab('all');
+            }}
+          />
           {/* Where the open work is: the categories with the most of it, as
               chips. It replaced the model's paragraph about the open work
               and the sentence derived from the counts, and the caption that
@@ -4682,9 +4718,11 @@ export function DevWorkshop(): ReactNode {
           changes and their votes, never what is already live (#4715: a
           merged change of theirs still going live stays, with its tag,
           until the release lands) (AppView
-          ._workshopView), in the shared work rows (./work-row.tsx WorkRow):
-          the title, the board's words, its tags and its vote, and its ☰. A
-          request your change addresses is drawn as that change. Its first
+          ._workshopView), in the shared work rows (./work-row.tsx WorkRow)
+          in This week's one-line shape (#4716, variant `line`): the glyph,
+          the title on one line, its status pill and Vote at the line's end
+          and its ☰; under it the board's words and its tags. A request your
+          change addresses is drawn as that change. Its first
           WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
@@ -4713,6 +4751,7 @@ export function DevWorkshop(): ReactNode {
               slug={slug}
               openKey={sideKey}
               onOpen={openItem}
+              variant="line"
             />
             {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
               <button
@@ -4730,11 +4769,11 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
       {/* ── New for you ──
-          Since your last visit, what asks something of you: a vote waiting
-          on yours, whose Vote opens it in Needs you, landed on; and a
-          request filed since, whose Build it is the request card's own
-          next step (ask Homeroom bot, or build it yourself). Not on a first
-          visit, which has no last visit, and not when there is none. */}
+          Since your last visit, the requests filed since, whose Build it is
+          the request card's own next step (ask Homeroom bot, or build it
+          yourself). The votes waiting on yours are Needs you's (#4716). Not
+          on a first visit, which has no last visit, and not when there is
+          none. */}
       {freshRows.length ? (
         <section className="dev-ws-strip" data-ws-fresh="">
           <div className="dev-ws-head">
@@ -4747,11 +4786,7 @@ export function DevWorkshop(): ReactNode {
                 key={r.key}
                 row={r}
                 slug={slug}
-                tone={r.brief!.vote && r.brief!.vote.ask ? 'ask' : undefined}
-                sub={rowWords(r.brief!, {
-                  lead: r.brief!.vote && r.brief!.vote.ask ? t('project:workRow.state.yourVote') : t('project:workRow.state.newRequest'),
-                  replies: true,
-                })}
+                sub={rowWords(r.brief!, { lead: t('project:workRow.state.newRequest'), replies: true })}
                 act={freshAct(r)}
                 on={rowOn(r)}
                 onOpen={openItem}
@@ -4848,7 +4883,6 @@ export function DevWorkshop(): ReactNode {
           canPost={canPost}
           onDone={() => openTab('workshop')}
           onHub={() => openTab('status')}
-          openOn={needsLanding}
           // #4680: the end card's quiet way into the Suggest an improvement
           // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
           // so the heading reads "Suggest an improvement".

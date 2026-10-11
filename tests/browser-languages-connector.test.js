@@ -88,5 +88,6 @@ test('the translation step\'s status names its batch and its last proposal', asy
     batch: { submittedAt: '2026-10-10T00:00:00Z', messages: 9000 },
     proposal: { prNumber: 4700, status: 'merged' },
     failure: null,
+    lastPass: null,
   });
 });

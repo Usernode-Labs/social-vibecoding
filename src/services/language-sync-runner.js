@@ -83,6 +83,9 @@ function parseRepo(url) {
 //   failure     { at, shape, baseSha, requests, reasons, example, batch } the
 //               last pass that wrote nothing because requests failed; gone
 //               once a pass ends without one
+//   lastPass    { at, requested, written, failed, problems } what the last
+//               pass that translated anything got back (#4641: a pass that
+//               wrote nothing used to leave no trace of why)
 
 async function readState(pool) {
   try {
@@ -139,6 +142,36 @@ function englishDigest(root) {
     hash.update(file).update('\0').update(fs.readFileSync(path.join(directory, file))).update('\0');
   }
   return hash.digest('hex');
+}
+
+/**
+ * What one pass got back, for the state and the log: how many messages it
+ * asked for, how many it could use, and the commonest reasons the rest stay
+ * English (at most three, each with its count).
+ */
+function passOutcome(summary, now = new Date()) {
+  let requested = 0;
+  let written = 0;
+  let failed = 0;
+  const reasons = new Map();
+  for (const language of Object.values(summary.languages || {})) {
+    requested += language.requested;
+    written += language.written;
+    failed += language.failed.length;
+    for (const { problem } of language.failed) reasons.set(problem, (reasons.get(problem) || 0) + 1);
+  }
+  const problems = [...reasons.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([problem, count]) => ({ problem: String(problem).slice(0, 300), count }));
+  return { at: now.toISOString(), requested, written, failed, problems };
+}
+
+/** A pass that asked for translations and could use none of them is a fault to see, not an info line. */
+function logOutcome(outcome, extra = {}) {
+  if (outcome.requested > 0 && outcome.written === 0) {
+    log.warn('language-sync', 'Translation pass wrote nothing', { ...extra, ...outcome });
+  }
 }
 
 /** What the answers cost, in cents, at the batch discount when they came as one. */
@@ -406,7 +439,7 @@ async function runOnce({ config, pool, deps = {} }) {
       // A batch Anthropic no longer knows (its results are kept 29 days) is
       // let go; the next pass plans again from main.
       if (err && err.status === 404) {
-        await writeState(pool, { checkedSha: null, proposal: state.proposal, failure: state.failure });
+        await writeState(pool, { checkedSha: null, proposal: state.proposal, failure: state.failure, lastPass: state.lastPass });
         return { dropped: state.batch.id };
       }
       throw err;
@@ -428,6 +461,8 @@ async function runOnce({ config, pool, deps = {} }) {
       });
       await limits.recordSystemSpend(pool, spent);
       const digest = englishDigest(root);
+      const lastPass = passOutcome(summary);
+      logOutcome(lastPass, { batchId: state.batch.id });
       const failure = reportFailures({
         logger, summary, baseSha: state.batch.baseSha, at: clock(), shape: state.batch.shape || null,
         batch: { id: state.batch.id, counts: status.counts || null },
@@ -436,10 +471,10 @@ async function runOnce({ config, pool, deps = {} }) {
         // Nothing was written and requests went unanswered, so main is not
         // marked as read: the same work is due again once the failure stops
         // holding it back.
-        await writeState(pool, { checkedSha: null, proposal: state.proposal, failure });
+        await writeState(pool, { checkedSha: null, proposal: state.proposal, failure, lastPass });
         return { failed: true, reasons: failure.reasons, spentCents: spent };
       }
-      const next = { checkedSha: state.batch.baseSha, proposal: state.proposal };
+      const next = { checkedSha: state.batch.baseSha, proposal: state.proposal, lastPass };
       if (summary.files.length) {
         const opened = await openProposal({ config, pool, app, repo, baseSha: state.batch.baseSha, root, summary, deps });
         next.proposal = { sessionId: opened.sessionId, englishDigest: digest };
@@ -447,7 +482,7 @@ async function runOnce({ config, pool, deps = {} }) {
         return { opened: opened.prNumber, spentCents: spent };
       }
       await writeState(pool, next);
-      return { nothingUsable: true, spentCents: spent };
+      return { nothingUsable: true, spentCents: spent, failed: lastPass.failed };
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -469,7 +504,7 @@ async function runOnce({ config, pool, deps = {} }) {
     const prepared = sync.prepareSync(root);
     const messages = [...prepared.plans.values()].reduce((sum, items) => sum + items.length, 0);
     if (!messages) {
-      await writeState(pool, { checkedSha: mainSha, proposal: state.proposal, failure: state.failure });
+      await writeState(pool, { checkedSha: mainSha, proposal: state.proposal, failure: state.failure, lastPass: state.lastPass });
       return { skipped: 'nothing_missing' };
     }
     const budget = await limits.checkSystemBudget(pool);
@@ -512,12 +547,14 @@ async function runOnce({ config, pool, deps = {} }) {
       },
     });
     await limits.recordSystemSpend(pool, spent);
+    const lastPass = passOutcome(summary);
+    logOutcome(lastPass, { baseSha: mainSha });
     const failure = reportFailures({ logger, summary, baseSha: mainSha, at: clock() });
     if (failure) {
-      await writeState(pool, { checkedSha: null, proposal: state.proposal, failure });
+      await writeState(pool, { checkedSha: null, proposal: state.proposal, failure, lastPass });
       return { failed: true, reasons: failure.reasons, messages, spentCents: spent };
     }
-    const next = { checkedSha: mainSha, proposal: state.proposal };
+    const next = { checkedSha: mainSha, proposal: state.proposal, lastPass };
     if (summary.files.length) {
       const opened = await openProposal({ config, pool, app, repo, baseSha: mainSha, root, summary, deps });
       next.proposal = { sessionId: opened.sessionId, englishDigest: digest };
@@ -525,7 +562,7 @@ async function runOnce({ config, pool, deps = {} }) {
       return { opened: opened.prNumber, messages, spentCents: spent };
     }
     await writeState(pool, next);
-    return { nothingUsable: true, messages, spentCents: spent };
+    return { nothingUsable: true, messages, spentCents: spent, failed: lastPass.failed };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -534,9 +571,11 @@ async function runOnce({ config, pool, deps = {} }) {
 /**
  * Where the step stands, for a full admin (get_browser_languages): the main
  * commit it last read, a batch still running, the last proposal it opened
- * with that proposal's status, and the last pass that wrote nothing because
- * requests failed (when, how many requests, why, and when they are due
- * again: null when the next pass sends them).
+ * with that proposal's status, what the last pass that translated anything
+ * got back (how many it could use, and why the rest stayed English), and the
+ * last pass that wrote nothing because requests failed (when, how many
+ * requests, why, and when they are due again: null when the next pass sends
+ * them).
  */
 async function status(pool, { now = Date.now() } = {}) {
   const state = await readState(pool);
@@ -560,6 +599,7 @@ async function status(pool, { now = Date.now() } = {}) {
       // next pass sends again.
       retryAfter: heldUntil(state.failure, now) === null ? null : new Date(heldUntil(state.failure, now)).toISOString(),
     } : null,
+    lastPass: state.lastPass || null,
   };
 }
 
@@ -601,6 +641,7 @@ module.exports = {
   isEnabled,
   materialize,
   openProposal,
+  passOutcome,
   proposalBody,
   proposalTitle,
   readState,

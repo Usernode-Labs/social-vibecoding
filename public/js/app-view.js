@@ -8422,10 +8422,10 @@ const AppView = {
         if (window.Secrets) Secrets.openForCurrentApp();
       }, { signal });
     }
-    // "Make it private" (the hub's ⋯, a public community's) renders once the
+    // "Who can see & change it" (the hub's ⋯, #4666) renders once the
     // community read answers, which can be after this wiring ran, so there is
     // no node to bind here: its own click closes the menu through this.
-    // What it does is React's (community-card.tsx confirmMakePrivate).
+    // What it does is React's (features/dialogs/who-decides.tsx).
     AppView._closePlusMenu = close;
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
@@ -12061,6 +12061,12 @@ const AppView = {
       open: openEntries.length,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
+      // #4745: the votes figure is tappable. It opens the one waiting item's
+      // page, or All items when several wait — these refs follow the bucket's
+      // order, so `refs.length === 1` and `votesWaiting === 1` agree.
+      votesWaitingRefs: buckets.inReview
+        .map((x) => ({ kind: x.kind, id: Number(x.item && x.item.id) }))
+        .filter((r) => r.id > 0),
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,

@@ -275,9 +275,11 @@ is no replay plan to write and nothing to verify locally.
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
   project GROWS by the same two levers: Invite makes Just you a Private
-  community, and the hero's "Make it public" (or, on a public community,
-  "Make it private" in the hero's ⋯) opens the visibility PR
-  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
+  community, and "Make it public" (a just-you project's Share it card) or
+  "Who can see & change it" (the hero's ⋯, the rule line's Rules;
+  `features/dialogs/who-decides.tsx`) opens the PR
+  (`POST /api/apps/:slug/visibility-pr`, or `/who-decides-pr`, which also
+  carries the approval rule), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
@@ -290,13 +292,16 @@ is no replay plan to write and nothing to verify locally.
   GitHub repo in place (`import-repo.tsx`), and makes a private community
   with nobody invited yet; inviting comes next, on its made screen. The
   create dialog that asked who it is for and who approves is retired: those
-  are the project's own levers afterwards (Invite, "Make it public", Members
-  & approvals). `POST /api/apps` still takes `audience`, a private
+  are the project's own levers afterwards (Invite, and "Who can see & change
+  it", whose invite-sheet line names the rule and offers the presets). `POST /api/apps` still takes `audience`, a private
   community's `invitees` and the approval rule as dapp.json's own
   `governance` block (`src/services/create-options.js`) for any other
   caller; the rule is written into the new repository's dapp.json by the
   template, so it is votable later like any other line there, and an
-  import's own dapp.json decides instead. Every project uses an app slot
+  import's own dapp.json decides instead. A new project starts on the You
+  or the group preset (#4666, `src/services/governance-rules.js`: the
+  creator's yes, or the group's time-&-majority vote); a change to who
+  decides always goes by that rule, whatever preset a project picks. Every project uses an app slot
   whatever its audience: each one is a real container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting

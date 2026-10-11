@@ -19997,6 +19997,27 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    call — stays in text ink. */
 .dev-ws-dash-cell-good b { color: var(--state-ok); }
 .dev-ws-dash-cell-warn b { color: var(--state-attention); }
+/* #4745: AND WHEN SOMETHING WAITS, THE VOTES FIGURE IS A BUTTON. The reset
+   takes the browser's button chrome off without taking the cell's own look
+   with it: the left border is the hairline between figures and stays
+   (:first-child still removes it), and font-size, line-height and colour all
+   keep coming from .dev-ws-dash-cell above — which is why the font reset is
+   the family and weight longhands, not the `font:` shorthand, whose
+   font-size would override the cell's. */
+button.dev-ws-dash-cell {
+  appearance: none;
+  background: none;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+button.dev-ws-dash-cell:hover .dev-ws-dash-label { color: var(--accent); }
+button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
    are alternatives over one board, and a shared rail says that where a gap
    between pills would read as two unrelated toggles. Deliberately NOT
@@ -22934,6 +22955,66 @@ html.in-side-panel body {
   .dev-ws-hrow-glyph { margin-top: 2px; }
   .dev-ws-hrow-main { flex-direction: column; align-items: flex-start; gap: 2px; }
   .dev-ws-hrow-link { white-space: normal; }
+}
+
+/* Your work (#4716, workshop/work-row.tsx variant `line`): This week's
+   one-line row with a second line. The first line is the small glyph, the
+   title on one line in This week's weight, and at its end the card's status
+   pill and Vote (#4486's pair, unchanged), then ☰; the line is as tall as
+   Vote, so the glyph and ☰ centre on it whether or not the row has one. The
+   second line is the item's number (and the requests it is for), its tags
+   most important first, then Homeroom bot's tag on a change it built for
+   you (#4716; your own work names nobody), on one line that scrolls
+   sideways and fades at its end, so nothing wraps; it sits above the row's
+   stretched link to take the swipe, and a click on it opens the item
+   (work-row.tsx). On a narrow card the title wraps (two lines at most)
+   and the pill and Vote end the row, at its
+   far end, as they do on a phone today (#4718): the first line lets go of
+   its box (`display: contents`) so the title and the pair are the column's
+   own items, and the pair is ordered after the tags. */
+/* Your work echoes What happened's This week card (#4716): This week's
+   heading (15px at 650, its count muted beside it on the baseline, 4px
+   above and 8px below), a hairline over the first row as over every row
+   there, and rows that start where This week's do, after the 7px dot and
+   10px gap This week keeps for what is new (so its titles line up with
+   This week's and New for you's). A row lights in place on hover, as This
+   week's does, rather than bleeding past the card's edge. */
+.dev-ws-strip[data-ws-mine] { container-type: inline-size; gap: 0; }
+.dev-ws-strip[data-ws-mine] > .dev-ws-head { align-items: baseline; padding: 4px 2px 8px; }
+.dev-ws-strip[data-ws-mine] > .dev-ws-head > .dev-ws-head-title { font-size: 15px; font-weight: 650; }
+.dev-ws-strip[data-ws-mine] .dev-ws-wlist { margin-top: 0; }
+.dev-ws-strip[data-ws-mine] .dev-ws-wlist + .dev-ws-reveal { margin-top: 2px; }
+.dev-ws-lrow { gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px; }
+.dev-ws-lrow:hover, .dev-ws-lrow[data-on] { margin: 0; padding-left: 19px; padding-right: 2px; }
+.dev-ws-lrow:hover + .dev-ws-lrow, .dev-ws-lrow[data-on] + .dev-ws-lrow { border-top-color: var(--app-sheet-line); }
+.dev-ws-lrow > .dev-ws-hrow-glyph { height: 30px; margin-top: 0; }
+.dev-ws-lrow > .dev-ws-wrow-main { gap: 2px; }
+.dev-ws-lrow-line { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 30px; }
+.dev-ws-lrow .dev-ws-wrow-link {
+  flex: 1 1 auto; min-width: 0; display: block; font-weight: 400; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dev-ws-lrow:has(.dev-ws-wrow-link:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-lrow-line > .dev-ws-wvote { flex: none; margin-left: 0; }
+.dev-ws-lrow .dev-ws-wrow-status {
+  position: relative; z-index: 1; margin-top: 0; column-gap: 8px; flex-wrap: nowrap; min-width: 0;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; cursor: pointer;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.dev-ws-lrow .dev-ws-wrow-status::-webkit-scrollbar { display: none; }
+.dev-ws-lrow .dev-ws-wrow-status > * { flex: none; }
+.dev-ws-lrow .dev-ws-wrow-sub { overflow: visible; }
+.dev-ws-lrow > .dev-ws-wrow-menu { margin-top: 1px; }
+@container (max-width: 520px) {
+  .dev-ws-lrow > .dev-ws-hrow-glyph { height: 20px; }
+  .dev-ws-lrow-line { display: contents; }
+  .dev-ws-lrow .dev-ws-wrow-link {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .dev-ws-lrow-line > :not(.dev-ws-wrow-link) { order: 1; align-self: flex-end; margin-top: 4px; }
+  .dev-ws-lrow .dev-ws-wrow-status { margin-top: 2px; }
+  .dev-ws-lrow > .dev-ws-wrow-menu { margin-top: -4px; }
 }
 
 /* The item's page beside the list, on a wide window (workshop/side-panel.tsx).

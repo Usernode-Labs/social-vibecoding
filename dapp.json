@@ -3638,9 +3638,9 @@
       "expectSelector": "#members-governance-section #members-initial-approvers-propose"
     },
     {
-      "name": "Approvers dormant-roster note ships in the approvers section",
+      "name": "Approvers dormant-roster note ships in the approvers section; Who can see & change it ships with the page, and Members points at it (#4666)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#members-approvers-section #members-approvers-dormant-note"
+      "expectSelector": "body:has(#who-decides-modal) #members-modal:has(#members-who-decides [data-members-who-decides]) #members-approvers-section #members-approvers-dormant-note"
     },
     {
       "name": "Errored app view shows the failure reason and build-log button",

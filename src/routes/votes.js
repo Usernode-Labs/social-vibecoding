@@ -4141,12 +4141,21 @@ function voteRoutes(config) {
         ...sessions.filter((r) => r.requires_explicit_approval).map((r) => r.app_id),
         ...governance.map((r) => r.app_id),
       ]);
+      // #4666: who voted, on the projects with rules of their own.
+      const rulesByApp = {};
+      const issueRulesByApp = {};
       for (const appId of appIds) {
         statsByApp[appId] = await getActiveUserStats(pool, appId);
         govByApp[appId] = await governanceSvc.getGovernance(pool, appId);
         electorateByApp[appId] = await governanceSvc.getElectorate(pool, appId, govByApp[appId]);
         if (floorApps.has(appId)) {
           membersByApp[appId] = await governanceSvc.communityMemberCount(pool, appId);
+        }
+        if (govByApp[appId].rules) {
+          rulesByApp[appId] = await governanceSvc.rulesContext(pool, appId, govByApp[appId], 'pr',
+            sessions.filter((r) => r.app_id === appId).map((r) => r.id));
+          issueRulesByApp[appId] = await governanceSvc.rulesContext(pool, appId, govByApp[appId], 'issue',
+            governance.filter((r) => r.app_id === appId).map((r) => r.id));
         }
       }
 
@@ -4171,6 +4180,8 @@ function voteRoutes(config) {
             explicitApproval: !!s.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount: membersByApp[s.app_id],
+            // These are the viewer's own proposals: they are the author.
+            ...(rulesByApp[s.app_id] ? governanceSvc.rulesGateOpts(rulesByApp[s.app_id], s.id, req.user.id, s.explicit_approval_reason || null) : {}),
           }
         );
         proposals.push({
@@ -4186,6 +4197,7 @@ function voteRoutes(config) {
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
           ...governanceSvc.explicitApprovalRowFields(s, gate),
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
         });
@@ -4267,7 +4279,10 @@ function voteRoutes(config) {
         // timer, and a Yes from another member (services/governance.js).
         const gate = governanceSvc.computeGate(
           gov, electorate?.active || 1, q.yes, q.no, g.created_at, null,
-          { explicitApproval: true, otherYes: q.otherYes, memberCount: membersByApp[g.app_id] }
+          {
+            explicitApproval: true, otherYes: q.otherYes, memberCount: membersByApp[g.app_id],
+            ...(issueRulesByApp[g.app_id] ? governanceSvc.rulesGateOpts(issueRulesByApp[g.app_id], g.id, g.created_by ?? null, 'secrets') : {}),
+          }
         );
         const { other_up_count: _otherUp, app_self_hosted: selfHosted, ...rest } = g;
         governanceRows.push({
@@ -4283,6 +4298,7 @@ function voteRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           // #695: qualifying tallies, matching the PR rows above, so the
           // home strip pill counts approver votes only on invited apps.
           qualified_yes_count: gate.qualifiedYes,
@@ -4604,6 +4620,11 @@ function voteRoutes(config) {
       const memberCount = rows.some((r) => r.votes_required == null && r.requires_explicit_approval)
         ? await governance.communityMemberCount(pool, appRows[0].id)
         : undefined;
+      // #4666: who voted, on a project with rules of its own.
+      const rulesCtx = gov.rules
+        ? await governance.rulesContext(pool, appRows[0].id, gov, 'pr',
+          rows.filter((r) => r.votes_required == null).map((r) => r.id))
+        : null;
       for (const row of rows) {
         if (row.votes_required != null) continue;
         const q = qualifiedByRow
@@ -4621,6 +4642,7 @@ function voteRoutes(config) {
             explicitApproval: !!row.requires_explicit_approval,
             otherYes: q.otherYes,
             memberCount,
+            ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null) : {}),
           }
         );
         row.votes_required = gate.required;
@@ -4631,6 +4653,7 @@ function voteRoutes(config) {
         row.approval_policy = gate.policy;
         row.approvals_required = gate.approvalsRequired;
         Object.assign(row, governance.explicitApprovalRowFields(row, gate));
+        if (gate.mode === 'rules') Object.assign(row, governance.ruleRowFields(gate));
         delete row.other_yes_count;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
@@ -5234,6 +5257,11 @@ function voteRoutes(config) {
             otherYes: q.otherYes,
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
+            // #4666: who voted, on a project with rules of its own.
+            ...(gov.rules ? governance.rulesGateOpts(
+              await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id]),
+              proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
+            ) : {}),
           }
         );
         proposal.votes_required = gate.required;
@@ -5244,6 +5272,7 @@ function voteRoutes(config) {
         proposal.approval_policy = gate.policy;
         proposal.approvals_required = gate.approvalsRequired;
         Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
+        if (gate.mode === 'rules') Object.assign(proposal, governance.ruleRowFields(gate));
         proposal.qualified_yes_count = gate.qualifiedYes;
         proposal.qualified_no_count = gate.qualifiedNo;
         // #3234: display only — the threshold as it stood when voting opened.
@@ -6413,6 +6442,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt, explicitApproval,
+    // #4666: on a project with rules, a change to who decides goes by the
+    // creator's yes or the group's real votes; a change to its keys by its
+    // own rule. The reason the live check found says which.
+    explicitReason: explicitApprovalReason,
     // The member floor's author: someone else has to say Yes to a flagged
     // proposal (services/governance.js applyNoTimerMerge).
     authorId: session.user_id ?? null,

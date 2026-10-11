@@ -40,12 +40,12 @@
  *   MAKE IT PUBLIC. Who a project is for can grow after it exists: Invite
  *   makes a Just-you project a private community, and "Make it public" (it
  *   was "Open it up") makes it a public one. Taking a public community back
- *   is "Make it private", a row of the ⋯ rather than a button here
- *   (confirmMakePrivate): narrowing who a project is for is a setting, not
- *   an invitation, and the hero's row is for asking people in. That is the
- *   visibility change the settings dialog proposes, POST
- *   /api/apps/:slug/visibility-pr, offered to the same people the route
- *   lets open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
+ *   is the Who can see & change it sheet's (#4666,
+ *   ../../dialogs/who-decides.tsx, from the ⋯ and the rule line's Rules):
+ *   narrowing who a project is for is a setting, not an invitation, and the
+ *   hero's row is for asking people in. That is a visibility change, POST
+ *   /api/apps/:slug/visibility-pr here and /who-decides-pr in the sheet,
+ *   offered to the same people the routes let open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
  *   says who a project is for, so the change is voted in like any other
  *   line of it and applies once it merges. While one is up, the hero says
  *   so and links to it instead of offering a second.
@@ -85,6 +85,7 @@ import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-iden
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
 import { changeHref } from '../../../lib/change-href';
+import type { ApprovalPayload } from '../../who-decides/model';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -210,12 +211,11 @@ export type CommunityPayload = {
    * (the list draws the live ones). Null when it could not be read.
    */
   places?: PlacesPayload | null;
-  approval: {
-    policy: 'anyone' | 'invited';
-    approvals_required: number | null;
-    electorate: number;
-    required: number;
-  };
+  approval: ApprovalPayload;
+  /** #4666: who can see and build it, as the two columns say. */
+  visibility?: { build: 'public' | 'private'; view: 'public' | 'private' } | null;
+  /** #4666: a change to who can see and change it already up for a vote. */
+  who_decides_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
 };
 
 /**
@@ -286,9 +286,12 @@ function ruleLine(ids: RuleIds, required: number, of: number, quiet: boolean): s
  */
 export function approvalLine(
   approval: CommunityPayload['approval'] | null | undefined,
-  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> | null,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> & { is_creator?: boolean } | null,
 ): string {
   if (!approval) return '';
+  // #4666: a preset's line, as plain text (its face and bold are the card's).
+  const preset = presetSentence(approval, viewer ? { ...viewer, is_creator: !!viewer.is_creator } : viewer);
+  if (preset) return translate(preset.long, preset.values).replace(/<\/?\d+>/g, '');
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   // A Just you project's one approver is the person reading it (#4246).
@@ -697,77 +700,6 @@ export async function verifiedToGoPublic(): Promise<boolean> {
 export const MAKE_PUBLIC_LINE = 'project:communityCard.makePublic.explain';
 
 /**
- * What making it private means, said before it is proposed. Who can OPEN
- * it: the repository stays public on GitHub (services/github.js createRepo)
- * whatever this setting says. A message id.
- */
-export const MAKE_PRIVATE_LINE = 'project:communityCard.makePrivate.explain';
-
-/**
- * "Make it private", from the hub's ⋯ (../actions-row.tsx DevPlusMenu's
- * `onMakePrivate`). It was a button in the hero beside Invite; it is a
- * setting, so it lives with the settings. The same question the hero's
- * popup asked, as the platform's confirm (the kit's alert, which a row of
- * the touch action sheet can present, as App display name's prompt does),
- * then the same proposal, then the hero re-reads and shows it up for a vote.
- */
-export async function confirmMakePrivate(slug: string, name: string): Promise<void> {
-  const ui = (window as any).PlatformUI;
-  if (!ui || typeof ui.confirm !== 'function') return;
-  const ok = await ui.confirm({
-    title: translate('project:communityCard.makePrivate.question', { project: name }),
-    message: translate(MAKE_PRIVATE_LINE),
-    confirmLabel: translate('project:communityCard.makePrivate.propose'),
-    cancelLabel: translate('project:communityCard.makePrivate.notNow'),
-  });
-  if (!ok) return;
-  try {
-    await proposeAudience(slug, 'private');
-  } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : translate('project:communityCard.audienceChange.failed'));
-    return;
-  }
-  await reloadCommunity(slug);
-}
-
-/**
- * "Make it public", from the hub's ⋯ (#4045, decision D). It was a button in
- * the hero's row; it is a setting, so it lives beside "Make it private" in
- * the ⋯ (../actions-row.tsx DevPlusMenu's `onMakePublic`), and the row keeps
- * what you do with people: Invite. The same question as the popup, as the
- * platform's confirm, then the same proposal.
- */
-export async function confirmMakePublic(slug: string, name: string): Promise<void> {
-  const ui = (window as any).PlatformUI;
-  if (!ui || typeof ui.confirm !== 'function') return;
-  if (!(await verifiedToGoPublic())) return;
-  const ok = await ui.confirm({
-    title: translate('project:communityCard.makePublic.question', { project: name }),
-    message: translate(MAKE_PUBLIC_LINE),
-    confirmLabel: translate('project:communityCard.makePublic.propose'),
-    cancelLabel: translate('project:communityCard.makePublic.notNow'),
-  });
-  if (!ok) return;
-  try {
-    if (!(await proposeAudience(slug, 'public'))) return;
-  } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : translate('project:communityCard.audienceChange.failed'));
-    return;
-  }
-  await reloadCommunity(slug);
-}
-
-/**
- * Whether the hub's ⋯ offers "Make it public": a private community, to
- * whoever may open the visibility proposal, while no change to who it is
- * for is already up for a vote. A project that is just yours keeps it on
- * its Share it card.
- */
-export function canMakePublic(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
-  return !!data && data.audience === 'invited' && !!data.can_manage && !data.audience_change;
-}
-
-/**
  * Leave, from the hub's ⋯ (#4045): it was the hero's Joined pill. Whether
  * the ⋯ offers it: a member who did not start the project (they cannot
  * leave what they started).
@@ -791,7 +723,8 @@ export async function leaveCommunity(slug: string): Promise<void> {
  * "Make it public" on a project that is just yours (ShareItCard): the
  * audience change as a question under its button, the Join popup's shape. The answer opens the visibility
  * PR; the hero then re-reads and shows it as up for a vote. Only this way
- * round: "Make it private" is the ⋯'s (confirmMakePrivate, above).
+ * round: who can see a project is the Who can see & change it sheet's
+ * (../../dialogs/who-decides.tsx), from the ⋯ and the rule line's Rules.
  */
 function MakePublic({ slug, name, onOpened }: {
   slug: string;
@@ -886,15 +819,6 @@ function MakePublic({ slug, name, onOpened }: {
       ) : null}
     </span>
   );
-}
-
-/**
- * Whether the hub's ⋯ offers "Make it private": a public community, to
- * whoever may open the visibility proposal (`can_manage`, the route's own
- * rule), while no change to who it is for is already up for a vote.
- */
-export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
-  return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
 /**
@@ -1440,7 +1364,66 @@ const RULE_LINE: Record<string, LineIds> = {
   membersOnly: { long: 'project:communityCard.line.members.only', short: 'project:communityCard.lineShort.members.only' },
   membersBoth: { long: 'project:communityCard.line.members.both', short: 'project:communityCard.lineShort.members.both' },
   membersAll: { long: 'project:communityCard.line.members.all', short: 'project:communityCard.lineShort.members.all' },
+  // #4666: the presets, said from the reader's side. You or the group reads
+  // "you say yes" to its creator and names the creator, face first, to
+  // everyone else; its group half is the members' count, as above.
+  youSome: { long: 'project:communityCard.line.youOrGroup.you.some', short: 'project:communityCard.lineShort.youOrGroup.you.some' },
+  youShort: { long: 'project:communityCard.line.youOrGroup.you.short', short: 'project:communityCard.lineShort.youOrGroup.you.short' },
+  youOnly: { long: 'project:communityCard.line.youOrGroup.you.only', short: 'project:communityCard.lineShort.youOrGroup.you.only' },
+  youBoth: { long: 'project:communityCard.line.youOrGroup.you.both', short: 'project:communityCard.lineShort.youOrGroup.you.both' },
+  youAll: { long: 'project:communityCard.line.youOrGroup.you.all', short: 'project:communityCard.lineShort.youOrGroup.you.all' },
+  creatorSome: { long: 'project:communityCard.line.youOrGroup.creator.some', short: 'project:communityCard.lineShort.youOrGroup.creator.some' },
+  creatorShort: { long: 'project:communityCard.line.youOrGroup.creator.short', short: 'project:communityCard.lineShort.youOrGroup.creator.short' },
+  creatorOnly: { long: 'project:communityCard.line.youOrGroup.creator.only', short: 'project:communityCard.lineShort.youOrGroup.creator.only' },
+  creatorBoth: { long: 'project:communityCard.line.youOrGroup.creator.both', short: 'project:communityCard.lineShort.youOrGroup.creator.both' },
+  creatorAll: { long: 'project:communityCard.line.youOrGroup.creator.all', short: 'project:communityCard.lineShort.youOrGroup.creator.all' },
+  twoYeses: { long: 'project:communityCard.line.twoYeses', short: 'project:communityCard.lineShort.twoYeses' },
+  openFloor: { long: 'project:communityCard.line.openFloor', short: 'project:communityCard.lineShort.openFloor' },
+  own: { long: 'project:communityCard.line.own', short: 'project:communityCard.lineShort.own' },
 };
+
+/**
+ * #4666: the line for a project on a preset or rules of its own, or null for
+ * one on the old two settings (and for Group vote, whose words are the
+ * members' own). Pure, for the tests.
+ */
+export function presetSentence(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member' | 'is_creator'> | null | undefined,
+): RuleSentence | null {
+  if (!approval || approval.mode !== 'rules') return null;
+  const preset = approval.preset || null;
+  if (preset === 'group_vote') return null;
+  const say = (ids: LineIds, values: Record<string, string | number> = {}, names: string[] | null = null): RuleSentence => (
+    { ...ids, values, names }
+  );
+  const solo = viewer?.audience === 'solo' && viewer.is_member;
+  if (!preset) return say(RULE_LINE.own);
+  if (preset === 'two_yeses') return solo ? say(RULE_LINE.you) : say(RULE_LINE.twoYeses);
+  if (preset === 'open_floor') return solo ? say(RULE_LINE.you) : say(RULE_LINE.openFloor);
+  // You or the group.
+  if (solo) return say(RULE_LINE.you);
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const creator = approval.creator?.username || null;
+  const mine = !!viewer?.is_creator || !creator;
+  const pick = (you: LineIds, them: LineIds) => (mine ? you : them);
+  const names = mine ? null : [creator as string];
+  const values = (extra: Record<string, string | number> = {}) => (mine ? extra : { ...extra, creator: creator as string });
+  if (required < electorate) return say(pick(RULE_LINE.youSome, RULE_LINE.creatorSome), values({ count: required, total: electorate }), names);
+  // Counted by how many there are: that is the number English words differently.
+  if (required > electorate) return say(pick(RULE_LINE.youShort, RULE_LINE.creatorShort), values({ count: electorate, required }), names);
+  if (electorate === 1) return say(pick(RULE_LINE.youOnly, RULE_LINE.creatorOnly), values(), names);
+  if (electorate === 2) return say(pick(RULE_LINE.youBoth, RULE_LINE.creatorBoth), values(), names);
+  return say(pick(RULE_LINE.youAll, RULE_LINE.creatorAll), values({ count: electorate }), names);
+}
+
+/** Whether the rule has the quiet path a wait clause describes (approvalStep's `wait`). */
+export function ruleHasWait(approval: CommunityPayload['approval'] | null | undefined): boolean {
+  if (!approval) return false;
+  if (approval.mode !== 'rules') return true;
+  return approval.preset === 'group_vote' || approval.preset === 'you_or_the_group';
+}
 
 export interface RuleSentence extends LineIds {
   values: Record<string, string | number>;
@@ -1459,9 +1442,11 @@ export interface RuleSentence extends LineIds {
  */
 export function ruleSentence(
   approval: CommunityPayload['approval'],
-  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> | null | undefined,
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> & { is_creator?: boolean } | null | undefined,
   approvers: string[] | null,
 ): RuleSentence {
+  const preset = presetSentence(approval, viewer ? { ...viewer, is_creator: !!viewer.is_creator } : viewer);
+  if (preset) return preset;
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   const say = (ids: LineIds, values: Record<string, string | number> = {}, names: string[] | null = null): RuleSentence => (
@@ -1539,7 +1524,7 @@ export function ApprovalLine({ slug }: { slug: string }) {
   const invited = !!(data && data.approval && data.approval.policy === 'invited');
   const approvers = useApprovers(slug, invited);
   if (!data || !data.approval) return null;
-  const { wait } = approvalStep(data.approval, data, approvers);
+  const { wait } = ruleHasWait(data.approval) ? approvalStep(data.approval, data, approvers) : { wait: '' };
   return (
     <p className="dev-ws-ov-rule" data-ws-approval-rules="" title={approvalLine(data.approval, data)}>
       <ShieldCheckIcon className="dev-ws-ov-rule-icon" aria-hidden="true" />
@@ -1553,7 +1538,7 @@ export function ApprovalLine({ slug }: { slug: string }) {
           className="dev-ws-hub-open dev-ws-ov-rule-edit un-touch-target"
           data-ws-rules-edit=""
           aria-label={t('project:communityCard.rule.editName')}
-          onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
+          onClick={() => window.UsernodeReact?.dialogs?.whoDecides?.open({ slug })}
         >
           {t('project:communityCard.rule.rules')}
         </button>

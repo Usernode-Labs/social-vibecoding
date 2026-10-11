@@ -3885,6 +3885,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               otherYes: q.otherYes,
               memberCount: flagged
                 ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+              // #4666: who voted, on a project with rules of its own.
+              ...(gov.rules ? governanceSvc.rulesGateOpts(
+                await governanceSvc.rulesContext(pool, rows[0].app_id, gov, 'pr', [rows[0].id]),
+                rows[0].id, rows[0].user_id ?? null, rows[0].explicit_approval_reason || null
+              ) : {}),
             }
           );
           rows[0].votes_required = gate.required;
@@ -3894,6 +3899,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
           Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
+          if (gate.mode === 'rules') Object.assign(rows[0], governanceSvc.ruleRowFields(gate));
         } catch { /* pill falls back to the raw tallies */ }
         // B10a: a project that is just you reads "Waiting for your approval"
         // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
