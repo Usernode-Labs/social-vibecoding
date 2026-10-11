@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const log = require('./logger');
+const { redactString } = require('./log-redaction');
 const llmTelemetry = require('./llm-telemetry');
 const { hasDocumentBlocks, withoutDocuments } = require('./attachments');
 
@@ -1416,14 +1417,17 @@ function catalogAnswer(message) {
  * direct call), `type` the API's error type, `message` the API's own wording.
  * `response` is the API's error body ({ error: { type, message } }): a batch
  * entry's `result.error`, or the SDK error's `.error`. The message is the
- * API's description of the request, cut short; it is never a model's output.
+ * API's description of the request, masked for secrets like a log line and
+ * then cut short; it is never a model's output.
  * `status` is the HTTP status, used as the type when the body names none.
  */
 function catalogFailure(kind, response, fallback, status) {
   const detail = response && typeof response === 'object'
     ? (response.error && typeof response.error === 'object' ? response.error : response)
     : {};
-  const message = String(detail.message || fallback || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  // Masked whole, then cut: cutting first can take the closing quote off a
+  // quoted secret, and masking can lengthen the text.
+  const message = redactString(String(detail.message || fallback || '').replace(/\s+/g, ' ').trim()).slice(0, 300);
   const failure = { kind };
   if (typeof detail.type === 'string' && detail.type !== 'error') failure.type = detail.type.slice(0, 60);
   else if (status) failure.type = `http_${status}`;

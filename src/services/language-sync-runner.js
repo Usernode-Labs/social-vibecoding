@@ -153,6 +153,17 @@ function spendCents(answers, { batch = false } = {}) {
 // ── A pass that produced nothing, or less than it asked for ───────────
 
 const MAX_REASONS = 6;
+const MAX_MESSAGE = 300;
+
+/**
+ * An error's wording as the step logs, keeps and returns it: one line,
+ * masked for secrets like any log line, then cut. Masked whole before the
+ * cut, because a cut can take the closing quote off a quoted secret and
+ * masking can lengthen the text.
+ */
+function bounded(text) {
+  return log.redactString(String(text ?? '').replace(/\s+/g, ' ').trim()).slice(0, MAX_MESSAGE);
+}
 
 /** The commonest entries of a { reason: count } tally. */
 function commonest(tally) {
@@ -175,9 +186,9 @@ function explain(summary, batch = null) {
     failedRequests: summary.requests.failed,
     reasons: commonest(summary.requests.reasons),
   };
-  // The API's wording is free text: masked like any log line before it is
-  // logged, kept in the state or returned by status().
-  if (summary.requests.example) out.example = log.redactString(summary.requests.example);
+  // The API's wording is free text: masked and cut before it is logged,
+  // kept in the state or returned by status().
+  if (summary.requests.example) out.example = bounded(summary.requests.example);
   if (Object.keys(problems).length) out.leftInEnglish = commonest(problems);
   if (batch) {
     out.batchId = batch.id;
@@ -477,7 +488,7 @@ async function runOnce({ config, pool, deps = {} }) {
         const refusal = llm.catalogFailure('submit', err.error, err.message, err.status);
         const reason = [refusal.kind, refusal.type].filter(Boolean).join(': ');
         const detail = { requests: prepared.requests.length, failedRequests: prepared.requests.length, reasons: { [reason]: 1 } };
-        if (refusal.message) detail.example = log.redactString(refusal.message);
+        if (refusal.message) detail.example = bounded(refusal.message);
         const failure = recordFailure({
           logger, detail, baseSha: mainSha, at: clock(), requests: prepared.requests.length,
           what: 'The translation batch was refused',
@@ -563,7 +574,7 @@ function start(config, pool) {
     if (inFlight) return inFlight;
     inFlight = runOnce({ config, pool })
       .then((result) => { if (!result.skipped) log.info('language-sync', 'Translation pass', result); })
-      .catch((err) => log.warn('language-sync', 'Translation pass stopped', { err: String(err?.message || err).replace(/\s+/g, ' ').slice(0, 300) }))
+      .catch((err) => log.warn('language-sync', 'Translation pass stopped', { err: bounded(err?.message || err) }))
       .finally(() => { inFlight = null; });
     return inFlight;
   };
@@ -586,6 +597,7 @@ module.exports = {
   RETRY_AFTER_FAILURE_MS,
   SOURCE,
   STATE_KEY,
+  bounded,
   englishDigest,
   explain,
   isEnabled,

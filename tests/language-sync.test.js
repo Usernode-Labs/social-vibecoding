@@ -303,6 +303,19 @@ test('a round in which every request failed is counted by reason and asked nothi
   assert.equal(twice.unanswered, 2);
   assert.deepEqual(twice.languages.es.failed.map((f) => f.problem), ['expired', 'expired']);
   assert.deepEqual(twice.requests.reasons, { expired: 3 });
+  // The first request is answered with nothing the checks pass, and the
+  // retries then fail in transport: a request for each message was answered,
+  // so none of them is unanswered.
+  const answeredFirst = await sync.syncTranslations({
+    root: checkout(t).root,
+    translate: async (requests, { round }) => new Map(requests.map((request) => [request.customId, round === 0
+      ? { text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: '' })) }) }
+      : { error: 'timeout', failure: { kind: 'request', type: 'timeout_error' } }])),
+  });
+  assert.equal(answeredFirst.nothingAnswered, false);
+  assert.equal(answeredFirst.unanswered, 0);
+  assert.equal(answeredFirst.requests.failed, 4);
+  assert.deepEqual(answeredFirst.languages.es.failed.map((f) => f.problem), Array(4).fill('request: timeout_error'));
   // A request the transport lost altogether counts as failed too.
   const lost = await sync.syncTranslations({ root: checkout(t).root, languages: ['es'], translate: async () => new Map() });
   assert.equal(lost.nothingAnswered, true);
@@ -674,6 +687,54 @@ test('a pass that wrote only part, or nothing the checks would pass, says why at
   assert.equal(warning.detail.leftInEnglish['an em dash'], 1);
   assert.equal(p.db.state.failure, undefined, 'the requests were answered');
   assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+});
+
+test('answers the checks refused, then retries that failed in transport: not a held failure', async (t) => {
+  const p = platform(t);
+  p.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => (requests.length === 1 && request.items.length > 1
+    ? emptyAnswers([request])[0]
+    : [request.customId, { error: 'timeout', failure: { kind: 'request', type: 'timeout_error', message: 'Request timed out.' } }])));
+  const result = await p.run();
+  assert.equal(result.nothingUsable, true);
+  assert.ok(result.spentCents > 0, 'the answered request was paid for');
+  assert.equal(p.db.state.failure, undefined);
+  assert.equal(p.db.state.checkedSha, 'a'.repeat(40), 'as any pass whose requests were answered');
+  const [warning] = p.logged.filter((line) => line.level === 'warn');
+  assert.equal(warning.message, 'Translation pass produced nothing');
+  assert.deepEqual(warning.detail.reasons, { 'request: timeout_error': 4 });
+});
+
+test('an error message is masked whole and then cut to 300 characters', async (t) => {
+  const llm = require('../src/services/llm');
+  // A quoted secret that straddles the cut, and a mask that lengthens the text.
+  const quoted = `${'x'.repeat(274)} TOKEN="synthetic credential value continues beyond cutoff"`;
+  const grows = `${'y'.repeat(291)} TOKEN=a`;
+  assert.equal(grows.length, 299);
+  for (const text of [quoted, grows]) {
+    const viaTransport = llm.catalogFailure('errored', { type: 'error', error: { type: 'invalid_request_error', message: text } }).message;
+    for (const out of [viaTransport, runner.bounded(text), runner.bounded(viaTransport)]) {
+      assert.ok(out.length <= 300, `${out.length} characters`);
+      assert.doesNotMatch(out, /synthetic|credential|continues|TOKEN=a/);
+      assert.match(out, /TOKEN=\*+$|TOKEN=\*{4}/);
+    }
+  }
+  assert.equal(runner.bounded('one\n  two '), 'one two');
+
+  // Through a refused submission: the warning, the saved state and the status.
+  const p = platform(t, { english: bulk(t) });
+  p.llm.submitCatalogBatch = async () => {
+    throw Object.assign(new Error(`400 ${quoted}`), { status: 400, error: { type: 'error', error: { type: 'invalid_request_error', message: quoted } } });
+  };
+  await p.run();
+  const shown = JSON.stringify([p.logged, p.db.state, await runner.status(p.pool, { now: p.clock.now })]);
+  assert.doesNotMatch(shown, /synthetic|credenti/);
+  assert.ok(p.db.state.failure.example.length <= 300);
+  // And through a failed request whose message arrives uncut from the transport.
+  const q = platform(t);
+  q.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, { error: 'refused', failure: { kind: 'request', type: 'invalid_request_error', message: grows } }]));
+  await q.run();
+  assert.ok(q.db.state.failure.example.length <= 300);
+  assert.doesNotMatch(JSON.stringify([q.logged, q.db.state]), /TOKEN=a/);
 });
 
 /** 61 plain messages: two direct requests. */

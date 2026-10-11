@@ -434,7 +434,9 @@ async function syncTranslations({
       if (!failed.length) continue;
       if (answer.failure && (allFailed || round > 0)) {
         for (const { item } of failed) summary.languages[request.language].failed.push({ id: item.id, problem: failureReason(answer.failure) });
-        summary.unanswered += failed.length;
+        // A retry of a message whose first request was answered (and failed
+        // a check) is not counted: a request for it has been answered.
+        if (round === 0 || request.unanswered) summary.unanswered += failed.length;
       } else if (round === 0) {
         // Asked again one at a time: one malformed message no longer takes
         // its neighbours down with it, and a request that failed while
