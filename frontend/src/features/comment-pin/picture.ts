@@ -283,10 +283,15 @@ export function describeElement(el: Element | null): ElementInfo | null {
  * the picture until the page next scrolls, so they are hidden rather than
  * waited out. The kit's classes exist only while one of its surfaces is up;
  * #feedback-modal is display:none whenever the form is not mid-exit itself,
- * and a hidden element is skipped outright.
+ * and a hidden element is skipped outright. The Homeroom menu on a computer
+ * (`#apps-switcher-sheet`, over `#apps-switcher-overlay`) is a CSS dropdown
+ * and not a kit shell, so it is named by id; a menu that is already closed
+ * with the hide mode on costs nothing.
  */
 export const PAGE_EXCLUDES = [
   '#feedback-modal',
+  '#apps-switcher-sheet',
+  '#apps-switcher-overlay',
   '.un-modal',
   '.un-sheet',
   '.un-panel',

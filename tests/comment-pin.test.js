@@ -188,6 +188,11 @@ test('the picture leaves the suggest flow\'s own overlays out, so the form never
   assert.ok(picture.PAGE_EXCLUDES.includes('#feedback-modal'), 'the form, in its sheet presentation');
   assert.ok(picture.PAGE_EXCLUDES.includes('.un-modal'), 'the kit dialog\'s shell, the form on a computer');
   assert.ok(picture.PAGE_EXCLUDES.includes('.un-backdrop'), 'the kit\'s dim, which would grey the whole page');
+  // #4730: the Homeroom menu on a computer is a CSS dropdown of its own ids,
+  // not a kit shell, so nothing above names it — and the suggest row opens
+  // comment mode, whose picture would carry the menu still on screen.
+  assert.ok(picture.PAGE_EXCLUDES.includes('#apps-switcher-sheet'), 'the Homeroom menu on a computer');
+  assert.ok(picture.PAGE_EXCLUDES.includes('#apps-switcher-overlay'), 'its dim, which would grey the whole page');
   for (const sel of picture.PAGE_EXCLUDES) {
     assert.match(sel, /^[.#][\w-]+$/, 'a selector SnapDOM can match, not a bare word');
   }

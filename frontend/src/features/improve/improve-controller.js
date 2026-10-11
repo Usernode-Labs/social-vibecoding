@@ -941,6 +941,12 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
+   * Waits for the panel to be GONE first, the way `openTerminal()` and
+   * `share()` do (#4730): with the experimental comment shortcut on, the
+   * dialog opens comment mode, and comment mode draws the page the moment it
+   * opens — a menu still on screen would be in that picture. Desktop
+   * resolves after the slide, so the row costs nothing there.
+   *
    * `fromDev` opens it asking where the suggestion goes, with neither "This
    * app" nor "Homeroom" chosen (#2707): a person in an app may well mean the
    * platform, so the press does not answer that question (#4236). A button
@@ -949,15 +955,16 @@ const Improve = {
    */
   giveFeedback() {
     const { slug } = improveStore.get();
-    Improve.close();
-    if (!window.App?.openFeedbackModal) return;
-    if (window.App.currentApp === slug) {
-      window.App.openFeedbackModal({ fromDev: true });
-      return;
-    }
-    // Otherwise there is no open app for "This app" to mean, so the dialog
-    // opens on its Platform default.
-    window.App.openFeedbackModal();
+    return Promise.resolve(Improve.close()).then(() => {
+      if (!window.App?.openFeedbackModal) return;
+      if (window.App.currentApp === slug) {
+        window.App.openFeedbackModal({ fromDev: true });
+        return;
+      }
+      // Otherwise there is no open app for "This app" to mean, so the dialog
+      // opens on its Platform default.
+      window.App.openFeedbackModal();
+    });
   },
 
   /**
