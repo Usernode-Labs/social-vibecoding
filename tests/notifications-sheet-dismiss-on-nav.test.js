@@ -179,6 +179,8 @@ test('touch: accepting an invite dismisses the sheet, then navigates to the app'
   assert.ok(panel.classList.contains('hidden'), 'the panel is hidden again');
   assert.ok(!panel.classList.contains('platform-panel-adopted'),
     'the adopted-surface class is rolled back');
+  // #4740: an approver accept answers on the screen it opens, not in a toast.
+  assert.ok(!calls.some((c) => c[0] === 'toast'), 'no success toast on an approver accept');
 });
 
 test('touch: the accept response appSlug wins over the row slug', async () => {
@@ -218,6 +220,8 @@ test('touch: declining does not navigate and keeps the sheet up', async () => {
   assert.ok(!calls.some((c) => c[0] === 'dismiss'), 'no dismiss');
   assert.ok(!calls.some((c) => c[0] === 'nav'), 'no navigation');
   assert.deepEqual(N.invites, [], 'the invite row is removed locally');
+  // #4740: the tap is no longer silent — the row leaving says why.
+  assert.deepEqual(calls.find((c) => c[0] === 'toast'), ['toast', 'Invite declined']);
 });
 
 // ── desktop closes too, now that the list is in a side drawer ───────────
