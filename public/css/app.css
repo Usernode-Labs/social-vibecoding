@@ -14446,9 +14446,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 500;
   color: var(--text-muted);
 }
-/* A test account's vote on an app a real person made is recorded but not
-   counted: one line under "Your vote" says so (VotePicker). The legacy vote
-   rows carry the same line (AppView._uncountedVoteNoteHtml). */
+/* One line under "Your vote" (VotePicker) and beside the legacy vote rows
+   (AppView._uncountedVoteNoteHtml): a test account's vote on an app a real
+   person made is recorded but not counted, and — #4747 — a viewer outside
+   the people who decide on a project that only some decide has an advisory
+   vote: recorded and shown, but it does not decide the change. */
 .dev-vote-uncounted {
   margin: 0;
   padding: 0 6px 6px;

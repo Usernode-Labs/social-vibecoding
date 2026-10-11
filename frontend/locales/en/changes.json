@@ -7235,6 +7235,10 @@
     "text": "Test account: this vote won’t count.",
     "description": "Note beside the vote buttons on a proposal when the viewer is signed in with a test account, whose vote is recorded but not counted."
   },
+  "vote.row.advisory": {
+    "text": "Your vote is advisory: it’s recorded, but it doesn’t decide this change.",
+    "description": "Note beside the vote buttons on a proposal in the chat and the activity panel, shown to someone outside the people who decide on this project — not an approver where only approvers decide, or outside every group the project’s rules name. Their vote is recorded and shown, but does not affect the outcome."
+  },
   "frame.open.proposal": {
     "text": "Open this proposal’s staging preview",
     "description": "Tooltip and accessible name of the Preview control on a proposal's card: opens the running preview of the app with the proposal applied. \"Open\" is a verb."

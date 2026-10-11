@@ -227,6 +227,25 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
 
+// ── #4747: the advisory vote ──────────────────────────────────────────
+
+test('an advisory vote says, in one line, that it does not decide; the test-account line wins when both apply', () => {
+  const html = picker({ advisory: true });
+  assert.match(html, /<div class="dev-vote-switch-label" id="dev-vote-reason-7-head">Your vote<\/div><p class="dev-vote-uncounted" data-vote-uncounted="">Your vote is advisory: it’s recorded, but it doesn’t decide this change\.<\/p><div class="dev-vote-switch"/,
+    'the same slot and style as the test-account line, under "Your vote"');
+  assert.doesNotMatch(picker(), /dev-vote-uncounted/, 'nobody else sees it');
+  const both = picker({ uncounted: true, advisory: true });
+  assert.match(both, /Test account: this vote won’t count\./);
+  assert.doesNotMatch(both, /advisory/, 'the test-account line wins; one line, never two');
+  // The flag rides the Yes spec from the /promoted row, as `uncounted` does.
+  assert.match(SRC, /advisory=\{!!yes\.advisory\}/);
+  const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(appView, /pr\.my_vote_advisory === true \? \{ advisory: true \} : \{\}/);
+  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.advisory'\)\}/, 'the legacy vote rows carry the same words');
+  assert.equal(message('project:card.vote.picker.advisory'), 'Your vote is advisory: it’s recorded, but it doesn’t decide this change.');
+  assert.equal(message('changes:vote.row.advisory'), 'Your vote is advisory: it’s recorded, but it doesn’t decide this change.');
+});
+
 // ── #3984: a vote on its way ─────────────────────────────────────────
 
 test('#3984: while a vote is on its way the button reads "Sending…" and takes no press', () => {

@@ -16017,7 +16017,9 @@ const AppView = {
   // your approval". A project with more people, a rule asking for more Yes
   // votes, or a test account's uncounted vote keeps the vote as it is.
   _approveSolo(pr) {
-    if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true) return false;
+    // #4747: an advisory vote does not decide either, so the one-tap
+    // "Approve" would promise what it cannot keep.
+    if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true || pr.my_vote_advisory === true) return false;
     const needed = parseInt(pr.votes_required, 10);
     return !Number.isFinite(needed) || needed <= 1;
   },
@@ -16059,6 +16061,11 @@ const AppView = {
     // Test accounts: the viewer's vote here is recorded but not counted
     // (my_vote_uncounted on the /promoted row); the picker says so.
     const uncounted = pr.my_vote_uncounted === true ? { uncounted: true } : {};
+    // #4747: the viewer is outside the people who decide this change (an
+    // invited project's non-approver, or outside every group the project's
+    // rules name), so their vote is recorded but advisory; the picker says
+    // so in one line.
+    const advisory = pr.my_vote_advisory === true ? { advisory: true } : {};
     return [
       {
         key: 'yes',
@@ -16071,6 +16078,7 @@ const AppView = {
         ...AppView._voteSolo(),
         ...(AppView._approveSolo(pr) ? { approve: true } : {}),
         ...uncounted,
+        ...advisory,
       },
       {
         key: 'no',
@@ -16088,7 +16096,8 @@ const AppView = {
   // known: on a project where only invited approvers' votes count (this
   // viewer's may be advisory), and for a vote recorded but not counted.
   _yesPutsItLive(pr) {
-    if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || AppView.readOnly) return false;
+    // #4747: an advisory vote never puts a change live, whatever the count.
+    if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || pr.my_vote_advisory === true || AppView.readOnly) return false;
     if (AppView._approveSolo(pr)) return true;
     if (pr.approval_policy === 'invited') return false;
     const st = AppView.statusPillState(pr);
@@ -24730,12 +24739,19 @@ const AppView = {
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 
-  // Test accounts: one line beside the legacy vote controls when the viewer's
-  // vote on this proposal is recorded but not counted (my_vote_uncounted).
-  // The board card's picker carries the same words (VotePicker).
+  // One line beside the legacy vote controls: a test account's vote is
+  // recorded but not counted (my_vote_uncounted), and #4747 a viewer
+  // outside the people who decide has an advisory vote (my_vote_advisory)
+  // — recorded, shown, but it does not decide this one. The test-account
+  // line wins when both apply. The board card's picker carries the same
+  // words (VotePicker).
   _uncountedVoteNoteHtml(pr) {
-    return pr && pr.my_vote_uncounted === true
-      ? `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.uncounted')}</span>`
+    if (!pr) return '';
+    if (pr.my_vote_uncounted === true) {
+      return `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.uncounted')}</span>`;
+    }
+    return pr.my_vote_advisory === true
+      ? `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.advisory')}</span>`
       : '';
   },
 
