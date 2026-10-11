@@ -8216,11 +8216,11 @@
     "description": "One sentence of the line under the figure on the Votes card of a change's page: the change cannot be approved by its author alone and waits for a Yes vote from a different member of the project. \"Go live\" means the change is applied to the running app."
   },
   "page.votes.note.advisory_one": {
-    "text": "{{count}} more yes is advisory, from people who aren’t approvers.",
+    "text": "{{count}} yes so far is from someone who isn’t an approver, so it doesn’t count.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page, on a project where only invited approvers' votes count: {{count}} Yes votes came from other people and do not count toward approval."
   },
   "page.votes.note.advisory_other": {
-    "text": "{{count}} more yeses are advisory, from people who aren’t approvers.",
+    "text": "{{count}} yeses so far are from people who aren’t approvers, so they don’t count.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page, on a project where only invited approvers' votes count: {{count}} Yes votes came from other people and do not count toward approval."
   },
   "page.votes.note.thresholdWas": {
