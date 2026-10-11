@@ -5496,6 +5496,16 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     inset: 0.5rem 0.75rem 0.75rem;
     gap: 0.5rem;      /* sm:gap-2 */
   }
+  /* THE GRID'S WIDTH (#4738): four columns across a 1024px .home-column put
+     a 56px icon in a ~250px cell, so a few apps read as a sparse scatter.
+     The grid keeps its four columns and sits at the column's left, capped
+     at 36rem (~576px). The cap is on the BOX, so the absolutely positioned
+     drag overlay (inset by the same padding) and Home's cell measurements
+     still line up with zero arithmetic. Search results keep the full
+     column. */
+  #app-list:not([data-view="search"]) {
+    max-width: 36rem;
+  }
 }
 
 /* App tiles sit at the TOP of their row rather than stretching to fill it.
@@ -21923,8 +21933,9 @@ html.un-kb #platform-parked {
      Under the sections, after a line: each app's own tile over its name,
      newest first, the green dot on the ones still open, the one on screen
      lit as a tab is. They replace Recents (#2802), whose conversations are
-     Messages' own list. Never squeezed: five rows of 58px fit any window
-     the strip is drawn in, and the rule above Me keeps them off the foot. */
+     Messages' own list. Rows are at least 58px and never squeezed; when the
+     window is too short for them all the list scrolls under the rule above
+     Me, and the fade below is the cue — the scrollbar stays hidden. */
   .platform-strip-apps:not(.hidden) {
     display: flex;
     flex-direction: column;
@@ -21937,6 +21948,15 @@ html.un-kb #platform-parked {
     border-top: 1px solid var(--app-sheet-line);
     scrollbar-width: none;
   }
+  /* The scroll cue (#4738): while apps sit below the fold the list's bottom
+     edge fades out instead of ending in a hard cut against the settings
+     cog. Bottom edge only, so the border-top line above stays solid; gone
+     once the list is scrolled to its end (strip-apps.tsx clears
+     `data-more`). */
+  .platform-strip-apps[data-more] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  }
   .platform-strip-app {
     display: flex;
     flex: none;
@@ -21945,8 +21965,8 @@ html.un-kb #platform-parked {
     justify-content: center;
     gap: 3px;
     min-width: 0;
-    height: 58px;
-    padding: 0 2px;
+    min-height: 58px;
+    padding: 6px 2px;
     border-radius: 12px;
     color: var(--text-muted);
     font-size: 11px;
@@ -21977,12 +21997,20 @@ html.un-kb #platform-parked {
   }
   .platform-strip-tile > img { border-radius: 0; }
   .platform-strip-tile > span { font-size: 16px; }
+  /* THE NAME (#4738): two lines before it truncates, so "Game Corner" reads
+     in full in the 68px strip. A longer name still ends in "..." — the
+     clamp — and the row's `title` carries the whole name on hover. */
   .platform-strip-label {
     max-width: 100%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.35;
+    overflow-wrap: anywhere;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2;
   }
 
   /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────

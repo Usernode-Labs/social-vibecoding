@@ -2005,6 +2005,22 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
 });
 
+// #4738: on a wide window the four-column grid sat in a ~250px-wide cell
+// around a 56px icon, so a few apps spread across the whole page column.
+// The cap is on #app-list's box, so the overlay — inset by the same
+// padding, sized by the same engine — keeps lining up with zero arithmetic.
+test('the My apps grid is capped at 36rem on wide windows, overlay untouched (#4738)', () => {
+  const wide = CSS.slice(CSS.indexOf('@media (min-width: 640px) {\n  .home-grid-overlay'),
+    CSS.indexOf('\n}\n', CSS.indexOf('#app-list:not([data-view="search"])')));
+  assert.match(wide, /#app-list:not\(\[data-view="search"\]\) \{\s*max-width: 36rem;\s*\}/,
+    'the grid box is capped, search results keep the full column');
+  // The overlay's inset and gap are unchanged: it is inset by #app-list's
+  // own padding, so any drift here is a jump at the end of the drop glide.
+  const overlay = wide.match(/\.home-grid-overlay \{[^}]*\}/)[0];
+  assert.match(overlay, /inset: 0\.5rem 0\.75rem 0\.75rem;/);
+  assert.match(overlay, /gap: 0\.5rem;/);
+});
+
 // Gesture-only and account-dependent surfaces are invisible to the
 // before/after captures and to every declared check, so they need URLs.
 test('the overlay and both create-quota treatments are URL-reachable', () => {
