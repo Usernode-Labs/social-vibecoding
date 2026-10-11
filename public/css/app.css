@@ -22951,8 +22951,21 @@ html.in-side-panel body {
    far end, as they do on a phone today (#4718): the first line lets go of
    its box (`display: contents`) so the title and the pair are the column's
    own items, and the pair is ordered after the tags. */
-.dev-ws-strip[data-ws-mine] { container-type: inline-size; }
-.dev-ws-lrow { gap: 10px; padding: 8px 2px; }
+/* Your work echoes What happened's This week card (#4716): This week's
+   heading (15px at 650, its count muted beside it on the baseline, 4px
+   above and 8px below), a hairline over the first row as over every row
+   there, and rows that start where This week's do, after the 7px dot and
+   10px gap This week keeps for what is new (so its titles line up with
+   This week's and New for you's). A row lights in place on hover, as This
+   week's does, rather than bleeding past the card's edge. */
+.dev-ws-strip[data-ws-mine] { container-type: inline-size; gap: 0; }
+.dev-ws-strip[data-ws-mine] > .dev-ws-head { align-items: baseline; padding: 4px 2px 8px; }
+.dev-ws-strip[data-ws-mine] > .dev-ws-head > .dev-ws-head-title { font-size: 15px; font-weight: 650; }
+.dev-ws-strip[data-ws-mine] .dev-ws-wlist { margin-top: 0; }
+.dev-ws-strip[data-ws-mine] .dev-ws-wlist + .dev-ws-reveal { margin-top: 2px; }
+.dev-ws-lrow { gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px; }
+.dev-ws-lrow:hover, .dev-ws-lrow[data-on] { margin: 0; padding-left: 19px; padding-right: 2px; }
+.dev-ws-lrow:hover + .dev-ws-lrow, .dev-ws-lrow[data-on] + .dev-ws-lrow { border-top-color: var(--app-sheet-line); }
 .dev-ws-lrow > .dev-ws-hrow-glyph { height: 30px; margin-top: 0; }
 .dev-ws-lrow > .dev-ws-wrow-main { gap: 2px; }
 .dev-ws-lrow-line { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 30px; }

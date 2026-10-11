@@ -2544,7 +2544,7 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   // The first line keeps to one line on a wide card, in This week's weight;
   // a narrow one wraps the title and ends the row with the pill and Vote.
   assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-link \{\s*flex: 1 1 auto; min-width: 0; display: block; font-weight: 400; line-height: 1\.35;\s*white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\s*\}/);
-  assert.match(CSS, /\.dev-ws-strip\[data-ws-mine\] \{ container-type: inline-size; \}/);
+  assert.match(CSS, /\.dev-ws-strip\[data-ws-mine\] \{ container-type: inline-size; gap: 0; \}/);
   assert.match(CSS, /@container \(max-width: 520px\) \{\s*\.dev-ws-lrow > \.dev-ws-hrow-glyph \{ height: 20px; \}\s*\.dev-ws-lrow-line \{ display: contents; \}/);
   assert.match(CSS, /\.dev-ws-lrow-line > :not\(\.dev-ws-wrow-link\) \{ order: 1; align-self: flex-end; margin-top: 4px; \}/);
   // The nested link still rings the row when it has focus.
@@ -2607,6 +2607,35 @@ test('#4716: Your work\'s tags line names the bot once and you never, drops the 
   assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-status > \* \{ flex: none; \}/);
   assert.match(read('frontend/src/features/dev-board/workshop/work-row.tsx'),
     /if \(\(e\.target as Element\)\.closest\('a, button'\)\) return;\s*linkRef\.current\?\.click\(\);/);
+});
+
+test('#4716: Your work echoes This week: its heading, a hairline over its first row, rows that start where This week\'s do', () => {
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const rule = (sel) => {
+    const at = stripped.indexOf(`${sel} {`);
+    assert.ok(at >= 0, `${sel} has a rule`);
+    return stripped.slice(at, stripped.indexOf('}', at));
+  };
+  // The heading: This week's size and weight (`.dev-ws-week-head b`), its
+  // count beside it on the baseline, and This week's head padding.
+  assert.match(rule('.dev-ws-week-head b'), /font-size: 15px; font-weight: 650;/);
+  assert.match(rule('.dev-ws-strip[data-ws-mine] > .dev-ws-head > .dev-ws-head-title'), /font-size: 15px; font-weight: 650;/);
+  assert.match(rule('.dev-ws-hweek-head'), /padding: 4px 2px 8px;/);
+  assert.match(rule('.dev-ws-strip[data-ws-mine] > .dev-ws-head'), /align-items: baseline; padding: 4px 2px 8px;/);
+  assert.match(rule('.dev-ws-strip[data-ws-mine] .dev-ws-wlist'), /margin-top: 0;/);
+  // The rows: a hairline over each, the first one included, as This week's
+  // rows have, the same height and corners, and the title starting after
+  // This week's 7px dot and 10px gap.
+  assert.match(rule('.dev-ws-hrow'), /padding: 8px 2px; border-top: 1px solid var\(--app-sheet-line\); border-radius: 10px;/);
+  assert.match(rule('.dev-ws-hrow-dot'), /width: 7px;/);
+  assert.match(rule('.dev-ws-hrow'), /gap: 10px;/);
+  assert.match(rule('.dev-ws-lrow'), /gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var\(--app-sheet-line\); border-radius: 10px;/);
+  // A row lights in place, as This week's does: no bleed past the card,
+  // and the hairline under it stays.
+  assert.match(stripped, /\.dev-ws-lrow:hover, \.dev-ws-lrow\[data-on\] \{ margin: 0; padding-left: 19px; padding-right: 2px; \}/);
+  assert.match(stripped, /\.dev-ws-lrow:hover \+ \.dev-ws-lrow, \.dev-ws-lrow\[data-on\] \+ \.dev-ws-lrow \{ border-top-color: var\(--app-sheet-line\); \}/);
+  // Scoped to Your work: New for you and the other cards keep their heads.
+  assert.match(rule('.dev-ws-head-title'), /font-size: 14px; font-weight: 600;/);
 });
 
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
