@@ -58,6 +58,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const usernames = require('./usernames');
+const governanceRules = require('./governance-rules');
 const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
 const topicFigures = require('./topic-figures');
@@ -880,6 +881,13 @@ function readGovernance(parsed) {
       log.warn('app-manifest', 'Ignoring invalid governance.approvals value', { value: raw.approvals });
     }
   }
+  // #4666: `preset`, or `groups` + `rules` (services/governance-rules.js).
+  // A block that carries either is decided by them, and its old two keys
+  // are not read: the rules replace them. One that cannot be read is
+  // reported and dropped, so the project keeps the rule it has.
+  const { value: rules, error: rulesError } = governanceRules.readRulesBlock(raw);
+  if (rulesError) log.warn('app-manifest', 'Ignoring invalid governance rules', { error: rulesError });
+  if (rules) return { approvers: null, approvals: null, rules };
   if (approvers == null && approvals == null) return null;
   return { approvers, approvals };
 }
@@ -1833,11 +1841,19 @@ async function reconcileAppVisibility(pool, app, manifest) {
  * CURRENT values — used for transition checks and the event's `from`).
  * All side effects beyond the column UPDATE are best-effort.
  */
-async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequired }, { actorLabel = 'dapp.json', userId = null } = {}) {
+async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequired, rules }, { actorLabel = 'dapp.json', userId = null } = {}) {
   await pool.query(
     `UPDATE apps SET approver_policy = $1, approvals_required = $2 WHERE id = $3`,
     [approverPolicy, approvalsRequired, app.id]
   );
+  // #4666: the rules column moves only when the caller says what it is now
+  // (`rules` undefined: an old-style change, which leaves it as it was).
+  if (rules !== undefined) {
+    await pool.query(
+      'UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2',
+      [rules ? JSON.stringify(rules) : null, app.id]
+    );
+  }
 
   // invited → anyone: pending approver invites become meaningless.
   if (app.approver_policy === 'invited' && approverPolicy === 'anyone') {
@@ -1901,6 +1917,7 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       appId: app.id,
       approverPolicy,
       approvalsRequired,
+      ...(rules !== undefined ? { rules: rules ? (rules.preset || 'own') : null } : {}),
     });
   } catch (err) {
     log.warn('app-manifest', 'Governance broadcast failed', { appId: app.id, err: err.message });
@@ -1913,8 +1930,16 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
       userId,
       appId: app.id,
       metadata: {
-        from: { approverPolicy: app.approver_policy, approvalsRequired: app.approvals_required },
-        to: { approverPolicy, approvalsRequired },
+        from: {
+          approverPolicy: app.approver_policy,
+          approvalsRequired: app.approvals_required,
+          ...(rules !== undefined ? { rules: describeRulesColumn(app.governance_rules) } : {}),
+        },
+        to: {
+          approverPolicy,
+          approvalsRequired,
+          ...(rules !== undefined ? { rules: describeRulesColumn(rules) } : {}),
+        },
         source: 'manifest',
       },
     });
@@ -1925,6 +1950,47 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
   log.info('app-manifest', 'Applied governance change', {
     appId: app.id, slug: app.slug, approverPolicy, approvalsRequired, actorLabel,
   });
+}
+
+/**
+ * #4666: a rules value (governance-rules.js parseRulesBlock) as
+ * apps.governance_rules stores it: each named group with its people
+ * resolved to user ids, through the retired-handle ledger as the admins
+ * reconcile does, so a member who renames stays in their group. A name that
+ * matches nobody is kept in `people` and simply has no id yet.
+ */
+async function storedRules(pool, value) {
+  const idsByGroup = new Map();
+  for (const g of value.groups || []) {
+    const resolved = g.people && g.people.length ? await usernames.resolveHandles(pool, g.people) : [];
+    idsByGroup.set(governanceRules.groupKey(g.name), [...new Set(resolved.map((r) => r.id))].sort((a, b) => a - b));
+  }
+  return governanceRules.storedForm(value, idsByGroup);
+}
+
+async function currentRulesColumn(pool, appId) {
+  try {
+    const { rows } = await pool.query('SELECT governance_rules FROM apps WHERE id = $1', [appId]);
+    const v = rows[0]?.governance_rules;
+    return v && typeof v === 'object' ? v : null;
+  } catch (err) {
+    log.warn('app-manifest', 'Could not read the approval rules', { appId, err: err.message });
+    return null;
+  }
+}
+
+function sameRules(a, b) {
+  const canon = (v) => (v ? JSON.stringify({
+    preset: v.preset || null,
+    groups: (v.groups || []).map((g) => ({ name: g.name, people: g.people || [], ids: g.ids || [] })),
+    rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null })),
+  }) : null);
+  return canon(a) === canon(b);
+}
+
+function describeRulesColumn(v) {
+  if (!v || !Array.isArray(v.rules)) return null;
+  return v.preset || governanceRules.matchPreset(v.rules) || 'own';
 }
 
 /**
@@ -1945,7 +2011,7 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
  */
 async function reconcileAppGovernance(pool, app, manifest) {
   const gov = manifest?.governance;
-  if (!gov || (gov.approvers == null && gov.approvals == null)) return false;
+  if (!gov || (gov.approvers == null && gov.approvals == null && !gov.rules)) return false;
 
   const { rows } = await pool.query(
     `SELECT id, slug, approver_policy, approvals_required FROM apps WHERE id = $1`,
@@ -1953,6 +2019,27 @@ async function reconcileAppGovernance(pool, app, manifest) {
   );
   if (!rows.length) return false;
   const cur = rows[0];
+  cur.governance_rules = await currentRulesColumn(pool, app.id);
+
+  // #4666: a block with rules sets them, and puts the two old columns back
+  // to their defaults (the rules replace them); one with only the old keys
+  // clears any rules, so the old keys decide again.
+  if (gov.rules) {
+    const stored = await storedRules(pool, gov.rules);
+    const same = sameRules(cur.governance_rules, stored)
+      && cur.approver_policy === 'anyone' && cur.approvals_required == null;
+    if (same) return false;
+    await applyGovernanceChange(pool, cur, { approverPolicy: 'anyone', approvalsRequired: null, rules: stored },
+      { actorLabel: 'dapp.json', userId: null });
+    return true;
+  }
+  if (cur.governance_rules) {
+    const approverPolicy = gov.approvers || 'anyone';
+    const approvalsRequired = gov.approvals == null || gov.approvals === 'default' ? null : gov.approvals;
+    await applyGovernanceChange(pool, cur, { approverPolicy, approvalsRequired, rules: null },
+      { actorLabel: 'dapp.json', userId: null });
+    return true;
+  }
 
   const approverPolicy = gov.approvers || cur.approver_policy;
   // 'default' is the explicit spelling of the NULL column state.
@@ -2436,6 +2523,7 @@ module.exports = {
   TOPIC_HANDLE_RE,
   applyVisibilityChange,
   applyGovernanceChange,
+  storedRules,
   applyAdminsChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,

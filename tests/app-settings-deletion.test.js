@@ -41,64 +41,25 @@ function setup(fetch) {
     window:{App:{navigateHome(){s.home=true;s.order.push('navigateHome');}},Home:{load(){}},PlatformUI:{toast(){}}},
     order:[],
   };
-  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
+  vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('remove')}`,s);
   s.submit=()=>s.remove({preventDefault(){}}); return s;
 }
 const ok = (app) => ({ok:true,json:async()=>({app})});
 const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 
-const modesSource = source.match(/const ACCESS_MODES:[\s\S]*?= (\[[\s\S]*?\n\]);\n\nfunction currentAccessMode/);
-assert.ok(modesSource, 'access mode table is readable');
-const ACCESS_MODES = vm.runInNewContext(`(${modesSource[1]})`);
-
-test('the three access modes map only to the valid build/view combinations',()=>{
-  const values=Object.fromEntries(ACCESS_MODES.map((mode)=>[mode.id,[mode.collabVisibility,mode.viewVisibility]]));
-  assert.deepEqual(values,{
-    public:['public','public'],
-    'public-invite':['private','public'],
-    private:['private','private'],
-  });
-});
-
-test('an explicit access proposal sends the selected valid combination',async()=>{
-  let path;let sent;
-  const s=setup(async(p,opts)=>{path=p;sent=opts;return {ok:true,status:201,json:async()=>({prNumber:77})};});
-  s.accessDraft='public-invite';
-  await s.proposeAccess();
-  assert.equal(path,'/api/apps/test-app/visibility-pr');
-  assert.equal(sent.method,'POST');
-  assert.deepEqual(JSON.parse(sent.body),{collabVisibility:'private',viewVisibility:'public'});
-  assert.equal(s.accessProposalOpen,true);
-  assert.match(s.accessMessage,/PR #77/);
-});
-
-test('access proposals stay blocked without management, a repo, or a mutable app',async()=>{
-  let calls=0;const s=setup(async()=>{calls++;return ok();});
-  s.app.can_manage=false;await s.proposeAccess();
-  s.app.can_manage=true;s.app.repo_url=null;await s.proposeAccess();
-  s.app.repo_url='https://github.com/o/r';s.app.self_hosted=true;await s.proposeAccess();
-  s.app.self_hosted=false;s.accessChanged=false;await s.proposeAccess();
-  assert.equal(calls,0);
-});
-
-test('an existing visibility proposal is reported and prevents a duplicate retry',async()=>{
-  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:409,json:async()=>({sessionId:55})};});
-  await s.proposeAccess();
-  assert.equal(s.accessProposalOpen,true);
-  assert.match(s.accessMessage,/already waiting for approval/);
-  await s.proposeAccess();
-  assert.equal(calls,1);
-});
-
-test('backing out of the verify sheet says the access did not change (#4659)',async()=>{
-  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:403,json:async()=>({code:'identity_required'})};});
-  s.verifyChoice=false;
-  await s.proposeAccess();
-  assert.equal(calls,1,'Not now does not retry the request');
-  assert.match(s.accessMessage,/Access not changed/);
-  assert.equal(s.accessMessageIsError,false,'declining to verify is not an error');
-  assert.equal(s.accessProposalOpen,false);
-  assert.equal(s.accessBusy,false);
+// #4666: who can see it is the Who can see & change it sheet's now
+// (features/dialogs/who-decides.tsx, one proposal with the approval rule);
+// App settings says what it is today and opens the sheet.
+test('the Access section says who can see it today and opens the one sheet', () => {
+  const names = source.match(/const ACCESS_NAMES: Record<AccessMode, string> = (\{[\s\S]*?\n\});/);
+  assert.ok(names, 'the access names table is readable');
+  const table = vm.runInNewContext(`(${names[1]})`);
+  assert.equal(t(table.private), 'Private community');
+  assert.equal(t(table.public), 'Public community');
+  assert.equal(t(table['public-invite']), 'Public, invite-only building');
+  assert.match(source, /id="app-access-open"/);
+  assert.match(source, /window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug: target \}\)/);
+  assert.ok(!source.includes('/visibility-pr'), 'the dialog no longer proposes visibility itself');
 });
 
 test('deletion requires current permission and the exact app name',async()=>{

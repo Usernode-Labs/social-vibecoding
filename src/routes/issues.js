@@ -983,6 +983,9 @@ function issueRoutes(config) {
         ? await governanceSvc.communityMemberCount(pool, appId)
         : undefined;
       const secretReason = explicitApprovalCopy.secretChangeReason(!!gatedApp.self_hosted);
+      // #4666: who voted, on a project with rules of its own.
+      const rulesCtx = gov.rules
+        ? await governanceSvc.rulesContext(pool, appId, gov, 'issue', rows.map((r) => r.id)) : null;
 
       // Strip ciphertext from secret_change rows before serializing —
       // the value should never be readable from this endpoint, even
@@ -1000,7 +1003,10 @@ function issueRoutes(config) {
         const flagged = r.kind === 'secret_change';
         const gate = governanceSvc.computeGate(
           gov, electorate.active, q.yes, q.no, r.created_at, null,
-          flagged ? { explicitApproval: true, otherYes: q.otherYes, memberCount } : {}
+          {
+            ...(flagged ? { explicitApproval: true, otherYes: q.otherYes, memberCount } : {}),
+            ...(rulesCtx ? governanceSvc.rulesGateOpts(rulesCtx, r.id, r.created_by ?? null, flagged ? 'secrets' : null) : {}),
+          }
         );
         const withGate = {
           ...r,
@@ -1009,6 +1015,7 @@ function issueRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
           ...(flagged ? governanceSvc.explicitApprovalRowFields({
@@ -1110,13 +1117,20 @@ function issueRoutes(config) {
         const flagged = row.kind === 'secret_change';
         const gate = governanceSvc.computeGate(
           gov, electorate.active, q.yes, q.no, row.created_at, null,
-          flagged
-            ? {
-              explicitApproval: true,
-              otherYes: q.otherYes,
-              memberCount: await governanceSvc.communityMemberCount(pool, appId),
-            }
-            : {}
+          {
+            ...(flagged
+              ? {
+                explicitApproval: true,
+                otherYes: q.otherYes,
+                memberCount: await governanceSvc.communityMemberCount(pool, appId),
+              }
+              : {}),
+            // #4666: who voted, on a project with rules of its own.
+            ...(gov.rules ? governanceSvc.rulesGateOpts(
+              await governanceSvc.rulesContext(pool, appId, gov, 'issue', [row.id]),
+              row.id, row.created_by ?? null, flagged ? 'secrets' : null
+            ) : {}),
+          }
         );
         proposal = {
           ...row,
@@ -1125,6 +1139,7 @@ function issueRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          ...(gate.mode === 'rules' ? governanceSvc.ruleRowFields(gate) : {}),
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
           ...(flagged ? governanceSvc.explicitApprovalRowFields({

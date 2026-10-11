@@ -85,7 +85,7 @@ import { describe as describeCommunity, openSwitcher } from '../../workshop/comm
 import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, ShareItCard, canLeave, canMakePrivate, canMakePublic, confirmMakePrivate, confirmMakePublic,
+  ApprovalLine, CommunityCard, ShareItCard, canLeave,
   leaveCommunity, useCommunity,
 } from './community-card';
 import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
@@ -4469,15 +4469,13 @@ export function DevWorkshop(): ReactNode {
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
               inHero
-              // A public community's "Make it private" is the ⋯'s, not a
-              // hero button (./community-card.tsx confirmMakePrivate).
-              onMakePrivate={canMakePrivate(community)
-                ? () => { void confirmMakePrivate(slug, app.name || community?.name || slug); }
-                : null}
-              // #4045: "Make it public" and Leave are the ⋯'s too, so the
-              // hero's row is what you do with people: Invite.
-              onMakePublic={canMakePublic(community)
-                ? () => { void confirmMakePublic(slug, app.name || community?.name || slug); }
+              // #4666: who can see it and how its changes are approved, one
+              // row and one sheet (features/dialogs/who-decides.tsx), for
+              // whoever may propose it. It took "Make it public" and "Make it
+              // private" in; Leave stays the ⋯'s, so the hero's row is what
+              // you do with people: Invite.
+              onWhoDecides={community?.can_manage
+                ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); }
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}

@@ -1815,22 +1815,6 @@
     "text": "Not now",
     "description": "Declining button under the question \"Make {{project}} a public community?\": closes it and leaves the project as it is."
   },
-  "communityCard.makePrivate.question": {
-    "text": "Make {{project}} a private community?",
-    "description": "Title of the confirm dialog opened by \"Make it private\" in a public project's ⋯ menu. {{project}} is the project's name."
-  },
-  "communityCard.makePrivate.explain": {
-    "text": "Only people who are invited can open it and build it. Its code stays public on GitHub. Members vote on this first, and it applies once it merges.",
-    "description": "Explanation in the confirm dialog titled \"Make {{project}} a private community?\". \"It\" is the project; open and build are verbs: use the app, and work on changes to it. \"This\" is the proposal to make it private, which is put to a vote and takes effect once it is merged."
-  },
-  "communityCard.makePrivate.propose": {
-    "text": "Propose making it private",
-    "description": "Confirming button of the dialog titled \"Make {{project}} a private community?\": puts the change up as a proposal for the members to vote on. \"It\" is the project."
-  },
-  "communityCard.makePrivate.notNow": {
-    "text": "Not now",
-    "description": "Declining button of the dialog titled \"Make {{project}} a private community?\": closes it and leaves the project public."
-  },
   "communityCard.share.title": {
     "text": "Share it",
     "description": "Heading of a card at the foot of the Hub of a project only its maker is in, offering to invite people or make it public. Share is a verb; \"it\" is the project."
@@ -3299,22 +3283,6 @@
     "text": "Back to the menu",
     "description": "Accessible name of the heading button at the top of the settings panel in a project's ⋯ menu: returns from the settings rows to the menu's first list."
   },
-  "menu.makePublic.title": {
-    "text": "Make it public",
-    "description": "Row among a project's settings, shown for a private community: opens the proposal that turns the project into a public community. 'It' is the project."
-  },
-  "menu.makePublic.sub": {
-    "text": "Anyone can find it on Discover and join.",
-    "description": "Second line of the 'Make it public' row in a project's settings: what being a public community means. Discover is the name of the screen for finding apps and communities."
-  },
-  "menu.makePrivate.title": {
-    "text": "Make it private",
-    "description": "Row among a project's settings, shown for a public community: opens the proposal that turns the project into a private community. 'It' is the project."
-  },
-  "menu.makePrivate.sub": {
-    "text": "Only invited people can open and build it. Code stays public on GitHub.",
-    "description": "Second line of the 'Make it private' row in a project's settings: what being a private community means. 'Build' is a verb, to work on the project."
-  },
   "menu.leave.named": {
     "text": "Leave {{project}}",
     "description": "Row among a project's settings for a member who did not start it: the person stops being a member of this community. 'Leave' is a verb. {{project}} is the project's name."
@@ -4502,5 +4470,165 @@
   "discussion.topic.placeholder": {
     "text": "Message #{{handle}}",
     "description": "Placeholder in the message box of a project's topic channel. {{handle}} is the channel's short name, shown after #."
+  },
+  "communityCard.line.youOrGroup.you.some_one": {
+    "text": "A change goes live when its checks pass and you say yes, or {{count}} of the {{total}} active members does.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here {{count}} of the {{total}} active members, one of them. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.some_one": {
+    "text": "Goes live when its checks pass and you say yes, or {{count}} of the {{total}} active members does.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here {{count}} of the {{total}} active members, one of them. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.some_one": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{count}} of the {{total}} active members does.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here {{count}} of the {{total}} active members, one of them. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.some_one": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{count}} of the {{total}} active members does.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here {{count}} of the {{total}} active members, one of them. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.some_other": {
+    "text": "A change goes live when its checks pass and you say yes, or {{count}} of the {{total}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here {{count}} of the {{total}} active members. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.some_other": {
+    "text": "Goes live when its checks pass and you say yes, or {{count}} of the {{total}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here {{count}} of the {{total}} active members. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.some_other": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{count}} of the {{total}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here {{count}} of the {{total}} active members. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.some_other": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{count}} of the {{total}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here {{count}} of the {{total}} active members. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.short_one": {
+    "text": "A change goes live when its checks pass and you say yes, or {{required}} active members (there is {{count}}) do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here more active members than there are; {{count}} is how many there are. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.short_one": {
+    "text": "Goes live when its checks pass and you say yes, or {{required}} active members (there is {{count}}) do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here more active members than there are; {{count}} is how many there are. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.short_one": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{required}} active members (there is {{count}}) do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here more active members than there are; {{count}} is how many there are. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.short_one": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{required}} active members (there is {{count}}) do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here more active members than there are; {{count}} is how many there are. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.short_other": {
+    "text": "A change goes live when its checks pass and you say yes, or {{required}} active members (there are {{count}}) do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here more active members than there are; {{count}} is how many there are. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.short_other": {
+    "text": "Goes live when its checks pass and you say yes, or {{required}} active members (there are {{count}}) do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here more active members than there are; {{count}} is how many there are. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.short_other": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{required}} active members (there are {{count}}) do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here more active members than there are; {{count}} is how many there are. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.short_other": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or {{required}} active members (there are {{count}}) do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here more active members than there are; {{count}} is how many there are. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.only": {
+    "text": "A change goes live when its checks pass and you say yes, or the only active member does.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here the only active member. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.only": {
+    "text": "Goes live when its checks pass and you say yes, or the only active member does.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here the only active member. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.only": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or the only active member does.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here the only active member. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.only": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or the only active member does.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here the only active member. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.both": {
+    "text": "A change goes live when its checks pass and you say yes, or both active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here both active members. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.both": {
+    "text": "Goes live when its checks pass and you say yes, or both active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here both active members. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.both": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or both active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here both active members. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.both": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or both active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here both active members. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.all_one": {
+    "text": "A change goes live when its checks pass and you say yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here all active members; {{count}} is how many. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.all_one": {
+    "text": "Goes live when its checks pass and you say yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here all active members; {{count}} is how many. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.all_one": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here all active members; {{count}} is how many. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.all_one": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here all active members; {{count}} is how many. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.you.all_other": {
+    "text": "A change goes live when its checks pass and you say yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here all active members; {{count}} is how many. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.you.all_other": {
+    "text": "Goes live when its checks pass and you say yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for the project's creator under You or the group: their yes, or the group's vote, here all active members; {{count}} is how many. The narrow card's wording."
+  },
+  "communityCard.line.youOrGroup.creator.all_other": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here all active members; {{count}} is how many. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The wide card's wording."
+  },
+  "communityCard.lineShort.youOrGroup.creator.all_other": {
+    "text": "Goes live when its checks pass and <0></0><1>{{creator}}</1> says yes, or all {{count}} active members do.",
+    "description": "Workshop Overview rule line for anyone but the creator under You or the group: the creator's yes, or the group's vote, here all active members; {{count}} is how many. <0></0> is the creator's face and <1> their name in bold; {{creator}} is their username. The narrow card's wording."
+  },
+  "communityCard.line.twoYeses": {
+    "text": "A change goes live when its checks pass and two people say yes: whoever makes it, and one more.",
+    "description": "Workshop Overview rule line under Two yeses. The wide card's wording."
+  },
+  "communityCard.lineShort.twoYeses": {
+    "text": "Goes live when its checks pass and two people say yes.",
+    "description": "Workshop Overview rule line under Two yeses. The narrow card's wording."
+  },
+  "communityCard.line.openFloor": {
+    "text": "A change goes live when its checks pass and any member says yes, even to their own change.",
+    "description": "Workshop Overview rule line under Open floor. The wide card's wording."
+  },
+  "communityCard.lineShort.openFloor": {
+    "text": "Goes live when its checks pass and any member says yes.",
+    "description": "Workshop Overview rule line under Open floor. The narrow card's wording."
+  },
+  "communityCard.line.own": {
+    "text": "A change goes live when its checks pass and any one of its rules passes.",
+    "description": "Workshop Overview rule line for a project with rules of its own. The wide card's wording."
+  },
+  "communityCard.lineShort.own": {
+    "text": "Goes live when its checks pass and one of its rules passes.",
+    "description": "Workshop Overview rule line for a project with rules of its own. The narrow card's wording."
+  },
+  "menu.whoDecides.title": {
+    "text": "Who can see & change it",
+    "description": "Row among a project's settings: opens the sheet that sets who can see the project and how its changes are approved."
+  },
+  "menu.whoDecides.sub": {
+    "text": "Private or public, and how changes are approved",
+    "description": "Second line of the 'Who can see & change it' row."
   }
 }

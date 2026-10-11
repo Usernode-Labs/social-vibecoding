@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
-import { askToVerifyForPublic } from '../auth/verify-identity';
 import { useDialog } from './use-dialog';
 
 // `delete_block` is the server's reason can_delete is false (routes/apps.js
@@ -32,46 +31,17 @@ type AppSettings = {
 
 type AccessMode = 'public' | 'public-invite' | 'private';
 
-// `title` and `description` are message ids (frontend/locales/en/dialogs.json),
-// read when the choices render.
-const ACCESS_MODES: Array<{
-  id: AccessMode;
-  title: string;
-  description: string;
-  collabVisibility: 'public' | 'private';
-  viewVisibility: 'public' | 'private';
-}> = [
-  {
-    id: 'public',
-    title: 'dialogs:appSettings.access.mode.public.title',
-    description: 'dialogs:appSettings.access.mode.public.description',
-    collabVisibility: 'public',
-    viewVisibility: 'public',
-  },
-  {
-    id: 'public-invite',
-    title: 'dialogs:appSettings.access.mode.publicInvite.title',
-    description: 'dialogs:appSettings.access.mode.publicInvite.description',
-    collabVisibility: 'private',
-    viewVisibility: 'public',
-  },
-  {
-    id: 'private',
-    title: 'dialogs:appSettings.access.mode.private.title',
-    description: 'dialogs:appSettings.access.mode.private.description',
-    collabVisibility: 'private',
-    viewVisibility: 'private',
-  },
-];
-
 function currentAccessMode(app: AppSettings): AccessMode {
   if (app.collab_visibility === 'public') return 'public';
   return app.view_visibility === 'private' ? 'private' : 'public-invite';
 }
 
-function visibilityForAccess(mode: AccessMode) {
-  return ACCESS_MODES.find((item) => item.id === mode) || ACCESS_MODES[0];
-}
+// #4666: who can see it, in the Who can see & change it sheet's words.
+const ACCESS_NAMES: Record<AccessMode, string> = {
+  public: 'dialogs:whoDecides.see.public',
+  'public-invite': 'dialogs:whoDecides.see.limitedName',
+  private: 'dialogs:whoDecides.see.private',
+};
 
 // Copy for the blocked state, keyed by the server's reason. Plain text, no
 // dashes: it is read aloud as the dialog's status line.
@@ -91,11 +61,6 @@ export function AppSettingsDialog() {
   const [app, setApp] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [accessDraft, setAccessDraft] = useState<AccessMode>('public');
-  const [accessMessage, setAccessMessage] = useState('');
-  const [accessMessageIsError, setAccessMessageIsError] = useState(false);
-  const [accessBusy, setAccessBusy] = useState(false);
-  const [accessProposalOpen, setAccessProposalOpen] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   // #2161: a full admin deleting an app that has other contributors must
   // also tick the acknowledgement; the server refuses the request without it.
@@ -113,18 +78,12 @@ export function AppSettingsDialog() {
     setConfirmation('');
     setSharedAck(false);
     setError('');
-    setAccessMessage('');
-    setAccessMessageIsError(false);
-    setAccessProposalOpen(false);
     setLoading(true);
     try {
       const response = await fetch(`/api/apps/${encodeURIComponent(target)}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || t('dialogs:appSettings.error.load'));
-      if (current === generation.current) {
-        setApp(data.app);
-        setAccessDraft(currentAccessMode(data.app));
-      }
+      if (current === generation.current) setApp(data.app);
     } catch (err) {
       if (current === generation.current) setError(err instanceof Error ? err.message : t('dialogs:appSettings.error.load'));
     } finally {
@@ -142,10 +101,6 @@ export function AppSettingsDialog() {
       setApp(null);
       setConfirmation('');
       setSharedAck(false);
-      setAccessDraft('public');
-      setAccessMessage('');
-      setAccessMessageIsError(false);
-      setAccessProposalOpen(false);
     },
     canClose: () => !pending.current,
   });
@@ -156,59 +111,6 @@ export function AppSettingsDialog() {
   const others = app ? Math.max(0, (app.contributor_count || 0) - 1) : 0;
   const armed = !!app?.can_delete && !!app?.name && confirmation === app.name && (!shared || sharedAck);
   const currentAccess = app ? currentAccessMode(app) : 'public';
-  const accessChanged = !!app && accessDraft !== currentAccess;
-  // The propose button is off until a different level is picked; with the
-  // repo there and nothing else in the way, say so instead of leaving a
-  // full-strength button that does nothing (#4659).
-  const accessHint = !!app?.repo_url && !accessChanged && !accessBusy && !accessProposalOpen;
-
-  async function proposeAccess() {
-    if (pending.current || !app?.can_manage || app.self_hosted || !app.repo_url
-        || !accessChanged || accessProposalOpen) return;
-    const target = visibilityForAccess(accessDraft);
-    pending.current = true;
-    setAccessBusy(true);
-    setAccessMessage('');
-    setAccessMessageIsError(false);
-    try {
-      const send = () => fetch(`/api/apps/${encodeURIComponent(app.slug)}/visibility-pr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collabVisibility: target.collabVisibility,
-          viewVisibility: target.viewVisibility,
-        }),
-      });
-      let response = await send();
-      let data = await response.json().catch(() => ({}));
-      // #4378: making it public needs a verified owner. The verify sheet
-      // asks; once a phone is linked the proposal goes again, and Not now
-      // leaves the access as it was — said in the status line, not left
-      // silent (#4659).
-      if (data && data.code === 'identity_required') {
-        if (!(await askToVerifyForPublic())) {
-          setAccessMessage(t('dialogs:appSettings.access.notChangedVerify'));
-          return;
-        }
-        response = await send();
-        data = await response.json().catch(() => ({}));
-      }
-      if (response.status === 409) {
-        setAccessProposalOpen(true);
-        setAccessMessage(t('dialogs:appSettings.access.alreadyWaiting'));
-        return;
-      }
-      if (!response.ok) throw new Error(data.error || t('dialogs:appSettings.access.error'));
-      setAccessProposalOpen(true);
-      setAccessMessage(t('dialogs:appSettings.access.opened', { number: data.prNumber }));
-    } catch (err) {
-      setAccessMessageIsError(true);
-      setAccessMessage(err instanceof Error ? err.message : t('dialogs:appSettings.access.error'));
-    } finally {
-      pending.current = false;
-      setAccessBusy(false);
-    }
-  }
 
   async function remove(event: FormEvent) {
     event.preventDefault();
@@ -275,64 +177,29 @@ export function AppSettingsDialog() {
         className={`mb-4 ${app?.can_manage && !app.self_hosted ? '' : 'hidden'}`}
       >
         <h3 className="font-semibold mb-1">{t('dialogs:appSettings.access.heading')}</h3>
+        {/* #4666: who can see it and how its changes are approved are one
+            sheet now (./who-decides.tsx), and one proposal. This says what
+            it is today and opens it. */}
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1">
-          {t('dialogs:appSettings.access.intro')}
+          {t('dialogs:appSettings.access.now', { access: t(ACCESS_NAMES[currentAccess]) })}
         </p>
         {/* Private decides who can open it; every repository is public on
             GitHub (services/github.js createRepo), whichever is chosen. */}
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
           {t('dialogs:appSettings.access.codePublic')}
         </p>
-        <div role="radiogroup" aria-label={t('dialogs:appSettings.access.groupLabel')} className="space-y-2">
-          {ACCESS_MODES.map((mode) => {
-            const selected = accessDraft === mode.id;
-            const current = currentAccess === mode.id;
-            return <button
-              key={mode.id}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              disabled={accessBusy || accessProposalOpen || !app?.repo_url}
-              onClick={() => {
-                setAccessDraft(mode.id);
-                setAccessMessage('');
-                setAccessMessageIsError(false);
-              }}
-              className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${selected
-                ? 'border-violet-600 bg-violet-50 dark:border-violet-500 dark:bg-violet-950/30'
-                : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800'}`}
-            >
-              <span className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">{t(mode.title)}</span>
-                {current ? <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{t('dialogs:appSettings.access.current')}</span> : null}
-              </span>
-              <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{t(mode.description)}</span>
-            </button>;
-          })}
-        </div>
-        {!app?.repo_url ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
-          {t('dialogs:appSettings.access.noRepository')}
-        </p> : <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-          {t('dialogs:appSettings.access.changeNote')}
-        </p>}
-        <p
-          id="app-access-status"
-          role={accessMessageIsError ? 'alert' : 'status'}
-          className={`${accessMessage ? '' : 'hidden'} mt-3 text-sm ${accessMessageIsError ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300'}`}
-        >{accessMessage}</p>
         <Button
-          id="app-access-propose"
+          id="app-access-open"
           type="button"
           size="sm"
-          className="mt-3"
-          disabledStyle="block"
-          disabled={accessBusy || accessProposalOpen || !app?.repo_url || !accessChanged}
-          aria-describedby={accessHint ? 'app-access-hint' : undefined}
-          onClick={() => void proposeAccess()}
+          onClick={() => {
+            const target = app?.slug || slug.current;
+            dialog.close();
+            window.UsernodeReact?.dialogs?.whoDecides?.open({ slug: target });
+          }}
         >
-          {accessBusy ? t('dialogs:appSettings.access.proposing') : (accessProposalOpen ? t('dialogs:appSettings.access.proposalOpen') : t('dialogs:appSettings.access.propose'))}
+          {t('dialogs:appSettings.access.open')}
         </Button>
-        {accessHint ? <p id="app-access-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:appSettings.access.hint')}</p> : null}
       </section>
       {app && !app.can_delete ? <p id="app-delete-blocked" role="status" className="text-sm mb-4">{blockedCopy(app)}</p> : null}
       <section ref={dangerRef} className="hidden border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4">

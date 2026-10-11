@@ -4478,7 +4478,7 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
   // (import on canCollaborate, the members row, Fork for a read-only viewer)
   // are the ones the menu always had.
   assert.match(WORKSHOP,
-    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onMakePrivate=\{canMakePrivate\(community\)[\s\S]*?onMakePublic=\{canMakePublic\(community\)[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
+    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onWhoDecides=\{community\?\.can_manage[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
   assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'rendered in one place on this surface');
 });
 
