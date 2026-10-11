@@ -144,17 +144,17 @@ function isDark(): boolean {
 }
 
 /** The Mermaid kind: nothing until it is drawn, `onFail` if it cannot be. */
-function Mermaid({ source, onFail, onDrawn }: { source: string; onFail?: () => void; onDrawn?: () => void }): ReactNode {
+function Mermaid({ source, dark = false, onFail, onDrawn }: { source: string; dark?: boolean; onFail?: () => void; onDrawn?: () => void }): ReactNode {
   const [svg, setSvg] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     setSvg(null);
-    renderMermaid(source, isDark()).then(
+    renderMermaid(source, dark || isDark()).then(
       (out) => { if (live) { setSvg(out); onDrawn?.(); } },
       () => { if (live) onFail?.(); },
     );
     return () => { live = false; };
-  }, [source]);
+  }, [source, dark]);
   if (!svg) return <span className="dev-ws-diagram-wait" aria-hidden="true" />;
   // DOMPurify-cleaned SVG from the vendored library (./mermaid.ts).
   return <div className="dev-ws-diagram-svg" dangerouslySetInnerHTML={{ __html: svg }} />;
@@ -162,15 +162,20 @@ function Mermaid({ source, onFail, onDrawn }: { source: string; onFail?: () => v
 
 /**
  * One diagram, with its label over it and its source under it. `onOpen`
- * makes the picture a door (the card opens Description from it, as tapping
- * the shots does); `onFail` is the Mermaid kind's way out.
+ * makes the picture a door (a Needs-you card opens its caption from it);
+ * `onFail` is the Mermaid kind's way out.
  */
-export function Diagram({ d, source, onOpen, onFail, className, defer = false }: {
+export function Diagram({ d, source, onOpen, onFail, className, defer = false, dark = false }: {
   d: DiagramRecord;
   source: DiagramSource;
   onOpen?: () => void;
   onFail?: () => void;
   className?: string;
+  /**
+   * Drawn on a dark ground whatever the page's theme (a Needs-you card): a
+   * Mermaid diagram takes its dark theme there too.
+   */
+  dark?: boolean;
   /**
    * Hold a Mermaid diagram back (an empty space) until the caller is near
    * it, so a feed of many cards loads the library only for the one in view.
@@ -183,7 +188,7 @@ export function Diagram({ d, source, onOpen, onFail, className, defer = false }:
     : d.kind === 'flow' ? <Flow d={d} />
       : d.kind === 'changes' ? <Changes d={d} />
         : d.kind === 'numbers' ? <Numbers d={d} />
-          : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} onFail={onFail} />;
+          : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} dark={dark} onFail={onFail} />;
   const door = onOpen ? {
     role: 'button' as const,
     tabIndex: 0,

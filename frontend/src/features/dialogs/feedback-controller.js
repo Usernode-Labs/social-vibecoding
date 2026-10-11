@@ -234,6 +234,9 @@ export function init() {
     };
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
+    // #4680: the form's own link to it, under the intro line — seen before
+    // any typing starts, not only on a confirmation afterwards.
+    document.getElementById('feedback-form-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
     // "Thanks! Posted to Run Club" / "Thanks! Posted to Homeroom" is the
     // heading; the notice under it carries only what else happened (a
@@ -2267,11 +2270,10 @@ export function init() {
         if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
       applyTargetAvailability(canTargetApp, appData);
-      // A caller whose own button already named the app opens on it: the
-      // Getting started card's Suggest ("Suggest a change to City garden",
-      // features/home/getting-started.tsx) opens that app, then this with
-      // `target: 'app'`. That press was the choice #2707 asks for, not a
-      // guess about intent, so asking again would only be a second tap.
+      // A caller whose own button already named the app opens on it, with
+      // `target: 'app'` (Home's Getting started card's Suggest did, until
+      // #4635 retired the card). That press was the choice #2707 asks for,
+      // not a guess about intent, so asking again would only be a second tap.
       // Only when "This app" is really there to choose.
       if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
       // The experimental C comment (features/comment-pin/) hands itself over

@@ -14,11 +14,11 @@
  * a thing the person could not find. Without names (an older server) the
  * second line says what to do instead.
  *
- * SHARED like ./challenge-card.tsx: the Challenges tab draws it after its
- * last group, and Home's block draws it ALONE while the gate is closed, in
- * place of the First challenges the Getting started card above it already
- * lists. It draws nothing for a count below one, so a payload without the
- * count simply has no placeholder.
+ * The Challenges tab draws it after its last group. Home's block drew it too,
+ * alone, while the gate was closed, until #4635 retired the Getting started
+ * card and the gate with it: no server sends a count now, and it draws
+ * nothing for a count below one, so a payload without the count simply has
+ * no placeholder.
  *
  * Both lines may wrap to a second line rather than truncate: the count line
  * is a sentence now, wider than a phone's card body, and a name cut to "Make

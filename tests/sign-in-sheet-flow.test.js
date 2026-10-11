@@ -145,10 +145,13 @@ test('the link\'s one-time sign-in (#4594) is kept for the sheet, off the addres
   assert.equal(enterHarness({ search: '?signup=1&key=short' }).auth._releaseLink.signIn, null);
 });
 
-test('the landing takes the link on show and opens the sheet at its step', () => {
+test('the landing takes the link on show: Sign in opens at once, a new account waits for Get started', () => {
   const src = read(LANDING);
   const onShow = src.slice(src.indexOf('const landingOnShow = useCallback(() => {'), src.indexOf('}, [loadLandingApps, refreshHeader, runAnonBackShot, st]);'));
-  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+setSheet\(link\.route === 'signup' \? 'start' : 'signin'\);/);
+  // Evan, 10 Oct 2026: the story first, and the sheet on Get started, which
+  // is when the one-time sign-in is spent.
+  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
   // Get started's sheet carries the token; Sign in's never does.
   assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}/);
   assert.match(src, /releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}/);
@@ -178,6 +181,21 @@ test('the link is taken once, and only a well-formed one', async () => {
   });
 });
 
+test('a code field says it is a one-time code, in every way a browser reads (Evan, 10 Oct 2026)', () => {
+  // On iPhone the sheet's code field read as a password to the OS.
+  const shared = read('frontend/src/features/auth/shared.ts');
+  const block = /export const ONE_TIME_CODE_FIELD = \{([\s\S]*?)\} as const;/.exec(shared)[1];
+  for (const attr of ["type: 'text'", "name: 'one-time-code'", "inputMode: 'numeric'", "pattern: '[0-9]*'",
+    "autoComplete: 'one-time-code'", "autoCapitalize: 'none'", "autoCorrect: 'off'", 'spellCheck: false']) {
+    assert.ok(block.includes(attr), attr);
+  }
+  const src = read(SHEET);
+  for (const id of ['sign-in-sheet-code', 'sign-in-sheet-phone-code']) {
+    assert.match(src, new RegExp(`id="${id}" \\{\\.\\.\\.ONE_TIME_CODE_FIELD\\} enterKeyHint="go" maxLength=\\{6\\}`), id);
+  }
+  assert.doesNotMatch(src, /type="password"[^>]*one-time-code|one-time-code[^>]*type="password"/);
+});
+
 test('the sheet spends the one-time sign-in with a POST, and anything but a spend falls back (#4594)', async () => {
   const sheet = loadTsx(SHEET);
   const key = 'K'.repeat(43);
@@ -191,12 +209,35 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   await withGlobals({ window: {}, sessionStorage: memoryStorage(), fetch }, async () => {
     assert.deepEqual(await sheet.spendReleaseLink(key), { next: 'set-password', email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' });
     assert.equal((await sheet.spendReleaseLink('S'.repeat(43))).next, 'signed-in');
-    assert.equal(await sheet.spendReleaseLink('U'.repeat(43)), null, 'expired, used or unknown: the fallback');
+    assert.equal(await sheet.spendReleaseLink('U'.repeat(43)), 'refused', 'expired, used or unknown: the fallback, and it says why');
+  });
+  const broken = fakeFetch(() => [500, { error: 'Internal server error' }]);
+  await withGlobals({ window: {}, sessionStorage: memoryStorage(), fetch: broken }, async () => {
+    assert.equal(await sheet.spendReleaseLink(key), null, 'a server error is no refusal: the fallback, with no reason given');
   });
   assert.ok(fetch.calls.every((c) => c.init.method === 'POST'), 'never a GET');
   const src = read(SHEET);
   // Spent: "Welcome <address>" over the account step; refused: the prefill and the code.
-  assert.match(src, /if \(!spent\) \{ prefill\(\); return; \}/);
+  assert.match(src, /if \(spent === 'refused'\) setLinkRefused\(true\);\s+if \(!spent \|\| spent === 'refused'\) \{ prefill\(\); return; \}/);
+  // While it is spent: "Signing you in…", not the email step and its Send
+  // code button (Evan, 10 Oct 2026: the first open showed that step first).
+  assert.match(src, /setStep\(releaseSignIn \? 'link' : 'email'\);/);
+  assert.match(src, /step === 'link' \? t\('auth:signInSheet\.link\.title'\)/);
+  assert.equal(message('auth:signInSheet.link.title'), 'Signing you in from your email\u2026');
+  // Closed and opened again (Get started again, Evan, 10 Oct 2026): the link
+  // signs in from the email again, not the code step. The sheet forgets the
+  // link it spent when it closes, and the story keeps the link when the
+  // sheet closes; the server takes the same link again while the account
+  // it started is not set up (tests/release-link-postgres.test.js).
+  assert.match(src, /if \(!open\) \{ setShown\(false\); setLeaving\(false\); setClosing\(false\); releaseSeen\.current = null; return undefined; \}/);
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /const closeSheet = useCallback\(\(\) => \{ setSheet\(null\); setResume\(null\); \}, \[\]\);/);
+  assert.doesNotMatch(landing, /setRelease\(null\); \}, \[\]\)/);
+  // Refused, the code step says why a code came instead.
+  assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : t\('auth:signInSheet\.code\.lead', \{ email \}\)/);
+  assert.equal(message('auth:signInSheet.code.leadLinkUsed', { email: 'ada@example.com' }),
+    'That sign-in link was already used or has expired, so we sent a 6-digit code to ada@example.com instead. It expires in 10 minutes.');
+  assert.match(src, /setLinkRefused\(false\); setStep\('email'\);/, 'another address is a plain code again');
   assert.match(src, /setWelcome\(spent\.email\);\s+setNeedsUsername\(spent\.needsUsername\);\s+setSuggestedUsername\(spent\.suggestedUsername\);\s+setCooldownUntil\(0\);\s+setStep\('account'\);/);
   assert.match(src, /welcome \? t\('auth:signInSheet\.account\.welcome', \{ email: welcome \}\) : t\('auth:signInSheet\.account\.title'\)/);
   assert.equal(message('auth:signInSheet.account.welcome', { email: 'ada@example.com' }), 'Welcome ada@example.com');
@@ -205,9 +246,11 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
 
 test('the account step\'s password is optional (#4595)', () => {
   const src = read(SHEET);
-  assert.match(src, /data-sign-in-sheet-skip-password=""[^>]*onClick=\{\(\) => \{ void finishAccount\(true\); \}\}>\{t\('auth:signInSheet\.account\.skip'\)\}<\/button>/);
-  assert.equal(message('auth:signInSheet.account.skip'), 'Skip for now');
-  // Skipped, or the field empty: no password in the request.
+  // No "Skip for now" (Evan, 10 Oct 2026): beside the username, which cannot
+  // be skipped, it read as skipping the step. The field left empty is how
+  // the password is skipped: no password in the request.
+  assert.doesNotMatch(src, /skip-password|signInSheet\.account\.skip|finishAccount\(true\)/);
+  assert.equal(message('auth:signInSheet.account.passwordLabel'), 'Password (optional)');
   assert.match(src, /\.\.\.\(password \? \{ password \} : \{\}\),/);
   assert.match(src, /if \(password && password\.length < 8\) \{ setError\(translate\('auth:signInSheet\.account\.passwordTooShort'\)\); return; \}/);
   // Asked once (Evan, 10 Oct 2026): no "Password again", and so no
@@ -296,7 +339,7 @@ test('the password step sends the sign-in screen\'s exchange, and says what it r
 
 test('the password step is the sheet\'s: the link opens it, and Forgot password still reaches the reset', () => {
   const src = read(SHEET);
-  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code';/);
+  assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code' \| 'link';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
   assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
   assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');

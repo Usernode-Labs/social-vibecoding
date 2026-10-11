@@ -633,39 +633,36 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   };
 }
 
-// Whether the Getting started card was ever drawn for this person: the rule
-// onboarding.js cardShows() spells, without its "not closed yet", since a
-// card that was closed was shown.
+// Whether this person started on the first-run list: a NEW account
+// (`users.getting_started_gate`, set at sign-up since 2026-10-01). It was the
+// rule for drawing Home's Getting started card, retired by #4635; the flag is
+// still how this page tells a newcomer from an account made before the list.
 function cardWasShown(row) {
   return row.user_id != null && row.getting_started_gate === true;
 }
 
 /**
  * The first mile's last column, "onboard": how far the person got through
- * Getting started, the tour and then the season's First challenges, the list
- * the card on Home draws (services/onboarding.js). `null` without an
- * account; `shown: false` when the card was never drawn for them (an account
- * from before the card, or the join screen not answered yet). `complete` is
- * the card's own "You're all set", which an earlier read can have granted
- * with fewer ticks than today's list has. Read with `record: false`: an
- * admin looking never opens anybody's gate.
+ * the first-run list, the tour and then the season's First challenges that
+ * can be done now (services/topochain/challenge-onboarding.js `available`,
+ * read with their lifetime progress, an earlier season's credits included).
+ * `null` without an account; `shown: false` for an account that did not
+ * start on the list (one from before it). `complete` is every one of them
+ * done. A read with no side effect: an admin looking changes nobody's
+ * account.
  */
 async function onboardFor(pool, row, seasonId) {
   if (row.user_id == null) return null;
   if (!cardWasShown(row)) return { shown: false, done: null, total: null, complete: false };
+  const tourDone = row.tour_done_at != null;
   const state = seasonId != null
-    ? await loadOnboarding(pool, Number(row.user_id), { seasonId, record: false })
+    ? await loadOnboarding(pool, Number(row.user_id), { seasonId })
     : null;
-  if (!state) {
-    const tourDone = row.tour_done_at != null;
-    return { shown: true, done: tourDone ? 1 : 0, total: 1, complete: tourDone };
-  }
-  return {
-    shown: true,
-    done: (state.tourDone ? 1 : 0) + state.summary.completed,
-    total: 1 + state.summary.total,
-    complete: state.finished,
-  };
+  const ids = state ? state.available : [];
+  const completed = ids.filter((id) => state.progress.get(id).done).length;
+  const done = (tourDone ? 1 : 0) + completed;
+  const total = 1 + ids.length;
+  return { shown: true, done, total, complete: done === total };
 }
 
 /** One cohort's first mile: `day` is an admit day, or 'other_way'. */
@@ -1330,8 +1327,8 @@ const PERSON_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_by = $1::int
    ORDER BY days_used DESC, ap.slug`;
 
 // The person's challenge credits since $2, with whether each is one of the
-// First challenges (the ONBOARDING category, which the Getting started card
-// is built from), from the ledger the scorer writes the moment an act counts.
+// First challenges (the ONBOARDING category), from the ledger the scorer
+// writes the moment an act counts.
 const PERSON_CHALLENGES_SQL = `SELECT ua.challenge_id, COALESCE(c.goal, ct.goal) AS title, ua.points, ua.activity_at, ua.source,
          UPPER(TRIM(COALESCE(ct.category, ''))) = 'ONBOARDING' AS first_challenge
     FROM user_activities ua
@@ -2178,6 +2175,12 @@ async function summary(pool, { week, now = new Date(), leftOutIds = [], memberId
 }
 
 module.exports = {
+  // Spelled as properties, not shorthand, so scripts/check-sql.js can
+  // resolve the queries elsewhere that splice them in
+  // (services/topic-figures.js reads them as journey.<NAME>).
+  ADMITTED_CTE: ADMITTED_CTE,
+  NEWCOMER_OR_NO_ACCOUNT: NEWCOMER_OR_NO_ACCOUNT,
+  REAL_PERSON_SQL: REAL_PERSON_SQL,
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
   CREATION_PATH_SQL,
@@ -2218,7 +2221,6 @@ module.exports = {
   TREND_WEEKS_MAX,
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
-  REAL_PERSON_SQL,
   REAL_VOTER_SQL,
   CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
@@ -2236,6 +2238,7 @@ module.exports = {
   pairReading,
   pairs,
   cohorts,
+  realPersonParams,
   coverage,
   groupsForWeek,
   inviteLoop,

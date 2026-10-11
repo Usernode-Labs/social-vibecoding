@@ -2,8 +2,8 @@
  * The project page's Discussion tab: the community's channel, whole, in
  * place.
  *
- * The hub shows the discussion's last two messages and a way in
- * (./hub-cards.tsx ChannelCard, compact). The way in used to leave the page
+ * The hub shows the discussion's last line and a way in (./hub-cards.tsx
+ * ForYouCard, its Discussion row). The way in used to leave the page
  * for `#messages/app/<slug>`; it is a tab of the page now, so a person
  * reading the hub and a person talking in the room are on the same page with
  * the same coloured header, and Back is the tab strip rather than a screen
@@ -87,6 +87,7 @@ import { devWorkshopStore } from '../card/cards-store';
 import type { TranscriptMarker } from '../../group-chat/transcript-store';
 import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
 import { TopicHead } from './topic-head';
+import { TopicFigures } from './topic-figures';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -507,6 +508,9 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         onRequests={openRequests}
         onSurvivor={survivor && onPlace ? () => onPlace(channelPlace(survivor.handle)) : undefined}
       />
+      {/* The numbers this topic names in dapp.json, between its line and
+          its room (topic-figures.tsx); nothing for a topic with none. */}
+      <TopicFigures slug={slug} topic={topic} />
       {/* The host's class string is constant and its subtree is the group
           chat's: the one-owner rule, satisfied at this boundary. */}
       <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />

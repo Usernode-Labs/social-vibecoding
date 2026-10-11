@@ -849,8 +849,8 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
     // The owed populations are read a third time, by the Needs you feed
     // (#3270), so the tab's cards and the counts beside it cannot disagree,
     // and a fourth by the same feed counted per project
-    // (OWED_BY_COMMUNITY_SQL), so the Getting started card's Vote step
-    // agrees with that feed about what is waiting and where.
+    // (OWED_BY_COMMUNITY_SQL), so a per-project count agrees with that feed
+    // about what is waiting and where.
     const reads = name.startsWith('OWED_') ? 4 : 2;
     assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
       `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 4 ? ', and by NEEDS_FEED_SQL and OWED_BY_COMMUNITY_SQL' : ''}`);
@@ -996,13 +996,16 @@ test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn b
   assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/swap\/dev\/governance\/9">Item 9<\/a><\/h2>/);
   assert.match(pane, /class="dev-ws-eyebrow">Group decision · Waiting for your approval</, 'a group decision says what it is');
   assert.match(pane, /class="dev-ws-eyebrow">Change · Waiting for your approval</, 'and a change, in its page\'s words');
-  // The rail, as a project's: Vote, Description, Comments, Ask, Try it, More.
+  // The rail, as a project's: Vote, Comments, Ask, Try it, More.
   assert.deepEqual([...pane.matchAll(/data-ws-rail-btn="(\w+)"/g)].map((m) => m[1]),
-    ['vote', 'description', 'comments', 'ask', 'try', 'more']);
+    ['vote', 'comments', 'ask', 'try', 'more']);
+  // Each item names its project at the top of its caption, over its by-line.
+  assert.match(pane, /<div class="dev-ws-item-caption"><a class="workshop-reel-app" data-ws-item-app=""[^>]*>[\s\S]*?<\/a><p class="dev-ws-item-by">/);
   assert.match(pane, /data-ws-rail-btn="more" data-card-menu="" data-card-menu-open="#app\/garden\/dev\/proposals\/8"/,
     'the ⋯ offers the card\'s page, the one entry that holds across projects');
   assert.match(pane, /class="dev-ws-item-of">1 \/ 3</);
   assert.match(pane, /class="dev-ws-done-cta">Back to your communities</);
+  assert.doesNotMatch(pane, /data-ws-done-hub/, 'the Communities screen has its own way on, and no Hub to go back to');
 
   mod.workshopStore.set({ feed: [] });
   out = html();

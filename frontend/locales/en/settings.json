@@ -663,6 +663,62 @@
     "text": "How much of your AI allowance is left and, once you add your own key, what it has spent this week.",
     "description": "Explanation under the Usage heading in Settings. \"Your own key\" is the person's own Anthropic API key; \"it\" is that key."
   },
+  "usage.buildingTime.title": {
+    "text": "Homeroom bot building time",
+    "description": "Small heading over a card on the \"AI usage & models\" page in Settings: how much of the Homeroom bot's weekly building time the person has used, and on which requests. \"Building time\" is the bot's time planning and building people's requests; Homeroom bot is a name and is not translated."
+  },
+  "usage.buildingTime.used": {
+    "text": "{{percent}}% of this week's building time used",
+    "description": "First line of the Homeroom bot building time card in Settings. {{percent}} is a whole number from 0 to 100, for example \"62\"."
+  },
+  "usage.buildingTime.usedUp": {
+    "text": "You've used this week's building time",
+    "description": "First line of the Homeroom bot building time card in Settings when the person has used all of this week's: the bot starts their requests again when the week resets."
+  },
+  "usage.buildingTime.none": {
+    "text": "You haven't used any building time this week",
+    "description": "First line of the Homeroom bot building time card in Settings when the bot has done no work on the person's requests this week."
+  },
+  "usage.buildingTime.unlimited": {
+    "text": "Your building time has no weekly limit",
+    "description": "First line of the Homeroom bot building time card in Settings for a person with no weekly limit; the list under it still shows which requests used the most."
+  },
+  "usage.buildingTime.resets": {
+    "text": "Resets {{day}} at {{time}}.",
+    "description": "Line under the bar on the Homeroom bot building time card in Settings saying when this week's building time starts again. \"Resets\" is a verb; its subject, the building time, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "usage.buildingTime.percent": {
+    "text": "{{percent}}%",
+    "description": "One request's share of the week's building time, at the end of its row on the Homeroom bot building time card in Settings. {{percent}} is a whole number, for example \"31\"."
+  },
+  "usage.buildingTime.underOne": {
+    "text": "Under 1%",
+    "description": "A request's share of the week's building time when it is more than nothing but less than one percent, at the end of its row on the Homeroom bot building time card in Settings."
+  },
+  "usage.buildingTime.untitled": {
+    "text": "Request #{{number}}",
+    "description": "A row's title on the Homeroom bot building time card in Settings when the request's own title is not known. {{number}} is the request's number, for example \"42\"."
+  },
+  "usage.buildingTime.askedFor": {
+    "text": "{{app}} · You asked for this",
+    "description": "Second line of a row on the Homeroom bot building time card in Settings, for somebody else's request that the person asked the bot to build, which counts toward their own building time. {{app}} is the project's name."
+  },
+  "usage.buildingTime.others": {
+    "text": "Other requests",
+    "description": "Last row of the Homeroom bot building time card in Settings: every request past the end of the list, together, with their share at the end."
+  },
+  "usage.buildingTime.explainLimited": {
+    "text": "Each request's share of your week. It counts the bot reading, planning and building your requests, and any you asked it to build for someone else.",
+    "description": "Small explanation under the Homeroom bot building time card in Settings, for a person with a weekly limit. \"Your week\" is their week of building time."
+  },
+  "usage.buildingTime.explainUnlimited": {
+    "text": "Each request's share of what you used this week. It counts the bot reading, planning and building your requests, and any you asked it to build for someone else.",
+    "description": "Small explanation under the Homeroom bot building time card in Settings, for a person with no weekly limit."
+  },
+  "usage.buildingTime.demo": {
+    "text": "Staging demo figures, not real numbers.",
+    "description": "Small line under the Homeroom bot building time card in Settings, shown only on a test copy of Homeroom: says the figures are made up for testing."
+  },
   "usage.spend.heading": {
     "text": "This week's spend",
     "description": "Small caption in Settings > Usage above the card that breaks down this week's AI spending. Shown only when the person has saved their own API key."

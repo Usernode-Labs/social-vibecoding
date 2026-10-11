@@ -1343,7 +1343,19 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // "People I pick" starts with the creator as its one approver, the
       // same seed applyGovernanceChange plants when a manifest switches a
       // live app to invited approvers.
-      if (rule) {
+      // #4666: a preset, or rules of its own, is written to governance_rules
+      // (its groups' people resolved, as the reconcile stores them); every
+      // new project gets one, You or the group unless it asked for another.
+      if (rule && Array.isArray(rule.rules)) {
+        const stored = rule.groups && rule.groups.length
+          ? await appManifest.storedRules(pool, rule)
+          : require('../services/governance-rules').storedForm(rule);
+        const { rows: governed } = await pool.query(
+          `UPDATE apps SET governance_rules = $1::jsonb WHERE id = $2 RETURNING *`,
+          [JSON.stringify(stored), appRow.id]
+        );
+        appRow = governed[0] || appRow;
+      } else if (rule) {
         const { rows: governed } = await pool.query(
           `UPDATE apps SET approver_policy = $1, approvals_required = $2
             WHERE id = $3 RETURNING *`,
@@ -1376,10 +1388,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // starter rather than the empty scaffold. On the row, like the rule
       // above, because app-creator scaffolds from the row: a Retry after a
       // failed create writes the same starter.
+      // A ready-made starter's icon is its own (template.js writes it into
+      // the new dapp.json, and nothing is sketched), so it is on the record
+      // from the start: Home's tile shows it while the app is still being
+      // set up, not a letter until the first deploy reads dapp.json back
+      // (Evan, 10 Oct 2026). That reconcile then finds nothing to change.
       if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const readyIcon = appTemplates.isReadyMade(template) ? appTemplates.get(template).icon || null : null;
         const { rows: templated } = await pool.query(
-          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
-          [template, appRow.id]
+          `UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2 RETURNING *`,
+          [template, appRow.id, readyIcon]
         );
         appRow = templated[0] || appRow;
       }
@@ -2969,6 +2987,93 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #4666: WHO CAN SEE & CHANGE IT, as one proposal (services/who-decides-pr.js).
+  // The sheet of that name sends who can see it ('private' | 'public'), how
+  // its changes are approved (a preset, or groups and rules), or both, and
+  // gets one PR on dapp.json. Same proposers as the two single-block routes
+  // it stands in for: the creator, an app admin or a platform admin. The
+  // platform's own app may change its rule here, never its visibility.
+  router.post('/api/apps/:slug/who-decides-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const whoDecides = require('../services/who-decides-pr');
+    let change;
+    try {
+      change = whoDecides.parseChange(req.body);
+    } catch (err) {
+      if (err instanceof whoDecides.WhoDecidesError) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAdmins.canManageApp(pool, app, req.user))) {
+        return res.status(403).json({ error: 'Only the project’s creator or an admin can propose who can see and change it' });
+      }
+      if (change.visibility && refuseIfSelfHosted(app, res)) return;
+
+      const gov = await governance.getGovernance(pool, app.id);
+      const diff = whoDecides.diffChange(change, {
+        collab: app.collab_visibility, view: app.view_visibility, rules: gov.rules,
+      });
+      if (!diff.visibility && !diff.governance) {
+        return res.status(400).json({ error: 'That is how it is already' });
+      }
+      if (diff.governance) {
+        try {
+          await whoDecides.checkPeople(pool, diff.governance);
+        } catch (err) {
+          if (err instanceof whoDecides.WhoDecidesError) {
+            return res.status(err.status).json({ error: err.message, ...err.extra });
+          }
+          throw err;
+        }
+      }
+
+      // Making it public needs a verified owner (#4378), as on visibility-pr.
+      if (diff.visibility === 'public' && app.view_visibility !== 'public') {
+        const identityRefusal = await communities.identityPublicRefusal(pool, req.user?.id);
+        if (identityRefusal) return res.status(403).json(identityRefusal);
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Changes to who decides need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url || !(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+
+      // One change to who decides in flight per project.
+      const existing = await whoDecides.findWhoDecidesPr(pool, app.id);
+      if (existing) {
+        return res.status(409).json({
+          error: 'A change to who can see and change it is already waiting for approval',
+          sessionId: existing.id,
+          prNumber: existing.pr_number,
+          prUrl: existing.pr_url,
+        });
+      }
+
+      const result = await whoDecides.createWhoDecidesPR(
+        config, pool, app, diff, { id: req.user.id, username: req.user.username }
+      );
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        title: result.title,
+      });
+    } catch (err) {
+      log.error('apps', 'Who-decides PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // Propose a proposal-approval governance change (issue #646). The two
   // settings live in dapp.json's top-level `governance` block, so
   // changing them is a manifest-editing PR — same lifecycle as a
@@ -3787,8 +3892,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sync_favorite_community_member), so Home's featured list's ⊕ is a
       // join as much as /membership is, and is counted the same way: on the
       // spot (scoreOnJoin), not on the rule's next pass, and said so in the
-      // answer (`joined`) so the client can tell its Challenges block and
-      // Getting started card to read again.
+      // answer (`joined`) so the client can tell its Challenges block to
+      // read again.
       let joined = false;
       if (favorited) {
         const { rows: joinRows } = await pool.query(
@@ -3923,9 +4028,32 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ? await renamePr.findVisibilityPr(pool, app.id) : null;
       const gov = await governance.getGovernance(pool, app.id);
       const electorate = await governance.getElectorate(pool, app.id, gov);
-      const required = gov.approvalsRequired != null
-        ? gov.approvalsRequired
-        : activeUsers.requiredVotes(electorate.active, 0);
+      // #4666: the rule by name, its rules and groups, and its creator, for
+      // the rule line said from the reader's side and the Who can see &
+      // change it sheet. Best-effort: a rule that cannot be described is the
+      // line without its name, never a failed hub.
+      let described = null;
+      try {
+        described = await governance.describeApproval(pool, app.id, gov);
+      } catch (err) {
+        log.warn('apps', 'Could not describe the approval rule', { slug: app.slug, message: err.message });
+      }
+      const required = described && described.mode === 'rules' && described.required != null
+        ? described.required
+        : gov.approvalsRequired != null
+          ? gov.approvalsRequired
+          : activeUsers.requiredVotes(electorate.active, 0);
+      let creator = null;
+      if (!app.self_hosted && app.created_by) {
+        const { rows: creatorRows } = await pool.query(
+          'SELECT id, username, display_name FROM users WHERE id = $1', [app.created_by]
+        );
+        if (creatorRows[0]) {
+          creator = { id: creatorRows[0].id, username: creatorRows[0].username, display_name: creatorRows[0].display_name || null };
+        }
+      }
+      const pendingWhoDecides = canManage
+        ? await require('../services/who-decides-pr').findWhoDecidesPr(pool, app.id) : null;
       // WHAT IT IS. dapp.json's one line when it has one. A project made
       // from "What should it do?" without a one-liner (the first session's
       // own words, not an example's) has none until somebody writes one, so
@@ -4023,7 +4151,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           approvals_required: gov.approvalsRequired,
           electorate: electorate.active,
           required,
+          // #4666
+          mode: described ? described.mode : (gov.rules ? 'rules' : 'columns'),
+          preset: described ? described.preset : null,
+          rules: described ? described.rules : null,
+          groups: described ? described.groups : [],
+          creator,
         },
+        // #4666: who can see it, as the two columns say, for the sheet.
+        visibility: { build: app.collab_visibility, view: app.view_visibility },
+        who_decides_change: pendingWhoDecides ? {
+          session_id: pendingWhoDecides.id,
+          pr_number: pendingWhoDecides.pr_number,
+          title: pendingWhoDecides.pr_title || null,
+        } : null,
       });
     } catch (err) {
       log.error('apps', 'Failed to load community', { message: err.message });

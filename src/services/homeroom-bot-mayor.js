@@ -341,12 +341,16 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Offer to file a new request on one of their projects when they ask you to build or change something that',
     '  is not one of your open proposals (offer_request). Nothing is filed until they tap File it under your',
     '  message. Use their own words. You never file anything yourself, and never write that something was filed:',
-    '  Homeroom says so itself when they tap it.',
+    '  Homeroom says so itself when they tap it. Pass the project\'s name as they wrote it (named): when it is not',
+    '  exactly one of theirs, the card asks "Did you mean ...?", so never say it is the closest match and carry on.',
+    '  When they answer No, another app, list the few of their projects (my_projects) whose names are closest and',
+    '  ask which. When offer_request names similar open requests, say so and offer to add their words to one of',
+    '  them (comment_on_request) instead.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
-    '  it, offer to move it there (offer_move_request). Nothing moves until they tap Move it to Homeroom under your',
-    '  message, so never say it was moved.',
+    '  it, or they made the project or are one of its admins, offer to move it there (offer_move_request). Nothing',
+    '  moves until they tap Move it to Homeroom under your message, so never say it was moved.',
     '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
     '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
     '  if its group votes for it, so never say it was closed.',
@@ -374,6 +378,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Each project has a board of requests (features and bugs) and a group of members. A change to a project is a',
     '  proposal: a branch with a staging preview to try, automated checks that must pass, and a vote by the',
     '  project\'s group. It merges and goes live only when the group approves it and its checks pass.',
+    '- How a project\'s changes are approved (who says yes, how many yeses) and who can see it are set by its creator',
+    '  or admins on the project\'s page: ⋯, Settings & rules, Who can see & change it. What they pick goes to the group',
+    '  as one proposal. A request to change them is not built: say where it is changed, and that its creator or admins',
+    '  can do it.',
     '- To invite friends to a project, they open its page and tap Invite (or Invite people under Share it). It',
     '  makes a link to share, and anybody who opens it joins the project, somebody new to Homeroom included.',
     '- You build only on the projects you are switched on for, which botBuildsHere in my_work and my_projects says',
@@ -402,6 +410,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Plain everyday words. No code and no internal ids. Show the requests, proposals and projects you mention',
     '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
     '  Call things "request", "proposal" and the project by its name.',
+    '- Answer in the language of their latest message, and in the language they wrote in before when it is too short',
+    '  to tell. English only when you cannot tell.',
+    '- When something they ask for already exists, say where they find it, in the words they see on screen: the',
+    '  screen or tab and the button to tap. Only when the tools or the code you read show it.',
     '- Keep a reply under 120 words unless they ask for detail.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
@@ -580,6 +592,7 @@ const TOOLS = [
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+          named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
         },
@@ -592,7 +605,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_move_request',
-      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. One offer per turn.',
+      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. One offer per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -885,7 +898,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
     }))
     : (await bot.workingNow(pool, settings, { userId }))
       .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
-  const cap = Number(settings?.userWeeklyCents) || 0;
+  const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   return {
     workingOnNow,
@@ -1780,8 +1793,23 @@ async function runTool(pool, ctx, name, args) {
         const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
         const details = clip(args.details, MAX_DETAILS_CHARS);
         if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        ctx.offer = { app, title, details };
-        return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
+        // #4501: a name they wrote that is not exactly this project's is a
+        // guess, and a guess is confirmed on the card before anything files.
+        const guess = guessedProject(args.named, app);
+        ctx.offer = { app, title, details, ...(guess ? { guess } : {}) };
+        // A request already on its board that looks like this one is said,
+        // so their words can go on it instead (request-similarity.js).
+        const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
+        return {
+          ok: true,
+          shown: guess
+            ? `The card asks "Did you mean ${app.name || app.slug}?" with Yes, file it, No, another app and Open ${app.name || app.slug}. Nothing is filed until they tap Yes. Never say it is the closest match and carry on.`
+            : 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.',
+          ...(similar.length ? {
+            similarOpen: similar,
+            similarNote: 'These open requests on the same project look like the same thing. Say so, show them as cards, and offer to add their words to one (comment_on_request) instead. The offer stays under your reply for them to decide.',
+          } : {}),
+        };
       }
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
@@ -2441,6 +2469,40 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
 
 // ── An offer, and the tap that decides it ─────────────────────────────────
 
+/**
+ * #4501: the name somebody wrote for a project, when it is not exactly the
+ * project the model picked ("Gym Trackr" for Gym Tracker), or null. Case,
+ * spaces and punctuation aside, and a slug's own suffix aside. Pure.
+ */
+function guessedProject(named, app) {
+  const squash = (value) => String(value || '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, '');
+  const wrote = squash(named);
+  if (!wrote || !app) return null;
+  const slug = String(app.slug || '');
+  const exact = [app.name, slug, slug.replace(/-[0-9a-f]{6}$/, '')].map(squash).filter(Boolean);
+  return exact.includes(wrote) ? null : clip(String(named).replace(/\s+/g, ' ').trim(), 80);
+}
+
+// #4501: the buttons under a request filed on a project whose name was a
+// guess. Yes files it, as File it does; No, another app is said back on the
+// card, so the model asks which project; Open lets them look first.
+const GUESS_YES = 'Yes, file it';
+const GUESS_OTHER = 'No, another app';
+
+function guessMeta({ app, name, actionId }) {
+  const open = dmModule({}).openAppAction({ slug: app.slug, appName: name });
+  return {
+    kind: 'confirm', appSlug: app.slug, appName: name, actionId, question: `Did you mean ${name}?`,
+    answers: [GUESS_YES, GUESS_OTHER],
+    actions: [
+      { id: 'yes', label: GUESS_YES, style: 'primary', type: 'server' },
+      { id: 'other', label: GUESS_OTHER, style: 'secondary', type: 'prompt', quote: true },
+      ...(open ? [{ ...open, style: 'secondary' }] : []),
+    ],
+    status: 'open', mirrors: false,
+  };
+}
+
 // An offer's metadata: its question and its buttons (offerActions).
 function confirmMeta(kind, { app, name, actionId, question }) {
   return {
@@ -2499,7 +2561,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...(o.details ? ['', `Why: ${clip(o.details, 600)}`] : []),
     ].join('\n')
     : [
-      text || `Here is the request I'd file on ${name}.`,
+      text || (o.guess ? `Did you mean ${name}? Here is the request I'd file there.` : `Here is the request I'd file on ${name}.`),
       '',
       `**${name}** · new request: ${o.title}`,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
@@ -2518,6 +2580,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       : move || close ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
     metadata: move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
       : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
+      : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
       : confirmMeta(kind, {
         app: o.app, name, actionId: action.id,
         question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
@@ -3873,6 +3936,8 @@ module.exports = {
   confirmMeta,
   closeOfferText,
   closeOfferMeta,
+  guessedProject,
+  guessMeta,
   decideTyped,
   typedDecision,
   fileRequest,

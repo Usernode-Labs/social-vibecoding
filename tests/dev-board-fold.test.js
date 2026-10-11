@@ -247,7 +247,8 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // The Workshop's By category draws the board's rows (#4486), so it no
   // longer imports the fold's row at all; `openHref` rides the same import
-  // since the Needs-you feed.
+  // since the Needs-you feed, and `voteSpecs` since Your work's rows carry
+  // a change's own Vote (After-Workshop-B).
   assert.match(WORKSHOP, /import \{ callAppView, openHref \} from '\.\.\/card\/fold';/);
   assert.ok(!/CardRowView/.test(WORKSHOP), 'By category unfolds nothing in place');
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
@@ -1340,8 +1341,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 818 → 820: +2 (communities, stage 5): a new account's first run. The
   // join screen ("What communities do you want to join?", ?shot=join-
-  // communities) and Home's Getting started card (?shot=getting-started),
-  // two new routes with nothing already declared on them to fold into.
+  // communities) and Home's Getting started card (?shot=getting-started,
+  // whose check #4635 retired with the card), two new routes with nothing
+  // already declared on them to fold into.
   // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
   // the next proposal to add a check folds into an existing one or raises
   // the cap, as tests/lib/check-cap.js says.
@@ -1611,14 +1613,24 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 736 + (−4) → 732: both changes land together; 732 leaves 148 slots.
   //
+  // 732 → 729: −3 (#4729): the mark menu's Agent chats section left the menu
+  // whole, and its Build it now row's three checks went with it — Build it
+  // now opens from Messages' Agents list now, which the rewritten menu check
+  // covers. 729 leaves 151 slots.
+  //
   // 732 → 733: +1 (#4309 follow-up): a change merged into Homeroom itself
   // says on its page when the next release carries it ("Merged; goes live in
   // the next release (about 8 minutes)"), on the ?demo=1 mock 9100035, a
   // state no other check's route reaches. 733 leaves 147 slots.
   //
+  // 733 → 732: −1 (#4635): Home's Getting started card is retired, and its
+  // check (home.getting-started-card on ?shot=getting-started) with it. A new
+  // account's First challenges are ordinary Challenges cards now, which the
+  // checks on Home's Challenges block already read. 732 leaves 148 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 729);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1705,12 +1717,14 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  for (const kind of ['vote', 'ask', 'comments']) {
+  // Two dialogs since the reel redesign: the vote, and the one sheet whose
+  // two tabs are Comments and Ask.
+  for (const kind of ['vote', 'talk']) {
     assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
       `the ${kind} dialog carries the deck’s base class`);
   }
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and none of the three carries the fold’s');
+    'and neither carries the fold’s');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1899,7 +1913,7 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // the title, then the sentence, then the caption) with the same `+`/`~`
   // direction.
   assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption"?$/);
+  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

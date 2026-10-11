@@ -407,21 +407,20 @@ const NEEDS_FEED_SQL = `
 `;
 
 // The same feed, counted per project and in the order the viewer joined
-// them: what the Getting started card's Vote step reads (services/
-// onboarding.js), so the step and the Needs you tab it sends people to agree
-// on what is waiting and where. The SAME owed predicates, the same
-// visibility filter and the same membership rule as NEEDS_FEED_SQL; only the
-// shape differs. `$1` is the viewer, `$2` "may see self-hosted rows", `$3`
+// them (services/places.js reads it; so did the Getting started card's Vote
+// step, until #4635 retired the card), so a count and the Needs you tab it
+// sends people to agree on what is waiting and where. The SAME owed
+// predicates, the same visibility filter and the same membership rule as
+// NEEDS_FEED_SQL; only the shape differs. `$1` is the viewer, `$2` "may see self-hosted rows", `$3`
 // "is an admin", as above.
 //
-// `paying` is how many of a project's `waiting` the card's Vote step can
-// send somebody to: the ones whose vote the scorer's VOTE_CAST pays
+// `paying` is how many of a project's `waiting` the scorer's VOTE_CAST pays
 // (services/topochain/challenge-scorer.js VOTE_CAST_SQL, the same two
 // tests). Not a proposal the Homeroom bot built from a request the viewer
 // made, and nothing in a project only the viewer is in ("Just you"): the
 // bot's first version of their own solo app waits in their Needs you like
 // any other proposal, but voting on it is not judging somebody else's
-// change. The feed itself still lists them; only the card skips them.
+// change. The feed itself still lists them; `paying` skips them.
 const OWED_BY_COMMUNITY_SQL = `
   WITH owed AS (
     SELECT cs.app_id,

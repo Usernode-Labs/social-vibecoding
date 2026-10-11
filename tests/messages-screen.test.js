@@ -83,9 +83,12 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   // #2813 added the agent thread as a third argument, last in precedence;
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
-  // The hub's channel card points here, not at the app view.
+  // The hub's record still names the room at this address; the hub's own
+  // Discussion row opens the project page's Discussion place, where the
+  // room is drawn whole, and links nowhere else.
+  assert.match(read('src/routes/apps.js'), /href: `#messages\/app\/\$\{encodeURIComponent\(app\.slug\)\}`,/);
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
+    /data-ws-channel="preview"\s+data-ws-channel-open=""[\s\S]{0,120}onClick=\{onOpen\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
   assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);

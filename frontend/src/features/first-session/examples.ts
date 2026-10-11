@@ -86,6 +86,11 @@ export type Template = {
    * empty suggests none) and the project's description.
    */
   own: { sentence: string; example: string; name: string; description: string };
+  /**
+   * The name field's example while it is empty, a name of this idea's kind
+   * (Evan, 10 Oct 2026: a game's was "Hiking Tier List"). A message id.
+   */
+  namePlaceholder: string;
   /** Always finished in the maker's own words; Your own comes first and is picked first. */
   finish?: boolean;
   /**
@@ -102,6 +107,7 @@ export const TEMPLATES: readonly Template[] = [
     emoji: '📊',
     chart: true,
     title: 'onboarding:firstSession.template.tier.title',
+    namePlaceholder: 'onboarding:firstSession.make.namePlaceholder',
     line: 'onboarding:firstSession.template.tier.line',
     short: 'onboarding:firstSession.template.tier.short',
     choices: [
@@ -117,6 +123,7 @@ export const TEMPLATES: readonly Template[] = [
     key: 'game',
     emoji: '🎮',
     title: 'onboarding:firstSession.template.game.title',
+    namePlaceholder: 'onboarding:firstSession.template.game.namePlaceholder',
     line: 'onboarding:firstSession.template.game.line',
     short: 'onboarding:firstSession.template.game.short',
     finish: true,
@@ -133,6 +140,7 @@ export const TEMPLATES: readonly Template[] = [
     key: 'organizer',
     emoji: '📋',
     title: 'onboarding:firstSession.template.organizer.title',
+    namePlaceholder: 'onboarding:firstSession.template.organizer.namePlaceholder',
     line: 'onboarding:firstSession.template.organizer.line',
     short: 'onboarding:firstSession.template.organizer.short',
     choices: [

@@ -659,6 +659,9 @@ test('Save changes sends only what changed, in the route\'s own shape, or says w
   assert.match(buildPatch({ ...form, models: { ...form.models, build: 'not a model' } }, saved, ['models']).error, /^Build: a model is an OpenRouter id/);
   assert.match(buildPatch({ ...form, botCap: '' }, saved, ['botCap']).error, /^The bot's weekly budget: enter a dollar amount\.$/);
   assert.match(buildPatch({ ...form, userCap: '-1' }, saved, ['userCap']).error, /0 for no limit/);
+  assert.equal(saved.adminCap, '100.00', 'an admin\'s budget is $100 until it is saved');
+  assert.deepEqual(buildPatch({ ...form, adminCap: '250' }, saved, ['adminCap']).patch, { adminWeeklyCents: 25000 });
+  assert.match(buildPatch({ ...form, adminCap: '-1' }, saved, ['adminCap']).error, /^The budget per admin: .*0 for no limit/);
   assert.deepEqual(buildPatch({ ...form, models: { ...saved.models, build: '' } }, saved, ['models']).patch, { models: { build: '' } },
     'back to the platform default is a blank');
 

@@ -110,6 +110,32 @@ export function MembersDialog() {
           </div>
         </div>
         {/*
+            #4666: on every project but the platform's own, how changes are
+            approved (and who can see it) is the Who can see & change it
+            sheet's (./who-decides.tsx); this row is the way there, shown by
+            the controller to whoever manages the project. The governance
+            section below stays for the platform's own project, whose rule is
+            its invited approvers.
+        */}
+        <div id="members-who-decides" className="hidden mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+          <button
+            type="button"
+            data-members-who-decides=""
+            className="flex w-full min-h-[44px] items-center gap-3 text-left"
+            onClick={() => {
+              const slug = window.AppView?.appData?.slug;
+              dialog.close();
+              window.UsernodeReact?.dialogs?.whoDecides?.open({ slug });
+            }}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">{t('dialogs:members.whoDecides.title')}</span>
+              <span className="block text-sm text-zinc-500 dark:text-zinc-400">{t('dialogs:members.whoDecides.sub')}</span>
+            </span>
+            <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">›</span>
+          </button>
+        </div>
+        {/*
             Proposal approvals (issue #646): who can approve proposals +
             how many approvals are needed. Shown to creator/admin; changes
             open a dapp.json governance PR (POST .../governance-pr).

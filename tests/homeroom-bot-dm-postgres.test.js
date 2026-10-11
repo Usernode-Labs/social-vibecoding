@@ -410,6 +410,20 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 5000 }, ada.id), false);
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200 }, ada.id), true);
     assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 0 }, ada.id), false, '0 is no cap');
+    // An admin's week is the per-admin cap, in place of the per-person one.
+    await pool.query('UPDATE users SET is_admin = TRUE WHERE id = $1', [ada.id]);
+    try {
+      assert.equal(await dm.weeklyCapCents(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), 5000);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), false);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 5000, adminWeeklyCents: 1200 }, ada.id), true);
+      assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 0 }, ada.id), false, '0 is no cap for an admin');
+      assert.equal(await dm.allowanceLow(pool, { userWeeklyCents: 5000, adminWeeklyCents: 1500 }, ada.id), true);
+    } finally {
+      await pool.query('UPDATE users SET is_admin = FALSE WHERE id = $1', [ada.id]);
+    }
+    assert.equal(await dm.weeklyCapCents(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), 1200);
+    assert.equal(await dm.overWeeklyAllowance(pool, { userWeeklyCents: 1200, adminWeeklyCents: 5000 }, ada.id), true,
+      'everyone else keeps the per-person cap');
     assert.equal(await dm.weeklySpentCents(pool, sam.id), 0);
 
     // What the bot caused itself (a restart's look, fixing its own checks) is

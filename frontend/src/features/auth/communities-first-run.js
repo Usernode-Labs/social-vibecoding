@@ -2,8 +2,7 @@
 //
 // The third first-run step, after "Choose your username"
 // (./username-first-run.js) and the terms (../settings/terms-first-run.js),
-// and before Home's Getting started card, whose first row offers the welcome
-// tour (../home/tour, #3240). A new account picks the communities it wants to be part of
+// and before Home. A new account picks the communities it wants to be part of
 // before it sees Home, so the Home it lands on already has them on it: each
 // one it joins is pinned there (services/communities.js `join`).
 //
@@ -40,8 +39,8 @@
 // line under the name rather than instead of it. One button, which says
 // what it will do: "Join 3 communities". Homeroom is not counted in it: the
 // account is already in Homeroom, so keeping it ticked joins nothing, and it
-// never ticks "Join a community" on the Getting started card
-// (src/services/onboarding.js, COMMUNITY_JOINED), so the button and the
+// never ticks the "Join a community" First challenge
+// (services/topochain/challenge-scorer.js, COMMUNITY_JOINED), so the button and the
 // toast after it never call it a join. Homeroom ticked alone is "Continue".
 // Unticking everything is allowed to be a dead end on purpose ("Pick at
 // least one"): a newcomer in no community has nothing on Home and nothing in
@@ -216,8 +215,7 @@
     // Has THIS document shown the real join screen (never the ?shot=
     // fixture)? Read by the tour: a first run shown here, a new account's or
     // one an admin reset (Admin → Users → ⋯ → Reset first run), clears this
-    // browser's "done" for the tour, as the reset cleared the account's, so
-    // the Getting started card offers the tour again.
+    // browser's "done" for the tour, as the reset cleared the account's.
     shownHere() {
       return CommunitiesFirstRun._shownHere === true;
     },
@@ -338,8 +336,8 @@
       // code, a provider, an admin-made test account) is asked "What do
       // you want to make?" like one that did (../first-session), and
       // recorded the way that sheet records it (POST /api/me/first-session/
-      // started). Getting started stays out of the first session. With no
-      // island to open it, the join screen is asked as before.
+      // started). With no island to open it, the join screen is asked as
+      // before.
       const firstSession = CommunitiesFirstRun._island();
       if (window.App.user.storyFirstSession === true && firstSession) {
         CommunitiesFirstRun._openFirstSession(firstSession);
@@ -634,12 +632,11 @@
           }
           if (window.App && window.App.user) {
             window.App.user.needsCommunitiesChoice = false;
-            if (!body.alreadyDone) window.App.user.showGettingStarted = true;
             try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
           }
           dismiss();
-          // Home re-reads the pins the joins just made, and the Getting
-          // started card appears (features/home/getting-started.tsx).
+          // Home re-reads the pins the joins just made, and its Challenges
+          // block the "Join a community" First challenge they ticked.
           document.dispatchEvent(new CustomEvent('sv:communities-joined', {
             detail: { joined: body.joined || [] },
           }));
@@ -659,8 +656,7 @@
 
       save.addEventListener('click', () => {
         if (!picked.size) return;
-        // In the listed order, so the first one ticked below Homeroom is the
-        // one the Getting started card is about.
+        // In the listed order.
         void answer({ join: list.map((c) => c.slug).filter((s) => picked.has(s)) });
       });
       skip.addEventListener('click', () => { void answer({ skip: true }); });

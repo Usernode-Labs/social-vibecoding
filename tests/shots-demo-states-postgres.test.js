@@ -335,11 +335,12 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     `SELECT mode, verdict, build_ok, proposal_session_id FROM homeroom_bot_runs WHERE build_branch IS NOT NULL`);
   assert.deepEqual(verdict, { mode: 'live', verdict: 'ready', build_ok: true, proposal_session_id: demoStates.IDS.proposal });
 
-  // First challenges, finished by every persona so nothing else is hidden;
-  // an Always open challenge counted just now.
+  // First challenges, finished by every persona, so the group sits at the
+  // end; an Always open challenge counted just now.
   for (const persona of ['usernode-capture', 'usernode-capture-admin', 'usernode-shots-full-admin']) {
     const onboarding = await loadOnboarding(pool, ids[persona], { eventId: 900501 });
-    assert.deepEqual(onboarding.summary, { total: 3, completed: 3, unlocked: true, event_id: 900501 }, persona);
+    assert.deepEqual(onboarding.ids, [...demoStates.IDS.onboardingChallenges], persona);
+    assert.deepEqual(onboarding.ids.map((id) => onboarding.progress.get(id).done), [true, true, true], persona);
   }
   const { rows: [rule] } = await pool.query(
     `SELECT r.interval_minutes, r.last_scored_at > NOW() - INTERVAL '1 minute' AS fresh, t.category

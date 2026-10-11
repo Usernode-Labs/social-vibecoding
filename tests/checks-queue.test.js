@@ -180,7 +180,7 @@ test('the stale sweep skips a queued session while it has a row in line, and onl
   const sql = queries[0].sql;
   assert.match(sql, /cs\.check_phase IS DISTINCT FROM 'queued'\s+OR NOT EXISTS \(SELECT 1 FROM check_runs cr\s+WHERE cr\.session_id = cs\.id AND cr\.admitted_at IS NULL\)/,
     'a queued session with no row left in line is overdue by the usual clock: the backstop');
-  assert.deepEqual(queries[0].params, [600000, 6, 50]);
+  assert.deepEqual(queries[0].params, [600000, 6, 50, stagingRecovery.PLATFORM_FAULT_RETRY_MS]);
 });
 
 test('the merge gate kicks no recheck for a queued run, and says it is waiting', () => {

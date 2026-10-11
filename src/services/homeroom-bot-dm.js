@@ -38,8 +38,9 @@
 // It talks to everybody Homeroom has let in (hasBot). It was tried out one
 // person at a time first, on a list an admin kept. What each person's
 // requests may cost the platform in a week is capped
-// (`homeroom_bot_user_weekly_cents`, $50 to start), apart from their own
-// allowance for agents.
+// (`homeroom_bot_user_weekly_cents`, $50 to start; an admin's by
+// `homeroom_bot_admin_weekly_cents`, $100), apart from their own allowance
+// for agents.
 //
 // Never a reason anything else fails: every entry point here is called
 // best-effort, after the request, the post or the merge it follows.
@@ -138,6 +139,9 @@ function requesterFrom(row, overrides = {}) {
     isSynthetic: !!row.is_synthetic,
     hasPlatformAccess: !!row.has_platform_access,
     isAdmin: !!row.is_admin,
+    // #4645: their language preference (users.locale, Settings → Language;
+    // null unset), for the prompts that write to them (live.localeRule).
+    locale: row.locale || null,
     ...overrides,
   };
 }
@@ -581,7 +585,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -616,7 +620,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   if (!rows.length) return null;
   // Who they are, as hasBot reads it.
   const { rows: who } = await pool.query(
-    'SELECT u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [rows[0].user_id],
   );
   return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
@@ -626,7 +630,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
 async function personOf(pool, userId) {
   if (!userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   return rows[0] ? requesterFrom(rows[0]) : null;
@@ -634,7 +638,7 @@ async function personOf(pool, userId) {
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
@@ -687,17 +691,33 @@ async function weeklySpentCents(pool, userId) {
 // says so (activity.js), and the bot's own status answer calls it low.
 const ALLOWANCE_LOW_SHARE = 0.2;
 
+/**
+ * This person's week of building time, in cents: the per-admin cap
+ * (`homeroom_bot_admin_weekly_cents`) for an admin, view-only ones included,
+ * else the per-person one. 0 means no cap. Reads the account only when the
+ * two differ.
+ */
+async function weeklyCapCents(pool, settings, userId) {
+  const cap = Number(settings?.userWeeklyCents);
+  const adminCap = Number(settings?.adminWeeklyCents);
+  if (!userId || !Number.isFinite(adminCap) || adminCap === cap) return cap;
+  const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
+  return rows[0]?.is_admin === true ? adminCap : cap;
+}
+
 /** Whether this person has less than ALLOWANCE_LOW_SHARE of their week left. False with no cap. */
 async function allowanceLow(pool, settings, userId) {
-  const cap = Number(settings?.userWeeklyCents);
-  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  if (!userId) return false;
+  const cap = await weeklyCapCents(pool, settings, userId);
+  if (!Number.isFinite(cap) || cap <= 0) return false;
   return cap - await weeklySpentCents(pool, userId) < cap * ALLOWANCE_LOW_SHARE;
 }
 
 /** Whether this person's requests have used their week's allowance. 0 means no cap. */
 async function overWeeklyAllowance(pool, settings, userId) {
-  const cap = Number(settings?.userWeeklyCents);
-  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  if (!userId) return false;
+  const cap = await weeklyCapCents(pool, settings, userId);
+  if (!Number.isFinite(cap) || cap <= 0) return false;
   return (await weeklySpentCents(pool, userId)) >= cap;
 }
 
@@ -919,6 +939,35 @@ function updateFailedWords(reason, it = 'this change', voice = 'me') {
 }
 
 /**
+ * A request the triage found already done (`done`: it exists in the app, or
+ * a merged change did it). It was a dead end: "a person needs to decide",
+ * with nothing to decide. The offer to vote on closing it follows
+ * (relayIssuePost); a reply here still asks the bot to look again.
+ */
+function doneText(line, dm) {
+  return `${line}\n\nThis looks done already, so I haven't built anything: ${clip(dm.reason, 600)}\n\n`
+    + 'If that covers what you asked for, you can open a vote on closing it below. If something is still missing, '
+    + 'reply to this message and say what, and I\'ll look at it again.';
+}
+
+/**
+ * Who a person hand-off waits on, when it is not the requester: the
+ * project's creator and admins (homeroom-bot.js whoDecides), at most four,
+ * as usernames.
+ */
+function personDeciders(dm) {
+  return (Array.isArray(dm?.deciders) ? dm.deciders : [])
+    .filter((name) => typeof name === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(name))
+    .slice(0, 4);
+}
+
+/** "@a", "@a or @b", "@a, @b or @c". */
+function deciderNames(dm) {
+  const names = personDeciders(dm).map((name) => `@${name}`);
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+}
+
+/**
  * The DM text for one of the bot's posts on a request, from the structured
  * `dm` its caller passed (homeroom-bot.js): plain words, no code. Returns
  * null for a kind the DM does not carry.
@@ -1013,14 +1062,25 @@ function dmText(kind, dm, context) {
           + `can do it, and I haven't built anything: ${clip(dm.reason, 600)}\n\n`
           + 'I can move it to Homeroom\'s own board, where the people who work on Homeroom look. Tap below to choose.';
       }
+      if (dm.done) return doneText(line, dm);
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the
       // request, and the bot looks at it again with it.
+      // On a project where somebody else decides (its creator or admins,
+      // homeroom-bot.js whoDecides), a go-ahead from the requester would
+      // only be read to the same answer: they are told who it waits on.
+      if (personDeciders(dm).length) {
+        const several = personDeciders(dm).length > 1;
+        return `${line}\n\nThis needs a person to decide, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
+          + `On ${context.appName}, ${deciderNames(dm)} ${several ? 'decide' : 'decides'} things like this. `
+          + `Once ${several ? 'one of them says' : 'they say'} to go ahead on the request, I'll look at it again.`;
+      }
       return `${line}\n\nThis needs a person to decide, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
         + 'If you decide to go ahead (or the group does), reply to this message and say so, and I\'ll look at it again.';
     case 'followup_person':
       return `${line}\n\nThis needs a person to decide, so I've left it for the group: ${clip(dm.reason, 600)}`;
     case 'empty':
+      if (dm.done) return doneText(line, dm);
       return `${line}\n\nI couldn't find anything to build in this yet. Reply to this message with what you'd like `
         + 'changed and I\'ll look again.';
     // A cap on how many changes the bot keeps waiting for approval held a
@@ -1285,8 +1345,11 @@ async function relayIssuePost({
     ...(dm.link ? { link: dm.link } : {}),
     // Where it is stuck, what to tap (STUCK_ACTIONS).
     // #4239: not Go ahead on a request about Homeroom itself; its own
-    // message offers the move instead.
-    ...(STUCK_ACTIONS[kind] && !(kind === 'person' && dm.platform) ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
+    // message offers the move instead. Nor to a requester who does not
+    // decide on the project: theirs would be read to the same answer.
+    // Nor under a request that is done already: the close offer follows.
+    ...(STUCK_ACTIONS[kind] && !(kind === 'person' && (dm.platform || personDeciders(dm).length)) && !dm.done
+      ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
     // one person's project (the title), who else it waits on and how many of
     // them it needs, their words.
@@ -1362,6 +1425,12 @@ async function relayIssuePost({
       bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
       key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
     });
+  } else if ((kind === 'person' || kind === 'empty') && dm.done) {
+    // And for one that is done already, the offer to vote on closing it.
+    await require('./homeroom-bot-move').offerClose(pool, {
+      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
+      key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
+    });
   }
   return told;
 }
@@ -1379,6 +1448,16 @@ async function relayIssuePost({
 // the card (closePlanCards); its bullets stay.
 
 const PLAN_KIND = 'plan';
+
+// B6: the message under a plan that stopped waiting (closePlanCards). It
+// rings nothing: it is news, not a decision, and the card above it is what
+// a reply picks up again.
+const PLAN_STOPPED_KIND = 'plan_stopped';
+
+function planStoppedText(appName) {
+  return `Nobody tapped Build it on the plan${appName ? ` for ${appName}` : ''} for a week, so I put it away and built nothing. `
+    + 'Reply to the plan above to pick it up again.';
+}
 const BUILD_IT = 'Build it';
 // A reply to a plan that says to go ahead, rather than what to change.
 const PLAN_GO_WORDS = new Set([
@@ -1500,17 +1579,23 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
  * B6: the cards of plans that stopped waiting (`runIds`): their buttons go on
  * every device. `stopped` (a week with no tap) says so and asks for a reply;
  * otherwise the card reads "No longer needed", until a newer plan replaces
- * it. Never throws.
+ * it. A stopped plan is also said once, in a message of its own with its
+ * request's card (planStoppedText): a card that changes a week up the
+ * conversation is one nobody sees, and the plan just went quiet. Never
+ * throws.
  */
-async function closePlanCards(pool, runIds, { stopped = false, ws = null } = {}) {
+async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = null } = {}) {
   const ids = (runIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
   if (!ids.length) return 0;
   try {
     const { rows } = await pool.query(
-      `SELECT message_id, conversation_id, user_id FROM homeroom_bot_dm_messages
-        WHERE kind = $2 AND run_id = ANY($1::int[])`,
+      `SELECT d.message_id, d.conversation_id, d.user_id, d.run_id, d.app_id, d.issue_number,
+              COALESCE(NULLIF(a.name, ''), a.slug) AS app_name, a.slug AS app_slug
+         FROM homeroom_bot_dm_messages d LEFT JOIN apps a ON a.id = d.app_id
+        WHERE d.kind = $2 AND d.run_id = ANY($1::int[])`,
       [ids, PLAN_KIND],
     );
+    let sender = bot;
     for (const row of rows) {
       await pool.query(
         'UPDATE homeroom_bot_dm_actions SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
@@ -1519,6 +1604,24 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null } = {})
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
         ws, conversationId: row.conversation_id, userId: row.user_id,
       });
+      if (!stopped) continue;
+      try {
+        sender = sender || await botAccount(pool);
+        await sendDm(pool, {
+          bot: sender,
+          userId: row.user_id,
+          content: planStoppedText(row.app_name),
+          // The request it is about, as a card: a bot message quotes only
+          // the person's own (quotable).
+          objects: cardsFor(PLAN_STOPPED_KIND, {}, { id: row.app_id }, row.issue_number),
+          idempotencyKey: `hrbot-plan-stopped-${row.run_id}`,
+          metadata: {
+            kind: PLAN_STOPPED_KIND, appSlug: row.app_slug, appName: row.app_name, issueNumber: Number(row.issue_number),
+          },
+        });
+      } catch (err) {
+        log.warn('homeroom-bot-dm', 'Closed a stopped plan, but could not say so', { runId: row.run_id, err: err.message });
+      }
     }
     return rows.length;
   } catch (err) {
@@ -4021,6 +4124,8 @@ function firstSentence(text, max = 90) {
 }
 
 module.exports = {
+  PLAN_STOPPED_KIND,
+  planStoppedText,
   BOT_USERNAME,
   QUESTION_KINDS,
   MIRRORED_KINDS,
@@ -4085,6 +4190,7 @@ module.exports = {
   requesterOf,
   personOf,
   weeklySpentCents,
+  weeklyCapCents,
   overWeeklyAllowance,
   noteOverAllowance,
   overAllowanceText,

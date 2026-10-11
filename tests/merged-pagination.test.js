@@ -337,7 +337,9 @@ test('a self-hosted merge going live carries its next release, and the Done colu
   });
   const { payload } = await callMerged(routes, captured, {});
   assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deploying', 'deployed', 'deployed']);
-  const release = { state: 'next', etaAt: new Date(now + 8 * MIN).toISOString() };
+  // Released 3 minutes ago, the newest merge a minute ago: its build ends in
+  // 4 minutes (past the 4-minute gap), live a minute after.
+  const release = { state: 'next', etaAt: new Date(now + 5 * MIN).toISOString() };
   assert.deepEqual(payload.merged[0].release, release);
   assert.equal(payload.merged[1].release, undefined, 'live already');
   assert.deepEqual(payload.deployment.release, release);

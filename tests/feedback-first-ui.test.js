@@ -194,6 +194,18 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   assert.ok(q.shown());
   assert.ok(q.el('feedback-sent').classList.contains('hidden'), 'one confirmation at a time');
 });
+// #4680: the form carries the same way to Your requests, under the intro
+// line, so what is already asked for is readable before a new one is written.
+// The route is written before the close, the same as the confirmations' links.
+test('the form itself offers Your requests before anything is typed', async () => {
+  const h = harness();
+  h.sandbox.App.openFeedbackModal();
+  assert.equal(h.el('feedback-form').classList.contains('hidden'), false, 'the form, not a confirmation');
+  h.el('feedback-form-mine').click();
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
+  assert.deepEqual(h.calls.filter((c) => c.url === '/api/feedback').length, 0, 'nothing filed by the look');
+});
 test('a rejected submission never congratulates the user', async () => {
   const h = harness({ ok: false, response: { error: 'Try again' } }); await h.submit();
   assert.equal(h.shown(), false);

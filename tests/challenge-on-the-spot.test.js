@@ -177,10 +177,11 @@ test('a vote credit names what was voted on, and is dated when it was cast', asy
   assert.equal(out[0].activityAt, iso(NOW - HOUR));
 });
 
-// evan, 2026-10-01: with nothing up for a vote in any community a newcomer is
-// in, the Getting started card's Vote step is a look at the Workshop, which
-// the server records only then. VOTE_CAST counts that look as it counts a
-// vote: the same window, one credit a person, whichever came first.
+// evan, 2026-10-01: with nothing up for a vote in any community a newcomer was
+// in, the Getting started card's Vote step was a look at the Workshop, which
+// the server recorded only then. VOTE_CAST counts that look as it counts a
+// vote: the same window, one credit a person, whichever came first. The card
+// is gone (#4635) and nothing records a look now; one recorded before counts.
 test('a look at the Workshop when nothing was up for a vote counts for VOTE_CAST, and the admin is told so', () => {
   const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
   assert.match(sql, /SELECT w\.user_id, 'workshop' AS kind, w\.user_id AS ref_id, w\.created_at, NULL AS app_id/);

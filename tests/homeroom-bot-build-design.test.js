@@ -239,7 +239,7 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
     assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
     // #4487: and a later change is asked to declare its visible changes.
-    const declare = live.BUILD_VISIBLE_CHANGES_LINES.join('\n');
+    const declare = live.buildVisibleChangesLines(null).join('\n');
     assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
     // The copies have no model key, so no declared step waits for the bot (PR 4536).
     assert.match(declare.replace(/\n/g, ' '), /The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says it cannot reach its model there/);

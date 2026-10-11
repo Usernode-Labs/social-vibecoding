@@ -335,26 +335,6 @@
       ],
       "why": "Example of a six-digit code in a placeholder; digits only."
     },
-    "frontend/src/features/home/getting-started.tsx": {
-      "texts": [
-        "City garden",
-        "Take the 1-minute tour",
-        "See how Homeroom works.",
-        "Join a community",
-        "Find people to build with.",
-        "Try an app",
-        "Open an app and try it.",
-        "Vote on an app",
-        "Help decide what goes live next.",
-        "Send feedback",
-        "Tell a community what would make it better.",
-        "Make your first change",
-        "Get a change live",
-        "Invite a friend",
-        "Start a community"
-      ],
-      "why": "The screenshot fixtures (FIXTURE_STEPS, FIXTURE_UNLOCKS, CITY_GARDEN behind ?shot=getting-started*). They stand in for the server's payload: a step's title and detail, a challenge's name and an app's name are the server's and the organisers' words (src/services TOUR_STEP holds the same tour title), which the client never translates."
-    },
     "frontend/src/features/apps/browse-list.tsx": {
       "texts": [
         "Not yet reviewed",

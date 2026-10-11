@@ -59,9 +59,17 @@
     "text": "See older message notifications",
     "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
   },
+  "sheet.older.reveal": {
+    "text": "See older notifications",
+    "description": "Button at the foot of the notifications sheet's Unread filter: shows the older, mostly read notifications under the unread ones, on the same tab, and loads the next batch if the server has one."
+  },
+  "sheet.older.hide": {
+    "text": "Hide older notifications",
+    "description": "Button at the foot of the notifications sheet's Unread filter once the older notifications are showing: collapses the list back to just the unread ones."
+  },
   "sheet.older.showAll": {
     "text": "See older notifications",
-    "description": "Button at the foot of the notifications sheet's Unread and Messages filters: switches to the All filter, where read notifications are listed too."
+    "description": "Button at the foot of the notifications sheet's Messages filter: switches to the All filter, where read notifications are listed too."
   },
   "sheet.older.load": {
     "text": "See older notifications",
@@ -1039,6 +1047,10 @@
     "text": "{{count}} people are in it",
     "description": "Under a pending invitation to a private project. {{count}} is how many members the project has. \"It\" is the project."
   },
+  "invite.alreadyIn": {
+    "text": "You're already in it",
+    "description": "Under a pending invitation to a project the viewer already belongs to (they joined through a link or the Join button while the invitation was still waiting). \"It\" is the project."
+  },
   "invite.meta.membersWhen": {
     "text": "<0>{{members}} · </0><1>{{when}}</1>",
     "description": "Small line under a pending invitation. {{members}} is the finished phrase saying how many people are in the project and {{when}} how long ago the invitation was sent. Only the separator between them is translated; keep it inside the first tag."
@@ -1094,6 +1106,18 @@
   "invite.acceptFailed": {
     "text": "Accept failed (HTTP {{status}})",
     "description": "Brief message shown when accepting an invitation failed and the server gave no reason. {{status}} is the numeric HTTP status code; keep \"HTTP\"."
+  },
+  "invite.acceptedBuild": {
+    "text": "You can now build {{project}}",
+    "description": "Brief message shown after the viewer accepted an invitation to work on the project {{project}} (the project's name). \"Build\" is a verb: make the project together."
+  },
+  "invite.acceptedBuildUnnamed": {
+    "text": "You can now build this project",
+    "description": "Brief message shown after the viewer accepted an invitation to work on a project whose name is not known. \"Build\" is a verb: make the project together."
+  },
+  "invite.declined": {
+    "text": "Invite declined",
+    "description": "Brief message shown after the viewer turned a pending invitation down from the notifications sheet."
   },
   "toast.markAllFailed": {
     "text": "Couldn’t mark notifications as read. Try again.",

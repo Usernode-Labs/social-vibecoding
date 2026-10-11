@@ -19,9 +19,10 @@
 
 const appChat = require('./app-chat');
 const log = require('./logger');
+const topicFigures = require('./topic-figures');
 
 const TOPIC_COLUMNS = `id, category_key, label, description, icon, topic_handle, topic_aliases,
-                       topic_state, merged_into, merged_at, topic_order`;
+                       topic_state, merged_into, merged_at, topic_order, topic_figures`;
 
 /** A topic row as the client reads it. */
 function shapeTopic(row) {
@@ -38,6 +39,8 @@ function shapeTopic(row) {
     merged_into: row.topic_state === 'merged' ? row.merged_into || null : null,
     merged_at: row.topic_state === 'merged' && row.merged_at ? new Date(row.merged_at).toISOString() : null,
     order: row.topic_order == null ? null : Number(row.topic_order),
+    // The figures its channel shows above the room (services/topic-figures.js).
+    figures: topicFigures.knownFigureIds(row.topic_figures),
   };
 }
 
@@ -154,7 +157,8 @@ async function topicRequestCounts(pool, appId, keys) {
  * cursors for them.
  *
  *   { owed, channels: [{ id, kind, key, handle, aliases, name, about, icon,
- *                        state, merged_into, merged_at, requests, unread }] }
+ *                        state, merged_into, merged_at, requests, unread,
+ *                        figures }] }
  *
  * Best-effort per part: a count that fails to read is null, never a failed
  * page.
@@ -205,6 +209,7 @@ async function placesFor(pool, app, viewer, { general = null, member = false, sh
       merged_at: null,
       requests: null,
       unread: Number(general.unread_count) || 0,
+      figures: [],
     });
   }
   for (const t of topics) {

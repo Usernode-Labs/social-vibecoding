@@ -152,26 +152,6 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
-  /**
-   * "Finish Getting started to unlock the rest of the season." while the
-   * gate is closed and the block has no locked card to say it (nothing
-   * hidden to count); null once unlocked or with no gate.
-   */
-  onboardingNote?: string | null;
-  /**
-   * How many challenges Getting started still hides (the server's
-   * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
-   * count. Above 0 the block is `locked`.
-   */
-  lockedCount?: number;
-  /** The first few of their names (`onboarding.hidden_names`), for the locked card's second line. */
-  lockedNames?: string[];
-  /**
-   * A new account's season, still behind its Getting started list
-   * (2026-10-01): the block draws ONE dashed locked card and nothing else,
-   * because the card on top of Home already lists the First challenges.
-   */
-  locked?: boolean;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */

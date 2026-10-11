@@ -98,10 +98,10 @@ async function setStoryLanding(pool, { enabled, actorId = null }) {
  * first session reached them ('story' or 'sign_in'), and what they said is
  * `first_session_answer` beside it. A project made with no start recorded
  * is 'made', as it always was. communities_onboarded_at stays unset either
- * way (it records the join screen itself being answered); the Getting started
- * card and the First-challenges gate do not wait on it, since #4601 they
- * follow `getting_started_gate` alone, so a new account that came this way
- * gets both like any other. Each is a no-op for anyone who already answered.
+ * way (it records the join screen itself being answered); since #4601
+ * `getting_started_gate` alone marks a new account, so one that came this
+ * way is a newcomer like any other. Each is a no-op for anyone who already
+ * answered.
  */
 async function recordStart(pool, userId, via) {
   await pool.query(

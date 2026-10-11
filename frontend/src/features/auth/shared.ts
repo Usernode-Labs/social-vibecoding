@@ -64,6 +64,24 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
 export const HANDLE_FIELD = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
 
 /**
+ * A 6-digit code's field, said in every way a browser reads (Evan, 10 Oct
+ * 2026: on iPhone the sheet's code field read as a password). A plain text
+ * field, numeric keys, the one-time-code autofill (Messages and Mail offer
+ * the code over the keyboard) and a name that says so, with nothing for
+ * autocorrect or a password manager to take it for.
+ */
+export const ONE_TIME_CODE_FIELD = {
+  type: 'text',
+  name: 'one-time-code',
+  inputMode: 'numeric',
+  pattern: '[0-9]*',
+  autoComplete: 'one-time-code',
+  autoCapitalize: 'none',
+  autoCorrect: 'off',
+  spellCheck: false,
+} as const;
+
+/**
  * What blockedOffline says. Exported so a form can tell this error from any
  * other and clear it when the connection returns, in whatever language.
  */
@@ -551,7 +569,8 @@ export async function passwordSignIn(username: string, password: string): Promis
  * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
  * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
  * the query, keeps it here and puts the address back to `/`, so the story
- * (./landing.tsx) opens with the sign-in sheet over it at this step.
+ * (./landing.tsx) opens with it: a new account's Get started takes it to
+ * the sheet, and an existing account's Sign in sheet is open over it.
  */
 export interface ReleaseLink {
   route: 'signup' | 'login';

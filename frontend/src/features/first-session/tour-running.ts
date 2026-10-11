@@ -1,9 +1,9 @@
 /**
  * Whether a first-session tour is on screen (./index.tsx Tour sets it while
- * it is mounted). What the tour's cards say about the plan is the only thing
- * that says it while the tour runs: the maker's last card names it when one
- * is waiting, and until then nothing else asks for it (requests #4391,
- * #4393). So the hub's first-version card (../dev-board/workshop/
+ * it is mounted). While the tour runs it asks for nothing but its own
+ * cards, the plan included (requests #4391, #4393): the maker's ends on the
+ * hub with Open app, and the app it opens offers the plan once the tour is
+ * over. So the hub's first-version card (../dev-board/workshop/
  * hub-cards.tsx) draws no "Review the plan" while this is true, only its
  * build line, "Homeroom bot is working on it", and the App tab
  * (../app-frame/app-status.tsx) holds its "Review the plan" back the same

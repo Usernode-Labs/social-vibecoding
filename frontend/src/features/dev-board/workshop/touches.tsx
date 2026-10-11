@@ -62,6 +62,22 @@ const AREA_IDS: Record<string, string> = {
 };
 const areaName = (a: { key: string; label: string }) => (AREA_IDS[a.key] ? translate(AREA_IDS[a.key]) : a.label);
 
+/**
+ * The picture in words, from whole messages: what a screen reader says for
+ * it ("What it touches. Server, 2 files; Tests, 1 file."), and the line a
+ * Needs-you caption's "more" shows under the summary. Said the same way in
+ * both, so the two cannot drift.
+ */
+export function touchesSaid(t: Touches, nothingVisible = false): string {
+  const touched = t.areas.filter((a) => a.files > 0)
+    .map((a) => translate('project:touches.area.withFiles', { area: areaName(a), files: filesWords(a.files) }));
+  if (!touched.length) return '';
+  // The areas are joined the way the picture's own sentence joins them.
+  const areas = touched.reduce((first, second) => translate('project:touches.areas.pair', { first, second }));
+  const said = translate('project:touches.label', { areas });
+  return nothingVisible ? translate('project:touches.labelNothingVisible', { said }) : said;
+}
+
 export function TouchesPicture({ t, nothingVisible, onOpen }: {
   t: Touches;
   /** The author declared that nothing on screen changes. */
@@ -71,8 +87,6 @@ export function TouchesPicture({ t, nothingVisible, onOpen }: {
   const tr = useMessages('project');
   const shown = t.areas.filter((a) => ALWAYS.has(a.key) || a.files > 0);
   const max = Math.max(1, ...shown.map((a) => a.lines || a.files));
-  const touched = shown.filter((a) => a.files > 0)
-    .map((a) => tr('project:touches.area.withFiles', { area: areaName(a), files: filesWords(a.files) }));
   const door = onOpen ? {
     role: 'button' as const,
     tabIndex: 0,
@@ -82,15 +96,12 @@ export function TouchesPicture({ t, nothingVisible, onOpen }: {
     },
   } : {};
   const foot = sourceWords('files');
-  // The areas are joined the way the picture's own sentence joins them.
-  const areas = touched.reduce((first, second) => tr('project:touches.areas.pair', { first, second }));
-  const said = tr('project:touches.label', { areas });
   return (
     <div
       className="dev-ws-diagram dev-ws-touches"
       data-ws-touches=""
       data-diagram-source="files"
-      aria-label={nothingVisible ? tr('project:touches.labelNothingVisible', { said }) : said}
+      aria-label={touchesSaid(t, nothingVisible)}
       {...door}
     >
       <span className="dev-ws-diagram-kicker" aria-hidden="true">{tr('project:touches.kicker')}</span>

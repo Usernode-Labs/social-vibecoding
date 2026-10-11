@@ -338,3 +338,93 @@ test('the voice\'s module and its tables say what they are for', () => {
   const agents = read('AGENTS.md');
   assert.match(agents, /Homeroom bot answering somebody who mentioned it there is conversation,\s+not activity/);
 });
+
+// ── What a report says, and how a queued change is said (10 October) ─────
+//
+// The voice's first real update, on change 7630 (PR #4646): its report ended
+// "The harness will commit and push.", passed on from the coding agent's own
+// reply, and the turn that queued it opened "Done, @evan: I've queued…".
+
+test('a report says nothing of the coding agent\'s workings: harness, commits, pushes, branches, files', () => {
+  const said = 'I updated change 7630 as asked. The requester\'s locale now flows into every prompt that writes to people, '
+    + 'so DM replies come in the language picked in Settings. The harness will commit and push.';
+  assert.equal(voice.withoutInternals(said),
+    'I updated change 7630 as asked. The requester\'s locale now flows into every prompt that writes to people, '
+    + 'so DM replies come in the language picked in Settings.');
+  for (const leak of [
+    'I pushed it to the branch.', 'I committed the fix.', 'I\'ll push the change once checks pass.',
+    'I changed frontend/src/features/messages/format.tsx so names drop the @.', 'The edit is in server.js.',
+    'I rebased it on main.', 'Run git status to see it.', 'It lives in a worktree.',
+  ]) assert.equal(voice.withoutInternals(leak), '', leak);
+  for (const kept of [
+    'Push notifications now say who replied.', 'Push the big button to start a round.',
+    'Names in DMs drop the @.', 'The list now sorts by due date.',
+  ]) assert.equal(voice.withoutInternals(kept), kept, kept);
+  assert.equal(voice.withoutInternals(''), '');
+  assert.equal(voice.withoutInternals(null), '');
+  // Its plain words, when no model answers, leave them out too.
+  assert.equal(
+    voice.plainReport({ action: 'revise', moved: true, summary: 'Names in DMs drop the @. The harness will commit and push.' }),
+    'Done: Names in DMs drop the @. Updating it reset its approvals, so the group needs to look again.',
+  );
+  assert.equal(voice.plainReport({ action: 'answer', reply: 'I pushed it to the branch.' }), 'I looked, and there is nothing to change.');
+});
+
+test('the report\'s model is never shown the agent\'s workings, is told not to name them, and what it says of them anyway goes', async () => {
+  const seen = [];
+  const deps = {
+    apiKey: 'test-key', sleep: async () => {},
+    ws: { async sendBotMessage(_p, _a, args) { seen.push({ sent: args }); return { id: 9 }; } },
+    notifications: { async createMentionNotifications() { return []; }, async hydrateAndPush() {} },
+    chat: async (req) => {
+      seen.push({ req });
+      return {
+        content: '',
+        toolCalls: [{ id: 'c1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({
+          text: 'I updated it: DM replies now come in your language. The harness will commit and push.',
+        }) } }],
+        usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+      };
+    },
+  };
+  const pool = { async query() { return { rows: [] }; } };
+  const n = await voice.reportFollowUp(pool, {}, {
+    app: { id: 9, slug: 'homeroom', name: 'Homeroom' },
+    session: { id: 7630, pr_number: 4646, session_title: 'Match the requester\'s language in DMs' },
+    bot: { id: 1, username: 'homeroom_bot' },
+    asks: [{ id: 1, asker: 'evan', asker_id: 2, instruction: 'Use the user\'s locale in DMs', place_type: 'session', place_ref: 7630 }],
+    outcome: {
+      action: 'revise', moved: true,
+      summary: 'DM replies follow the language picked in Settings.',
+      reply: 'Folded in. The DM chat replier stays untouched. The harness will commit and push.',
+    },
+    deps,
+  });
+  assert.equal(n, 1);
+  const req = seen.find((x) => x.req).req;
+  const facts = req.messages[1].content;
+  assert.doesNotMatch(facts, /harness|commit|push/i, 'the facts it writes from leave them out');
+  assert.match(facts, /DM replies follow the language picked in Settings\./);
+  assert.match(req.messages[0].content, /Never mention the harness, commits, pushes,\s+branches, files, code, prompts/);
+  const sent = seen.find((x) => x.sent).sent;
+  assert.equal(sent.content,
+    'I updated it: DM replies now come in your language. Updating it reset its approvals, so the group needs to look again.');
+});
+
+test('a turn that only queued a change, or only offered something, never opens by saying it is done', () => {
+  assert.equal(voice.notDoneYet('Done, @evan: I\'ve queued the update to fold locale-aware DM replies into change 7630.'),
+    'Got it, @evan: I\'ve queued the update to fold locale-aware DM replies into change 7630.');
+  assert.equal(voice.notDoneYet('Done. I\'ve queued it behind the update running now.'), 'Got it. I\'ve queued it behind the update running now.');
+  assert.equal(voice.notDoneYet('All done! It\'s queued.'), 'Got it. It\'s queued.');
+  assert.equal(voice.notDoneYet('Finished: queued for its next update.'), 'Got it, queued for its next update.');
+  assert.equal(voice.notDoneYet('Done'), 'Got it.');
+  for (const fine of ['Got it: I\'ve queued it.', 'Queued: I\'ll make the header blue next.', 'Doneness aside, it is queued.']) {
+    assert.equal(voice.notDoneYet(fine), fine, fine);
+  }
+  // Applied to a turn's reply when it queued a change or made an offer, and
+  // the model is told the same in the prompt and in update_change's answer.
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /if \(text && \(ctx\.revised \|\| ctx\.offer\)\) text = notDoneYet\(text\);/);
+  assert.match(src, /never say it is done, since it is not made yet/);
+  assert.match(src, /next: 'It is not made yet, so never say it is done\./);
+});

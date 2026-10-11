@@ -1147,12 +1147,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS captured_at TIMESTAM
 --   check_error_notified_at  : stamped when the proposal owner is notified of
 --                              the failure, so they're nudged once per streak
 --                              (cleared when a new commit resets the streak).
+--   check_error_platform     : the stored 'error' is the platform's fault and
+--                              nothing else: the unit suite's Job was refused
+--                              or lost before any of the proposal's code ran
+--                              (unit-suite-row.isPlatformNotRun). Written with
+--                              every 'error'. Such a row is not held to
+--                              CHECK_MAX_AUTO_RETRIES: the error lane keeps
+--                              retrying it for a day from the streak's first
+--                              failure, and a platform boot makes it due at
+--                              once (services/staging-recovery.js).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_detail TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS consecutive_check_failures INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_platform BOOLEAN NOT NULL DEFAULT false;
 -- Which STAGE a 'pending' check run is in, so the proposal card can say
 -- "Preparing the staging preview…" vs "Running the automated tests…"
 -- instead of one opaque "Checks are still running…" for the whole run.
@@ -2412,6 +2422,10 @@ ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_state VARCHAR(8
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_into TEXT;
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
 ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_order INTEGER;
+-- topic_figures: dapp.json's `figures` for the topic, the numbers its
+-- channel shows above the room (services/topic-figures.js). Written by the
+-- same reconcile, so changing them is a proposal like the topic itself.
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_figures TEXT[] NOT NULL DEFAULT '{}';
 -- The read the places list, the channel lookup and the tally's exclusion
 -- make: one app's topics, in order.
 CREATE INDEX IF NOT EXISTS idx_app_category_registry_topics
@@ -3136,6 +3150,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_first_artefact_once
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_invite_signed_in_once
   ON events (user_id, (metadata->>'inviteId'))
   WHERE event_type = 'invite_signed_in';
+-- A project's app seen down (services/app-outages.js): one row per app per
+-- minute, for the unavailable page shown to somebody opening it
+-- ('app_unavailable') and for the watchdog starting it again
+-- ('app_restarted', metadata.count times in that minute). The Infra
+-- topic's figures read them (services/topic-figures.js).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_app_down_minute
+  ON events (app_id, event_type, (metadata->>'minute'))
+  WHERE event_type IN ('app_unavailable', 'app_restarted') AND metadata ? 'minute';
+-- When those rows began: an open from before it had no way to be seen
+-- failing, so "App opens that worked" counts only the opens since.
+INSERT INTO platform_settings (key, value) VALUES
+  ('app_outages_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+ON CONFLICT (key) DO NOTHING;
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -3199,6 +3226,17 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 -- make every pre-migration app behave exactly as before.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
+
+-- Who says yes (#4666): the approval rule a project chose by name (a preset)
+-- or built from groups and rules of its own, from dapp.json's `governance`
+-- block (`preset`, or `groups` + `rules`; services/governance-rules.js).
+-- `{ preset, groups: [{ name, people, ids }], rules: [{ group, kind, n }] }`,
+-- with each named group's people resolved to user ids at reconcile. NULL is
+-- every project that never chose one: approver_policy and
+-- approvals_required above decide, exactly as before. Reconciled with them
+-- (services/app-manifest.js reconcileAppGovernance); a block with rules
+-- puts those two back to their defaults.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS governance_rules JSONB;
 
 -- Per-app admins (#788), display side. The last reconciled *declared*
 -- username list from dapp.json's top-level `admins` block — INCLUDING
@@ -9285,7 +9323,11 @@ CREATE INDEX IF NOT EXISTS chat_sessions_checks_earned_unsettled_idx
 --   fixed_check_sync_keys  every check it was synced for. A check that
 --                          still fails once the proposal contains a main
 --                          that passes it is the proposal's own, and is
---                          never a reason to sync it again.
+--                          never a reason to sync it again. The unit suite,
+--                          one row for every test, is the exception: each
+--                          sync for it is recorded as <key>@<main's tip>,
+--                          and a main that moved on and is green may sync
+--                          it again, up to three times in all.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_head TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_keys TEXT[];
 
@@ -11002,6 +11044,8 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_shadow_build_platform', 'off'),
   -- #3624: $50 a week for each person's requests.
   ('homeroom_bot_user_weekly_cents', '5000'),
+  -- And $100 for an admin's, in place of it.
+  ('homeroom_bot_admin_weekly_cents', '10000'),
   -- Live work 12 at once, 3 per person; a DM is read.
   ('homeroom_bot_live_at_once', '12'),
   ('homeroom_bot_per_person', '3'),
@@ -12040,8 +12084,12 @@ END $$;
 -- ── Communities, stage 5: the first run ─────────────────────────────────
 --
 -- A new account picks the communities it wants to join (Homeroom first)
--- after its username and the terms, then a "Getting started" card on Home:
--- the tour, then the season's First challenges (src/services/onboarding.js).
+-- after its username and the terms (src/services/onboarding.js). Home then
+-- showed it a "Getting started" card, the tour and the season's First
+-- challenges, until #4635 retired the card: the First challenges are ordinary
+-- cards in Home's Challenges area now. The card's columns below stay, unread
+-- by Home: Admin › Journey reads them (src/services/journey.js), and this
+-- file is replayed on every boot, where a DROP cannot be taken back.
 --
 -- users.needs_communities_choice — this account has not been asked yet.
 -- Set TRUE by every path a person signs up through (email, an activation
@@ -12054,20 +12102,17 @@ END $$;
 -- NULL-means-new rule would have put behind a blocking step on every
 -- replay. No backfill, so nothing to guard with a marker row.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE;
--- When the join screen was answered. Its one other reader is the Getting
--- started card, which is for people who came through that screen: it shows
--- while this is set and getting_started_closed_at is not.
+-- When the join screen was answered.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
--- The card's close button. Server state, like the join screen's answer, so
--- a card closed on the phone is closed on the laptop too.
+-- The retired card's close button (#4635: nothing writes it now).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
 -- Visits the card asks for that leave no row behind of their own. The old
 -- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
 -- its steps became the season's First challenges (2026-10-01) nothing reads
 -- those two keys. One key is read: "vote_workshop", the last time the Vote
 -- step's Workshop opened while NOTHING was up for a vote in any community
--- the account is in (services/onboarding.js markWorkshopVisit), which the
--- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- the account is in (the retired card's markWorkshopVisit; nothing writes it
+-- since #4635), which the scorer's VOTE_CAST still counts like a vote. A new key rather than "workshop",
 -- because those old visits were recorded whether or not a vote was waiting.
 -- Reset first run clears the whole column. Kept rather than dropped: this
 -- file is replayed on every boot, and a DROP is the one statement here that
@@ -12081,12 +12126,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- counts, and a browser that has it copies it here once. Reset first run
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
--- The Getting started list that IS the First challenges (evan, 2026-10-01):
--- the card on Home is the tour plus the season's ONBOARDING challenges, and
--- until all of them are done the rest of the season is hidden
--- (src/services/topochain/challenge-onboarding.js). Both only for accounts
--- made after that shipped; everyone who was already here, and every
--- signed-out visitor, sees the whole season and no card.
+-- The Getting started list that WAS the First challenges (evan, 2026-10-01):
+-- the card on Home was the tour plus the season's ONBOARDING challenges, and
+-- until all of them were done the rest of the season was hidden. #4635
+-- retired the card and the gate: every account sees the whole season, and
+-- nothing reads these two to decide what is shown. Admin › Journey still
+-- reads the flag to tell a newcomer from an older account. Both only for
+-- accounts made after the list shipped.
 --
 -- getting_started_gate — this account starts on that list. Set TRUE at
 -- sign-up by the same three INSERTs that set needs_communities_choice
@@ -12101,11 +12147,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
 -- younger than it.
 --
 -- getting_started_unlocked_at — when this account's gate first opened (the
--- tour done and every First challenge done, read anywhere: Home, the
--- Challenges tab, the phone app). Once set the gate never closes again, so
--- an ONBOARDING challenge an admin adds to the season later is one more
--- challenge to do, not a wall that comes back down over a season the person
--- has already been let into. Reset first run clears it with the rest.
+-- tour done and every First challenge done). Nothing writes it since #4635,
+-- which retired the gate. Reset first run clears it with the rest.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;
 
@@ -13393,6 +13436,20 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- platform_live_at: a merge into Homeroom itself, when a production build
+-- that carries it first started serving. Homeroom ships in a release cut
+-- after the merge, so live_at (the merge, on the legacy paths) cannot say.
+-- Stamped once, by the first production process to boot with it
+-- (services/platform-release.js), and read by the Infra topic's Merge →
+-- live (services/topic-figures.js). Nothing else reads it, so no "going
+-- live" screen moves with it. Merges from before it was tracked stay NULL:
+-- the marker below is when tracking began, so a first boot does not stamp
+-- all of history with that boot's time.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_live_at TIMESTAMPTZ;
+INSERT INTO platform_settings (key, value) VALUES
+  ('platform_live_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+ON CONFLICT (key) DO NOTHING;
 
 -- #4083: every account without access has a spot on the waitlist, however it
 -- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);

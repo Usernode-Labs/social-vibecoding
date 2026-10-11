@@ -560,7 +560,6 @@ const SENDS = [
   ['frontend/src/features/agent-session/index.tsx', 'variant="pillDanger" ink="dangerTint" size="icon"'],
   ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-draft-send'],
   ['frontend/src/features/agent-session/propose-confirm.tsx', 'data-agent-session-propose-confirm'],
-  ['frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'],
   ['frontend/src/features/dev-board/workshop/workshop.tsx', 'className="dc-send-btn dc-circle-send dev-ws-ask-send"'],
   ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
   ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
@@ -586,8 +585,9 @@ test('the dev session\'s Send keeps focus in every state it wears', () => {
 });
 
 test('a press on Send still closes the suggestion lists, as the blur did', () => {
-  assert.match(openingTag('frontend/src/features/dev-board/workshop/hub-cards.tsx', 'className="dev-ws-hub-compose-send"'),
-    /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); \}\}/);
+  // The hub's own composer went with its channel card: the hub's Discussion
+  // row opens the Discussion place, whose composer is the group chat's.
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'), /dev-ws-hub-compose-send/);
   assert.match(openingTag('frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'),
     /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); mention\.close\(\); refs\.close\(\); \}\}/);
 });
@@ -600,7 +600,6 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
   });
   assert.equal(message('messages:composer.send'), 'Send message');
   assert.equal(message('project:feedThread.reply.send'), 'Send reply');
-  assert.equal(message('project:hub.composer.send'), 'Send');
   let seen = 0;
   for (const file of walk('frontend/src')) {
     const src = read(file);

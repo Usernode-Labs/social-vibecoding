@@ -230,10 +230,10 @@ is no replay plan to write and nothing to verify locally.
   `community-scope.ts`). A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
-  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who is here
-  and who it is for, the actions, a 14-day trend, since your last visit,
-  votes owed, the chat's last lines, your work), **Needs you** and
-  **Workshop**, a line, then **Channels** (**#general**) and **Topics**
+  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
+  for and who was active this week, the actions, For you: votes owed, your
+  work and the chat's last line, then Recently live; no charts),
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
   (each topic's channel), each group under its heading. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
@@ -261,9 +261,11 @@ is no replay plan to write and nothing to verify locally.
   (`services/homeroom-bot-voice.js`), never unprompted and never in the
   channel's own stream.
   App-wide state is shown where it lives: merges paused and a stalled release
-  are banners on the project page, and settings changed lately and the
-  Friday card are the Workshop's notices panel (`services/app-notices.js`,
-  read from `events` — record a new kind there, not a chat line).
+  are banners on the project page. Settings changed lately and the Friday
+  card are recorded in `events` and read back by `services/app-notices.js`
+  (`GET /api/apps/:slug/notices`); record a new kind there, not a chat line.
+  No screen draws them since the Workshop's "Lately in this project" panel
+  was removed.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
@@ -273,9 +275,11 @@ is no replay plan to write and nothing to verify locally.
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
   project GROWS by the same two levers: Invite makes Just you a Private
-  community, and the hero's "Make it public" (or, on a public community,
-  "Make it private" in the hero's ⋯) opens the visibility PR
-  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
+  community, and "Make it public" (a just-you project's Share it card) or
+  "Who can see & change it" (the hero's ⋯, the rule line's Rules;
+  `features/dialogs/who-decides.tsx`) opens the PR
+  (`POST /api/apps/:slug/visibility-pr`, or `/who-decides-pr`, which also
+  carries the approval rule), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
@@ -288,13 +292,20 @@ is no replay plan to write and nothing to verify locally.
   GitHub repo in place (`import-repo.tsx`), and makes a private community
   with nobody invited yet; inviting comes next, on its made screen. The
   create dialog that asked who it is for and who approves is retired: those
-  are the project's own levers afterwards (Invite, "Make it public", Members
-  & approvals). `POST /api/apps` still takes `audience`, a private
+  are the project's own levers afterwards (Invite, and "Who can see & change
+  it"). The approval rule is the one thing Make it says before it makes:
+  one line under the two answers, "Who can change it: You or the group",
+  whose Change offers the four presets (`who-decides/make-rule.tsx`); a
+  pick goes out as the new project's `governance` block, and the invite
+  sheet after it says nothing about the rule. `POST /api/apps` still takes `audience`, a private
   community's `invitees` and the approval rule as dapp.json's own
   `governance` block (`src/services/create-options.js`) for any other
   caller; the rule is written into the new repository's dapp.json by the
   template, so it is votable later like any other line there, and an
-  import's own dapp.json decides instead. Every project uses an app slot
+  import's own dapp.json decides instead. A new project starts on the You
+  or the group preset (#4666, `src/services/governance-rules.js`: the
+  creator's yes, or the group's time-&-majority vote); a change to who
+  decides always goes by that rule, whatever preset a project picks. Every project uses an app slot
   whatever its audience: each one is a real container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting

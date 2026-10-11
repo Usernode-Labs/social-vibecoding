@@ -334,7 +334,8 @@ test('#4270: the feed across every project says Approve and Don\'t approve for t
   // "You approved it" / "You didn't approve it", not "You voted yes".
   const lander = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
   const facts = lander.slice(lander.indexOf('function factsFor('), lander.indexOf('function approves('));
-  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 2, 'both branches, the project\'s and the feed\'s');
+  assert.equal((facts.match(/text: youAnswered\(row, voted\)/g) || []).length, 1, 'one fact for both, the project\'s rows and the feed\'s');
+  assert.ok(facts.indexOf('text: youAnswered(row, voted)') < facts.indexOf('if (st) {'), 'said before either count');
   assert.doesNotMatch(facts, /`You voted \$\{voted\}`/);
 });
 

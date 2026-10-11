@@ -11,8 +11,9 @@
  * is opening it on the answer to a question nobody asked: you tapped the bell
  * BECAUSE it had a count, and the count is the unread. So Unread is first in
  * the strip and is the initial tab, and All is the archive you step sideways
- * into — which is what the footer link at the bottom of a filtered tab now
- * does, rather than paging more rows into a filter you are trying to empty.
+ * into — which is what the Messages footer link still does, rather than paging
+ * more rows into a filter you are trying to empty. Unread shows its older rows
+ * in place instead (#4700).
  *
  * All is LAST for the same reason it is not first. The strip reads as a
  * narrowing: the count you came for, then the one conversation kind you answer
@@ -577,6 +578,13 @@ export function NotificationsSheetView() {
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // The Unread tab's own reveal (#4700): "See older notifications" shows the
+  // older, mostly read rows IN PLACE instead of jumping to All, and turns
+  // into "Hide older notifications" while they are showing. It is a per-visit
+  // state, not a preference — an effect below collapses it when the sheet
+  // closes or the tab changes, so coming back to Unread starts collapsed
+  // again. It starts false, so the prerendered markup is unchanged.
+  const [olderShown, setOlderShown] = useState(false);
   const t = useMessages('notifications');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
@@ -597,6 +605,14 @@ export function NotificationsSheetView() {
     if (shot === 'notifications-messages') setTab('messages');
   }, []);
 
+  // The expanded Unread view is forgotten when the sheet closes or you leave
+  // the tab, so each visit to Unread starts collapsed again (see the state
+  // above). An effect, not the initial state, for the hydration reason the
+  // deep link above spells out.
+  useEffect(() => {
+    if (!open || tab !== 'unread') setOlderShown(false);
+  }, [open, tab]);
+
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation || view.agent);
@@ -614,6 +630,11 @@ export function NotificationsSheetView() {
   const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
     : tab === 'messages' ? messages : all;
+  // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
+  // ones already in hand, plus any further page the server still has — show
+  // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
+  // the footer's conditions and counts read it, and the list is `shown`.
+  const shown = tab === 'unread' && olderShown ? all : rows;
   // #2815: the Messages tab interleaves the sessions with its notification
   // rows by time, one list, newest first — the order the Messages screen's
   // chats section keeps. Stable sort, so a tie keeps notifications first.
@@ -632,7 +653,7 @@ export function NotificationsSheetView() {
   const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
-    : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+    : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
@@ -877,10 +898,16 @@ export function NotificationsSheetView() {
           now pages itself on its own cursor. See
           Notifications.loadOlderMessages for why that cursor is separate.
 
-          On UNREAD it is still the All tab, and for the reason above that has
-          not changed: paging Unread means asking for more of the thing you are
-          trying to get to zero, and the older rows are mostly read. What you
-          want from the bottom of that list is the unfiltered one.
+          On UNREAD it shows the older rows IN PLACE (#4700), where it used to
+          be the All tab. Paging Unread still cannot mean "more of the thing
+          you are trying to get to zero" — the older rows are mostly read, and
+          that is exactly why they now show UNDER the unread ones instead of
+          somewhere else. The collapsed footer reveals them, walking the same
+          loadOlder cursor the All tab's pager uses (a no-op on its own when
+          every loaded row is already in hand); once they are showing the
+          button reads "Hide older notifications" and collapses the list back
+          to just the unread ones, and a further page offers the ordinary
+          pager above it.
 
           On ALL it is the loader it always was.
 
@@ -901,7 +928,7 @@ export function NotificationsSheetView() {
             {snap.loadingOlderMessages ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.messages')}
           </button>
         </div>
-      ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
+      ) : tab === 'messages' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older"
@@ -912,6 +939,47 @@ export function NotificationsSheetView() {
             {t('notifications:sheet.older.showAll')}
           </button>
         </div>
+      ) : tab === 'unread' && !olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <div className="px-4 py-3">
+          <button
+            id="notifications-see-older"
+            type="button"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            disabled={snap.loadingMore}
+            onClick={() => {
+              setOlderShown(true);
+              controller()?.loadOlder();
+            }}
+          >
+            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.reveal')}
+          </button>
+        </div>
+      ) : tab === 'unread' && olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <>
+          {snap.screenCanLoadMore ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-load-older"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingMore}
+                onClick={() => controller()?.loadOlder()}
+              >
+                {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
+              </button>
+            </div>
+          ) : null}
+          <div className="px-4 py-3">
+            <button
+              id="notifications-hide-older"
+              type="button"
+              className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
+              onClick={() => setOlderShown(false)}
+            >
+              {t('notifications:sheet.older.hide')}
+            </button>
+          </div>
+        </>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
           <button

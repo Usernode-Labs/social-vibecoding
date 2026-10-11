@@ -187,17 +187,17 @@ test('Back climbs: a message to Messages, a proposal, an issue or a change to th
 
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
-  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Workshop', 'a discussion is its project page (#3653)');
-  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
+  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Community', 'a discussion is its project page (#3653)');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Community', 'the project page is titled Community, as the prototype titled it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
   assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Request');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/new', 'Notes'), 'New change');
   // Derived from the route while the document has said nothing yet.
-  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Workshop');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Community');
   assert.equal(R.titleFor('messages/4242', ''), 'Messages');
-  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Workshop');
+  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Community');
 });
 
 test('the panel document\'s address keeps the top window\'s query, less its own and the load-scoped ones', () => {
@@ -369,7 +369,7 @@ test('opening starts ONE document, and later pages are navigations inside it', (
   assert.equal(s.frameSrc, '/?demo=1&panel=1#app/notes-ab12/workshop');
   assert.equal(s.frameKey, 1);
   assert.equal(s.loading, true);
-  assert.equal(s.title, 'Workshop', 'titled from the route until the document says');
+  assert.equal(s.title, 'Community', 'titled from the route until the document says');
   assert.equal(s.canBack, false);
   const gone = fakeFrame();
   // A second page asked for while it boots is where it goes once it can.

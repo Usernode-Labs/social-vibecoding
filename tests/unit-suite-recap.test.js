@@ -165,7 +165,7 @@ test('the failing tests ride beside the row, never in it', async () => {
 
 function runScriptTail(npmBody) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-suite-recap-'));
-  const tail = unitSuite.RUN_SCRIPT.slice(unitSuite.RUN_SCRIPT.indexOf('TEST_LOG='));
+  const tail = unitSuite.RUN_SCRIPT.slice(unitSuite.RUN_SCRIPT.indexOf('TEST_CMD='));
   const script = `set -eu\nWS="${dir}"\ncd "${dir}"\nnpm() {\n${npmBody}\n}\n${tail}`;
   try {
     return spawnSync('bash', ['-c', script], { encoding: 'utf8' });

@@ -342,7 +342,13 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
   assert.doesNotMatch(rules, /\b(44|48|50)px/);
   // The story's foot: Safari's toolbar is the large viewport less the small.
   assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-landing-scroll"\] \[data-landing-story\] \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
-  assert.match(read('frontend/src/features/auth/story.tsx'), /<div data-landing-story="" className=/);
+  const story = read('frontend/src/features/auth/story.tsx');
+  assert.match(story, /<div ref=\{storyRef\} data-landing-story="" className=/);
+  // Evan, 10 Oct 2026: a foot pinned over the story looked wrong. The story
+  // shrinks to fit its screen instead (tests/story-fit.test.js), so the foot
+  // is in the flow again, with no ground of its own.
+  assert.doesNotMatch(story, /\bsticky\b/);
+  assert.doesNotMatch(APP_CSS, /data-landing-story-foot/);
   // #4593: with the keys down, the sheet's foot stands on the small viewport's
   // foot, clear of Safari's toolbar, and its height is capped to that
   // viewport; the keyboard rule above is more specific, so it still wins.

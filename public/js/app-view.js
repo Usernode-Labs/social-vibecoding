@@ -1273,12 +1273,10 @@ const AppView = {
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
       }
-      // `?shot=mine-session` unfolds the viewer's own session in "What you
-      // are working on" — the state the #1887 check reads: a card about your
-      // own session opens as the CARD, with the session a link inside it,
-      // rather than as the session. Only that strip has the row and only an
-      // unfolded row has the link, so this is the URL that reaches it (see
-      // _workshopView's autoExpand).
+      // `?shot=mine-session` leads the viewer's work with their own session
+      // — the state the #1887 check reads: the hub's Your work row names it,
+      // and opens the Workshop, whose row opens the change's page rather than
+      // the session (see _workshopView's `mine`).
       if (shot === 'mine-session') {
         AppView._workshopShot = 'mine-session';
       }
@@ -3312,8 +3310,9 @@ const AppView = {
    * features/app-frame/app-status.tsx). A card that does not say it, such as
    * today's "this shows how the build is going", leaves it in place.
    * While a first-session tour runs, app-status.tsx holds "Review the plan"
-   * back and its line says the bot is working on it (heldForTour): the
-   * tour's last card is what names the plan.
+   * back and its line says the bot is working on it (heldForTour). The
+   * maker's tour ends by opening this screen from the hub, and it is offered
+   * here from then on.
    */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};
@@ -6736,8 +6735,30 @@ const AppView = {
     if (f < 0.42) return PlatformI18n.t('changes:page.testing.where.third');
     if (f < 0.58) return PlatformI18n.t('changes:page.testing.where.half');
     if (f < 0.71) return PlatformI18n.t('changes:page.testing.where.twoThirds');
-    if (f < 0.88) return PlatformI18n.t('changes:page.testing.where.threeQuarters');
+    if (f < 0.85) return PlatformI18n.t('changes:page.testing.where.threeQuarters');
     return PlatformI18n.t('changes:page.testing.where.almost');
+  },
+
+  // #4727 — how far the checks really are. Testing runs in two halves side
+  // by side (the declared checks and the unit suite) and the verdict waits
+  // for both, so the run is as far as the half that is behind: the average
+  // let a finished unit suite pull the bar ahead of the half still running.
+  // A half that has started but not said its total yet counts as 0, so the
+  // result never goes backwards once a total is learned. Null when there is
+  // no progress object at all.
+  _checksHalvesFraction(p) {
+    if (!p || typeof p !== 'object') return null;
+    const declared = Number.isInteger(p.expected) && p.expected > 0
+      ? Math.min(1, (Number(p.ran) || 0) / p.expected)
+      : 0;
+    const halves = [declared];
+    const u = p.unit && typeof p.unit === 'object' ? p.unit : null;
+    if (u) {
+      if (u.done) halves.push(1);
+      else if (Number(u.expected) > 0) halves.push(Math.min(1, (Number(u.ran) || 0) / Number(u.expected)));
+      else halves.push(0);
+    }
+    return Math.min(...halves);
   },
 
   // Whole minutes, rounded; 0 reads "under a minute" where it is said.
@@ -6853,15 +6874,7 @@ const AppView = {
     if (b && b.step === 'done') buildFrac = 1;
     else if (b) buildFrac = Math.min(0.95, (doneSteps + 0.5) / BUILD_KEYS.length);
     else buildFrac = phase === 'testing' ? 1 : 0;
-    const fracs = [];
-    if (p && Number.isInteger(p.expected) && p.expected > 0) fracs.push(Math.min(1, (Number(p.ran) || 0) / p.expected));
-    const u = p && p.unit && typeof p.unit === 'object' ? p.unit : null;
-    if (u) {
-      if (u.done) fracs.push(1);
-      else if (Number(u.expected) > 0) fracs.push(Math.min(1, (Number(u.ran) || 0) / Number(u.expected)));
-      else fracs.push(0);
-    }
-    const checksFrac = buildFrac < 1 ? 0 : (fracs.length ? fracs.reduce((t, f) => t + f, 0) / fracs.length : 0);
+    const checksFrac = buildFrac < 1 ? 0 : (AppView._checksHalvesFraction(p) || 0);
     const where = buildFrac < 1
       ? PlatformI18n.t('changes:page.testing.where.building', { step: Math.min(BUILD_KEYS.length, doneSteps + 1), steps: BUILD_KEYS.length })
       : AppView._checksFractionLine(checksFrac);
@@ -8409,10 +8422,10 @@ const AppView = {
         if (window.Secrets) Secrets.openForCurrentApp();
       }, { signal });
     }
-    // "Make it private" (the hub's ⋯, a public community's) renders once the
+    // "Who can see & change it" (the hub's ⋯, #4666) renders once the
     // community read answers, which can be after this wiring ran, so there is
     // no node to bind here: its own click closes the menu through this.
-    // What it does is React's (community-card.tsx confirmMakePrivate).
+    // What it does is React's (features/dialogs/who-decides.tsx).
     AppView._closePlusMenu = close;
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
@@ -10243,6 +10256,12 @@ const AppView = {
   _specDraftTag() {
     return { label: PlatformI18n.t('changes:workshop.row.tag.specDraft'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
+  // #4728: the tag on a Your work row for a change Homeroom bot built from
+  // a request the viewer made — the row is theirs through the bot, and the
+  // tag says so at a glance, beside the sparkle Messages draws for an agent.
+  _botForYouTag() {
+    return { label: PlatformI18n.t('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' };
+  },
   // The request a private session of the viewer's is for, when that request
   // is one of `numbers` (the requests drawn beside it), else null.
   _privateDraftFor(session, numbers) {
@@ -10433,6 +10452,41 @@ const AppView = {
       return str(p.key) ? { kind: 'secret_change', key: str(p.key), action: p.action === 'delete' ? 'delete' : 'set' } : null;
     }
     return null;
+  },
+
+  // RECENTLY LIVE, the hub's last section: the newest few changes that
+  // merged, newest first, from the Completed stream the board already loaded
+  // (`_merged`, GET /api/apps/:slug/merged; an applied close-issue proposal is
+  // a decision, not a change, so it is left out). Each carries its after
+  // still from its before & after shots (`_workshopVisuals`, the Needs-you
+  // feed's own reading of them; a merged row carries no "What it touches",
+  // so without one the card draws a plain tile), and who made it and when
+  // it went live — or that it is going live now: merged,
+  // and production has not run it yet (its rollout pending, or `live_at`
+  // null; a row without the field reads live, as the dashboard's count reads
+  // it). One whose rollout failed or stalled has not gone live, and its page
+  // says so (`_topicHeroView`), so it is not one of these.
+  _workshopRecentLive(limit = AppView.WORKSHOP_RECENT_LIVE_MAX) {
+    const rows = (Array.isArray(AppView._merged) ? AppView._merged : [])
+      .filter((m) => m && m.row_type !== 'close_issue' && m.id != null
+        && m.deployment_state !== 'failed' && m.deployment_state !== 'stalled')
+      .slice(0, limit);
+    return rows.map((m) => {
+      const pictures = AppView._workshopVisuals(null, m.shots || null);
+      const dep = m.deployment_state;
+      const going = dep === 'pending' || dep === 'deploying' || (dep !== 'deployed' && m.live_at === null);
+      const raw = AppView._devCardAuthor('merged', m);
+      return {
+        key: `live:${m.id}`,
+        sessionId: Number(m.id),
+        prNumber: m.pr_number != null ? Number(m.pr_number) : null,
+        title: String(m.pr_title || m.session_title || ''),
+        who: AppView._botBuilt(m) ? PlatformI18n.t('changes:workshop.row.byBot') : (raw || null),
+        at: going ? null : (m.live_at || m.merged_at || m.created_at || null),
+        going,
+        picture: pictures && pictures.after ? pictures.after : null,
+      };
+    });
   },
 
   // The first before/after capture pair, as the Needs-you feed's picture.
@@ -10795,6 +10849,8 @@ const AppView = {
   // The viewer's own work in flight. Same cap and the same reveal-in-place
   // as the vote strip: this is a reminder, not an inbox.
   WORKSHOP_MINE_MAX: 3,
+  // The hub's Recently live: its picture cards, newest first.
+  WORKSHOP_RECENT_LIVE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
   // Rows of the SAME list from before the baseline — what the reader has
@@ -10812,6 +10868,14 @@ const AppView = {
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
   // the since-strip is computed against. See _workshopBaseline.
   _workshopSince: {},
+  // The week whose page is open on the Workshop tab, and its fetch:
+  // { slug, startMs, endMs, loading, failed, seq }, or null. The since-strip
+  // caps its lists and rides on the merged page that happens to be loaded, so
+  // a week further back than those rows would draw nothing — this state is
+  // what backs the page with the week's own history instead (see
+  // openWorkshopWeek and _workshopView's `week`).
+  _workshopWeek: null,
+  _workshopWeekSeq: 0,
   // The last themes answer: { slug, themes, source, generatedAt, stale,
   // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
   // app's grouping over this one's cards.
@@ -10864,6 +10928,64 @@ const AppView = {
     try {
       window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${s}`, String(stamp));
     } catch { /* private mode — cleared for this page session only */ }
+    const react = AppView._reactDevBoard();
+    if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
+      react.publishWorkshop(AppView._workshopView());
+    }
+  },
+
+  // A week page needs the merged history to reach back past its Monday, and
+  // the board only loads the first page of it. This pages /merged (the same
+  // pager a manual "Show more" uses) until the oldest loaded row is OLDER
+  // than the week or history runs out, while _workshopView files every entry
+  // in the week's range. The page shows "Loading this week…" meanwhile, and
+  // the empty line only once this has finished and the week holds nothing.
+  //
+  // A later open (a fresh seq), a close (null) or the viewer leaving the app
+  // stops a running loop: each round re-reads the state and compares both
+  // seq and slug, so a stale loop never pages on behind a closed page.
+  async openWorkshopWeek(startMs, endMs) {
+    const slug = App.currentApp || '';
+    const seq = (AppView._workshopWeekSeq += 1);
+    AppView._workshopWeek = { slug, startMs, endMs, loading: true, failed: false, seq };
+    AppView._publishWorkshop();
+    while (true) {
+      const wk = AppView._workshopWeek;
+      if (!wk || wk.seq !== seq || wk.slug !== slug || (App.currentApp || '') !== slug) return;
+      if (!AppView._mergedHasMore) break;
+      const merged = AppView._merged || [];
+      // The rows come newest first, so the last one is the oldest loaded.
+      const oldest = merged.length ? Date.parse(AppView._completedAt(merged[merged.length - 1]) || '') || 0 : 0;
+      if (merged.length && oldest < startMs) break;
+      const ok = await AppView.loadMoreMerged({ limit: 50 });
+      if (!ok) {
+        // A page that did not land while history continues is a part-loaded
+        // week, and the page says so. A pager that stopped advancing throws
+        // inside loadMoreMerged, which resolves false — the loop cannot
+        // stall on it.
+        const cur = AppView._workshopWeek;
+        if (cur && cur.seq === seq && cur.slug === slug && AppView._mergedHasMore) cur.failed = true;
+        break;
+      }
+    }
+    const wk = AppView._workshopWeek;
+    if (wk && wk.seq === seq && wk.slug === slug) {
+      wk.loading = false;
+      AppView._publishWorkshop();
+    }
+  },
+
+  // The week page closed: drop the state, so _workshopView stops building
+  // `week` and the page is the tab's own list again.
+  closeWorkshopWeek() {
+    if (!AppView._workshopWeek) return;
+    AppView._workshopWeek = null;
+    AppView._publishWorkshop();
+  },
+
+  // The publish a week's open and close use — the same one _workshopClearSince
+  // makes when the tab is up.
+  _publishWorkshop() {
     const react = AppView._reactDevBoard();
     if (react && typeof document !== 'undefined' && document.getElementById('dev-workshop')) {
       react.publishWorkshop(AppView._workshopView());
@@ -11315,6 +11437,28 @@ const AppView = {
     return top.name;
   },
 
+  // WHERE MOST OF THE OPEN WORK IS (After-Workshop-B): the Workshop's
+  // Overview names the categories with the most open work, as chips under
+  // its figures. Open work is what the "open items" figure counts: open,
+  // underway and in review. Over EVERY category the app has, not the ones
+  // All items' search left standing (#2915), because the Overview is about
+  // the app; a category with none is not named, and ties keep the
+  // grouping's own order (a project's topics first). Each carries its
+  // topic, whose chip is the way into its channel.
+  WORKSHOP_OPEN_THEMES_MAX: 4,
+  _workshopOpenThemes(themes) {
+    return (themes || [])
+      .filter((t) => t && !t.ungrouped)
+      .map((t, i) => {
+        const c = t.counts || {};
+        return { t, i, open: (c.open || 0) + (c.underway || 0) + (c.review || 0) };
+      })
+      .filter((x) => x.open > 0)
+      .sort((a, b) => (b.open - a.open) || (a.i - b.i))
+      .slice(0, AppView.WORKSHOP_OPEN_THEMES_MAX)
+      .map(({ t, open }) => ({ id: t.id, name: t.name, open, topic: t.topic || null }));
+  },
+
   /**
    * The topic body for one card, for the Workshop to draw UNDER that card
    * without leaving the lander (#1787 round four).
@@ -11340,7 +11484,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [],
+      since: null, week: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -11521,6 +11665,22 @@ const AppView = {
       // Underway column and in its theme, exactly as before.
       ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
         .map((e) => ({ kind: 'issue', item: e.item })),
+      // #4715: a merged change of yours that is still GOING LIVE stays in
+      // Your work until the release lands — the strip's job is what you
+      // have underway, and a change whose rollout is still running is
+      // underway. The same reading of the pill that draws "Going live" in
+      // This week (statusPillState: 'deploying', or a child app's
+      // 'delivery_pending') decides what counts, so a stalled or failed
+      // release stays out, and a row without `live_at` reads as it always
+      // did (live) and adds nothing. Bot changes built from the viewer's
+      // request count as theirs here, as in review above (`requested_by_me`
+      // now rides the /merged payload too). A close-issue row is a task,
+      // not a change of yours going live.
+      ...mineOf(buckets.done, (m) => meId != null && m.row_type !== 'close_issue'
+        && (String(m.user_id) === String(meId) || m.requested_by_me === true)
+        && ['deploying', 'delivery_pending']
+          .includes((AppView.statusPillState(m) || {}).key))
+        .map((m) => ({ kind: 'merged', item: m })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item))
       // #4457: a request your own change addresses is that change's, and is
       // drawn as it ("Change #4456 · yours · for #4455"), not a second time.
@@ -11530,8 +11690,13 @@ const AppView = {
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
     // what the empty strip is drawn on: a guest has no work to have none of.
-    // `?shot=mine-empty` empties it on purpose, for the declared check.
-    const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
+    // `?shot=mine-empty` empties it on purpose, for the declared check, and
+    // `?shot=mine-session` leads it with the viewer's own sessions, the row
+    // the hub's Your work then names (#1887's check).
+    const mineList = AppView._workshopShot === 'mine-empty' ? []
+      : AppView._workshopShot === 'mine-session'
+        ? mineItems.filter((x) => x.kind === 'my-session').concat(mineItems.filter((x) => x.kind !== 'my-session'))
+        : mineItems;
     const mine = {
       viewer: meId != null,
       // Homeroom bot builds requests here for this viewer: the empty strip
@@ -11540,16 +11705,38 @@ const AppView = {
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
       rows: mineList.map(({ kind, item }) => {
+        // #4715: a merged row draws the very card This week draws for it
+        // (`_mergedRowModel`, whose pill says "Going live" while the release
+        // is still rolling out), so there is no new markup to keep in step.
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : kind === 'gov'
             ? AppView._govCardModel(item)
             : kind === 'issue'
               ? AppView._issueCardModel(item)
-              : AppView._proposalCardModel(item);
+              : kind === 'merged'
+                ? AppView._mergedRowModel(item)
+                : AppView._proposalCardModel(item);
         if (!card) return null;
+        const brief = AppView._workshopBrief(kind, item, card);
+        // #4728: a change the bot built from the viewer's own request wears
+        // the bot tag in Your work, so the row says it was taken up at a
+        // glance and not only in its maker line. First among a proposal's
+        // tags; after a merged row's settled pill, so "Going live…" keeps
+        // the tags line's start. The brief is copied, not mutated: the
+        // board and the week pages build their own from the same models.
+        if ((kind === 'proposal' || kind === 'merged')
+          && item.requested_by_me === true && AppView._botBuilt(item)) {
+          const tag = AppView._botForYouTag();
+          const tags = brief.tags.slice();
+          if (kind === 'proposal') tags.unshift(tag);
+          else tags.splice(1, 0, tag);
+          return AppView._attachRowConversation(
+            { t: 'card', key: `mine:${card.key}`, card, brief: { ...brief, tags } }, kind, item,
+          );
+        }
         return AppView._attachRowConversation(
-          { t: 'card', key: `mine:${card.key}`, card, brief: AppView._workshopBrief(kind, item, card) }, kind, item,
+          { t: 'card', key: `mine:${card.key}`, card, brief }, kind, item,
         );
       }).filter(Boolean),
     };
@@ -11605,7 +11792,6 @@ const AppView = {
         who: AppView._devCardAuthor(kind, item) || null,
         ago: AppView._workshopAgo(item && (item.promoted_at || item.created_at)),
         number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
-        body: null,
         // A change not yet up for a vote shows its before & after shots
         // too, and never a legacy capture.
         visuals: kind === 'proposal'
@@ -11776,6 +11962,42 @@ const AppView = {
       };
     }
 
+    // ── The open week's page ──
+    //
+    // `since` is capped and rides on whatever merged page happens to be
+    // loaded, so a week further back than those rows drew its digest heading
+    // and nothing else (weekGroups() found no rows and the page said so).
+    // When a week page is open, this files EVERY entry the week's range
+    // holds, uncapped: an entry belongs to the week when it was created or
+    // completed in it, or when something happened on it in it (`created` or
+    // `t` in the range). A change that went live that week is listed even if
+    // people commented on it later; a request filed that week and closed
+    // since arrives through the change that closed it. The page's groups
+    // (weekGroups) split these on the same baseline `since` uses, and the
+    // loading and failure lines are the fetch's (openWorkshopWeek).
+    let week = null;
+    {
+      const wk = AppView._workshopWeek;
+      if (wk && wk.slug === slug) {
+        const now = Date.now();
+        const inWeek = (e) => (e.created >= wk.startMs && e.created < wk.endMs)
+          || (e.t >= wk.startMs && e.t < wk.endMs);
+        const picked = entries.filter(inWeek).sort((a, b) => b.t - a.t);
+        week = {
+          startMs: wk.startMs,
+          endMs: wk.endMs,
+          loading: !!wk.loading,
+          failed: !!wk.failed,
+          fresh: [],
+          seen: [],
+        };
+        for (const e of picked) {
+          const row = { ...e.row, key: `week:${e.row.key}`, at: Math.min(e.t, now) };
+          (baseline && e.t > baseline ? week.fresh : week.seen).push(row);
+        }
+      }
+    }
+
     // ── The dashboard, and the one thing to pick up ──
     //
     // This was `welcome`: the same four numbers, shown ONLY on a first visit,
@@ -11839,11 +12061,19 @@ const AppView = {
       open: openEntries.length,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
+      // #4745: the votes figure is tappable. It opens the one waiting item's
+      // page, or All items when several wait — these refs follow the bucket's
+      // order, so `refs.length === 1` and `votesWaiting === 1` agree.
+      votesWaitingRefs: buckets.inReview
+        .map((x) => ({ kind: x.kind, id: Number(x.item && x.item.id) }))
+        .filter((r) => r.id > 0),
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
+      // Where most of the open work is: the Overview's chips.
+      openThemes: AppView._workshopOpenThemes(named),
       // The model's three windowed lines, when there are any: the Workshop
       // draws them as cards. The flattened paragraph below is what a row
       // written under the previous digest prompt still has, and the derived
@@ -11892,19 +12122,19 @@ const AppView = {
 
     // ── The Needs-you queue ──
     //
-    // One ordered list of QUESTIONS, which is what that tab answers: the
-    // proposals owed a vote first, then the issues nobody has claimed. The
-    // unclaimed used to be a lane on the status tab, alone under a heading
-    // that covered nothing else; they are the back of this queue now,
-    // because "will you take this?" is the same shape of ask as "should
-    // this go in?" — one card, one question, three answers.
+    // One ordered list of DECISIONS, which is what that tab answers: the
+    // changes and group decisions owed this viewer's vote, and nothing else.
+    // The requests nobody has picked up used to be the back of this queue
+    // ("will you take this?"), but a request is the group's to pick up, not
+    // the viewer's to answer: the feed is a review of what other people
+    // submitted, and its end card says how the votes went. The requests are
+    // counted (`dashboard.unclaimed`) and offered (`nextUp`) where the work
+    // is, on the Hub's line and the Workshop.
     //
     // Each row carries the question and what Yes and No DO, so the deck
     // renders buttons rather than deciding policy. A proposal's pair comes
     // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
-    // argument the server checks. An issue has no claim API, so Yes opens
-    // it — the same thing tapping the row has always done — and No records
-    // nothing beyond moving on, which is stated rather than implied.
+    // argument the server checks.
     const queue = [];
     for (const x of owed) {
       const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
@@ -11914,7 +12144,7 @@ const AppView = {
       queue.push({
         ...(voteRow(card, x.item, x.kind) || {}),
         kind: 'vote',
-        // The Description sheet's body: the summary as its own page renders
+        // The expanded caption's body: the summary as its own page renders
         // it (sanitised where it is built), for a proposal that has one.
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
@@ -11922,33 +12152,9 @@ const AppView = {
         // item says Approve / Don't approve, as its card does.
         yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
         no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
-      });
-    }
-    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
-      const n = e.item && e.item.number;
-      queue.push({
-        ...e.row,
-        key: `need:${e.row.key}`,
-        kind: 'claim',
-        summary: null,
-        askAbout: n != null ? { kind: 'issue', ref: n } : null,
-        who: AppView._devCardAuthor('issue', e.item) || null,
-        ago: AppView._workshopAgo(e.item && (e.item.createdAt || e.item.created_at)),
-        number: n != null ? Number(n) : null,
-        // The issue's own words, as the line under its title. Plain text:
-        // the feed sets it as a sentence, not as a document.
-        body: AppView._workshopExcerpt(e.item && e.item.body),
-        // And the whole of them, rendered, for the Description sheet.
-        descriptionHtml: e.item && e.item.body ? AppView._issueBodyHtml(e.item) : '',
-        visuals: null,
-        // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
-        // two labels: neither recorded anything, both moved the deck on, and
-        // offering them side by side asked the reader to tell apart a
-        // distinction the app does not make. Skip is the honest one — it says
-        // "not now" without implying the app filed a preference.
-        ask: PlatformI18n.t('changes:workshop.queue.claimAsk'),
-        yes: n ? { label: PlatformI18n.t('changes:workshop.queue.claimYes'), act: { fn: 'openTopic', args: ['issue', n] } } : null,
-        no: null,
+        // The facts line's "your yes puts it live", and the end card's "Your
+        // yes put it over the line": exactly one more Yes meets the rule.
+        ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
       });
     }
 
@@ -11994,15 +12200,6 @@ const AppView = {
       // folded — which is the state the lanes check is about.
       const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
       if (first) autoExpand = { theme: first.id, key: '' };
-    } else if (AppView._workshopShot === 'mine-session') {
-      // The viewer's own session in "What you are working on", unfolded
-      // (#1887). `theme` is the row's SCOPE, and the strip's is `mine` — the
-      // key the Workshop's toggleRow files it under. Among the rows the strip
-      // draws before "N more of yours", so the link cannot name a row that
-      // is not on screen.
-      const r = mine.rows.slice(0, mine.shown)
-        .find((row) => row.t === 'card' && row.card.attrs && row.card.attrs['data-session-chip']);
-      if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
     // The BOARD holding nothing, which no search can cause: `entries` is
@@ -12032,7 +12229,11 @@ const AppView = {
       votes,
       mine,
       since,
+      week,
       dashboard,
+      // The hub's Recently live: the newest changes that merged, each with
+      // its after shot when the checks took one.
+      recentLive: AppView._workshopRecentLive(),
       nextUp,
       nextMore,
       discussion,
@@ -15879,6 +16080,34 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
+  },
+
+  // The Needs-you card's "your yes puts it live" (and the end card's "Your
+  // yes put it over the line"): exactly one more Yes meets the change's rule,
+  // and this viewer's Yes is one that counts. False wherever that is not
+  // known: on a project where only invited approvers' votes count (this
+  // viewer's may be advisory), and for a vote recorded but not counted.
+  _yesPutsItLive(pr) {
+    if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || AppView.readOnly) return false;
+    if (AppView._approveSolo(pr)) return true;
+    if (pr.approval_policy === 'invited') return false;
+    const st = AppView.statusPillState(pr);
+    return !!st && st.majority - st.yes === 1;
+  },
+
+  // Where a change the viewer just voted on in the Needs-you feed stands
+  // NOW, for the end card's "What your votes did": read off the board rows
+  // the vote's own refresh brought back (a merged change is in the merged
+  // list), as its pill reads it. `key` is the pill's state (`merging`,
+  // `deploying`, `merged`, `deployed`, …), its words (`label`), the Yes votes
+  // that count (`yes`) and the rule's number (`majority`). Null for anything
+  // not loaded here, such as another project's change on the Communities
+  // screen.
+  _needsOutcome(kind, id) {
+    if (kind !== 'proposal') return null;
+    const item = AppView._findItem('proposal', Number(id));
+    const st = item ? AppView.statusPillState(item) : null;
+    return st ? { key: st.key, label: st.label || '', yes: Number(st.yes) || 0, majority: Number(st.majority) || 1 } : null;
   },
 
   // Everything a proposal card demoted off its face, as ⋯ descriptors.
@@ -22137,11 +22366,21 @@ const AppView = {
   // the start of a run lasts minutes and the chip drew no bar for any of
   // it. `text` is the count in words, for the tooltip and the bar's name:
   // one whole message per case (done of total, done so far, starting).
-  _checksChipProgress(live, inFlight) {
+  // #4727: `progress` is the raw `checks_progress`; `pct` is the run's real
+  // position from `_checksHalvesFraction` (the slower of the two halves), so
+  // the chip's bar fills as far as the Testing card's checks part does while
+  // `done` and `total` stay the declared checks' count.
+  _checksChipProgress(live, inFlight, progress) {
     const bar = live && live.bar;
     if (bar && bar.expected) {
       const done = Math.min(bar.ran, bar.expected);
-      return { done, total: bar.expected, text: PlatformI18n.t('changes:chips.checks.progress.of', { done, count: bar.expected }) };
+      const f = AppView._checksHalvesFraction(progress);
+      return {
+        done,
+        total: bar.expected,
+        ...(Number.isFinite(f) ? { pct: Math.round(f * 100) } : {}),
+        text: PlatformI18n.t('changes:chips.checks.progress.of', { done, count: bar.expected }),
+      };
     }
     if (inFlight) {
       const text = live && live.bar.ran
@@ -22171,7 +22410,10 @@ const AppView = {
       // The ARIA indeterminate form: no valuenow or valuemax, and no fill.
       return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="${escapeAttr(progress.text)}"></span>`;
     }
-    const pct = Math.round((progress.done / progress.total) * 100);
+    // #4727: the fill follows the run's real position (`pct`, the slower of
+    // the two halves) when the run knows it; the aria counts stay the
+    // declared checks' done-of-total.
+    const pct = Number.isFinite(progress.pct) ? progress.pct : Math.round((progress.done / progress.total) * 100);
     return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${escapeAttr(progress.text)}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
   },
   STATUS_TAG_CLS: {
@@ -22244,7 +22486,7 @@ const AppView = {
       // it and the chip is just "Checks".
       const fresh = p.check_state !== 'pending';
       const live = !fresh ? AppView._checksProgressView(p) : null;
-      const progress = AppView._checksChipProgress(live, true);
+      const progress = AppView._checksChipProgress(live, true, p.checks_progress);
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
         label: fresh ? PlatformI18n.t('changes:badge.tag.checksStarting') : PlatformI18n.t('changes:badge.tag.checks'),
@@ -22807,7 +23049,7 @@ const AppView = {
     // deferred run is nothing in flight, so it keeps its words with no bar.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
     const inFlight = state === 'pending' && pr.check_phase !== 'deferred';
-    const progress = AppView._checksChipProgress(live, inFlight);
+    const progress = AppView._checksChipProgress(live, inFlight, pr.checks_progress);
     // With a bar, the chip is "Checks" and the bar says how far; with none
     // (a deferred run), its words, and the count of those that ran.
     const label = progress

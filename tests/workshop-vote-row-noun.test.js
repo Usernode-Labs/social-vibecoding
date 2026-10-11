@@ -10,7 +10,8 @@
 // of a different thing on this board (the card in the review lane).
 //
 // The rule this pins is the vocabulary, not one string: within the Workshop
-// sheets, a vote row is a change and an issue is an issue.
+// sheets, a vote row is a change. (Requests left the feed with the reel
+// redesign, so the sheets no longer have a word for one at all.)
 //
 // Out of scope, deliberately: dev-card.tsx's "Edit this proposal title"
 // tooltip. That is the CARD, not a Workshop row sheet, and there the thing
@@ -45,25 +46,24 @@ test('no Workshop row sheet calls a vote row a proposal', () => {
 });
 
 test('the sheets that name a vote row all say "change"', () => {
-  // The Comments sheet subtitle — the one that disagreed.
-  assert.match(SRC, /row\.kind === 'vote' \? 'project:needsYou\.comments\.countChange' : 'project:needsYou\.comments\.countRequest'/);
-  assert.match(SRC, /row\.kind === 'vote' \? 'project:needsYou\.comments\.titleChange' : 'project:needsYou\.comments\.titleRequest'/);
-  assert.equal(message('project:needsYou.comments.countChange', { count: 3 }), '<0>3 comments</0><1>on this change</1>');
-  assert.equal(message('project:needsYou.comments.titleChange'), '<0>Comments</0><1>on this change</1>');
-  // The two that were already right, kept so the pair cannot drift apart.
-  assert.match(SRC, /kind === 'vote' \? t\('project:needsYou\.ask\.titleChange'\) : t\('project:needsYou\.ask\.titleRequest'\)/);
-  assert.equal(message('project:needsYou.ask.titleChange'), 'Ask about this change');
+  // The Ask tab's field and its hint, and the caption with no summary.
   assert.match(SRC, /\{t\('project:needsYou\.ask\.fieldLabel'\)\}<\/label>/);
   assert.equal(message('project:needsYou.ask.fieldLabel'), 'Ask about this change');
-  assert.match(SRC, /isVote \? t\('project:needsYou\.noSummary\.change'\) : t\('project:needsYou\.noSummary\.request'\)/);
+  assert.match(SRC, /\{summary \|\| t\('project:needsYou\.noSummary\.change'\)\}/);
   assert.equal(message('project:needsYou.noSummary.change'), 'No plain-language summary was written for this change.');
-  assert.equal(message('project:needsYou.description.noSummary'), 'No plain-language summary was written for this change.');
+  // The end card counts changes, as the cards above it do.
+  assert.equal(message('project:needsYou.end.reviewedAll', { count: 4 }), 'You reviewed all 4 changes that were waiting on you.');
 });
 
-test('an issue row is still an issue', () => {
-  assert.equal(message('project:needsYou.comments.countRequest', { count: 1 }), '<0>1 comment</0><1>on this request</1>');
-  assert.equal(message('project:needsYou.comments.titleRequest'), '<0>Comments</0><1>on this request</1>');
-  assert.equal(message('project:needsYou.ask.titleRequest'), 'Ask about this request');
-  assert.equal(message('project:needsYou.noSummary.request'), 'This request has no description.');
-  assert.equal(message('project:needsYou.description.noDescription'), 'This request has no description.');
+test('the feed is changes and group decisions alone: no request wording is left in it', () => {
+  // Requests nobody has picked up left the queue (they are the group's to
+  // take, offered on the Hub and the Workshop), and with them every word the
+  // sheets had for one.
+  const ids = SHEET_TEXTS.map(([key]) => key);
+  for (const gone of ['needsYou.comments.countRequest_one', 'needsYou.comments.titleRequest', 'needsYou.ask.titleRequest',
+    'needsYou.noSummary.request', 'needsYou.eyebrow.request', 'needsYou.rail.take', 'needsYou.by.filed']) {
+    assert.ok(!ids.includes(gone), `${gone} is gone`);
+  }
+  assert.doesNotMatch(SRC, /project:needsYou\.[\w.]*[Rr]equest\b/, 'and nothing asks for one');
+  assert.ok(!SHEET_TEXTS.some(([, text]) => /\bthis request\b/.test(text)), 'no sheet calls a row "this request"');
 });

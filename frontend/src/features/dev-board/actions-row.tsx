@@ -86,21 +86,14 @@ export interface DevActionsRowProps {
    */
   inHero?: boolean;
   /**
-   * "Make it private", the first of Settings & rules when the page passes
-   * it: a public community, to whoever may open the visibility proposal
-   * (workshop/community-card.tsx canMakePrivate / confirmMakePrivate). It
-   * was a button in the hub's hero; narrowing who a project is for is a
-   * setting, so it is a row here. Absent everywhere else.
+   * #4666: "Who can see & change it", the first of Settings & rules when the
+   * page passes it, to whoever may propose it: who can see the project and
+   * how its changes are approved, in one sheet
+   * (features/dialogs/who-decides.tsx). It took in "Make it public" and
+   * "Make it private", which were rows here (and before that, hero
+   * buttons). Absent everywhere else.
    */
-  onMakePrivate?: (() => void) | null;
-  /**
-   * #4045: "Make it public", beside "Make it private" for a private
-   * community (workshop/community-card.tsx canMakePublic /
-   * confirmMakePublic). It was a button in the hub's hero, beside Invite;
-   * the row is for asking people in, and who a project is for is a
-   * setting. Absent everywhere else.
-   */
-  onMakePublic?: (() => void) | null;
+  onWhoDecides?: (() => void) | null;
   /**
    * #4045: Leave, for a member who did not start the project
    * (community-card.tsx canLeave / leaveCommunity). It was the hero's
@@ -245,8 +238,7 @@ export function DevPlusMenu({
   canCollaborate,
   showsMembers,
   inHero = false,
-  onMakePrivate = null,
-  onMakePublic = null,
+  onWhoDecides = null,
   onLeave = null,
   appName = null,
 }: DevActionsRowProps): ReactNode {
@@ -400,26 +392,15 @@ export function DevPlusMenu({
               <ChevronLeftIcon className="shrink-0 w-4 h-4" aria-hidden="true" />
               {t('project:menu.settings.heading')}
             </button>
-            {onMakePublic ? (
+            {onWhoDecides ? (
               <PlusRow
-                data-plus="make-public"
-                icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title={t('project:menu.makePublic.title')}
-                sub={t('project:menu.makePublic.sub')}
+                data-plus="who-decides"
+                icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={t('project:menu.whoDecides.title')}
+                sub={t('project:menu.whoDecides.sub')}
                 // Rendered after the menu was wired (once the community read
                 // answers), so it closes the menu itself.
-                onClick={() => { callAppView('_closePlusMenu'); onMakePublic(); }}
-              />
-            ) : null}
-            {onMakePrivate ? (
-              <PlusRow
-                data-plus="make-private"
-                icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title={t('project:menu.makePrivate.title')}
-                sub={t('project:menu.makePrivate.sub')}
-                // It renders after the menu was wired (once the community
-                // read answers), so it closes the menu itself.
-                onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
+                onClick={() => { callAppView('_closePlusMenu'); onWhoDecides(); }}
               />
             ) : null}
             {onLeave ? (

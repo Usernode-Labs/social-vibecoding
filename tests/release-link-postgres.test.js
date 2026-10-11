@@ -114,19 +114,33 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal(user.password_set, false);
     assert.equal(user.has_platform_access, true, 'a released address is let in');
 
-    // Single use.
+    // Spent, it works again while the account it started is unfinished (no
+    // username, no password): the same account's step, in whatever browser
+    // opened it. Evan, 10 Oct 2026: the phone app's own browser spent it
+    // before handing the link to Safari, where the tap found it used.
     const replay = await spend(token);
-    assert.equal(replay.status, 422);
-    assert.equal((await replay.json()).code, 'invalid_release_link');
+    assert.equal(replay.status, 200);
+    const replayBody = await replay.json();
+    assert.equal(replayBody.next, 'set-password');
+    assert.equal(replayBody.created, false, 'the same account, not a second');
+    assert.equal(replayBody.needsUsername, true);
+    assert.equal((await pool.query(
+      "SELECT COUNT(*)::int AS n FROM users WHERE lower(email) = 'new.person@example.test'"
+    )).rows[0].n, 1);
 
     // The account step finishes without a password ("Skip for now").
     const done = await fetch(`${base}/api/auth/otp/set-password`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: `usernode_signup=${cookieValue(first.headers, 'usernode_signup')}` },
+      headers: { 'content-type': 'application/json', cookie: `usernode_signup=${cookieValue(replay.headers, 'usernode_signup')}` },
       body: JSON.stringify({ username: 'new_person' }),
     });
     assert.equal(done.status, 200);
     assert.equal((await done.json()).user.username, 'new_person');
+
+    // Set up, the link is spent for good.
+    const spent = await spend(token);
+    assert.equal(spent.status, 422);
+    assert.equal((await spent.json()).code, 'invalid_release_link');
 
     // ── An account with nothing left to set up is signed straight in ──
     const againId = await pool.query("SELECT id FROM waitlist_signups WHERE email = 'new.person@example.test'");
@@ -143,6 +157,14 @@ test('the release link signs its recipient in once, by POST, and only while it i
     const older = await releaseLinks.mint(pool, { signupId: otherId, email: 'other@example.test' });
     const newer = await releaseLinks.mint(pool, { signupId: otherId, email: 'other@example.test' });
     assert.equal((await spend(older)).status, 422);
+
+    // ── A spent link stops working once a newer mail was sent ──
+    const laterId = await released('later@example.test');
+    const firstMail = await releaseLinks.mint(pool, { signupId: laterId, email: 'later@example.test' });
+    assert.equal((await spend(firstMail)).status, 200, 'spent: the account is made, unfinished');
+    const secondMail = await releaseLinks.mint(pool, { signupId: laterId, email: 'later@example.test' });
+    assert.equal((await spend(firstMail)).status, 422, 'the older mail no longer reopens it');
+    assert.equal((await spend(secondMail)).status, 200, 'the newest one does');
 
     // ── Expired ──
     await pool.query("UPDATE waitlist_release_links SET expires_at = NOW() - INTERVAL '1 minute' WHERE token_hash = $1",

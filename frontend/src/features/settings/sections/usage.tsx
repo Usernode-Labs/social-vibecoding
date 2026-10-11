@@ -2,6 +2,7 @@ import { SectionHeading } from '@/components/ui/field';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { AiBudgetRow } from '../../header/ai-budget';
+import { BuildingTime } from '../building-time';
 
 /**
  * The viewer's AI allowance and this week's spend — the first part of the
@@ -47,6 +48,12 @@ export function UsageSection() {
           <AiBudgetRow />
         </div>
       </div>
+      {/*
+          The Homeroom bot's building time this week, and the requests that
+          used it (../building-time.tsx). React's alone: it renders an empty
+          marker until the section first shows, then reads the week.
+      */}
+      <BuildingTime />
       {/*
           #119 — spend breakdown for BYOK users. Filled by
           Settings._refreshSpend() on modal open; hidden while loading,

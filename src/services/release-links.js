@@ -19,7 +19,13 @@
 //     db console and denied to the debug role);
 //   - bound to the waitlist row it was minted for and that row's address: a
 //     row whose address changed, or that was un-released, spends nothing;
-//   - single use, and good for RELEASE_LINK_TTL_MS (7 days);
+//   - single use once the account it starts is set up, and good for
+//     RELEASE_LINK_TTL_MS (7 days). Until then (no username chosen and no
+//     password set) the newest link for the row works again: the phone
+//     app's own browser opened it and spent it before handing it to Safari
+//     (Evan, 10 Oct 2026), so the person's own tap found it used and was
+//     asked for a code. A second spend only reopens the same unfinished
+//     account's step, which the first one already handed out;
 //   - spent only by a POST from the page (POST /api/auth/release-link),
 //     never by the GET that opens it, so the mail's click-tracking redirect
 //     and the mail scanners that prefetch links cannot use it up. The mail
@@ -81,9 +87,9 @@ async function mint(pool, { signupId, email }) {
 /**
  * Spend a link: the mailbox is proven, so continue as an email code would.
  * Throws EmailSignupError `invalid_release_link` for anything that is not a
- * live, unspent link to a released row with the same address, and the
- * code's own refusals (an admin, an unconfirmed account with a password)
- * once the link is spent.
+ * live link to a released row with the same address, unspent or (the row's
+ * newest) spent on an account still unfinished, and the code's own refusals
+ * (an admin, an unconfirmed account with a password) once it is spent.
  */
 async function spend(pool, rawToken, { createSession } = {}) {
   const token = typeof rawToken === 'string' ? rawToken.trim() : '';
@@ -94,7 +100,9 @@ async function spend(pool, rawToken, { createSession } = {}) {
   const result = await emailSignup.withTransaction(pool, async (client) => {
     const { rows } = await client.query(
       `SELECT l.token_hash, l.email, l.expires_at, l.consumed_at,
-              w.email AS signup_email, w.released_at
+              w.email AS signup_email, w.released_at,
+              EXISTS (SELECT 1 FROM waitlist_release_links n
+                       WHERE n.signup_id = l.signup_id AND n.created_at > l.created_at) AS superseded
          FROM waitlist_release_links l
          JOIN waitlist_signups w ON w.id = l.signup_id
         WHERE l.token_hash = $1
@@ -102,15 +110,29 @@ async function spend(pool, rawToken, { createSession } = {}) {
       [hashToken(token)]
     );
     const link = rows[0];
-    if (!link || link.consumed_at || new Date(link.expires_at) <= new Date()
+    if (!link || new Date(link.expires_at) <= new Date()
         || !link.released_at
         || emailSignup.normalizeEmail(link.signup_email) !== link.email) {
       return { invalid: true };
     }
-    await client.query(
-      'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
-      [link.token_hash]
-    );
+    if (link.consumed_at) {
+      // Spent already: again only while it is the row's newest link and the
+      // account it started is unfinished (no username chosen, no password).
+      if (link.superseded) return { invalid: true };
+      const { rows: [account] } = await client.query(
+        `SELECT needs_username_choice, password_set FROM users
+          WHERE lower(email) = lower($1)`,
+        [link.email]
+      );
+      if (!account || account.needs_username_choice !== true || account.password_set) {
+        return { invalid: true };
+      }
+    } else {
+      await client.query(
+        'UPDATE waitlist_release_links SET consumed_at = NOW() WHERE token_hash = $1',
+        [link.token_hash]
+      );
+    }
     email = link.email;
     return emailSignup.continueProvenEmail(client, email, { createSession });
   });

@@ -785,8 +785,8 @@ function adminRoutes(config) {
   });
 
   // "Reset first run" (communities, stage 5): the account's next load shows
-  // the join screen, the tour and the Getting started card again, as for a
-  // new account. For trying onboarding on a test account, or on yourself.
+  // the join screen again, with the tour not done, as for a new account. For
+  // trying onboarding on a test account, or on yourself.
   // Nothing the account owns is touched (services/onboarding.js
   // resetFirstRun), so any full admin may do it, to anyone, like a password
   // reset.

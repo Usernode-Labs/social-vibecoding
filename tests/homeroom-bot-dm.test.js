@@ -76,6 +76,8 @@ test('the per-person allowance defaults to $50, and there is no DM list to read'
   assert.equal(Object.hasOwn(s, 'dmUsers'), false, 'a row left over from the list is not read');
   assert.equal(s.userWeeklyCents, 5000);
   assert.equal(bot.parseSettings([{ key: 'homeroom_bot_user_weekly_cents', value: '-3' }]).userWeeklyCents, 0);
+  assert.equal(s.adminWeeklyCents, 10000, 'an admin\'s defaults to $100');
+  assert.equal(bot.parseSettings([{ key: 'homeroom_bot_admin_weekly_cents', value: '25000' }]).adminWeeklyCents, 25000);
 });
 
 test('an admin sets the allowance; a DM list is no longer a setting; anything else is refused', () => {
@@ -87,6 +89,9 @@ test('an admin sets the allowance; a DM list is no longer a setting; anything el
   assert.deepEqual(bot.validateSettingsPatch({ dmUsers: ['evan'] }), { ok: false, error: 'Nothing to update' });
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: 1.5 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: -1 }).ok, false);
+  assert.deepEqual(bot.validateSettingsPatch({ adminWeeklyCents: 20000 }).updates, [['homeroom_bot_admin_weekly_cents', '20000']]);
+  assert.equal(bot.validateSettingsPatch({ adminWeeklyCents: 1.5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ adminWeeklyCents: -1 }).ok, false);
 });
 
 test('a project the bot builds for somebody is live, as every app but a paused one is; never on staging', () => {
@@ -857,6 +862,30 @@ test('#3772: "needs a person" says what to do about it, and a card already showi
   assert.match(src, /objects: dm\.card \? \[\] : cardsFor\(kind, dm, app, issueNumber\)\.filter\(\(c\) => !\(shown && c\.type === 'issue'\)\),/);
 });
 
+test('a requester who does not decide on the project is told who does, and offered no Go ahead that would loop', () => {
+  const ctx = { appName: 'Geneva Hikes', issueNumber: 2, issueTitle: 'A real map' };
+  const text = dm.dmText('person', { reason: 'A map needs a tile provider.', deciders: ['ann', 'bo'] }, ctx);
+  assert.match(text, /This needs a person to decide, so I haven't built it: A map needs a tile provider\./);
+  assert.match(text, /On Geneva Hikes, @ann or @bo decide things like this\. Once one of them says to go ahead on the request, I'll look at it again\.$/);
+  assert.doesNotMatch(text, /If you decide to go ahead/);
+  assert.match(dm.dmText('person', { reason: 'x', deciders: ['ann'] }, ctx), /On Geneva Hikes, @ann decides things like this\. Once they say to go ahead on the request, I'll look at it again\.$/);
+  assert.match(dm.dmText('person', { reason: 'x', deciders: ['ann', 'bo', 'cy'] }, ctx), /@ann, @bo or @cy decide/);
+  assert.match(dm.dmText('person', { reason: 'x', deciders: ['<b>', 7] }, ctx), /If you decide to go ahead/, 'nothing usable: as before');
+  assert.doesNotMatch(text, /\u2014/);
+});
+
+test('a request found already done says so, where it is, and that a vote on closing it follows', () => {
+  const ctx = { appName: 'Ear Trainer', issueNumber: 14, issueTitle: 'Show my votes' };
+  for (const kind of ['person', 'empty']) {
+    const text = dm.dmText(kind, { reason: 'Open Profile, then Your votes.', done: true }, ctx);
+    assert.match(text, /This looks done already, so I haven't built anything: Open Profile, then Your votes\.\n\nIf that covers what you asked for, you can open a vote on closing it below\. If something is still missing, reply to this message and say what, and I'll look at it again\.$/, kind);
+    assert.doesNotMatch(text, /—/);
+  }
+  assert.match(dm.dmText('person', { reason: 'x', done: true, deciders: ['ann'] }, ctx), /looks done already/, 'done comes before who decides');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /\} else if \(\(kind === 'person' \|\| kind === 'empty'\) && dm\.done\) \{\n[^\n]*\n\s+await require\('\.\/homeroom-bot-move'\)\.offerClose\(pool, \{/);
+});
+
 test('#4239: a request about Homeroom itself says so, and offers the move instead of Go ahead', () => {
   const ctx = { appName: 'Ear Trainer', issueNumber: 13, issueTitle: 'Header colour' };
   const text = dm.dmText('person', { reason: 'The header is drawn by Homeroom.', platform: true }, ctx);
@@ -864,7 +893,7 @@ test('#4239: a request about Homeroom itself says so, and offers the move instea
   assert.match(text, /I can move it to Homeroom's own board, where the people who work on Homeroom look\. Tap below to choose\.$/);
   assert.doesNotMatch(text, /\u2014/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && dm\.platform\) \?/);
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !\(kind === 'person' && \(dm\.platform \|\| personDeciders\(dm\)\.length\)\) && !dm\.done\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
   assert.match(src, /if \(kind === 'person' && dm\.platform\) \{\n    await require\('\.\/homeroom-bot-move'\)\.offerMove\(/);
 });
 

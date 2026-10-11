@@ -36,6 +36,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const appHeal = require('../services/app-heal');
+const appOutages = require('../services/app-outages');
 
 // How long the page keeps showing the calm "restarting" copy before
 // escalating to "still not responding" (client-side; keep in sync with
@@ -144,6 +145,7 @@ function appErrorRoutes(config) {
     const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
 
     let displayName = null;
+    let productionSlug = null;
     try {
       // A Homeroom host or a live custom domain (#4405).
       const parsed = await require('../services/app-domains').resolveAppHost(pool, rawHost);
@@ -151,6 +153,7 @@ function appErrorRoutes(config) {
         // Only production hosts get the on-demand heal — staging previews
         // are owned by the staging heal sweep (server.js Pass 3).
         if (parsed.label === parsed.slug) {
+          productionSlug = parsed.slug;
           appHeal.requestHeal(parsed.slug, config);
         }
         // Existence-hiding: name only for view-PUBLIC apps. The generic
@@ -182,6 +185,10 @@ function appErrorRoutes(config) {
     if (!isDocument) {
       return res.json({ error: 'app_unavailable' });
     }
+    // Somebody opening a production app got this page, not the app: the
+    // Infra topic's "App opens that worked" counts it. The page's own
+    // retries are fetches, so they never land here.
+    if (productionSlug) appOutages.recordUnavailable(pool, productionSlug);
     res.set('Content-Type', 'text/html; charset=utf-8');
     return res.send(renderPage(displayName));
   });

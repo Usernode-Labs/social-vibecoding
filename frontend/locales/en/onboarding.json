@@ -259,6 +259,10 @@
     "text": "A game",
     "description": "Title of one of three examples of what a group can make (a game), in the list on the signed-out welcome page."
   },
+  "firstSession.template.game.namePlaceholder": {
+    "text": "For example, My Game",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the game idea is picked: an example of a game project's name."
+  },
   "firstSession.template.game.line": {
     "text": "A new one, built and played together",
     "description": "Line under the example titled \"A game\" on the signed-out welcome page: what it is for."
@@ -378,6 +382,10 @@
   "firstSession.template.organizer.title": {
     "text": "An organizer",
     "description": "Title of one of three examples of what a group can make (an organizer), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.organizer.namePlaceholder": {
+    "text": "For example, Camping Gear List",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the organizer idea is picked: an example of an organizer project's name."
   },
   "firstSession.template.organizer.line": {
     "text": "Groceries, chores, a shared library",
@@ -539,6 +547,10 @@
     "text": "For example, Hiking Tier List",
     "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen, where a member describes a new project: an example of a project name."
   },
+  "firstSession.make.namePlaceholderOwn": {
+    "text": "For example, My New App",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the member is describing an idea of their own (not a tier list, game or organizer): an example of a project name."
+  },
   "firstSession.make.needed.blank": {
     "text": "Fill in the blank first.",
     "description": "Error under a ready idea's sentence when the member pressed Make it without typing their own words into the sentence's blank."
@@ -574,6 +586,38 @@
   "firstSession.make.importLink": {
     "text": "Import from a GitHub repo",
     "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
+  },
+  "firstSession.make.rule.line": {
+    "text": "Who can change it: <0>{{preset}}</0>",
+    "description": "One line under the description and name fields on the \"What do you want to make?\" screen, before the project exists: the approval rule it will be made with. <0>…</0> is bold. {{preset}} is the rule's name, such as \"You or the group\" or \"Two yeses\"."
+  },
+  "firstSession.make.rule.intro": {
+    "text": "Pick how changes go live. You can change this later on the project’s page.",
+    "description": "Line under the title of the four approval presets sheet, opened from Change on the \"What do you want to make?\" screen, before the project is made."
+  },
+  "firstSession.make.rule.change": {
+    "text": "Change",
+    "description": "Link at the end of the Make it step's \"Who can change it\" line: opens the four approval presets."
+  },
+  "firstSession.make.rule.title": {
+    "text": "Who says yes?",
+    "description": "Title of the sheet with the four approval presets, opened from Change on the \"What do you want to make?\" screen."
+  },
+  "firstSession.make.rule.plays": {
+    "text": "How it plays out",
+    "description": "Section label over two rows showing what the picked preset means."
+  },
+  "firstSession.make.rule.close": {
+    "text": "Close",
+    "description": "Accessible name of the presets sheet's close button."
+  },
+  "firstSession.make.rule.done": {
+    "text": "Done",
+    "description": "Button: close the presets sheet without changing anything."
+  },
+  "firstSession.make.rule.use": {
+    "text": "Use {{preset}}",
+    "description": "Button: make the new project with the picked preset instead. {{preset}} is its name. Nothing is proposed: the project does not exist yet."
   },
   "firstSession.make.lookAround": {
     "text": "Not sure yet? <0>Look around first</0>",
@@ -770,6 +814,10 @@
   "firstSession.made.startTour": {
     "text": "Start the tour",
     "description": "Button on the screen shown right after a project is made once an invite has gone out, on a new member's first session: goes on to a short tour of Homeroom."
+  },
+  "firstSession.made.gettingReady": {
+    "text": "Getting it ready…",
+    "description": "Label of the button that goes on from the screen shown right after a project is made, once it has been pressed while a ready-made app is still being set up: the screen goes on by itself as soon as the app is running. \"it\" is the project."
   },
   "firstSession.made.goTo": {
     "text": "Go to {{community}}",
@@ -1075,33 +1123,21 @@
     "text": "Join the waitlist to get your spot.",
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access, text of the last card: joining the waitlist is how they get to make apps of their own."
   },
-  "firstSession.tour.maker.bot.title": {
-    "text": "Homeroom bot is in Messages",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title: points at the Messages tab. Homeroom bot is the name of the assistant and Messages the name of the tab."
+  "firstSession.tour.maker.meetBot.title": {
+    "text": "Meet Homeroom bot",
+    "description": "Card of the short tour a new member is walked through after making a project, title: points at the Messages tab, where the assistant called Homeroom bot is. Homeroom bot is a name."
   },
-  "firstSession.tour.maker.bot.text": {
-    "text": "It makes {{app}} with you. You can always find it here.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project: text about Homeroom bot. \"It\" is Homeroom bot and {{app}} the project's name."
+  "firstSession.tour.maker.meetBot.text": {
+    "text": "Tell it what {{app}} should do next, and it starts building it. It's always here in Messages.",
+    "description": "Card of the short tour a new member is walked through after making a project: text about Homeroom bot. \"It\" is Homeroom bot, {{app}} is the project's name and Messages is the name of a tab."
   },
-  "firstSession.tour.maker.bot.tap": {
-    "text": "Tap Messages",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about Homeroom bot: asks the person to tap the Messages tab, and taps it for them when pressed. Messages is the tab's name."
+  "firstSession.tour.maker.hub.text": {
+    "text": "The discussion and the app's changes are here. Now open your new app.",
+    "description": "Card of the short tour a new member is walked through after making a project, text of the last card, under the title naming the community's hub: asks them to open the app they just made from the hub's Open app button. \"changes\" is a noun: the changes proposed to the app."
   },
-  "firstSession.tour.maker.working.title": {
-    "text": "Homeroom bot is working on {{app}}",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card, shown over their chat with Homeroom bot. {{app}} is the project's name. Homeroom bot is a name."
-  },
-  "firstSession.tour.maker.working.text": {
-    "text": "It'll let you know here when there's something to look at.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card. \"It\" is Homeroom bot and \"here\" is this chat."
-  },
-  "firstSession.tour.maker.plan.title": {
-    "text": "Homeroom bot has a plan for you",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card when Homeroom bot's plan is already waiting in the chat. Homeroom bot is a name."
-  },
-  "firstSession.tour.maker.plan.text": {
-    "text": "Answer it here: tap Build it, or tell it what to change.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card when a plan is waiting. \"Build it\" is the name of a button under the plan; the first \"it\" is the plan and the last is Homeroom bot."
+  "firstSession.tour.maker.hub.tap": {
+    "text": "Tap Open app",
+    "description": "Card of the short tour a new member is walked through after making a project, link on the last card: asks the person to tap the hub's Open app button, and taps it for them when pressed, which opens their app and ends the tour. Open app is the button's name."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",
@@ -1137,71 +1173,71 @@
   },
   "tour.counter": {
     "text": "{{step}} of {{total}}",
-    "description": "Small counter at the top of each card of the welcome tour on the Home screen, started from the Getting started card or from Settings. {{step}} is the card's number and {{total}} how many cards there are, for example \"3 of 5\"."
+    "description": "Small counter at the top of each card of the welcome tour on the Home screen, started from Settings. {{step}} is the card's number and {{total}} how many cards there are, for example \"3 of 5\"."
   },
   "tour.skip": {
     "text": "Skip",
-    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings: asks whether to leave the tour."
+    "description": "Button on each card of the welcome tour on the Home screen, started from Settings: asks whether to leave the tour."
   },
   "tour.next": {
     "text": "Next",
-    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings except the last: goes to the next card."
+    "description": "Button on each card of the welcome tour on the Home screen, started from Settings except the last: goes to the next card."
   },
   "tour.finish": {
     "text": "Finish",
-    "description": "Button on the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: ends the tour. A verb."
+    "description": "Button on the last card of the welcome tour on the Home screen, started from Settings: ends the tour. A verb."
   },
   "tour.confirm.text": {
     "text": "Are you sure? You can reopen this from Settings.",
-    "description": "Question shown in the tour's card after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings. \"this\" is the tour. Settings is the name of a screen."
+    "description": "Question shown in the tour's card after Skip is pressed in the welcome tour on the Home screen, started from Settings. \"this\" is the tour. Settings is the name of a screen."
   },
   "tour.confirm.keepGoing": {
     "text": "Keep going",
-    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: stays in the tour."
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from Settings: stays in the tour."
   },
   "tour.confirm.skip": {
     "text": "Skip the tour",
-    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: leaves the tour."
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from Settings: leaves the tour."
   },
   "tour.step.communities.title": {
     "text": "Communities",
-    "description": "Title of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Communities tab. The tab's name."
+    "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
   },
   "tour.step.communities.body": {
     "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
   },
   "tour.step.apps.title": {
     "text": "My apps",
-    "description": "Title of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
+    "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
     "text": "The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",
-    "description": "Title of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
+    "description": "Title of the third card of the welcome tour on the Home screen, started from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
   },
   "tour.step.appMenu.body": {
     "text": "Inside any app, this mark opens its menu. Tap it, or tap Next to open it.",
-    "description": "Text of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
+    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
   },
   "tour.step.menuActions.title": {
     "text": "Suggest an improvement",
-    "description": "Title of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
+    "description": "Title of the fourth card of the welcome tour on the Home screen, started from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
   },
   "tour.step.menuActions.body": {
     "text": "Say what should change. It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.",
-    "description": "Text of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
   },
   "tour.step.settings.title": {
     "text": "Replay this any time",
-    "description": "Title of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the profile tab. \"this\" is the tour."
+    "description": "Title of the last card of the welcome tour on the Home screen, started from Settings: points at the profile tab. \"this\" is the tour."
   },
   "tour.step.settings.body": {
     "text": "You can replay this tour any time from Settings, on your profile.",
-    "description": "Text of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings. Settings is the name of a screen reached from the person's profile."
+    "description": "Text of the last card of the welcome tour on the Home screen, started from Settings. Settings is the name of a screen reached from the person's profile."
   },
   "firstSession.tour.general.title": {
     "text": "Talk in #general",

@@ -1,33 +1,29 @@
 'use strict';
 
-// THE GATE: a new account's season waits on its Getting started list.
+// THE FIRST CHALLENGES: which of a season's challenges they are, and how far
+// the viewer has got through them over a lifetime.
 //
 // The first ONBOARDING_LIMIT ONBOARDING challenges of the season, in the
-// organiser's display order, are the First challenges, and since 2026-10-01
-// (evan's "one list" decision) they ARE the Getting started card on Home: the
-// tour, then these, each ticking from a credit the moment it is earned
-// (src/services/onboarding.js draws the card from `steps` below). Four, up
-// from three, because the list grew a step: Join a community, Try an app,
-// Vote on an app, Send feedback. The NAMES are the admin's data,
-// never this file's: whatever four come first is the list.
+// organiser's display order, are the First challenges (Join a community, Try
+// an app, Vote on an app, Send feedback, as the admin sets them up; the NAMES
+// are the admin's data, never this file's: whatever four come first is the
+// list). Any ONBOARDING challenge after them is an ordinary PERSISTENT one
+// (challengeCategory, below).
 //
-// WHO IS GATED. Until the tour is done (finished or skipped) and every one of
-// those challenges is, the rest of the season is hidden from the viewer, but
-// only from an account that started on that list: `users.getting_started_gate`
-// (set at sign-up since the list shipped, FALSE for every account before it;
-// the note beside the column in src/db/schema.sql), however it signed up: the
-// join screen, "What do you want to make?" or an invite link (#4601, evan's
-// "lock every new account", 9 Oct 2026). Its card shows on Home whichever
-// door it came in by, so the gate never hides the season behind a list
-// nobody can see. Everyone else, and
-// every signed-out visitor, sees the whole season, and the lists send them no
-// gate summary at all: the same payload as a season with no ONBOARDING
-// challenges, which every client already draws.
+// They are ordinary challenges for everyone. Home's Challenges area lists
+// them under their "First challenges" heading like any other card, and so do
+// the Challenges tab and the native list. Until #4635 they were also a GATE:
+// a new account (`users.getting_started_gate`) saw nothing else of the season
+// until it had done the tour and every one of them, on a Getting started card
+// on top of Home. Every new account gets a tour now, so the card and
+// the gate went together: no list hides anything behind these any more.
 //
-// ONCE OPEN, OPEN FOR GOOD. The first read that finds a gated account's list
-// done records it (`users.getting_started_unlocked_at`), and from then on the
-// account is not gated: an ONBOARDING challenge an admin adds to the season
-// later is one more thing to do, not a wall that comes back down.
+// What is left here is the one thing that makes them different: their
+// progress is LIFETIME. A credit on the same template in an earlier season
+// counts, because the list is a one-time introduction, not something to
+// repeat at a season boundary (loadOnboarding, below; Home's and the
+// profile's done counts lay it over their own rule through
+// routes/home-panels.js onboardingDoneExpr).
 const ONBOARDING_LIMIT = 4;
 
 // THE VIEWER'S BLOCK COUNT, AND THE ONLY PLACE IT LIVES. Block scores are
@@ -74,18 +70,12 @@ function resolveProgress({ metricKind, metricTarget, activityCount, blocks, comp
 // disabling, or retiring a step must never promote an identity challenge into
 // its place.
 //
-// Every row carries the viewer's three facts (`gate`, `tour_done`,
-// `unlocked`, from loadOnboarding's join on `users`), so the gate is decided
-// from the same read as the progress it waits on. `gated` is whether the gate
-// applies to this viewer at all; `summary.unlocked` stays the one answer every
-// list reads, and is TRUE for a viewer the gate does not apply to. `opened` is
-// the read on which a gated viewer's list is first done, which loadOnboarding
-// records so it stays open.
+// `ids` are the First challenges' rows, in the list's order; `progress` is
+// the viewer's lifetime answer for each, keyed by row id; `available` is the
+// ids that can be done now (organiser-enabled, not marked over, inside their
+// window), which is what Admin › Journey counts a newcomer's list out of.
 function buildOnboarding(rows, now = Date.now()) {
   if (!rows.length) return null;
-  const viewer = rows[0];
-  const gated = viewer.gate === true && viewer.unlocked !== true;
-  const tourDone = viewer.tour_done === true;
   const ordered = [...rows].sort((a, b) =>
     Number(a.display_order) - Number(b.display_order) || Number(a.id) - Number(b.id));
   const templates = new Set();
@@ -95,9 +85,6 @@ function buildOnboarding(rows, now = Date.now()) {
     templates.add(key);
     return true;
   }).slice(0, ONBOARDING_LIMIT);
-  const required = steps.filter((r) => r.enabled && !r.completed
-    && (!r.schedule_start || Date.parse(r.schedule_start) <= now)
-    && (!r.schedule_end || Date.parse(r.schedule_end) >= now));
   const progress = new Map(steps.map((r) => [Number(r.id), resolveProgress({
     metricKind: r.metric_type,
     metricTarget: r.metric_target,
@@ -105,74 +92,23 @@ function buildOnboarding(rows, now = Date.now()) {
     blocks: r.blocks,
     completionRecorded: r.completion_recorded === true,
   })]));
-  const completed = required.filter((r) => progress.get(Number(r.id)).done).length;
-  // The list is done when the tour is and every available step is. The tour
-  // counts here and not in `total`/`completed`, which stay the challenges'
-  // own numbers: the native and web lists draw them as "N of M First
-  // challenges", where a tour has no card.
-  const finished = tourDone && completed === required.length;
+  const available = steps.filter((r) => r.enabled && !r.completed
+    && (!r.schedule_start || Date.parse(r.schedule_start) <= now)
+    && (!r.schedule_end || Date.parse(r.schedule_end) >= now));
   return {
     ids: steps.map((r) => Number(r.id)),
     progress,
-    // The available steps in the list's order, with what the Getting started
-    // card draws for each (title, task, reward, earned points, the measure
-    // that scores it). Additive: no list reads it.
-    steps: required,
-    gated,
-    tourDone,
-    // Done now, or let through on an earlier read: the card's "You're all
-    // set" state, which a challenge added since does not take away.
-    finished: finished || viewer.unlocked === true,
-    opened: gated && finished,
-    summary: {
-      total: required.length, completed, unlocked: !gated || finished,
-      event_id: Number((required.find((r) => !progress.get(Number(r.id)).done) || steps[0]).season_event_id),
-    },
+    available: available.map((r) => Number(r.id)),
   };
-}
-
-// Whether the gate is CLOSED for this viewer: what the lists hide behind.
-function isLocked(onboarding) {
-  return !!onboarding && !onboarding.summary.unlocked;
-}
-
-// The summary a list sends this viewer, or null. Only to a viewer the gate
-// applies to (the read that opens it included): an existing member and a
-// signed-out visitor get no summary, which is exactly what a season with no
-// ONBOARDING challenges sends, so every client draws them the whole season
-// with no gate to explain.
-function gateSummary(onboarding) {
-  return onboarding && onboarding.gated ? onboarding.summary : null;
-}
-
-// Keep the gate open once it has opened (ONCE OPEN, OPEN FOR GOOD, at the
-// top). One idempotent write per account, ever, on the read that first finds
-// the list done. It never fails the read it rides on: a write that did not
-// land leaves the account where it was, and the next read tries again.
-async function recordUnlocked(pool, userId) {
-  try {
-    await pool.query(
-      `UPDATE users SET getting_started_unlocked_at = NOW()
-        WHERE id = $1 AND getting_started_gate AND getting_started_unlocked_at IS NULL`,
-      [userId]
-    );
-  } catch { /* the next read records it */ }
 }
 
 // Always resolve the entire season, even when the caller is viewing one
 // weekly event or has filtered completed challenges out of its own query.
 // Credits on earlier instances of the same template count too: onboarding
 // is a one-time introduction, not something to repeat at a season boundary.
-//
-// The same read carries what the Getting started card draws for each step
-// (the challenge's own text over its template's, its call-to-action, the
-// points the viewer has been paid on it, and the measure of the scoring rule
-// bound to it, which is how the card knows what a step's button does) and
-// the viewer's gate facts,
-// so the card, the gate and every list are one query and one answer.
-// `record: false` is a read with no side effect, for a reader that is not
-// the viewer (Admin › Journey's onboard column): it never records the unlock.
-async function loadOnboarding(pool, userId, { seasonId, eventId, record = true } = {}) {
+// A read with no side effect, for any viewer (a signed-out one included,
+// whose progress is all not-done).
+async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
   const scope = seasonId != null ? 'se.season_id = $2'
     : 'se.season_id = (SELECT season_id FROM season_events WHERE id = $2)';
   const { rows } = await pool.query(
@@ -182,53 +118,31 @@ async function loadOnboarding(pool, userId, { seasonId, eventId, record = true }
             COALESCE(c.schedule_end, ct.schedule_end) AS schedule_end,
             COALESCE(c.metric_type, ct.metric_type) AS metric_type,
             COALESCE(c.metric_target, ct.metric_target) AS metric_target,
-            COALESCE(c.goal, ct.goal) AS goal,
-            COALESCE(c.task, ct.task) AS task,
-            COALESCE(c.reward, ct.reward) AS reward,
-            COALESCE(c.cta_link, ct.cta_link) AS cta_link,
-            COALESCE(c.cta_label, ct.cta_label) AS cta_label,
-            credit.activity_count, credit.earned_points,
+            credit.activity_count,
             EXISTS (SELECT 1 FROM user_activities ua
                JOIN challenges credited ON credited.id = ua.challenge_id
               WHERE ua.user_id = $1
                 AND credited.challenge_template_id = c.challenge_template_id
                 AND ua.metadata->>'kind' = 'challenge_completion') AS completion_recorded,
-            ${NEWEST_EVENT_BLOCKS_SQL} AS blocks,
-            (SELECT r.measure FROM challenge_scoring_rules r
-              WHERE r.enabled
-                AND (r.challenge_id = c.id OR r.challenge_template_id = c.challenge_template_id)
-              ORDER BY (r.challenge_id IS NOT NULL) DESC, r.id ASC LIMIT 1) AS measure,
-            viewer.gate, viewer.tour_done, viewer.unlocked
+            ${NEWEST_EVENT_BLOCKS_SQL} AS blocks
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        JOIN challenge_templates ct ON ct.id = c.challenge_template_id
        -- Every credit on the template, this season's row or an earlier one:
-       -- how many (the progress) and how many points (the card's "+500 pts").
+       -- how many, which is the progress.
        CROSS JOIN LATERAL (
-         SELECT COUNT(*) AS activity_count, COALESCE(SUM(ua.points), 0) AS earned_points
+         SELECT COUNT(*) AS activity_count
            FROM user_activities ua
            JOIN challenges credited ON credited.id = ua.challenge_id
           WHERE ua.user_id = $1
             AND credited.challenge_template_id = c.challenge_template_id
        ) credit
-       -- The viewer's gate, in the same read. No row for a signed-out viewer,
-       -- so all three are NULL and nobody is gated. The flag alone decides,
-       -- as it does for the card (onboarding.js cardShows): every new
-       -- account, however it signed up (#4601).
-       LEFT JOIN (
-         SELECT u.getting_started_gate AS gate,
-                (u.tour_done_at IS NOT NULL) AS tour_done,
-                (u.getting_started_unlocked_at IS NOT NULL) AS unlocked
-           FROM users u WHERE u.id = $1
-       ) viewer ON TRUE
       WHERE ${scope} AND se.internal = FALSE
         AND UPPER(TRIM(ct.category)) = 'ONBOARDING'
       ORDER BY c.display_order ASC, c.id ASC`,
     [userId ?? null, seasonId ?? eventId]
   );
-  const state = buildOnboarding(rows);
-  if (record && state && state.opened && userId != null) await recordUnlocked(pool, userId);
-  return state;
+  return buildOnboarding(rows);
 }
 
 // The same value, for the callers that cannot correlate it: the challenge
@@ -252,12 +166,6 @@ async function loadEventBlocks(pool, userId, eventIds) {
     r.blocks == null ? null : Number(r.blocks)]));
 }
 
-function visibleChallenges(items, onboarding, idKey = 'id') {
-  if (!isLocked(onboarding)) return items;
-  const ids = new Set(onboarding.ids);
-  return items.filter((c) => ids.has(Number(c[idKey])));
-}
-
 function challengeCategory(id, category, onboarding) {
   if (onboarding && String(category).trim().toUpperCase() === 'ONBOARDING') {
     return onboarding.ids.includes(Number(id)) ? 'ONBOARDING' : 'PERSISTENT';
@@ -267,6 +175,5 @@ function challengeCategory(id, category, onboarding) {
 
 module.exports = {
   ONBOARDING_LIMIT, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL, resolveProgress, buildOnboarding,
-  loadOnboarding, loadEventBlocks, visibleChallenges, challengeCategory,
-  isLocked, gateSummary,
+  loadOnboarding, loadEventBlocks, challengeCategory,
 };

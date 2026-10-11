@@ -239,9 +239,9 @@ for (const touch of [false, true]) {
 test('Suggest an improvement and Start a new change each exist once, and the read-only gate holds', () => {
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
-  // button is Suggest an improvement now (the same dialog), and New change is
-  // "Build it now" under Agent chats in the menu's list, because
-  // what it opens is an agent session.
+  // button is Suggest an improvement now (the same dialog). New change —
+  // "Build it now" — left the menu with its Agent chats section (#4729) and
+  // is Messages' "+" choice, because what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
@@ -254,12 +254,12 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
     'and not in two places — that id is what the outbox dot\'s writer selects');
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
-  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  // B8: the row is Build it now, beside Suggest an improvement going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label=\{t\('agent:appContext\.agentChats\.buildNow'\)\}/);
-  assert.equal(message('agent:appContext.agentChats.buildNow'), 'Build it now');
-  // A read-only viewer may not start a change, as the button's gate was.
-  assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
+  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 0,
+    'and the menu carries no start-a-change row any more (#4729)');
+  // Messages' "+" is Build it now now, opening an agent session.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /startAgentSession\(\{ entry: 'messages' \}\)/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
   // only on a writeable board (it is inside the menu's readOnly gate).
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
@@ -369,19 +369,34 @@ function improveHarness(currentApp = 'demo') {
   return { Improve: sandbox.Improve, App: sandbox.App, sandbox, calls, get navigation() { return navigation; } };
 }
 
-test('Give feedback still opens the shared dialog for the current app', () => {
+test('Give feedback still opens the shared dialog for the current app', async () => {
   const { Improve, calls } = improveHarness();
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   // #4236: `fromDev` with no `target`, so the dialog asks where it goes
-  // with neither destination chosen (#2707). Only Getting started's
-  // "Suggest a change to <app>", which named the app, preselects it.
+  // with neither destination chosen (#2707). Only a button that names the
+  // app (`target: 'app'`) preselects it.
   assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 
-test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {
+test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', async () => {
   const { Improve, calls } = improveHarness('other');
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   assert.deepEqual(calls, [['close'], ['feedback', undefined, undefined]]);
+});
+
+// #4730: the dialog's comment shortcut draws the page as it opens, so the
+// menu must be gone from the screen before the open, not merely told to
+// close. The other dialog rows (share, terminal) already wait this way.
+test('#4730: Give feedback waits for the menu to be gone before opening the dialog', async () => {
+  const { Improve, calls } = improveHarness();
+  let release;
+  Improve.close = () => new Promise((resolve) => { release = resolve; });
+  const settled = Improve.giveFeedback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [], 'the dialog does not open while the menu is still leaving');
+  release();
+  await settled;
+  assert.deepEqual(calls, [['feedback', true, undefined]]);
 });
 
 // #2770 sent New change straight to the app's classic unsent-change screen

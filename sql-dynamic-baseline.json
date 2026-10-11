@@ -376,9 +376,9 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "e5bba89d6db4a92d4162",
+      "fingerprint": "885dacea6255a0967d25",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND "
     },
     {
       "source": "src/routes/kudos.js",
@@ -1035,7 +1035,7 @@
       "source": "src/services/governance.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
-      "count": 1,
+      "count": 2,
       "preview": "sql"
     },
     {
@@ -1153,9 +1153,9 @@
     {
       "source": "src/services/merge-queue.js",
       "kind": "structural-template",
-      "fingerprint": "54f23c72aa02de8e5813",
+      "fingerprint": "493c3ca09dec042ca2c7",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch, cs.integra"
+      "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integrati"
     },
     {
       "source": "src/services/moderation.js",
@@ -1426,7 +1426,7 @@
     {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
-      "fingerprint": "0fc6ef4929f71c2316c8",
+      "fingerprint": "0d73f67849537e7007aa",
       "count": 1,
       "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
     },

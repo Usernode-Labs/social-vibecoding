@@ -13188,30 +13188,27 @@ async function seedStagingTopochain(pool, config) {
 
 // The staging season's First challenges (2026-10-01).
 //
-// A new account's Getting started card on Home IS the season's first four
-// ONBOARDING challenges, and until they and the tour are done the rest of
-// the season is hidden from it (src/services/topochain/challenge-onboarding.js).
-// The fixture season above has no ONBOARDING challenge, so in a preview the
-// card had only its tour row and the gate had nothing to hold anyone at.
+// The season's first four ONBOARDING challenges are its First challenges
+// (src/services/topochain/challenge-onboarding.js), which Home's Challenges
+// area lists first for an account that has not done them. (Until #4635 they
+// were also a Getting started card on top of Home, and a gate over the rest
+// of the season.) The fixture season above has no ONBOARDING challenge, so
+// a preview had no First challenges to show.
 // These four are the list evan sets up in production (join, try, vote,
 // suggest), under obviously-staging names, on the fixture season's own
 // season-type event (EVENT_SEASON_ID, whose window seedStagingTopochain keeps
 // on "now") and with no schedule of their own, so they never close. The
 // staging mark comes AFTER the action ("Try an app (staging demo)"), not
-// before it as the fixture's other names have it: the card's row truncates
-// on a phone, and four rows reading "Staging demo challenge …" were four
-// rows nobody could tell apart.
+// before it as the fixture's other names have it: a card's title truncates
+// on a phone, and four reading "Staging demo challenge …" were four nobody
+// could tell apart.
 //
 // DATA ONLY, NO SIGNAL (platform conventions, "Seeded data must not
 // fabricate a signal your logic reads"): no credits, for anybody, and no
 // scoring rules, so nothing scores a cloned account on them behind its back.
 // A reviewer who signs up in the preview ticks them by doing them, or an
-// admin credits them from the console. Without a rule a row's button is its
-// own call-to-action (onboarding.js stepAction, `other`), so the first three
-// carry one; the fourth has none and opens its own page on the Challenges
-// tab. The buttons that know their step (Join, Try with the app's icon, Vote
-// or Look, Suggest) need the rule an admin binds, in staging as in
-// production; the card's ?shot= fixtures draw them without one.
+// admin credits them from the console. The first three carry a
+// call-to-action of their own; the fourth has none.
 //
 // Its own function rather than a block in seedStagingTopochain, whose seeded
 // template and challenge counts its test pins; its own failure domain too, so

@@ -95,6 +95,19 @@ test('the allow-list: Empty, the default, the eight ready-made apps and the four
   for (const id of appTemplates.TEMPLATE_IDS) assert.ok(id.length <= 40, `${id} fits apps.template`);
 });
 
+// Evan, 10 Oct 2026, iPhone: Home showed a new ready-made project as its
+// name's letter until the first deploy read dapp.json's icon back. The icon
+// is on the record from the moment it is made, the one dapp.json is written
+// with, so that reconcile finds nothing to change.
+test('a ready-made app\'s icon is on its record from the start', () => {
+  const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
+  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await pool\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
+  for (const id of READY) {
+    const dapp = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: id }), 'dapp.json'));
+    assert.deepEqual(dapp.icon, { emoji: appTemplates.get(id).icon }, id);
+  }
+});
+
 test('Empty is the scaffold every project always got, byte for byte', () => {
   const plain = getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, {});
   assert.deepEqual(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: 'empty' }), plain);

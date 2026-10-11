@@ -30,6 +30,9 @@
  * `--restart unless-stopped` policy is usually mid-backoff and recovers on
  * its own; we only step in when it's still not running next tick.
  *
+ * Each time it brings an app back, it records the minute
+ * (app-outages.js), which the Infra topic's figures count.
+ *
  * Like the drift poller, apps.status deliberately stays 'running'
  * throughout a heal (flipping it would drop the app's URL from the home
  * tile — see main-drift-poller.js for the full rationale), and rebuilds
@@ -40,6 +43,7 @@
 const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
+const appOutages = require('./app-outages');
 const { getPool } = require('../db/pool');
 
 const FIRST_PASS_DELAY_MS = 30_000;
@@ -438,6 +442,7 @@ async function poll(config) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
     try {
       const result = await checkAndHealOne(config, pool, app, { background: true });
+      appOutages.recordHealed(pool, app, result, 'sweep');
       if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
@@ -466,6 +471,7 @@ function requestHeal(slug, config = _config) {
     );
     if (!rows.length) return;
     const result = await checkAndHealOne(config, pool, rows[0], { probeRunning: true });
+    appOutages.recordHealed(pool, rows[0], result, 'visit');
     log.info('app-heal', 'On-demand heal finished', { slug, status: result.status });
   })().catch((err) => {
     log.warn('app-heal', 'On-demand heal failed', { slug, err: err.message });

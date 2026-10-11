@@ -603,77 +603,9 @@
     "text": "Access",
     "description": "Heading of the section of the app settings dialog that sets who may use the app and who may build changes for it."
   },
-  "appSettings.access.intro": {
-    "text": "Choose who can use this app and who can build changes for it.",
-    "description": "First line of the Access section of the app settings dialog."
-  },
   "appSettings.access.codePublic": {
     "text": "The code is public on GitHub either way.",
     "description": "Second line of the Access section of the app settings dialog: even a private app's source code can be read on GitHub."
-  },
-  "appSettings.access.groupLabel": {
-    "text": "App access",
-    "description": "Accessible name of the group of three access choices (Public; Public, invite-only building; Private) in the app settings dialog."
-  },
-  "appSettings.access.mode.public.title": {
-    "text": "Public",
-    "description": "Access choice in the app settings dialog: anyone may use the app and build changes for it."
-  },
-  "appSettings.access.mode.public.description": {
-    "text": "Everyone can use and build this app.",
-    "description": "Explanation under the \"Public\" access choice in the app settings dialog. \"Build\" means writing changes to the app."
-  },
-  "appSettings.access.mode.publicInvite.title": {
-    "text": "Public, invite-only building",
-    "description": "Access choice in the app settings dialog: anyone may use the app, but only invited collaborators may build changes for it."
-  },
-  "appSettings.access.mode.publicInvite.description": {
-    "text": "Everyone can use it. Only collaborators can build it.",
-    "description": "Explanation under the \"Public, invite-only building\" access choice in the app settings dialog. \"it\" is the app; \"build\" means writing changes to it."
-  },
-  "appSettings.access.mode.private.title": {
-    "text": "Private",
-    "description": "Access choice in the app settings dialog: only invited collaborators may use the app or build changes for it."
-  },
-  "appSettings.access.mode.private.description": {
-    "text": "Only collaborators can use or build this app.",
-    "description": "Explanation under the \"Private\" access choice in the app settings dialog. \"Build\" means writing changes to the app."
-  },
-  "appSettings.access.current": {
-    "text": "Current",
-    "description": "Small tag on the access choice that is in force for the app now, in the app settings dialog."
-  },
-  "appSettings.access.noRepository": {
-    "text": "This app has no GitHub repository, so its access setting is read-only.",
-    "description": "Note under the access choices in the app settings dialog when they cannot be changed."
-  },
-  "appSettings.access.changeNote": {
-    "text": "Changing access opens a proposal. The new setting applies after the group votes it in and the app redeploys.",
-    "description": "Note under the access choices in the app settings dialog. A proposal is a change the app's members vote on."
-  },
-  "appSettings.access.alreadyWaiting": {
-    "text": "A visibility change is already waiting for approval. See it in the Workshop.",
-    "description": "Status in the app settings dialog when an earlier proposal to change the app's access has not been decided yet. The Workshop is the tab of the app's page that lists proposals; keep it as a name."
-  },
-  "appSettings.access.opened": {
-    "text": "Proposal opened (PR #{{number}}). It needs the group's vote before the new access applies.",
-    "description": "Status in the app settings dialog after the access change was put up as a proposal. {{number}} is the number of its pull request (PR) on GitHub; keep the # before it."
-  },
-  "appSettings.access.error": {
-    "text": "Could not open the visibility proposal.",
-    "description": "Error in the app settings dialog when the proposal to change the app's access could not be created and the server gave no reason."
-  },
-  "appSettings.access.propose": {
-    "text": "Propose access change",
-    "description": "Button in the app settings dialog: puts the chosen access setting up as a proposal for the group to vote on."
-  },
-  "appSettings.access.proposing": {
-    "text": "Opening proposal…",
-    "description": "Text of the \"Propose access change\" button while the proposal is being created."
-  },
-  "appSettings.access.proposalOpen": {
-    "text": "Proposal open",
-    "description": "Text of the disabled \"Propose access change\" button once a proposal to change the access exists and is waiting for votes. \"Open\" is an adjective: the proposal is not decided yet."
   },
   "appSettings.delete.blocked.core": {
     "text": "This is a core platform app. It cannot be deleted from the UI.",
@@ -1198,6 +1130,10 @@
   "feedback.intro": {
     "text": "Members can see it, vote on it and pick it up.",
     "description": "Line under the heading of the \"Suggest an improvement\" dialog. \"it\" is the request being written; to pick it up is to start working on it."
+  },
+  "feedback.form.mine": {
+    "text": "See your requests",
+    "description": "Small link under the intro line of the Suggest an improvement form: closes the form and opens the list of this person's own requests on their profile."
   },
   "feedback.dropLabel": {
     "text": "Drop images or a clip to attach",
@@ -2819,12 +2755,656 @@
     "text": "Network error while opening the proposal.",
     "description": "Error in the Topics dialog when the request to open the topic change's proposal did not reach the server."
   },
-  "appSettings.access.notChangedVerify": {
-    "text": "Access not changed. Verify your account to make this app public, then propose again.",
-    "description": "Status line under the Access section of an app's settings when the person chose Not now on the verify sheet that making an app public needs: the access stays as it was."
+  "whoDecides.title": {
+    "text": "Who can see & change it",
+    "description": "Title of the sheet where a project's creator or admin chooses who can see the project and how its changes are approved."
   },
-  "appSettings.access.hint": {
-    "text": "Pick a different access level above, then propose the change.",
-    "description": "Small line under the Access section's Propose button while it is switched off because the chosen access is the app's current one: what to do to make the button work."
+  "whoDecides.sub": {
+    "text": "{{name}} · {{audience}}",
+    "description": "Line under the sheet's title. {{name}} is the project's name; {{audience}} says who it is for and how many are in it, for example \"Private community · 3 members\"."
+  },
+  "whoDecides.back": {
+    "text": "Back",
+    "description": "Accessible name of the round back button at the top of a screen inside the Who can see & change it sheet."
+  },
+  "whoDecides.close": {
+    "text": "Close",
+    "description": "Accessible name of the round close button at the top of the Who can see & change it sheet."
+  },
+  "whoDecides.picked": {
+    "text": "Picked",
+    "description": "Accessible name of the check mark beside the option chosen in a list on the Who can see & change it sheet."
+  },
+  "whoDecides.now": {
+    "text": "Now",
+    "description": "Small badge on the approval option the project uses today."
+  },
+  "whoDecides.someone": {
+    "text": "Someone else",
+    "description": "Stand-in for another member's name in \"How it plays out\" when nobody else is in the project yet."
+  },
+  "whoDecides.waiting": {
+    "text": "A change to who can see and change it is already up for a vote.",
+    "description": "Note at the top of the sheet when such a proposal is waiting for votes; followed by a link that opens it."
+  },
+  "whoDecides.open": {
+    "text": "Open it",
+    "description": "Link or button that opens the proposal the sheet is talking about."
+  },
+  "whoDecides.see.title": {
+    "text": "Who can see it",
+    "description": "Section label over the two choices of who can open the project."
+  },
+  "whoDecides.see.private": {
+    "text": "Private community",
+    "description": "Choice: only the project's members can open it."
+  },
+  "whoDecides.see.privateSub": {
+    "text": "Only members can open it.",
+    "description": "Line under the Private community choice."
+  },
+  "whoDecides.see.public": {
+    "text": "Public community",
+    "description": "Choice: anyone can open the project and join it."
+  },
+  "whoDecides.see.publicSub": {
+    "text": "Anyone can open it and join.",
+    "description": "Line under the Public community choice."
+  },
+  "whoDecides.see.note": {
+    "text": "Everyone who can see it can suggest changes. The rule below decides what goes live.",
+    "description": "Note under the two visibility choices."
+  },
+  "whoDecides.see.limitedName": {
+    "text": "Public, invite-only building",
+    "description": "Name of an older setting some projects still have: anyone can see the project, only collaborators can build it."
+  },
+  "whoDecides.see.limitedNote": {
+    "text": "Today anyone can see it, and only its collaborators can build it. Picking Public community lets everyone who joins suggest changes.",
+    "description": "Note under the visibility choices for a project still on the older public, invite-only building setting."
+  },
+  "whoDecides.rule.title": {
+    "text": "How changes are approved",
+    "description": "Section label over the approval presets."
+  },
+  "whoDecides.publicWarning": {
+    "text": "Anyone can join a public community, so under this rule anyone who joins can approve changes.",
+    "description": "Warning shown when a public community is paired with Open floor or Two yeses."
+  },
+  "whoDecides.legacyName": {
+    "text": "Its current rule",
+    "description": "Name for an older approval setting that none of the four presets matches, in the list of changes to propose."
+  },
+  "whoDecides.legacyNote": {
+    "text": "This project uses an older approval setting. Pick one below to change it.",
+    "description": "Note above the presets when the project's current rule is an older setting none of them matches."
+  },
+  "whoDecides.preset.you_or_the_group.name": {
+    "text": "You or the group",
+    "description": "Preset name, as the project's creator reads it: a change goes live on the creator's yes, or when most of the group says yes."
+  },
+  "whoDecides.preset.you_or_the_group.nameOther": {
+    "text": "{{creator}} or the group",
+    "description": "The same preset's name as everyone but its creator reads it. {{creator}} is the creator's username."
+  },
+  "whoDecides.preset.you_or_the_group.line": {
+    "text": "You ship on your own. Others need you or most of the group.",
+    "description": "Line under the You or the group preset, for the creator."
+  },
+  "whoDecides.preset.you_or_the_group.lineOther": {
+    "text": "{{creator}} ships on their own. Others need {{creator}} or most of the group.",
+    "description": "Line under the same preset for anyone but the creator. {{creator}} is the creator's username."
+  },
+  "whoDecides.preset.two_yeses.name": {
+    "text": "Two yeses",
+    "description": "Preset name: a change goes live once two people say yes, whoever made it and one more."
+  },
+  "whoDecides.preset.two_yeses.line": {
+    "text": "Whoever makes it, plus one more. While it’s just you, yours is enough.",
+    "description": "Line under the Two yeses preset."
+  },
+  "whoDecides.preset.open_floor.name": {
+    "text": "Open floor",
+    "description": "Preset name: any member's yes puts a change live, even on their own change."
+  },
+  "whoDecides.preset.open_floor.line": {
+    "text": "Any member’s yes ships a change, even their own.",
+    "description": "Line under the Open floor preset."
+  },
+  "whoDecides.preset.group_vote.name": {
+    "text": "Group vote",
+    "description": "Preset name: the platform's usual vote, most active members say yes, or a wait with no objections."
+  },
+  "whoDecides.preset.group_vote.line": {
+    "text": "Most active members say yes, or it goes live after a wait if nobody objects.",
+    "description": "Line under the Group vote preset."
+  },
+  "whoDecides.plays.title": {
+    "text": "How it plays out",
+    "description": "Section label over two rows showing what the picked rule means for the reader and for someone else."
+  },
+  "whoDecides.plays.youTitle": {
+    "text": "You make a change",
+    "description": "Row title: what happens to a change the reader makes."
+  },
+  "whoDecides.plays.otherTitle": {
+    "text": "{{name}} makes a change",
+    "description": "Row title: what happens to a change someone else makes. {{name}} is another member's username."
+  },
+  "whoDecides.plays.you_or_the_group.you": {
+    "text": "Your yes is enough. Live once its checks pass.",
+    "description": "You or the group, for a change the creator makes."
+  },
+  "whoDecides.plays.you_or_the_group.other": {
+    "text": "Live when you say yes, or when most of the group does.",
+    "description": "You or the group, for a change someone else makes, as the creator reads it."
+  },
+  "whoDecides.plays.you_or_the_group.youOther": {
+    "text": "Live when {{creator}} says yes, or when most of the group does.",
+    "description": "You or the group, for a change the reader makes, when the reader is not the creator. {{creator}} is the creator's username."
+  },
+  "whoDecides.plays.you_or_the_group.otherOther": {
+    "text": "Live when {{creator}} says yes, or when most of the group does.",
+    "description": "You or the group, for a change someone else makes, when the reader is not the creator."
+  },
+  "whoDecides.plays.two_yeses.you": {
+    "text": "Live once one other person says yes too.",
+    "description": "Two yeses, for a change the reader makes."
+  },
+  "whoDecides.plays.two_yeses.other": {
+    "text": "Live once one more person says yes. That can be you.",
+    "description": "Two yeses, for a change someone else makes, under a row titled with that person's name: one yes besides theirs puts it live, and the reader's counts."
+  },
+  "whoDecides.plays.open_floor.you": {
+    "text": "Your yes is enough. Live once its checks pass.",
+    "description": "Open floor, for a change the reader makes."
+  },
+  "whoDecides.plays.open_floor.other": {
+    "text": "{{name}}’s own yes is enough, same as yours.",
+    "description": "Open floor, for a change someone else makes. {{name}} is that person's username."
+  },
+  "whoDecides.plays.group_vote.you": {
+    "text": "Live when most active members say yes, or after a wait if nobody objects.",
+    "description": "Group vote, for a change the reader makes."
+  },
+  "whoDecides.plays.group_vote.other": {
+    "text": "Same as yours: the group decides.",
+    "description": "Group vote, for a change someone else makes."
+  },
+  "whoDecides.plays.own.you": {
+    "text": "Live when any one of its rules passes.",
+    "description": "A project's own rules, for a change the reader makes."
+  },
+  "whoDecides.plays.own.other": {
+    "text": "Same as yours: any one rule passing is enough.",
+    "description": "A project's own rules, for a change someone else makes."
+  },
+  "whoDecides.alwaysYou": {
+    "text": "Changing who can see it, its admins or this rule always works like You or the group: your yes is enough, or the group’s real yes votes are.",
+    "description": "Note under How it plays out, for the creator: changes to who decides follow a fixed rule whatever is picked."
+  },
+  "whoDecides.alwaysCreator": {
+    "text": "Changing who can see it, its admins or this rule always works like You or the group: {{creator}}’s yes is enough, or the group’s real yes votes are.",
+    "description": "The same note for anyone but the creator. {{creator}} is the creator's username."
+  },
+  "whoDecides.own.name": {
+    "text": "Make your own",
+    "description": "Option and screen title: build the project's own approval rule from groups and rules."
+  },
+  "whoDecides.own.sub": {
+    "text": "Groups and rules, starting from the one picked above.",
+    "description": "Line under the Make your own option."
+  },
+  "whoDecides.own.picked_one": {
+    "text": "Your own rule. Tap to change it.",
+    "description": "Line under Make your own when the project's own rules are picked, with one rule."
+  },
+  "whoDecides.own.picked_other": {
+    "text": "Your own {{count}} rules. Tap to change them.",
+    "description": "Line under Make your own when the project's own rules are picked. {{count}} is how many rules."
+  },
+  "whoDecides.own.startedFrom": {
+    "text": "{{name}} · started from {{preset}}",
+    "description": "Line under the Make your own title. {{name}} is the project; {{preset}} is the preset the rules started from."
+  },
+  "whoDecides.own.same": {
+    "text": "Same as {{preset}}",
+    "description": "Shown on Make your own when the rules are exactly one of the presets. {{preset}} is its name."
+  },
+  "whoDecides.own.rules": {
+    "text": "Rules · any one passing is enough",
+    "description": "Section label over the list of rules."
+  },
+  "whoDecides.own.or": {
+    "text": "or",
+    "description": "Word between two rules in the list: either rule passing is enough."
+  },
+  "whoDecides.own.addRule": {
+    "text": "Add a rule",
+    "description": "Row that opens a new rule."
+  },
+  "whoDecides.own.ruleCount_one": {
+    "text": "{{count}} of {{max}} rules",
+    "description": "How many rules there are out of the most allowed, with one rule. {{max}} is the limit."
+  },
+  "whoDecides.own.ruleCount_other": {
+    "text": "{{count}} of {{max}} rules",
+    "description": "How many rules there are out of the most allowed. {{max}} is the limit."
+  },
+  "whoDecides.own.groups": {
+    "text": "Groups",
+    "description": "Section label over the groups a rule can name."
+  },
+  "whoDecides.own.addGroup": {
+    "text": "Add a group",
+    "description": "Row that opens a new named group of members."
+  },
+  "whoDecides.own.alwaysOn": {
+    "text": "Always on",
+    "description": "Section label over the fixed rule for changes to who decides."
+  },
+  "whoDecides.own.alwaysTitle": {
+    "text": "Changes to who decides",
+    "description": "Title of the fixed rule's row."
+  },
+  "whoDecides.own.alwaysSub": {
+    "text": "Who can see it, its admins, its groups and these rules: {{creator}} says yes, or the group does with real yes votes.",
+    "description": "What the fixed rule says. {{creator}} is the creator's username."
+  },
+  "whoDecides.own.alwaysSubNobody": {
+    "text": "Who can see it, its admins, its groups and these rules: the group says yes with real yes votes.",
+    "description": "What the fixed rule says on a project with no creator."
+  },
+  "whoDecides.own.use": {
+    "text": "Use these rules",
+    "description": "Button: take the rules back to the main sheet, where they are proposed."
+  },
+  "whoDecides.own.useNote": {
+    "text": "Nothing changes until you propose it. It follows the Always on rule.",
+    "description": "Note under Use these rules."
+  },
+  "whoDecides.own.problem.noRules": {
+    "text": "Add at least one rule.",
+    "description": "Error: the rule list is empty."
+  },
+  "whoDecides.own.problem.tooManyRules": {
+    "text": "A project has at most {{max}} rules.",
+    "description": "Error: too many rules. {{max}} is the limit."
+  },
+  "whoDecides.own.problem.tooManyGroups": {
+    "text": "A project has at most {{max}} groups of its own.",
+    "description": "Error: too many named groups. {{max}} is the limit."
+  },
+  "whoDecides.own.problem.missingGroup": {
+    "text": "A rule names a group that is gone. Change or remove that rule.",
+    "description": "Error: a rule refers to a group that was deleted."
+  },
+  "whoDecides.own.problem.duplicate": {
+    "text": "That rule is already on the list.",
+    "description": "Error: the same rule twice."
+  },
+  "whoDecides.group.creator": {
+    "text": "Creator",
+    "description": "Built-in group: the person who made the project."
+  },
+  "whoDecides.group.creatorNobody": {
+    "text": "Nobody: this project has no creator",
+    "description": "Line under the Creator group on a project with no creator."
+  },
+  "whoDecides.group.members": {
+    "text": "All members",
+    "description": "Built-in group: everyone in the project's community."
+  },
+  "whoDecides.group.membersSub_one": {
+    "text": "{{count}} person, updates as people join and leave",
+    "description": "Line under All members, with one person."
+  },
+  "whoDecides.group.membersSub_other": {
+    "text": "{{count}} people, updates as people join and leave",
+    "description": "Line under All members. {{count}} is how many people are in it."
+  },
+  "whoDecides.group.admins": {
+    "text": "App admins",
+    "description": "Built-in group: the project's admins, set in Members."
+  },
+  "whoDecides.group.builtIn": {
+    "text": "Built in",
+    "description": "Label beside a group the platform defines."
+  },
+  "whoDecides.group.nobody": {
+    "text": "Nobody yet",
+    "description": "Line for a group with nobody in it."
+  },
+  "whoDecides.group.title": {
+    "text": "Group",
+    "description": "Title of the screen that edits a named group."
+  },
+  "whoDecides.group.newTitle": {
+    "text": "New group",
+    "description": "Title of the screen that makes a named group."
+  },
+  "whoDecides.group.sub": {
+    "text": "{{name}} · Make your own",
+    "description": "Line under a group or rule screen's title. {{name}} is the project."
+  },
+  "whoDecides.group.name": {
+    "text": "Name",
+    "description": "Label of the group's name field."
+  },
+  "whoDecides.group.people_one": {
+    "text": "People in this group · {{count}}",
+    "description": "Section label over the group's people, with one person."
+  },
+  "whoDecides.group.people_other": {
+    "text": "People in this group · {{count}}",
+    "description": "Section label over the group's people. {{count}} is how many."
+  },
+  "whoDecides.group.removePerson": {
+    "text": "Remove {{name}}",
+    "description": "Accessible name of the button that takes a person out of the group. {{name}} is their username."
+  },
+  "whoDecides.group.add": {
+    "text": "Add a member",
+    "description": "Label before the buttons that add members to the group."
+  },
+  "whoDecides.group.note": {
+    "text": "Only members of {{name}} can be in a group.",
+    "description": "Note under the group's people. {{name}} is the project."
+  },
+  "whoDecides.group.usedBy_one": {
+    "text": "Used by {{count}} rule",
+    "description": "Section label over the rules that name this group, with one."
+  },
+  "whoDecides.group.usedBy_other": {
+    "text": "Used by {{count}} rules",
+    "description": "Section label over the rules that name this group. {{count}} is how many."
+  },
+  "whoDecides.group.whoDecides": {
+    "text": "Changing who’s in a group changes who decides, so it follows the Always on rule when you propose it.",
+    "description": "Note on the group screen."
+  },
+  "whoDecides.group.save": {
+    "text": "Save group",
+    "description": "Button: keep the group's name and people."
+  },
+  "whoDecides.group.delete": {
+    "text": "Delete group",
+    "description": "Button: remove the group."
+  },
+  "whoDecides.group.cannotDelete": {
+    "text": "A rule uses this group. Remove the rule first to delete it.",
+    "description": "Note in place of Delete group when a rule names the group."
+  },
+  "whoDecides.group.problem.blank": {
+    "text": "Give the group a name.",
+    "description": "Error: the group's name is empty."
+  },
+  "whoDecides.group.problem.long": {
+    "text": "A group’s name is at most {{max}} characters.",
+    "description": "Error: the group's name is too long. {{max}} is the limit."
+  },
+  "whoDecides.group.problem.builtIn": {
+    "text": "{{name}} is a built-in group. Name yours something else.",
+    "description": "Error: the name is taken by a built-in group. {{name}} is what was typed."
+  },
+  "whoDecides.group.problem.taken": {
+    "text": "Another group already has that name.",
+    "description": "Error: two groups cannot share a name."
+  },
+  "whoDecides.rule.newTitle": {
+    "text": "New rule",
+    "description": "Title of the screen that makes a rule."
+  },
+  "whoDecides.rule.editTitle": {
+    "text": "Rule",
+    "description": "Title of the screen that edits a rule."
+  },
+  "whoDecides.rule.sentence": {
+    "text": "A change goes live when: {{rule}}.",
+    "description": "The rule being edited, said as one sentence. {{rule}} is the rule, for example \"At least 2 people in Lifeguards say yes\"."
+  },
+  "whoDecides.rule.whose": {
+    "text": "Whose yes",
+    "description": "Section label over the groups a rule can count."
+  },
+  "whoDecides.rule.howMany": {
+    "text": "How many",
+    "description": "Section label over the ways a rule can count yeses."
+  },
+  "whoDecides.rule.kind.atLeast": {
+    "text": "A number of people",
+    "description": "Way to count: at least this many yeses from the group."
+  },
+  "whoDecides.rule.kind.atLeastSub": {
+    "text": "Never more than the group has, so it keeps working if someone leaves.",
+    "description": "Line under A number of people."
+  },
+  "whoDecides.rule.kind.percentOfActive": {
+    "text": "% of the active people",
+    "description": "Way to count: a share of the group's people who have been around lately."
+  },
+  "whoDecides.rule.kind.percentOfActiveSub": {
+    "text": "Only people active lately count, the way Group vote does.",
+    "description": "Line under % of the active people."
+  },
+  "whoDecides.rule.kind.percentOfEveryone": {
+    "text": "% of everyone in the group",
+    "description": "Way to count: a share of everyone in the group."
+  },
+  "whoDecides.rule.kind.percentOfEveryoneSub": {
+    "text": "Active or not.",
+    "description": "Line under % of everyone in the group."
+  },
+  "whoDecides.rule.kind.majority": {
+    "text": "Majority over time",
+    "description": "Way to count: the platform's usual vote over the group."
+  },
+  "whoDecides.rule.kind.majoritySub": {
+    "text": "Group vote’s math: the bar eases as more people are active, and one yes with no objections goes live after a wait.",
+    "description": "Line under Majority over time."
+  },
+  "whoDecides.rule.people": {
+    "text": "People",
+    "description": "Label of the stepper that sets how many yeses a rule needs."
+  },
+  "whoDecides.rule.percent": {
+    "text": "Percent",
+    "description": "Label of the stepper that sets a rule's share."
+  },
+  "whoDecides.rule.percentValue": {
+    "text": "{{percent}}%",
+    "description": "A share, as the stepper shows it. {{percent}} is a whole number from 1 to 100."
+  },
+  "whoDecides.rule.fewer": {
+    "text": "Fewer",
+    "description": "Accessible name of the stepper's minus button."
+  },
+  "whoDecides.rule.more": {
+    "text": "More",
+    "description": "Accessible name of the stepper's plus button."
+  },
+  "whoDecides.rule.today.title": {
+    "text": "Today",
+    "description": "Section label over what the rule asks for with the project as it is now."
+  },
+  "whoDecides.rule.yesesOnly": {
+    "text": "Only yeses count toward a rule. No votes don’t stop it, though enough of them can still close a change nobody wants.",
+    "description": "Note under Today on the rule screen."
+  },
+  "whoDecides.rule.save": {
+    "text": "Save rule",
+    "description": "Button: keep the rule."
+  },
+  "whoDecides.rule.remove": {
+    "text": "Remove rule",
+    "description": "Button or accessible name: take a rule off the list."
+  },
+  "whoDecides.rule.phrase.creator": {
+    "text": "{{creator}} (creator) says yes",
+    "description": "A rule, said as a clause. {{creator}} is the creator's username."
+  },
+  "whoDecides.rule.phrase.creatorNobody": {
+    "text": "The creator says yes",
+    "description": "The creator rule on a project with no creator."
+  },
+  "whoDecides.rule.phrase.atLeast_one": {
+    "text": "At least {{count}} person in {{group}} says yes",
+    "description": "A rule, said as a clause, asking for one yes. {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.atLeast_other": {
+    "text": "At least {{count}} people in {{group}} say yes",
+    "description": "A rule, said as a clause. {{count}} is how many yeses; {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.percentOfActive": {
+    "text": "{{percent}}% of the active people in {{group}} say yes",
+    "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.percentOfEveryone": {
+    "text": "{{percent}}% of everyone in {{group}} says yes",
+    "description": "A rule, said as a clause. {{percent}} is a whole number; {{group}} is a group's name."
+  },
+  "whoDecides.rule.phrase.majority": {
+    "text": "Most active people in {{group}} say yes, over time",
+    "description": "A rule, said as a clause: the platform's usual vote over a group. {{group}} is a group's name."
+  },
+  "whoDecides.rule.today.empty": {
+    "text": "Can’t pass until {{group}} has someone in it.",
+    "description": "What a rule on an empty group asks for. {{group}} is the group's name."
+  },
+  "whoDecides.rule.today.creator": {
+    "text": "{{creator}}’s yes alone is enough.",
+    "description": "What the creator rule asks for. {{creator}} is the creator's username."
+  },
+  "whoDecides.rule.today.atLeast_one": {
+    "text": "Needs {{count}} yes today. Never more than the group has.",
+    "description": "What a count rule asks for today, one yes."
+  },
+  "whoDecides.rule.today.atLeast_other": {
+    "text": "Needs {{count}} yeses today. Never more than the group has.",
+    "description": "What a count rule asks for today. {{count}} is how many yeses."
+  },
+  "whoDecides.rule.today.percentOfEveryone": {
+    "text": "Needs {{need}} of {{total}} today, active or not.",
+    "description": "What a share-of-everyone rule asks for today. {{need}} yeses out of {{total}} people."
+  },
+  "whoDecides.rule.today.percentOfActive": {
+    "text": "Counts only people who have been active lately.",
+    "description": "What a share-of-active rule asks for."
+  },
+  "whoDecides.rule.today.majority": {
+    "text": "Group vote’s math, or a quiet wait if nobody objects.",
+    "description": "What a majority rule asks for."
+  },
+  "whoDecides.rule.today.unknown": {
+    "text": "Depends on how many people the group has.",
+    "description": "What a rule asks for when the screen does not know the group's size."
+  },
+  "whoDecides.people.title": {
+    "text": "People",
+    "description": "Section label over who is in the project and its admins."
+  },
+  "whoDecides.people.members": {
+    "text": "Members",
+    "description": "Row that opens Members, where people are invited and managed."
+  },
+  "whoDecides.people.membersSub_one": {
+    "text": "{{count}} person in it. Invite and manage people.",
+    "description": "Line under the Members row, with one person."
+  },
+  "whoDecides.people.membersSub_other": {
+    "text": "{{count}} people in it. Invite and manage people.",
+    "description": "Line under the Members row. {{count}} is how many people."
+  },
+  "whoDecides.people.admins": {
+    "text": "App admins",
+    "description": "Row that opens Members on the project's admins."
+  },
+  "whoDecides.people.adminsNone": {
+    "text": "None yet. They manage settings and can force-merge.",
+    "description": "Line under App admins when there are none."
+  },
+  "whoDecides.change.see": {
+    "text": "Who can see it",
+    "description": "Name of the first kind of change in the list of changes to propose."
+  },
+  "whoDecides.change.rule": {
+    "text": "How changes are approved",
+    "description": "Name of the second kind of change in the list of changes to propose."
+  },
+  "whoDecides.changeLine": {
+    "text": "{{what}}: {{from}} → {{to}}",
+    "description": "One change in the list to propose. {{what}} is what changes; {{from}} and {{to}} are the old and new settings."
+  },
+  "whoDecides.count_one": {
+    "text": "1 change, ready to propose",
+    "description": "Heading of the summary when one thing was changed."
+  },
+  "whoDecides.count_other": {
+    "text": "{{count}} changes, proposed together",
+    "description": "Heading of the summary when several things were changed. {{count}} is how many."
+  },
+  "whoDecides.propose_one": {
+    "text": "Propose this change",
+    "description": "Button: open the proposal for the one change."
+  },
+  "whoDecides.propose_other": {
+    "text": "Propose {{count}} changes",
+    "description": "Button: open one proposal for several changes. {{count}} is how many."
+  },
+  "whoDecides.proposing": {
+    "text": "Proposing…",
+    "description": "The propose button while the proposal is being opened."
+  },
+  "whoDecides.proposeNoteYou": {
+    "text": "Your yes is enough to put it through, or the group’s real yes votes are. Changes to who decides never go live on a quiet wait.",
+    "description": "Note under the propose button, for the creator."
+  },
+  "whoDecides.proposeNoteCreator": {
+    "text": "{{creator}}’s yes is enough to put it through, or the group’s real yes votes are. Changes to who decides never go live on a quiet wait.",
+    "description": "Note under the propose button, for anyone but the creator. {{creator}} is the creator's username."
+  },
+  "whoDecides.nothing": {
+    "text": "Nothing changed yet",
+    "description": "Summary heading before anything was changed."
+  },
+  "whoDecides.nothingSub": {
+    "text": "Pick something different above, and it becomes one proposal for the group.",
+    "description": "Line under Nothing changed yet."
+  },
+  "whoDecides.opened": {
+    "text": "Proposed",
+    "description": "Summary heading once the proposal is open."
+  },
+  "whoDecides.openedSub": {
+    "text": "It’s up for a vote now, and goes live once it passes.",
+    "description": "Line under Proposed."
+  },
+  "whoDecides.alreadyWaiting": {
+    "text": "A change to who can see and change it is already up for a vote. Open it from the note at the top.",
+    "description": "Error when another such proposal is already waiting."
+  },
+  "whoDecides.notVerified": {
+    "text": "Nothing changed. Making it public needs a verified phone first.",
+    "description": "Status after the person declined to verify before making the project public."
+  },
+  "whoDecides.error": {
+    "text": "Could not propose the change. Try again.",
+    "description": "Error when the proposal could not be opened."
+  },
+  "members.whoDecides.title": {
+    "text": "Who can see & change it",
+    "description": "Row in the Members dialog that opens the sheet where the project's visibility and approval rule are set."
+  },
+  "members.whoDecides.sub": {
+    "text": "Private or public, and how changes are approved",
+    "description": "Second line of that row."
+  },
+  "appSettings.access.now": {
+    "text": "Now: {{access}}. Who can see it and how its changes are approved are set together, in one proposal.",
+    "description": "Line in App settings' Access section. {{access}} is who can see the project today, for example \"Private community\"."
+  },
+  "appSettings.access.open": {
+    "text": "Who can see & change it",
+    "description": "Button in App settings' Access section: opens the sheet that sets who can see the project and how its changes are approved."
   }
 }
