@@ -129,6 +129,11 @@ other change.
 - `LANGUAGE_SYNC_ENABLED=false` turns it off. Its spend counts against the
   platform's daily system budget. A full admin's connector reads where it
   stands with `get_browser_languages`, the last such failure included.
+- **Where an admin sees a failure.** The warning lines are in the platform's
+  logs, and for a while in the admin console under Health & status → Recent
+  events: that list shows the last 50 lines the running server logged, at any
+  level, so a line leaves it as newer ones arrive or the server restarts. The
+  kept failure in `get_browser_languages` stays until a pass ends without one.
 
 `node scripts/language-sync.js --plan` shows what each language needs on a
 checkout, and the same script translates by hand with an `ANTHROPIC_API_KEY`
