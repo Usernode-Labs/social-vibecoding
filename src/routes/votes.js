@@ -336,7 +336,7 @@ function stagingMockProposals(viewer) {
     // recorded and shown but does not decide this one, and the vote picker
     // says so. Reviewable on staging via ?demo=1.
     {
-      ...mk(9000041, 900141,
+      ...mk(9000047, 900147,
         '[Mock] Advisory vote: only approvers decide this one',
         6, 0, 0, 1, { required: 2, windowEndsAt: hoursAhead(66) }),
       approval_policy: 'invited',
