@@ -1109,7 +1109,10 @@ test('the board card and the running badge carry the live count', () => {
   const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
   const running = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 619, passed: 619, failed: 0, expected: 732 } });
   assert.equal(running.label, 'Checks');
-  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, text: '619 of 732 checks done' });
+  // #4727: the fill follows the run's real position — with no unit block
+  // running behind, that is the declared checks' own 85%, so this chip
+  // renders exactly as it did before the change.
+  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, pct: 85, text: '619 of 732 checks done' });
   assert.match(running.title, /^619 of 732 checks done\. /);
   assert.equal(running.spinner, true);
   const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
@@ -1120,6 +1123,15 @@ test('the board card and the running badge carry the live count', () => {
   assert.deepEqual({ ...early.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
   const earlyRan = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
   assert.deepEqual({ ...earlyRan.progress }, { done: 0, total: 0, indeterminate: true, text: '7 checks done so far' });
+  // #4727: a unit suite running behind holds the chip's fill at the run's
+  // real position — the slower half — while the count stays the declared
+  // checks' ("840 of 840 checks done"): declared 840/840 with the unit suite
+  // at half fills the bar 50%, not 100%, the same as the Testing card.
+  const lagging = { ran: 840, passed: 840, failed: 0, expected: 840, unit: { ran: 9600, passed: 9600, failed: 0, expected: 19240, done: false } };
+  const behind = tag({ status: 'promoted', check_state: 'pending', checks_progress: lagging });
+  assert.deepEqual({ ...behind.progress }, { done: 840, total: 840, pct: 50, text: '840 of 840 checks done' });
+  const behindBadge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: lagging });
+  assert.match(behindBadge, /aria-valuemax="840" aria-valuenow="840" aria-label="840 of 840 checks done"><span class="checks-chip-bar-fill" style="width:50%"><\/span><\/span><\/span>$/, 'the fill follows the slower half, the aria count the declared checks');
 
   // Both React renderers draw the bar from the spec, the busy one included.
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');

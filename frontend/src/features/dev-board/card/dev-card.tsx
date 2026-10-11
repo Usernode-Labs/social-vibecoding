@@ -355,7 +355,12 @@ export function ChecksBar({ progress }: { progress: ChecksProgress }): ReactNode
       />
     );
   }
-  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  // #4727: the fill follows the run's real checks position (`pct`, the slower
+  // of its two halves) when the run knows it; the aria counts stay the
+  // declared checks' done-of-total.
+  const pct = Number.isFinite(progress.pct)
+    ? progress.pct
+    : progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <span
       className="checks-chip-bar"
