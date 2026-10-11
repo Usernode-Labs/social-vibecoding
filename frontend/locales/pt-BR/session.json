@@ -1126,5 +1126,281 @@
   "progress.phase.interrupted": {
     "text": "Interrompido",
     "source": "132d124d6bb3d811116f98aa03bc474f5783517d4c82635c031745912e62e1c8"
+  },
+  "merge.measured.minutesAgo_many": {
+    "text": "medido há {{count}} de minutos",
+    "source": "fab5cb02f9f34f5b9c23d65b9af60f9d0b34389a2217c3c4b7adf7eec94f721f"
+  },
+  "merge.measured.minutesAgo_one": {
+    "text": "medido há {{count}} minuto",
+    "source": "122359816fa092208411ca9f2a262884dc5985b32e29609cff117b44d04832df"
+  },
+  "merge.measured.minutesAgo_other": {
+    "text": "medido há {{count}} minutos",
+    "source": "fab5cb02f9f34f5b9c23d65b9af60f9d0b34389a2217c3c4b7adf7eec94f721f"
+  },
+  "merge.measured.hoursAgo_many": {
+    "text": "medido há {{count}} de horas",
+    "source": "a0684d5220fdaec34613e90ce9d8316ee372fd8b61233d8bb06c8abb867fc529"
+  },
+  "merge.measured.hoursAgo_one": {
+    "text": "medido há {{count}} hora",
+    "source": "a40bd7557e4ea758a3545791ea8f66e22bc4bc20dced7d5127e805cf079386ea"
+  },
+  "merge.measured.hoursAgo_other": {
+    "text": "medido há {{count}} horas",
+    "source": "a0684d5220fdaec34613e90ce9d8316ee372fd8b61233d8bb06c8abb867fc529"
+  },
+  "merge.status.conflictsWithMainFiles_many": {
+    "text": "Conflita com a main · {{count}}",
+    "source": "ccebb79ef5de4540602c37e5bdb14e0f255732108ce8ae79a4505de771f58adf"
+  },
+  "merge.status.conflictsWithMainFiles_one": {
+    "text": "Conflita com a main · {{count}}",
+    "source": "ccebb79ef5de4540602c37e5bdb14e0f255732108ce8ae79a4505de771f58adf"
+  },
+  "merge.status.conflictsWithMainFiles_other": {
+    "text": "Conflita com a main · {{count}}",
+    "source": "ccebb79ef5de4540602c37e5bdb14e0f255732108ce8ae79a4505de771f58adf"
+  },
+  "merge.status.checksFailingCount_many": {
+    "text": "Verificações com falha · {{count}}",
+    "source": "d312d35e2e88c0c08a527abfe98c11ca8e8500a1f0e3ff02f0249cef4b1d3b46"
+  },
+  "merge.status.checksFailingCount_one": {
+    "text": "Verificações com falha · {{count}}",
+    "source": "d312d35e2e88c0c08a527abfe98c11ca8e8500a1f0e3ff02f0249cef4b1d3b46"
+  },
+  "merge.status.checksFailingCount_other": {
+    "text": "Verificações com falha · {{count}}",
+    "source": "d312d35e2e88c0c08a527abfe98c11ca8e8500a1f0e3ff02f0249cef4b1d3b46"
+  },
+  "merge.status.checksQueuedAhead_many": {
+    "text": "Verificações na fila · {{count}} à frente",
+    "source": "eab8f11d97739087afa414c6f2ae44813a21d124275342fe4e194bbb0b1ac4dc"
+  },
+  "merge.status.checksQueuedAhead_one": {
+    "text": "Verificações na fila · {{count}} à frente",
+    "source": "eab8f11d97739087afa414c6f2ae44813a21d124275342fe4e194bbb0b1ac4dc"
+  },
+  "merge.status.checksQueuedAhead_other": {
+    "text": "Verificações na fila · {{count}} à frente",
+    "source": "eab8f11d97739087afa414c6f2ae44813a21d124275342fe4e194bbb0b1ac4dc"
+  },
+  "merge.status.checksRunningFor_many": {
+    "text": "Verificações em andamento · {{count}} min",
+    "source": "077aa9ff5525c54b79caf86f6a5694a944c51aa5e1f8b4640c9445f5b3c86c83"
+  },
+  "merge.status.checksRunningFor_one": {
+    "text": "Verificações em andamento · {{count}} min",
+    "source": "077aa9ff5525c54b79caf86f6a5694a944c51aa5e1f8b4640c9445f5b3c86c83"
+  },
+  "merge.status.checksRunningFor_other": {
+    "text": "Verificações em andamento · {{count}} min",
+    "source": "077aa9ff5525c54b79caf86f6a5694a944c51aa5e1f8b4640c9445f5b3c86c83"
+  },
+  "merge.status.behindCount_many": {
+    "text": "Atrás da main · {{count}}",
+    "source": "9e71cc86c4d5ce22b7efbb1d646ccbd33a9dc9094c3039aa0edea984d3862135"
+  },
+  "merge.status.behindCount_one": {
+    "text": "Atrás da main · {{count}}",
+    "source": "9e71cc86c4d5ce22b7efbb1d646ccbd33a9dc9094c3039aa0edea984d3862135"
+  },
+  "merge.status.behindCount_other": {
+    "text": "Atrás da main · {{count}}",
+    "source": "9e71cc86c4d5ce22b7efbb1d646ccbd33a9dc9094c3039aa0edea984d3862135"
+  },
+  "merge.pill.advisoryVotes_many": {
+    "text": "{{count}} de votos consultivos de quem não é aprovador. Não contam para mesclar",
+    "source": "bee2ff0211395b1b2cc8fa92b4d84af7c6818670f81bc548be6fad2fd283ab51"
+  },
+  "merge.pill.advisoryVotes_one": {
+    "text": "{{count}} voto consultivo de quem não é aprovador. Não conta para mesclar",
+    "source": "7799c1131ee1fe16f9a0c3051f8ea81466afdfe4071aae4bd7da950e5940ab8a"
+  },
+  "merge.pill.advisoryVotes_other": {
+    "text": "{{count}} votos consultivos de quem não é aprovador. Não contam para mesclar",
+    "source": "bee2ff0211395b1b2cc8fa92b4d84af7c6818670f81bc548be6fad2fd283ab51"
+  },
+  "flow.connectors.hint_many": {
+    "text": "Você já tem {{count}} de conectores Claude / ChatGPT conectados. Também pode simplesmente pedir que ele assuma esta tarefa. Um conector pertence à conta do {{product}} em que foi adicionado, então colar em outra conta exige um próprio: <0>mostrar as etapas</0>.",
+    "source": "7c0724bf00ab965f5bb40fcacd406cd32de88f8ac6a1ed7a9c8e5364b7ec8367"
+  },
+  "flow.connectors.hint_one": {
+    "text": "Você já tem {{count}} conector Claude / ChatGPT conectado. Também pode simplesmente pedir que ele assuma esta tarefa. Um conector pertence à conta do {{product}} em que foi adicionado, então colar em outra conta exige um próprio: <0>mostrar as etapas</0>.",
+    "source": "7b3c024b87e597ea1ea4109b51e648688986c4ed09cde7d56d4be1cc4e47a309"
+  },
+  "flow.connectors.hint_other": {
+    "text": "Você já tem {{count}} conectores Claude / ChatGPT conectados. Também pode simplesmente pedir que ele assuma esta tarefa. Um conector pertence à conta do {{product}} em que foi adicionado, então colar em outra conta exige um próprio: <0>mostrar as etapas</0>.",
+    "source": "7c0724bf00ab965f5bb40fcacd406cd32de88f8ac6a1ed7a9c8e5364b7ec8367"
+  },
+  "credits.resetIn.minutes_many": {
+    "text": "{{count}} min",
+    "source": "dfa02f1827e7eeb4de0376512e651595dda607acbfe39dc892e9d397805bb604"
+  },
+  "credits.resetIn.minutes_one": {
+    "text": "{{count}} min",
+    "source": "dfa02f1827e7eeb4de0376512e651595dda607acbfe39dc892e9d397805bb604"
+  },
+  "credits.resetIn.minutes_other": {
+    "text": "{{count}} min",
+    "source": "dfa02f1827e7eeb4de0376512e651595dda607acbfe39dc892e9d397805bb604"
+  },
+  "credits.resetIn.hours_many": {
+    "text": "{{count}} h",
+    "source": "0419aebec122e5210870a0d354e3ea9b5510821dfe20094e3d7802e99a6ca0d3"
+  },
+  "credits.resetIn.hours_one": {
+    "text": "{{count}} h",
+    "source": "0419aebec122e5210870a0d354e3ea9b5510821dfe20094e3d7802e99a6ca0d3"
+  },
+  "credits.resetIn.hours_other": {
+    "text": "{{count}} h",
+    "source": "0419aebec122e5210870a0d354e3ea9b5510821dfe20094e3d7802e99a6ca0d3"
+  },
+  "credits.intro.counted_many": {
+    "text": "{{count}} de maneiras de continuar criando agora:",
+    "source": "7fa8dbdc6ee7af752dd900627b2c10d40b262d3653e9f2b3dd6cb9cb805f4bb1"
+  },
+  "credits.intro.counted_one": {
+    "text": "{{count}} maneira de continuar criando agora:",
+    "source": "a5c8b5ff36a941a6d817e7e87c69719f922cbd685dff4ae73f2a5e6615cbf381"
+  },
+  "credits.intro.counted_other": {
+    "text": "{{count}} maneiras de continuar criando agora:",
+    "source": "7fa8dbdc6ee7af752dd900627b2c10d40b262d3653e9f2b3dd6cb9cb805f4bb1"
+  },
+  "buildLog.ago.minutes_many": {
+    "text": "há {{count}} min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "buildLog.ago.minutes_one": {
+    "text": "há {{count}} min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "buildLog.ago.minutes_other": {
+    "text": "há {{count}} min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "buildLog.ago.hours_many": {
+    "text": "há {{count}} h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "buildLog.ago.hours_one": {
+    "text": "há {{count}} h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "buildLog.ago.hours_other": {
+    "text": "há {{count}} h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "buildLog.ago.days_many": {
+    "text": "há {{count}} d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "buildLog.ago.days_one": {
+    "text": "há {{count}} d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "buildLog.ago.days_other": {
+    "text": "há {{count}} d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "buildLog.ago.months_many": {
+    "text": "há {{count}} m",
+    "source": "1ac849daabdf9524b6c67be6483ec48053d7a688924f23666a2b82903620a56f"
+  },
+  "buildLog.ago.months_one": {
+    "text": "há {{count}} m",
+    "source": "1ac849daabdf9524b6c67be6483ec48053d7a688924f23666a2b82903620a56f"
+  },
+  "buildLog.ago.months_other": {
+    "text": "há {{count}} m",
+    "source": "1ac849daabdf9524b6c67be6483ec48053d7a688924f23666a2b82903620a56f"
+  },
+  "transcript.activity.stepsAndSummary_many": {
+    "text": "Atividade do agente ({{count}} de etapas) e resumo",
+    "source": "0a916b4372b1fe76f38908634f5184945b833873754176a8c2ef45852b20477b"
+  },
+  "transcript.activity.stepsAndSummary_one": {
+    "text": "Atividade do agente ({{count}} etapa) e resumo",
+    "source": "0a916b4372b1fe76f38908634f5184945b833873754176a8c2ef45852b20477b"
+  },
+  "transcript.activity.stepsAndSummary_other": {
+    "text": "Atividade do agente ({{count}} etapas) e resumo",
+    "source": "0a916b4372b1fe76f38908634f5184945b833873754176a8c2ef45852b20477b"
+  },
+  "transcript.activity.steps_many": {
+    "text": "Atividade do agente ({{count}} de etapas)",
+    "source": "637b437bf7a1665507a1c00f1c535f9fd19df4a3d9337aa6cd1e77502c1bf87d"
+  },
+  "transcript.activity.steps_one": {
+    "text": "Atividade do agente ({{count}} etapa)",
+    "source": "637b437bf7a1665507a1c00f1c535f9fd19df4a3d9337aa6cd1e77502c1bf87d"
+  },
+  "transcript.activity.steps_other": {
+    "text": "Atividade do agente ({{count}} etapas)",
+    "source": "637b437bf7a1665507a1c00f1c535f9fd19df4a3d9337aa6cd1e77502c1bf87d"
+  },
+  "transcript.spec.versionLines_many": {
+    "text": "Plano v{{version}} · {{lines}} de linhas",
+    "source": "ca7078019c498416bb28c889f5a63c9533be59a64aec694348bab64acdd81a99"
+  },
+  "transcript.spec.versionLines_one": {
+    "text": "Plano v{{version}} · {{lines}} linha",
+    "source": "ca7078019c498416bb28c889f5a63c9533be59a64aec694348bab64acdd81a99"
+  },
+  "transcript.spec.versionLines_other": {
+    "text": "Plano v{{version}} · {{lines}} linhas",
+    "source": "ca7078019c498416bb28c889f5a63c9533be59a64aec694348bab64acdd81a99"
+  },
+  "transcript.spec.draftedLines_many": {
+    "text": "Plano elaborado · {{lines}} de linhas",
+    "source": "2df444dfaefad09c226187644eeeb505bb4af7dbfac2bdf75ed2512dd009532a"
+  },
+  "transcript.spec.draftedLines_one": {
+    "text": "Plano elaborado · {{lines}} linha",
+    "source": "2df444dfaefad09c226187644eeeb505bb4af7dbfac2bdf75ed2512dd009532a"
+  },
+  "transcript.spec.draftedLines_other": {
+    "text": "Plano elaborado · {{lines}} linhas",
+    "source": "2df444dfaefad09c226187644eeeb505bb4af7dbfac2bdf75ed2512dd009532a"
+  },
+  "transcript.header.byAuthorMessages_many": {
+    "text": "Sessão do agente de {{author}} · {{count}} de mensagens",
+    "source": "c144794ae25d47cdc65adb9242317b18c542bb8dbfc86781a3164adaa0587b92"
+  },
+  "transcript.header.byAuthorMessages_one": {
+    "text": "Sessão do agente de {{author}} · {{count}} mensagem",
+    "source": "0e2d4748a6dd2e8fd02aa086fbdd8347af5c1ee28cc19379a19971dd281231e3"
+  },
+  "transcript.header.byAuthorMessages_other": {
+    "text": "Sessão do agente de {{author}} · {{count}} mensagens",
+    "source": "c144794ae25d47cdc65adb9242317b18c542bb8dbfc86781a3164adaa0587b92"
+  },
+  "transcript.header.byUnknownMessages_many": {
+    "text": "Sessão do agente de alguém · {{count}} de mensagens",
+    "source": "85bf6b7e7b6d9e1cc8c9596834567ebe77cb72fd0908e88b82069411de4bc0a0"
+  },
+  "transcript.header.byUnknownMessages_one": {
+    "text": "Sessão do agente de alguém · {{count}} mensagem",
+    "source": "20a31320dc78c6b095ca64f45ef66b87b1d744d83c12e0fb1c56a02173d60f3f"
+  },
+  "transcript.header.byUnknownMessages_other": {
+    "text": "Sessão do agente de alguém · {{count}} mensagens",
+    "source": "85bf6b7e7b6d9e1cc8c9596834567ebe77cb72fd0908e88b82069411de4bc0a0"
+  },
+  "transcript.header.readMessages_many": {
+    "text": "Ler a sessão do agente ({{count}} de mensagens)",
+    "source": "2cd885fb43046a463abcf0a87c59296bf743654a172ac3522d12f1bb398198b8"
+  },
+  "transcript.header.readMessages_one": {
+    "text": "Ler a sessão do agente ({{count}} mensagem)",
+    "source": "2cd885fb43046a463abcf0a87c59296bf743654a172ac3522d12f1bb398198b8"
+  },
+  "transcript.header.readMessages_other": {
+    "text": "Ler a sessão do agente ({{count}} mensagens)",
+    "source": "2cd885fb43046a463abcf0a87c59296bf743654a172ac3522d12f1bb398198b8"
   }
 }
