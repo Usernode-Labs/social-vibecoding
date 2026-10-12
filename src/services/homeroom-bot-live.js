@@ -511,6 +511,24 @@ function swapWording(text, pairs) {
   }, text);
 }
 
+// 12 Oct 2026: a first version's size and order. Its build gets about 40
+// minutes (homeroom-bot.js buildBudgets, FIRST_VERSION_BUILD_TIME_FACTOR),
+// took a median 36, and some ran out of time, so the spec plans for about 25
+// and ranks its work: the build does the must-haves first
+// (FIRST_VERSION_ORDER_LINES) and the rest only with time left. Nothing is
+// cut: blind comparisons favoured the complete, reviewed first versions, and
+// what decided close pairs is the must-have list below.
+const FIRST_VERSION_SIZE_LINES = Object.freeze([
+  '- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves',
+  '  it time to look at the result and fix it. This is a size to aim for, not a cut: nothing the request needs is',
+  '  dropped to fit, and what may not fit goes last in the order below.',
+  '- Ranked, so the build does what matters most first. End the technical half with a "Build order" subsection',
+  '  of two short lists. "Must-haves first": the main action working end to end; honest loading, empty and error',
+  '  states (never a blank loading screen, a made-up zero or a raw server error); the phone layout (nothing',
+  '  covering or cutting off content, the tab you are on marked); demo data that shows the app\'s core idea; and',
+  '  the signature element on the first screen. Then "Nice-to-haves": everything else, most valuable first.',
+]);
+
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
 function specScopeLines(firstVersion = false, starter = null) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
@@ -526,6 +544,7 @@ function specScopeLines(firstVersion = false, starter = null) {
     '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
     '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
     '  and why. What binds you is the request itself and what its creator approved, above.',
+    ...FIRST_VERSION_SIZE_LINES,
   ];
 }
 
@@ -1974,6 +1993,14 @@ const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
   '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
 ]);
 
+// A first version's build follows its spec's "Build order"
+// (FIRST_VERSION_SIZE_LINES): the must-haves first, the rest with time left.
+const FIRST_VERSION_ORDER_LINES = Object.freeze([
+  '',
+  'Build in the order the spec\'s "Build order" gives: every must-have first, working, then the nice-to-haves, most',
+  'valuable first, only while time is left.',
+]);
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -2035,6 +2062,7 @@ function buildPrompt({
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
+    ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -3400,6 +3428,8 @@ module.exports = {
   specScopeLines,
   specDesignBrief,
   firstVersionDesignLines,
+  FIRST_VERSION_SIZE_LINES,
+  FIRST_VERSION_ORDER_LINES,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,

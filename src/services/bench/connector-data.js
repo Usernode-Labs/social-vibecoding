@@ -185,6 +185,11 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       versionId: Number(r.bot_config_version_id), key: r.bot_config_key || null,
       label: r.bot_config_label ? clipText(r.bot_config_label, 80) : null, version: num(r.bot_config_version),
     } : null,
+    // How big the plan the build worked from was, in characters of its
+    // markdown spec, to read against how the build went: a first version's
+    // spec is asked to plan about 25 minutes of its 40 (homeroom-bot-live.js
+    // FIRST_VERSION_SIZE_LINES). Null when the run has no spec.
+    specChars: r.build_spec_md ? String(r.build_spec_md).length : null,
     reviewRounds: num(r.review_rounds),
     reviewStop: r.review_stop || null,
     // Whose weekly building time it counted toward, if anybody's.
