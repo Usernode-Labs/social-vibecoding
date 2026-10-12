@@ -354,14 +354,20 @@ test('the low-credits check is the note\'s words in a red strip, with Cancel and
   const html = check(parts.creditView(figures(60)));
   assert.match(html, /role="alert"/);
   assert.match(html, /data-agent-session-low-credit-confirm="true"/);
-  assert.match(html, new RegExp(`>${message('agent:session.credits.lowNote', { amount: '$0.60' }).replace('$', '\\$')}<`));
+  // The sentence is rich text: its tag 0 renders as the real Settings link,
+  // so the catalog string is compared with its markers stripped, as the
+  // LowCreditNote test above does.
+  const words = (id, values) => message(id, values).replace(/<\/?0>/g, '').replace(/\s+/g, ' ').trim();
+  const spoken = (html) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  assert.ok(spoken(html).includes(words('agent:session.credits.lowNote', { amount: '$0.60' })), 'the check speaks the note\'s words');
+  assert.match(html, /href="#settings\/api-key"/, 'the way out is the API key page in Settings');
   assert.match(html, /class="card-button-outlined"[^>]*>Cancel</, 'Cancel in the outlined card-button style');
   assert.match(html, /class="card-button-filled"[^>]*>Continue</, 'Continue in the filled card-button style');
   assert.match(html, /bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950\/40 dark:text-red-300/, 'the red tint of the credits pill');
   assert.equal((html.match(/type="button"/g) || []).length, 2, 'neither button submits the form');
 
   const empty = check(parts.creditView(figures(0)));
-  assert.match(empty, new RegExp(`>${message('agent:session.credits.lowNoteNone')}<`), 'nothing left says the none-left sentence');
+  assert.ok(spoken(empty).includes(words('agent:session.credits.lowNoteNone')), 'nothing left says the none-left sentence');
 });
 
 test('the pill is gray in every state and only its ink changes; a bar along its bottom drains from the right', () => {
