@@ -1737,7 +1737,10 @@ function buildDescriptionLines(locale = null) {
 // key: a change to the bot's own replies declared as "ask the bot" had its
 // shots end on "I can't reach my model" (PR 4536), so the build is told to
 // start from a reply already there. The tool's answer warns about it too
-// (shots-ready-states.js).
+// (shots-ready-states.js). Most states the copies lacked were new in the
+// change itself (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12),
+// so the build seeds a new state in the same change: the after copy, where
+// that seed lands, is the side a new state needs.
 function buildVisibleChangesLines(locale = null) {
   return [
   '',
@@ -1756,6 +1759,12 @@ function buildVisibleChangesLines(locale = null) {
   'it cannot reach its model there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot',
   '(or any AI feature) for something and wait for its reply. Start from a state that already holds the reply: a',
   'ready-made state the tool\'s answer lists, or a message the app\'s staging seed writes.',
+  'When a fresh staging copy lacks the state a change shows, add an idempotent, obviously fake staging seed for it in',
+  'this same change: it reaches the after copy, which is the side a new state needs. Seed rows for the shots\' own',
+  'accounts (usernode-capture is the member) and fake people, never a signal your code reads to decide something,',
+  'and a reply as the stored message, never asked for. A change to a state that already existed needs it on both',
+  'copies, which a seed in this change cannot give: make it with hints.setup steps, or say in your summary that its',
+  'seed must merge first, in its own change.',
   ];
 }
 

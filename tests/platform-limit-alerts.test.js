@@ -235,10 +235,11 @@ test('each cap counts exactly what its enforcing route counts', async () => {
   // routes/sessions.js's global-cap probe.
   assert.match(count, /status IN \('active', 'promoted'\)/);
   assert.match(count, /source IS DISTINCT FROM 'imported'/);
-  assert.match(count, /is_synthetic = TRUE/);
+  assert.doesNotMatch(count, /is_synthetic/, 'synthetic users\' sessions count');
   const routes = collapse(read('src/routes/sessions.js'));
-  assert.ok(routes.includes("AND source IS DISTINCT FROM 'imported' AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)"),
+  assert.equal(routes.split("WHERE status IN ('active', 'promoted') AND source IS DISTINCT FROM 'imported'`").length - 1, 4,
     'the sessions route still counts the same way');
+  assert.doesNotMatch(routes, /NOT IN \(SELECT id FROM users WHERE is_synthetic/);
   const apps = collapse(read('src/routes/apps.js'));
   assert.ok(apps.includes("SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'"),
     'the apps route still counts the same way');
