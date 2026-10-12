@@ -19207,7 +19207,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-fig-side-value-warn .dev-ws-fig-warn { margin-top: 0; }
 .dev-ws-fig-side-detail { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 /* The Homeroom bot's grid: a corner and the three column heads, then a row
-   per group, its name first. */
+   per group, its name first, and the rows a group runs on into under it. */
 .dev-ws-figs-grid { grid-template-columns: 140px repeat(3, minmax(0, 1fr)); }
 .dev-ws-figs-row { display: contents; }
 .dev-ws-figs-corner,
@@ -19229,6 +19229,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-figs-corner { display: none; }
   .dev-ws-figs-colhead { padding: 8px 10px 6px; }
   .dev-ws-figs-rowhead { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; align-items: baseline; gap: 6px; padding: 8px 10px 4px; }
+  .dev-ws-figs-rowhead-more { display: none; }
   .dev-ws-figs-rowname { font-size: 13px; line-height: 18px; }
   .dev-ws-figs-grid .dev-ws-fig { padding: 6px 10px 10px; }
   .dev-ws-figs-grid .dev-ws-fig-value { font-size: 18px; line-height: 24px; }
