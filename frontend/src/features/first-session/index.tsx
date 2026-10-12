@@ -274,7 +274,17 @@ const RING = 3;
  */
 const SHADE = 'pointer-events-auto fixed';
 const SHADE_ALL = 'pointer-events-auto fixed inset-0 bg-[rgba(9,9,12,0.6)]';
-const DIM = 'pointer-events-none fixed motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
+/*
+ * IT GLIDES FROM STEP TO STEP, AND ONLY THEN (onboarding run three, 12 Oct
+ * 2026): eased all the time, the cut-out chased whatever its target did
+ * within a step. Leaving the menu it followed "Suggest an improvement" down
+ * with the sheet, a light bar sliding across the page; on Home it glided
+ * down 40pt and back over 250ms. Now it eases for the move a step makes
+ * (`gliding`, GLIDE_MS) and follows its target at once otherwise.
+ */
+const DIM = 'pointer-events-none fixed';
+const DIM_GLIDE = 'pointer-events-none fixed motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
+const GLIDE_MS = 260;
 /** The cut-out's corners: the ring's (`rounded-2xl`) round a control, square for a screen. */
 export const HOLE_RADIUS = 16;
 
@@ -518,6 +528,15 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   const settleRef = useRef<{ at: number; since: number; key: string; still: number } | null>(null);
   const [settling, setSettling] = useState(false);
   const [moving, setMoving] = useState(false);
+  // A step change's move of the cut-out, eased (IT GLIDES FROM STEP TO STEP).
+  const [gliding, setGliding] = useState(false);
+  const firstStepRef = useRef(true);
+  useLayoutEffect(() => {
+    if (firstStepRef.current) { firstStepRef.current = false; return undefined; }
+    setGliding(true);
+    const t = window.setTimeout(() => setGliding(false), GLIDE_MS);
+    return () => window.clearTimeout(t);
+  }, [index]);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
@@ -740,7 +759,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   const pointed = !!(step.tap || step.ringed);
   // Waiting for the hub, nothing of the page under it is shown: it is a
   // blank page, then skeleton rows, until the hub is drawn whole.
-  const dimAll = waiting && step.waitsFor === 'hub';
+  // Nor while it leaves the menu: its target slides away with the sheet
+  // (OUT OF THE MENU, THE MENU GOES FIRST).
+  const dimAll = (waiting && step.waitsFor === 'hub') || leavingMenu;
   const hole = box && !dimAll && holeFor(box, viewport, pointed && !step.press ? RING : 0);
   // While a step waits for the app (`waiting`) nothing is ringed, and all of
   // its cut-out is covered.
@@ -761,7 +782,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     <div data-first-session-tour={index + 1} className={step.inMenu ? 'pointer-events-none fixed inset-0 z-[9995]' : 'pointer-events-none fixed inset-0 z-[9000]'}>
       {hole ? (
         <>
-          <div aria-hidden="true" data-first-session-dim="" className={DIM} style={dimStyle(hole, pointed)} />
+          <div aria-hidden="true" data-first-session-dim="" className={gliding || moving ? DIM_GLIDE : DIM} style={dimStyle(hole, pointed)} />
           <div className={SHADE} style={{ left: 0, top: 0, right: 0, height: Math.max(0, hole.top) }} />
           <div className={SHADE} style={{ left: 0, top: hole.top + hole.height, right: 0, bottom: 0 }} />
           <div className={SHADE} style={{ left: 0, top: hole.top, width: Math.max(0, hole.left), height: hole.height }} />

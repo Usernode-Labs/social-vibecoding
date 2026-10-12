@@ -463,13 +463,16 @@
         included: tapping ✕ on its fifth card showed the app undimmed for a
         frame, then the app's words through the next card while the two
         faded. While the tour is up (its flag, first-session/tour-running.ts)
-        a push, pop or fade runs as 'none'. A zoom is not a View Transition
-        and keeps its motion. */
+        a push, pop or fade runs as 'none'. So does the zoom out of an app
+        (onboarding run three): it pins the app's view over everything to
+        shrink it into its tile, and ✕ on the fifth card showed that view
+        undimmed for a frame. The zoom into an app keeps its motion: that is
+        the tile the tour asks them to tap, opening. */
     underTour(opts) {
       const o = opts || { type: 'none' };
       const flag = globalThis.__usernodeFirstSessionTourRunning;
       if (!flag || !flag.running) return o;
-      if (o.type === 'none' || o.type === 'zoom-in' || o.type === 'zoom-out') return o;
+      if (o.type === 'none' || o.type === 'zoom-in') return o;
       return Object.assign({}, o, { type: 'none' });
     },
 

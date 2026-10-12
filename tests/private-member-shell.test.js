@@ -28,7 +28,7 @@ test('the private tour: the shared seven cards, three reworded for someone invit
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
   assert.deepEqual(steps.map((s) => s.tap || null), ['Tap it', null, 'Tap the menu', null, 'Tap ✕', 'Tap Communities', null, null, null]);
   assert.deepEqual(steps.map((s) => s.target), [
-    '.app-card[data-slug="best-brunch"]',
+    '#app-list .app-card[data-slug="best-brunch"]',
     '#app-view',
     '#platform-mark-btn',
     '#improve-row-feedback',

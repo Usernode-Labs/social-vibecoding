@@ -136,6 +136,20 @@ test('no saved session holds the body too: the landing, not Home\'s skeleton, is
   assert.equal(signedOut.timers[0].ms, 8000, 'with the same floor');
   assert.equal(runHold(null, { saved: null, search: '?shot=dark', hash: '#login' }).classes.size, 1, 'whatever the address');
   assert.equal(runHold(null).classes.size, 0, 'a browser that was signed in keeps the skeleton');
+  // Onboarding run three, 12 Oct 2026: a saved session that still owes "What
+  // do you want to make?" is drawn into it as the shell starts, so a reload
+  // of it holds as well, and painted no Home skeleton first. The same four
+  // facts as the join step's firstSessionNow.
+  const owes = (user) => runHold(null, { saved: JSON.stringify({ user: { id: 7, ...user } }) }).classes.size;
+  const OWES = { needsCommunitiesChoice: true, storyFirstSession: true, needsUsernameChoice: false, hasPlatformAccess: true };
+  assert.equal(owes(OWES), 1, 'owed: held until the make screen is drawn');
+  assert.equal(owes({ ...OWES, needsCommunitiesChoice: false }), 0, 'answered: Home is next');
+  assert.equal(owes({ ...OWES, storyFirstSession: false }), 0);
+  assert.equal(owes({ ...OWES, needsUsernameChoice: true }), 0, 'a username to choose comes first');
+  assert.equal(owes({ ...OWES, hasPlatformAccess: false }), 0, 'the waiting room');
+  assert.equal(runHold(null, { saved: '{not json' }).classes.size, 0, 'an unreadable snapshot holds nothing');
+  const GATE = read('frontend/src/features/auth/communities-first-run.js');
+  assert.match(GATE, /user\.needsCommunitiesChoice === true\s+&& user\.storyFirstSession === true\s+&& user\.needsUsernameChoice !== true/);
   assert.equal(runHold(null, { blocked: true }).classes.size, 0, 'storage blocked: nothing known, nothing held');
   // The signed-out boot lifts it once the landing is drawn.
   assert.match(APP, /if \(window\.AuthScreens\) AuthScreens\.enter\(\);\s+App\._liftFirstSessionBoot\(\);/);

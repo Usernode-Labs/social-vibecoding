@@ -35,7 +35,7 @@ const DIR = 'frontend/src/features/first-session';
 const MAKE = read(`${DIR}/make.tsx`);
 const MADE = read(`${DIR}/made.tsx`);
 const ISLAND = read(`${DIR}/index.tsx`);
-const { lockPage, PAGE_LOCKED } = loadTsx('frontend/src/lib/page-lock.ts');
+const { lockPage, PAGE_LOCKED, PAGE_HIDDEN } = loadTsx('frontend/src/lib/page-lock.ts');
 
 // A <body> of element children, in order, each knowing its previous sibling.
 function page(...names) {
@@ -83,6 +83,27 @@ test('lockPage: a child that is inert already is someone else\'s, and stays as i
   assert.deepEqual(p.inert(), ['home-screen', 'platform-parked']);
   release();
   assert.deepEqual(p.inert(), ['platform-parked'], 'the parked strip lets go of its own');
+});
+
+test('lockPage: what it makes inert is out of sight too, so Safari\'s toolbar band shows no Home (onboarding run three)', () => {
+  assert.equal(PAGE_HIDDEN, 'data-page-locked');
+  const p = page('platform-header', 'home-screen', 'platform-parked', 'make', 'make-rule-sheet');
+  p.by['platform-parked'].setAttribute('inert', '');
+  const hidden = () => Object.values(p.by).filter((el) => el.hasAttribute(PAGE_HIDDEN)).map((el) => el.id);
+  const release = lockPage(p.by.make);
+  assert.deepEqual(hidden(), ['platform-header', 'home-screen'], 'only what this lock made inert');
+  // Nested: hidden until the last lock that hid it lets go.
+  const again = lockPage(p.by['make-rule-sheet']);
+  release();
+  assert.ok(p.by['home-screen'].hasAttribute(PAGE_HIDDEN));
+  again();
+  assert.deepEqual(hidden(), []);
+  // Without inert (from Create), nothing is hidden.
+  const create = lockPage(p.by.make, { inert: false });
+  assert.deepEqual(hidden(), []);
+  create();
+  // app.css draws it at no opacity, which no descendant can undo, while locked.
+  assert.match(APP_CSS, /html\.platform-page-locked \[data-page-locked\] \{\s+opacity: 0 !important;\s+\}/);
 });
 
 test('lockPage: without inert, only the scrolling stops (from Create, under the header)', () => {

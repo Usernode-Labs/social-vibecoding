@@ -34,7 +34,7 @@
 import { t as translate } from '../../lib/i18n/runtime';
 import { appFrameStore } from '../app-frame/app-frame-store.js';
 import { appStatusStore } from '../app-frame/app-status-store.js';
-import type { AppWait } from './tour-steps';
+import { type AppWait, tileOf } from './tour-steps';
 
 /** How often a waiting step looks again. */
 export const WAIT_CHECK_MS = 150;
@@ -89,7 +89,7 @@ export function appReady(wait: AppWait, slug: string, doc: Pick<Document, 'query
     return doc.querySelectorAll('#app-content [data-ws-community], #app-content [data-ws-community-pending]').length > 0;
   }
   if (wait === 'running') {
-    return Array.from(doc.querySelectorAll(`.app-card[data-slug="${slug}"]`))
+    return Array.from(doc.querySelectorAll(tileOf(slug)))
       .some((el) => tileSettled(el.getAttribute('data-status')));
   }
   const { view } = appStatusStore.get() as { view: StatusView };
