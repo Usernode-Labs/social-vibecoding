@@ -13,6 +13,7 @@ const path = require('path');
 const http = require('node:http');
 const { execFileSync, spawnSync, spawn } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 const {
   AUTO_COMPACT_TOKEN_LIMIT,
   DEFAULT_BASE_INSTRUCTIONS,
@@ -81,7 +82,7 @@ function makeEnv(run) {
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     MODE: 'scout',
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'openai/gpt-5.3-codex',
     AGENT_MODEL_NAME: 'GPT-5.3 Codex via OpenRouter',
@@ -721,7 +722,7 @@ exit 0
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     SESSION_ID: '1',
-    PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
     MODE: 'scout',
     WORKSPACE_DIR: ws,
   };

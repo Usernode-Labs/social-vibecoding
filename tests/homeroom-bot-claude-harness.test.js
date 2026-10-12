@@ -31,6 +31,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const registry = require('../src/agents/registry');
 const agentTurn = require('../src/services/agent-turn');
@@ -350,6 +351,7 @@ function runRunCc(env, fx, upstream, extra = {}) {
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
         RUNNER: path.join(ROOT, 'worker', 'run-cc.sh'),
         TURN_JOURNAL: journal,
+        ...RUNNER_TEST_ENV,
         ...extra,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
