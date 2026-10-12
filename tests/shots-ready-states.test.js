@@ -38,6 +38,10 @@ test('Homeroom\'s answer lists the ready-made states; a child app\'s says it has
   assert.match(own.dataNote, /src\/db\/migrate\.js/);
   assert.match(own.dataNote, /hints\.setup/);
   assert.match(own.dataNote, /reaches only the after copy/);
+  // A file to choose, and a loading or error state behind one request, the
+  // shots agent reaches itself (upload_file, control_request).
+  assert.match(own.dataNote, /chooses one of Homeroom's sample files \(landscape\.png, portrait\.png, table\.csv, document\.pdf\)/);
+  assert.match(own.dataNote, /hold or fail one API GET on both copies to show a loading or error state: name the file or the request in hints\.setup/);
   assert.deepEqual(own.warnings, []);
   // A state new in the proposal is seeded in it: the after copy is the side
   // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).

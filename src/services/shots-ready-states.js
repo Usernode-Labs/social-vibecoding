@@ -39,7 +39,14 @@
 // reads to decide something; a reply as the stored message), and that only
 // a change to a state that already existed needs its seed merged first.
 //
+// Two needs the shots agent meets itself, on both copies alike: a step that
+// chooses a file (it chooses one of the sample files, shots-samples.js) and
+// a loading or error state behind one API GET (it holds or fails that
+// request). The note names both, so an author says which in hints.setup.
+//
 // Pure: the declare route reads the app once and passes `selfApp`.
+
+const { SAMPLE_NAMES } = require('../../worker/shots-samples');
 
 // Each demo state in a few words, with who it is for (its persona and
 // alsoFor), in shots-demo-states.js's order. tests/shots-ready-states.test.js
@@ -204,6 +211,9 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
       + 'availableStates, on both sides' : `This app's before & after copies hold what ${seeds} writes, and no `
       + 'ready-made states'}. Anything else a change needs comes from hints.setup steps the shots agent takes `
       + `through the UI on both copies, or from ${seeds}. ${SEED_RULE} ${SEED_SIDES} `
+      + 'Where a step chooses a file, the shots agent chooses one of Homeroom\'s sample files '
+      + `(${SAMPLE_NAMES.join(', ')}), and it can hold or fail one API GET on both copies to show a loading or `
+      + 'error state: name the file or the request in hints.setup. '
       + `Nothing on them answers with a model${selfApp ? ', the Homeroom bot included' : ''}: they have no model key, `
       + 'so seed a reply as the stored message rather than asking for it.',
     warnings,

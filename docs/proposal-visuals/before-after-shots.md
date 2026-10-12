@@ -127,7 +127,10 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   for want of a state, most of them new in their own proposal. AGENTS.md,
   the declare tool, the Homeroom bot's build lines, the work order and
   `src/prompts/app-conventions.md` ("Who the before & after shots see") say
-  the same. A warning is added when a declared change's claim,
+  the same. It also says that a file a step chooses is one of
+  Homeroom's sample files, and that the shots agent can hold or fail one API
+  GET to show a loading or error state (see "Reaching a state the steps
+  cannot"). A warning is added when a declared change's claim,
   steps or checkpoint name a state that no ready-made state holds (a
   member's first-session tour, an invited account, the waitlist, an empty
   state or a new account; on a child app also a change waiting for
@@ -261,6 +264,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore` (`true`, `false` or `"unknown"`, the default). At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
+   | `control_request` | Holds (a loading state) or fails (an error state) one exact API GET on both builds, for a change that declares no `controlledFailurePath`; recorded first, and shown beside the change's shots (see "Reaching a state the steps cannot" below) |
+   | `upload_file` | Chooses Homeroom's sample files where a page's file chooser is open, in the named browser; recorded first, and shown beside the change's shots |
 
    For each change and screen, the agent takes the browser the brief names
    for that screen (the persona's phone browser for a phone screen), resizes
@@ -309,7 +314,10 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
-`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }], notices? }`.
+`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note?, conditions? }], notices? }`.
+`conditions` (`[{ kind: "request_held" | "request_failed", request }]` or
+`[{ kind: "sample_file", files }]`, at most four) is there only when the
+agent held or failed a request or uploaded sample files for that change.
 `notices` (`[{ text, change, screen, shot, alsoBefore }]`) is there only when
 the agent noted a problem; a notice names its `shot` only while that after
 shot is published. Notices are advisory: they never change a change's
@@ -485,6 +493,122 @@ people are the judges, which is also how the replay pipeline ended: people
 still had to look. The builds are platform-made from exact revisions with
 fixture data, so no author's local data or credentials can appear in them.
 
+## Reaching a state the steps cannot
+
+From 2026-10-09 to 10-12, declared changes went unshot because the shots
+agent had no way to do what their steps needed: choose a file (pixora PR 3,
+"no file-upload tool"), or show a loading or error state its author had not
+declared a `controlledFailurePath` for (reloop PR 12, smart-cashier PR 2's
+skeleton). The browser's own `browser_file_upload`, `browser_evaluate` and
+`browser_run_code` stay denied (`worker/run-cc.sh`): the first would hand a
+page any file on the worker, the browsers' signed-in storage state among
+them, and the others run whatever code the agent writes. Two shots tools do
+only the narrow part instead:
+
+- **`control_request`** makes one API GET wait (`hold`, a loading state) or
+  fail (`fail`, an error state, as `fail_request` does for a declared path),
+  and `off` lets it through again. The rule is a declared
+  `controlledFailurePath`'s: one exact path under `/api/`, with its query if
+  it has one, no wildcard or fragment (`shots-boundary.controlledRequestPath`,
+  `visible-changes.validControlledFailurePath`), and nothing that looks like a
+  credential. The shots proxy applies it to GETs to the pair's two addresses
+  alike and to nothing else: never a hosted app, never the internet. A held
+  request goes on as normal when it is let go, and after two minutes
+  whatever happens (`SHOTS_HOLD_MAX_MS`); a page that gives up first simply
+  goes. The trace counts each hit as `controlled_failure_hit` with its
+  `mode`.
+- **`upload_file`** answers a page's open file chooser with Homeroom's
+  sample files: `landscape.png` and `portrait.png` (made-up pictures),
+  `table.csv` (eight made-up purchases) and `document.pdf` (one page of
+  text), at most three at once. They are drawn from fixed numbers by
+  `worker/shots-samples.js`, so they hold nothing about anyone and are the
+  same bytes on every run and side, and the worker image writes them once,
+  read-only, to `/usr/local/share/usernode/shots-samples`. The agent clicks
+  the page's upload control as usual; when the browser says a file chooser
+  is open, the bridge asks that browser's observer, over a socket of its own
+  in a directory only the worker's user can open
+  (`SHOTS_BROWSER_CONTROL_DIR`) and with the turn's own token
+  (`SHOTS_BROWSER_CONTROL_TOKEN`), to choose them. The observer resolves each
+  name to its file in the sample directory itself, refuses any other name or
+  a link, and sends the browser the upload, queued behind the agent's own
+  calls; its answer goes back to the bridge and never into the agent's stream
+  of that browser (`createPointerParker` `inject`). The brief lists the set
+  as `sampleFiles`. The trace counts each upload as `sample_upload`.
+
+Both are recorded with the platform before anything is done
+(`POST /api/internal/shots/:runId/condition`, `RunControl.noteCondition`),
+so no shot is taken under a request held or failed, or after a file chosen,
+that the card does not name. A refused recording stops the tool. Each change
+keeps at most four, and the same one twice is recorded once. They go on the
+change's result as `conditions`, whatever its status, and the card shows each
+under a ready change, beside "Not in these shots":
+
+- "**Controlled test:** the shots agent kept GET /api/items waiting on both
+  builds, to show it loading."
+- "**Controlled test:** the shots agent made GET /api/items fail on both
+  builds, to show what happens when it does."
+- "**Sample file:** the shots agent uploaded landscape.png on both builds,
+  from Homeroom's own sample files."
+
+A declared `controlledFailurePath` failed through `control_request` is not
+recorded again: the change's own first step already says so. The connector's
+`get_proposal` carries them in `shotResults[].conditions`.
+
+Not built yet, for the same runs: taking a browser offline and back
+(trading-journal PR 37, mountain-trail PR 13), granting a fixed, fictional
+location (mountain-trail PR 12), and showing a change in its people's
+language (world-weather PR 18: the personas' tokens carry `locale: 'en'`,
+`shots-identities.js`). Going offline needs the browser context itself
+(Playwright's `setOffline`), which Playwright MCP 0.0.41 offers no tool for;
+a location can be granted at launch (`--grant-permissions geolocation` and a
+`contextOptions.geolocation` config) once a declared change can ask for it;
+and a language needs a locale on the declaration, carried to the persona
+tokens and the browsers' `locale`.
+
+## Signed in, as an app's page reads it
+
+Inside Homeroom an app's frame opens with `?token=` in its address
+(`public/js/app-view.js` `buildAppIframeSrc`, and the staging `buildSrc`),
+and many apps decide who is signed in from that query in the page rather
+than by asking their server: homeroom-maps gates every signed-in screen on
+it (`public/js/auth.js` `hasToken`), job-vacancy reads the person's name
+from it, and the bridge reads the linked address and locale from it. On a
+child app's copies the shots proxy signs each persona in by adding its
+token as `x-usernode-token` to the persona's requests to the pair's two
+addresses, which signs a page in on its server only. Pages the shots agent
+opened had no token in their address, so such an app showed the member as
+signed out: homeroom-maps PR 36 (proposal 7761) got only "Location Sharing
+needs a signed-in account", and job-vacancy PR 27 (proposal 7524) only its
+"Sign in" link.
+
+So the proxy now opens a child app's pages the way Homeroom's frame does
+(`worker/shots-origin-proxy.js`, `addressRedirect`):
+
+- A signed-in persona's page load (a top-level `GET` document) of either of
+  the pair's addresses with no `token` in its query is redirected to the same
+  address with `token=<display token>` added after the app's own query. The
+  browser keeps the fragment, so `/#/sharing` opens as
+  `/?token=…#/sharing`.
+- The display token is the persona token's own header and claims with the
+  placeholder signature `shots-display-only`: the page can read who is
+  signed in from it, but it signs nobody in anywhere. On its way to the
+  pair's two addresses the proxy puts the real token in its place, in the
+  `token` query value and in the `x-usernode-token` header the page forwards
+  it in; a redirect from the pair that names the real token goes back to the
+  browser with the display one. The real token stays out of the address,
+  the browser's history and what the shots agent reads.
+- An app's own redirect from a page that carried the token to an address
+  without one (an app that takes the token out of its address) is followed
+  as it is, once, rather than round again. The page has no token there in
+  Homeroom's frame either, and the header still signs it in on the server.
+- The guest is never redirected: Homeroom's frame has no guests, and at an
+  app's own address nobody's token is in the query. Homeroom's own copies
+  are unchanged; their sessions are cookies.
+
+The trace marks a page load the proxy sent on this way with
+`identityRedirect` on its `document_request`, and the redirect itself as a
+302 `document_response`.
+
 ## The guest browser
 
 The `guest` persona is a browser that is not signed in: the bootstrap writes
@@ -514,6 +638,15 @@ on the app:
 No gate is loosened for this: the guest gets only what a signed-out request
 already gets, and a preview still never admits guests. The guest token is
 masked with the other tokens and never enters the brief or the trace.
+
+An app on the scaffold from before guests verifies only a person's token,
+so it answers every `/api/*` request a guest makes with 401, at its own
+production address as on the copies. job-vacancy PR 27 (proposal 7524:
+`/api/bootstrap` and `/api/rates`) and world-weather PR 18 (proposal 7131:
+`/api/place`) were shot that way: what the guest browser showed is what a
+visitor with no account sees there. The fix is the app's (the current
+scaffold's guest check in `services/template.js`, and read routes that do
+not assume `req.user`), or a change declared for `member`.
 
 ## Phone sign-in on Homeroom's copies
 
@@ -826,9 +959,11 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | --- | --- |
 | Declaration schema (`parseIntent`, `declaredChanges`, `hints`, `needsClip`, `phoneScreen`, `phonePersonas`) | `src/services/visible-changes.js` |
 | Declaring on a hosted turn (`declare_visible_changes`) | `worker/visible-changes-mcp.js`, `POST /api/internal/sessions/:id/visible-changes` |
-| File checks and per-change results (`shotTarget`, `notice`, `summarize`) | `src/services/shots-files.js` |
-| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `noteProblem`, `summary`) | `src/services/shots-control.js` |
-| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/problem`, `/home-tile/:side`) | `src/routes/internal.js` |
+| File checks and per-change results (`shotTarget`, `notice`, `condition`, `summarize`) | `src/services/shots-files.js` |
+| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `noteProblem`, `noteCondition`, `summary`) | `src/services/shots-control.js` |
+| Internal routes (`/context`, raw `/shot`, `/skip`, `/note`, `/problem`, `/condition`, `/home-tile/:side`) | `src/routes/internal.js` |
+| The sample files `upload_file` may choose | `worker/shots-samples.js` |
+| A browser's own control socket (`startControl`), and calls the shots tools send it (`inject`) | `worker/shots-browser-observer.js` |
 | The app's home-screen tile on each side (`/__shots/home-tile`) | `src/services/shots-home-tile.js` |
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
@@ -840,7 +975,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Phone sign-in on Homeroom's copies (`shotsPhoneSignInEnv`, `shotsPhoneTestCodeFrom`, `testNumbersAllowed`) | `src/services/shots-environment.js`, `src/config.js`, `src/services/firebase-phone-auth.js` |
 | Browser servers (`--output-dir`, `--save-video`, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
-| Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
+| Egress proxy (origins, public-only egress, platform assets, requests held or failed) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
 | States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
