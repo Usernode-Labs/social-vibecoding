@@ -1003,6 +1003,10 @@
     "text": "Change password",
     "description": "Heading of the section in Settings where the person changes their password."
   },
+  "password.titleAdd": {
+    "text": "Add a password",
+    "description": "Heading of the same section in Settings, in place of \"Change password\", for an account that has no password yet and signs in with a code sent by email."
+  },
   "password.intro": {
     "text": "Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here. No password yet? Choose one here; until then you sign in with an emailed code.",
     "description": "Explanation under the Change password heading in Settings. The last sentence is for an account that has no password yet and signs in with a code sent by email."
@@ -1022,6 +1026,10 @@
   "password.submit": {
     "text": "Change password",
     "description": "Button in Settings > Change password: saves the new password, checked against the current one."
+  },
+  "password.submitAdd": {
+    "text": "Add password",
+    "description": "Button in Settings > Add a password, in place of \"Change password\", for an account that has no password yet: saves its first password."
   },
   "password.submitWithWallet": {
     "text": "Sign & change password",
