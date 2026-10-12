@@ -66,6 +66,33 @@ test('the build carries the dev chat\'s in-loop browser block and the bot\'s exp
   assert.match(text, /Boot the app, then\n  walk each changed screen through its accessibility snapshot \(`browser_snapshot`; you read text, not images\)\n/);
 });
 
+test('with a reviewer, the build checks its main flow once at one width and leaves the visual sweep to the review', () => {
+  for (const readsImages of [true, false]) {
+    const without = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true });
+    const p = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: true });
+    assert.ok(p.includes(IN_LOOP_BROWSER_GUIDANCE));
+    assert.match(p, /- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main\n  thing once \(below\), enough to know it runs and its main flow works, and fix what that shows is broken\./);
+    assert.match(p, /Do not\n  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at\n  both widths and in both looks once your turn is over, and you fix what it finds\./);
+    assert.match(p, /- A page that renders is not a button that works\./, 'the main-flow check stays');
+    assert.doesNotMatch(p, /at a desktop width, in both looks/);
+    assert.doesNotMatch(p, /Boot the app, then\n  (take screenshots|walk each changed screen)/);
+    // Without a reviewer, today's sweep, unchanged.
+    assert.match(without, /at 390x844 and at a desktop width, in both looks/);
+    assert.doesNotMatch(without, /one check is EXPECTED/);
+    assert.equal(without, live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages, firstVersion: true, reviewed: false }));
+  }
+  const clocked = live.buildPrompt({
+    seed: 'ISSUE', buildNote: 'plan', firstVersion: true, reviewed: true, clock: { startedAt: Date.now(), budgetMs: 40 * 60000 },
+  });
+  assert.match(clocked, /the reviewer checks sizes, looks, and empty and error states/);
+  assert.match(clocked, /Do it in the order, and by the time, the TIME section above sets\./);
+});
+
+test('the build is told it has a reviewer exactly when its configuration has one', () => {
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /reviewed: Boolean\(review\?\.reviewer\),/);
+});
+
 test('the dev chat\'s browser guidance is left as it was', () => {
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /browserGuidance: IN_LOOP_BROWSER_GUIDANCE,/);

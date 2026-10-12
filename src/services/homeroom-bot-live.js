@@ -1793,7 +1793,14 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
-function browserLines({ readsImages = false, clocked = false } = {}) {
+//
+// A first version under a configuration with a reviewer (bot-review.js) has
+// its screens captured at both widths, in both looks, and reviewed once the
+// build turn is over. Its build checked the same things first: first versions
+// took a median 36 minutes of a 40-minute clock, and one ran out of time
+// inside a browser check. So that build boots the app and does its main thing
+// once, at one width, and leaves the sweep to the review.
+function browserLines({ readsImages = false, clocked = false, reviewed = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -1806,12 +1813,20 @@ function browserLines({ readsImages = false, clocked = false } = {}) {
     'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
     'shows on:',
     IN_LOOP_BROWSER_GUIDANCE,
+    ...(reviewed ? [
+      '- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main',
+      '  thing once (below), enough to know it runs and its main flow works, and fix what that shows is broken. Do not',
+      '  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at',
+      '  both widths and in both looks once your turn is over, and you fix what it finds.',
+      '  Skip it only when the app cannot boot promptly, and then say why in your summary. ' + withinTime,
+    ] : [
     '- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will',
     '  see. Boot the app, then',
     `  ${look}`,
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     `  the app cannot boot promptly, and then say why in your summary. ${withinTime}`,
+    ]),
     '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
     '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
@@ -1853,12 +1868,16 @@ function utcClock(ms) {
  * The TIME section of a build prompt, or [] without a clock. `startedAt` is
  * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
  */
-function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {}) {
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false } = {}) {
   if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
   const minutes = (ms) => Math.round(ms / 60000);
   const stopAt = utcClock(startedAt + budgetMs);
   const soft = Number(softMs) > 0 && softMs < budgetMs;
   const softAt = soft ? utcClock(startedAt + softMs) : null;
+  // With a reviewer, the sizes, looks and empty and error states are its.
+  const rest = reviewed
+    ? 'the spec\'s other screens, and polish (the reviewer checks sizes, looks, and empty and error states).'
+    : 'the other screens, sizes and looks, the empty and error states, and polish.';
   return [
     '',
     `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
@@ -1869,10 +1888,7 @@ function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {})
     '1. Build everything the spec and the plan ask for. This is never what gets cut.',
     '2. Boot the app and do its main thing once, as a person would.',
     '3. Fix what that shows is broken.',
-    soft
-      ? `4. Only then, while it is before ${softAt} UTC: the other screens, sizes and looks, the empty and error states,`
-        + ' and polish.'
-      : '4. Only then, with time to spare: the other screens, sizes and looks, the empty and error states, and polish.',
+    soft ? `4. Only then, while it is before ${softAt} UTC: ${rest}` : `4. Only then, with time to spare: ${rest}`,
     soft
       ? `After ${softAt} UTC, start no new round of testing or polish. Finish building what the spec asks for if you`
         + ' still are, finish the fix you are in, check the app still boots, and finish your turn. Say in your summary'
@@ -1987,11 +2003,14 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // A first version whose configuration has a reviewer (bot-review.js): the
+  // review does the visual sweep, so the build checks its main flow once.
+  reviewed = false,
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
 }) {
-  const time = clock ? clockLines(clock) : [];
+  const time = clock ? clockLines({ ...clock, reviewed }) : [];
   const specBlock = spec
     ? [
       '',
@@ -2027,7 +2046,7 @@ function buildPrompt({
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
-    ...browserLines({ readsImages, clocked: time.length > 0 }),
+    ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2995,6 +3014,7 @@ async function buildAndPropose({
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    reviewed: Boolean(review?.reviewer),
     locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
