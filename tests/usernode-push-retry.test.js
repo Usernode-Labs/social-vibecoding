@@ -91,3 +91,26 @@ test('a rate-limited push is tried again', () => {
   assert.equal(r.status, 0);
   assert.equal(r.tries, 2);
 });
+
+// The unit suite runs in the worker image, where run-cc.sh and
+// run-codex-agent.sh call the real script; a test pointing a runner at a
+// platform that is not there sat out every pause (110 s a run) until four
+// files timed out. Set but empty, the backoff is one try, and the suite's
+// preload gives every child a test starts that value.
+test('set but empty, the backoff is one try', () => {
+  const r = run(['exit 7', '200 {"ok":true}'], { USERNODE_PUSH_BACKOFF: '' });
+  assert.equal(r.status, 1);
+  assert.equal(r.tries, 1);
+  assert.match(r.stdout, /^__USERNODE_WARN__ usernode-push: curl failed: /m);
+});
+
+test('the unit suite\'s preload gives a child one push try unless the test set its own backoff', () => {
+  // Loaded here too, so the file also passes under a bare `node --test`.
+  require('./lib/test-net.js');
+  const childProcess = require('node:child_process');
+  const backoff = (env) => childProcess.spawnSync('sh', ['-c', 'printf "[%s]" "${USERNODE_PUSH_BACKOFF-unset}"'],
+    { env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' }).stdout;
+  assert.equal(backoff({}), '[]', 'an env built from scratch');
+  assert.equal(backoff({ USERNODE_PUSH_BACKOFF: '0 0' }), '[0 0]', 'a test that set its own');
+  assert.equal(process.env.USERNODE_PUSH_BACKOFF, '');
+});

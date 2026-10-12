@@ -46,8 +46,9 @@ URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/push"
 # fails (connection refused, DNS, timeout), when the platform answers 5xx or
 # 429, and never on any other answer, nor on a failure the platform marks
 # permanent. The pauses, in seconds, between six tries come to about two
-# minutes; USERNODE_PUSH_BACKOFF overrides them (tests).
-BACKOFF="${USERNODE_PUSH_BACKOFF:-5 10 20 30 45}"
+# minutes; USERNODE_PUSH_BACKOFF overrides them, and set but empty it tries
+# once (the unit suite's preload, tests/lib/test-net.js, sets it so).
+BACKOFF="${USERNODE_PUSH_BACKOFF-5 10 20 30 45}"
 
 attempt=1
 for pause in $BACKOFF ""; do

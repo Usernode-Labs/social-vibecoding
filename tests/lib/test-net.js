@@ -1,8 +1,9 @@
 // Test-harness preload (loaded via --require in the npm test script; the
 // node test runner spawns each test file with the parent's execArgv, so
-// every test process gets this automatically). Two patches, one shared
-// goal: kill the rare, random `TypeError: fetch failed` flakes that hit a
-// different test file every few full-suite runs.
+// every test process gets this automatically). The first two patches share
+// one goal: kill the rare, random `TypeError: fetch failed` flakes that hit
+// a different test file every few full-suite runs. The third keeps a
+// worker's push from waiting out its retries in a test.
 //
 // ── Patch 1: test servers bind IPv4 loopback ──────────────────────────
 //
@@ -35,10 +36,29 @@
 // dials a fresh connection (undici discards errored sockets). Every fire
 // is logged so a systemic problem stays visible in TAP output instead of
 // being silently absorbed.
+//
+// ── Patch 3: a worker's push tries once ───────────────────────────────
+//
+// worker/usernode-push retries a failed push with pauses that come to
+// about two minutes, because a push can land while the platform restarts.
+// The unit suite runs in the worker image, where run-cc.sh and
+// run-codex-agent.sh find the real /usr/local/bin/usernode-push, and most
+// tests that run a runner point it at a platform that is not there
+// (127.0.0.1:1, http://p). Each such run sat out every pause, about 110 s,
+// and four files went past their 180 s limit (main paused, 12 Oct 2026).
+// On a laptop the script is not installed, so the push failed at once and
+// nothing showed. So every child a test starts gets USERNODE_PUSH_BACKOFF
+// set and empty, which is one try, unless the test set it itself, as
+// tests/usernode-push-retry.test.js does. Most of these tests build the
+// child's env from scratch, so setting process.env alone would not reach
+// them.
 
 'use strict';
 
+const childProcess = require('child_process');
+const { syncBuiltinESMExports } = require('module');
 const net = require('net');
+const util = require('util');
 
 // ── Patch 1 ─────────────────────────────────────────────────────────────
 const realListen = net.Server.prototype.listen;
@@ -100,3 +120,31 @@ globalThis.fetch = async function fetchWithLocalRetry(input, init) {
     }
   }
 };
+
+// ── Patch 3 ─────────────────────────────────────────────────────────────
+const PUSH_BACKOFF = 'USERNODE_PUSH_BACKOFF';
+if (process.env[PUSH_BACKOFF] === undefined) process.env[PUSH_BACKOFF] = '';
+
+// The options argument is the first plain object after the command, in
+// every signature below (spawn(cmd, args, opts), exec(cmd, opts, cb), …).
+function withOnePushTry(args) {
+  const i = args.findIndex((a, n) => n > 0 && a && typeof a === 'object' && !Array.isArray(a));
+  const env = i > 0 ? args[i].env : null;
+  if (!env || typeof env !== 'object' || PUSH_BACKOFF in env) return args;
+  const out = args.slice();
+  out[i] = { ...args[i], env: { ...env, [PUSH_BACKOFF]: '' } };
+  return out;
+}
+
+for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
+  const real = childProcess[name];
+  const patched = function childWithOnePushTry(...args) {
+    return real.apply(this, withOnePushTry(args));
+  };
+  // exec and execFile promisify to { stdout, stderr } through this.
+  const custom = real[util.promisify.custom];
+  if (custom) patched[util.promisify.custom] = (...args) => custom(...withOnePushTry(args));
+  childProcess[name] = patched;
+}
+// `import { spawn } from 'node:child_process'` sees the patched functions too.
+syncBuiltinESMExports();
