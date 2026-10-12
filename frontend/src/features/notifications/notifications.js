@@ -1161,6 +1161,9 @@ const Notifications = {
       const proposalKinds = new Set([
         'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
+        // #4787: a change the viewer voted on going live opens that change,
+        // the same way the author's own "Live" row does.
+        'voted_change_merged',
       ]);
       const toProposals = proposalKinds.has(item.kind);
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
@@ -2654,6 +2657,22 @@ function rowView(n) {
       icon: '\u{1F389}',
       label: head.label,
       segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
+    };
+  }
+
+  // #4787: a change the viewer voted on (yes or no) went live. Drawn like
+  // the author's "Live" row above: the same tile, a small grey first line
+  // naming the kind, the change's title in bold below it. No button of its
+  // own; the row itself opens the change (proposalKinds).
+  if (n.kind === 'voted_change_merged') {
+    const head = headline(
+      t('notifications:row.votedMerged.label'),
+      prLabel || n.sessionTitle || t('notifications:row.votedMerged.aChange'),
+    );
+    return {
+      ...base,
+      icon: '\u{1F389}',
+      ...head,
     };
   }
 
