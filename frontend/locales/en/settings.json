@@ -28,7 +28,7 @@
     "description": "Heading of the Connectors section in Settings, where a person connects AI chat products (Claude, ChatGPT, Codex) to Homeroom."
   },
   "connectors.intro": {
-    "text": "Work on your apps from a Claude or ChatGPT chat, without using your daily credits.",
+    "text": "Work on your apps from a Claude or ChatGPT chat, without using your weekly credits.",
     "description": "Explanation under the Connectors heading in Settings: what connecting a chat product is for. Claude and ChatGPT are product names."
   },
   "connectors.url.label": {
@@ -341,19 +341,19 @@
   },
   "linkedAccounts.title": {
     "text": "Linked accounts",
-    "description": "Heading of the Linked accounts section in Settings, where a person connects a GitHub or X account to raise their daily AI credits."
+    "description": "Heading of the Linked accounts section in Settings, where a person connects a GitHub or X account to raise their weekly AI credits."
   },
   "linkedAccounts.intro": {
     "text": "We pay for these credits, so a connected account helps us stop one person making many.",
-    "description": "Explanation under the Linked accounts heading in Settings: why connecting a GitHub or X account raises daily credits. \"Making many\" means making many Homeroom accounts."
+    "description": "Explanation under the Linked accounts heading in Settings: why connecting a GitHub or X account raises weekly credits. \"Making many\" means making many Homeroom accounts."
   },
   "linkedAccounts.scope": {
     "text": "Homeroom asks for<0> no access to your repositories </0>and stores no provider token. Connecting confirms you control the account. It is not proof of unique humanity.",
     "description": "Note under the list of linked accounts in Settings: what connecting a GitHub or X account does and does not give Homeroom. Tag 0 is bold. The spaces just inside the tag are the only spaces around those words, so keep one on each side, inside the tag."
   },
   "linkedAccounts.dailyCredits": {
-    "text": "Daily credits",
-    "description": "Small heading above the list in Settings > Linked accounts that shows the person's daily AI credit level and the accounts that raise it."
+    "text": "Weekly credits",
+    "description": "Small heading above the list in Settings > Linked accounts that shows the person's weekly AI credit level and the accounts that raise it."
   },
   "linkedAccounts.auditNote": {
     "text": "Review or revoke this authorization at <0>{{address}}</0>.",
@@ -616,7 +616,7 @@
     "description": "Heading of the section in Settings that lists the apps the person has allowed to use AI on their budget."
   },
   "grants.intro": {
-    "text": "Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately, and a revoked app can be re-enabled here with its previous cap.",
+    "text": "Apps you've allowed to use AI on your behalf. Their spend counts against your normal weekly budget, plus the per-app cap you set. Revoking takes effect immediately, and a revoked app can be re-enabled here with its previous cap.",
     "description": "Explanation under the \"App AI permissions\" heading in Settings. A \"cap\" is the most an app may spend per day."
   },
   "grants.loadFailed": {
@@ -648,7 +648,7 @@
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
   },
   "grants.useOwnKey": {
-    "text": "Use my own key past the daily budget",
+    "text": "Use my own key past the weekly budget",
     "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
   },
   "grants.revoke": {
@@ -1003,6 +1003,10 @@
     "text": "Change password",
     "description": "Heading of the section in Settings where the person changes their password."
   },
+  "password.titleAdd": {
+    "text": "Add a password",
+    "description": "Heading of the same section in Settings, in place of \"Change password\", for an account that has no password yet and signs in with a code sent by email."
+  },
   "password.intro": {
     "text": "Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here. No password yet? Choose one here; until then you sign in with an emailed code.",
     "description": "Explanation under the Change password heading in Settings. The last sentence is for an account that has no password yet and signs in with a code sent by email."
@@ -1022,6 +1026,10 @@
   "password.submit": {
     "text": "Change password",
     "description": "Button in Settings > Change password: saves the new password, checked against the current one."
+  },
+  "password.submitAdd": {
+    "text": "Add password",
+    "description": "Button in Settings > Add a password, in place of \"Change password\", for an account that has no password yet: saves its first password."
   },
   "password.submitWithWallet": {
     "text": "Sign & change password",
@@ -2088,7 +2096,7 @@
     "description": "Not shown on screen. Extra search words for \"Delete account\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.linkedAccounts": {
-    "text": "github x twitter social verified daily credits connect",
+    "text": "github x twitter social verified weekly credits connect",
     "description": "Not shown on screen. Extra search words for \"Linked accounts\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.wallet": {
@@ -2387,49 +2395,49 @@
     "text": "Could not load social accounts. Try again shortly.",
     "description": "Error in Settings > Linked accounts. when the list of connected GitHub and X accounts could not be loaded."
   },
-  "socialIdentity.perDay": {
-    "text": "${{amount}} / day",
-    "description": "An amount of AI credits per day, in US dollars, in the daily-credits list in Settings > Linked accounts. {{amount}} is a number such as 10 or 2.50. Keep the dollar sign."
+  "socialIdentity.perWeek": {
+    "text": "${{amount}} / week",
+    "description": "An amount of AI credits per week, in US dollars, in the weekly-credits list in Settings > Linked accounts. {{amount}} is a number such as 50 or 2.50. Keep the dollar sign."
   },
   "socialIdentity.tier.unavailable.title": {
-    "text": "Daily credits unavailable",
-    "description": "Title of the first row of the daily-credits list in Settings > Linked accounts. when Homeroom could not check how many credits the account has."
+    "text": "Weekly credits unavailable",
+    "description": "Title of the first row of the weekly-credits list in Settings > Linked accounts. when Homeroom could not check how many credits the account has."
   },
   "socialIdentity.tier.unavailable.note": {
     "text": "We could not check your credits, so calls we pay for are paused. Your own API key still works.",
-    "description": "Note under the daily-credits list in Settings > Linked accounts. when the credits could not be checked. \"Calls\" are requests to an AI model; \"we\" is Homeroom."
+    "description": "Note under the weekly-credits list in Settings > Linked accounts. when the credits could not be checked. \"Calls\" are requests to an AI model; \"we\" is Homeroom."
   },
   "socialIdentity.tier.legacy.title": {
     "text": "Your credits",
-    "description": "Title of the first row of the daily-credits list in Settings > Linked accounts. on a server where connecting an account does not change the amount."
+    "description": "Title of the first row of the weekly-credits list in Settings > Linked accounts. on a server where connecting an account does not change the amount."
   },
   "socialIdentity.tier.legacy.note": {
     "text": "Your credits do not depend on a connected account yet.",
-    "description": "Note under the daily-credits list in Settings > Linked accounts. on a server where connecting GitHub or X does not change the daily AI credits."
+    "description": "Note under the weekly-credits list in Settings > Linked accounts. on a server where connecting GitHub or X does not change the weekly AI credits."
   },
   "socialIdentity.tier.override.title": {
     "text": "Your credits",
-    "description": "Title of the first row of the daily-credits list in Settings > Linked accounts. for an account whose amount an administrator set by hand."
+    "description": "Title of the first row of the weekly-credits list in Settings > Linked accounts. for an account whose amount an administrator set by hand."
   },
   "socialIdentity.tier.override.note": {
     "text": "An administrator set this amount. A connected account does not change it.",
-    "description": "Note under the daily-credits list in Settings > Linked accounts. for an account whose daily AI credits an administrator set by hand."
+    "description": "Note under the weekly-credits list in Settings > Linked accounts. for an account whose weekly AI credits an administrator set by hand."
   },
   "socialIdentity.tier.signedIn.title": {
     "text": "Signed in",
-    "description": "Title of the first row of the daily-credits list in Settings > Linked accounts. the credits a person gets just for being signed in, before connecting GitHub or X. A state, not an action."
+    "description": "Title of the first row of the weekly-credits list in Settings > Linked accounts. the credits a person gets just for being signed in, before connecting GitHub or X. A state, not an action."
   },
   "socialIdentity.tier.signedIn.note": {
     "text": "Either one is enough. Connecting both does not add more.",
-    "description": "Note under the daily-credits list in Settings > Linked accounts. \"Either one\" means a GitHub account or an X account; connecting one raises the daily credits."
+    "description": "Note under the weekly-credits list in Settings > Linked accounts. \"Either one\" means a GitHub account or an X account; connecting one raises the weekly credits."
   },
   "socialIdentity.row.reconnectRequired": {
-    "text": "Linked for GitHub attribution. Reconnect once to count it toward daily credits.",
-    "description": "Amber state text on the GitHub row in Settings > Linked accounts. the account is linked only so code changes are credited to it, and must be connected again before it raises the daily credits."
+    "text": "Linked for GitHub attribution. Reconnect once to count it toward weekly credits.",
+    "description": "Amber state text on the GitHub row in Settings > Linked accounts. the account is linked only so code changes are credited to it, and must be connected again before it raises the weekly credits."
   },
   "socialIdentity.row.noExtraCredits": {
     "text": "No extra credits",
-    "description": "State text on the second connected account's row in Settings > Linked accounts. the first connected account already raised the daily credits, and this one adds nothing."
+    "description": "State text on the second connected account's row in Settings > Linked accounts. the first connected account already raised the weekly credits, and this one adds nothing."
   },
   "socialIdentity.row.notSetUp": {
     "text": "Not set up on this server.",
@@ -2544,7 +2552,7 @@
     "description": "Title of the confirmation dialog before disconnecting a GitHub or X account in Settings > Linked accounts. {{provider}} is \"GitHub\" or \"X\"."
   },
   "socialIdentity.unlink.confirmMessage": {
-    "text": "This removes {{provider}} from your public profile and may change your daily credit eligibility.",
+    "text": "This removes {{provider}} from your public profile and may change your weekly credit eligibility.",
     "description": "Body of the confirmation dialog before disconnecting a GitHub or X account in Settings > Linked accounts. {{provider}} is \"GitHub\" or \"X\"."
   },
   "socialIdentity.unlink.confirmButton": {
@@ -3140,7 +3148,7 @@
     "description": "Title of the confirmation dialog before removing the saved Anthropic API key in Settings."
   },
   "apiKey.remove.confirmMessage": {
-    "text": "Future chats will fall back to the shared daily budget.",
+    "text": "Future chats will fall back to your weekly Homeroom credits.",
     "description": "Body of the confirmation dialog before removing the saved Anthropic API key in Settings: AI usage will be paid from the platform's allowance again."
   },
   "apiKey.remove.confirmButton": {

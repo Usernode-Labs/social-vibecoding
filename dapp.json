@@ -20,7 +20,7 @@
       "name": "Homeroom bot",
       "icon": "🤖",
       "about": "How it plans, builds and answers",
-      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal"]
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend"]
     },
     {
       "id": "proposal-pipeline",
@@ -28,7 +28,7 @@
       "name": "Proposal pipeline",
       "icon": "🚦",
       "about": "From request to merge: proposals, checks, votes and merging",
-      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused"]
+      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused", "pipeline.reds-rerun"]
     },
     {
       "id": "infra",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away", "infra.homeroom-stalls", "infra.homeroom-crashes"]
     },
     {
       "id": "project-workflows",
@@ -1248,7 +1248,7 @@
       "name": "Identity credits show the actionable zero-credit state before verification (#538)",
       "path": "/?demo=identity-unverified#settings/linked-accounts",
       "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-link-body",
-      "expectText": "$0 / day"
+      "expectText": "$0 / week"
     },
     {
       "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",
@@ -2160,7 +2160,7 @@
     {
       "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), first under What's happening",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine]:first-child [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {
@@ -4948,6 +4948,11 @@
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "name": "Workshop: What's happening files your work in sections of one card: Waiting on you and Going live one line a row, Yours, up for a vote two (#4772)",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"vote\"]:has(.dev-ws-lrow) ~ [data-ws-mine-section=\"live\"] .dev-ws-hrow[data-ws-row]"
     }
   ],
   "governance": {

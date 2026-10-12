@@ -251,7 +251,7 @@ test('a Codex conversation that goes on gets the nudge alone, and no Claude fall
 test('no nudge for a turn that failed, under either CLI, or whose dispatch failed', async () => {
   const cases = [
     [{ ...QUIT, ccExit: 1, exitCode: 1 }, /the build turn failed \(the agent exited with code 1\)/],
-    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error\)/],
+    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error: API Error: 429 Too Many Requests\)/],
     [{ ...QUIT, agentHarness: 'codex', ccExit: null, exitCode: 1, agentExit: 1 }, /produced no change/],
   ];
   for (const [result, error] of cases) {
@@ -531,7 +531,7 @@ test('a build turn a restart caught that changed nothing is kept and counted, no
 test('both recovery paths record it: the live one on its outcome, the lane\'s on its run', () => {
   const src = read('src/services/homeroom-bot.js');
   const finish = src.slice(src.indexOf('async function finishRecoveredTurn('), src.indexOf('async function finishConfiguredShadow('));
-  assert.match(finish, /component: activeTurn\?\.telemetryComponent \|\| null,\n\s+\}\)\) \{/, 'a live turn notes its ledger name for completeRecoveredLive');
+  assert.match(finish, /component: activeTurn\?\.telemetryComponent \|\| null,\n\s+harness: activeTurn\?\.harness \|\| null, deadlineMs,\n\s+\}\)\) \{/, 'a live turn notes its ledger name for completeRecoveredLive');
   assert.match(finish, /const noChange = await recoveredNoChange\(pool, \{/);
   assert.match(finish, /build_no_change = COALESCE\(\$9::jsonb, r\.build_no_change\)/);
   const complete = src.slice(src.indexOf('async function completeRecoveredLive('), src.indexOf('async function holdSlotDuringRecovery('));

@@ -215,7 +215,7 @@ function linkUnavailable() {
     'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
     + 'yours — and work built by your own coding agent is only submitted under a verified account. Ask an admin '
     + 'to set GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel. In the '
-    + 'meantime, start_platform_build has Homeroom build the change itself out of your daily Homeroom credits — '
+    + 'meantime, start_platform_build has Homeroom build the change itself out of your weekly Homeroom credits — '
     + 'that path needs no GitHub link.',
     { retryable: false }
   );

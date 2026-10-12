@@ -1475,6 +1475,30 @@
     "text": "Homeroom bot",
     "description": "Small tag, beside a sparkle, on a row in a project's Your work when Homeroom bot built the change from a request the viewer made; \"Homeroom bot\" is the platform's builder bot, a name."
   },
+  "workshop.row.tag.planWaits": {
+    "text": "Plan ready: tap Build it",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab. On a request of the viewer's: Homeroom bot wrote a plan for it and waits for the viewer to tap the \"Build it\" button before it builds. \"Build it\" is that button's label; keep it the same as the button."
+  },
+  "workshop.row.tag.botAsked": {
+    "text": "Homeroom bot asked you",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab. On a request of the viewer's: Homeroom bot asked the viewer a question about it and waits for their answer. \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.botReplied": {
+    "text": "With Homeroom bot · it replied {{ago}}",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and Homeroom bot wrote last. {{ago}} is a time such as \"2h ago\". \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.botRepliedNow": {
+    "text": "With Homeroom bot · it replied",
+    "description": "The same tag as \"With Homeroom bot · it replied 2h ago\", when the time it replied is not known."
+  },
+  "workshop.row.tag.youReplied": {
+    "text": "With Homeroom bot · you replied {{ago}}",
+    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and the viewer wrote last. {{ago}} is a time such as \"1d ago\". \"Homeroom bot\" is the platform's builder bot, a name."
+  },
+  "workshop.row.tag.youRepliedNow": {
+    "text": "With Homeroom bot · you replied",
+    "description": "The same tag as \"With Homeroom bot · you replied 1d ago\", when the time is not known."
+  },
   "countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
     "description": "Short countdown on a proposal's card showing roughly how long until its voting window ends, for example \"~2d 5h\". {{days}} and {{hours}} are numbers; \"d\" and \"h\" abbreviate days and hours. Keep the leading \"~\" (about)."
@@ -4964,8 +4988,8 @@
     "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started. {{error}} is the error's own message."
   },
   "issue.autoRun.outOfCredits": {
-    "text": "You're out of today's free AI credits.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the day's free AI allowance, and no fuller message came back."
+    "text": "You're out of free AI credits.",
+    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the week's free AI allowance, and no fuller message came back."
   },
   "issue.autoRun.model.free": {
     "text": "Free",
@@ -7764,11 +7788,11 @@
     "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.introBudget": {
-    "text": "This lets {{app}} spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
+    "text": "This lets {{app}} spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
     "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. {{app}} is the app's name; the cap is the spending limit set in the field below."
   },
   "dialog.llm.introBudgetUnnamed": {
-    "text": "This lets This app spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
+    "text": "This lets This app spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
     "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. The cap is the spending limit set in the field below. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.capSuggested": {
@@ -7784,7 +7808,7 @@
     "description": "Checkbox label in the AI access dialog when the person has no platform AI credits, so the app can only run on their own API key."
   },
   "dialog.llm.ownKeyFallback": {
-    "text": "If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).",
+    "text": "If my weekly platform budget runs out, let this app keep going on my own API key (still limited by the cap above).",
     "description": "Checkbox label in the AI access dialog: lets the app continue on the person's own API key once their daily Homeroom budget is spent."
   },
   "dialog.llm.capInvalid": {

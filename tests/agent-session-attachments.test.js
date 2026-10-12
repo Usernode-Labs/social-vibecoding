@@ -281,21 +281,37 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(100, { level: 'unavailable' })), null);
 });
 
-test('the low-credits note shows before the first message of a conversation whose pill is red, and not once started (#4784)', () => {
+test('the low-credits note shows whenever the pill is red, and not while the out-of-credits card is open (#4784, #4801)', () => {
   const figures = (remainingCents) => ({ limitCents: 5000, remainingCents, spentCents: 5000 - remainingCents, byokCents: 0, weekly: true, level: 'ok' });
   const red = parts.creditView(figures(300));
-  assert.equal(parts.showLowCreditNote(red, false), true, 'red pill, nothing sent: the note shows');
+  assert.equal(parts.showLowCreditNote(red, false), true, 'red pill, no card: the note shows');
   assert.equal(parts.showLowCreditNote(parts.creditView(figures(1500)), false), false, 'the yellow pill says nothing');
   assert.equal(parts.showLowCreditNote(parts.creditView(figures(4000)), false), false, 'nor the green');
   assert.equal(parts.showLowCreditNote(null, false), false, 'no figures, no note');
-  assert.equal(parts.showLowCreditNote(red, true), false, 'a conversation already under way says nothing');
+  assert.equal(parts.showLowCreditNote(red, true), false, 'the out-of-credits card is open: it speaks instead');
   assert.equal(parts.showLowCreditNote(parts.creditView(figures(0)), false), true, 'nothing left at all is the other line');
 
-  const html = renderToHtml(createElement(parts.LowCreditNote, { credit: red }));
-  assert.match(html, /^<p class="px-2 text-\[13px\] text-red-600 dark:text-red-400" data-agent-session-low-credit="true">/);
-  assert.match(html, new RegExp(`>${message('agent:session.credits.lowNote', { amount: '$3.00' }).replace('$', '\\$')}<`));
-  const none = renderToHtml(createElement(parts.LowCreditNote, { credit: parts.creditView(figures(0)) }));
-  assert.match(none, new RegExp(`>${message('agent:session.credits.lowNoteNone')}<`));
+  const keyLink = (html) => {
+    assert.match(html, /href="#settings\/api-key"/, 'the way out is the API key page in Settings');
+    assert.match(html, /data-agent-session-low-credit-key="true"/);
+    return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+
+  const raw = renderToHtml(createElement(parts.LowCreditNote, { credit: red }));
+  assert.match(raw, /^<p class="px-2 text-\[13px\] text-red-600 dark:text-red-400" data-agent-session-low-credit="true">/,
+    'the same small red line above the send row');
+  const html = keyLink(raw);
+  assert.ok(html.includes('add your own Anthropic API key'), 'the link names the key');
+  const plain = (id, values) => message(id, values).replace(/<\/?0>/g, '').replace(/\s+/g, ' ').trim();
+  for (const piece of plain('agent:session.credits.lowNote', { amount: '$3.00' }).split('. ')) {
+    if (piece) assert.ok(html.includes(piece.replace(/\.$/, '')), `the lowNote text is there: ${piece}`);
+  }
+  const noneRaw = renderToHtml(createElement(parts.LowCreditNote, { credit: parts.creditView(figures(0)) }));
+  const none = keyLink(noneRaw);
+  assert.ok(none.includes('add your own Anthropic API key'));
+  for (const piece of plain('agent:session.credits.lowNoteNone').split('. ')) {
+    if (piece) assert.ok(none.includes(piece.replace(/\.$/, '')), `the lowNoteNone text is there: ${piece}`);
+  }
 });
 
 // ── 3b. The low-credits check (#4792) ──────────────────────────────────

@@ -332,21 +332,23 @@ test('the composer keeps what was typed per conversation, and the drafts list of
 
 // ── 4. What a typical change costs ─────────────────────────────────────
 
-test('the low-credits note sits between the field and the send row, before the first message only (#4784)', () => {
+test('the low-credits note sits between the field and the send row, whenever the pill is red (#4784, #4801)', () => {
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
-    'a sent message shown or still on its way is a conversation under way');
-  assert.match(panel, /\{!archived && !pendingSend && showLowCreditNote\(credit, snapshot\.started\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
-    'the note is the red pill before the first message, never in an archived conversation, and it gives way while the low-credits check is open (#4792)');
+  assert.match(panel, /refused: !!s\.credits/,
+    'a refusal set on the store opens the out-of-credits card, and the note hides while it is open');
+  assert.doesNotMatch(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
+    'the note is no longer gated to a new conversation: it shows mid-session too');
+  assert.match(panel, /\{!archived && !pendingSend && showLowCreditNote\(credit, snapshot\.refused\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
+    'the note shows whenever the pill is red, never in an archived conversation, and it gives way while the low-credits check is open (#4792)');
   const field = panel.indexOf('<textarea');
-  const note = panel.indexOf('showLowCreditNote(credit, snapshot.started)');
+  const note = panel.indexOf('showLowCreditNote(credit, snapshot.refused)');
   const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', note);
   assert.ok(field !== -1 && note !== -1 && row !== -1 && field < note && note < row,
     'the note reads between the box and the row with Send');
   assert.equal(message('agent:session.credits.lowNote', { amount: '$0.60' }),
-    'Only $0.60 of credits left. A build can cost more than that and may stop partway.');
+    'Only $0.60 of credits left. A build can cost more than that and may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
   assert.equal(message('agent:session.credits.lowNoteNone'),
-    'No credits left. A build may not start, or may stop partway.');
+    'No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
 });
 
 test('a send with almost no credits stops for one tap first, then never again this visit (#4792)', () => {

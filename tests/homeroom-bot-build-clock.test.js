@@ -39,6 +39,15 @@ test('a first version\'s 40-minute build is told when it started, when it is sto
   assert.doesNotMatch(t, /—/);
 });
 
+test('a reviewed first version\'s clock leaves sizes, looks and empty and error states to the reviewer', () => {
+  const t = flat(live.clockLines({ startedAt: STARTED, budgetMs: 40 * MIN, reviewed: true }));
+  assert.match(t, /2\. Boot the app and do its main thing once, as a person would\./);
+  assert.match(t, /4\. Only then, while it is before 20:11 UTC: the spec's other screens, and polish \(the reviewer checks sizes, looks, and empty and error states\)\./);
+  assert.doesNotMatch(t, /sizes and looks, the empty and error states/);
+  const short = flat(live.clockLines({ startedAt: STARTED, budgetMs: 20 * MIN, reviewed: true }));
+  assert.match(short, /4\. Only then, with time to spare: the spec's other screens, and polish \(the reviewer checks/);
+});
+
 test('a build whose clock is not longer than the soft budget has no soft mark, only its stop', () => {
   for (const budget of [20 * MIN, 30 * MIN]) {
     const t = flat(live.clockLines({ startedAt: STARTED, budgetMs: budget }));

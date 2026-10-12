@@ -157,26 +157,27 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
 }
 
 /**
- * The low-credits note (#4784): before a conversation's first message, and
- * only when the credits pill is already red, one small line above the send
- * row says how much is left and that a build can cost more than that and may
- * stop partway. It is a note, not a gate — Send stays the composer's one
- * primary action — and it sits and reads like the composer's "saved as a
- * draft, not sent" note, in the pill's red so the two read together. Once the
- * conversation is under way it is the out-of-credits card that speaks, not
- * this.
+ * The low-credits note (#4784, kept up mid-session by #4801): whenever the
+ * credits pill is red — before the first message and once the conversation is
+ * under way — one small line above the send row says how much is left, that a
+ * build can cost more than that and may stop partway, and the two ways to
+ * keep going (the person's own Anthropic API key, or the free credits'
+ * reset). It is a note, not a gate — Send stays the composer's one primary
+ * action — and it sits and reads like the composer's "saved as a draft, not
+ * sent" note, in the pill's red so the two read together. When the credits
+ * have run out and the agent refused, it is the out-of-credits card that
+ * speaks instead, so the note hides while that card is open.
  */
-export function showLowCreditNote(credit: CreditView | null, started: boolean): boolean {
-  return !!credit && credit.tone === 'red' && !started;
+export function showLowCreditNote(credit: CreditView | null, refused: boolean): boolean {
+  return !!credit && credit.tone === 'red' && !refused;
 }
 
 export function LowCreditNote({ credit }: { credit: CreditView }) {
-  const t = useMessages('agent');
   return (
     <p className="px-2 text-[13px] text-red-600 dark:text-red-400" data-agent-session-low-credit>
       {credit.remainingCents > 0
-        ? t('agent:session.credits.lowNote', { amount: dollars(credit.remainingCents) })
-        : t('agent:session.credits.lowNoteNone')}
+        ? <RichMessage id="agent:session.credits.lowNote" values={{ amount: dollars(credit.remainingCents) }} components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />
+        : <RichMessage id="agent:session.credits.lowNoteNone" components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />}
     </p>
   );
 }
@@ -243,8 +244,8 @@ export function LowCreditConfirm({ credit, buttonClass, primaryClass, onContinue
     >
       <span className="min-w-0 flex-1">
         {credit.remainingCents > 0
-          ? t('agent:session.credits.lowNote', { amount: dollars(credit.remainingCents) })
-          : t('agent:session.credits.lowNoteNone')}
+          ? <RichMessage id="agent:session.credits.lowNote" values={{ amount: dollars(credit.remainingCents) }} components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />
+          : <RichMessage id="agent:session.credits.lowNoteNone" components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />}
       </span>
       <button type="button" className={buttonClass} onMouseDown={(event) => event.preventDefault()} onClick={onCancel}>
         {t('agent:session.credits.confirmCancel')}

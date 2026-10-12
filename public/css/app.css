@@ -3650,6 +3650,23 @@ html[data-browser-scroller] body {
     overscroll-behavior-y: contain;
   }
 }
+/* ── THE PAGE HOLDS STILL UNDER A FULL-SCREEN SCREEN (#4893) ──────────────
+   Onboarding run, 12 Oct 2026, iPhone 17 Safari: with "What do you want to
+   make?" open, Home could still be scrolled underneath, and its cards came
+   up behind the status bar. The make, made and "You're in" screens are fixed
+   boxes, and in a phone browser the document is Home's scroller (above), so
+   a drag their own scroller did not take went on to it.
+   frontend/src/lib/page-lock.ts marks <html> `platform-page-locked` while one
+   is up, and the document stops scrolling: `hidden` rather than `auto`,
+   which keeps where it was (the page is not moved, and is there again when
+   the screen goes) and which iOS honours on the root since 16, bounce and
+   all, so the overscroll rules above are left as they are. What scrolls
+   inside the screen still does. The second selector outranks the paged
+   document's own `overflow-y: auto` by weight, not only by coming later. */
+html.platform-page-locked,
+html.platform-page-locked[data-browser-scroller] {
+  overflow: hidden;
+}
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
@@ -5443,6 +5460,43 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-create-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ── EDIT MODE (#4669): the wiggle ───────────────────────────
+   A held tile puts My apps into edit mode, and the tiles gently wiggle the
+   way a phone's home screen does. The animation is on the ICON WRAPPER
+   (the card's `.relative` child), not on the card itself: the kit's drag
+   writes `transform` to the CARD element for the lift, displacement preview
+   and release spring, and an animation transform on the same element would
+   fight it. The wrapper is React's alone.
+
+   `alternate` swings the one keyframe pair between -1.5deg and 1.5deg, and
+   the per-row delays (2n / 3n) spread the phase so the grid reads as a
+   jelly of tiles rather than one rigid tile repeated. */
+@keyframes home-wiggle {
+  from { transform: rotate(-1.5deg); }
+  to { transform: rotate(1.5deg); }
+}
+#app-list[data-editing] > .app-card > .relative {
+  animation: home-wiggle 260ms ease-in-out infinite alternate;
+}
+#app-list[data-editing] > .app-card:nth-child(2n) > .relative {
+  animation-delay: -130ms;
+}
+#app-list[data-editing] > .app-card:nth-child(3n) > .relative {
+  animation-delay: -65ms;
+}
+/* While a drag is live the kit puts .un-reordering on the list; the wiggle
+   pauses so the dragged tile's wrapper is not also turning under the finger. */
+#app-list.un-reordering[data-editing] > .app-card > .relative {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The arrangement affordances stay — the remove buttons, "Done" and the
+     Add apps tile are markup, not motion — only the wiggle goes. */
+  #app-list[data-editing] > .app-card > .relative {
+    animation: none;
+  }
 }
 
 /* ── Phone density ──────────────────────────────────────────
@@ -19170,7 +19224,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-fig-side-value-warn .dev-ws-fig-warn { margin-top: 0; }
 .dev-ws-fig-side-detail { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 /* The Homeroom bot's grid: a corner and the three column heads, then a row
-   per group, its name first. */
+   per group, its name first, and the rows a group runs on into under it. */
 .dev-ws-figs-grid { grid-template-columns: 140px repeat(3, minmax(0, 1fr)); }
 .dev-ws-figs-row { display: contents; }
 .dev-ws-figs-corner,
@@ -19192,6 +19246,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-figs-corner { display: none; }
   .dev-ws-figs-colhead { padding: 8px 10px 6px; }
   .dev-ws-figs-rowhead { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; align-items: baseline; gap: 6px; padding: 8px 10px 4px; }
+  .dev-ws-figs-rowhead-more { display: none; }
   .dev-ws-figs-rowname { font-size: 13px; line-height: 18px; }
   .dev-ws-figs-grid .dev-ws-fig { padding: 6px 10px 10px; }
   .dev-ws-figs-grid .dev-ws-fig-value { font-size: 18px; line-height: 24px; }
@@ -20079,7 +20134,13 @@ button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outlin
   background: transparent; color: var(--text-muted);
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative;
 }
+/* #4916: each tab is a glyph now (a tag, the board's columns), its words in
+   the tooltip and an sr-only copy. 16px at the shell's 2px stroke, the size
+   the filter chips beside it draw theirs. */
+.dev-ws-group-icon { width: 16px; height: 16px; flex: none; }
 /* The tokens carry their own dark values, so there is no dark variant —
    the same note `.dev-ws-tab[aria-selected="true"]` carries. */
 .dev-ws-group-tab[aria-selected="true"] {
@@ -20921,6 +20982,22 @@ html.un-kb #platform-tabs {
   }
   html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made]) {
     padding-bottom: 200px;
+  }
+}
+/* AND OVER THEIR TOP, UNDER THE STATUS BAR (onboarding run, 12 Oct 2026,
+   iPhone 17 Safari, #4893). Safari draws the page behind the status bar,
+   above these boxes as it does under its toolbar below them, and what showed
+   there, behind the clock, was Home's cards once it had scrolled. The page
+   holds still under them now (`platform-page-locked`, above), and their
+   ground also runs on 200px above them, as the box's own shadow in the
+   ground's colour: a scroller (the made screen is one) clips what it holds
+   but not its own shadow, as the sign-in sheet's foot has it, and nothing in
+   the box moves, so the wallpaper's star and washes stay where they are.
+   Where a box already starts at the top of the glass the shadow is off the
+   screen. Not from Create, whose screens begin under the platform header. */
+@media (max-width: 767px) {
+  html.un-ios.web-browser-chrome :is([data-first-session-make], [data-first-session-made], [data-first-session-welcome]):not(.platform-under-header) {
+    box-shadow: 0 -200px 0 0 var(--home-ground, #f4f2e4);
   }
 }
 
@@ -22984,6 +23061,13 @@ html.in-side-panel body {
 }
 .dev-ws-hrow-tag[data-tone="run"] { color: var(--lit-ink); }
 .dev-ws-hrow-tag[data-tone="bad"] { color: var(--state-blocked); }
+/* What's happening's own-work rows end with where the work stands
+   (week-pages.tsx MetaTag): the tag's words in its tone, no pill, with its
+   glyph ("Only you", Homeroom bot) where it has one. */
+.dev-ws-hrow-tag[data-tone="warn"] { color: var(--state-attention); }
+.dev-ws-hrow-tag[data-tone="ok"] { color: var(--state-ok); }
+.dev-ws-hrow-tag:has(> svg) { display: inline-flex; align-items: center; gap: 4px; }
+.dev-ws-hrow-tag > svg { flex: none; width: 12px; height: 12px; }
 .dev-ws-hrow-ago { font-variant-numeric: tabular-nums; }
 .dev-ws-hweek > .dev-ws-reveal { margin-top: 2px; }
 .dev-ws-hweek + .dev-ws-wlist { margin-top: 4px; border-top: 1px solid var(--app-sheet-line); }
@@ -23010,18 +23094,25 @@ html.in-side-panel body {
    far end, as they do on a phone today (#4718): the first line lets go of
    its box (`display: contents`) so the title and the pair are the column's
    own items, and the pair is ordered after the tags. */
-/* Your work echoes What happened's This week card (#4716): This week's
-   heading (15px at 650, its count muted beside it on the baseline, 4px
-   above and 8px below), a hairline over the first row as over every row
-   there, and rows that start where This week's do, after the 7px dot and
-   10px gap This week keeps for what is new (so its titles line up with
-   This week's and New for you's). A row lights in place on hover, as This
-   week's does, rather than bleeding past the card's edge. */
-.dev-ws-strip[data-ws-mine] { container-type: inline-size; gap: 0; }
-.dev-ws-strip[data-ws-mine] > .dev-ws-head { align-items: baseline; padding: 4px 2px 8px; }
-.dev-ws-strip[data-ws-mine] > .dev-ws-head > .dev-ws-head-title { font-size: 15px; font-weight: 650; }
-.dev-ws-strip[data-ws-mine] .dev-ws-wlist { margin-top: 0; }
-.dev-ws-strip[data-ws-mine] .dev-ws-wlist + .dev-ws-reveal { margin-top: 2px; }
+/* WHAT'S HAPPENING IS ONE CARD (After-Workshop-C, Oct 2026), drawn as What
+   happened's is: its own container (so a narrow card wraps its rows, not
+   only a narrow window), each part headed with This week's head
+   (`.dev-ws-hweek-head`: the name at 15px/650, its count beside it, 4px
+   above and 8px below), a hairline over every row, and a hairline between
+   parts, as between This week and the weeks under it. Waiting on you, Your
+   work and Going live are This week's one-line row (`.dev-ws-hrow`, the
+   `standing` HappenedRow); Yours, up for a vote keeps the two-line row
+   below (`.dev-ws-lrow`), whose glyph starts where the one-line rows'
+   does, after their 7px dot and 10px gap. A row lights in place on hover,
+   as This week's does, rather than bleeding past the card's edge. */
+.dev-ws-strip[data-ws-happening] { container-type: inline-size; gap: 4px; }
+.dev-ws-hpart { display: flex; flex-direction: column; min-width: 0; }
+.dev-ws-hpart + .dev-ws-hpart { margin-top: 4px; border-top: 1px solid var(--app-sheet-line); }
+.dev-ws-hpart + .dev-ws-hpart > .dev-ws-hweek-head { padding-top: 14px; }
+.dev-ws-hpart .dev-ws-wlist { margin-top: 0; }
+.dev-ws-hpart > .dev-ws-wlist > .dev-ws-wrow:first-child { border-top: 1px solid var(--app-sheet-line); }
+.dev-ws-hpart .dev-ws-reveal { margin-top: 2px; }
+.dev-ws-hpart [data-ws-mine-empty] { margin: 0; padding: 8px 2px; border-top: 1px solid var(--app-sheet-line); }
 .dev-ws-lrow { gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px; }
 .dev-ws-lrow:hover, .dev-ws-lrow[data-on] { margin: 0; padding-left: 19px; padding-right: 2px; }
 .dev-ws-lrow:hover + .dev-ws-lrow, .dev-ws-lrow[data-on] + .dev-ws-lrow { border-top-color: var(--app-sheet-line); }
@@ -23082,6 +23173,14 @@ html.in-side-panel body {
 .dev-ws-side-close { width: 30px; padding: 0; justify-content: center; }
 .dev-ws-side-full { margin-left: auto; }
 .dev-ws-side-page { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* #4875: the page and, over it, the plan reader's slot. The panel is too
+   narrow to dock the reader beside the page, so the reader takes its
+   narrow-window layout here at every width: it fills the panel below the bar. */
+.dev-ws-side-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dev-ws-side .gc-spec-side-panel.gc-spec-side-panel-open {
+  position: absolute; inset: 0; z-index: 2;
+  width: auto !important; min-width: 0; max-width: none; border-left: none;
+}
 
 /* ── The row's card parts, on every row (#4486) ──────────────────────
    The Workshop's row carries the card's own pieces now: on live work the

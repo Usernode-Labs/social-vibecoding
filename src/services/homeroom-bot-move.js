@@ -374,18 +374,26 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
  * move it, under its own buttons. Offered once per request and person.
  * Never throws; resolves what was sent, or null.
  */
-async function offerMove(pool, { bot, userId, app, issueNumber, title, reason = null, key = null, deps = {} }) {
+async function offerMove(pool, {
+  bot, userId, app, issueNumber, title, reason = null, key = null, runId = null, deps = {},
+}) {
   try {
     const n = Number(issueNumber);
     if (!bot?.id || !userId || !app?.id || !Number.isInteger(n)) return null;
-    if (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps))) return null;
+    if (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps))) {
+      await noteMoveOffer(pool, runId, 'not_sent');
+      return null;
+    }
     const { rows: before } = await pool.query(
       `SELECT 1 FROM homeroom_bot_dm_actions
         WHERE user_id = $1 AND app_id = $2 AND kind = 'move_request' AND source_issue_number = $3
           AND status IN ('open', 'done')`,
       [userId, app.id, n],
     );
-    if (before.length) return null;
+    if (before.length) {
+      await noteMoveOffer(pool, runId, 'already_offered');
+      return null;
+    }
     const name = app.name || app.slug;
     const { rows: [action] } = await pool.query(
       `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
@@ -400,17 +408,91 @@ async function offerMove(pool, { bot, userId, app, issueNumber, title, reason = 
     });
     if (!sent?.messageId || sent.duplicate) {
       await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+      await noteMoveOffer(pool, runId, sent?.duplicate ? 'already_offered' : 'not_sent');
       return sent || null;
     }
     await pool.query(
       'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
       [action.id, sent.messageId, sent.conversationId],
     );
+    await noteMoveOffer(pool, runId, 'sent');
     return sent;
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not offer to move a request', { app: app?.slug, issueNumber, err: err.message });
+    await noteMoveOffer(pool, runId, 'not_sent');
     return null;
   }
+}
+
+// What became of a platform verdict's move offer (homeroom_bot_runs
+// move_offer): sent, or why it was not.
+const MOVE_OFFER_OUTCOMES = Object.freeze(['sent', 'no_requester', 'no_bot', 'repeat_held', 'already_offered', 'not_sent']);
+
+/**
+ * Record on run `runId` what became of its move offer (MOVE_OFFER_OUTCOMES),
+ * for the console's Move offers line and get_homeroom_bot. Only on a run the
+ * triage flagged as about Homeroom itself. Never throws.
+ */
+async function noteMoveOffer(pool, runId, outcome) {
+  const id = Number(runId);
+  if (!Number.isInteger(id) || id <= 0 || !MOVE_OFFER_OUTCOMES.includes(outcome)) return;
+  await pool.query('UPDATE homeroom_bot_runs SET move_offer = $2 WHERE id = $1 AND about_platform', [id, outcome])
+    .catch((err) => log.warn('homeroom-bot-move', 'Could not record a move offer\'s outcome', { runId: id, outcome, err: err.message }));
+}
+
+// How far back the console's Move offers line looks.
+const MOVE_OFFER_DAYS = 7;
+
+/**
+ * The move offers of the last MOVE_OFFER_DAYS days, for the console and
+ * get_homeroom_bot: offers sent (any source: a platform verdict's DM, or
+ * the DM chat's offer_move_request), and how each was decided: moved
+ * (Move it to Homeroom), kept (Keep it here), still open, failed. And the
+ * live `person` verdicts flagged as about Homeroom itself that sent no
+ * offer, counted by why (move_offer; `unrecorded` for a run from before it
+ * was kept, or whose DM news did not go out), with the latest few.
+ * Codes and counts, never anybody's words.
+ */
+async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
+  const { rows: [o] } = await pool.query(
+    `SELECT COUNT(*)::int AS sent,
+            COUNT(*) FILTER (WHERE status = 'done')::int AS moved,
+            COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
+            COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+       FROM homeroom_bot_dm_actions
+      WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
+    [days],
+  );
+  const { rows: missed } = await pool.query(
+    `SELECT r.id, r.issue_number, r.created_at, a.slug AS app_slug,
+            COALESCE(r.move_offer, 'unrecorded') AS why
+       FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+      WHERE r.about_platform AND r.verdict = 'person' AND r.mode = 'live'
+        AND r.created_at > NOW() - make_interval(days => $1)
+        AND r.move_offer IS DISTINCT FROM 'sent'
+        AND (r.move_offer IS NOT NULL OR NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_dm_actions x
+           WHERE x.kind = 'move_request' AND x.app_id = r.app_id AND x.source_issue_number = r.issue_number))
+      ORDER BY r.id DESC`,
+    [days],
+  );
+  const byWhy = {};
+  for (const m of missed) byWhy[m.why] = (byWhy[m.why] || 0) + 1;
+  return {
+    days,
+    sent: o?.sent || 0,
+    moved: o?.moved || 0,
+    kept: o?.kept || 0,
+    open: o?.open || 0,
+    failed: o?.failed || 0,
+    notOffered: missed.length,
+    notOfferedByWhy: byWhy,
+    notOfferedRecent: missed.slice(0, 10).map((m) => ({
+      runId: Number(m.id), app: m.app_slug, issueNumber: Number(m.issue_number),
+      why: m.why, at: new Date(m.created_at).toISOString(),
+    })),
+  };
 }
 
 /**
@@ -489,6 +571,9 @@ function moveOfferMeta({ app, actionId }) {
 }
 
 module.exports = {
+  MOVE_OFFER_OUTCOMES,
+  noteMoveOffer,
+  moveOfferSummary,
   offerClose,
   requestLink,
   movedFooter,

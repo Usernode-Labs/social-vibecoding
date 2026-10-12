@@ -86,7 +86,6 @@ test('the #3575 helpers stay retired; only the email sign-up step suggests from 
 test('the suggestion is the letters and digits before the @, lowercased, cut to 32 (#4596)', () => {
   const { usernameFromEmail } = usernames;
   assert.equal(usernameFromEmail('Ada.Lovelace@example.com'), 'adalovelace');
-  assert.equal(usernameFromEmail('alex+homeroom@example.com'), 'alexhomeroom');
   assert.equal(usernameFromEmail('j_o-e.99@example.com'), 'joe99', 'underscores and hyphens go too');
   assert.equal(usernameFromEmail('Zoë@example.com'), 'zoe', 'accents fold to their letter');
   assert.equal(usernameFromEmail(`${'a'.repeat(40)}@example.com`), 'a'.repeat(32));
@@ -99,6 +98,27 @@ test('the suggestion is the letters and digits before the @, lowercased, cut to 
   assert.equal(usernameFromEmail('staging1@example.com'), null);
   assert.equal(usernameFromEmail(''), null);
   assert.equal(usernameFromEmail(null), null);
+});
+
+test('a "+" alias is cut off before the suggestion is made (#4891)', async () => {
+  const { usernameFromEmail } = usernames;
+  // The address in the report: what follows the "+" is a filing tag, not
+  // the person's name.
+  assert.equal(usernameFromEmail('evan.a.shapiro+test1012a@example.com'), 'evanashapiro');
+  assert.equal(usernameFromEmail('Ada.Lovelace+hr@example.com'), 'adalovelace');
+  assert.equal(usernameFromEmail('alex+homeroom+more@example.com'), 'alex', 'cut at the first "+"');
+  // What is left before the "+" is held to the same rules: too short, or
+  // nothing at all, and the field starts empty rather than borrowing the tag.
+  assert.equal(usernameFromEmail('al+homeroom@example.com'), null);
+  assert.equal(usernameFromEmail('+homeroom@example.com'), null);
+  // A "+" after the @ is not an alias.
+  assert.equal(usernameFromEmail('alex@plus+example.com'), 'alex');
+  // And the free-name walk starts from the cut name.
+  const none = { query: async (sql, [candidates]) => {
+    assert.equal(candidates[0], 'evanashapiro');
+    return { rows: [] };
+  } };
+  assert.equal(await usernames.suggestUsernameForEmail(none, 'evan.a.shapiro+test1012a@example.com', 7), 'evanashapiro');
 });
 
 test('a taken suggestion takes the smallest free number, over live and retired names (#4596)', async () => {

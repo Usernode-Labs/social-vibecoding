@@ -152,7 +152,7 @@ test('triage records the ask before the verdict is posted, so that very post lea
   assert.equal(out.verdict, 'person');
   assert.deepEqual(order, [['run'], ['asks', ['maya'], ['sam'], 900]]);
   const src = read('src/services/homeroom-bot.js');
-  const tri = src.slice(src.indexOf('await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId })'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
+  const tri = src.slice(src.lastIndexOf('await supersedeEarlierBuilds(pool, { app, issueNumber, runId });'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
   assert.match(tri, /live\.applyMentionAsks\(/, 'recorded before actOnVerdict runs, in the same run');
   const fu = src.slice(src.indexOf('const parsed = followup.parseFollowUp(result.lastResultText);'), src.indexOf('const moved = followup.headMoved({'));
   assert.match(fu, /live\.applyMentionAsks\(\{\n\s+pool, github, app, repo, issueNumber, stop: parsed\.stopMentioning, resume: parsed\.resumeMentioning,\n\s+proposalSessionId: session\.id,/,

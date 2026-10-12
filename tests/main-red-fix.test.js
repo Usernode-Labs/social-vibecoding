@@ -216,6 +216,27 @@ test('a verdict a newer merge superseded is kept, with what it was', async () =>
     'and the log says what it was');
 });
 
+// The proposal-pipeline topic's "Reds that passed on a re-run" reads the
+// flag (services/topic-figures.js).
+test('a red the confirm run clears is kept as a flake; a red twice is not', async () => {
+  let restore = scripted(red([KUDOS]), pass);
+  try {
+    const pool = redPool();
+    await mainWatch.afterMerge({ workerRuntime: 'docker' }, pool, { app: APP, session: { id: 1, pr_number: 4832 }, mergeSha: RED });
+    assert.deepEqual(pool.verdicts.map((v) => [v[2], v[5]]), [['passing', true]]);
+  } finally { restore(); }
+  restore = scripted(red([KUDOS]), red([KUDOS]));
+  try {
+    const pool = redPool({ openRequest: true });
+    await mainWatch.afterMerge({ workerRuntime: 'docker' }, pool, { app: APP, session: { id: 1, pr_number: 4832 }, mergeSha: RED });
+    assert.deepEqual(pool.verdicts.map((v) => [v[2], v[5]]), [['failing', false]]);
+  } finally { restore(); }
+  assert.equal(mainWatch.flakedRed({ disjoint: true, confirmed: true }), true, 'red twice on tests that each passed the other time');
+  assert.equal(mainWatch.flakedRed({ confirmed: true }), false);
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  assert.match(schema, /ALTER TABLE main_watch_verdicts ADD COLUMN IF NOT EXISTS flake BOOLEAN NOT NULL DEFAULT FALSE;/);
+});
+
 test('the request text without suspects lists the range, and too long a range is not attributed', () => {
   const { body } = redFix.fixRequestText({
     redSha: RED, failingTests: [KUDOS],

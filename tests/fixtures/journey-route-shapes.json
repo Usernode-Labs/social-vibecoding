@@ -222,6 +222,13 @@
       "first_version": "number",
       "running": "number"
     },
+    "timing": {
+      "from": "object",
+      "of": "number",
+      "pod": "object",
+      "stages": [],
+      "totalMs": "object"
+    },
     "week": "string",
     "weeks": [
       {

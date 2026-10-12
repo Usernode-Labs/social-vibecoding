@@ -54,9 +54,29 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
   assert.equal(out.runs[0].build.ok, true);
   assert.equal(out.runs[0].build.state, 'built');
   assert.equal(out.runs[0].readReason, null, 'a run from before read reasons');
+  assert.equal(out.runs[0].specChars, null, 'a run with no spec has no size');
+  assert.equal(out.runs[0].build_spec_md, undefined, 'the size, not the spec itself');
   assert.equal(out.buildLane, null, 'no lane in the payload, none here');
   assert.equal(out.nextBefore, 9, 'a full page names the next one');
   assert.equal(out.queue.items[0].app, 'bread');
+});
+
+test('botOverview: a run whose verdict could not be read carries its kept reply, and no other run does', async () => {
+  const bot = {
+    adminPayload: async () => ({
+      settings: {}, runs: [
+        { id: 2, verdict: 'failed', error: 'unparseable: Verdict below.', created_at: '2026-10-01T00:00:00Z',
+          unreadable_reply: { reply: { text: 'Reading. Verdict below.', chars: 23 }, repair: { text: 'x'.repeat(20_000), chars: 20_000 } } },
+        { id: 1, verdict: 'failed', error: 'budget: wall clock', created_at: '2026-10-01T00:00:00Z' },
+      ],
+    }),
+  };
+  const out = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(out.runs[0].unreadableReply.reply, { text: 'Reading. Verdict below.', chars: 23 });
+  assert.equal(out.runs[0].unreadableReply.repair.chars, 20_000);
+  assert.ok(out.runs[0].unreadableReply.repair.text.length <= 16 * 1024 + 200, 'bounded however it was stored');
+  assert.equal(out.runs[0].error, 'unparseable: Verdict below.');
+  assert.equal(out.runs[1].unreadableReply, null);
 });
 
 test('a ready verdict that was never built says where it got to and why; a run says what started its read', async () => {
@@ -295,4 +315,23 @@ test('a failed run in recent shots carries its code, its reason in full and how 
   // A lookup that fails never fails the listing.
   const broken = { async query() { throw new Error('relation does not exist'); } };
   assert.equal((await data.recentShots(broken, {}, { gallery })).proposals.length, 3);
+});
+
+test('a run carries the size of the spec its build worked from, to read against how the build went', async () => {
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: {}, bot: null, totals: {}, queue: { depth: 0, items: [] },
+        runs: [{
+          id: 3, app_slug: 'bread', issue_number: 1, verdict: 'ready', build_ok: false,
+          build_error: 'the build ran past its time limit', build_spec_md: '# Plan\n'.concat('x'.repeat(9993)),
+          bot_config_version_id: 4, created_at: '2026-10-01T00:00:00Z',
+        }],
+      };
+    },
+  };
+  const [run] = (await data.botOverview(null, {}, {}, { bot })).runs;
+  assert.equal(run.specChars, 10000);
+  assert.equal(run.build.state, 'failed');
+  assert.equal(run.botConfig.versionId, 4);
 });

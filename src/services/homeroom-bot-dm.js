@@ -860,7 +860,11 @@ function questionLead(line, it, dm) {
  * ended: a build that ran too long or changed nothing is said as that.
  */
 function buildFailedCause(reason) {
-  const r = String(reason || '').replace(/\s*\(finished after a restart\)/g, '');
+  // Read from the reason alone: what a failed turn was last doing and its
+  // final message follow it (homeroom-bot-live.js failureDetail), and an
+  // agent that wrote "the server would not start" did not fail to start.
+  const r = String(reason || '').split(/; (?:last activity|it last said):/)[0]
+    .replace(/\s*\(finished after a restart\)/g, '');
   const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
   if (restarts) return { cause: 'restarts', times: Number(restarts[1]) };
   if (/ran past its time limit/.test(r)) return { cause: 'time' };
@@ -983,6 +987,9 @@ function dmText(kind, dm, context) {
     case 'followup_ask':
       return `${line}\n\nI have a question before I update your change:\n\n${clip(dm.question, 2000)}`;
     case 'spec':
+      // A first version tried once more on its own (homeroom-bot.js
+      // buildLive): the one start of a build that is a message of its own.
+      if (dm.retry) return `${line}\n\nMy first try at building ${it} didn't finish, so I'm trying once more from the same plan. I'll message you here when it's ready to try.`;
       return `${line}\n\nI'm building ${it} now. I'll message you here when it's ready to try.`;
     // #20 (WP3): the change's card under the message is its link (cardsFor
     // attaches it whenever the news names its session), so the text points
@@ -1180,6 +1187,9 @@ const CARD_ONLY = new Set(['spec', 'held_proposals_per_app', 'held_proposals_tot
 
 /** Pure: whether a post's news stays on the card rather than being a DM message (CARD_ONLY). */
 function cardOnly(kind, dm = null) {
+  // Trying once more is news the card alone would not say: it reads
+  // "building" either way.
+  if (kind === 'spec' && dm?.retry) return false;
   if (CARD_ONLY.has(kind)) return true;
   // A change's red checks handed to a person: the change's own discussion
   // says so, where the group votes on it (homeroom-bot.js runChecksFix).
@@ -1258,9 +1268,16 @@ async function relayIssuePost({
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: CHAT_STATUS_OF_KIND[kind] });
   }
   if (!dm || !bot?.id) return null;
+  // A verdict about Homeroom itself offers a move (below); where it cannot,
+  // the run records why (homeroom-bot-move.js noteMoveOffer).
+  const noteMove = (outcome) => (kind === 'person' && dm.platform
+    ? require('./homeroom-bot-move').noteMoveOffer(pool, runId, outcome) : null);
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) return null;
+  if (!requester || !hasBot(settings, requester)) {
+    await noteMove(requester ? 'no_bot' : 'no_requester');
+    return null;
+  }
   const context = {
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -1316,7 +1333,7 @@ async function relayIssuePost({
   const shown = await cardShown(pool, requester.userId, app.id, issueNumber);
   // B4: one card follows a request through every look, so while it has one,
   // that card says it, wherever it sits.
-  if (shown && CARD_SAYS.has(kind)) {
+  if (shown && CARD_SAYS.has(kind) && !dm.retry) {
     return {
       conversationId: shown.conversationId, messageId: shown.messageId, duplicate: true,
       userId: requester.userId, username: requester.username, card: true,
@@ -1387,7 +1404,10 @@ async function relayIssuePost({
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
-  if (!sent?.messageId) return null;
+  if (!sent?.messageId) {
+    await noteMove('not_sent');
+    return null;
+  }
   const told = { ...sent, userId: requester.userId, username: requester.username };
   // The same post relayed again (a retry) was already sent and recorded.
   if (sent.duplicate) return told;
@@ -1422,7 +1442,7 @@ async function relayIssuePost({
   // Homeroom's own board, under its own buttons. Never throws.
   if (kind === 'person' && dm.platform) {
     await require('./homeroom-bot-move').offerMove(pool, {
-      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
+      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
       key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
     });
   } else if ((kind === 'person' || kind === 'empty') && dm.done) {
@@ -3517,10 +3537,11 @@ const TOUR_PROMPTS = Object.freeze(['What can I ask for?', 'How does the group d
  * (onboarding.js markTourDone), once ever: their one hello (claimHello, as a
  * 'tour'), so somebody already greeted as a maker, member, joiner or in the
  * welcome sweep, or written to before hellos existed, hears nothing. Only
- * when the bot is on and builds for them, as greetJoiner, and never a test
- * account unless it was made to receive the welcome DM
- * (test_account_welcome_dm), as the welcome sweep and the welcome DM skip
- * them. Quiet: it rings nothing. Never throws.
+ * when the bot is on and builds for them, as greetJoiner. #4897: a test
+ * account is greeted like anybody, as every other hello greets it, so a
+ * tester finds in Messages what the tour promised; only the welcome DM,
+ * which puts staff into a group with it, waits for test_account_welcome_dm.
+ * Quiet: it rings nothing. Never throws.
  */
 async function greetTourFinisher(pool, { userId }) {
   try {
@@ -3529,11 +3550,11 @@ async function greetTourFinisher(pool, { userId }) {
     if (settings.mode === 'off') return null;
     const { rows } = await pool.query(
       `SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access,
-              is_admin, (test_account_created_at IS NOT NULL AND NOT test_account_welcome_dm) AS quiet_test
+              is_admin
          FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
     );
     const person = rows[0];
-    if (!person || person.quiet_test || !hasBot(settings, {
+    if (!person || !hasBot(settings, {
       username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
     })) return null;

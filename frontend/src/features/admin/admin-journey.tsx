@@ -983,11 +983,99 @@ type Creation = {
   targets: Record<string, number>;
   recordedFrom: Record<string, string | null>;
   weeks: Array<{ week: string; steps: Array<{ key: string; reached: Count; medianSeconds: number | null }> }>;
+  timing?: CreationTimingSummary;
   examples: Array<{
     userId: number; name: string; slug: string; project: string; createdAt: string;
     steps: Array<{ key: string; recorded: boolean; seconds: number | null }>;
+    timing?: CreationTiming | null;
   }>;
 };
+
+// Where the time to running goes (#4895): each stage of making a project,
+// its median over the projects made from a starter since creation was timed
+// (src/services/journey.js creationTimingSummary). Each stage is its own
+// clock: the database and the repository are made side by side, so the
+// stages do not add up to the total.
+type PodStart = { scheduleMs: number; startMs: number; readyMs: number };
+type CreationTiming = {
+  kind: string; totalMs: number | null; stages: Record<string, number>;
+  build?: { engine: string; reused?: boolean; steps: Array<{ name: string; ms: number }> };
+  pod?: PodStart;
+};
+type CreationTimingSummary = {
+  from: string | null; of: number; totalMs: number | null;
+  stages: Array<{ key: string; medianMs: number }>; pod: PodStart | null;
+};
+
+const TIMING_STAGES: Record<string, [string, string]> = {
+  database: ['Database', 'its own Postgres database and role'],
+  repository: ['Repository', 'its GitHub repository made and the starter committed'],
+  card: ['Card', 'waiting for the first session\'s card, inside Repository'],
+  checkout: ['Checkout', 'the starter written out for the image build'],
+  lock: ['Build lock', 'waiting to share the build-retention lock'],
+  manifest: ['Manifest', 'dapp.json read and reconciled, secrets checked'],
+  build: ['Image build', 'its container image built'],
+  deploy: ['Deploy', 'its Service, Deployment and Ingress applied'],
+  rollout: ['Start', 'its Pod placed, its image pulled and started, until /health answered'],
+};
+
+/** Milliseconds as a short duration: "0.4 s", "4.3 s", "71 s", "1.5 min". */
+function msDur(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  if (ms < 10000) return `${Math.round(ms / 100) / 10} s`;
+  return dur(ms / 1000);
+}
+
+function CreationTimingRows({ timing }: { timing: CreationTimingSummary | undefined }) {
+  if (!timing) return null;
+  if (!timing.of) {
+    return (
+      <p className={JUI.fine}>
+        {timing.from
+          ? `No project made from a starter in this time was timed. Timed from ${weekLabel(timing.from.slice(0, 10))}.`
+          : 'Not timed yet: each new project is timed from now on.'}
+      </p>
+    );
+  }
+  const most = Math.max(1, ...timing.stages.map((st) => st.medianMs));
+  return (
+    <div className="space-y-1">
+      {timing.stages.map((st) => {
+        const [label, means] = TIMING_STAGES[st.key] || [st.key, ''];
+        return (
+          <div key={st.key} data-journey-creation-stage={st.key} title={means}
+            className="grid grid-cols-[6.5rem_minmax(0,1fr)_3.5rem] items-center gap-2 text-xs">
+            <span className="truncate">{label}</span>
+            <div className={`h-2 rounded-sm ${JUI.empty}`}>
+              <div className="h-2 rounded-sm bg-violet-500" style={{ width: `${Math.max(2, Math.round((st.medianMs / most) * 100))}%` }} />
+            </div>
+            <span className="text-right tabular-nums">{msDur(st.medianMs)}</span>
+          </div>
+        );
+      })}
+      {timing.pod ? (
+        <p className={JUI.fine} data-journey-creation-pod="">
+          {`Start, from the Pod: placed ${msDur(timing.pod.scheduleMs)} · image pulled and started ${msDur(timing.pod.startMs)} · booted until healthy ${msDur(timing.pod.readyMs)}`}
+        </p>
+      ) : null}
+      <p className={JUI.fine}>
+        {`Median per stage over ${plural(timing.of, 'project', 'projects')} made from a starter, ${msDur(timing.totalMs)} in all. Each stage has its own clock: the database and the repository are made side by side, so the stages do not add up to the total.`}
+      </p>
+    </div>
+  );
+}
+
+/** One project's slowest stages, and how its image was built. */
+function exampleTiming(timing: CreationTiming): string {
+  const top = Object.entries(timing.stages).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([key, ms]) => `${(TIMING_STAGES[key] || [key])[0]} ${msDur(ms)}`);
+  const b = timing.build;
+  const slowest = b && b.steps.length ? b.steps[0] : null;
+  const built = b
+    ? `built with ${b.engine}${b.reused ? ', reused' : ''}${slowest ? `, slowest ${slowest.name} ${msDur(slowest.ms)}` : ''}`
+    : null;
+  return [...top, ...(built ? [built] : [])].join(' · ');
+}
 
 const CREATION_STEPS: Array<[string, string, string]> = [
   ['created', 'Created', 'made a project'],
@@ -1059,6 +1147,11 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
       </div>
       {since ? <p className={`${JUI.fine} mt-2`}>Running, Preview opened and Requested change live are recorded from {weekLabel(since)}.</p> : null}
 
+      <div className={`${JUI.label} mt-4 mb-1.5`}>Where the time to running goes</div>
+      <div id="admin-journey-creation-timing">
+        <CreationTimingRows timing={data.timing} />
+      </div>
+
       <div className={`${JUI.label} mt-4 mb-1.5`}>By week</div>
       <div className={JUI.weekGrid} id="admin-journey-creation-weeks">
         <span className={JUI.fine}>Week</span>
@@ -1104,6 +1197,7 @@ function CreationCard({ scope, onOpen }: { scope: Scope; onOpen: OpenPerson }) {
                   </span>
                 ))}
               </div>
+              {e.timing ? <div className={`mt-0.5 ${JUI.fine}`} data-journey-creation-example-timing="">{exampleTiming(e.timing)}</div> : null}
             </div>
           ))}
         </div>
@@ -1890,4 +1984,4 @@ const AdminJourney = {
 if (typeof window !== 'undefined') (window as any).AdminJourney = AdminJourney;
 
 // InviteFunnelRows for its render test (tests/admin-journey-section.test.js).
-export { AdminJourney, InviteFunnelRows };
+export { AdminJourney, InviteFunnelRows, CreationTimingRows, exampleTiming };
