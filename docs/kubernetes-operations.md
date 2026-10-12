@@ -255,6 +255,136 @@ preview whose row no longer names it keeps its staging database until the
 orphan database pass (`STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS`, 6 h) finds nothing
 connected to it.
 
+## A separate server for preview databases
+
+By default one PostgreSQL server holds everything: the platform's database,
+every app's production database, and every database a preview needs (each
+app's redacted staging template, each preview's copy of it, and the copies
+before & after shots are taken on). `STAGING_DB_ADMIN_URL` names a second
+server for the preview side, so that the copies, the template rebuilds and
+whatever previews write stop going through production's WAL, replicas and
+archive. It is off unless set, and with it unset nothing changes.
+
+What moves and what stays (`src/services/db-manager.js`, "Two servers"):
+
+- On the preview server: staging templates (`app_<slug>_stgtmpl`), preview
+  copies (`app_<slug>_staging_s<session>_<commit>`), shots copies and their
+  frozen source (`…_shots_…`, `…_evsrc_…`), and the roles of all of them.
+- On the main server, always: the platform's database, every app's production
+  database, app forks, and the advisory locks. The redacted dump is still
+  read from the main server; it is restored on the preview server, and both
+  redaction passes run there and fail the build if they cannot finish.
+- Nothing records which server a preview database is on. Its name says whose
+  it is, so a drop runs on both servers and the sweeps list both. A preview
+  built before the switch keeps working and is cleaned up on the main server.
+  A preview connects with the address its container was given when it was
+  built.
+- There is no fallback to the main server. If the preview server is down,
+  preview builds fail as a platform fault and retry on the checks' own
+  schedule; they do not move their full copies onto production.
+
+### What the cluster has to provide
+
+The chart does not create the server. It needs:
+
+- **A PostgreSQL server that holds nothing else, with one instance.** No
+  replicas and no backups or WAL archive: everything on it can be rebuilt
+  from the main server.
+- **PostgreSQL 18 or later** for shared-block copies. An older server works;
+  it gets the plain copy, and the platform logs that once. The platform image's
+  `pg_dump` and `pg_restore` (`postgresql-client` in `Dockerfile.kubernetes`,
+  18 at the time of writing) must not be older than either server.
+- **A data volume on a filesystem with reflink**: XFS made with `reflink=1`
+  (check with `xfs_info <mount>`), or Btrfs. On Linux a copy on a filesystem
+  without reflink does not fail: the kernel copies the files instead. The
+  copy still skips the WAL but shares no blocks, and nothing the platform can
+  query says which happened, so check the volume rather than the logs.
+- **A superuser credential for the platform**, as `DB_ADMIN_URL` is on the
+  main server: it creates and drops databases and roles, takes ownership of
+  restored objects and ends sessions on its own disposable databases.
+- **A maintenance database that exists**, named in the URL's path
+  (`postgres` if the path is empty).
+- **The same encoding and locale as the main server**, and every extension
+  an app's database uses, or a restore fails and so does that app's build.
+- **Network reach from two places.** From the platform Pods: the chart adds
+  that egress rule (`previewPostgresql.namespace`, `podSelector`, `port`),
+  and the server's own ingress policy has to admit them. From preview and
+  shots Pods in the app namespace (`APP_NAMESPACE`): that namespace's egress
+  policy is in the foundation, not in this repository, and the server's
+  ingress has to admit Pods labelled
+  `app.kubernetes.io/managed-by: social-vibecoding-runtime` from it. Until
+  both are in place a preview builds and then cannot reach its database.
+- **One address that resolves the same from both places.** A preview is
+  handed the URL's host and port with its own role and password, so use the
+  server's fully qualified Service name, not a Pod address. An `sslmode`
+  query parameter in the URL is passed on.
+- **Enough `max_connections` for the previews.** Each preview database is
+  capped at `STAGING_DB_CONNECTION_LIMIT` (12). The connection-pressure pass
+  reads the preview server's own budget and reclaims idle previews there at
+  90% of it.
+
+Lighter write settings are reasonable on a server whose contents can be
+rebuilt: `synchronous_commit = off`, and `wal_level = minimal` with
+`max_wal_senders = 0`, which CloudNativePG accepts only for a one-instance
+cluster with archiving off. Whether the operator lets `fsync` be turned off
+was not confirmed, and nothing here depends on it. The file-copy strategy
+forces a checkpoint before and after every copy, which is why it is never
+used on the main server.
+
+With PostgreSQL 18 on the preview server and 17 on the main one, previews
+and their checks run on a newer PostgreSQL than production does. That is a
+known cost of the shared-block copy.
+
+### Switching it on
+
+1. Create the server and its credential, and open the two network paths.
+2. Add `STAGING_DB_ADMIN_URL` to the platform Secret
+   (`postgres://<user>:<password>@<host>:<port>/<maintenance database>`). It
+   carries a password: keep it in the Secret, never in plaintext values.
+   With `secrets.create=true` the chart writes it from `previewPostgresql.*`
+   and `secrets.previewDatabasePassword`.
+3. Set `previewPostgresql.enabled: true` with `namespace`, `podSelector` and
+   `port`, and sync. While `enabled` is false the chart sets the variable to
+   an empty value on the platform, which overrides the key in the Secret, so
+   this is the switch.
+
+From the next platform Pod on, new previews are made on the preview server.
+Each app's template is rebuilt there on its first build, and its old template
+on the main server is dropped by that build, or within six hours by the
+orphan database pass. Previews that already exist stay on the main server
+until they are rebuilt or torn down. `Staging template refreshed` log lines
+carry `server: preview`; `refused a shared-block copy` and `older than
+PostgreSQL 18` say why a server gets plain copies. `STAGING_DB_FILE_CLONE=0`
+turns the shared-block attempt off without moving anything.
+
+### Switching it off
+
+1. Set `previewPostgresql.drain: true` (`STAGING_DB_SERVER_DRAIN=1`) and
+   sync. New previews are made on the main server again. Previews still on
+   the preview server keep working and are still cleaned up there; a preview
+   backing a live vote is rebuilt onto the main server by the heal pass, a
+   few per sweep, and any other is rebuilt the next time somebody opens it.
+   Until then such a preview is reported as needing a rebuild.
+2. When no client is connected to a `%_staging_%` database on the preview
+   server (`pg_stat_activity` there), set `previewPostgresql.enabled: false`
+   and sync, then remove the key from the Secret and the server.
+
+Removing the setting at once, without draining, is safe for everything on
+the main server and for building: the platform is back to one server. What
+it leaves behind is on the preview server: previews there keep running for as
+long as the server exists, nothing cleans them up, and once the server is
+deleted each of them answers errors until its next rebuild.
+
+### If the preview server is wiped
+
+Nothing has to be done by hand. The next build of each app finds no template
+and rebuilds it. A preview whose database is gone is detected by looking for
+its database on both servers (within a minute of the wipe, and only when
+both servers answer); the heal pass rebuilds the ones backing a live vote,
+a re-run of the checks rebuilds first, and any other is rebuilt when it is
+opened. If the server comes back on another version, the platform reads the
+new version within ten minutes.
+
 ## Harvesting check runs across platform rollouts
 
 Every merge to the self-app rolls the platform Deployment, and every checks

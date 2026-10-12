@@ -239,6 +239,22 @@ const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they wi
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
+//
+//   5. The preview's DATABASE is gone, or is on a server being emptied.
+//      Only possible with a separate preview database server
+//      (STAGING_DB_ADMIN_URL, db-manager.js), which holds nothing but copies
+//      and may be wiped and come back empty. The container built against it
+//      keeps running and answers an error for every page that reads its
+//      database, so a liveness check sees nothing wrong and a checks run
+//      would record those errors against the proposal. Detected by looking
+//      for the session's clone on every configured server
+//      (dbManager.previewDatabaseVerdict): only a clean "none anywhere"
+//      counts, a server that cannot be read is "cannot tell". The rebuild
+//      rebuilds the app's template on the empty server and copies again.
+//      The same look moves previews off a preview server that is being
+//      drained before it is removed. With one server the question is not
+//      asked.
+//
 // `config` is optional. Without it the staleness comparison is skipped and
 // the verdict is liveness-only — the pre-#851 behaviour. Every real caller
 // passes one; the fallback keeps the function usable from a context that has
@@ -276,6 +292,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
   // exited/dead/created.
   if (state.status !== 'running') return true;
   if (previewIsOfAnotherCommit(session, headSha)) return true;
+  if (await previewDatabaseNeedsRebuild(session)) return true;
   if (!config) return false;
 
   const stagingEnv = require('./staging-env');
@@ -287,6 +304,25 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// Shape 5 above. Never throws: a failed look is "cannot tell".
+async function previewDatabaseNeedsRebuild(session) {
+  let dbManager;
+  try { dbManager = require('./db-manager'); } catch (_) { return false; }
+  if (typeof dbManager.previewDatabaseVerdict !== 'function') return false;
+  let verdict = null;
+  try { verdict = await dbManager.previewDatabaseVerdict(session.id); } catch (_) { return false; }
+  if (verdict === 'gone') {
+    log.info('staging-recovery', 'Preview database is gone from every database server, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  } else if (verdict === 'draining') {
+    log.info('staging-recovery', 'Preview database is on a server being drained, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  }
+  return !!verdict;
 }
 
 // Is the preview of a session whose checks keep erroring still inside the

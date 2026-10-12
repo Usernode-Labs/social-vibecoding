@@ -968,24 +968,67 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     ]);
     summary.examined = dbs.rows.length;
 
+    const liveSessionIds = new Set(live.rows.map((r) => Number(r.id)));
     const orphans = selectOrphanDbs({
       dbNames: dbs.rows.map((r) => r.datname),
-      liveSessionIds: new Set(live.rows.map((r) => Number(r.id))),
+      liveSessionIds,
       connectedDbNames: new Set(connected.rows.map((r) => r.datname)),
       hasInFlightBuild: staging.hasInFlightBuild,
     });
-    summary.orphaned = orphans.length;
-    if (!orphans.length) return summary;
 
-    const batch = orphans.slice(0, cap);
+    // The preview server, when there is one (STAGING_DB_ADMIN_URL): the same
+    // classification over ITS databases and ITS connections. Each orphan
+    // remembers the server it was found on and is dropped there only, so a
+    // database of the same name that is in use on the other server is never
+    // reached by this pass. A preview server that cannot be read contributes
+    // nothing this time; the main server's pass goes on.
+    const onPreviewServer = new Set();
+    const previewServer = dbManager.previewServerConfigured?.() ? dbManager.PREVIEW_SERVER : null;
+    if (previewServer) {
+      try {
+        const there = await dbManager.listPreviewServerStagingDatabases();
+        summary.examined += there.dbNames.length;
+        for (const name of selectOrphanDbs({
+          dbNames: there.dbNames,
+          liveSessionIds,
+          connectedDbNames: there.connectedDbNames,
+          hasInFlightBuild: staging.hasInFlightBuild,
+        })) onPreviewServer.add(name);
+      } catch (err) {
+        log.warn('staging-reap', 'Could not list the preview database server; skipping it this pass', { err: err.message });
+      }
+      // Templates of apps that have not built since previews moved.
+      const retired = await dbManager.retireStrayTemplates();
+      if (retired.dropped || retired.failed) log.info('staging-reap', 'Stray staging templates retired', retired);
+    }
+    // One entry per (database, server). With one server this is the list it
+    // always was.
+    const work = [
+      ...[...onPreviewServer].map((dbName) => ({ dbName, server: previewServer })),
+      ...orphans.map((dbName) => ({ dbName, server: previewServer ? dbManager.PRIMARY_SERVER : null })),
+    ];
+    summary.orphaned = work.length;
+    if (!work.length) return summary;
+    const dropOrphan = ({ dbName, server }) => (server
+      ? dbManager.dropDatabase(dbName, { server })
+      : dbManager.dropDatabase(dbName));
+    // Is anything connected to it, on the server it is on?
+    const hasSessions = async ({ dbName, server }) => {
+      if (server && server === previewServer) return dbManager.previewServerDatabaseHasSessions(dbName);
+      const { rows } = await pool.query('SELECT 1 FROM pg_stat_activity WHERE datname = $1', [dbName]);
+      return rows.length > 0;
+    };
+
+    const batch = work.slice(0, cap);
     log.info('staging-reap', 'Orphan staging-DB pass started', {
-      examined: summary.examined, orphaned: orphans.length,
-      acting: batch.length, deferred: orphans.length - batch.length,
+      examined: summary.examined, orphaned: work.length,
+      acting: batch.length, deferred: work.length - batch.length,
     });
 
     // Serial on purpose: DROP DATABASE forces WAL/checkpoint work, and this
     // pass must stay invisible in host I/O next to live staging restores.
-    for (const dbName of batch) {
+    for (const item of batch) {
+      const { dbName } = item;
       try {
         const lifecycle = require('./preview-lifecycle');
         if (lifecycle.enabled(config)) {
@@ -994,15 +1037,14 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
             require('./advisory-locks').PREVIEW_LIFECYCLE_LOCK, sessionId, async () => {
               // The census predates lock acquisition. Recheck durable ownership
               // and connections after every competing build/capture has stopped.
-              const { rows } = await pool.query(`SELECT 1 FROM chat_sessions
-                WHERE id = $1 AND staging_url IS NOT NULL
-                UNION ALL SELECT 1 FROM pg_stat_activity WHERE datname = $2`, [sessionId, dbName]);
-              if (rows.length) return;
-              await dbManager.dropDatabase(dbName);
+              const { rows } = await pool.query(
+                'SELECT 1 FROM chat_sessions WHERE id = $1 AND staging_url IS NOT NULL', [sessionId]);
+              if (rows.length || await hasSessions(item)) return;
+              await dropOrphan(item);
               summary.dropped++;
             });
         } else {
-          await dbManager.dropDatabase(dbName);
+          await dropOrphan(item);
           summary.dropped++;
         }
       } catch (err) {
@@ -1089,8 +1131,15 @@ function selectPressureVictims({ rows, isBusy = null, hasInFlightBuild = null })
  * down with it. Generated apps frequently have no such listener, so the
  * platform would be crash-looping other people's production apps to make
  * room for a preview.
+ *
+ * `server` picks whose budget is read. The main server's is read through the
+ * platform's pool, as always. With a preview database server
+ * (STAGING_DB_ADMIN_URL) there are two budgets, and a preview only holds
+ * connections on the server its database is on: each pass then considers
+ * only the previews that live on the server it measured, since tearing down
+ * one on the other server would free nothing here.
  */
-async function sweepConnectionPressure(config, { limit = null } = {}) {
+async function sweepConnectionPressure(config, { limit = null, server = null } = {}) {
   const cap = limit || pressureSweepLimit();
   const summary = { saturated: false, candidates: 0, tornDown: 0, failed: 0, freed: 0 };
   _lastPressureSweepStartedAt = Date.now();
@@ -1101,7 +1150,12 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
 
     const pool = getPool(config);
     const { connectionCensus } = require('../db/connection-census');
-    const before = await connectionCensus(pool);
+    const twoServers = !!dbManager.previewServerConfigured?.();
+    const onPreviewServer = twoServers && server === 'preview';
+    // Asked about a preview server there is not: nothing to read.
+    if (server === 'preview' && !twoServers) return summary;
+    const reader = onPreviewServer ? dbManager.previewServerQueryable() : pool;
+    const before = await connectionCensus(reader);
     // A null census means the query itself could not run, which on this
     // path most likely means the server is ALREADY refusing connections.
     // Acting on a reading we do not have would be guessing, and the stale
@@ -1122,15 +1176,22 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
         ORDER BY last_activity_at ASC
         LIMIT 50`
     );
+    // Which previews hold connections on THIS server. Not knowing is a
+    // reason to do nothing: the other passes still run.
+    let here = null;
+    if (twoServers) {
+      here = await dbManager.stagingCloneSessionIds(onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER);
+    }
+    const where = twoServers ? { server: onPreviewServer ? 'preview' : 'main' } : {};
     const victims = selectPressureVictims({
-      rows,
+      rows: here ? rows.filter((r) => here.has(Number(r.id))) : rows,
       isBusy: activeWorkers.isSessionBusy,
       hasInFlightBuild: staging.hasInFlightBuild,
     });
     summary.candidates = victims.length;
     if (!victims.length) {
       log.warn('staging-reap', 'Postgres near its connection limit, no reclaimable preview', {
-        used: before.used, max: before.max, topDatabases: before.topDatabases,
+        used: before.used, max: before.max, topDatabases: before.topDatabases, ...where,
       });
       return summary;
     }
@@ -1138,7 +1199,7 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
     log.warn('staging-reap', 'Connection-pressure pass started', {
       used: before.used, max: before.max, free: before.free,
       candidates: victims.length, cap,
-      topDatabases: before.topDatabases,
+      topDatabases: before.topDatabases, ...where,
     });
 
     for (const victim of victims.slice(0, cap)) {
@@ -1156,7 +1217,7 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
       // Stop at the first reading that clears: this pass is allowed to
       // reclaim previews to relieve pressure, not to keep reclaiming them
       // once the pressure is gone.
-      const now = await connectionCensus(pool);
+      const now = await connectionCensus(reader);
       if (now) {
         summary.freed = Math.max(0, now.free - before.free);
         if (!now.saturated) break;

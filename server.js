@@ -5893,6 +5893,9 @@ function startSessionAutoPauseSweeper(config) {
     try {
       if (stagingReap.pressureSweepDue()) {
         await stagingReap.sweepConnectionPressure(config);
+        // The preview database server has its own budget
+        // (STAGING_DB_ADMIN_URL). A no-op without one.
+        await stagingReap.sweepConnectionPressure(config, { server: 'preview' });
       }
     } catch (err) {
       log.warn('server', 'Connection-pressure sweep failed', { err: err.message });

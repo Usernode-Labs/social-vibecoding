@@ -363,11 +363,15 @@ test('#1771: both clone paths converge on one place that sets the ceiling', () =
   const src = stripComments(read('src/services/db-manager.js'));
   const fn = src.slice(src.indexOf('async function cloneDatabase(sourceDb'));
   const body = fn.slice(0, fn.indexOf('\nasync function cloneDatabaseDirect'));
-  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb\)/g) || []).length, 2,
+  // Each call names the server the clone was made on (the main one unless
+  // STAGING_DB_ADMIN_URL names a preview server): the ceiling is set where
+  // the database is.
+  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb, \{ server \}\)/g) || []).length, 2,
     'the template path and the direct path each land on it');
   // After the copy, never before: pg_restore opens its own connections and a
   // ceiling applied mid-restore would cap the restore itself.
-  assert.ok(body.indexOf('cloneDatabaseDirect(sourceDb, targetDb)') < body.lastIndexOf('applyStagingConnectionLimit'));
+  const direct = body.indexOf('cloneDatabaseDirect(sourceDb, targetDb, { server })');
+  assert.ok(direct > 0 && direct < body.lastIndexOf('applyStagingConnectionLimit'));
 });
 
 test('#1771: pressure reclaim skips every preview somebody is using', () => {

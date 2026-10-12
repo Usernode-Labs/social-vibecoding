@@ -13514,8 +13514,8 @@ CMD ["node", "server.js"]
   // teardown, never persisted on the platform).
   const prodDbName = dbManager.appDbName(app.slug);
   const stagingDbName = dbManager.stagingDbName(app.slug, `s${session.id}`, hash);
-  const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
-  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword);
+  const { password: stagingDbPassword, server: stagingDbServer } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
+  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword, { server: stagingDbServer });
 
   // Stop old staging
   await docker.stopAndRemove(containerName).catch(() => {});
