@@ -11,6 +11,7 @@ const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
 const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
+const botDrain = require('./homeroom-bot-drain');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
@@ -3803,6 +3804,10 @@ async function execInWorker(sessionId, {
     }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
       sessionId, turnId: durableTurnId, err: err.message,
     }));
+    // The turn's record is saved and its process runs: a Homeroom bot
+    // pipeline that opened it is parked at a point restart recovery adopts
+    // (homeroom-bot-drain.js), so shutdown need not wait for it.
+    botDrain.noteTurnDispatched(sessionId, { mode });
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -3879,7 +3884,24 @@ async function execInWorker(sessionId, {
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
+    let consumeError = null;
+    try {
+      await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
+    } catch (err) {
+      consumeError = err;
+    }
+    // A Homeroom bot pipeline's turn that ends once shutdown has begun goes
+    // no further: its record and journal stay as they are (this never
+    // returns, so the `finally` below never clears them) and the next
+    // leader adopts the finished turn, rather than this process starting a
+    // step it cannot finish (homeroom-bot-drain.js).
+    if (botDrain.holdAfterTurn()) {
+      log.info('worker', 'Shutting down: a Homeroom bot turn ended; left for the next leader', {
+        sessionId, turnId: durableTurnId, mode,
+      });
+      await new Promise(() => {});
+    }
+    if (consumeError) throw consumeError;
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
@@ -3894,6 +3916,7 @@ async function execInWorker(sessionId, {
     }
     return finalizeHarnessResult(state);
   } finally {
+    if (providerDispatched) botDrain.noteTurnEnded(sessionId, { mode });
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);

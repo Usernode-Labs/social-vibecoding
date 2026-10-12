@@ -633,14 +633,25 @@ function makeRedactor(secrets) {
 // time doing it (one, at $5.77, was on its 317th request, of 540 KB).
 const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 
+// Any other provider's model (GLM among them) compacts sooner. Its images are
+// sent again on every request (imagesAfterToolResults, never pruned) and
+// first-version builds that failed on their clock carried 600 to 870 KB
+// requests, so it compacts at 120k. Anthropic's models keep the limit above.
+const NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT = 120_000;
+
+function autoCompactLimit(model) {
+  return ANTHROPIC_MODEL.test(String(model || '')) ? AUTO_COMPACT_TOKEN_LIMIT : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
+}
+
 // Claude Code's compaction settings for this turn: the model's real window
 // (AGENT_MODEL_CONTEXT_WINDOW, from the catalog) and the window it compacts
 // at. A value already in the environment is kept.
-function compactionEnv(env) {
+function compactionEnv(env, model) {
   const window = Number(env.AGENT_MODEL_CONTEXT_WINDOW);
   const known = Number.isSafeInteger(window) && window > 0;
+  const limit = autoCompactLimit(model);
   const out = {
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(known ? Math.min(window, AUTO_COMPACT_TOKEN_LIMIT) : AUTO_COMPACT_TOKEN_LIMIT),
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(known ? Math.min(window, limit) : limit),
   };
   if (known) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
   for (const name of Object.keys(out)) if (env[name]) delete out[name];
@@ -665,7 +676,7 @@ function claudeChildEnv(env, { baseUrl, localToken, model }) {
     // Anthropic-only beta headers mean nothing to another provider and are
     // the usual reason a gateway rejects a Claude Code request.
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
-    ...compactionEnv(env),
+    ...compactionEnv(env, model),
   });
   return child;
 }
@@ -729,5 +740,5 @@ if (require.main === module) {
 
 module.exports = {
   startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
-  AUTO_COMPACT_TOKEN_LIMIT,
+  AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
 };

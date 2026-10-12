@@ -511,6 +511,24 @@ function swapWording(text, pairs) {
   }, text);
 }
 
+// 12 Oct 2026: a first version's size and order. Its build gets about 40
+// minutes (homeroom-bot.js buildBudgets, FIRST_VERSION_BUILD_TIME_FACTOR),
+// took a median 36, and some ran out of time, so the spec plans for about 25
+// and ranks its work: the build does the must-haves first
+// (FIRST_VERSION_ORDER_LINES) and the rest only with time left. Nothing is
+// cut: blind comparisons favoured the complete, reviewed first versions, and
+// what decided close pairs is the must-have list below.
+const FIRST_VERSION_SIZE_LINES = Object.freeze([
+  '- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves',
+  '  it time to look at the result and fix it. This is a size to aim for, not a cut: nothing the request needs is',
+  '  dropped to fit, and what may not fit goes last in the order below.',
+  '- Ranked, so the build does what matters most first. End the technical half with a "Build order" subsection',
+  '  of two short lists. "Must-haves first": the main action working end to end; honest loading, empty and error',
+  '  states (never a blank loading screen, a made-up zero or a raw server error); the phone layout (nothing',
+  '  covering or cutting off content, the tab you are on marked); demo data that shows the app\'s core idea; and',
+  '  the signature element on the first screen. Then "Nice-to-haves": everything else, most valuable first.',
+]);
+
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
 function specScopeLines(firstVersion = false, starter = null) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
@@ -526,6 +544,7 @@ function specScopeLines(firstVersion = false, starter = null) {
     '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
     '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
     '  and why. What binds you is the request itself and what its creator approved, above.',
+    ...FIRST_VERSION_SIZE_LINES,
   ];
 }
 
@@ -1793,7 +1812,14 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
-function browserLines({ readsImages = false, clocked = false } = {}) {
+//
+// A first version under a configuration with a reviewer (bot-review.js) has
+// its screens captured at both widths, in both looks, and reviewed once the
+// build turn is over. Its build checked the same things first: first versions
+// took a median 36 minutes of a 40-minute clock, and one ran out of time
+// inside a browser check. So that build boots the app and does its main thing
+// once, at one width, and leaves the sweep to the review.
+function browserLines({ readsImages = false, clocked = false, reviewed = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -1806,12 +1832,20 @@ function browserLines({ readsImages = false, clocked = false } = {}) {
     'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
     'shows on:',
     IN_LOOP_BROWSER_GUIDANCE,
+    ...(reviewed ? [
+      '- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main',
+      '  thing once (below), enough to know it runs and its main flow works, and fix what that shows is broken. Do not',
+      '  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at',
+      '  both widths and in both looks once your turn is over, and you fix what it finds.',
+      '  Skip it only when the app cannot boot promptly, and then say why in your summary. ' + withinTime,
+    ] : [
     '- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will',
     '  see. Boot the app, then',
     `  ${look}`,
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     `  the app cannot boot promptly, and then say why in your summary. ${withinTime}`,
+    ]),
     '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
     '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
@@ -1853,12 +1887,16 @@ function utcClock(ms) {
  * The TIME section of a build prompt, or [] without a clock. `startedAt` is
  * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
  */
-function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {}) {
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false } = {}) {
   if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
   const minutes = (ms) => Math.round(ms / 60000);
   const stopAt = utcClock(startedAt + budgetMs);
   const soft = Number(softMs) > 0 && softMs < budgetMs;
   const softAt = soft ? utcClock(startedAt + softMs) : null;
+  // With a reviewer, the sizes, looks and empty and error states are its.
+  const rest = reviewed
+    ? 'the spec\'s other screens, and polish (the reviewer checks sizes, looks, and empty and error states).'
+    : 'the other screens, sizes and looks, the empty and error states, and polish.';
   return [
     '',
     `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
@@ -1869,10 +1907,7 @@ function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {})
     '1. Build everything the spec and the plan ask for. This is never what gets cut.',
     '2. Boot the app and do its main thing once, as a person would.',
     '3. Fix what that shows is broken.',
-    soft
-      ? `4. Only then, while it is before ${softAt} UTC: the other screens, sizes and looks, the empty and error states,`
-        + ' and polish.'
-      : '4. Only then, with time to spare: the other screens, sizes and looks, the empty and error states, and polish.',
+    soft ? `4. Only then, while it is before ${softAt} UTC: ${rest}` : `4. Only then, with time to spare: ${rest}`,
     soft
       ? `After ${softAt} UTC, start no new round of testing or polish. Finish building what the spec asks for if you`
         + ' still are, finish the fix you are in, check the app still boots, and finish your turn. Say in your summary'
@@ -1958,6 +1993,14 @@ const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
   '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
 ]);
 
+// A first version's build follows its spec's "Build order"
+// (FIRST_VERSION_SIZE_LINES): the must-haves first, the rest with time left.
+const FIRST_VERSION_ORDER_LINES = Object.freeze([
+  '',
+  'Build in the order the spec\'s "Build order" gives: every must-have first, working, then the nice-to-haves, most',
+  'valuable first, only while time is left.',
+]);
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -1987,11 +2030,14 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // A first version whose configuration has a reviewer (bot-review.js): the
+  // review does the visual sweep, so the build checks its main flow once.
+  reviewed = false,
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
 }) {
-  const time = clock ? clockLines(clock) : [];
+  const time = clock ? clockLines({ ...clock, reviewed }) : [];
   const specBlock = spec
     ? [
       '',
@@ -2016,6 +2062,7 @@ function buildPrompt({
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
+    ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -2027,7 +2074,7 @@ function buildPrompt({
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
-    ...browserLines({ readsImages, clocked: time.length > 0 }),
+    ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2232,6 +2279,40 @@ function readSpecText(text) {
     : { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
+/**
+ * The bot's clock stopping its turn on `sessionId`. Why is saved on the
+ * turn's record first (BOT_STOP_KEY, turn-lifecycle stampTurn), then the turn
+ * is stopped. The journal of a stopped turn ends `__USERNODE_EXIT__ 143`,
+ * which says nothing of who stopped it: a restart between the stop and the
+ * build recording it left the next server reading the 143 as the agent's
+ * own failure ("the agent exited with code 143 (finished after a
+ * restart)"). Restart recovery reads the saved stop instead (botStopOf) and
+ * records the turn as the time-out it was. Never throws: the stop goes
+ * ahead whether or not the note could be saved.
+ */
+const BOT_STOP_KEY = 'botStop';
+
+async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
+  try {
+    const turnLifecycle = require('./turn-lifecycle');
+    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn && turn.turnId) {
+      await turnLifecycle.stampTurn(pool, {
+        sessionId, turnId: turn.turnId, key: BOT_STOP_KEY, value: { why, at: new Date().toISOString() },
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not save why the bot stopped its turn', { sessionId, err: err.message });
+  }
+  return worker.stopTurn(sessionId);
+}
+
+/** The bot's own stop saved on a turn record (stopOnClock), or null. Pure. */
+function botStopOf(activeTurn) {
+  const stop = activeTurn && typeof activeTurn === 'object' ? activeTurn[BOT_STOP_KEY] : null;
+  return stop && typeof stop === 'object' && stop.why ? stop : null;
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2253,7 +2334,7 @@ async function draftSpec({
   let stopping = null;
   const timer = setTimeout(() => {
     stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    stopping = stopOnClock(pool, worker, session.id).catch(() => {});
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
@@ -2586,7 +2667,7 @@ function buildTurnRunner({
     let stopping = null;
     const timer = setTimeout(() => {
       turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+      stopping = stopOnClock(pool, worker, session.id).catch(() => {});
     }, budgetMs);
     if (typeof timer.unref === 'function') timer.unref();
     activeWorkers.add(session.id);
@@ -2995,6 +3076,7 @@ async function buildAndPropose({
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    reviewed: Boolean(review?.reviewer),
     locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
@@ -3293,6 +3375,9 @@ async function reviewLanded({
 }
 
 module.exports = {
+  BOT_STOP_KEY,
+  stopOnClock,
+  botStopOf,
   waitOutShotsRun,
   askerOf,
   creditedDescription,
@@ -3351,6 +3436,8 @@ module.exports = {
   REQUEST_IS_DATA_LINES,
   requestRulesLines,
   teeProgress,
+  lastActivity,
+  utcClock,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
@@ -3380,6 +3467,8 @@ module.exports = {
   specScopeLines,
   specDesignBrief,
   firstVersionDesignLines,
+  FIRST_VERSION_SIZE_LINES,
+  FIRST_VERSION_ORDER_LINES,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,
