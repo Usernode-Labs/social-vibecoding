@@ -155,6 +155,21 @@ If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.
 
+If a change shows a loading or error state that the steps alone do not
+reach (a skeleton or spinner that shows only while a request is on its way,
+an error only when one fails) and it declares no controlledFailurePath, call
+control_request with the change, the exact API GET path and query the page
+sends (browser_network_requests lists them), and mode "hold" for the loading
+state or "fail" for the error, just before the step that sends it. Shoot
+both sides that way, then call it again with mode "off". People see a line
+beside the shots saying which request you held or made fail.
+
+If a change's steps choose a file (a photo, a spreadsheet, a document), click
+the page's upload control; when the browser says a file chooser is open,
+call upload_file with that browser, the change and the files from the
+brief's sampleFiles that fit, the same ones on both sides. They are the only
+files you can give a page. People see a line beside the shots naming them.
+
 If your shots show the change but not everything the claim says, for example
 part of it needs data these copies do not have, keep them and call
 note_change with the change id and what they leave out; people read it

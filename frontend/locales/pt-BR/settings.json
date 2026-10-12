@@ -3918,5 +3918,173 @@
   "password.status.set": {
     "text": "Senha definida. Agora você pode entrar com ela.",
     "source": "5ff4583ec20a0aaca130c16c90ea388eea12d0e504dafc6799b80bb856984733"
+  },
+  "alerts.test.countdown.queued_many": {
+    "text": "Alerta em {{count}} s. Push no celular na fila. Deixe o app em segundo plano ou feche-o para ver a notificação. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "44d3b7820e60ebcea0b7fcbd9b765a674f71648b37449f59dda9196a8a8ecccd"
+  },
+  "alerts.test.countdown.queued_one": {
+    "text": "Alerta em {{count}} s. Push no celular na fila. Deixe o app em segundo plano ou feche-o para ver a notificação. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "44d3b7820e60ebcea0b7fcbd9b765a674f71648b37449f59dda9196a8a8ecccd"
+  },
+  "alerts.test.countdown.queued_other": {
+    "text": "Alerta em {{count}} s. Push no celular na fila. Deixe o app em segundo plano ou feche-o para ver a notificação. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "44d3b7820e60ebcea0b7fcbd9b765a674f71648b37449f59dda9196a8a8ecccd"
+  },
+  "alerts.test.countdown.preferenceDisabled_many": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Ative Sessões do agente em Categorias de push no celular e tente de novo. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "0981ea37a5400452d0212ef337c7fa4b0c61c63784bf2f4f75a2182b3ffca299"
+  },
+  "alerts.test.countdown.preferenceDisabled_one": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Ative Sessões do agente em Categorias de push no celular e tente de novo. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "0981ea37a5400452d0212ef337c7fa4b0c61c63784bf2f4f75a2182b3ffca299"
+  },
+  "alerts.test.countdown.preferenceDisabled_other": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Ative Sessões do agente em Categorias de push no celular e tente de novo. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "0981ea37a5400452d0212ef337c7fa4b0c61c63784bf2f4f75a2182b3ffca299"
+  },
+  "alerts.test.countdown.unavailable_many": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Entre no celular e ative as notificações de atividade e a permissão de notificações. O envio de push também precisa estar disponível no servidor. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "801ee6e101f0262c0e8764dff66e1afa3b3ff8732a9718abc8c7fdba1dbd2658"
+  },
+  "alerts.test.countdown.unavailable_one": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Entre no celular e ative as notificações de atividade e a permissão de notificações. O envio de push também precisa estar disponível no servidor. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "801ee6e101f0262c0e8764dff66e1afa3b3ff8732a9718abc8c7fdba1dbd2658"
+  },
+  "alerts.test.countdown.unavailable_other": {
+    "text": "Alerta em {{count}} s. O push no celular não foi enfileirado. Entre no celular e ative as notificações de atividade e a permissão de notificações. O envio de push também precisa estar disponível no servidor. Fique aqui para ouvir o sinal sonoro, se o som estiver ativado.",
+    "source": "801ee6e101f0262c0e8764dff66e1afa3b3ff8732a9718abc8c7fdba1dbd2658"
+  },
+  "connectors.hint.sent_many": {
+    "text": "A Homeroom enviou esta dica no chat {{count}} de vezes nos últimos {{days}} dias, a mais recente em {{when}}.",
+    "source": "8f01b4e580aa3607aaa8fbe3f594c418f545d4ca07d30ab0f41b67941cd9c8cf"
+  },
+  "connectors.hint.sent_one": {
+    "text": "A Homeroom enviou esta dica no chat uma vez nos últimos {{days}} dias, a mais recente em {{when}}.",
+    "source": "2e606c4f3720017c3c21909e89af025ce704db155400b6bb55bab8fa28dbd04f"
+  },
+  "connectors.hint.sent_other": {
+    "text": "A Homeroom enviou esta dica no chat {{count}} vezes nos últimos {{days}} dias, a mais recente em {{when}}.",
+    "source": "8f01b4e580aa3607aaa8fbe3f594c418f545d4ca07d30ab0f41b67941cd9c8cf"
+  },
+  "connectors.hint.sentWhenUnknown_many": {
+    "text": "A Homeroom enviou esta dica no chat {{count}} de vezes nos últimos {{days}} dias, recentemente.",
+    "source": "3091bfb5a601a4fccd6bc38e7669684bea633bb718f220fd79849d099d02383a"
+  },
+  "connectors.hint.sentWhenUnknown_one": {
+    "text": "A Homeroom enviou esta dica no chat uma vez nos últimos {{days}} dias, recentemente.",
+    "source": "5ebf6866d6d95d1bdb8a55fbbd6c99f098cb5529e9969b0d8435a3757708dcfd"
+  },
+  "connectors.hint.sentWhenUnknown_other": {
+    "text": "A Homeroom enviou esta dica no chat {{count}} vezes nos últimos {{days}} dias, recentemente.",
+    "source": "3091bfb5a601a4fccd6bc38e7669684bea633bb718f220fd79849d099d02383a"
+  },
+  "openrouter.catalog.updatedMinutesAgo_many": {
+    "text": "Atualizado há {{count}} min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "openrouter.catalog.updatedMinutesAgo_one": {
+    "text": "Atualizado há {{count}} min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "openrouter.catalog.updatedMinutesAgo_other": {
+    "text": "Atualizado há {{count}} min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "openrouter.catalog.updatedHoursAgo_many": {
+    "text": "Atualizado há {{count}} h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "openrouter.catalog.updatedHoursAgo_one": {
+    "text": "Atualizado há {{count}} h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "openrouter.catalog.updatedHoursAgo_other": {
+    "text": "Atualizado há {{count}} h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "openrouter.catalog.shownOfTotal_many": {
+    "text": "{{shown}} de {{count}} de modelos",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "openrouter.catalog.shownOfTotal_one": {
+    "text": "{{shown}} de {{count}} modelo",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "openrouter.catalog.shownOfTotal_other": {
+    "text": "{{shown}} de {{count}} modelos",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "openrouter.catalog.refreshed_many": {
+    "text": "{{count}} de modelos atuais do OpenRouter carregados.",
+    "source": "3b052c314495da8dcd229695a2e5198b64a49d0098f95b540774826ab9db2df1"
+  },
+  "openrouter.catalog.refreshed_one": {
+    "text": "{{count}} modelo atual do OpenRouter carregado.",
+    "source": "3b052c314495da8dcd229695a2e5198b64a49d0098f95b540774826ab9db2df1"
+  },
+  "openrouter.catalog.refreshed_other": {
+    "text": "{{count}} modelos atuais do OpenRouter carregados.",
+    "source": "3b052c314495da8dcd229695a2e5198b64a49d0098f95b540774826ab9db2df1"
+  },
+  "usernode.widgetIcons.registry.loaded_many": {
+    "text": "Carregado: {{count}} de fixados",
+    "source": "5b6ba223ee96014b3cdb77353ed53890aa98311fad1ba9e06eff3bcd456bb412"
+  },
+  "usernode.widgetIcons.registry.loaded_one": {
+    "text": "Carregado: {{count}} fixado",
+    "source": "5b6ba223ee96014b3cdb77353ed53890aa98311fad1ba9e06eff3bcd456bb412"
+  },
+  "usernode.widgetIcons.registry.loaded_other": {
+    "text": "Carregado: {{count}} fixados",
+    "source": "5b6ba223ee96014b3cdb77353ed53890aa98311fad1ba9e06eff3bcd456bb412"
+  },
+  "usernode.widgetIcons.lastCheck.atSent_many": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} de enviados",
+    "source": "5bbf66900c03de58042d868cc07a9c7866891beab8c68dbe842e0c8ba542b4f4"
+  },
+  "usernode.widgetIcons.lastCheck.atSent_one": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} enviado",
+    "source": "5bbf66900c03de58042d868cc07a9c7866891beab8c68dbe842e0c8ba542b4f4"
+  },
+  "usernode.widgetIcons.lastCheck.atSent_other": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} enviados",
+    "source": "5bbf66900c03de58042d868cc07a9c7866891beab8c68dbe842e0c8ba542b4f4"
+  },
+  "usernode.widgetIcons.lastCheck.neverSent_many": {
+    "text": "Última verificação de ícones: nunca: {{count}} de enviados",
+    "source": "1bcc91ea1f0696b2e234544863fcdc774a01556c34b86d7963b26de26f4fbcb8"
+  },
+  "usernode.widgetIcons.lastCheck.neverSent_one": {
+    "text": "Última verificação de ícones: nunca: {{count}} enviado",
+    "source": "1bcc91ea1f0696b2e234544863fcdc774a01556c34b86d7963b26de26f4fbcb8"
+  },
+  "usernode.widgetIcons.lastCheck.neverSent_other": {
+    "text": "Última verificação de ícones: nunca: {{count}} enviados",
+    "source": "1bcc91ea1f0696b2e234544863fcdc774a01556c34b86d7963b26de26f4fbcb8"
+  },
+  "usernode.widgetIcons.lastCheck.atSentRefused_many": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} de enviados, {{refused}} recusados",
+    "source": "34de95aafa5af1823a1c8b1fc52abde752894c6b6f7a53edf4e5d4ecced91973"
+  },
+  "usernode.widgetIcons.lastCheck.atSentRefused_one": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} enviado, {{refused}} recusados",
+    "source": "34de95aafa5af1823a1c8b1fc52abde752894c6b6f7a53edf4e5d4ecced91973"
+  },
+  "usernode.widgetIcons.lastCheck.atSentRefused_other": {
+    "text": "Última verificação de ícones: {{when}}: {{count}} enviados, {{refused}} recusados",
+    "source": "34de95aafa5af1823a1c8b1fc52abde752894c6b6f7a53edf4e5d4ecced91973"
+  },
+  "usernode.widgetIcons.lastCheck.neverSentRefused_many": {
+    "text": "Última verificação de ícones: nunca: {{count}} de enviados, {{refused}} recusados",
+    "source": "71bb178f901ce6b6ccd31ad18fee7974ee1d49587799b784af70187f2f514470"
+  },
+  "usernode.widgetIcons.lastCheck.neverSentRefused_one": {
+    "text": "Última verificação de ícones: nunca: {{count}} enviado, {{refused}} recusados",
+    "source": "71bb178f901ce6b6ccd31ad18fee7974ee1d49587799b784af70187f2f514470"
+  },
+  "usernode.widgetIcons.lastCheck.neverSentRefused_other": {
+    "text": "Última verificação de ícones: nunca: {{count}} enviados, {{refused}} recusados",
+    "source": "71bb178f901ce6b6ccd31ad18fee7974ee1d49587799b784af70187f2f514470"
   }
 }

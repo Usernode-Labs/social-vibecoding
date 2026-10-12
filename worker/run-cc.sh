@@ -440,6 +440,12 @@ if [ "$MODE" = "shots" ]; then
   # otherwise. The bootstrap and the control plane keep the shared port above.
   export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  # The shots bridge's upload_file asks a browser's observer to choose a
+  # sample file (shots-samples.js) over a socket here, with its own token:
+  # the agent's browser_file_upload stays denied below.
+  export SHOTS_BROWSER_CONTROL_DIR="$SHOTS_TMP/ctl"
+  export SHOTS_BROWSER_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  mkdir -m 700 "$SHOTS_BROWSER_CONTROL_DIR" || die "could not create the shots browser control directory"
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
   # The proxy also samples the worker's memory every 5 seconds into the

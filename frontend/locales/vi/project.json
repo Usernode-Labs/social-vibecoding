@@ -3595,6 +3595,246 @@
     "text": "<0>{{count}}</0> đã áp dụng",
     "source": "c53cc96d738905aa7acd2b917ca79ee540a9d5187345f0d4624f746bb8a1775e"
   },
+  "weeks.row.liveAtLeast_other": {
+    "text": "<0>{{count}}+</0> đã chạy",
+    "source": "9f7784e796593274d206c7875001683bddad3442461fb053a35b0461262bb513"
+  },
+  "weekPage.meta.nowLive_other": {
+    "text": "{{start}} → nay · <0>{{count}}</0> đã chạy",
+    "source": "8ab777cbb4bad718d3ad3ea60f8e2183011c18891327e17236abce79eefc678a"
+  },
+  "weekPage.meta.nowLiveAtLeast_other": {
+    "text": "{{start}} → nay · <0>{{count}}+</0> đã chạy",
+    "source": "c8e3b274172a4bdf2ca9b8c2578278e7e46640e649ad9eeb3db546c17b7b1875"
+  },
+  "weekPage.meta.rangeLive_other": {
+    "text": "{{start}} – {{end}} · <0>{{count}}</0> đã chạy",
+    "source": "e98b4d1fd13c06659b549aaaf175ca8358a862be58406b8178fe699875412c9b"
+  },
+  "weekPage.meta.rangeLiveAtLeast_other": {
+    "text": "{{start}} – {{end}} · <0>{{count}}+</0> đã chạy",
+    "source": "208b51363aa1388580d1deaf4d2027a27e423fe9030b1a36a397c3930ca8ab33"
+  },
+  "weekPage.group.showAll_other": {
+    "text": "Xem tất cả {{count}}",
+    "source": "4d9b71269748d690965d9f80af4168c540965ede4f6f6226e2ae8408f551edb9"
+  },
+  "workRow.for_other": {
+    "text": "cho {{requests}}",
+    "source": "c75fa21c260425b4e5a83870fd053a02e88510ddd5638c2b726485f59dab258c"
+  },
+  "workRow.closed_other": {
+    "text": "đã đóng {{requests}}",
+    "source": "2f489f37cdf38738aa222003ce70a9a70cfdd9533470c408372ca1320f948bf4"
+  },
+  "workRow.replies_other": {
+    "text": "{{count}} bình luận",
+    "source": "3313c3ed57add98d84a952640940903b6720d20da0cb0c134cf697c1eba32bf7"
+  },
+  "needsYou.fact.approvals_other": {
+    "text": "{{yes}}/{{count}} lượt chấp thuận",
+    "source": "92c6d9cd8a5b818e8161934e37d557430039e909266ccc49fef93c64a4ef522b"
+  },
+  "needsYou.fact.yes_other": {
+    "text": "{{count}} đồng ý",
+    "source": "007d6ed7346df239517087df6082699bf7117941f982a94cc9d548b143855926"
+  },
+  "needsYou.fact.no_other": {
+    "text": "{{count}} từ chối",
+    "source": "37072901ced8ddd98335f60e27b81ae83a72d84fdd7600b3b67677e226481c02"
+  },
+  "needsYou.voteSub.ofNeeded_other": {
+    "text": "Đến nay {{count}}/{{needed}} người đã đồng ý.",
+    "source": "64e736f70ae3bf8b3ad4bee625c0a0f96dde5a627c78337935ee553b6f1496b6"
+  },
+  "needsYou.voteSub.ofNeededState_other": {
+    "text": "Đến nay {{count}}/{{needed}} người đã đồng ý. {{state}}.",
+    "source": "a3e2adfb9d089b3f85eaafafd8ceded2674dc9392ed4146f270b53f08ad31ee1"
+  },
+  "needsYou.end.reviewedAll_other": {
+    "text": "Bạn đã xem xét tất cả {{count}} thay đổi đang chờ bạn.",
+    "source": "7cc7965e9be9c6b50c73592f3e705571f8b5fa70171e0fb18f21f82a4e1324d6"
+  },
+  "needsYou.end.reviewedSome_other": {
+    "text": "Bạn đã xem xét {{done}}/{{count}} thay đổi đang chờ bạn.",
+    "source": "9b75b1fffae07a364f4b14de7d272971b76101bbe8ea15d980d7404b9c59544e"
+  },
+  "needsYou.end.skipped_other": {
+    "text": "Bạn đã bỏ qua {{count}}. Mục đó vẫn ở phía trên nếu bạn đổi ý.",
+    "source": "9f73c5f1d7745a2b834b5e2a493b15943f3a29fa79a70ea4b1e981962e81be9d"
+  },
+  "needsYou.end.status.waiting_other": {
+    "text": "Chờ thêm {{count}}",
+    "source": "2d1a345d037f21d851a0d870dbd6f94747462c403f3ce5b6835ced013a3d9253"
+  },
+  "needsYou.rail.commentsCount_other": {
+    "text": "{{count}} bình luận",
+    "source": "3313c3ed57add98d84a952640940903b6720d20da0cb0c134cf697c1eba32bf7"
+  },
+  "needsYou.talk.commentsCount_other": {
+    "text": "Bình luận <0>{{count}}</0>",
+    "source": "8d30f2670e0956a2dab560442fc14a48e191c020fb31b3460a8d8702abe879c5"
+  },
+  "hub.channel.unread_other": {
+    "text": "{{shown}} mới",
+    "source": "3ef1cb80f2d3b411e51333ccd55f63f38996d37d67cd894ea1974c39925c3bdb"
+  },
+  "hub.needs.toVote_other": {
+    "text": "{{count}} cần bầu",
+    "source": "0b933014269d26619a17763cea8bdecc4d6553b79199903184ed764c35f1a1eb"
+  },
+  "hub.needs.skipped_other": {
+    "text": "{{count}} phiếu bầu bạn đã bỏ qua vẫn còn mở",
+    "source": "6b90914c51fad7caabf6e5f53410fee1b939c70a983c3a0af53aec61143e504c"
+  },
+  "hub.needs.noneButRequests_other": {
+    "text": "Không còn gì để bầu · <0>{{count}} yêu cầu chưa ai nhận</0>",
+    "source": "df6f979ca3cc2c4cdc877199ca1649143512e07a1abf0bf1ec5ce332a4f3bdf2"
+  },
+  "hub.needs.requestsAlone_other": {
+    "text": "<0>{{count}} yêu cầu chưa ai nhận</0>",
+    "source": "6d08c257a9173dd491d6c9076ebcc9228e239c34c652da3a7823652c5eb3aef5"
+  },
+  "hub.people.active_other": {
+    "text": "{{count}} hoạt động tuần này",
+    "source": "8c14f09c2453bc9678d9834c7f9df953dff57047ecb2f0743a72464126b0becf"
+  },
+  "hub.people.namesAndMore_other": {
+    "text": "{{names}} và {{count}} người khác",
+    "source": "62c152bb12b517f5da08c0a0106f5c6a348fd6c4a47481fde8fed3188c443086"
+  },
+  "hub.people.moreFaces_other": {
+    "text": "+{{count}}",
+    "source": "dcccc8a38439354a5444ec414d6a796680d5b97cce0ef1abf9a642cc1ecdfa59"
+  },
+  "hub.forYou.needs.firstAndMore_other": {
+    "text": "{{title}}, và {{count}} mục khác",
+    "source": "26e7a637ed98107dd924c35247c596d67bab87591928d38931867d7fe0265dae"
+  },
+  "hub.forYou.work.inProgress_other": {
+    "text": "{{count}} đang thực hiện",
+    "source": "e927bf4644731c56fb38c510a706ae357184d964f0d23d12f98f85c5f0554643"
+  },
+  "communityCard.rule.fixed_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi có {{count}} thành viên chấp thuận.",
+    "source": "30df4712aaff8c1b45e6ef9eca4a6affab1d0bc25dc661a5dbd02d1b32a55e00"
+  },
+  "communityCard.rule.approvers.some_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{count}}/{{total}} người phê duyệt đồng ý.",
+    "source": "208e521c25806af85aceccf65785874f42a3bd4b9eb469e6a0735a6c26250341"
+  },
+  "communityCard.rule.approvers.someQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{count}}/{{total}} người phê duyệt đồng ý, hoặc sau một thời gian chờ nếu có một người đồng ý và không ai từ chối.",
+    "source": "97a26dd896525164eb338fb3698184e446d5ebc813e392a0a961f31e4d4b3023"
+  },
+  "communityCard.rule.approvers.short_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{required}} người phê duyệt (hiện có {{count}}) đồng ý.",
+    "source": "06d9c6edd3b91f0f0caf7c090eb56e3edddd6f9b5ed891319c6be2c098178e4a"
+  },
+  "communityCard.rule.approvers.shortQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{required}} người phê duyệt (hiện có {{count}}) đồng ý, hoặc sau một thời gian chờ nếu có một người đồng ý và không ai từ chối.",
+    "source": "c9c591320b6d41b71f2d077db8c40969ee4b098a5c403afed0da8e750dbd3e80"
+  },
+  "communityCard.rule.approvers.all_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi cả {{count}} người phê duyệt đồng ý.",
+    "source": "6fba4442b9450bbad7533b7fba2754af08752bea6dd5a50506daf41eff41e38d"
+  },
+  "communityCard.rule.approvers.allQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi cả {{count}} người phê duyệt đồng ý, hoặc sau một thời gian chờ nếu có một người đồng ý và không ai từ chối.",
+    "source": "6002acf10e8d08bc56c9993582d7a6eb8b6decc30b581c7653240333e4238267"
+  },
+  "communityCard.rule.members.some_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{count}}/{{total}} thành viên tích cực chấp thuận.",
+    "source": "ba30783b103d4d3d6fb4445c03489b4b07b0f9cca8402366d3f85ce9673e8e33"
+  },
+  "communityCard.rule.members.someQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{count}}/{{total}} thành viên tích cực chấp thuận, hoặc sau một thời gian chờ nếu có một người chấp thuận và không ai phản đối.",
+    "source": "c6fd93faac277712a2a3235182d9b5815ebdfa7772b094ad6576f4e34f4c8a12"
+  },
+  "communityCard.rule.members.short_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{required}} thành viên tích cực (hiện có {{count}}) chấp thuận.",
+    "source": "dca81e0381acb0cb5ae3eff335fdec989fceba3f6327f95640b3a3cd8a8e5a1d"
+  },
+  "communityCard.rule.members.shortQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi {{required}} thành viên tích cực (hiện có {{count}}) chấp thuận, hoặc sau một thời gian chờ nếu có một người chấp thuận và không ai phản đối.",
+    "source": "3a30daf1e53394db976bf1ef5ceb05649200f632af6237a28c855e386d53417d"
+  },
+  "communityCard.rule.members.all_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi cả {{count}} thành viên tích cực chấp thuận.",
+    "source": "247da650c4e0db7b815733936f239a40d97baec84d1bad60857abe9175cbaf84"
+  },
+  "communityCard.rule.members.allQuiet_other": {
+    "text": "Thay đổi được đưa vào hoạt động khi cả {{count}} thành viên tích cực chấp thuận, hoặc sau một thời gian chờ nếu có một người chấp thuận và không ai phản đối.",
+    "source": "d44ab4a7e605a65a18eb6580816c2d8fe115e1c5f9cd15617e1dd9aaabb0a0e6"
+  },
+  "communityCard.step.fixed_other": {
+    "text": "{{count}} thành viên chấp thuận",
+    "source": "fae140edc3c33f961f8ff97798112044e02a8e062ff0e13a53e71b14d84e4d3c"
+  },
+  "communityCard.step.approvers.some_other": {
+    "text": "{{count}}/{{total}} người phê duyệt đồng ý",
+    "source": "11dcaeab7f94033c619fad0018d1d6884f5cfcde25e6fcf67bb6409e0fb80db8"
+  },
+  "communityCard.step.approvers.all_other": {
+    "text": "Cả {{count}} người phê duyệt đồng ý",
+    "source": "a6550eac5a2b9d7bc3afd2e6cbcc37b6ece84547286be27347d2cbdb914e7f41"
+  },
+  "communityCard.step.approvers.short_other": {
+    "text": "{{required}} người phê duyệt đồng ý (hiện có {{count}})",
+    "source": "44222eaf4bc1c5038d2a4b4040a235660562af11fa3022923e59ba228990cf3a"
+  },
+  "communityCard.step.members.some_other": {
+    "text": "{{count}}/{{total}} thành viên tích cực đồng ý",
+    "source": "c102d8075ee7fcbbfa8822e6d1efa55b014b1de4257042621b14aa5726637360"
+  },
+  "communityCard.step.members.short_other": {
+    "text": "{{required}} thành viên tích cực đồng ý (hiện có {{count}})",
+    "source": "f1c660bac93c856f6e2ec92ca47f6abe357ea1e8089a036bc9fdd00ebd8f3d4d"
+  },
+  "communityCard.step.members.all_other": {
+    "text": "Cả {{count}} thành viên tích cực đồng ý",
+    "source": "3fb6cd416b40baf5a1a4ff952f11d7df75e85ad20bedc0489b5b17dc58088096"
+  },
+  "communityCard.step.names.more_other": {
+    "text": "{{first}}, {{second}}, {{third}} +{{count}}",
+    "source": "7e7158431bb6fdf248a41a6b23ab48a39f86e132400010d4dd14a78b75b161ad"
+  },
+  "communityCard.audience.withMembers_other": {
+    "text": "{{audience}} · {{count}} thành viên",
+    "source": "ab96727ee5ef2a4ecccc6d5c548ae1a7d1cb3e8ca15d8130df0df464c51a82ff"
+  },
+  "communityCard.week.people_other": {
+    "text": "{{count}} người",
+    "source": "387110bc3f09d337d5e7ecd1895885a978bcca90980fb55463e3950eb4e1affd"
+  },
+  "communityCard.people.members_other": {
+    "text": "{{count}} thành viên",
+    "source": "9f5aa2fb70d1df7c6149ca2f482cafa0d8b944d6c3367a3e1c7bbef6a9d544af"
+  },
+  "communityCard.people.audienceMembers_other": {
+    "text": "<0>{{audience}}</0> · {{count}} thành viên",
+    "source": "b602089121976183bfa4d1e48f59f0886df599db05f63160e67214fe9f38b6fa"
+  },
+  "topic.checks.showPassing_other": {
+    "text": "Hiện {{count}} kiểm tra đã đạt",
+    "source": "fcab68d18e73ba79ebd3ed101e36e7c28f6ff2d23d591decda73cb7228507125"
+  },
+  "topic.ledger.passing_other": {
+    "text": "{{count}} đã đạt",
+    "source": "cac73682a5f05e07d5fe34fa599a4e2a20df3b2a76e9ab14442ec76d16503d01"
+  },
+  "topic.change.stream.replies_other": {
+    "text": "{{count}} phản hồi",
+    "source": "058b2c42c294f95ec02d03d78564dccc682d1cf4b7da8e85a15d409a4eb20502"
+  },
+  "topic.requests.more_other": {
+    "text": "+{{count}} nữa",
+    "source": "48380badf7a45c74d3fac6b89d19d777585cb9052d135d1ec482b932bc99e98a"
+  },
+  "topic.requests.selectedCount_other": {
+    "text": "Đã chọn ({{count}})",
+    "source": "e0416959b1bdd65227f8316665642534d788bc7ddd43950287ce9bf2cab8dcf0"
+  },
   "topic.requests.remaining_other": {
     "text": "Còn {{count}}",
     "source": "5ca269e1d54664842d0f6d68d73d51d3ab0add37a26defc997ef056a7910f395"

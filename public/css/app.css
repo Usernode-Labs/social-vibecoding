@@ -656,6 +656,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-group-tag {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   height: 22px;
   margin-left: 6px;
   padding: 0 8px;

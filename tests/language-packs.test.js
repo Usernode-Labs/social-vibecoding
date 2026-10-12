@@ -81,6 +81,14 @@ test('an authoring mistake in the English source fails the build', (t) => {
   rejects({ extra: { ...says('Save'), source: 'x' } }, /core:extra: unknown field "source"/);
   put('en/core.json', '{ not json');
   assert.throws(() => collectCatalogs(root), /en\/core\.json:/);
+  // A key two merged changes each added (12 Oct 2026: kudos.rankNote).
+  const body = JSON.stringify(ENGLISH, null, 2).slice(1, -1);
+  put('en/core.json', `{"twice": ${JSON.stringify(says('One'))},${body}, "twice": ${JSON.stringify(says('Two'))}}`);
+  assert.throws(() => collectCatalogs(root), /core:twice: defined more than once in en\/core\.json/);
+  assert.throws(() => buildLanguagePacks(root), /core:twice: defined more than once/);
+  // The same name inside an entry, or in another catalog, is not a duplicate.
+  put('en/core.json', JSON.stringify({ ...ENGLISH, nested: { text: 'Save', description: 'text says where' } }));
+  assert.doesNotThrow(() => collectCatalogs(root));
 });
 
 test('a translation never fails the build: what cannot be used falls back to English and is reported', (t) => {

@@ -1224,20 +1224,20 @@ function proposalHandoffRoutes(config) {
         const { freed } = await sessionLifecycle.freeUserSlot({
           pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
         });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, {
+            cap: 'user', path: 'proposal_start', userId: req.user.id, appId: app.id,
+          });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
-      const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (Number(globalCounts[0].cnt) - replacedActiveSlot
-          >= Number(config.maxGlobalSessions || 100)) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-      }
+      // The platform-wide cap, counted as every other start counts it
+      // (session-caps.countGlobalSessions): this path once had its own copy,
+      // which disagreed with the others (12 Oct 2026).
+      const global = await sessionLifecycle.claimGlobalSlot({
+        pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
+      });
+      if (!global.ok) return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
       // #1376: `requestId` is already validated to [a-z0-9-] and the user id

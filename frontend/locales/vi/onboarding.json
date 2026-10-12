@@ -563,6 +563,38 @@
     "text": "Nhập từ kho GitHub",
     "source": "9530f95ad5938ce909eef33ba6de35f921a8ee4cc4e481868df6f26dd26c5c73"
   },
+  "firstSession.make.rule.line": {
+    "text": "Ai có thể thay đổi: <0>{{preset}}</0>",
+    "source": "25a63b36df55706f8a905763ad24532e0d414e3be8cde13f21d17b0870897b2a"
+  },
+  "firstSession.make.rule.intro": {
+    "text": "Chọn cách các thay đổi được đưa vào hoạt động. Bạn có thể đổi sau trong trang dự án.",
+    "source": "666f658ec491ee9b66bed8d59c2fdcebbb04f74a0a49314a11687068335b5d76"
+  },
+  "firstSession.make.rule.change": {
+    "text": "Đổi",
+    "source": "c0bf75bd78bf9572596720d596bd5a20a5b9145cde0fe50dec1e783cb184d69b"
+  },
+  "firstSession.make.rule.title": {
+    "text": "Ai là người đồng ý?",
+    "source": "5f9dc603764ac33040ebc39697fa00df569f9e287a347a8c4a9120496ad50caf"
+  },
+  "firstSession.make.rule.plays": {
+    "text": "Cách vận hành",
+    "source": "e7272904b7ec300a334ae3b3dd1f02c42ecb818ce694cefeb5572f3be5cfa1ba"
+  },
+  "firstSession.make.rule.close": {
+    "text": "Đóng",
+    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
+  },
+  "firstSession.make.rule.done": {
+    "text": "Xong",
+    "source": "11a6767d5674c7e45f7e00dc525762275b3a48491ad6045427d2609cc496c516"
+  },
+  "firstSession.make.rule.use": {
+    "text": "Dùng {{preset}}",
+    "source": "e406009b1ea7bb9e9d742b96ca291dd366ec1c05708d629e42aec15fadd1a5c6"
+  },
   "firstSession.make.lookAround": {
     "text": "Chưa chắc? <0>Xem qua trước</0>",
     "source": "4d761a32d89fa3c346d3e7d7bc25d1aefc8cec3602b4fdd0cc961e9fe2d786b1"
@@ -1186,74 +1218,6 @@
   "tour.step.meetBot.body": {
     "text": "Nhờ bot xây dựng thay đổi, ghi lại ý tưởng hoặc sửa lỗi giúp bạn. Bạn tìm thấy bot trong Tin nhắn.",
     "source": "3b43fbacda5790fb7a7800ab9bf8ad5cfa1592e5bf84eb7daed19932ffe66cd0"
-  },
-  "firstSession.invite.rule.you_or_the_group": {
-    "text": "Người bạn mời có thể gợi ý thay đổi cho {{name}}. Thay đổi có hiệu lực khi bạn đồng ý, hoặc khi đa số nhóm đồng ý.",
-    "source": "a334668444f6a4c3e7822aa8bd8c1da8f50e7591cc2c05d1de06e5e3ff749af0"
-  },
-  "firstSession.invite.rule.two_yeses": {
-    "text": "Người bạn mời có thể gợi ý thay đổi cho {{name}}. Thay đổi có hiệu lực khi hai người đồng ý.",
-    "source": "641db75e85a52bf3b63d99b71a281e0875cda180b9c727667a133b46592237f7"
-  },
-  "firstSession.invite.rule.open_floor": {
-    "text": "Người bạn mời có thể gợi ý thay đổi cho {{name}}. Chỉ cần một thành viên đồng ý là thay đổi có hiệu lực.",
-    "source": "d3e731fa87fe57abe8c4e858a4e89a63950f43c8f457c380701eef37990db308"
-  },
-  "firstSession.invite.rule.group_vote": {
-    "text": "Người bạn mời có thể gợi ý thay đổi cho {{name}}. Thay đổi có hiệu lực khi đa số nhóm đồng ý.",
-    "source": "f9dc8ffe466adc31cf5580eb46374be588311f2a5b38f6000f163aa3285b8a6f"
-  },
-  "firstSession.invite.rule.own": {
-    "text": "Người bạn mời có thể gợi ý thay đổi cho {{name}}. Thay đổi có hiệu lực khi một trong các quy tắc của dự án được đáp ứng.",
-    "source": "7b0894b615d57c3fda5b1a153cb2b8bcc82514414bedab785f2d07dadd2a39a2"
-  },
-  "firstSession.invite.rule.change": {
-    "text": "Đổi",
-    "source": "c0bf75bd78bf9572596720d596bd5a20a5b9145cde0fe50dec1e783cb184d69b"
-  },
-  "firstSession.invite.rule.proposed": {
-    "text": "Thay đổi của bạn sang {{preset}} đang chờ bỏ phiếu. Thay đổi có hiệu lực khi vượt qua kiểm tra.",
-    "source": "6dd58ac6e4d9849631d60dc15fd892cc35ba852af9a38abc61263bbd907d69dd"
-  },
-  "firstSession.invite.rule.title": {
-    "text": "Ai là người đồng ý?",
-    "source": "5f9dc603764ac33040ebc39697fa00df569f9e287a347a8c4a9120496ad50caf"
-  },
-  "firstSession.invite.rule.intro": {
-    "text": "Chọn cách các thay đổi của {{name}} có hiệu lực. Bạn có thể đổi lại sau trong trang của dự án.",
-    "source": "9fdb64eb7e94f98b13778a4a27aec795b1d5a43f57947b096189e614fa80a881"
-  },
-  "firstSession.invite.rule.plays": {
-    "text": "Cách hoạt động",
-    "source": "e7272904b7ec300a334ae3b3dd1f02c42ecb818ce694cefeb5572f3be5cfa1ba"
-  },
-  "firstSession.invite.rule.close": {
-    "text": "Đóng",
-    "source": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed"
-  },
-  "firstSession.invite.rule.done": {
-    "text": "Xong",
-    "source": "11a6767d5674c7e45f7e00dc525762275b3a48491ad6045427d2609cc496c516"
-  },
-  "firstSession.invite.rule.use": {
-    "text": "Dùng {{preset}}",
-    "source": "e406009b1ea7bb9e9d742b96ca291dd366ec1c05708d629e42aec15fadd1a5c6"
-  },
-  "firstSession.invite.rule.useNote": {
-    "text": "Thay đổi sẽ có hiệu lực khi bạn đồng ý và các kiểm tra đạt.",
-    "source": "206d4b2534d8ab789c3192813ab067f67f7b7654549386d0fe0f0f72668395f6"
-  },
-  "firstSession.invite.rule.busy": {
-    "text": "Đang đề xuất…",
-    "source": "adf1e9863b117de1b301cff1c6d1187163f52116a0c0a51856368d8257eb314c"
-  },
-  "firstSession.invite.rule.waiting": {
-    "text": "Một thay đổi về mục này đang chờ bỏ phiếu.",
-    "source": "68690f446e4845a1597def550e17a7cc8dd54bdc78212d846c4b27e8d36e032d"
-  },
-  "firstSession.invite.rule.error": {
-    "text": "Không thể đề xuất thay đổi. Hãy thử lại.",
-    "source": "6b6ba95d59e774ae79b7678164b9c9ae94bde14a9c6b4267523a8938d1e1c13c"
   },
   "communities.memberCount_other": {
     "text": "{{memberCount}} thành viên",
