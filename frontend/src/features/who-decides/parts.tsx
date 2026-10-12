@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import {
-  BallotIcon, BoltIcon, CheckIcon, HandRaisedIcon, SparklesIcon,
+  BallotIcon, BoltIcon, CheckIcon, HandRaisedIcon, SparklesIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 import { IconTile } from '@/components/ui/icon-tile';
 
@@ -100,10 +100,27 @@ export function PresetTiles({ picked, now, viewer, onPick, labelId }: {
   );
 }
 
-/** How a preset plays out, for the person reading and for someone else. */
+/**
+ * How a preset plays out. Two yeses, Open floor and Group vote treat every
+ * change alike, so one row says it for anyone (#4894); You or the group, and
+ * a project's own rules, say it for the person reading and for someone else.
+ */
 export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer: Viewer }) {
   const t = useMessages('dialogs');
   const lines = playsOut(preset, viewer);
+  if ('anyone' in lines) {
+    return (
+      <GroupedList tone="plane" className="mx-0" data-who-plays="">
+        <ListRow
+          leading={<IconTile size="xs"><UserGroupIcon aria-hidden="true" /></IconTile>}
+          title={t('dialogs:whoDecides.plays.anyoneTitle')}
+          subtitle={lines.anyone}
+          chevron={false}
+          subtitleClassName="whitespace-normal"
+        />
+      </GroupedList>
+    );
+  }
   return (
     <GroupedList tone="plane" className="mx-0" data-who-plays="">
       <ListRow

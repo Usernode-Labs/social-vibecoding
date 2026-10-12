@@ -288,7 +288,7 @@ test('a checks fix a restart caught keeps its deadline, and its outcome reaches 
     )).rows[0].id });
   });
 
-  await t.test('the console and the connector show a queued row waiting on its busy session, and until when', async () => {
+  await t.test('the console and the connector show a queued row waiting on its busy session, and until when', async (t) => {
     await pool.query('DELETE FROM homeroom_bot_queue');
     const until = new Date(Date.now() + 40 * 60_000);
     await pool.query(
@@ -296,6 +296,10 @@ test('a checks fix a restart caught keeps its deadline, and its outcome reaches 
        VALUES ($1, 4602, 1, $2, 'session_busy', $3), ($1, 4603, 2, 'new', 'session_busy', NOW() - INTERVAL '1 minute')`,
       [app.id, bot.CHECKS_REASON, until],
     );
+    // On: with the bot off, every waiting row says so (bot_paused).
+    const { rows: [mode] } = await pool.query(`SELECT value FROM platform_settings WHERE key = 'homeroom_bot_mode'`);
+    await pool.query(`UPDATE platform_settings SET value = 'shadow' WHERE key = 'homeroom_bot_mode'`);
+    t.after(() => pool.query('UPDATE platform_settings SET value = $1 WHERE key = \'homeroom_bot_mode\'', [mode.value]));
     const payload = await bot.adminPayload(pool, {});
     const byIssue = Object.fromEntries(payload.queue.items.map((i) => [i.issue_number, i.waiting]));
     assert.deepEqual(byIssue[4602], { reason: 'session_busy', until: until.toISOString() });

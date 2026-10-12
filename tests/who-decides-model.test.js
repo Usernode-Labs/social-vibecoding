@@ -2,9 +2,9 @@
 
 // #4666, WHO SAYS YES, on screen: the presets and rules as the sheet, the
 // Make it step and the Workshop's rule line say them
-// (frontend/src/features/who-decides/model.ts, make-rule.tsx,
-// dev-board/workshop/community-card.tsx presetSentence), held to the server's
-// own table (src/services/governance-rules.js).
+// (frontend/src/features/who-decides/model.ts, make-rule.tsx, parts.tsx
+// PlaysOut, dev-board/workshop/community-card.tsx presetSentence), held to
+// the server's own table (src/services/governance-rules.js).
 //
 // Run with: node --test tests/who-decides-model.test.js
 
@@ -81,8 +81,51 @@ test('a preset is said from the reader’s side', () => {
   assert.equal(model.playsOut('you_or_the_group', creator).you, 'Your yes is enough. Live once its checks pass.');
   assert.equal(model.playsOut('you_or_the_group', creator).other, 'Live when you say yes, or when most of the group does.');
   assert.equal(model.playsOut('you_or_the_group', member).other, 'Live when evan says yes, or when most of the group does.');
-  assert.equal(model.playsOut('two_yeses', creator).other, 'Live once one more person says yes. That can be you.');
   assert.equal(model.playsOut(null, creator).you, 'Live when any one of its rules passes.');
+});
+
+test('#4894: a rule that treats every change alike says how it plays out once, for anyone', () => {
+  const model = loadTsx(MODEL);
+  const creator = { isCreator: true, creator: 'evan', other: 'maya' };
+  const member = { isCreator: false, creator: 'evan', other: 'snait' };
+  const anyone = {
+    two_yeses: 'Live once one more person says yes.',
+    open_floor: 'Their own yes is enough. Live once its checks pass.',
+    group_vote: 'Live when most active members say yes, or after a wait if nobody objects.',
+  };
+  for (const [key, line] of Object.entries(anyone)) {
+    assert.deepEqual({ ...model.playsOut(key, creator) }, { anyone: line }, key);
+    assert.deepEqual({ ...model.playsOut(key, member) }, { anyone: line }, `${key}, read by someone who did not make the project`);
+  }
+  // You or the group keeps both: the creator's own change and someone
+  // else's really do differ. So do a project's own rules.
+  assert.deepEqual(Object.keys(model.playsOut('you_or_the_group', creator)), ['you', 'other']);
+  assert.deepEqual(Object.keys(model.playsOut('you_or_the_group', member)), ['you', 'other']);
+  assert.deepEqual(Object.keys(model.playsOut(null, creator)), ['you', 'other']);
+
+  // On screen: one row titled "Anyone makes a change", or the two rows.
+  const { PlaysOut } = loadTsx('frontend/src/features/who-decides/parts.tsx');
+  const draw = (preset, viewer = creator) => renderToHtml(createElement(PlaysOut, { preset, viewer }));
+  for (const [key, line] of Object.entries(anyone)) {
+    const html = draw(key);
+    assert.equal(html.match(/>Anyone makes a change</g)?.length, 1, key);
+    assert.ok(html.includes(`>${line}<`), key);
+    assert.doesNotMatch(html, /You make a change|maya makes a change/, key);
+  }
+  const two = draw('you_or_the_group');
+  assert.match(two, />You make a change<[\s\S]*>Your yes is enough\. Live once its checks pass\.</);
+  assert.match(two, />maya makes a change<[\s\S]*>Live when you say yes, or when most of the group does\.</);
+  assert.doesNotMatch(two, /Anyone makes a change/);
+  assert.match(draw(null), />You make a change<[\s\S]*>maya makes a change</);
+
+  // The six retired lines are gone from the English catalog.
+  const dialogs = JSON.parse(read('frontend/locales/en/dialogs.json'));
+  for (const key of ['two_yeses', 'open_floor', 'group_vote']) {
+    assert.equal(dialogs[`whoDecides.plays.${key}.anyone`].text, anyone[key]);
+    assert.equal(dialogs[`whoDecides.plays.${key}.you`], undefined, `${key}.you retired`);
+    assert.equal(dialogs[`whoDecides.plays.${key}.other`], undefined, `${key}.other retired`);
+  }
+  assert.equal(dialogs['whoDecides.plays.anyoneTitle'].text, 'Anyone makes a change');
 });
 
 test('each rule in words, and what it asks for today', () => {

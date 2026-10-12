@@ -549,8 +549,9 @@ test('queueWait: its own refusal, then its payer\'s week, then the bot\'s fault 
   assert.deepEqual(bot.queueWait({}, { now, fault: { until: Date.parse(later) } }), { reason: 'platform_fault', until: later });
   assert.equal(bot.queueWait({}, { now }), null);
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until,\n\s+a\.slug AS app_slug/);
-  assert.match(src, /const queueRows = queued\.map\(\(q\) => \(\{ \.\.\.q, waiting: queueWait\(q, \{ fault \}\) \}\)\);/);
+  assert.match(src, /q\.held_until, q\.wait_reason, q\.wait_until, q\.waiting_total, q\.running_total,\n\s+a\.slug AS app_slug/);
+  assert.match(src, /const items = rows\.map\(\(\{ waiting_total: _w, running_total: _r, \.\.\.q \}\) => \(\{ \.\.\.q, waiting: queueWait\(q, ctx\) \}\)\);/);
+  assert.match(src, /fault: faultBackoff\(now\), now, off: settings\.mode === 'off'/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_reason TEXT;\nALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS wait_until TIMESTAMPTZ;/);
 });
 

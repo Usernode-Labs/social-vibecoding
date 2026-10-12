@@ -71,6 +71,9 @@ export interface BotConfigVersion {
     builds: number;
     built: number;
     buildRate?: number | null;
+    // Builds the platform failed (a side build's infra failure, a live one a
+    // restart failed): left out of builds and the build rate on both sides.
+    platformFailures?: number;
     // A later change's current version: what became of its live builds' proposals.
     proposals?: { merged: number; closed: number; open: number; none: number };
     avgCostUsd: number | null;
@@ -181,6 +184,11 @@ function Row({ v, canWrite, busy, onRole }: {
       <td className={`${AdminUI.td} whitespace-nowrap`}>
         <div>{s.builds}</div>
         {s.builds > 0 && s.buildRate != null ? <div className={`${AdminUI.muted} text-xs`}>{pct(s.buildRate)} built</div> : null}
+        {s.platformFailures ? (
+          <div className={`${AdminUI.muted} text-xs`} data-platform-failures={s.platformFailures}>
+            {`${s.platformFailures} platform failure${s.platformFailures === 1 ? '' : 's'}, left out`}
+          </div>
+        ) : null}
         {proposals ? <div className={`${AdminUI.muted} text-xs`}>{proposals}</div> : null}
       </td>
       <td className={`${AdminUI.td} whitespace-nowrap`}>{usd(s.avgCostUsd) || 'None yet'}</td>

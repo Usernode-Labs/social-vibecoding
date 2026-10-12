@@ -3655,7 +3655,13 @@
       };
       // #4595: an account with no password (it signs in with an email code)
       // has no current password to give, and sets its first one without.
-      show('cp-current-row', !wallet && !this._noPasswordYet());
+      // #4891: and it is offered "Add a password", not "Change password".
+      const first = this._noPasswordYet();
+      show('cp-current-row', !wallet && !first);
+      show('cp-title-change', !first);
+      show('cp-title-add', first);
+      show('cp-save-change', !first);
+      show('cp-save-add', first);
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
       // Offer the password-creation link only in password mode and only when

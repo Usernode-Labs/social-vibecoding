@@ -1090,6 +1090,51 @@ test('the native-only password creation link has a read-only browser review stat
     'a browser using the review state cannot reach the wallet request path');
 });
 
+test('Settings → Account offers "Add a password" to an account that has none (#4891)', () => {
+  // The email sign-up asks for no password and says "You can add a password
+  // later in Settings." This is where: the Password part, titled and
+  // buttoned for the account it is showing to.
+  assert.equal(message('settings:password.titleAdd'), 'Add a password');
+  assert.equal(message('settings:password.submitAdd'), 'Add password');
+  assert.equal(message('settings:password.title'), 'Change password');
+  // Both wordings ship, the "add" one hidden, so the section stays a static
+  // render that settings.js toggles (no React state over its nodes).
+  assert.match(html, /<span id="cp-title-change">Change password<\/span><span id="cp-title-add" class="hidden">Add a password<\/span>/);
+  assert.match(html, /<span id="cp-save-change">Change password<\/span><span id="cp-save-add" class="hidden">Add password<\/span>/);
+
+  // settings.js picks the wording from /api/auth/me's hasPassword, with the
+  // current-password row (#4595), each time the section is shown.
+  const shown = (hasPassword) => {
+    const els = new Map();
+    const document = {
+      getElementById(id) {
+        if (!els.has(id)) {
+          const el = { hidden: false };
+          el.classList = { toggle(name, on) { if (name === 'hidden') el.hidden = on; } };
+          els.set(id, el);
+        }
+        return els.get(id);
+      },
+    };
+    const App = { user: { hasPassword } };
+    const S = new Function('document', 'window', 'App',
+      `return ({${sliceMethod(settingsJs, '_noPasswordYet')},${sliceMethod(settingsJs, '_setChangePasswordMode')}});`,
+    )(document, { App }, App);
+    S._walletChangeAvailable = false;
+    S._setChangePasswordMode('password');
+    return (id) => !els.get(id).hidden;
+  };
+  const none = shown(false);
+  for (const id of ['cp-title-add', 'cp-save-add', 'cp-save']) assert.equal(none(id), true, `${id} shows with no password`);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row']) assert.equal(none(id), false, `${id} hides with no password`);
+  const has = shown(true);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row', 'cp-save']) assert.equal(has(id), true, `${id} shows with a password`);
+  for (const id of ['cp-title-add', 'cp-save-add']) assert.equal(has(id), false, `${id} hides with a password`);
+  // Once the first one is set, the section reads "Change password" again.
+  assert.match(sliceMethod(settingsJs, 'changePassword'),
+    /if \(j\.first && window\.App && App\.user\) \{\s*App\.user\.hasPassword = true;\s*this\._setChangePasswordMode\('password'\);/);
+});
+
 // ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
 // inside the first dispatch's uncaptured snapshot window ─────────────────
 //

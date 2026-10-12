@@ -1103,6 +1103,76 @@ function parseVerdict(text) {
   return plainVerdict(readVerdict(text));
 }
 
+// How much of a reply whose verdict could not be read is kept on its run:
+// its start (what it set out to do) and its end (where a verdict block
+// would be). The run's error line keeps only a short tail.
+const KEPT_REPLY_HEAD_CHARS = 4 * 1024;
+const KEPT_REPLY_TAIL_CHARS = 12 * 1024;
+
+/**
+ * A reply kept for an admin to read: { text, chars }, the text whole when it
+ * fits, else its first and last characters around a line saying how many
+ * were left out; `chars` is the whole reply's length. Null for no reply.
+ * Pure.
+ */
+function keptReply(value) {
+  const text = String(value == null ? '' : value);
+  if (!text.trim()) return null;
+  const chars = text.length;
+  if (chars <= KEPT_REPLY_HEAD_CHARS + KEPT_REPLY_TAIL_CHARS) return { text, chars };
+  const left = chars - KEPT_REPLY_HEAD_CHARS - KEPT_REPLY_TAIL_CHARS;
+  return {
+    text: `${text.slice(0, KEPT_REPLY_HEAD_CHARS)}\n\n[… ${left} characters left out …]\n\n${text.slice(-KEPT_REPLY_TAIL_CHARS)}`,
+    chars,
+  };
+}
+
+/** A run's unreadable_reply: the reply, and the repair turn's reply if one was asked for. Null when neither has text. */
+function unreadableReplyOf(reply, repair = null) {
+  const kept = { reply: keptReply(reply), repair: keptReply(repair) };
+  return kept.reply || kept.repair ? kept : null;
+}
+
+// The fixed issue number that marks the staging run below.
+const STAGING_UNREADABLE_ISSUE = 936711;
+
+/**
+ * Staging only (USERNODE_ENV), idempotent, and never throws: one obviously
+ * fake failed triage whose reply had no verdict block, with the reply and the
+ * repair turn's reply kept as keptReply keeps them, so a preview of the
+ * console's run row has an unreadable reply to show. Run on a running app,
+ * under an issue number no request has.
+ */
+async function seedStagingUnreadableReply(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return false;
+  try {
+    const { rows: [have] } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_runs WHERE issue_number = $1 LIMIT 1', [STAGING_UNREADABLE_ISSUE],
+    );
+    if (have) return false;
+    const { rows: [app] } = await pool.query("SELECT id FROM apps WHERE status = 'running' ORDER BY id LIMIT 1");
+    if (!app) return false;
+    const reply = [
+      'Staging demo: I read the request and the files it names.',
+      'The change is small and bounded: one button, no schema, nothing anyone else is working on.',
+      'So it can be built now. Verdict below.',
+    ].join('\n\n');
+    const repair = 'Staging demo: it is ready to build, as I said.';
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, model, cost_usd, duration_ms, error, created_at)
+       VALUES ($1, $2, 'shadow', 'failed', 'staging/demo', 0.02, 95000, $3, NOW() - INTERVAL '1 hour')
+       RETURNING id`,
+      [app.id, STAGING_UNREADABLE_ISSUE, `unparseable: ${clip(reply.slice(-300), 300)}`],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [run.id, JSON.stringify(unreadableReplyOf(reply, repair))]);
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not seed the staging unreadable reply', { err: err.message });
+    return false;
+  }
+}
+
 /**
  * Every JSON object a reply holds, as text, the one that ends last first
  * (and, of two that end together, the outer one). Each `{` is matched to its
@@ -2237,6 +2307,13 @@ async function insertRun(pool, run) {
       'UPDATE homeroom_bot_runs SET plan = $2 WHERE id = $1',
       [id, JSON.stringify(run.plan)],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record a plan', { runId: id, err: err.message }));
+  }
+  // A reply whose verdict could not be read (keptReply), the same way.
+  if (id && run.unreadableReply && typeof run.unreadableReply === 'object') {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [id, JSON.stringify(run.unreadableReply)],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record an unreadable reply', { runId: id, err: err.message }));
   }
   // #4488: a ready verdict labelled complicated, the same way.
   if (id && run.complicated) {
@@ -3755,6 +3832,7 @@ async function runTriage(pool, config, {
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
     // … so it can", "Verdict below."). The reading is done; one short turn
     // on the same thread asks for the block alone before the run fails.
+    let repairText = null;
     const repair = await askForVerdictBlock(pool, config, {
       bot, session, model, containerName, harness: triageHarness,
       threadId: result.agentThreadId || null,
@@ -3767,7 +3845,8 @@ async function runTriage(pool, config, {
       costUsd = addKnown(costUsd, spent.costUsd);
       usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
       usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
-      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repair.routed?.result?.lastResultText);
+      repairText = repair.routed?.result?.lastResultText || null;
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText);
       log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
         app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
         stopped: repair.stopped || null, error: repair.routed?.error || null,
@@ -3775,7 +3854,7 @@ async function runTriage(pool, config, {
     }
     if (!parsed) {
       return recordFailure(`unparseable: ${body}`, {
-        sessionId: session.id, costUsd, ...usage,
+        sessionId: session.id, costUsd, ...usage, unreadableReply: unreadableReplyOf(text, repairText),
       });
     }
   }
@@ -5609,9 +5688,9 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
       const what = plan.lost ? (plan.why || 'the turn was lost') : 'the spec turn was cut short';
       // #4210: every interruption is kept where admins see it, whatever
       // became of the build: it is an error that should not happen.
-      const noteIncident = (outcome) => incidents().record(pool, {
+      const noteIncident = (outcome, why = what) => incidents().record(pool, {
         kind: incidents().KINDS.BUILD_INTERRUPTED, appId: app.id, sessionId: Number(sessionId),
-        detail: { runId: Number(plan.runId), issueNumber: Number(plan.issueNumber), mode: plan.mode || null, why: what, outcome },
+        detail: { runId: Number(plan.runId), issueNumber: Number(plan.issueNumber), mode: plan.mode || null, why, outcome },
       });
       // The person it is for hears it only when it has to start over from
       // the request (WP1, #9): a build that carries on from its plan is
@@ -5644,7 +5723,9 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
           log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
             app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
           });
-          await noteIncident('resumed');
+          // A spec turn that was not lost ended with its plan kept: nothing
+          // was cut short, the build carries on from what it saved.
+          await noteIncident('resumed', plan.lost ? what : 'resumed from its saved plan');
           return 'resumed';
         }
         // Caught before its spec turn started (its checkpoint): nothing was
@@ -6674,7 +6755,9 @@ async function runFollowUp(pool, config, {
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
     if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
-    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
+    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
+      ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
+    });
   }
 
   let runId = null;
@@ -7746,6 +7829,10 @@ async function actOnVerdict({
       app: app.slug, issueNumber, verdict: parsed.verdict,
     });
     acted = 'unaddressed';
+    // A note about Homeroom itself held so offers no move: the run says why.
+    if (parsed.verdict === 'person' && parsed.platform) {
+      await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
+    }
   } else if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
@@ -10294,7 +10381,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.budget_stop,
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
-            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.unreadable_reply, r.created_at,
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
@@ -10428,14 +10515,34 @@ async function* iterateRunsForExport(pool, {
 
 /**
  * #4533: why a queue row that is not running waits, and until when, or null
- * when it is simply next in line: { reason, until }. Its own refusal first
- * (`session_busy`: a turn is running on its session, recorded by runTriage's
- * recordRefusal with its backoff), then its payer's week (`allowance`,
- * held_until), then the whole bot's pause on a platform fault
- * (`platform_fault`, faultBackoff, known on the Pod running the loop). A
- * wait whose time has passed is no wait. Pure.
+ * when it is simply next in line: { reason, until } (`until` null when the
+ * wait has no clock), and the first version's request number for
+ * `first_version_pending`. In the order the loop meets them:
+ *   - its own refusal (`wait_reason`, recorded by runTriage's recordRefusal
+ *     with its backoff), then its payer's week (`allowance`, held_until),
+ *     then the whole bot's pause on a platform fault (`platform_fault`,
+ *     faultBackoff, known on the Pod running the loop);
+ *   - `bot_paused`: the bot is off (`off`), or its weekly budget is spent
+ *     (`budgetUntil`; dispatch starts nothing until then);
+ *   - `app_paused`: its app is on the paused list (`row.app_paused`);
+ *   - `first_version_pending`: its project's first version is not live yet
+ *     (FIRST_VERSION_PENDING_SQL; never the first version's own request, a
+ *     follow-up or an admin's Run now, as liveCandidates reads it);
+ *   - `build_pending`: a live build of the same request waits or runs
+ *     (liveCandidates' NOT EXISTS), read once it ends;
+ *   - `session_busy`: something else runs on its app's one session, or the
+ *     app is backed off (`busyApps`: Map(app id → until ms or null)); never
+ *     a follow-up, which runs on its proposal's session;
+ *   - `per_person`: the person it is for already has `perPerson` pieces of
+ *     live work running (`personCounts`: Map(person key → count));
+ *   - `settling`: a person wrote on it under SETTLE_MS ago (`settle_from`),
+ *     so it is read once they pause.
+ * A wait whose time has passed is no wait. Pure.
  */
-function queueWait(row, { fault = null, now = Date.now() } = {}) {
+function queueWait(row, {
+  fault = null, now = Date.now(), off = false, budgetUntil = 0,
+  busyApps = new Map(), personCounts = new Map(), perPerson = DEFAULTS.perPerson,
+} = {}) {
   if (!row || row.started_at) return null;
   const at = (ms) => new Date(ms).toISOString();
   const own = toMs(row.wait_until);
@@ -10443,7 +10550,133 @@ function queueWait(row, { fault = null, now = Date.now() } = {}) {
   const held = toMs(row.held_until);
   if (held > now) return { reason: 'allowance', until: at(held) };
   if (fault && Number(fault.until) > now) return { reason: 'platform_fault', until: at(Number(fault.until)) };
+  if (off) return { reason: 'bot_paused', until: null };
+  if (Number(budgetUntil) > now) return { reason: 'bot_paused', until: at(Number(budgetUntil)) };
+  if (row.app_paused) return { reason: 'app_paused', until: null };
+  const followUp = row.follow_up_session_id != null;
+  if (row.first_version_pending && !followUp && row.reason !== 'admin') {
+    const n = Number(row.first_version_issue);
+    return { reason: FIRST_VERSION_HOLD, until: null, firstVersionIssue: Number.isInteger(n) && n > 0 ? n : null };
+  }
+  if (row.build_pending) return { reason: 'build_pending', until: null };
+  if (!followUp && busyApps instanceof Map && busyApps.has(Number(row.app_id))) {
+    const until = Number(busyApps.get(Number(row.app_id)));
+    return { reason: 'session_busy', until: until > now ? at(until) : null };
+  }
+  if (personCounts instanceof Map && (personCounts.get(personKeyOf(row)) || 0) >= Math.max(1, Number(perPerson) || 1)) {
+    return { reason: 'per_person', until: null };
+  }
+  const settle = toMs(row.settle_from) + SETTLE_MS;
+  if (row.settle_from && settle > now) return { reason: 'settling', until: at(settle) };
   return null;
+}
+
+// How many queued rows the console and get_homeroom_bot list: the first
+// QUEUE_LISTED waiting, in the order they are read, and every running one
+// (at most 24 run at once, liveAtOnce's ceiling, with room for the
+// background lane).
+const QUEUE_LISTED = 12;
+const QUEUE_RUNNING_LISTED = 40;
+
+// One statement, so one snapshot: the counts (window functions, taken before
+// the list is cut) and the rows listed always describe the same queue. Each
+// listed row carries what queueWait needs from the database, read with the
+// rules liveCandidates applies.
+const QUEUE_SNAPSHOT_SQL = `
+  WITH snap AS (
+    SELECT q.*,
+           COUNT(*) FILTER (WHERE q.started_at IS NULL) OVER ()::int AS waiting_total,
+           COUNT(*) FILTER (WHERE q.started_at IS NOT NULL) OVER ()::int AS running_total,
+           ROW_NUMBER() OVER (PARTITION BY (q.started_at IS NULL)
+                              ORDER BY q.started_at DESC, (q.priority = 0) DESC, q.priority, q.enqueued_at, q.id) AS rn
+      FROM homeroom_bot_queue q
+  )
+  SELECT q.id, q.app_id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
+         q.held_until, q.wait_reason, q.wait_until, q.waiting_total, q.running_total,
+         a.slug AS app_slug, a.name AS app_name,
+         (a.slug = ANY($1::text[])) AS app_paused,
+         COALESCE(r.user_id, i.created_by) AS person_id,
+         fu.id AS follow_up_session_id,
+         fvh.issue_number AS first_version_issue,
+         (fvh.app_id IS NOT NULL) AS first_version_pending,
+         EXISTS (
+           SELECT 1 FROM homeroom_bot_runs b
+            WHERE b.app_id = q.app_id AND b.issue_number = q.issue_number
+              AND b.mode = 'live' AND b.verdict = 'ready' AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
+              AND (b.live_build_waiting_at IS NOT NULL OR b.build_session_id IS NOT NULL)
+              AND b.created_at > NOW() - make_interval(days => $2)
+         ) AS build_pending,
+         (SELECT MAX(m.created_at) FROM chat_messages m
+            LEFT JOIN users mu ON mu.id = m.user_id
+           WHERE m.app_id = q.app_id AND m.msg_type = 'message' AND m.deleted_at IS NULL
+             AND mu.is_synthetic IS NOT TRUE
+             AND ((m.thread_type = 'issue' AND m.thread_ref = q.issue_number)
+               OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
+             AND m.created_at > NOW() - make_interval(secs => $3)) AS settle_from
+    FROM snap q
+    JOIN apps a ON a.id = q.app_id
+    LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
+    LEFT JOIN LATERAL (
+      SELECT created_by FROM issues
+       WHERE app_id = q.app_id AND github_issue_number = q.issue_number
+       ORDER BY id LIMIT 1
+    ) i ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT cs.id FROM chat_sessions cs
+       WHERE cs.app_id = q.app_id AND cs.user_id = $4
+         AND q.issue_number = ANY(cs.linked_issues)
+         AND cs.status = 'promoted' AND cs.is_headless = FALSE
+       ORDER BY cs.id DESC LIMIT 1
+    ) fu ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT fv.app_id, fv.issue_number FROM homeroom_bot_first_versions fv
+       WHERE fv.app_id = q.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM q.issue_number
+         AND ${FIRST_VERSION_PENDING_SQL}
+       LIMIT 1
+    ) fvh ON TRUE
+   WHERE (q.started_at IS NULL AND q.rn <= $5) OR (q.started_at IS NOT NULL AND q.rn <= $6)
+   ORDER BY q.started_at DESC NULLS LAST, q.rn`;
+
+/**
+ * The queue as the console and get_homeroom_bot show it, from one snapshot:
+ * { depth (waiting), running, items, listedWaiting, listedRunning }, the
+ * running rows first, each waiting row with why it waits (queueWait).
+ * `depth` keeps its name: it has always been the rows not running.
+ */
+async function queueSnapshot(pool, settings = {}, { botId = null, now = Date.now() } = {}) {
+  const { rows } = await pool.query(QUEUE_SNAPSHOT_SQL, [
+    settings.pausedApps || [], ABANDONED_LIVE_WINDOW_DAYS, SETTLE_MS / 1000,
+    botId, QUEUE_LISTED, QUEUE_RUNNING_LISTED,
+  ]);
+  const running = rows.filter((q) => q.started_at);
+  // The apps whose one session is taken: a read running there (not a
+  // follow-up, which runs on its proposal's), from the snapshot and from
+  // this Pod's own record, and the apps backed off after a refusal.
+  const busyApps = new Map();
+  for (const q of running) if (q.follow_up_session_id == null) busyApps.set(Number(q.app_id), null);
+  for (const e of inFlight.values()) if (!e.followUp && !e.build) busyApps.set(Number(e.appId), null);
+  for (const [appId] of appBackoff) {
+    const b = backoffFor(appId, now);
+    if (b) busyApps.set(Number(appId), b.until);
+  }
+  // Live work running per person: the reads running, and the builds this
+  // Pod runs (they run from their runs, not the queue).
+  const personCounts = new Map();
+  const bump = (key) => personCounts.set(key, (personCounts.get(key) || 0) + 1);
+  for (const q of running) bump(personKeyOf(q));
+  for (const e of inFlight.values()) if (e.build && e.lane === 'live' && e.person) bump(e.person);
+  const ctx = {
+    fault: faultBackoff(now), now, off: settings.mode === 'off', budgetUntil: budgetPausedUntil,
+    busyApps, personCounts, perPerson: settings.perPerson || DEFAULTS.perPerson,
+  };
+  const items = rows.map(({ waiting_total: _w, running_total: _r, ...q }) => ({ ...q, waiting: queueWait(q, ctx) }));
+  return {
+    depth: Number(rows[0]?.waiting_total) || 0,
+    running: Number(rows[0]?.running_total) || 0,
+    items,
+    listedWaiting: items.length - running.length,
+    listedRunning: running.length,
+  };
 }
 
 async function adminPayload(pool, config, {
@@ -10521,20 +10754,11 @@ async function adminPayload(pool, config, {
     costUsd: Number(t.cost_usd) || 0,
   };
 
-  const { rows: queued } = await pool.query(
-    `SELECT q.id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
-            q.held_until, q.wait_reason, q.wait_until,
-            a.slug AS app_slug, a.name AS app_name
-       FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-      ORDER BY q.started_at DESC NULLS LAST, q.priority, q.enqueued_at
-      LIMIT 12`,
-  );
-  // #4533: and why each one that is not running waits, and until when.
-  const fault = faultBackoff();
-  const queueRows = queued.map((q) => ({ ...q, waiting: queueWait(q, { fault }) }));
-  const { rows: depthRows } = await pool.query(
-    'SELECT COUNT(*)::int AS depth FROM homeroom_bot_queue WHERE started_at IS NULL',
-  );
+  // The queue from one snapshot (queueSnapshot): how many wait and how many
+  // run, and the rows listed, read by one statement so the counts and the
+  // lists describe the same set. #4533 and after: why each one that is not
+  // running waits, and until when.
+  const queue = await queueSnapshot(pool, settings, { botId: botRow?.id ?? null });
   // Running now and Waiting count builds too: they run from their runs, not
   // from the queue, and were left out of both while the bot was busy.
   const builds = await buildsNow(pool);
@@ -10571,7 +10795,7 @@ async function adminPayload(pool, config, {
         .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
     } : lastPass,
     totals,
-    queue: { depth: depthRows[0]?.depth || 0, items: queueRows, buildsWaiting: builds.waiting },
+    queue: { ...queue, buildsWaiting: builds.waiting },
     runs: runRows.map((r) => ({
       ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r), replayStages: replayable[r.id] || [],
     })),
@@ -10596,6 +10820,12 @@ async function adminPayload(pool, config, {
     // The configurations' pairs waiting for a pick, per scope: picked only
     // through the connector, so the Overview says they wait.
     pairsWaiting: await botConfigs().pairsWaitingByScope(pool),
+    // Requests about Homeroom itself: the move offers of the last week, how
+    // they were decided, and the verdicts that sent none, with why.
+    moveOffers: await require('./homeroom-bot-move').moveOfferSummary(pool).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read the move offers', { err: err.message });
+      return null;
+    }),
   };
 }
 
@@ -11035,6 +11265,7 @@ module.exports = {
   finishRecoveredFollowUp,
   RECOVERED_FOLLOWUP_EFFECT,
   queueWait,
+  queueSnapshot,
   settleAbandonedLiveBuilds,
   resumeStalledLiveBuilds,
   finishInterruptedReviews,
@@ -11072,6 +11303,9 @@ module.exports = {
   simulateCaps,
   planTripwire,
   parseVerdict,
+  keptReply,
+  unreadableReplyOf,
+  seedStagingUnreadableReply,
   parseRepo,
   BOT_USERNAME,
   MODES,
