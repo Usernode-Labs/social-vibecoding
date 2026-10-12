@@ -29,6 +29,20 @@
  * page as it was, and is ready by the time the words are. In comment mode
  * every pin is drawn on its own, and the mode's layer never is. The layout
  * helpers are pure and exported for tests.
+ *
+ * A picture can also come out with part of the page missing: the sticky and
+ * fixed parts (the header, the rail, the section column, the place bar)
+ * survive, and the in-flow content under them does not (#4773). SnapDOM
+ * lifts the sticky parts out of the page on their own path; against the
+ * built shell the loss did not reproduce, scrolled or not, so the cause is
+ * read as timing, a reused capture cache or a draw taken while an island was
+ * re-rendering. `takeBase` therefore reads the element under the pin before
+ * it draws, and when that element's rectangle in the picture is one flat
+ * colour while the live element has words, it takes one more picture two
+ * animation frames later with the cache off, and uses that whatever it
+ * shows. One retake, and only for a pin on something with words: a page
+ * that really draws flat never loops, and a pin on the running app's frame
+ * or on empty background never asks for one.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -274,6 +288,49 @@ export function describeElement(el: Element | null): ElementInfo | null {
   return { tag: el.tagName.toLowerCase(), id: el.id || '', text };
 }
 
+/** True when every pixel is within `tolerance` a channel of the first one. */
+export function flatRegion(data: Uint8ClampedArray, tolerance = 8): boolean {
+  if (data.length < 4) return true;
+  const r0 = data[0];
+  const g0 = data[1];
+  const b0 = data[2];
+  const a0 = data[3];
+  for (let i = 4; i < data.length; i += 4) {
+    if (Math.abs(data[i] - r0) > tolerance
+      || Math.abs(data[i + 1] - g0) > tolerance
+      || Math.abs(data[i + 2] - b0) > tolerance
+      || Math.abs(data[i + 3] - a0) > tolerance) return false;
+  }
+  return true;
+}
+
+/**
+ * The page's own element under a pin, the one the picture has to show: the
+ * first thing at the point that is not the comment's layer (`host`), not
+ * inside one of the flow's own overlays (they are hidden out of the
+ * picture, so the element under one is what the picture shows), with words
+ * on it and big enough to read a region of the picture against. A frame is
+ * another document: the pin is on the running app there, whose own picture
+ * is laid in, so there is nothing to check. Null whenever there is nothing
+ * to check, and no retake is asked for.
+ */
+export function pinTarget(pin: Point, host: Element): Rect | null {
+  if (typeof document.elementsFromPoint !== 'function') return null;
+  for (const el of document.elementsFromPoint(pin.x, pin.y)) {
+    if (host.contains(el)) continue;
+    if (el.tagName === 'IFRAME') return null;
+    if (PAGE_EXCLUDES.some((sel) => el.closest(sel))) continue;
+    if (el === document.documentElement || el === document.body) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    const text = `${el.getAttribute('aria-label') || ''}${el.getAttribute('title') || ''}`
+      + ((el as HTMLElement).innerText || el.textContent || '');
+    if (!text.trim()) continue;
+    return { x: r.left, y: r.top, width: r.width, height: r.height };
+  }
+  return null;
+}
+
 /**
  * The overlays the suggest flow itself had on screen a moment before, which
  * a picture of the page leaves out: the form still sliding away when the
@@ -302,15 +359,18 @@ export const PAGE_EXCLUDES = [
 /**
  * The shell's own page as it is on screen, without the comment's own layer,
  * without frames, which are other documents (the app's is laid in from its
- * own picture), and without the flow's own overlays (PAGE_EXCLUDES).
+ * own picture), and without the flow's own overlays (PAGE_EXCLUDES). With
+ * `fresh` the capture's cache is off: a first picture that lost the content
+ * under a pin is retaken on a clean read of the page (the header comment).
  */
-async function drawShell(scale: number, host: Element): Promise<HTMLCanvasElement> {
+async function drawShell(scale: number, host: Element, fresh = false): Promise<HTMLCanvasElement> {
   const snapdom = await loadLibrary();
   // `dpr: 1`: SnapDOM multiplies `scale` by the screen's pixel ratio
   // unless told otherwise, and `scale` here already is that ratio.
   const capture = await snapdom(document.body, {
     scale,
     dpr: 1,
+    cache: fresh ? 'disabled' : 'soft',
     clip: { x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight },
     backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
     exclude: [(el: Element) => el === host, 'iframe', ...PAGE_EXCLUDES],
@@ -339,6 +399,7 @@ export function takeBase(opts: {
   pin: Point;
 }): Promise<Base | null> {
   const { host, scale, frame, frameRect, pin } = opts;
+  const target = pinTarget(pin, host);
   const app = frame && frameRect
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
@@ -349,8 +410,44 @@ export function takeBase(opts: {
     // (the app, the pin, the words) is placed in CSS pixels times this.
     const actual = canvas.width / Math.max(1, window.innerWidth);
     if (frameRect) await layInApp(canvas, actual, frameRect, picture);
+    const checked = await missingUnderPin(canvas, actual, target);
+    if (checked) {
+      // Two frames, so an island caught mid-render has settled, then one
+      // clean read of the page. Whatever it shows is used: the comment's pin
+      // data still names the element, so a second miss does not loop.
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const again = await drawShell(scale, host, true).catch(() => null);
+      if (again) {
+        const retaken = again.width / Math.max(1, window.innerWidth);
+        if (frameRect) await layInApp(again, retaken, frameRect, picture);
+        return { canvas: again, scale: retaken, app: picture };
+      }
+    }
     return { canvas, scale: actual, app: picture };
   });
+}
+
+/**
+ * Whether the region the pin's element covers in the picture is one flat
+ * colour while the live element has words on it (#4773): the capture kept
+ * the sticky chrome and lost the content. A region that cannot be read
+ * (a tainted canvas, a coordinate off the picture) counts as seen.
+ */
+async function missingUnderPin(canvas: HTMLCanvasElement, scale: number, target: Rect | null): Promise<boolean> {
+  if (!target) return false;
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+    const sx = Math.max(0, Math.floor(target.x * scale));
+    const sy = Math.max(0, Math.floor(target.y * scale));
+    const sw = Math.min(canvas.width - sx, Math.max(1, Math.ceil(target.width * scale)));
+    const sh = Math.min(canvas.height - sy, Math.max(1, Math.ceil(target.height * scale)));
+    if (sw < 1 || sh < 1) return false;
+    const data = ctx.getImageData(sx, sy, sw, sh).data;
+    return flatRegion(data);
+  } catch {
+    return false;
+  }
 }
 
 async function layInApp(canvas: HTMLCanvasElement, scale: number, rect: Rect, picture: AppPicture | null): Promise<void> {
