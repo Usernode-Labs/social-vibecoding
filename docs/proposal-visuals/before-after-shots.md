@@ -116,7 +116,18 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   `hints.setup` steps the shots agent takes through the UI on both copies,
   or the staging seeds (`src/db/migrate.js` for Homeroom, the app's own
   `IS_STAGING` seed for a child app). A seed the proposal itself adds reaches
-  only the after copy. It also says that a file a step chooses is one of
+  only the after copy, which is the side a state new in the proposal needs,
+  so the answer says to seed such a state in that same proposal; a change to
+  a state that already existed needs it on both copies, so its seed merges
+  first, in its own proposal. A seed is idempotent and obviously fake: rows
+  for the shots' fixture accounts and fake people, never a signal the code
+  reads to decide something, and a model's reply as the stored message. The
+  answer used to send every seed to a change merged first, while from
+  2026-10-09 to 10-12, 22 shot runs failed and 13 more changes were skipped
+  for want of a state, most of them new in their own proposal. AGENTS.md,
+  the declare tool, the Homeroom bot's build lines, the work order and
+  `src/prompts/app-conventions.md` ("Who the before & after shots see") say
+  the same. It also says that a file a step chooses is one of
   Homeroom's sample files, and that the shots agent can hold or fail one API
   GET to show a loading or error state (see "Reaching a state the steps
   cannot"). A warning is added when a declared change's claim,

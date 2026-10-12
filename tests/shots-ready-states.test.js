@@ -43,6 +43,13 @@ test('Homeroom\'s answer lists the ready-made states; a child app\'s says it has
   assert.match(own.dataNote, /chooses one of Homeroom's sample files \(landscape\.png, portrait\.png, table\.csv, document\.pdf\)/);
   assert.match(own.dataNote, /hold or fail one API GET on both copies to show a loading or error state: name the file or the request in hints\.setup/);
   assert.deepEqual(own.warnings, []);
+  // A state new in the proposal is seeded in it: the after copy is the side
+  // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
+  // What a seed may hold keeps the platform's seed rule.
+  assert.match(own.dataNote, /A seed is idempotent and obviously fake: rows for the shots' fixture accounts \(usernode-capture is the member\) and fake people, never a signal the code reads to decide something\./);
+  assert.match(own.dataNote, /which is the side a state new in this proposal needs: seed such a state in this proposal\./);
+  assert.match(own.dataNote, /A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\./);
+  assert.doesNotMatch(own.dataNote, /merged before this one/);
 
   const child = readyStates.declarationAdvice(declare(story('a', 'The list shows its items.')), { selfApp: false });
   assert.deepEqual(child.availableStates, []);
@@ -67,7 +74,9 @@ test('the states that cost changes their shots are ready-made on Homeroom\'s cop
   const child = warned(held, false);
   assert.equal(child.length, 3);
   assert.match(child[0], /^approval-chip seems to need a change waiting for approval, and this app's copies have no ready-made states\./);
-  assert.match(child[0], /seed it in the app's own staging seed \(its IS_STAGING seed\) in a change merged before this one/);
+  assert.match(child[0], /or seed it in the app's own staging seed \(its IS_STAGING seed\)\. A seed this proposal adds reaches only the after copy/);
+  assert.match(child[0], /seed such a state in this proposal\. A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\.$/);
+  assert.match(readyStates.declarationAdvice(held, { selfApp: false }).dataNote, /A seed is idempotent and obviously fake/);
   assert.match(child[1], /^activity-times seems to need standings rows with recorded activities/);
   assert.match(child[2], /^bot-thanks seems to need an answered first-version plan/);
 });
@@ -87,7 +96,9 @@ test('a change needing a state no ready-made state holds is warned about, once p
   ]);
   assert.match(warnings[0], /a member in their first session \(its tour\), and no ready-made state on these copies holds it \(see availableStates\)/);
   assert.match(warnings[0], /seed it in the staging seeds in src\/db\/migrate\.js/);
-  assert.match(warnings[0], /a seed this proposal adds reaches only the after copy\.$/);
+  assert.match(warnings[0], /A seed this proposal adds reaches only the after copy, which is the side a state new in this proposal needs/);
+  assert.match(warnings[0], /its seed merges first, in its own proposal\.$/);
+  assert.doesNotMatch(warnings.join(' '), /merged before this one/, 'a new state is seeded in the proposal that makes it');
   assert.match(warnings[1], /an account somebody invited/);
   assert.match(warnings[2], /an empty state, or an account with nothing of its own yet/);
   assert.match(warnings[3], /an account on the waitlist/);
@@ -125,10 +136,10 @@ test('a change whose steps wait for a model\'s reply is warned about whatever se
   const [own] = warned(declare(asked), true);
   assert.match(own, /^close-offer seems to need a live reply from a model \(the Homeroom bot, or an app's own AI feature\)/);
   assert.match(own, /nothing on these copies answers with a model: they have no model key/);
-  assert.match(own, /start from a ready-made state that already holds it \(see availableStates\), or seed it in the staging seeds in src\/db\/migrate\.js/);
+  assert.match(own, /start from a ready-made state that already holds it \(see availableStates\), or seed the reply in the staging seeds in src\/db\/migrate\.js as the stored message\./);
   const [child] = warned(declare(story('summary', 'Send the AI a page and it replies with a summary.')), false);
   assert.match(child, /^summary seems to need a live reply from a model/);
-  assert.match(child, /start from a reply the copies already hold, or seed it in the app's own staging seed/);
+  assert.match(child, /start from a reply the copies already hold, or seed the reply in the app's own staging seed \(its IS_STAGING seed\) as the stored message\./);
   for (const steps of [['Ask Homeroom bot to propose closing request 900003'], ['DM the bot: close it'],
     ['Mention @homeroom_bot on the request'], ['Wait until the bot replies']]) {
     assert.equal(warned(declare(story('asks', 'The card has a new line.', { steps })), true).length, 1, steps[0]);
@@ -142,9 +153,36 @@ test('a change whose steps wait for a model\'s reply is warned about whatever se
   ]) {
     assert.deepEqual(warned(declare(story('said', claim)), true), [], claim);
   }
-  // And every answer says the copies have no model.
+  // And every answer says the copies have no model, so a reply is seeded as stored.
   assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: true }).dataNote,
-    /Nothing on them answers with a model, the Homeroom bot included: they have no model key\.$/);
+    /Nothing on them answers with a model, the Homeroom bot included: they have no model key, so seed a reply as the stored message rather than asking for it\.$/);
   assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: false }).dataNote,
-    /Nothing on them answers with a model: they have no model key\.$/);
+    /Nothing on them answers with a model: they have no model key, so seed a reply as the stored message rather than asking for it\.$/);
+});
+
+// The same advice, wherever an author reads how to declare: a state new in
+// the proposal is seeded in it, a seed holds fixture accounts' and fake
+// people's rows (never a signal the code reads), a reply is seeded as
+// stored, and only a change to a state that already existed needs its seed
+// merged first. AGENTS.md said to report a missing fixture as a blocker,
+// and the declare tool said to report missing data; the other surfaces are
+// pinned in their own suites (homeroom-bot-build-design, app-conventions,
+// external-agent-tasks).
+test('AGENTS.md and the declare tool say to seed a new state in the same proposal', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const agents = read('AGENTS.md');
+  const start = agents.indexOf('## Declare visible changes');
+  const section = agents.slice(start, agents.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(section, /If a fresh staging copy lacks the state a change shows, seed it in the same proposal \(`src\/db\/migrate\.js`, idempotent, obviously fake\): it reaches the after copy, the side a new state needs\./);
+  assert.match(section, /Seed rows for the shots' fixture accounts \(`usernode-capture` is the member\) and fake people, never a signal the code reads to decide something, and a bot's reply as the stored message, never asked for\./);
+  assert.match(section, /A change to a state that already existed needs it on both sides: its seed merges first, in its own proposal\./);
+  assert.match(section, /If a required state can be neither reached nor seeded, report that blocker instead of declaring `none`\./);
+  assert.doesNotMatch(section, /If a required fixture or state is missing/);
+
+  const tool = read('worker/visible-changes-mcp.js');
+  assert.match(tool, /When a fresh staging copy lacks the state, seed it in this same change/);
+  assert.match(tool, /a staging seed, in this same change for a state new in it/);
+  assert.doesNotMatch(tool, /Report missing data or an unreachable state instead of guessing/);
 });
