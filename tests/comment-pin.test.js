@@ -249,7 +249,7 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   const css = read('public/css/app.css');
   // The first picture waits for the sheet the mode was opened from (the menu,
   // the form) to finish leaving, rather than landing on it mid-slide.
-  assert.match(src, /void overlaysGone\(\)\.then\(\(\) => \{ if \(live\) takeViewShot\(\); \}\);/);
+  assert.match(src, /void Promise\.all\(\[ahead, overlaysGone\(\)\]\)/, 'with or without a picture drawn ahead');
   // Nothing of the mode is drawn over the live page before the first picture:
   // the state starts as drawing, and the bar and the first-use note wait.
   assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
@@ -270,6 +270,70 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
   assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
   assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
+});
+
+test('the picture is drawn ahead while the menu or the form is open, and opens at once (12 Oct 2026)', () => {
+  // Tap to zoom used to wait for the code, the library and the whole drawing
+  // after the menu had gone: 0.3s of a still screen, 1.3s on the first open
+  // after launch. The menu and the form now ask for the picture as they open.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const shortcut = read('frontend/src/features/improve/suggest-shortcut.ts');
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const form = read('frontend/src/features/dialogs/feedback.tsx');
+  assert.match(shortcut, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\)\) return;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.prepareCommentView\(\)\)/,
+    'only where the switch is on, and the mode\'s code loads with it');
+  assert.match(menu, /useEffect\(\(\) => \{\s*if \(open\) prepareComment\(\);\s*\}, \[open\]\);/);
+  assert.match(form, /Feedback\._open\(opts \|\| \{\}\);[\s\S]*?prepareComment\(\);\s*\},/);
+  // Drawn once the sheet has slid in, watched from the moment it starts, and
+  // put up the moment the sheet has gone; otherwise drawn fresh, as before.
+  assert.match(src, /const AHEAD_SETTLE_MS = 350;/);
+  assert.match(src, /const AHEAD_TTL_MS = 20000;/);
+  assert.match(src, /watching = true;\s*observer\.observe\(document\.body, \{ subtree: true, childList: true, characterData: true, characterDataOldValue: true \}\);/);
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+  assert.match(src, /if \(!stillFresh\(a\) \|\| a\.size\.width !== size\.width\) \{/);
+  // A scroll of the page or a new width spoils it too.
+  assert.match(src, /const onScroll = \(e: Event\) => \{ if \(!outOfPicture\(e\.target instanceof Node \? e\.target : null\)\) spoil\(\); \};/);
+  assert.match(src, /const onResize = \(\) => \{ if \(window\.innerWidth !== size\.width\) spoil\(\); \};/);
+  // The menu's dim is cut out of every picture, or one drawn under the menu would be dimmed.
+  assert.ok(picture.PAGE_EXCLUDES.includes('.overlay-scrim'));
+});
+
+test('what counts as the page changing since the picture was drawn', () => {
+  const realDoc = global.document;
+  const el = ({ parent = null, overlay = false, internal = false, rects = 1, holdsOverlay = false, text = '' } = {}) => ({
+    nodeType: 1, parentElement: parent, isConnected: true, textContent: text,
+    closest: (sel) => ((overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)) ? {} : null),
+    matches: (sel) => (overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)),
+    querySelector: () => (holdsOverlay ? {} : null),
+    getClientRects: () => ({ length: rects }),
+  });
+  const text = (parent, value) => ({ nodeType: 3, parentElement: parent, isConnected: true, textContent: value });
+  const rec = (type, target, added = [], removed = []) => ({ type, target, addedNodes: added, removedNodes: removed });
+  try {
+    const page = el();
+    const heading = el({ parent: page });
+    // A visible change of nodes on the page counts.
+    assert.equal(picture.changesPicture(rec('childList', heading, [text(heading, 'New')], [text(heading, 'Old')])), true);
+    // Inside an overlay, inside the drawing library's own nodes, or on a
+    // node that is not laid out: it does not.
+    assert.equal(picture.changesPicture(rec('childList', el({ overlay: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ internal: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ rects: 0 }), [el()])), false);
+    // The kit lifting the menu sheet out of the page and putting it back,
+    // and the library adding its sandbox to the body: not a change.
+    assert.equal(picture.changesPicture(rec('childList', page, [], [el({ overlay: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ holdsOverlay: true }), { nodeType: 8 }, text(page, '  ')])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ internal: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ overlay: true }), el()])), true, 'one real node among them counts');
+    // Text: judged by the first value against what it says now.
+    const a = text(heading, 'Plant Pal');
+    const b = text(heading, 'Changed');
+    assert.equal(picture.textsUnchanged(new Map([[a, 'Plant Pal']])), true, 'written away and back');
+    assert.equal(picture.textsUnchanged(new Map([[b, 'Before']])), false);
+    assert.equal(picture.textsUnchanged(new Map([[{ ...b, isConnected: false }, 'Before']])), true, 'a node that has gone is a childList change, judged there');
+  } finally {
+    global.document = realDoc;
+  }
 });
 
 test('overlayOnScreen: a leaving sheet counts, the always-mounted dim and a hidden menu do not', () => {
