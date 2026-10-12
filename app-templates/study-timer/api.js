@@ -81,9 +81,10 @@ function routes(app, pool) {
   app.get('/api/today', async (req, res) => {
     const zone = zoneOf(req.query.tz);
     try {
-      if (!req.user) return res.json({ me: null, count: 0 });
-      const { rows } = await pool.query(TODAY_SQL, [req.user.id, zone, req.now]);
-      res.json({ me: { id: req.user.id, username: req.user.username }, day: localDay(req.now, zone), count: rows[0].count });
+      const me = req.user ? req.user.id : null;
+      if (!me) return res.json({ me: null, count: 0 });
+      const { rows } = await pool.query(TODAY_SQL, [me, zone, req.now]);
+      res.json({ me: req.user ? { id: me, username: req.user.username } : null, day: localDay(req.now, zone), count: rows[0].count });
     } catch (err) {
       fail(res, err);
     }
