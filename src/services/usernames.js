@@ -197,13 +197,16 @@ function handlesFromName(rawName, tries = 6) {
  * The handle an email sign-up's username field arrives holding (#4596):
  * the letters and digits before the @, lowercased, with dots and every
  * other character dropped, cut to the 32 a handle may hold. `Ada.Lovelace+hr@`
- * is `adalovelace`. Null when what is left is too short or reserved, and
- * the field then starts empty. #4596 deliberately overturns #3575 for this
- * flow: the field is prefilled, the person can change it, and set-password
- * still takes only what the field sends.
+ * is `adalovelace`: a "+" starts a subaddress, the person's own filing tag
+ * rather than their name, so the address is cut there first (#4891:
+ * `evan.a.shapiro+test1012a@` suggested `evanashapirotest1012a`). Null when
+ * what is left is too short or reserved, and the field then starts empty.
+ * #4596 deliberately overturns #3575 for this flow: the field is
+ * prefilled, the person can change it, and set-password still takes only
+ * what the field sends.
  */
 function usernameFromEmail(rawEmail) {
-  const local = String(rawEmail || '').split('@')[0] || '';
+  const local = (String(rawEmail || '').split('@')[0] || '').split('+')[0];
   const base = local
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')

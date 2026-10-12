@@ -244,20 +244,28 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   assert.equal(message('auth:signInSheet.account.title'), 'Finish your account');
 });
 
-test('the account step\'s password is optional (#4595)', () => {
+test('the account step asks for no password, and says how they sign in (#4891)', () => {
   const src = read(SHEET);
-  // No "Skip for now" (Evan, 10 Oct 2026): beside the username, which cannot
-  // be skipped, it read as skipping the step. The field left empty is how
-  // the password is skipped: no password in the request.
-  assert.doesNotMatch(src, /skip-password|signInSheet\.account\.skip|finishAccount\(true\)/);
-  assert.equal(message('auth:signInSheet.account.passwordLabel'), 'Password (optional)');
-  assert.match(src, /\.\.\.\(password \? \{ password \} : \{\}\),/);
-  assert.match(src, /if \(password && password\.length < 8\) \{ setError\(translate\('auth:signInSheet\.account\.passwordTooShort'\)\); return; \}/);
-  // Asked once (Evan, 10 Oct 2026): no "Password again", and so no
-  // confirmation sent; a mistyped one is reset by email. The field shows
-  // what was typed on request instead (the shared PasswordInput's toggle).
-  assert.doesNotMatch(src, /Password again|passwordConfirmation|confirmField|signInSheet\.account\.confirmLabel/);
-  assert.match(src, /<PasswordInput ref=\{passwordField\} id="sign-in-sheet-password" autoComplete="new-password"/);
+  // The password was optional (#4595), and still one more decision at the
+  // very first step. The step is the username and nothing else: no field,
+  // no "Skip for now", no confirmation, and no password in the request.
+  const step = src.slice(src.indexOf("{step === 'account' ? ("), src.indexOf('</form>', src.indexOf("{step === 'account' ? (")));
+  assert.ok(step.length > 0, 'the account step renders');
+  assert.doesNotMatch(step, /PasswordInput|new-password|id="sign-in-sheet-password"/);
+  assert.doesNotMatch(src, /passwordField|accountStepFields|signInSheet\.account\.password|signInSheet\.account\.skip|finishAccount\(true\)/);
+  const finishAccount = src.slice(src.indexOf('const finishAccount = useCallback'), src.indexOf('const signInWithPassword = useCallback'));
+  assert.match(finishAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  assert.doesNotMatch(finishAccount, /\{ password \}|\bpassword:|passwordConfirmation|passwordField/);
+  // The username is the step's one field, so its Return goes.
+  assert.match(step, /<input ref=\{usernameField\} id="sign-in-sheet-username" defaultValue=\{suggestedUsername\} autoComplete="username" enterKeyHint="go" className=\{INPUT\}/);
+  // In the password's place, how they sign in and where a password is added.
+  assert.match(step, /<p data-sign-in-sheet-code-note="" className="text-\[13px\] text-zinc-500 dark:text-zinc-400">\{t\('auth:signInSheet\.account\.codeNote'\)\}<\/p>/);
+  assert.equal(message('auth:signInSheet.account.codeNote'),
+    'You sign in with a code we email you. You can add a password later in Settings.');
+  assert.equal(message('auth:signInSheet.account.leadWithUsername'), 'Pick a username. It is public on Homeroom.');
+  assert.doesNotMatch(message('auth:signInSheet.account.leadWithUsername'), /password/i);
+  // Settings is really where it is offered (tests/settings-screen.test.js).
+  assert.equal(message('settings:password.titleAdd'), 'Add a password');
 });
 
 test('the sheet fills in the token\'s address and sends the code once per tab, through the sign-in screen\'s lookup', async () => {

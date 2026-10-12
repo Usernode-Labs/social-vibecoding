@@ -8,11 +8,13 @@
  * (./login.tsx), against the same routes:
  *
  *   email    POST /api/auth/otp/request sends a six-digit code.
- *   code     POST /api/auth/otp/verify. An account that has a password is
- *            signed straight in; a new one (or one with no password yet)
- *            moves on to
- *   account  POST /api/auth/otp/set-password: a password, and the username
- *            when the account has none, which mints the session.
+ *   code     POST /api/auth/otp/verify. An account that has a password, or
+ *            has chosen its username, is signed straight in; a new one (or
+ *            one that never chose a username) moves on to
+ *   account  POST /api/auth/otp/set-password: the username when the account
+ *            has none, which mints the session. No password (#4891): the
+ *            account signs in with an emailed code, and adds a password in
+ *            Settings if it wants one.
  *
  * Continue with Apple and Continue with Google come first when an admin has
  * set them up (`providers`, from the waitlist options). Either leaves
@@ -559,7 +561,6 @@ export function SignInSheet({
   const codeField = useRef<HTMLInputElement>(null);
   const usernameField = useRef<HTMLInputElement>(null);
   const providerUsernameField = useRef<HTMLInputElement>(null);
-  const passwordField = useRef<HTMLInputElement>(null);
   const nameField = useRef<HTMLInputElement>(null);
   const phoneField = useRef<HTMLInputElement>(null);
   // The phone step's two fields in order, for Return, and the name as typed.
@@ -568,9 +569,8 @@ export function SignInSheet({
   const phoneCodeField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
-  // Each multi-field step's fields in order, for Return (`returnWalks`).
+  // The password step's fields in order, for Return (`returnWalks`).
   const passwordStepFields = [identifierField, currentPasswordField];
-  const accountStepFields = [usernameField, passwordField];
   // The panel scrolls its fields; with the keyboard up they are revealed in
   // it, with the step's button, and tapped without iOS's pan. It rides the
   // keys up and down as one eased movement.
@@ -641,9 +641,9 @@ export function SignInSheet({
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
-              : (needsUsername && !suggestedUsername ? usernameField : passwordField);
+              : usernameField;
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername, suggestedUsername]);
+  }, [open, step, needsUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -940,19 +940,16 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  // #4595: the password is optional. The field left empty finishes without
-  // one: the account then signs in with an email code, and can add a
-  // password in Settings. It is asked once, with no "again" field: a
-  // mistyped one is reset by email ("Forgot password?"). There is no "Skip
-  // for now" (Evan, 10 Oct 2026): beside a username that cannot be skipped
-  // it read as skipping the whole step, and "Password (optional)" with
-  // Continue already says it.
+  // #4891: the account step asks for the username and nothing else. The
+  // password was optional (#4595), and still one more decision at the very
+  // first step; the account signs in with an emailed code and adds a
+  // password in Settings if it wants one (POST /api/me/password, which sets
+  // a first password with no current one). set-password takes the request
+  // with no password in it as exactly that.
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError(translate('auth:signInSheet.account.usernameMissing')); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = passwordField.current?.value || '';
-    if (password && password.length < 8) { setError(translate('auth:signInSheet.account.passwordTooShort')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -961,7 +958,6 @@ export function SignInSheet({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          ...(password ? { password } : {}),
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -1133,7 +1129,7 @@ export function SignInSheet({
           ? t('auth:signInSheet.password.lead')
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
-            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : t('auth:signInSheet.account.lead'));
+            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : '');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades.
@@ -1311,18 +1307,16 @@ export function SignInSheet({
 
         {step === 'account' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
-            <div className={FIELD_GROUP}>
-              {needsUsername ? (
+            {needsUsername ? (
+              <div className={FIELD_GROUP}>
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
                 </div>
-              ) : null}
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>{t('auth:signInSheet.account.passwordLabel')}</label>
-                <PasswordInput ref={passwordField} id="sign-in-sheet-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" placeholder={t('auth:signInSheet.account.passwordPlaceholder')} />
               </div>
-            </div>
+            ) : null}
+            {/* No password here (#4891): how they sign in, and where a password is added. */}
+            <p data-sign-in-sheet-code-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.account.finishing') : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
