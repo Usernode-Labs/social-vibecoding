@@ -173,7 +173,9 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     build: buildStateOf(r) == null ? null : {
       state: buildStateOf(r),
       ok: r.build_ok, branch: r.build_branch || null, sha: r.build_sha || null, commits: num(r.build_commits),
-      error: r.build_error ? clipText(r.build_error, 300) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
+      // Whole, as the run keeps it (600 characters): a failed turn's reason
+      // is followed by what it was last doing and its final message.
+      error: r.build_error ? clipText(r.build_error, 600) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
     },
     rating: r.rating || null,
     ratingNote: r.rating_note ? clipText(r.rating_note, 300) : null,

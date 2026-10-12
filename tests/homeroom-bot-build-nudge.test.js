@@ -251,7 +251,7 @@ test('a Codex conversation that goes on gets the nudge alone, and no Claude fall
 test('no nudge for a turn that failed, under either CLI, or whose dispatch failed', async () => {
   const cases = [
     [{ ...QUIT, ccExit: 1, exitCode: 1 }, /the build turn failed \(the agent exited with code 1\)/],
-    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error\)/],
+    [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error: API Error: 429 Too Many Requests\)/],
     [{ ...QUIT, agentHarness: 'codex', ccExit: null, exitCode: 1, agentExit: 1 }, /produced no change/],
   ];
   for (const [result, error] of cases) {

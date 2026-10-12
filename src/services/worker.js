@@ -4607,6 +4607,67 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
   }
 }
 
+// A first version's build turn that ran past its time limit or failed is
+// not always empty-handed: its edits are still in the worker's checkout,
+// uncommitted (run-cc.sh's DISCARD_FAILED_TURN skips the commit, and a
+// stopped turn is killed before it reaches it). The script commits them on
+// the session branch the way the runner would have (session-branch.sh), and
+// prints how far the branch is ahead of main and its commit. `workspace`
+// and `lib` are overridable for tests only.
+function buildPartialCommitScript({
+  workspace = '/home/node/workspace', lib = '/usr/local/bin/session-branch.sh',
+} = {}) {
+  return [
+    `cd ${shellQuote(workspace)} || exit 1`,
+    `. ${shellQuote(lib)}`,
+    // The session branch as GitHub had it when the turn started: what the
+    // runner's TURN_START_SHA would have been.
+    'start=$(git rev-parse --quiet --verify "refs/remotes/origin/$BRANCH" 2>/dev/null || true)',
+    'if ! usernode_settle_session_branch >&2; then echo "__USERNODE_PARTIAL__ ahead=0 sha="; exit 0; fi',
+    'usernode_commit_leftovers "$start" "$COMMIT_MSG" >&2',
+    'echo "__USERNODE_PARTIAL__ ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0) sha=$(git rev-parse HEAD 2>/dev/null)"',
+  ].join('\n');
+}
+
+/** Pure: the script's `__USERNODE_PARTIAL__` line, as { ahead, sha }, or null. */
+function parsePartialCommit(stdout) {
+  const line = String(stdout || '').split('\n').reverse().find((l) => l.startsWith('__USERNODE_PARTIAL__ '));
+  if (!line) return null;
+  const ahead = Number((line.match(/\bahead=(\d+)/) || [])[1]) || 0;
+  const sha = (line.match(/\bsha=([0-9a-f]{7,40})\b/) || [])[1] || null;
+  return { ahead, sha };
+}
+
+/**
+ * Commit and push what a failed or stopped build turn left in the session's
+ * worker, when it differs from main. Resolves { pushed: true, sha, commits }
+ * or { pushed: false, reason }; never throws. Outside any agent turn:
+ * nothing is journaled and the active-turn record is untouched.
+ */
+async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bot: work so far' } = {}) {
+  if (!branchName) return { pushed: false, reason: 'no branch' };
+  const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
+  let committed;
+  try {
+    const script = `BRANCH=${shellQuote(branchName)}\nCOMMIT_MSG=${shellQuote(String(commitMsg).slice(0, 200))}\n`
+      + buildPartialCommitScript();
+    const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script], null, { timeoutMs: 60000 });
+    committed = parsePartialCommit(stdout);
+  } catch (err) {
+    return { pushed: false, reason: `could not read the worker's checkout (${String(err.message || err).slice(0, 200)})` };
+  }
+  if (!committed || !(committed.ahead > 0) || !committed.sha) return { pushed: false, reason: 'nothing differs from main' };
+  try {
+    const pushed = await execPushFromWorker(sessionId, branchName);
+    log.info('worker', 'Kept a failed build turn\'s work', {
+      sessionId, branch: branchName, sha: String(pushed?.sha || committed.sha).slice(0, 8), commits: committed.ahead,
+    });
+    return { pushed: true, sha: pushed?.sha || committed.sha, commits: committed.ahead };
+  } catch (err) {
+    return { pushed: false, reason: `the push failed (${String(err.message || err).slice(0, 200)})` };
+  }
+}
+
 // #3737: the benchmark's screenshot step (services/bench/capture.js). The
 // platform's own script is written into the worker (never baked into its
 // image, so the step is the platform's current one) and run there with
@@ -5339,6 +5400,9 @@ module.exports = {
   buildPushScript,
   unpushedCommit,
   rescueUnpushedCommit,
+  keepPartialWork,
+  buildPartialCommitScript,
+  parsePartialCommit,
   mintWorkerJwt,
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
