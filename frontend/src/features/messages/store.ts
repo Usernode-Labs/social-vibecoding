@@ -6,7 +6,7 @@ import * as api from './api';
 import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
-import type { AppDiscussion, InboxFilter } from './inbox';
+import { savedInboxFilter, type AppDiscussion, type InboxFilter } from './inbox';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -266,14 +266,14 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 /**
- * Which of the four kinds the list is showing (#2718).
- *
- * Presentation, so it is not persisted and not in the route: a filter that
- * survives a reload is a filter somebody has to remember turning on, and the
- * one thing this screen must always be able to say is "here is everything".
+ * Which kind the list is showing (#2718), remembered per device since #4783:
+ * a daily voter coming back keeps their choice instead of landing on All.
+ * Still presentation, so not in the route, and a fresh device starts on All;
+ * an unknown saved value (`savedInboxFilter`) falls back to All too.
  */
 export function setFilter(next: InboxFilter): void {
   if (state.filter === next) return;
+  try { localStorage.setItem('usernode:messages-filter', next); } catch { /* storage unavailable */ }
   publish({ filter: next });
 }
 
@@ -2469,14 +2469,17 @@ export function initializeMessagesStore(): () => void {
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
   // #2387 / #2967: the two layout preferences, read after mount so the first
-  // render matches the prerendered shell.
+  // render matches the prerendered shell. #4783: the chosen filter is the
+  // third, remembered the same way.
   let listCollapsed = false;
   let showMoreChannels = false;
+  let filter: InboxFilter = 'all';
   try {
     listCollapsed = localStorage.getItem('usernode:messages-list-collapsed') === '1';
     showMoreChannels = localStorage.getItem('usernode:messages-more-channels') === '1';
+    filter = savedInboxFilter(localStorage.getItem('usernode:messages-filter'));
   } catch { /* storage unavailable */ }
-  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels });
+  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels, filter });
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
