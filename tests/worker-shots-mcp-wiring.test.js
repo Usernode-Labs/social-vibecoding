@@ -579,6 +579,7 @@ test('the shots bridge offers exactly nine tools and talks only to its own run',
   assert.equal(problem.isError, false);
   const unsure = await bridge.call('note_problem', {
     change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+    alsoBefore: 'unknown',
   });
   assert.equal(unsure.isError, false);
 
@@ -600,6 +601,7 @@ test('the shots bridge offers exactly nine tools and talks only to its own run',
   });
   assert.deepEqual(JSON.parse(bridge.calls[5].body), {
     change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+    alsoBefore: 'unknown',
   });
   const problemTool = /registerTool\('note_problem', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
   assert.match(problemTool, /not about the declared change itself/);
@@ -607,7 +609,13 @@ test('the shots bridge offers exactly nine tools and talks only to its own run',
   assert.match(problemTool, /"Also noticed" and changes nothing about the shots/);
   assert.match(problemTool, /At most five per run/);
   assert.match(problemTool, /problem: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(300\)/);
-  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
+  // The agent must say whether the before build has it: left optional, it
+  // was "unknown" for every problem noted in the proposals merged
+  // 2026-10-09 to 10-12.
+  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\s+\.describe\('true if your before shot of the same screen/);
+  assert.doesNotMatch(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
+  assert.match(problemTool, /"unknown" only if you could not look/);
+  assert.match(problemTool, /you shoot the before side of the same screen anyway, so look at that shot/);
 
   // A bridge without its run, token or platform refuses to start.
   for (const broken of [{ SHOTS_JWT: '' }, { SHOTS_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {

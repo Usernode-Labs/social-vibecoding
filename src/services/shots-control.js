@@ -222,11 +222,25 @@ class RunControl {
         alsoBefore: entry.alsoBefore,
         notices: this.notices.length,
         remaining: shots.MAX_NOTICES - this.notices.length,
+        // "unknown" says nothing to a person reading it, and the agent
+        // shoots the before side of every screen it shoots the after side
+        // of, so it is asked to look and say.
+        ...(entry.alsoBefore === 'unknown' ? { hint: this.alsoBeforeHint(entry) } : {}),
       };
     } catch (error) {
       this.lastToolFailure = { operation: 'note-problem', error };
       throw error;
     }
+  }
+
+  // What a notice without alsoBefore asks of the agent: to look at the
+  // before shot of that screen, now or once it has taken it.
+  alsoBeforeHint({ change, screen }) {
+    const lead = this.saved.has(shots.slotKey({ storyId: change, viewport: screen, side: 'base', variant: 'context' }))
+      ? 'You saved the before shot of this screen: look at it'
+      : 'Once you have shot the before side of this screen, look at it';
+    return `${lead} and note this problem again with alsoBefore true or false, so people can tell whether this `
+      + 'change brought it. Noting the same problem at the same place updates it.';
   }
 
   // The shots bridge records what it is about to do to both builds for a

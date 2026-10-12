@@ -23618,7 +23618,9 @@ const AppView = {
     }).join('');
     const noteOf = (claim) => {
       const result = resultOf(claim);
-      if (!result || result.status !== 'ready') return '';
+      // An unchanged change (its before and after came out the same) is
+      // shown as a ready one, and its note says so.
+      if (!result || (result.status !== 'ready' && result.status !== 'unchanged')) return '';
       // What the shots agent said its shots leave out of the claim.
       const shotNote = typeof result.note === 'string' ? result.note : '';
       return `${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [leadIn])}</p>` : ''}${conditionsOf(result)}`;

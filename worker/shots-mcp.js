@@ -341,7 +341,7 @@ server.registerTool('note_change', {
 });
 
 server.registerTool('note_problem', {
-  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. At most five per run; noting the same problem at the same place again updates it.',
+  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. Say whether the before build shows it too (alsoBefore): you shoot the before side of the same screen anyway, so look at that shot. At most five per run; noting the same problem at the same place again updates it.',
   inputSchema: {
     change: z.string().min(1).max(96)
       .describe('The declared change you were shooting when you saw it.'),
@@ -349,8 +349,11 @@ server.registerTool('note_problem', {
       .describe('The screen (viewport name) it shows at.'),
     problem: z.string().trim().min(1).max(300)
       .describe('What is broken, in one short sentence a person will understand, e.g. "The results table is cut off at the right edge."'),
-    alsoBefore: z.union([z.boolean(), z.literal('unknown')]).optional()
-      .describe('true if the before address shows the same problem, false if it does not, "unknown" (the default) if you did not look.'),
+    // Required since 2026-10-12: left out, it was "unknown" for every
+    // problem noted in the proposals merged 10-09 to 10-12, though the
+    // agent holds the before shot of the same screen.
+    alsoBefore: z.union([z.boolean(), z.literal('unknown')])
+      .describe('true if your before shot of the same screen (or the same place on the before address) shows the same problem; false if it does not, also when that place is new with this change; "unknown" only if you could not look.'),
     shot: z.enum(['screen', 'element']).optional()
       .describe('Which after shot you saved for this change and screen shows it, if one does.'),
   },

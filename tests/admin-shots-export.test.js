@@ -305,6 +305,22 @@ test('a verified run counts what its verdict judged and what it still retains', 
   assert.equal(rec.failure_detail_json, null);
 });
 
+test('a ready change whose before and after came out the same reads unchanged, and still counts as ready', () => {
+  const rec = shotsExport.exportRecord({
+    ...runs[2],
+    hard_verdict: { ...runs[2].hard_verdict, stories: [
+      { id: 's1', status: 'ready', files: 2, unchanged: true, note: 'any visible difference.' },
+      { id: 's2', status: 'skipped', reason: 'Not reachable' },
+    ] },
+  });
+  assert.equal(rec.stories_ready, 1, 'its shots were published');
+  assert.equal(rec.stories_skipped, 1);
+  assert.deepEqual(JSON.parse(rec.story_results_json), [
+    { id: 's1', status: 'unchanged', note: 'any visible difference.' },
+    { id: 's2', status: 'skipped', reason: 'Not reachable' },
+  ]);
+});
+
 test('the file quotes what a spreadsheet would otherwise eat, and never holds the private answer', async () => {
   who = FULL_ADMIN;
   const body = await (await get('/api/admin/shots/export.csv')).text();

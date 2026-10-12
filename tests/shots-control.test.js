@@ -338,6 +338,25 @@ test('a problem noticed on the after build is kept with the run, capped, and cha
     { code: 'shots_turn_finished', status: 409 });
 });
 
+// Every problem noted in the proposals merged 2026-10-09 to 10-12 said
+// "unknown", though the agent shoots the before side of every screen.
+test('a problem noted without saying whether the before build has it asks the agent to look', () => {
+  const run = control({ intent: threeChanges() });
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  const early = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.' });
+  assert.equal(early.alsoBefore, 'unknown');
+  assert.match(early.hint, /^Once you have shot the before side of this screen, look at it and note this problem again with alsoBefore true or false/);
+
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before'));
+  const later = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: 'unknown' });
+  assert.match(later.hint, /^You saved the before shot of this screen: look at it and note this problem again/);
+  assert.match(later.hint, /Noting the same problem at the same place updates it\.$/);
+
+  const said = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: false });
+  assert.equal(Object.hasOwn(said, 'hint'), false, 'a notice that says true or false is not asked again');
+  assert.deepEqual(run.notices.map((entry) => entry.alsoBefore), [false], 'noting it again updated the one notice');
+});
+
 // control_request and upload_file record what they are about to do to both
 // builds before they do it; it goes on the change's result, whatever its
 // status, so the card can say so beside the shots.

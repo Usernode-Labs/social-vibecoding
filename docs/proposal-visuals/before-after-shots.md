@@ -261,7 +261,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
-   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore` (`true`, `false` or `"unknown"`, the default). At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
+   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore`: `true` or `false` from the before shot of the same screen, which the agent takes anyway, or `"unknown"` only when it could not look. The tool requires it, and the platform still reads one left out as `"unknown"`; a note that says `"unknown"` is answered with a `hint` to look at that before shot (now, or once it is taken) and note the problem again. At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
    | `control_request` | Holds (a loading state) or fails (an error state) one exact API GET on both builds, for a change that declares no `controlledFailurePath`; recorded first, and shown beside the change's shots (see "Reaching a state the steps cannot" below) |
@@ -289,7 +289,11 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    broken, at most a handful, never a matter of taste, style or wording, and
    never whether the declared change is shown or works (that is
    `note_change` and `skip_change`). It does not go looking for problems on
-   other screens.
+   other screens. For each one it says whether the before build shows it
+   too, from its before shot of the same screen, so a problem the change
+   did not bring reads as such. Until 2026-10-12 that was optional and left
+   `"unknown"` for every problem noted in the proposals merged 10-09 to
+   10-12.
 4. **Saving** (`reviewing`). Each change is folded into one result. A change
    the agent skipped by name is **skipped**, even if shots were saved for it,
    or **failed** when it skipped it with `outcome: "failed"`.
@@ -301,6 +305,10 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    no area that differs) is still published, marked `unchanged`, with a note
    saying so ("Not in these shots: any visible difference…"): people judge
    the shots, and two copies of one screen must not pass for the change.
+   The verdict keeps it `status: "ready"` with `unchanged: true`, so it
+   counts toward publishing the run; every result read off the verdict
+   (`shotResults`, the admin listing, the runs export) says `unchanged`
+   (`shots-files.resultStatus`).
    `save_shot` already warns the agent (`sameAsOtherSide`) when it saves the
    same image on both sides, while it can still retake them. Anything else is **skipped**, with the agent's reason or, failing
    that, a list of exactly what is missing. The files of ready changes are
@@ -896,14 +904,30 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   with the declaration, for whoever reviews it.
 
 The public view model and the connector's `get_proposal` carry `shotResults`
-(`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
+(`[{ id, status: "ready" | "unchanged" | "skipped" | "failed", reason, note }]`) beside `claims` and
 `artifacts`, and `shotNotices`
 (`[{ text, change, screen, shot: "screen" | "element" | null, alsoBefore: true | false | "unknown" }]`,
-at most five, only for a published run on the current revision). The
-connector's `list_recent_shots` lists each proposal's `shotNotices` too, its
-text marked untrusted. Runs from before shots have no `shotResults`, runs
-from before notices have empty `shotNotices`, and older paired clips still
-play.
+at most five, only for a published run on the current revision). An
+`unchanged` result has its shots published like a ready one, and its `note`
+says the before and after came out the same, so a reader that knows only
+ready, skipped and failed can show it as ready; before 2026-10-12 it read
+`ready`. The change page's card shows it as it always has: the shots, and
+the note under "Not in these shots".
+
+The admin connector's `list_recent_shots` lists each proposal's
+`shotNotices` too, its text marked untrusted, each declared change with
+how it came out (`claims[].status`, null when the run has no result for
+it), and the counts (`changes: { declared, ready, unchanged, skipped,
+failed }`), so a run that shot one change of three does not read as a
+success. Its `stats` (`stats: true`) are the current shots over the last
+`statsDays` days (7 unless asked, at most 90) of merged proposals, for the
+app filter: how each one's shots ended, how the declared changes of their
+current runs came out, how many noted problems are also on the before
+build, and the failure codes (`routes/gallery.js` `shotsStats`). The
+console's Screenshot gallery keeps its own counters, the retired
+route-capture pipeline's over all time. Runs from before shots have no
+`shotResults`, runs from before notices have empty `shotNotices`, and older
+paired clips still play.
 
 A staging preview has one published run with notices to look at: the
 merged proposal 900108 on the Screenshot gallery's demo app
