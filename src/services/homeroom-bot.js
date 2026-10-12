@@ -355,6 +355,10 @@ const RESTART_REASON = 'restart';
 // are triaged without either post: they speak only when they have
 // something to say (a question, a spec, a proposal).
 const APP_AGAIN_REASON = 'app_again';
+// The queue reason of a request whose last verdict a cap held, brought back
+// once that cap has room (refreshApp). A held ready verdict is reused then,
+// with no new read, when the request has not changed since (reuseHeldVerdict).
+const CAP_FREED_REASON = 'cap_freed';
 // The queue reason of an issue whose bot proposal's checks settled failing
 // on its current head (noteProposalChecks): a follow-up turn fixes them.
 const CHECKS_REASON = 'checks_failing';
@@ -1566,7 +1570,7 @@ async function refreshApp(pool, app, {
     for (const h of held) {
       if (!(room[h.cap] > 0)) continue;
       room[h.cap] -= 1;
-      eligible.push({ n: h.n, eligible: true, reason: 'cap_freed', priority: 2, threadSeenAt: h.threadSeenAt });
+      eligible.push({ n: h.n, eligible: true, reason: CAP_FREED_REASON, priority: 2, threadSeenAt: h.threadSeenAt });
     }
   }
 
@@ -2230,6 +2234,14 @@ async function insertRun(pool, run) {
     await pool.query('UPDATE homeroom_bot_runs SET complicated = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record a complicated verdict', { runId: id, err: err.message }));
   }
+  // What the read saw of its request (readFingerprintOf), and the held run
+  // a reused verdict came from (reuseHeldVerdict), the same way.
+  if (id && (run.readFingerprint || run.reusedRunId)) {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET read_fingerprint = $2, reused_run_id = $3 WHERE id = $1',
+      [id, run.readFingerprint ? JSON.stringify(run.readFingerprint) : null, Number(run.reusedRunId) || null],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record what a read saw', { runId: id, err: err.message }));
+  }
   // #4239: a person verdict about Homeroom itself, the same way.
   if (id && run.aboutPlatform) {
     await pool.query('UPDATE homeroom_bot_runs SET about_platform = TRUE WHERE id = $1', [id])
@@ -2787,6 +2799,178 @@ async function clearStaleTurn(pool, session, { worker, maxAgeMs, now = Date.now(
   return { ageMs };
 }
 
+// ── A held verdict, reused when its turn comes ──────────────────────────
+//
+// A ready verdict a cap held is stored as it was reached (cap_suppressed on
+// its run), and the refresh brings its request back once the cap has room
+// (CAP_FREED_REASON). That used to read the request again from the start:
+// a whole model turn, a second "looking at this" note, and then the caps
+// checked again, often only to be held again (46 such reads in a week, 25
+// of them in 75 minutes). Each read now records what it saw
+// (readFingerprintOf); when the request has not changed since the held
+// verdict read it, that verdict is acted on again as it stands.
+
+const READ_FINGERPRINT_VERSION = 1;
+
+// A GitHub login or a Homeroom username, compared as the seed compares the
+// bot's own login (thread-context.js renderEntry).
+function authorKey(name) {
+  return String(name || '').trim().toLowerCase().replace(/\[bot\]$/, '');
+}
+
+/**
+ * Pure: what a read saw of its request, as a hash to compare with a later
+ * look: its title and body, its GitHub comments (id, author, body) and its
+ * Homeroom discussion (author, time, body). A screenshot is a link in one
+ * of those, so a new or changed one changes the hash too. The bot's own
+ * posts (`botLogins`: its GitHub login and Homeroom username) are left
+ * out: the held note it posts after the read is not a change to the
+ * request. The counts beside the hash are for whoever reads the run.
+ */
+function readFingerprintOf({ issue, comments = [], threadMessages = [], botLogins = [] } = {}) {
+  const own = new Set((Array.isArray(botLogins) ? botLogins : []).map(authorKey).filter(Boolean));
+  const theirs = (entry) => !own.has(authorKey(entry?.author));
+  const github = (Array.isArray(comments) ? comments : []).filter(theirs)
+    .map((c) => [c?.id == null ? null : String(c.id), authorKey(c?.author), String(c?.body || '')]);
+  const discussion = (Array.isArray(threadMessages) ? threadMessages : []).filter(theirs)
+    .map((m) => [authorKey(m?.author), String(m?.createdAt || ''), String(m?.body || '')]);
+  const title = String(issue?.title || '');
+  const body = String(issue?.body || '');
+  const hash = crypto.createHash('sha256')
+    .update(JSON.stringify([READ_FINGERPRINT_VERSION, title, body, github, discussion]))
+    .digest('hex');
+  const ids = github.map(([id]) => id).filter(Boolean);
+  return {
+    v: READ_FINGERPRINT_VERSION,
+    hash,
+    comments: github.length,
+    lastCommentId: ids.length ? ids[ids.length - 1] : null,
+    messages: discussion.length,
+  };
+}
+
+/**
+ * The request's last run, as lastRunsByIssue reads it, when it is a live
+ * ready verdict a cap held and it recorded what it read; else null.
+ */
+async function heldReadyRun(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT id, verdict, cap_suppressed, mode, read_fingerprint, determined, missing_fact, build_note, reason,
+            plan, complicated, about_platform, model
+       FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [appId, issueNumber],
+  );
+  const run = rows[0];
+  if (!run || run.verdict !== 'ready' || !run.cap_suppressed || run.mode !== 'live') return null;
+  if (!run.read_fingerprint?.hash) return null;
+  return run;
+}
+
+/**
+ * A newer verdict on a request replaces any build still waiting for an
+ * older one: the shadow lane's, and a live build waiting its turn.
+ */
+async function supersedeEarlierBuilds(pool, { app, issueNumber, runId }) {
+  await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
+    log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
+  });
+  await pool.query(
+    `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'
+      WHERE app_id = $1 AND issue_number = $2 AND id <> $3
+        AND live_build_waiting_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
+    [app.id, issueNumber, runId],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not supersede a waiting live build', { app: app.slug, issueNumber, err: err.message }));
+}
+
+/**
+ * A cap_freed request whose held ready verdict still answers it: the
+ * request as it stands is compared with what that verdict read, and when
+ * nothing changed, a new run carries the held one's verdict (its plan,
+ * build note and the rest) at no cost, the caps are checked again, and it
+ * is acted on as a fresh ready verdict is: built, or held again without
+ * the held note said twice. Nothing is posted before it, as nothing was
+ * read. Returns runTriage's result, or null to read the request as usual:
+ * a held run that recorded nothing, or a request that changed.
+ */
+async function reuseHeldVerdict(pool, config, {
+  bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs, deps,
+}) {
+  const { github, threadContext, sessions } = deps;
+  const issueNumber = Number(item.issue_number);
+  const held = await heldReadyRun(pool, app.id, issueNumber).catch((err) => {
+    log.warn('homeroom-bot', 'Could not read a request\'s held verdict', { app: app.slug, issueNumber, err: err.message });
+    return null;
+  });
+  if (!held) return null;
+  const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    live.botUsernameOf(github),
+  ]);
+  const fingerprint = readFingerprintOf({
+    issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+  });
+  if (fingerprint.hash !== held.read_fingerprint.hash) {
+    log.info('homeroom-bot', 'Held request changed since its verdict; reading it again', {
+      app: app.slug, issueNumber, heldRunId: Number(held.id),
+    });
+    return null;
+  }
+  let parsed = {
+    verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
+    reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
+    complicated: held.complicated === true, platform: held.about_platform === true,
+  };
+  // As a fresh read: a change its requester was asked to plan is planned
+  // with them again.
+  if (!parsed.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
+    parsed = { ...parsed, complicated: true };
+  }
+  const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings)
+    || (parsed.complicated ? await planTripwire(pool, app.id) : null);
+  const runId = await insertRun(pool, {
+    ...billingOf(item, runMode),
+    readReason: readReasonOf(item),
+    appId: app.id, issueNumber, mode: runMode,
+    verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
+    plan: parsed.plan, aboutPlatform: parsed.platform, complicated: parsed.complicated,
+    buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
+    threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
+    model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
+    durationMs: Date.now() - startedMs,
+    readFingerprint: fingerprint, reusedRunId: Number(held.id),
+  });
+  await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
+  await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
+  log.info('homeroom-bot', 'Held verdict reused: the request is unchanged since it was read', {
+    app: app.slug, issueNumber, runId, heldRunId: Number(held.id), cap: capSuppressed,
+  });
+  let acted = null;
+  try {
+    acted = await actOnVerdict({
+      pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+      seed: sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, thread?.messages || []),
+      seedReadAt, postedAt: [], turnBudgetMs, botLogin, comments,
+      model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
+      // Its requester was told it is held when it was; held again says nothing.
+      quietHold: true,
+      proposalCeiling: botProposalCeiling(settings),
+      deps,
+    });
+  } catch (err) {
+    log.error('homeroom-bot', 'Acting on a reused verdict failed', { app: app.slug, issueNumber, err: err.message });
+  }
+  return { ran: true, verdict: 'ready', runId, reused: Number(held.id), ...(acted ? { acted } : {}) };
+}
+
 /**
  * One issue, one read-only scout turn, one ledger row. Returns
  * { ran: true, verdict } or { ran: false, reason }. `budget` is the one
@@ -3018,6 +3202,18 @@ async function runTriage(pool, config, {
       await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
       return { ran: false, reason: 'build_it' };
     }
+    // A ready verdict a cap held, its turn come: reused as it stands when
+    // the request has not changed since it was read (reuseHeldVerdict), with
+    // no read and nothing said first. A first version is planned afresh.
+    if (item.reason === CAP_FREED_REASON && !requester?.firstVersion) {
+      const reused = await reuseHeldVerdict(pool, config, {
+        bot, app, repo, item, issue, settings, runMode, startedMs, turnBudgetMs,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions, activeWorkers, ...liveD,
+        },
+      });
+      if (reused) return reused;
+    }
     // An issue a restart sent back (#3471), or a read started over because
     // somebody changed the request mid-read, was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
@@ -3081,6 +3277,11 @@ async function runTriage(pool, config, {
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
+  // What this read saw of the request, so a ready verdict a cap holds can be
+  // reused when its turn comes if nothing has changed (reuseHeldVerdict).
+  const readFingerprint = readFingerprintOf({
+    issue, comments, threadMessages: thread?.messages || [], botLogins: [botUsername, bot.username],
+  });
   // #3772: on a project of one, the person who asked decides what the group
   // would; on a project with more, its creator and admins do. Only on a
   // project the bot acts on, where it says its verdict.
@@ -3593,7 +3794,7 @@ async function runTriage(pool, config, {
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-    durationMs: Date.now() - startedMs,
+    durationMs: Date.now() - startedMs, readFingerprint,
   });
   await recordSnapshot(runId);
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
@@ -3607,17 +3808,8 @@ async function runTriage(pool, config, {
     });
   }
   // A newer verdict on the issue replaces any build still waiting for an
-  // older one: the lane builds what the bot thinks now.
-  await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
-    log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
-  });
-  // And a live build still waiting its turn: what was said since replaces it.
-  await pool.query(
-    `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_error = 'superseded: a later verdict on the same issue'
-      WHERE app_id = $1 AND issue_number = $2 AND id <> $3
-        AND live_build_waiting_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL`,
-    [app.id, issueNumber, runId],
-  ).catch((err) => log.warn('homeroom-bot', 'Could not supersede a waiting live build', { app: app.slug, issueNumber, err: err.message }));
+  // older one, shadow or live: the lane builds what the bot thinks now.
+  await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
   // Before anything is posted: whoever asked the bot to stop tagging them
   // is left out of this post and every later one on the issue, and whoever
   // asked to be tagged again is back in.
@@ -9856,7 +10048,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.question_answers, dm.dm_sent_at, dm.dm_answered_at, r.checks_head_sha,
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
-            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
+            bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason, r.reused_run_id,
             r.charged, r.payer_user_id, pu.username AS payer_username,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
@@ -9930,6 +10122,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'label_verdict', 'build_model',
   // What started the read ('new', 'changed:github', 'retry_failed', …).
   'read_reason',
+  // The held run whose verdict this one reused, with no read of its own.
+  'reused_run_id',
 ]);
 
 /** A question's suggested answers as one cell: "Yes | No | Later". */
@@ -10647,6 +10841,9 @@ module.exports = {
   enqueueFront,
   billingOf,
   readReasonOf,
+  readFingerprintOf,
+  reuseHeldVerdict,
+  CAP_FREED_REASON,
   skippedAtTriage,
   liveCandidates,
   buildsNow,

@@ -13055,6 +13055,16 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAM
 -- from before, or one no queue row started.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
+-- What a read saw of its request (homeroom-bot.js readFingerprintOf): a
+-- hash of its title, body, GitHub comments and discussion messages (the
+-- screenshots they link included), the bot's own posts left out, with a
+-- few counts beside it. A ready verdict a cap held is reused when its turn
+-- comes (cap_freed) if the request still hashes the same: no new read, and
+-- the new run names the one it reused in `reused_run_id`, at no cost. Null
+-- on a run from before, or one that read nothing.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_fingerprint JSONB;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS reused_run_id INTEGER
+  REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL;
 -- #4533: why a queued row is waiting, and until when, as the refusal that
 -- left it there said (homeroom-bot.js recordRefusal; 'session_busy' when a
 -- turn was running on its session). A refusal keeps the row and its place,
