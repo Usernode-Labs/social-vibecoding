@@ -152,16 +152,16 @@ test('the first picture animates out of the live page instead of a bare grey gro
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   // The first picture, nothing drawn yet: the live page shows through (the
   // mode's layer above it already keeps every press off) and neither the
-  // grey ground nor the chip is drawn over it.
+  // grey ground nor the word that names the picture is drawn.
   assert.match(src, /viewShot\?\.state === 'drawing' && !viewShot\.url/,
     'the first picture: still drawing, with nothing to show');
   assert.match(src, /shotIntro \? null : \(/);
-  // Once the picture lands it mounts with its ground and chip for the first
+  // Once the picture lands it mounts with its ground and its word for the first
   // time and shrinks from the full page into its frame; a degenerate scale
   // skips the move.
   assert.match(src, /inset\.scale > 0 \? 'comment-shot-in' : ''/);
   assert.match(src, /comment-shot-ground-in/);
-  assert.match(src, /comment-shot-chip-in/);
+  assert.match(src, /comment-shot-label-in/);
   assert.match(src, /--comment-shot-from/, 'the start of the move: the inverse of the inset frame');
   // The hover outline and the posted pins wait with it: both are placed
   // against the inset frame and would sit wrong over the full-size page.
@@ -172,9 +172,34 @@ test('the first picture animates out of the live page instead of a bare grey gro
   const css = read('public/css/app.css');
   assert.match(css, /\.comment-shot-in \{ animation: comment-shot-in 320ms ease-out; transform-origin: 0 0; \}/);
   assert.match(css, /\.comment-shot-ground-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
-  assert.match(css, /\.comment-shot-chip-in \{ animation: comment-shot-chip-in 160ms ease-out 200ms both; \}/);
+  assert.match(css, /\.comment-shot-label-in \{ animation: comment-shot-label-in 160ms ease-out 200ms both; \}/);
   assert.match(css, /@keyframes comment-shot-in \{\s*from \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-chip-in \{ animation: none; \}\s*\}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in \{ animation: none; \}\s*\}/);
+});
+
+test('"Screenshot" leads the bar above the picture, never over the picture (#4774)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The word used to be a chip drawn at the picture's top-left corner, where
+  // it covered the page's own header. It is now the bar's leading label, in
+  // the band above the picture, shown exactly while the picture is.
+  assert.doesNotMatch(src, /comment-shot-chip-in/);
+  assert.doesNotMatch(src, /left: inset\.x \+ 10, top: inset\.y \+ 10/,
+    'nothing is positioned over the picture\'s corner');
+  assert.match(src, /const shotLabel = !!inset && !shotIntro;/);
+  const bar = src.slice(src.indexOf('role="toolbar"'));
+  const label = bar.indexOf("{t('devchat:commentPin.view.chip')}");
+  assert.ok(label > 0, 'the word renders inside the toolbar');
+  assert.ok(label < bar.indexOf('{confirm ? ('), 'it leads the bar, before either of its states');
+  assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
+  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className="comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400"/,
+    'a muted label that truncates first, and stays while the bar asks its question: the picture is still there');
+  // On a phone the label takes the place of the mode's chat glyph, so the
+  // bar still fits a 390px screen.
+  assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
+  // And the Form / Comment switch drops its two glyphs on a phone while the
+  // word shows, so "Screenshot" is whole at 390px rather than "Screen…".
+  assert.match(bar, /<DescriptionIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
+  assert.match(bar, /<ChatIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
 });
 
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {
