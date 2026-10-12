@@ -533,6 +533,7 @@ function claudeTurnModel(mode, model) {
 // contain private app data or credentials and must never enter a run trace.
 const SHOTS_DIAGNOSTIC_TOOLS = new Set([
   'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -2758,6 +2759,9 @@ async function _bootstrapWarmContainer(sessionId, {
       `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
     );
     err.code = 'github_rate_limited';
+    // When it resets, for a caller that tries again then (the before &
+    // after shots' recovery sweep).
+    if (privacy.retryAfterSeconds > 0) err.retryAfterMs = privacy.retryAfterSeconds * 1000;
     throw err;
   }
   if (!privacy.ok) {

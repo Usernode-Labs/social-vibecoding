@@ -1865,9 +1865,11 @@ function readyKey(sessionId, epoch) {
  * settled (shots-state.holdsReady): the shots agent tries what the change
  * says it does, and a change whose main action fails is not offered as
  * ready (Flat 4B Chores, whose "mark as done" answered a 500 on every tap
- * while its checks passed). Resolves { ready, epoch, waitingOnShots, broken },
- * `broken` being the declared changes those shots show failing
- * (shots-state.brokenOnHead), or null for no such change.
+ * while its checks passed). Resolves { ready, epoch, waitingOnShots, broken,
+ * skipped }, `broken` being the declared changes those shots show failing
+ * (shots-state.brokenOnHead) and `skipped` those they could not reach for
+ * want of data the change can seed (shots-state.skippedOnHead), or null for
+ * no such change.
  */
 async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const id = Number(sessionId);
@@ -1890,6 +1892,7 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
     epoch: Number(row.approval_epoch) || 0,
     waitingOnShots,
     broken: checked ? shotsState.brokenOnHead(row, head) : [],
+    skipped: checked ? shotsState.skippedOnHead(row, head) : [],
     // #3870: what the change is, for its ready card: its proposal's title,
     // unless that is the placeholder written while titles could not be
     // made, else its session's.
@@ -1947,12 +1950,18 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
     // once per head and within its revisions). Only when no such round is
     // due (it already looked at this head, has no revisions left, or is not
     // working on this app) does the card go out, saying what does not work.
+    // The same goes for a change its shots could not reach for want of data
+    // the change can seed: the bot adds it, and the shots are taken again,
+    // before anybody is asked to approve it without pictures of it.
     const broken = brokenWords(state.broken);
-    if (broken.length) {
+    const unshot = Array.isArray(state.skipped) ? state.skipped.length : 0;
+    if (broken.length || unshot) {
       const handedBack = await settingsModule().noteProposalChecks(pool, { sessionId: id }).catch(() => false);
       if (handedBack) {
-        log.info('homeroom-bot-dm', 'A change\'s shots show part of it failing; the bot fixes it before its requester hears', {
-          sessionId: id, failed: broken.length,
+        log.info('homeroom-bot-dm', broken.length
+          ? 'A change\'s shots show part of it failing; the bot fixes it before its requester hears'
+          : 'A change\'s shots could not reach part of it; the bot adds the data they need before its requester hears', {
+          sessionId: id, failed: broken.length, skipped: unshot,
         });
         return null;
       }
@@ -2009,9 +2018,9 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
  * A proposal's before & after shots settled (shots-state.noteSettled: a run
  * published or failed, was waived, or will not start). A change of the
  * bot's that passed its checks was waiting on them: it is ready to try now,
- * or, when they show part of it failing, it goes back to the bot to fix
- * first (noteChangeReady). One indexed read for any other proposal. Never
- * throws.
+ * or, when they show part of it failing or could not reach part of it for
+ * want of data it can seed, it goes back to the bot first
+ * (noteChangeReady). One indexed read for any other proposal. Never throws.
  */
 function noteShotsSettled(pool, sessionId, deps = {}) {
   return noteChangeReady(pool, sessionId, deps);

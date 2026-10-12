@@ -196,6 +196,7 @@ test('the columns are pinned in order, so an analysis that reads them by positio
     'worker_memory_limit_mb', 'worker_memory_peak_mb', 'worker_memory_last_mb',
     'worker_oom_kills', 'worker_memory_by_process_json',
     'egress_blocked_json',
+    'platform_fault',
   ]);
 });
 
@@ -252,6 +253,18 @@ test('a run a Homeroom restart interrupted says so; anything else leaves the col
     null, 'only a fixed tag is copied out');
 });
 
+test('a run a platform step failed names the kind; the retry is its own row', () => {
+  const fault = shotsExport.exportRecord({
+    ...runs[1], state: 'failed', failure_code: 'shots_failed',
+    trace_summary: { platformFault: { kind: 'database' } },
+  });
+  assert.equal(fault.platform_fault, 'database');
+  assert.equal(shotsExport.exportRecord({ ...runs[1], trigger: 'platform-retry' }).trigger, 'platform-retry');
+  assert.equal(shotsExport.exportRecord(runs[0]).platform_fault, null);
+  assert.equal(shotsExport.exportRecord({ ...runs[1], trace_summary: { platformFault: { kind: '=cmd()' } } })
+    .platform_fault, null, 'only a fixed word is copied out');
+});
+
 test('a failed run carries what the diagnostics screen would say, and no private answer', () => {
   const rec = shotsExport.exportRecord(runs[0]);
   assert.equal(rec.duration_ms, 480000);
@@ -290,6 +303,22 @@ test('a verified run counts what its verdict judged and what it still retains', 
   assert.equal(rec.artifacts_retained, 4);
   assert.equal(rec.artifact_bytes_retained, 50000, 'a bigint arrives as a string and leaves as a number');
   assert.equal(rec.failure_detail_json, null);
+});
+
+test('a ready change whose before and after came out the same reads unchanged, and still counts as ready', () => {
+  const rec = shotsExport.exportRecord({
+    ...runs[2],
+    hard_verdict: { ...runs[2].hard_verdict, stories: [
+      { id: 's1', status: 'ready', files: 2, unchanged: true, note: 'any visible difference.' },
+      { id: 's2', status: 'skipped', reason: 'Not reachable' },
+    ] },
+  });
+  assert.equal(rec.stories_ready, 1, 'its shots were published');
+  assert.equal(rec.stories_skipped, 1);
+  assert.deepEqual(JSON.parse(rec.story_results_json), [
+    { id: 's1', status: 'unchanged', note: 'any visible difference.' },
+    { id: 's2', status: 'skipped', reason: 'Not reachable' },
+  ]);
 });
 
 test('the file quotes what a spreadsheet would otherwise eat, and never holds the private answer', async () => {

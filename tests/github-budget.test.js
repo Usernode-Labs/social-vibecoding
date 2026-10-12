@@ -335,6 +335,8 @@ test('checkRepoPublic says the budget is used up instead of passing GitHub\'s wo
   assert.equal(out.ok, false);
   assert.equal(out.code, 'rate_limited');
   assert.match(out.message, /^GitHub's hourly limit for Homeroom is used up\. It resets in about (9|10) minutes\.$/);
+  // When, for a caller that tries again then (the before & after shots).
+  assert.ok(out.retryAfterSeconds > 8 * 60 && out.retryAfterSeconds <= 10 * 60, String(out.retryAfterSeconds));
 
   github._setOctokitFactoryForTests(() => ({
     rest: { repos: { get: async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); } } },
@@ -349,6 +351,8 @@ test('a worker that cannot start for the budget says so in words a person reads'
   const block = src.slice(at, at + 800);
   assert.match(block, /Homeroom could not start working on \$\{repoOwner\}\/\$\{repoName\}\. \$\{privacy\.message\} Nothing was changed\./);
   assert.match(block, /err\.code = 'github_rate_limited'/);
+  assert.match(block, /if \(privacy\.retryAfterSeconds > 0\) err\.retryAfterMs = privacy\.retryAfterSeconds \* 1000;/,
+    'and when it resets, so the shots sweep waits for that');
   assert.ok(src.indexOf("privacy.code === 'rate_limited'") < src.indexOf('Cannot bootstrap worker for'),
     'before the generic "Cannot bootstrap worker" refusal');
 });

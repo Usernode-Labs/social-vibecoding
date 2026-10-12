@@ -27,6 +27,8 @@
 // run's images after 24 hours. `artifacts_retained` is therefore what is
 // left NOW; `artifact_bytes_stored` is what the run stored at the time.
 
+const { resultStatus } = require('./shots-files');
+
 const RUN_STATES = Object.freeze([
   'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
   'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden',
@@ -36,6 +38,7 @@ const RUN_STATES = Object.freeze([
 // group a person means when asking "what is running right now".
 const IN_PROGRESS_STATES = Object.freeze(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const STATE_FILTERS = Object.freeze([...RUN_STATES, 'in_progress']);
+const SHOWN = new Set(['ready', 'unchanged']);
 
 const EXPORT_COLUMNS = Object.freeze([
   'run_id', 'created_at', 'started_at', 'completed_at', 'updated_at', 'duration_ms',
@@ -77,6 +80,11 @@ const EXPORT_COLUMNS = Object.freeze([
   // Destinations the shots proxy refused, counted by reason and kind of
   // host ("private_address:pair_host"), never by destination.
   'egress_blocked_json',
+  // A failure on a platform step (shots-state PLATFORM_FAULT_KINDS:
+  // database, clone, worker_bootstrap, github_rate_limited, agent_exit),
+  // which the recovery sweep takes again once; the retry's own row has
+  // `trigger` platform-retry.
+  'platform_fault',
 ]);
 
 // The agent's own event ring holds up to 128 entries; the tail is what
@@ -227,7 +235,9 @@ function exportRecord(row) {
     const s = obj(story);
     return {
       id: s.id ?? null,
-      status: s.status ?? null,
+      // A ready change whose before and after came out the same reads
+      // 'unchanged', as every result does (shots-files.resultStatus).
+      status: s.status === 'ready' ? resultStatus(s) : (s.status ?? null),
       ...(s.reason ? { reason: s.reason } : {}),
       ...(s.note ? { note: s.note } : {}),
     };
@@ -281,8 +291,9 @@ function exportRecord(row) {
     failure_detail_json: json(failure.detail),
     impact: intent.impact ?? null,
     stories_declared: declared.length,
-    stories_ready: results.length ? results.filter((s) => s.status === 'ready').length : null,
-    stories_skipped: results.length ? results.filter((s) => s.status !== 'ready').length : null,
+    // Ready counts an unchanged change too: its shots were published.
+    stories_ready: results.length ? results.filter((s) => SHOWN.has(s.status)).length : null,
+    stories_skipped: results.length ? results.filter((s) => !SHOWN.has(s.status)).length : null,
     story_results_json: json(results),
     plan_source: trace.planSource ?? null,
     agent_attempts: num(trace.agentAttempts),
@@ -329,6 +340,8 @@ function exportRecord(row) {
     worker_oom_kills: num(memory.oomKillsDuringTurn),
     worker_memory_by_process_json: Object.keys(obj(memory.peakRssMb)).length ? json(memory.peakRssMb) : null,
     egress_blocked_json: Object.keys(egress).length ? json(egress) : null,
+    platform_fault: typeof obj(trace.platformFault).kind === 'string'
+      && /^[a-z_]{1,32}$/.test(trace.platformFault.kind) ? trace.platformFault.kind : null,
     diagnostics_path: slug && row.session_id
       ? `/api/apps/${slug}/proposals/${row.session_id}/shots/diagnostics?runId=${row.id}`
       : null,

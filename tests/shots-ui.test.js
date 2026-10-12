@@ -344,6 +344,47 @@ test('absence is labelled only when the author explicitly declared a new before 
   assert.match(absent, /shots-flip-chip-before">Before · not there yet</);
 });
 
+// A project's first version (services/shots-starter.js): its before build was
+// the starter template's placeholder, so only the after side was taken. The
+// card says so, where it opens and where a before would be, instead of
+// showing a missing shot.
+test('a first version\'s card says New app: nothing before, and shows its after shots', () => {
+  const afterOnly = (overrides = {}) => shots({
+    afterOnly: true,
+    artifacts: shots().artifacts.filter((artifact) => artifact.side !== 'base'),
+    ...overrides,
+  });
+  const html = AppView.shotsHtml(afterOnly(), { sessionId: 42 });
+  assert.match(html, /data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3" data-shots-after-only="1"/);
+  assert.match(html, /<p class="text-xs text-zinc-600 dark:text-zinc-400">New app: nothing before\. This proposal builds the app’s first real screens, so these are its after shots only\./);
+  assert.match(html, /<span class="shots-flip-side shots-flip-before shots-flip-missing">New app: nothing before<\/span>/);
+  assert.match(html, new RegExp(`<img src="${url('4')}"`), 'the after screen is shown');
+  assert.doesNotMatch(html, /No shot|not there yet|Taken on the exact before and after builds/);
+  // Even when the author declared the feature absent before, the card names the app as new.
+  const declaredAbsent = afterOnly();
+  declaredAbsent.claims = [{ ...declaredAbsent.claims[0], baseState: 'not_present' }];
+  assert.doesNotMatch(AppView.shotsHtml(declaredAbsent, { sessionId: 42 }), /not there yet/);
+
+  // The change page's Before and after card says the same where the before would be.
+  const thread = AppView.shotsHtml(afterOnly(), { sessionId: 42, thread: true });
+  assert.match(thread, /class="dev-change-shots-body" data-shots-after-only="1"/);
+  assert.match(thread, /shots-flip-missing">New app: nothing before</);
+
+  // A motion change plays its after clip alone, with no empty before player.
+  const motion = afterOnly({
+    artifacts: [...afterOnly().artifacts, ...clipArtifacts().filter((artifact) => artifact.side === 'head')],
+  });
+  motion.claims = [{ ...motion.claims[0], animation: 'motion' }];
+  const clips = AppView.shotsHtml(motion, { sessionId: 42 });
+  assert.match(clips, /these are its after shots and clips only/);
+  assert.match(clips, new RegExp(`<video src="${url('8')}"`));
+  assert.doesNotMatch(clips, /No clip|Before clip/);
+
+  // An ordinary run is unchanged.
+  const ordinary = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.doesNotMatch(ordinary, /New app|data-shots-after-only/);
+});
+
 test('a skipped change shows its reason and no media, beside a ready one', () => {
   const value = shots({
     claims: [
@@ -399,6 +440,55 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
   ]) {
     assert.doesNotMatch(AppView.shotsHtml(shots({ shotResults }), { sessionId: 42 }), /data-shots-shot-note/);
   }
+});
+
+// An unchanged change (its before and after came out the same) is shown as
+// a ready one was before it had its own status: its shots, then its note,
+// then what the shots agent did to both builds to reach it.
+test('an unchanged change shows its shots and the note that they came out the same, as a ready one', () => {
+  const note = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
+  const conditions = [{ kind: 'request_failed', request: '/api/items' }];
+  const unchanged = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'unchanged', reason: null, note, conditions }],
+  }), { sessionId: 42 });
+  const ready = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note, conditions }],
+  }), { sessionId: 42 });
+  assert.equal(unchanged, ready, 'the card reads it exactly as a ready change with that note');
+  assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> any visible difference\. The before and after screens came out the same/);
+  assert.match(unchanged, /<p data-shots-condition="request_failed"[^>]*>.*Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds/);
+  assert.match(unchanged, new RegExp(`<img src="${url('3')}"`));
+  assert.doesNotMatch(unchanged, /data-shots-shot-status="skipped"|>Skipped</);
+});
+
+// control_request and upload_file: a loading or error state the shots agent
+// caused, or a file it chose, is said beside the shots, so nobody takes it
+// for the app's own.
+test('a ready change says what the shots agent did to both builds to reach it, as text', () => {
+  const html = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note: 'The fold needs a hidden app.', conditions: [
+      { kind: 'request_held', request: '/api/items?q=<b>' },
+      { kind: 'request_failed', request: '/api/items' },
+      { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+      { kind: 'evaluate', request: '/api/items' },
+      { kind: 'sample_file', files: [] },
+    ] }],
+  }), { sessionId: 42 });
+  const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(html)[0];
+  assert.deepEqual([...change.matchAll(/data-shots-condition="([a-z_]+)"/g)].map((match) => match[1]),
+    ['request_held', 'request_failed', 'sample_file']);
+  assert.match(change, /Controlled test:<\/span> the shots agent kept GET \/api\/items\?q=&lt;b&gt; waiting on both builds, to show it loading\./);
+  assert.match(change, /Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds, to show what happens when it does\./);
+  assert.match(change, /Sample file:<\/span> the shots agent uploaded landscape\.png(?:, | and )table\.csv on both builds, from Homeroom&#39;s own sample files\./);
+  assert.ok(change.indexOf('data-shots-shot-note') < change.indexOf('data-shots-condition'), 'after what the shots leave out');
+  // None recorded, or a change that is not ready: nothing is said.
+  assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /data-shots-condition/);
+  const skipped = AppView.shotsHtml(shots({
+    claims: [...shots().claims, { ...shots().claims[0], id: 'other', claim: 'Another change.' }],
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null },
+      { id: 'other', status: 'skipped', reason: 'Not reached.', conditions: [{ kind: 'request_held', request: '/api/items' }] }],
+  }), { sessionId: 42 });
+  assert.doesNotMatch(skipped, /data-shots-condition/);
 });
 
 // The shots agent's notes on clear problems it saw on the after build

@@ -569,6 +569,23 @@ test('shot results come only from a shots verdict and carry nothing but id, stat
   ]);
 });
 
+// The verdict keeps it ready with `unchanged: true` (shots-files.markUnchanged);
+// read as plain ready, a change whose shots show no difference looked shot.
+test('a ready change whose before and after came out the same reads unchanged, with its note', () => {
+  const base = { state: 'verified', base_sha: BASE_SHA, head_sha: HEAD_SHA, intent: intent() };
+  const summary = state.runSummary({ ...base, hard_verdict: shotsVerdict([
+    { id: 'invite-suggestions', status: 'ready', files: 2, unchanged: true, note: 'any visible difference.' },
+    { id: 'invite-empty', status: 'ready', files: 2 },
+  ]) });
+  assert.deepEqual(summary.shotResults, [
+    { id: 'invite-suggestions', status: 'unchanged', reason: null, note: 'any visible difference.' },
+    { id: 'invite-empty', status: 'ready', reason: null, note: null },
+  ]);
+  // Nothing that decides whether a change works reads it as failing.
+  const row = { shots_state: 'verified', shots_detail: { ...summary, intent: intent() } };
+  assert.deepEqual(state.brokenOnHead(row, HEAD_SHA), []);
+});
+
 test('problems the shots agent noticed are kept beside the results and never read as a change failing', () => {
   const notices = [
     { text: 'The sort control overlaps the Done heading.', change: 'invite-suggestions', screen: 'desktop', shot: 'screen', alsoBefore: true },
