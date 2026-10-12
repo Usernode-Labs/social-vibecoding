@@ -3487,6 +3487,53 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
 }
 
 /**
+ * #4772: one section of the viewer's own work in What's happening (Waiting
+ * on you, Yours, up for a vote, Going live): a card with its title over the
+ * shared one-line work rows (./work-row.tsx, variant `line`), its first
+ * WORKSHOP_WORK_FIRST rows and the rest behind Show N more. The caller
+ * leaves out a section with no rows.
+ */
+function MineSection({ section, title, rows, slug, openKey, onOpen }: {
+  section: 'waiting' | 'vote' | 'live';
+  title: string;
+  rows: WorkCardRow[];
+  slug: string;
+  openKey: string | null;
+  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const [all, setAll] = useState(false);
+  return (
+    <section className="dev-ws-strip" data-ws-mine-section={section}>
+      <div className="dev-ws-head">
+        <span className="dev-ws-head-title">{title}</span>
+      </div>
+      <div className="dev-ws-lane" data-ws-lane={`mine-${section}`}>
+        <WorkList
+          rows={all ? rows : rows.slice(0, WORKSHOP_WORK_FIRST)}
+          slug={slug}
+          openKey={openKey}
+          onOpen={onOpen}
+          variant="line"
+        />
+        {rows.length > WORKSHOP_WORK_FIRST ? (
+          <button
+            type="button"
+            className="dev-ws-reveal touch-target-32"
+            data-ws-mine-section-more={section}
+            aria-expanded={all}
+            onClick={() => setAll(!all)}
+          >
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+            {all ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: rows.length - WORKSHOP_WORK_FIRST })}
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/**
  * The grouping strip — "By category" / "By stage".
  *
  * THE PANE HEAD'S FIRST ROW, at every width (#852). From 768px up it used to
@@ -4419,19 +4466,45 @@ export function DevWorkshop(): ReactNode {
   // first. A first visit has no baseline and so nothing new, but the weeks
   // and their figures are still the history, so they are drawn without the
   // card's own controls.
-  const sinceList = v.since || EMPTY_SINCE;
+  // #4772: the viewer's own work, by section (AppView._workshopView files
+  // each row's `group`): what waits on them, then their work in flight, then
+  // theirs up for a vote, then what is going live. `extra` is what Homeroom
+  // bot waits on them for on items that are not otherwise theirs.
+  const mineCards = (v.mine ? v.mine.rows : []).filter((r): r is WorkCardRow => r.t === 'card');
+  const mineIn = (group: NonNullable<WorkCardRow['group']>) => mineCards.filter((r) => (r.group || 'work') === group);
+  const waitingRows = [...mineIn('waiting'), ...((v.mine && v.mine.extra) || []).filter((r): r is WorkCardRow => r.t === 'card')];
+  const workRows = mineIn('work');
+  const voteRows = mineIn('vote');
+  const liveRows = mineIn('live');
+  const anyMine = waitingRows.length + workRows.length + voteRows.length + liveRows.length > 0;
+  // Your work stays when the viewer has nothing anywhere (#2182: it says so);
+  // with something in another section, an empty Your work is left out.
+  const showWork = !!v.mine && (workRows.length > 0 || (!anyMine && !!v.mine.viewer));
+  // A merged change of the viewer's still going live is Going live's until
+  // it is live, and then What happened's news like anyone's: while it is
+  // here, What happened and its weeks leave it out, so it is listed once.
+  const rowKey = (r: WorkCardRow): string => {
+    const ref = topicRef(r.card);
+    return ref ? `${ref.kind}:${ref.id}` : r.key;
+  };
+  const goingLiveKeys = new Set(liveRows.map(rowKey));
+  const notGoingLive = (r: { t: string }): boolean => r.t !== 'card' || !goingLiveKeys.has(rowKey(r as WorkCardRow));
+  const sinceAll = v.since || EMPTY_SINCE;
+  const sinceList = goingLiveKeys.size ? { ...sinceAll, rows: sinceAll.rows.filter(notGoingLive) } : sinceAll;
   const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
   const thisWeek = weeks.length && weeks[0].live ? weeks[0] : null;
   const pastWeeks = thisWeek ? weeks.slice(1) : weeks;
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
   // #4457: the week whose page is open, while it is still in the list.
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
-  // Own ongoing work is already in Your work. Once it merges, its outcome
-  // belongs in catch-up too: it no longer appears in that ongoing list.
-  // #4538: so is a bot change built from the viewer's request — Your work
-  // has it while it is in flight, and the bot remains its maker either way.
-  // (week-pages.tsx `catchUp`, which files the dots and "N new" the same way.)
-  const sinceRows = (v.since ? v.since.rows : [])
+  // Own ongoing work is already in What's happening. Once it merges, its
+  // outcome belongs in catch-up too: it no longer appears in that ongoing
+  // list. #4538: so is a bot change built from the viewer's request — What's
+  // happening has it while it is in flight, and the bot remains its maker
+  // either way. (week-pages.tsx `catchUp`, which files the dots and "N new"
+  // the same way.) #4772: `sinceList` has already left out what is going
+  // live, which is Going live's until it is live.
+  const sinceRows = (v.since ? sinceList.rows : [])
     .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && catchUp(r.brief));
   // NEW FOR YOU: of what moved since your last visit, the requests filed
   // since, newest first. Your own are Your work's. A vote waiting on yours is
@@ -4649,8 +4722,8 @@ export function DevWorkshop(): ReactNode {
             ? {
                 loading: v.week.loading,
                 failed: v.week.failed,
-                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card'),
-                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card'),
+                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
+                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card' && notGoingLive(r)),
               }
             : null}
           slug={slug}
@@ -4723,25 +4796,38 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── WHAT'S HAPPENING ── what is yours, then what is new for you. */}
-      {(v.mine && (v.mine.rows.length || v.mine.viewer)) || freshRows.length ? (
+      {anyMine || showWork || freshRows.length ? (
         <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="happening">{t('project:workshop.part.happening')}</SectionHeader>
       ) : null}
+      {/* ── Waiting on you ── (#4772) what needs the viewer's answer before
+          it can move: Homeroom bot's plan for their request waiting for
+          Build it, its question to them, a back and forth with it on a
+          change or request, and a change of theirs that needs a fix. */}
+      {waitingRows.length ? (
+        <MineSection
+          section="waiting"
+          title={t('project:workshop.waiting.title')}
+          rows={waitingRows}
+          slug={slug}
+          openKey={sideKey}
+          onOpen={openItem}
+        />
+      ) : null}
       {/* ── Your work ──
-          A returning member's own work in flight: their requests, their
-          changes and their votes, never what is already live (#4715: a
-          merged change of theirs still going live stays, with its tag,
-          until the release lands) (AppView
+          A returning member's own work in flight that waits on nobody's
+          vote and none of their answers (#4772: those are the sections
+          around it): their requests and their changes being made (AppView
           ._workshopView), in the shared work rows (./work-row.tsx WorkRow)
           in This week's one-line shape (#4716, variant `line`): the glyph,
           the title on one line, its status pill and Vote at the line's end
           and its ☰; under it the board's words and its tags. A request your
           change addresses is drawn as that change. Its first
           WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+      {v.mine && showWork ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-head">
             <span className="dev-ws-head-title">{t('project:workshop.mine.title')}</span>
-            {v.mine.rows.length ? <span className="dev-ws-head-sub">{t('project:workshop.mine.open', { count: v.mine.rows.length })}</span> : null}
+            {workRows.length ? <span className="dev-ws-head-sub">{t('project:workshop.mine.open', { count: workRows.length })}</span> : null}
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
             {/* #2182: the strip does not leave when the viewer has nothing
@@ -4749,7 +4835,7 @@ export function DevWorkshop(): ReactNode {
                 bot where it builds for this viewer (`mine.bot`), Build it
                 now under the hub's ⋯ elsewhere, and nothing to press for a
                 read-only viewer or under the start-here banner. */}
-            {!v.mine.rows.length ? (
+            {!workRows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
                   ? t('project:workshop.mine.empty')
@@ -4759,14 +4845,13 @@ export function DevWorkshop(): ReactNode {
               </p>
             ) : null}
             <WorkList
-              rows={v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)
-                .filter((r): r is WorkCardRow => r.t === 'card')}
+              rows={workRows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)}
               slug={slug}
               openKey={sideKey}
               onOpen={openItem}
               variant="line"
             />
-            {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
+            {workRows.length > WORKSHOP_WORK_FIRST ? (
               <button
                 type="button"
                 className="dev-ws-reveal touch-target-32"
@@ -4775,11 +4860,37 @@ export function DevWorkshop(): ReactNode {
                 onClick={() => setMineAll(!mineAll)}
               >
                 <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {mineAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: v.mine.rows.length - WORKSHOP_WORK_FIRST })}
+                {mineAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: workRows.length - WORKSHOP_WORK_FIRST })}
               </button>
             ) : null}
           </div>
         </section>
+      ) : null}
+      {/* ── Yours, up for a vote ── (#4772) the viewer's own changes and
+          group decisions up for a vote that need nothing from them. */}
+      {voteRows.length ? (
+        <MineSection
+          section="vote"
+          title={t('project:workshop.yourVotes.title')}
+          rows={voteRows}
+          slug={slug}
+          openKey={sideKey}
+          onOpen={openItem}
+        />
+      ) : null}
+      {/* ── Going live ── (#4715, #4772) the viewer's merged changes that are
+          not live yet, until the release lands. They are left out of What
+          happened meanwhile (`goingLiveKeys`), and are its news
+          once live, so a change is listed once at any point. */}
+      {liveRows.length ? (
+        <MineSection
+          section="live"
+          title={t('project:workshop.goingLive.title')}
+          rows={liveRows}
+          slug={slug}
+          openKey={sideKey}
+          onOpen={openItem}
+        />
       ) : null}
       {/* ── New for you ──
           Since your last visit, the requests filed since, whose Build it is

@@ -1262,8 +1262,11 @@ test('What happened is one card under its own label, with Mark all seen beside t
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
   // Own ongoing work is not repeated; its merged outcomes are retained.
   // #4538: nor is a bot change built from the viewer's request, while Your
-  // work is showing it. One rule, for the rows and the dots alike.
+  // work is showing it. #4772: nor is one of yours still going live, while
+  // Going live shows it. One rule, for the rows and the dots alike.
   assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && catchUp\(r\.brief\)\)/);
+  assert.match(WORKSHOP, /const sinceRows = \(v\.since \? sinceList\.rows : \[\]\)/);
+  assert.match(WORKSHOP, /const sinceList = goingLiveKeys\.size \? \{ \.\.\.sinceAll, rows: sinceAll\.rows\.filter\(notGoingLive\) \} : sinceAll;/);
   assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'),
     /export function catchUp\(b: Pick<RowBrief, 'mine' \| 'requested' \| 'stage'>\): boolean \{\s*return !\(b\.mine \|\| b\.requested\) \|\| b\.stage === 'live';\s*\}/);
   // The reveals keep their own shape.
@@ -1277,7 +1280,7 @@ test('#4505: catch-up retains your recently merged contributions, not your ongoi
   seed(AppView);
   AppView._merged = [
     { ...AppView._merged[0], username: 'me', pr_title: 'My recent live contribution', live_at: at(1) },
-    { ...AppView._merged[0], id: 79, pr_number: 42, username: 'me', pr_title: 'My merge going live', live_at: null },
+    { ...AppView._merged[0], id: 79, pr_number: 42, username: 'me', user_id: 1, pr_title: 'My merge going live', live_at: null },
     { ...AppView._merged[0], id: 80, pr_number: 43, username: 'me', pr_title: 'My older contribution', merged_at: at(8), last_message_at: at(8) },
   ];
   AppView._mySessions = [{ id: 81, status: 'active', username: 'me', session_title: 'My ongoing contribution', created_at: at(1), last_activity_at: at(1) }];
@@ -1287,17 +1290,19 @@ test('#4505: catch-up retains your recently merged contributions, not your ongoi
     const at0 = happened.indexOf(`>${title}</a>`);
     return at0 < 0 ? '' : happened.slice(happened.lastIndexOf('<li', at0), happened.indexOf('</li>', at0));
   };
-  // YOUR OWN, ONCE LIVE, IS NEWS: "You" on the row, and "Going live" on the
-  // one still rolling out.
+  // YOUR OWN, ONCE LIVE, IS NEWS: "You" on the row. #4772: the one still
+  // rolling out is Going live's, in What's happening, until it is live, so
+  // it is listed once.
   assert.match(row('My recent live contribution'), /data-new=""[\s\S]*<span class="dev-ws-hrow-you">You<\/span><time/);
-  assert.match(row('My merge going live'), /<span class="dev-ws-hrow-glyph" data-kind="live" aria-hidden="true"><span class="dc-status-spinner-arc"><\/span><\/span>/);
-  assert.match(row('My merge going live'), /<span class="dev-ws-hrow-you">You<\/span><span class="dev-ws-hrow-tag" data-tone="run">Going live<\/span><time class="dev-ws-hrow-ago" dateTime="[^"]+" title="[^"]+">2d ago<\/time>/);
+  assert.equal(row('My merge going live'), '', 'still going live, it is not in What happened');
+  const goingLive = html.slice(html.indexOf('data-ws-mine-section="live"'), html.indexOf('data-ws-happened-head'));
+  assert.match(goingLive, /<span class="dev-ws-head-title">Going live<\/span>[\s\S]*>My merge going live<\/a>/);
   assert.ok(!row('My recent live contribution').includes('Going live'), 'a live one says nothing of the sort');
   assert.equal(row('My older contribution'), '', 'old merges stay in their week, a row of its own');
   assert.ok(!happened.includes('My ongoing contribution'), 'ongoing work stays in Your work');
   assert.match(html.split('data-ws-mine=""')[1].split('data-ws-happened-head')[0], /My ongoing contribution/);
-  // The head counts what is new this week: the request and the two merges.
-  assert.match(happened, /<span class="dev-ws-week-fresh">3 new<\/span>/);
+  // The head counts what is new this week: the request and the live merge.
+  assert.match(happened, /<span class="dev-ws-week-fresh">2 new<\/span>/);
   AppView._workshopClearSince('demo-app', AppView._workshopView().since.through);
   const cleared = workshopHtml(AppView, 'workshop');
   const after = cleared.slice(cleared.indexOf('data-ws-happened=""'));
@@ -2287,7 +2292,8 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
     'the bot change from the viewer\'s request is in Your work; the bot\'s other one is not');
 
   const html = workshopHtml(AppView, 'workshop');
-  const lane = html.split('data-ws-lane="mine"')[1] || '';
+  // #4772: up for a vote, it is under Yours, up for a vote.
+  const lane = html.split('data-ws-lane="mine-vote"')[1] || '';
   // The row names the bot as its maker and the request it is for — never
   // "yours", because the bot made it. #4716: its PR number and the request
   // it is for in words, and the bot once, as its tag; no age.
@@ -2397,6 +2403,108 @@ test('#4715: a merged change of yours that is still going live stays in Your wor
   assert.equal(row81.split(going).length - 1, 1, 'said once, on the first line');
   assert.equal(row84.split(going).length - 1, 1);
   assert.match(row84.slice(row84.indexOf('dev-ws-wrow-status')), new RegExp(esc(message('changes:workshop.row.tag.homeroomBot'))));
+});
+
+test('#4772: What\'s happening files your work as Waiting on you, Your work, Yours up for a vote and Going live, each once', () => {
+  const store = { 'workshopSeen:demo-app': String(Date.now() - 3.5 * 86400000) };
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  // Mine: a session being built, a change up for a vote with its checks
+  // passing, one whose checks fail, and a merge still going live. Carol's
+  // change 34 is one I am talking to Homeroom bot on; request 13 has the
+  // bot's plan waiting for my Build it; request 12 its question to me.
+  AppView._mySessions = [{ id: 51, status: 'active', username: 'me', session_title: 'Bottom tabs', created_at: at(1), last_activity_at: at(1) }];
+  AppView._proposals.push(
+    { id: 61, pr_number: 61, pr_title: 'Mine, passing', status: 'promoted', username: 'me', user_id: 1,
+      created_at: at(1), promoted_at: at(1), last_message_at: at(1), linked_issues: [], my_vote: null, check_state: 'passing' },
+    { id: 62, pr_number: 62, pr_title: 'Mine, failing', status: 'promoted', username: 'me', user_id: 1,
+      created_at: at(1.5), promoted_at: at(1.5), last_message_at: at(1.5), linked_issues: [], my_vote: null, check_state: 'failing',
+      test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'x', consoleErrors: [] }] },
+  );
+  AppView._merged.push({ id: 79, pr_number: 42, pr_title: 'Mine, going live', status: 'merged', username: 'me', user_id: 1,
+    created_at: at(1), merged_at: at(0.5), last_message_at: at(0.5), row_type: 'pr', linked_issues: [], live_at: null });
+  AppView._ghIssuesMeta = { waitingOnYou: {
+    plans: [{ number: 13, at: at(0.1) }],
+    questions: [{ number: 12, at: at(0.2) }, { number: 999, at: at(0.2) }],
+    talks: [{ type: 'session', ref: 34, at: at(0.05), botLast: true }, { type: 'session', ref: 4040, at: at(0.05), botLast: false }],
+  } };
+  const v = AppView._workshopView();
+  const groups = Object.fromEntries(plain(v.mine.rows).map((r) => [r.key, r.group]));
+  assert.deepEqual(groups, {
+    'mine:my-session:51': 'work', 'mine:proposal:61': 'vote', 'mine:proposal:62': 'waiting', 'mine:merged:79': 'live',
+  });
+  assert.equal(v.mine.count, 4, 'the hub\'s count is unchanged: what is waiting on an item not yours is not counted');
+  // What the bot waits on me for on items not otherwise mine, in its order:
+  // plans, then questions, then talks. A request or change the board no
+  // longer has (999, 4040) is left out.
+  const extra = plain(v.mine.extra);
+  assert.deepEqual(extra.map((r) => r.key), ['mine:issue:13', 'mine:issue:12', 'mine:proposal:34']);
+  assert.ok(extra.every((r) => r.group === 'waiting'));
+  assert.deepEqual(extra.map((r) => r.brief.tags[0]), [
+    { label: message('changes:workshop.row.tag.planWaits'), tone: 'warn' },
+    { label: message('changes:workshop.row.tag.botAsked'), tone: 'warn' },
+    { label: message('changes:workshop.row.tag.botReplied', { ago: '1h ago' }), tone: 'warn' },
+  ]);
+  assert.equal(message('changes:workshop.row.tag.botReplied', { ago: '1h ago' }), 'With Homeroom bot · it replied 1h ago');
+
+  const html = workshopHtml(AppView, 'workshop');
+  // The sections in order, under What's happening, each a card with its
+  // sentence-case title; then New for you's and What happened.
+  const order = ['data-ws-part="happening"', 'data-ws-mine-section="waiting"', 'data-ws-mine=""',
+    'data-ws-mine-section="vote"', 'data-ws-mine-section="live"', 'data-ws-happened-head'];
+  const idx = order.map((x) => html.indexOf(x));
+  assert.ok(idx.every((i) => i >= 0), `every section is drawn: ${idx}`);
+  assert.deepEqual([...idx].sort((a, b) => a - b), idx, 'in that order');
+  const section = (key) => html.slice(html.indexOf(`data-ws-mine-section="${key}"`), html.indexOf('</section>', html.indexOf(`data-ws-mine-section="${key}"`)));
+  assert.match(section('waiting'), /<span class="dev-ws-head-title">Waiting on you<\/span>/);
+  assert.match(section('vote'), /<span class="dev-ws-head-title">Yours, up for a vote<\/span>/);
+  assert.match(section('live'), /<span class="dev-ws-head-title">Going live<\/span>/);
+  const rowsOf = (chunk) => [...chunk.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
+  // The first three of Waiting on you, the rest behind Show 1 more.
+  assert.deepEqual(rowsOf(section('waiting')), ['mine:proposal:62', 'mine:issue:13', 'mine:issue:12']);
+  assert.match(section('waiting'), /data-ws-mine-section-more="waiting" aria-expanded="false">[\s\S]*?Show 1 more/);
+  assert.deepEqual(rowsOf(section('vote')), ['mine:proposal:61']);
+  assert.deepEqual(rowsOf(section('live')), ['mine:merged:79']);
+  const work = html.slice(html.indexOf('data-ws-mine=""'), html.indexOf('</section>', html.indexOf('data-ws-mine=""')));
+  assert.deepEqual(rowsOf(work), ['mine:my-session:51']);
+  assert.match(work, /<span class="dev-ws-head-sub">1 open<\/span>/, 'Your work counts its own rows');
+  // The one-line rows of Your work, with the reason first among the tags.
+  assert.match(section('waiting'), /<span class="dev-ws-tag" data-tone="warn">Plan ready: tap Build it<\/span>/);
+  // Going live is listed once: not in What happened while it is going live.
+  const happened = html.slice(html.indexOf('data-ws-happened=""'));
+  assert.ok(!happened.includes('Mine, going live'), 'not in What happened as well');
+  // Carol's change 34 is the fourth waiting on me, behind Show 1 more, and
+  // drawn nowhere else on this tab.
+  assert.equal((html.match(/data-ws-open="proposal:34"/g) || []).length, 0);
+
+  // EMPTY SECTIONS ARE LEFT OUT, and with something elsewhere so is an
+  // empty Your work. With nothing anywhere Your work says so (#2182).
+  AppView._mySessions = [];
+  const noWork = workshopHtml(AppView, 'workshop');
+  assert.ok(!noWork.includes('data-ws-mine=""'), 'an empty Your work is left out beside the other sections');
+  AppView._proposals = AppView._proposals.filter((p) => p.id === 34);
+  AppView._merged = AppView._merged.filter((m) => m.id !== 79);
+  AppView._ghIssuesMeta = null;
+  const none = workshopHtml(AppView, 'workshop');
+  assert.ok(!none.includes('data-ws-mine-section'), 'no section without rows');
+  assert.match(none, /data-ws-part="happening"[^]*?data-ws-mine=""[^]*?data-ws-mine-empty=""/);
+  // The declared check's empty Your work (?shot=mine-empty) empties the
+  // sections too, so the strip stays right under the label.
+  AppView._ghIssuesMeta = { waitingOnYou: { plans: [{ number: 13, at: at(0.1) }], questions: [], talks: [] } };
+  AppView._workshopShot = 'mine-empty';
+  const shot = workshopHtml(AppView, 'workshop');
+  assert.match(shot, /data-ws-part="happening">[^<]*<\/h2><section class="dev-ws-strip" data-ws-mine="">/);
+});
+
+test('#4772: a change of yours needs your fix only when it is yours to fix', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const base = { status: 'promoted', username: 'me', user_id: 1, check_state: 'passing' };
+  assert.equal(AppView._workshopNeedsFix(base), false, 'passing checks wait on the vote');
+  assert.equal(AppView._workshopNeedsFix({ ...base, check_state: 'failing' }), true);
+  assert.equal(AppView._workshopNeedsFix({ ...base, check_state: 'failing', username: 'homeroom_bot' }), false,
+    'a change Homeroom bot built is the bot\'s to fix');
+  assert.equal(AppView._workshopNeedsFix({ ...base, status: 'merging', check_state: 'failing' }), false);
 });
 
 test('#2496: an issue you are working on joins "What you are working on"', () => {
@@ -2583,9 +2691,9 @@ test('#4716: Your work is This week\'s one-line row: the title, its pill and Vot
   const list = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
   assert.match(list, /^<div class="dev-ws-wrow" /);
   assert.ok(list.includes('dev-ws-wrow-tile') && list.includes('<span class="dev-ws-wrow-votes">') && !list.includes('dev-ws-lrow'));
-  // Only Your work passes it.
+  // Only Your work and its sections (#4772, MineSection) pass it.
   assert.match(WORKSHOP, /onOpen=\{openItem\}\s*variant="line"\s*\/>/);
-  assert.equal((WORKSHOP.match(/variant="line"/g) || []).length, 1, 'Your work alone');
+  assert.equal((WORKSHOP.match(/variant="line"/g) || []).length, 2, 'Your work and its sections alone');
   // The first line keeps to one line on a wide card, in This week's weight;
   // a narrow one wraps the title and ends the row with the pill and Vote.
   assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-link \{\s*flex: 1 1 auto; min-width: 0; display: block; font-weight: 400; line-height: 1\.35;\s*white-space: nowrap; overflow: hidden; text-overflow: ellipsis;\s*\}/);
@@ -3524,6 +3632,12 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // silently: open, unclaimed, the votes, then what went live.
   assert.match(lands.expectSelector,
     /\[data-ws-dash-cell="open"\] \+ \[data-ws-dash-cell="unclaimed"\] \+ \[data-ws-dash-cell="votes"\] \+ \[data-ws-dash-cell="shipped"\] > b$/);
+  // #4772: What's happening's sections of your work have their own check:
+  // the ?demo=1 mocks give the viewer a row in each, in order.
+  const sections = byName(/What's happening files your work in sections/);
+  assert.ok(sections && sections.path === '/?demo=1&ws=workshop#app/usernode-2d5619/dev');
+  assert.match(sections.expectSelector, /\[data-ws-mine-section="waiting"\][^]*\[data-ws-mine-section="vote"\][^]*\[data-ws-mine-section="live"\]/);
+  assert.ok(sections.expectSelector.length <= 256);
   // The summary cards ride the ROUTE check rather than a slot of their own:
   // the manifest keeps 20 of its 580 clear and was already at that working
   // ceiling, so a new entry would fail the check-count guard in
