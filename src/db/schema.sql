@@ -9400,6 +9400,33 @@ UPDATE apps
    AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
    AND (main_check_detail -> 'flakesOnly') IS NULL;
 
+-- Every verdict main watch reached on a merge commit (services/main-red-fix.js),
+-- kept even when a newer merge took the app's row before it could be stored
+-- there: a superseded green is still the newest merge known to pass, and is
+-- where a red's suspects are read from. `confirmed` is null for a green.
+CREATE TABLE IF NOT EXISTS main_watch_verdicts (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  sha         VARCHAR(40) NOT NULL,
+  state       VARCHAR(16) NOT NULL,
+  superseded  BOOLEAN NOT NULL DEFAULT FALSE,
+  confirmed   BOOLEAN,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_main_watch_verdicts_app ON main_watch_verdicts(app_id, state, created_at DESC);
+
+-- The requests main watch filed to fix a red main (services/main-red-fix.js),
+-- one per red commit and one open per app at a time. `issue_number` is null
+-- while one is being filed.
+CREATE TABLE IF NOT EXISTS main_red_requests (
+  id            BIGSERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  red_sha       VARCHAR(40) NOT NULL,
+  issue_number  INTEGER,
+  filed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (app_id, red_sha)
+);
+
 -- Tests main-watch saw fail and then pass on the same merge commit
 -- (services/main-watch.js). A red whose failures are all tests seen here in
 -- the last 30 days pauses no merges, and each test gets one request to fix
