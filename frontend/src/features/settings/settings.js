@@ -2320,7 +2320,10 @@
       // override a reader can see, whatever the policy. A daily one changes
       // no figure any more; on the tiered ladder it still lets the account
       // past the identity gate, which is what `tier: 'override'` says there.
-      if (e.weeklySource === 'admin_override' || (e.policy !== 'legacy' && e.tier === 'override')) {
+      // An account the tiered gate still holds back is on the ladder, weekly
+      // figure or not: nothing is granted until it connects.
+      if ((e.weeklySource === 'admin_override' && !e.verificationRequired)
+        || (e.policy !== 'legacy' && e.tier === 'override')) {
         return {
           tone: 'plain',
           done: true,

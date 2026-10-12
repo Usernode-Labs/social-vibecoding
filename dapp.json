@@ -1248,7 +1248,7 @@
       "name": "Identity credits show the actionable zero-credit state before verification (#538)",
       "path": "/?demo=identity-unverified#settings/linked-accounts",
       "expectSelector": "[data-settings-section=\"linked-accounts\"]:not(.hidden) #github-link-body",
-      "expectText": "$0 / day"
+      "expectText": "$0 / week"
     },
     {
       "name": "Legacy GitHub attribution is preserved but asks for one credit-proof reconnect (#538)",

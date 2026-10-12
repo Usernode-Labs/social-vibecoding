@@ -2286,6 +2286,14 @@ test('off the credit ladder the list promises nothing a connection cannot delive
   });
   assert.equal(dailyOnly.amount, '$50 / week');
   assert.match(dailyOnly.note, /do not depend on a connected account/);
+  // A weekly override does not lift the tiered identity gate: until the
+  // account connects it is on the ladder, and the head row says so.
+  const gated = view._socialIdentityTierView({
+    policy: 'tiered', tier: 'unverified', limitCents: 0, verificationRequired: true,
+    weeklyLimitCents: 8000, weeklySource: 'admin_override', entitlementAvailable: true,
+  });
+  assert.equal(gated.title, 'Signed in');
+  assert.equal(gated.amount, '$0 / week');
   // …and an entitlement with no weekly figure shows none, not a daily one.
   assert.equal(view._socialIdentityTierView({
     policy: 'legacy', limitCents: 2500, entitlementAvailable: true,

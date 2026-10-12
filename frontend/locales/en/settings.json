@@ -648,7 +648,7 @@
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
   },
   "grants.useOwnKey": {
-    "text": "Use my own key past the daily budget",
+    "text": "Use my own key past the weekly budget",
     "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
   },
   "grants.revoke": {
