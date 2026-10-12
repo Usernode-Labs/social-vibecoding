@@ -621,7 +621,7 @@
   },
   "firstSession.make.rule.plays": {
     "text": "How it plays out",
-    "description": "Section label over the rows showing what the picked preset means: one row for anyone, or two, for the reader and for someone else."
+    "description": "Section label over the rows showing what the picked preset means: one row for anyone, or two, for the reader and for anyone else."
   },
   "firstSession.make.rule.close": {
     "text": "Close",

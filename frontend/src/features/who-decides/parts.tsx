@@ -23,8 +23,6 @@ export interface Viewer {
   isCreator: boolean;
   /** The creator's username, or null (the platform's own project has none). */
   creator: string | null;
-  /** Someone else in the project, for "How it plays out", or a stand-in. */
-  other: string;
 }
 
 const PRESET_ICONS: Record<PresetKey, ReactNode> = {
@@ -100,10 +98,14 @@ export function PresetTiles({ picked, now, viewer, onPick, labelId }: {
   );
 }
 
+/** The group's tile, beside a row about a change anyone (else) makes. */
+const GROUP_TILE = <IconTile size="xs"><UserGroupIcon aria-hidden="true" /></IconTile>;
+
 /**
- * How a preset plays out. Two yeses, Open floor and Group vote treat every
- * change alike, so one row says it for anyone (#4894); You or the group, and
- * a project's own rules, say it for the person reading and for someone else.
+ * How a preset, or a project's own rules (`preset` null), plays out. Two
+ * yeses, Open floor, Group vote and a project's own rules say it in one row,
+ * for anyone (#4894); You or the group says it for the person reading and
+ * for anyone else.
  */
 export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer: Viewer }) {
   const t = useMessages('dialogs');
@@ -112,7 +114,7 @@ export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer:
     return (
       <GroupedList tone="plane" className="mx-0" data-who-plays="">
         <ListRow
-          leading={<IconTile size="xs"><UserGroupIcon aria-hidden="true" /></IconTile>}
+          leading={GROUP_TILE}
           title={t('dialogs:whoDecides.plays.anyoneTitle')}
           subtitle={lines.anyone}
           chevron={false}
@@ -131,8 +133,8 @@ export function PlaysOut({ preset, viewer }: { preset: PresetKey | null; viewer:
         subtitleClassName="whitespace-normal"
       />
       <ListRow
-        leading={<Face name={viewer.other} />}
-        title={t('dialogs:whoDecides.plays.otherTitle', { name: viewer.other })}
+        leading={GROUP_TILE}
+        title={t('dialogs:whoDecides.plays.anyoneElseTitle')}
         subtitle={lines.other}
         chevron={false}
         subtitleClassName="whitespace-normal"
