@@ -505,6 +505,26 @@ const CHILD_APP_ROLES = Object.freeze({
     + 'app itself is different: when hints.setup says how to get it, do that first.',
 });
 
+// The signed-in browsers are three different accounts, so a step somebody
+// other than a change's persona takes (a reply to the member's message, a
+// vote on their change) can be taken in another persona's browser. The
+// shots of PR 4626's notification for a reply in a topic's thread were
+// skipped because "producing one needs a second account to reply to my
+// message, and I can't sign in as another account" (2026-10-09). On
+// Homeroom's own copies the full admin is a member of Homeroom's own project
+// (shots-fixtures.js installFullAdminFixture). Fixed words only.
+function secondAccountBrief(selfApp) {
+  return {
+    personas: ['member', 'read_only_admin', 'full_admin'],
+    note: 'The member, read_only_admin and full_admin browsers are three different signed-in accounts. When a '
+      + 'change needs somebody other than its persona to act first (a reply to the member\'s message, a vote on '
+      + 'their change, a friend request back), take that step in another of these browsers, the same way on the '
+      + 'before and the after address, then shoot in the browser screenBrowsers names. '
+      + (selfApp ? 'Here, use full_admin when you can: it is a member of Homeroom\'s own project on these copies. ' : '')
+      + 'The guest browser is not signed in, so it cannot be that account.',
+  };
+}
+
 // A project's first version (shots-starter.js): the before address is still
 // the starter template's placeholder, which shows none of the declared
 // changes. Before this, every before shot of such a proposal was that
@@ -560,6 +580,7 @@ function shotsBrief({
       guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
     },
     screenBrowsers: screenBrowsers(intent),
+    secondAccount: secondAccountBrief(selfApp),
     ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
     ...(afterOnly ? { afterOnly: { ...AFTER_ONLY } } : {}),
     changedFiles: {

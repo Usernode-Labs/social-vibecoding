@@ -122,6 +122,12 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The member, read_only_admin and full_admin browsers are three different
+accounts. When a change needs somebody other than its persona to act first,
+such as a reply to the member's message or a vote on their change, take that
+step in another of those browsers as the brief's secondAccount says, on both
+addresses alike, then shoot in the browser screenBrowsers names.
+
 When the brief has afterOnly, the proposal builds the app's first real
 screens and the before address still shows only the starter template's
 placeholder, which has none of the declared changes. Then there is no

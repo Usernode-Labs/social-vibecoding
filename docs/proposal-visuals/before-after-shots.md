@@ -113,27 +113,29 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   (`shots-ready-states.declarationAdvice`). `availableStates` names each
   ready-made state with its personas (the demo states below; none for a
   child app), and `dataNote` says where anything else comes from:
-  `hints.setup` steps the shots agent takes through the UI on both copies,
-  or the staging seeds (`src/db/migrate.js` for Homeroom, the app's own
-  `IS_STAGING` seed for a child app). A seed the proposal itself adds reaches
-  only the after copy, which is the side a state new in the proposal needs,
-  so the answer says to seed such a state in that same proposal; a change to
-  a state that already existed needs it on both copies, so its seed merges
-  first, in its own proposal. A seed is idempotent and obviously fake: rows
-  for the shots' fixture accounts and fake people, never a signal the code
-  reads to decide something, and a model's reply as the stored message. The
-  answer used to send every seed to a change merged first, while from
-  2026-10-09 to 10-12, 22 shot runs failed and 13 more changes were skipped
-  for want of a state, most of them new in their own proposal. AGENTS.md,
-  the declare tool, the Homeroom bot's build lines, the work order and
-  `src/prompts/app-conventions.md` ("Who the before & after shots see") say
-  the same. It also says that a file a step chooses is one of
-  Homeroom's sample files, and that the shots agent can hold or fail one API
-  GET to show a loading or error state (see "Reaching a state the steps
-  cannot"). A warning is added when a declared change's claim,
-  steps or checkpoint name a state that no ready-made state holds (a
-  member's first-session tour, an invited account, the waitlist, an empty
-  state or a new account; on a child app also a change waiting for
+  `hints.setup` steps the shots agent takes through the UI on both copies
+  (in any signed-in persona's browser: each is its own account, so one can
+  reply to or vote on another's), or the staging seeds (`src/db/migrate.js`
+  for Homeroom, the app's own `IS_STAGING` seed for a child app). A seed the
+  proposal itself adds reaches only the after copy, which is the side a
+  state new in the proposal needs, so the answer says to seed such a state
+  in that same proposal; a change to a state that already existed needs it
+  on both copies, so its seed merges first, in its own proposal. A seed is
+  idempotent and obviously fake: rows for the shots' fixture accounts and
+  fake people, never a signal the code reads to decide something, and a
+  model's reply as the stored message. The answer used to send every seed
+  to a change merged first, while from 2026-10-09 to 10-12, 22 shot runs
+  failed and 13 more changes were skipped for want of a state, most of them
+  new in their own proposal. AGENTS.md, the declare tool, the Homeroom bot's
+  build lines, the work order and `src/prompts/app-conventions.md` ("Who the
+  before & after shots see") say the same. It also says that a file a step
+  chooses is one of Homeroom's sample files, and that the shots agent can
+  hold or fail one API GET to show a loading or error state (see "Reaching a
+  state the steps cannot"). A warning is added when a declared change's
+  claim, steps or checkpoint name a state that no ready-made state holds for
+  its persona (a member's first-session tour, an invited account, the
+  waitlist, an empty state or a new account; a nearly spent allowance for
+  anyone but the full admin; on a child app also a change waiting for
   approval and the rest) and the change has no `hints.setup`. These come
   from a short list of phrases (`NEEDS`), so ordinary words like "plan" or
   "invite" alone never warn. The data-state gap was the largest group of
@@ -229,7 +231,29 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      a vote on closing it, with Propose to close and Keep it open, waiting
      for an answer. Its action row is real, so a tap goes the bot's own way,
      but it cannot open the vote: GitHub does not have the mock, and the bot
-     answers that it couldn't propose closing it just now.
+     answers that it couldn't propose closing it just now;
+   - for the member: in the same chat, between the activity cards and the
+     plan, the bot's "needs a person to decide" message on their request on
+     a project somebody else made (a private community of two), naming that
+     maker as the one who decides there, with no Go ahead (#4763);
+   - for the member: a change they voted on that went live, and its read
+     row in their bell, "A change you voted on is live" (#4787), on the All
+     tab, so the bell's count is unchanged;
+   - for every persona: a change Homeroom bot built from the member's
+     request, up for a vote, which wears the Homeroom bot tag in the
+     member's Your work (#4728);
+   - for every persona: a change of the member's up for a vote whose checks
+     are part-way through: preview built, the unit suite finished, 620 of
+     840 declared checks done (#4727);
+   - for the full admin: a weekly building allowance nearly spent ($4.00 of
+     an admin-set $50.00 left), so the credits pill beside Send is red and a
+     new agent conversation shows the low-credits note (#4784). It is the
+     full admin's because the member is shot far more often, and every one
+     of the member's agent conversations would show the red pill.
+
+   States that write as the Homeroom bot never write a bot run: one would
+   put the request in the bot's tray, on every shot of the member's chat
+   with it.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
@@ -257,7 +281,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 
    | Tool | What it does |
    | --- | --- |
-   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
+   | `get_brief` | The declared changes, before/after addresses, which browser to use for whom and for each screen (`screenBrowsers`), that another signed-in browser can be a second account (`secondAccount`), changed files and progress so far; on Homeroom's own copies, how phone sign-in works there (`phoneSignIn`) |
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
@@ -279,7 +303,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    does the same on the
    before address, framed the same way. Data a
    screen needs (`hints.setup`) is created on both addresses before either
-   is shot. For a `motion` change it also records one clip per side.
+   is shot. A step somebody other than the change's persona takes (a reply
+   to the member's message, a vote on their change) is taken in another
+   signed-in persona's browser, as the brief's `secondAccount` says: the
+   three are different accounts, and on Homeroom's own copies the full admin
+   is a member of Homeroom's own project. PR 4626's notification for a reply
+   in a topic's thread was skipped for want of a second account. For a
+   `motion` change it also records one clip per side.
    It calls `browser_close` to end the stills session, resizes again, and
    triggers only the motion. Then it calls `browser_close` again, which writes
    the recording, and `save_clip` publishes it.
