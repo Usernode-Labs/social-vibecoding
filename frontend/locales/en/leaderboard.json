@@ -1111,10 +1111,6 @@
     "text": "Kudos earned on live changes",
     "description": "Tooltip of the kudos count at the right of a person's row in the Kudos tab's \"Top users\" list. \"Changes\" is a noun."
   },
-  "kudos.rankNote": {
-    "text": "Ranks update as people give kudos and changes go live, so yours can move even when you haven’t done anything.",
-    "description": "Small line above the Kudos tab's \"Top users\" list, on both All-time and This week: explains that ranks are recalculated live as other people's changes earn kudos or go live, so a person's rank can change without them doing anything. \"Changes\" is a noun."
-  },
   "kudos.person.back": {
     "text": "← Top users",
     "description": "Link at the top of a person's page on the Kudos tab: returns to the \"Top users\" list. Keep the arrow."
