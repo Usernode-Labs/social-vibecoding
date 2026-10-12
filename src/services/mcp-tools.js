@@ -1442,6 +1442,40 @@ function whyYouCannotPush(branch) {
       + 'your fork alone does not move it';
 }
 
+// The sentence nextStep adds when the before & after shots of this revision
+// skipped a declared change for want of data the proposal itself could seed
+// (shots-state.skippedOnHead: a change new on the after side, skipped for a
+// missing row or fixture, never for a model key, a wallet or the like), or
+// ''. A skip used to reach nobody, and the proposal went to its vote with no
+// pictures of that change (13 skipped changes and 22 runs that reached none,
+// 9 to 12 Oct 2026). The Homeroom bot's own proposals get the same advice in
+// its fix round (homeroom-bot-followup.checksFixPrompt).
+const MAX_SKIPS_NAMED = 3;
+function shotsSkipStep(session, branch) {
+  if (!['promoted', 'active', 'paused'].includes(session.status)) return '';
+  const shots = session.shots && typeof session.shots === 'object' ? session.shots : null;
+  if (!shots || !shots.headSha) return '';
+  const skipped = require('./shots-state').skippedOnHead({
+    shots_state: shots.state,
+    shots_detail: { headSha: shots.headSha, claims: shots.claims, shotResults: shots.shotResults },
+  }, shots.headSha);
+  if (!skipped.length) return '';
+  const named = skipped.slice(0, MAX_SKIPS_NAMED)
+    .map((s) => `${untrusted(s.claim, 200)}, skipped because ${untrusted(s.reason, 400)}`).join('; ');
+  const one = skipped.length === 1;
+  const where = branch.youCanPush
+    ? `${branch.name || 'this proposal\'s branch'} in your own fork`
+    : 'a branch in your OWN fork';
+  return `Before & after shots of this revision could not show ${one ? 'a declared change' : `${skipped.length} declared changes`} `
+    + `because the copies they are taken on lack the data: ${named}. Without them the group votes on `
+    + `${one ? 'it' : 'them'} with no pictures. ${one ? 'It is' : 'Each is'} new in this change, so add a few obviously fake `
+    + 'rows that reach that state to the staging seed in this revision (the app\'s boot-time block gated on '
+    + 'IS_STAGING; for Homeroom itself, src/db/migrate.js), which runs only on the after copy, the side that has the '
+    + 'change; or, if the state can be made through the app, declare the change again with a hints.setup that says '
+    + `how. Then push to ${where} and call submit_work with proposalId ${session.id}, that branch and the `
+    + 'visibleChanges: the shots are taken again on the new commit.';
+}
+
 // Capture routes reported back on a proposal. The capture step caps its own
 // list at CAPTURE_MAX_PATHS; this bounds what a stored row from any era can
 // put in a tool response.
@@ -1456,6 +1490,8 @@ function shapeProposal(session, origin, viewerId = null) {
     ? detail.paths.filter((p) => typeof p === 'string').slice(0, MAX_CAPTURE_PATHS_REPORTED)
     : [];
   const checks = shapeChecks(session);
+  const step = shapeNextStep(session, checks, viewerId);
+  const skipStep = shotsSkipStep(session, shapeBranch(session));
   return {
     proposalId: session.id,
     appSlug: session.app_slug || null,
@@ -1482,7 +1518,7 @@ function shapeProposal(session, origin, viewerId = null) {
     // Where the head lives and who may move it. Everything an agent needs to
     // revise this proposal without guessing.
     branch: shapeBranch(session),
-    nextStep: shapeNextStep(session, checks, viewerId),
+    nextStep: skipStep ? `${step} ${skipStep}` : step,
     // A true value says capture used the app root because neither an explicit
     // route nor a matching named scenario supplied something more specific.
     captureDefaultedToRoot: detail.media !== false

@@ -1081,7 +1081,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
-      // Which declared change failed, and why (shots_change_failed).
+      // Which declared change failed or was skipped, and why
+      // (shots_change_failed, shots_capture_incomplete).
       ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
@@ -1430,10 +1431,14 @@ async function executeRun(config, options, injected = {}) {
         failure.hardVerdict = summary.verdict;
         throw failure;
       }
-      throw new ShotsOrchestrationError(
+      const incomplete = new ShotsOrchestrationError(
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
       );
+      // Each change's own reason is kept too, so whoever can supply the
+      // data it lacked hears which change it was (shots-state.skippedOnHead).
+      incomplete.hardVerdict = summary.verdict;
+      throw incomplete;
     }
     // Where each change's before and after screens differ, so the card can
     // outline it. A screen that cannot be compared is shown without outlines;

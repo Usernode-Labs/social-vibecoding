@@ -293,8 +293,9 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 5. **Shots ready** (`verified`). A run publishes if at least one change is
    ready, so one unreachable change never hides the others. If none is
    ready, the run fails with `shots_capture_incomplete` and each change's
-   reason, or with `shots_change_failed` when a change failed: then it keeps
-   its verdict, so every reader can say which change failed. If the agent
+   reason, or with `shots_change_failed` when a change failed. Either way it
+   keeps its verdict, so every reader can say which change failed or was
+   skipped, and why (see "A skip its author can fix" below). If the agent
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
@@ -789,6 +790,42 @@ round is spent, the card says plainly what does not work ("Flat 4B Chores is
 built, but not everything works yet", "One thing isn’t working yet: …"), and
 nobody else is asked to approve it. Problems the shots agent only noticed
 (`notices`) are not a failing change and never start that round.
+
+A change the shots skipped for want of data the change itself can seed (see
+"A skip its author can fix") goes back to the bot in the same round
+(`checksDue`'s `skipped`), with each reason and the advice to add the data to
+the app's staging seed, and `hints.setup` when that helps. Its push is a
+revision like any other: the votes are cleared and the shots are taken again,
+once, on the new head. A skip is never a reason for a round after a fix round
+has revised the proposal (`fix_revised`), so it never loops. A round that
+adds nothing says nothing (the shots card already gives the reason) and sends
+the ready card that waited on it.
+
+## A skip its author can fix
+
+From 9 to 12 October 2026, of the 166 merged proposals that needed shots, 22
+runs failed because no declared change could be reached, and 13 more changes
+were skipped inside runs that published. Each of those went to its vote
+without pictures of that change, and a skip went nowhere.
+
+Many skips have a known fix: the change is new, so the copies hold none of
+its data, and a staging seed in the proposal (which reaches only the after
+copy, the side that has the change) or a `hints.setup` step would let the
+shots agent reach it. Others do not: no seed gives the copies a model key, a
+wallet, a file to upload, a mailbox, a network to drop or a location.
+`shots-state.skippedOnHead` keeps to the first kind and is narrow on purpose:
+a skipped change qualifies only when it was declared new on the after side
+(`baseState: "not_present"`) and its reason names missing data (no such row,
+no fixture, a project that does not exist there) and none of those causes
+(`seedableSkip`). 11 of those 35 reasons qualify before the `baseState` rule.
+
+Such a skip goes back to whoever can fix it, on that exact head:
+
+- a proposal the Homeroom bot built: its fix round, as above;
+- anyone else's: `get_proposal`'s `nextStep` names each skipped change and
+  its reason, and says to seed the data (or declare `hints.setup`) and submit
+  again, for the author's coding agent. Its `shots.shotResults` now carries
+  each change's reason on a `shots_capture_incomplete` run too.
 
 ## Configuration
 

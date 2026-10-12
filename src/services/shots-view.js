@@ -215,9 +215,11 @@ function serialize(run, session, slug, currentHead) {
       && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
     // A failed run carries them only when a declared change failed
-    // (shots_change_failed), so the change page can say which one.
+    // (shots_change_failed), so the change page can say which one, or when
+    // none could be reached (shots_capture_incomplete), so its author's
+    // agent reads why each was skipped (get_proposal's nextStep).
     shotResults: matchesCurrent && (run.state === 'verified'
-      || (run.state === 'failed' && run.failureCode === 'shots_change_failed'))
+      || (run.state === 'failed' && ['shots_change_failed', 'shots_capture_incomplete'].includes(run.failureCode)))
       ? cleanShotResults(run.shotResults) : [],
     // Only a published run's card shows them.
     shotNotices: matchesCurrent && run.state === 'verified'
