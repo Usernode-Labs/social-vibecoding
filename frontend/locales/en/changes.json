@@ -4988,7 +4988,7 @@
     "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started. {{error}} is the error's own message."
   },
   "issue.autoRun.outOfCredits": {
-    "text": "You're out of today's free AI credits.",
+    "text": "You're out of free AI credits.",
     "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the day's free AI allowance, and no fuller message came back."
   },
   "issue.autoRun.model.free": {

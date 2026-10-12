@@ -156,7 +156,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 //   close_work_order       — puts one of the user's own unsubmitted work
 //                            orders away, so an agent holding it can no
 //                            longer submit it (#4266)
-//   start_platform_build   — spends the user's daily Homeroom credits
+//   start_platform_build   — spends the user's weekly Homeroom credits
 //   submit_platform_build  — puts that build to a group vote
 //   update_proposal_issues — changes which requests an existing proposal
 //                            addresses (and its managed PR closing lines)
@@ -5995,7 +5995,7 @@ function registerTools(server, ctx) {
 
   server.registerTool('start_platform_build', {
     title: 'Have Homeroom build it',
-    description: "Ask Homeroom to build a request using the user's daily Homeroom credits. Call this only after explaining the credit spend and the user explicitly chooses the platform build; never infer consent because the current chat lacks repository tools or GitHub access. Prefer prepare_work when this conversation or the user has a coding agent. Returns a build id to poll with get_platform_build. Nothing is proposed or voted on until submit_platform_build is called.",
+    description: "Ask Homeroom to build a request using the user's weekly Homeroom credits. Call this only after explaining the credit spend and the user explicitly chooses the platform build; never infer consent because the current chat lacks repository tools or GitHub access. Prefer prepare_work when this conversation or the user has a coding agent. Returns a build id to poll with get_platform_build. Nothing is proposed or voted on until submit_platform_build is called.",
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().describe('The request to build, from list_requests.'),

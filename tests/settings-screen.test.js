@@ -2241,10 +2241,11 @@ test('the head row says where the account stands, in words a reader has', () => 
   const view = tierView();
   const locked = view._socialIdentityTierView({
     policy: 'tiered', limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+    weeklyLimitCents: 5000,
   });
   const html2 = socialHtml({ ...socialBase, tier: locked });
   assert.match(html2, />Signed in</);
-  assert.match(html2, />\$0 \/ day</);
+  assert.match(html2, />\$0 \/ week</);
   assert.match(html2, /id="github-link-tier-note"[^>]*>Either one is enough\./,
     'the one sentence the ladder needs sits under the list');
   assert.doesNotMatch(html2, /Layer 1/,
@@ -2257,39 +2258,67 @@ test('off the credit ladder the list promises nothing a connection cannot delive
   const view = tierView();
   // `legacy` is IDENTITY_CREDIT_POLICY's default, so this is the state most
   // deployments are in: a flat allowance that connecting does not change.
+  // #4913: the figure is the weekly allowance. `limitCents` is the daily
+  // value #2571 switched off; printed, it read "$20 / day" beside a $50 week.
   const legacy = view._socialIdentityTierView({
-    policy: 'legacy', limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+    policy: 'legacy', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    verificationRequired: false, entitlementAvailable: true,
   });
   assert.equal(legacy.title, 'Your credits');
-  assert.equal(legacy.amount, '$25 / day');
+  assert.equal(legacy.amount, '$50 / week');
   assert.match(legacy.note, /do not depend on a connected account/);
   const override = view._socialIdentityTierView({
-    policy: 'tiered', tier: 'override', limitCents: 5050, entitlementAvailable: true,
+    policy: 'tiered', tier: 'override', limitCents: 2000, weeklyLimitCents: 5050, entitlementAvailable: true,
   });
-  assert.equal(override.amount, '$50.50 / day', 'a part-dollar amount keeps its cents');
+  assert.equal(override.amount, '$50.50 / week', 'a part-dollar amount keeps its cents');
   assert.match(override.note, /administrator set this amount/i);
+  // An administrator's weekly figure for one account is an override too…
+  const weeklyOverride = view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, weeklyLimitCents: 10000, weeklySource: 'admin_override',
+    entitlementAvailable: true,
+  });
+  assert.equal(weeklyOverride.amount, '$100 / week');
+  assert.match(weeklyOverride.note, /administrator set this amount/i);
+  // A DAILY override changes no figure since #2571, so it claims none.
+  const dailyOnly = view._socialIdentityTierView({
+    policy: 'legacy', tier: 'override', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    entitlementAvailable: true,
+  });
+  assert.equal(dailyOnly.amount, '$50 / week');
+  assert.match(dailyOnly.note, /do not depend on a connected account/);
+  // …and an entitlement with no weekly figure shows none, not a daily one.
+  assert.equal(view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, entitlementAvailable: true,
+  }).amount, null);
   for (const tier of [legacy, override]) {
     assert.doesNotMatch(socialHtml({ ...socialBase, tier }), /Signed in|Either one is enough/);
   }
 
-  const rows = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
   const unlinked = { available: true, linked: false };
-  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy' }, false).amount, null,
-    'no "$10 / day" beside Connect where connecting unlocks no $10');
+  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy', weeklyLimitCents: 5000 }, false).amount, null,
+    'no figure beside Connect where connecting unlocks nothing');
   assert.equal(
-    rows._socialIdentityRowView('github', unlinked, { policy: 'tiered', verificationRequired: true }, false).amount,
-    '$10 / day');
+    rows._socialIdentityRowView('github', unlinked,
+      { policy: 'tiered', verificationRequired: true, weeklyLimitCents: 5000 }, false).amount,
+    '$50 / week');
 });
 
 test('a second proof never reads as a second $10', () => {
   // src/services/limits.js: "provider proofs replace one another; they do
-  // not stack". Two rows each saying "$10 / day" would say the opposite.
-  const rows = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
-  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false };
+  // not stack". Two rows each carrying the figure would say the opposite.
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
+  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false, weeklyLimitCents: 5000 };
   const github = { available: true, linked: true, handle: 'octo' };
   const x = { available: true, linked: true, handle: 'octo' };
   const both = { github, x };
-  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$10 / day');
+  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$50 / week');
   const second = rows._socialIdentityRowView('x', x, tiered, false, both);
   assert.equal(second.amount, null);
   assert.equal(second.state.text, 'No extra credits');
@@ -2302,7 +2331,7 @@ test('an unverifiable entitlement is the one head row that reads as a fault', ()
   const down = tierView()._socialIdentityTierView({ entitlementAvailable: false });
   assert.equal(down.amount, null, 'no figure is shown when none could be checked');
   const html2 = socialHtml({ ...socialBase, tier: down });
-  assert.match(html2, /text-amber-800[^"]*"[^>]*>Daily credits unavailable</);
+  assert.match(html2, /text-amber-800[^"]*"[^>]*>Weekly credits unavailable</);
   assert.match(html2, /Your own API key still works/);
 });
 
@@ -2312,7 +2341,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
     name: 'GitHub',
     heading: 'GitHub',
     state: { tone: 'muted', text: '' },
-    amount: '$10 / day',
+    amount: '$50 / week',
     done: false,
     linkedAt: null,
     noToken: null,
@@ -2336,7 +2365,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
   // affordance are inside it, and nothing interactive is nested in it.
   const anchor = live.slice(live.indexOf('<a '), live.indexOf('</a>'));
   assert.match(anchor, />GitHub</);
-  assert.match(anchor, />\$10 \/ day</);
+  assert.match(anchor, />\$50 \/ week</);
   assert.match(anchor, /<span[^>]*>Connect<\/span>/, 'an affordance, not a nested control');
   assert.doesNotMatch(anchor.slice(3), /<button|<a /);
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled

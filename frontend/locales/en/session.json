@@ -392,7 +392,7 @@
     "description": "Name of one place a change can be built: Homeroom's own servers, using the Claude AI model. Homeroom and Claude are product names; keep the middle dot."
   },
   "venue.usernodeClaude.blurb": {
-    "text": "Homeroom runs the turns right here, on your daily Claude credits, or your own Anthropic key once they run out.",
+    "text": "Homeroom runs the turns right here, on your weekly Claude credits, or your own Anthropic key once they run out.",
     "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. A turn is one request to the coding agent and its reply. Claude and Anthropic are names; a key is an API key."
   },
   "venue.usernodeClaude.cta": {
@@ -548,7 +548,7 @@
     "description": "Row in the \"Where do you want to work on this?\" sheet: build the change on Homeroom itself, inside this chat."
   },
   "venue.choice.onPlatform.blurb": {
-    "text": "Homeroom runs the turns right here, in this chat, on your daily AI credits or your own key once they run out.",
+    "text": "Homeroom runs the turns right here, in this chat, on your weekly AI credits or your own key once they run out.",
     "description": "Tooltip on the \"On-Platform\" row of the sheet that chooses where to build a change. A turn is one request to the coding agent and its reply; a key is an API key."
   },
   "venue.choice.webAgent.label": {
