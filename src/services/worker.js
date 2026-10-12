@@ -4622,7 +4622,7 @@ function parsePartialCommit(stdout) {
  * nothing is journaled and the active-turn record is untouched.
  */
 async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bot: work so far' } = {}) {
-  if (!branchName || !branchNames.isValidBranchName(branchName)) return { pushed: false, reason: 'no valid branch' };
+  if (!branchName) return { pushed: false, reason: 'no branch' };
   const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
   let committed;
   try {

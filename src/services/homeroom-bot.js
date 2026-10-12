@@ -7986,25 +7986,29 @@ async function buildLive({
       // A first version's build turn that does not finish keeps its work.
       ...(firstVersion ? { keepPartial: true } : {}),
     };
-    built = await live.buildAndPropose(buildArgs);
     // A first version that did not finish is tried once more on its own,
     // from the plan it wrote and its creator approved: no new read, plan
     // card, Build it or spec turn. Once per first version.
-    if (firstVersion && autoRetryable(built)
-        && await claimAutoRetry(pool, { runId, appId: app.id, issueNumber, built })) {
-      const first = built;
+    let first = null;
+    for (;;) {
+      built = await live.buildAndPropose(first ? {
+        ...buildArgs, presetSpec: first.specMd, onSpec: null,
+        // Its first look was drawn by the first try.
+        onFirstLook: null,
+      } : buildArgs);
+      if (first) {
+        built.retried = { error: first.error, sessionId: first.sessionId || null };
+        if (Number(first.costUsd) > 0) built.costUsd = (Number(built.costUsd) || 0) + Number(first.costUsd);
+        break;
+      }
+      if (!firstVersion || !autoRetryable(built)
+          || !await claimAutoRetry(pool, { runId, appId: app.id, issueNumber, built })) break;
+      first = built;
       log.warn('homeroom-bot', 'A first version did not finish; trying once more from its plan', {
         app: app.slug, issueNumber, runId, sessionId: first.sessionId || null, error: first.error,
       });
       await say('spec', live.retryCommentText(), { dm: { building: true, retry: true } })
         .catch((err) => log.warn('homeroom-bot', 'Could not say the first version is tried once more', { runId, err: err.message }));
-      built = await live.buildAndPropose({
-        ...buildArgs, presetSpec: first.specMd, onSpec: null,
-        // Its first look was drawn by the first try.
-        onFirstLook: null,
-      });
-      built.retried = { error: first.error, sessionId: first.sessionId || null };
-      if (Number(first.costUsd) > 0) built.costUsd = (Number(built.costUsd) || 0) + Number(first.costUsd);
     }
     buildMs = Date.now() - buildStartedMs;
   } finally {

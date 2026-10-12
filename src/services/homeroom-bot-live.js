@@ -3131,7 +3131,7 @@ async function buildAndPropose({
   // The build turn, and its nudge, are over: so is Live.
   endLive();
 
-  let result = (routed && routed.result) || {};
+  const result = (routed && routed.result) || {};
   // A turn that ran past its clock or failed, and why, with what it was last
   // doing and its final message (failureDetail), so the run says more than
   // "exited with code 1". A failed turn is a failed build, whatever it left
@@ -3156,7 +3156,7 @@ async function buildAndPropose({
     const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
     if (kept?.pushed && Number(kept.commits) > 0) {
       partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
-      result = { ...result, pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null };
+      Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
       // A stop aimed at the build would skip the review's fix turns.
       worker.clearPendingStop?.(session.id);
       log.warn('homeroom-bot', 'A first version\'s build turn did not finish; reviewing the work it pushed', {
