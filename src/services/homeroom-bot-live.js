@@ -2232,6 +2232,40 @@ function readSpecText(text) {
     : { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
+/**
+ * The bot's clock stopping its turn on `sessionId`. Why is saved on the
+ * turn's record first (BOT_STOP_KEY, turn-lifecycle stampTurn), then the turn
+ * is stopped. The journal of a stopped turn ends `__USERNODE_EXIT__ 143`,
+ * which says nothing of who stopped it: a restart between the stop and the
+ * build recording it left the next server reading the 143 as the agent's
+ * own failure ("the agent exited with code 143 (finished after a
+ * restart)"). Restart recovery reads the saved stop instead (botStopOf) and
+ * records the turn as the time-out it was. Never throws: the stop goes
+ * ahead whether or not the note could be saved.
+ */
+const BOT_STOP_KEY = 'botStop';
+
+async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
+  try {
+    const turnLifecycle = require('./turn-lifecycle');
+    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn && turn.turnId) {
+      await turnLifecycle.stampTurn(pool, {
+        sessionId, turnId: turn.turnId, key: BOT_STOP_KEY, value: { why, at: new Date().toISOString() },
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not save why the bot stopped its turn', { sessionId, err: err.message });
+  }
+  return worker.stopTurn(sessionId);
+}
+
+/** The bot's own stop saved on a turn record (stopOnClock), or null. Pure. */
+function botStopOf(activeTurn) {
+  const stop = activeTurn && typeof activeTurn === 'object' ? activeTurn[BOT_STOP_KEY] : null;
+  return stop && typeof stop === 'object' && stop.why ? stop : null;
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2253,7 +2287,7 @@ async function draftSpec({
   let stopping = null;
   const timer = setTimeout(() => {
     stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    stopping = stopOnClock(pool, worker, session.id).catch(() => {});
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
@@ -2586,7 +2620,7 @@ function buildTurnRunner({
     let stopping = null;
     const timer = setTimeout(() => {
       turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+      stopping = stopOnClock(pool, worker, session.id).catch(() => {});
     }, budgetMs);
     if (typeof timer.unref === 'function') timer.unref();
     activeWorkers.add(session.id);
@@ -3293,6 +3327,9 @@ async function reviewLanded({
 }
 
 module.exports = {
+  BOT_STOP_KEY,
+  stopOnClock,
+  botStopOf,
   waitOutShotsRun,
   askerOf,
   creditedDescription,
@@ -3351,6 +3388,8 @@ module.exports = {
   REQUEST_IS_DATA_LINES,
   requestRulesLines,
   teeProgress,
+  lastActivity,
+  utcClock,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,

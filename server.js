@@ -4564,12 +4564,24 @@ async function resumeDetachedTurnInner({
   const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
   let botTimedOut = false;
   let botClock = null;
+  // The bot's clock's deadline, for a recovered build that changed nothing:
+  // it is nudged on what is left of it, as the live path nudges one.
+  let botDeadline = null;
   if (botTurn || benchTurn || botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
-    const deadline = await (benchTurn
+    let deadline = await (benchTurn
       ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
       : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
+    botDeadline = deadline;
+    // The bot's clock had already stopped this turn before the restart, and
+    // saved why on its record (homeroom-bot-live.js stopOnClock). Its journal
+    // ends in the 143 the stop left, which read alone is the agent's own
+    // failure: it is the time-out it was, whatever this clock has left.
+    if (botTurn && require('./src/services/homeroom-bot-live').botStopOf(activeTurn)) {
+      botTimedOut = true;
+      deadline = Date.now();
+    }
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
@@ -4838,6 +4850,16 @@ async function resumeDetachedTurnInner({
     throw err;
   }
 
+  // A build whose commit the restart kept from being pushed (its worker's
+  // push landed while this platform was down) is pushed now, from the
+  // worker, as a person's recovered turn is below: what the bot or the lane
+  // reads next is the turn as the live path would have had it.
+  if (benchTurn || botTurn) {
+    result = await homeroomBotRecovery().repushRecovered({
+      session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || (benchTurn && !!handle.stopped),
+    });
+  }
+
   // #3401: the journal is followed and the attempt settled; the rest is the
   // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
   // turn must not get. The bot records the result on its run, then the
@@ -4864,7 +4886,7 @@ async function resumeDetachedTurnInner({
 
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, deadlineMs: botDeadline,
     });
     const botCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(
