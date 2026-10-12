@@ -12,6 +12,11 @@
 //     the last one waiting in are read; everyone touched hears it.
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
+//   - #4778: a decided change's asks (the vote nudge, the re-confirm ask, a
+//     going-quiet warning, a digest of one) read as read off the change's
+//     status even when settleDecidedChange never ran; its "ready to try"
+//     row still waits for the settle; a change still up for approval asks
+//     as before.
 //   - homeroom-bot-chat record() pushes the maker's row again once the first
 //     message is filed, and the rest of a small group's discussion rows
 //     about a message once it is filed (Mo's, the same day).
@@ -142,6 +147,68 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     pushed.length = 0;
     assert.deepEqual(await notifications.settleDecidedChange(pool, first), []);
     assert.deepEqual(changedFor(), []);
+  });
+
+  // #4778: settleDecidedChange runs best-effort at every call site, so the
+  // bell also reads a decided change's asks as read off the change's status.
+  // Seeded WITHOUT calling it, the way a missed settle leaves the rows.
+  const seedAsks = async (who, sessionId) => {
+    const ids = [
+      await notify(who.id, 'pr_proposed', { sessionId }),
+      await notify(who.id, 'revision_recheck', { sessionId, detail: '1' }),
+      await notify(who.id, 'stale_pr', { sessionId }),
+      await notify(who.id, 'vote_digest', { sessionId, detail: '1', ago: '20 minutes', source: null }),
+    ];
+    const ready = await notify(who.id, 'change_ready', { sessionId, detail: 'epoch:1' });
+    return { ids, ready };
+  };
+  const exact = async (userId, id) => notifications.serialize(await notifications.getForUser(pool, userId, id));
+
+  await t.test('a decided change\'s asks read as read without the settle (#4778)', async () => {
+    const sam = await user('sam');
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, sam.id]);
+    const decided = await change('Show book covers on the shelf');
+    const { ids, ready } = await seedAsks(sam, decided);
+    assert.equal(await notifications.countUnread(pool, sam.id), 5, 'all five asks count');
+
+    // The change merges; the best-effort settle never runs.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [decided]);
+
+    for (const id of ids) {
+      assert.notEqual((await listed(sam.id, id)).readAt, null, `${(await row(id)).kind} reads as read in the list`);
+      assert.notEqual((await exact(sam.id, id)).readAt, null, 'the exact lookup reads the same');
+    }
+    assert.ok((await notifications.hydrateNotification(pool, ids[0])).notification.readAt,
+      'the live push read serializes a truthy readAt');
+    assert.equal(await notifications.countUnread(pool, sam.id), 1, 'only the ready row still counts');
+    assert.equal((await listed(sam.id, ready)).readAt, null,
+      'the ready row stays with settleDecidedChange: the Live news for whoever never voted');
+    const { rows: stored } = await pool.query(
+      'SELECT read_at FROM notifications WHERE id = ANY($1::int[])', [ids],
+    );
+    assert.ok(stored.every((r) => r.read_at === null), 'nothing was written: the stored state is untouched');
+  });
+
+  await t.test('a closed change\'s asks read as read without the settle too', async () => {
+    const tessa = await user('tessa');
+    const closed = await change('Keep a reading list per shelf');
+    const { ids, ready } = await seedAsks(tessa, closed);
+    await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [closed]);
+    for (const id of ids) {
+      assert.notEqual((await listed(tessa.id, id)).readAt, null);
+    }
+    assert.equal((await listed(tessa.id, ready)).readAt, null);
+    assert.equal(await notifications.countUnread(pool, tessa.id), 1);
+  });
+
+  await t.test('a change still up for approval asks as before (control)', async () => {
+    const uma = await user('uma');
+    const open = await change('Sort the reading list by date added');
+    const { ids, ready } = await seedAsks(uma, open);
+    for (const id of [...ids, ready]) {
+      assert.equal((await listed(uma.id, id)).readAt, null);
+    }
+    assert.equal(await notifications.countUnread(pool, uma.id), 5, 'all five still count');
   });
 
   await t.test('a read "ready to try" comes back unread as the news, once, for whoever never voted on it (#4787: a voter now hears the merge itself)', async () => {
