@@ -439,7 +439,15 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
 function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
   const t = useMessages('leaderboard');
   return (
-    <div className="space-y-2">
+    <>
+      {/* The rank note only makes sense above rows: empty, loading and error
+          states explain themselves, and #4786 asked for it over the ranked
+          list exactly. The row-detail size, not the HINT block, so it reads
+          as a footnote to the list rather than an empty state. */}
+      <p data-lb-rank-note="" className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+        {t('leaderboard:kudos.rankNote')}
+      </p>
+      <div className="space-y-2">
       {rows.map((row) => (
         <button
           key={row.key}
@@ -476,7 +484,8 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           </div>
         </button>
       ))}
-    </div>
+      </div>
+    </>
   );
 }
 
