@@ -116,7 +116,7 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     assert.deepEqual((await rowsOf(id)).map((r) => r.runner_id), after.map((r) => r.runner_id), 'nothing it wrote landed');
   });
 
-  await t.test('a driver whose lease went to another writes nothing more and claims nothing more', async () => {
+  await t.test('a driver whose lease went to another records the app it finished, and claims nothing more', async () => {
     const id = await campaign();
     model.calls = 0;
     model.gate = gate();
@@ -130,10 +130,33 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     answered.open();
     assert.deepEqual(await stale, { ran: true, paused: 'lease_lost' });
     const after = await rowsOf(id);
-    assert.deepEqual(after.find((r) => r.slug === held.slug), held, 'its answer for the app it held did not land');
+    // Its row was still its claim (nobody reset it), so the app's result is
+    // recorded: the next driver does not run it again.
+    assert.deepEqual(after.find((r) => r.slug === held.slug), { ...held, state: 'skipped' }, 'the app it finished is recorded');
     assert.ok(after.filter((r) => r.slug !== held.slug).every((r) => r.state === 'pending'), 'and it claimed no other app');
     assert.equal((await leaseOf(id)).runner_id, 'another');
     assert.equal(model.calls, 1, 'no model call after it lost the lease');
+  });
+
+  await t.test('a lease that lapsed with nobody taking over does not lose an app\'s result', async () => {
+    // Its renewals stalled while the app ran (a PR being opened, say): the
+    // result is the record that the work is done, so it must land, or the
+    // next driver runs the app again and opens a second PR.
+    const id = await campaign();
+    model.calls = 0;
+    model.gate = gate();
+    const driver = fleet.runCampaign({}, pool, id);
+    await until(() => model.calls > 0, 'the driver to be working on its first app');
+    const runner = (await leaseOf(id)).runner_id;
+    await pool.query(`UPDATE maintenance_campaigns SET lease_until = NOW() - INTERVAL '1 second' WHERE id = $1`, [id]);
+    const answered = model.gate;
+    model.gate = null;
+    answered.open();
+    assert.deepEqual(await driver, { ran: true }, 'still its campaign: it renews and goes on');
+    const after = await rowsOf(id);
+    assert.deepEqual(after.map((r) => r.state), ['skipped', 'skipped']);
+    assert.ok(after.every((r) => r.runner_id === runner));
+    assert.equal((await leaseOf(id)).status, 'done');
   });
 
   await t.test('a campaign is done only when no app is pending or still running', async () => {
