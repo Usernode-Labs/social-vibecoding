@@ -2041,6 +2041,19 @@ test('the trace keeps whether a hosted app\'s page load carried the persona iden
   assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
 });
 
+test('the trace keeps that a page load was sent on to its address with the display token, and nothing else of it', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head',
+    identityAttached: false, identityRedirect: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityRedirect: '/?token=x' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityRedirect: true });
+  const [sent, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(sent.identityRedirect, true);
+  assert.equal(sent.identityAttached, false);
+  assert.equal(junk.identityRedirect, undefined, 'only true is kept, never the address');
+  assert.equal(other.identityRedirect, undefined, 'and only a page load carries it');
+});
+
 test('the trace counts the shots proxy\'s refusals of a destination by reason only', () => {
   const metrics = orchestrator.newRunMetrics();
   for (const blockReason of ['private_address', 'port', 'dns']) {
