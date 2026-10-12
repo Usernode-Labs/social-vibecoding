@@ -500,3 +500,77 @@ test('a red-checks hand-off with nothing failing in the shots does not send a re
   await run(t, h);
   assert.deepEqual(told, []);
 });
+
+// ── A declared change its shots skipped for want of data it can seed ────
+//
+// Proposal 7818 (11 Oct 2026): the bot built an advisory line for the vote
+// picker, every check passed, and the shots agent skipped the change because
+// the copies had no change where the member's vote is advisory. The group
+// voted without pictures of it. Now the same round adds that data to the
+// change's staging seed, and the shots are taken again on the new head
+// (tests/shots-skipped-change.test.js has the rest).
+
+const SKIP_REASON = 'The after copy has no \'[Mock] Advisory vote\' row, so the advisory state could not be reached.';
+
+function skippedRow(extra = {}) {
+  return checksRow({
+    check_state: 'passing',
+    test_results: [{ name: 'votes', path: '/', status: 'pass' }],
+    shots_state: 'failed',
+    shots_detail: {
+      headSha: HEAD,
+      claims: [{ id: 'advisory-vote-picker', claim: 'The vote picker says a non-approver\'s vote is advisory.', steps: ['Open the change', 'Press Vote'], baseState: 'not_present' }],
+      shotResults: [{ id: 'advisory-vote-picker', status: 'skipped', reason: SKIP_REASON }],
+    },
+    ...extra,
+  });
+}
+
+test('a skip the change can seed: one build turn adds the data, said as what the shots need', async (t) => {
+  const h = harness({
+    row: skippedRow(),
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Seeded it.","summary":"The staging seed adds a change where the member\'s vote is advisory."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  const { prompt, commitMsg } = h.calls.exec[0].opts;
+  assert.match(prompt, /could not show one of the changes you declared/);
+  assert.match(prompt, /Why it was skipped: The after copy has no '\[Mock\] Advisory vote' row/);
+  assert.match(prompt, /gated on IS_STAGING/);
+  assert.match(commitMsg, /seed what the before and after shots of #50 need/);
+  assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again on the new head');
+  assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
+  assert.match(h.calls.onProposal[0].text, /^Homeroom bot added what this change's before and after shots need: The staging seed adds/);
+  assert.match(h.calls.onProposal[0].text, /the shots are taken again on the new version/);
+  // Its new head's shots are taken again once; a skip there starts no second round.
+  assert.match(read('src/services/homeroom-bot.js'),
+    /WHERE r\.proposal_session_id = cs\.id\n\s+AND r\.verdict = 'revise' AND r\.checks_head_sha IS NOT NULL\n\s+\) AS fix_revised/);
+  const again = harness({ row: skippedRow({ fix_revised: true }) });
+  assert.deepEqual(await run(t, again), { ran: false, reason: 'no_new_replies' });
+});
+
+test('a skip it adds no data for says nothing, marks the head, and sends the card that waited', async (t) => {
+  for (const opts of [
+    { result: { lastResultText: '```json\n{"action":"person","reply":"It needs a reply from a model, which no seed gives."}\n```', pushOk: true, sha: HEAD } },
+    { revisions: followup.MAX_REVISIONS },
+  ]) {
+    const told = [];
+    const h = harness({ row: skippedRow(), ...opts });
+    h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+    const out = await run(t, h);
+    assert.equal(out.acted, 'checks_shots_left');
+    assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0, 'the shots card already gives the reason');
+    assert.equal(h.calls.reconciled.length, 0);
+    assert.equal(insertOf(h).params[21], HEAD, 'never asked again for the same head');
+    assert.deepEqual(told, [5001]);
+  }
+});
+
+test('a skip no seed can fix is not a reason to look again', async (t) => {
+  const row = skippedRow();
+  row.shots_detail.shotResults[0].reason = 'These copies have no model key, so the bot never answered.';
+  const h = harness({ row });
+  const out = await run(t, h);
+  assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
+  assert.equal(h.calls.exec.length, 0);
+});

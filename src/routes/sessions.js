@@ -1945,21 +1945,11 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   );
   if (!ownRows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
 
-  const { rows: globalRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM chat_sessions
-      WHERE status IN ('active', 'promoted')
-        AND source IS DISTINCT FROM 'imported'`
-  );
-  if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-    // At the global cap: reclaim a slot from a globally idle session
-    // (not this one) rather than blocking the reopen. Only 429 if
-    // everything else is genuinely active.
-    const { freed } = await sessionLifecycle.freeGlobalSlot({
-      pool, graceMs: config.sessionPressureGraceMs, excludeSessionId: sessionId,
-    });
-    if (!freed) {
-      return { ok: false, status: 429, error: 'Platform is at capacity right now. Try again in a few minutes.' };
-    }
+  // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+  // session elsewhere is paused to make room, or this is refused and
+  // the refusal recorded.
+  if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'resume', userId: user.id, excludeSessionId: sessionId })).ok) {
+    return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
   }
 
   // Per-user cap counts only 'active' sessions (#193) — promoted ones
@@ -1978,6 +1968,7 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   );
   if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
     if (!config.sessionLruOnResume) {
+      sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
       return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
     }
     // LRU: pause the user's least-recently-active 'active' session
@@ -1986,7 +1977,10 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     const { freed } = await sessionLifecycle.freeUserSlot({
       pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
     });
-    if (!freed) return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    if (!freed) {
+      sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
+      return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    }
   }
 
   const { rows } = await pool.query(
@@ -3010,7 +3004,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // everything and opening it resumes it, so nobody is asked to manage it.
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'start', userId: req.user.id });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
 
       // A browser that offers the coding-agent picker sends `backend`
@@ -3048,25 +3045,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
       // Homeroom worker, so they do not spend this budget.
-      // Synthetic users' sessions (the Homeroom bot's proposals) do: each
-      // holds a preview pod like anyone's, and the cap is sized from the pod
-      // slots the cluster has, so every count of it includes them.
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        // At the global cap: try to reclaim a slot from a globally idle
-        // session (idle past the pressure grace window, not mid-turn)
-        // instead of making this user wait for the slow 2h auto-pause.
-        // Only 429 if everything is genuinely active.
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'start', userId: req.user.id })).ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       // #287: an optional issue number links this dev chat back to the
@@ -3277,18 +3260,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // cap (they're shared, unattended work — see the cap query in POST
       // /sessions), but they consume a real worker slot, so the global cap
       // still applies.
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'issue_headless', userId: req.user.id })).ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       const selectedModel = models.resolve(req.body && req.body.model);
@@ -3447,7 +3423,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'clone_headless', userId: req.user.id });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
 
       // Resolve (and, for a first-time eligible user, provision) the coding
@@ -3463,18 +3442,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         throw err;
       }
 
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
+      // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
+      // session elsewhere is paused to make room, or this is refused and
+      // the refusal recorded.
+      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'clone_headless', userId: req.user.id })).ok) {
+        return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
       // Fork the new branch off the auto session's branch so any commit it

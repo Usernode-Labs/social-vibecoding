@@ -6258,6 +6258,10 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //     is due the same turn (followup.brokenClaims): every settled shots run
 //     reaches homeroom-bot-dm.noteShotsSettled, whose noteChangeReady calls
 //     noteProposalChecks before it would offer the change as ready to try.
+//     So is one they skipped for want of data the change can seed
+//     (followup.skippedClaims); its revision is a new head, whose shots are
+//     taken again once. A skip is never a reason for a round once a fix
+//     round has revised the proposal (`fix_revised`), so it never loops.
 
 const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_state, cs.checks_commit_sha,
             cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, a.slug, a.name, a.repo_url,
@@ -6265,7 +6269,12 @@ const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_stat
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
                  AND r.checks_head_sha = LOWER(cs.reviewed_head_sha)
-            ) AS looked
+            ) AS looked,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+               WHERE r.proposal_session_id = cs.id
+                 AND r.verdict = 'revise' AND r.checks_head_sha IS NOT NULL
+            ) AS fix_revised
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
        JOIN users u ON u.id = cs.user_id
@@ -6294,8 +6303,9 @@ async function checksToFix(pool, sessionId) {
 
 /**
  * A check verdict settled 'failing' on proposal `sessionId` (visuals.js),
- * or its before & after shots showed a declared change failing while its
- * checks passed (homeroom-bot-dm.noteChangeReady). When it is the bot's own
+ * or its before & after shots showed a declared change failing, or skipped
+ * one for want of data the change can seed, while its checks passed
+ * (homeroom-bot-dm.noteChangeReady). When it is the bot's own
  * open proposal, on an app it is live on, and a fix is due on its current
  * head, its issue is queued for a checks follow-up and the loop woken. A
  * run that looks like the platform's fault (followup.checksLookLikeInfra)
@@ -6334,9 +6344,11 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
     );
     log.info('homeroom-bot', due.failing.length
       ? 'Its proposal\'s checks failed; queued to fix them'
-      : 'Part of its proposal failed when Homeroom tried it; queued to fix it', {
+      : due.broken?.length
+        ? 'Part of its proposal failed when Homeroom tried it; queued to fix it'
+        : 'Its proposal\'s shots could not reach a change for want of data; queued to add it', {
       app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
-      broken: due.broken?.length || 0,
+      broken: due.broken?.length || 0, skipped: due.skipped?.length || 0,
     });
     noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
     return true;
@@ -6368,6 +6380,9 @@ async function runChecksFix(pool, config, {
   const { head, failing, total } = checks;
   // The declared changes its shots show failing on this head, if any.
   const broken = Array.isArray(checks.broken) ? checks.broken : [];
+  // And those they skipped for want of data the change can seed itself.
+  const skipped = Array.isArray(checks.skipped) ? checks.skipped : [];
+  const onlyShots = followup.onlyShotsDue(checks);
   // The run keeps what the bot has seen of the issue: nobody said anything,
   // so the last run's mark stands (without one the next refresh would read
   // the whole thread as new).
@@ -6399,6 +6414,18 @@ async function runChecksFix(pool, config, {
     });
     await recordSnapshot(runId);
     await dropRow();
+    // Only shots that could not reach a change, and no data was added: the
+    // change works, and its shots card already says why each was skipped, so
+    // nobody is told anything more. The head is looked at, so this is not
+    // asked again; the ready card that waited on this round goes out now.
+    if (onlyShots) {
+      log.info('homeroom-bot', 'Its proposal\'s shots could not reach a change, and it added no data for them', {
+        app: app.slug, issueNumber, sessionId: session.id, head, why, skipped: skipped.length,
+      });
+      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
+        .catch(() => {});
+      return { ran: true, verdict, runId, acted: 'checks_shots_left' };
+    }
     if (notChange) {
       // Not the change's doing: the platform's to look at. Admins are told
       // (the Unexpected events list and its digest), the group voting on the
@@ -6477,7 +6504,7 @@ async function runChecksFix(pool, config, {
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
     const prompt = followup.checksFixPrompt({
-      seed, proposalBlock, prNumber, failing, total, broken, locale: requester?.locale || null,
+      seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
     });
     snapshot = {
       stage: 'checks_fix', appId: app.id, issueNumber,
@@ -6486,6 +6513,7 @@ async function runChecksFix(pool, config, {
         seed, prompt, proposal_block: proposalBlock,
         failing: JSON.stringify(failing),
         ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
+        ...(skipped.length ? { skipped: JSON.stringify(skipped) } : {}),
         thread: snapshots.frozenThread({
           issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
         }),
@@ -6497,13 +6525,16 @@ async function runChecksFix(pool, config, {
       pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
       commitMsg: failing.length
         ? `Homeroom bot: fix the failing checks on #${issueNumber}`
-        : `Homeroom bot: fix what did not work on #${issueNumber}`,
+        : broken.length
+          ? `Homeroom bot: fix what did not work on #${issueNumber}`
+          : `Homeroom bot: seed what the before and after shots of #${issueNumber} need`,
       turnMark: followUpMark({
         kind: 'checks_fix', app, item, runMode, model, startedMs, seedReadAt, session, threadSeenAt,
         extra: {
           checks: {
             head, total, failing: failing.length,
             broken: broken.slice(0, 5).map((b) => ({ claim: clip(String(b?.claim || ''), 300) })),
+            ...(skipped.length ? { skipped: skipped.slice(0, 5).map((s) => ({ claim: clip(String(s?.claim || ''), 300) })) } : {}),
           },
         },
       }),
@@ -6542,7 +6573,9 @@ async function runChecksFix(pool, config, {
     // #4533: after a restart, the person's recovery tail has already done
     // this for the new head (server.js finalizeRecoveredTurn).
     if (!recovered) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
-    const summary = parsed?.summary || parsed?.reply || 'It updated the change so its checks pass.';
+    const summary = parsed?.summary || parsed?.reply || (onlyShots
+      ? 'It added the data the before and after shots need.'
+      : 'It updated the change so its checks pass.');
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -6563,10 +6596,11 @@ async function runChecksFix(pool, config, {
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
       text: followup.checksRevisedText({
         summary, reply: parsed?.reply, prNumber, link, broken: broken.length > 0, failing: failing.length > 0,
+        skipped: skipped.length > 0,
       }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks revision post failed', { app: app.slug, issueNumber, err: err.message }));
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
-      app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, costUsd, runId,
+      app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, skipped: skipped.length, costUsd, runId,
     });
     return { ran: true, verdict: 'revise', runId, acted: 'checks_revise' };
   }
@@ -6590,7 +6624,7 @@ async function runChecksFix(pool, config, {
     await dropRow();
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_retry', bot, sessionId: session.id,
-      text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0 }),
+      text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0 }),
     }).catch((err) => log.warn('homeroom-bot', 'Checks retry post failed', { app: app.slug, issueNumber, err: err.message }));
     log.warn('homeroom-bot', 'Fix of its proposal\'s checks ran out of time; trying once more', {
       app: app.slug, issueNumber, sessionId: session.id, head, runId,
@@ -6790,6 +6824,7 @@ async function finishRecoveredFollowUp({
             // How many failed is all that is said again; the turn read why.
             failing: Array.from({ length: Math.max(0, Number(c.failing) || 0) }, () => ({})),
             broken: Array.isArray(c.broken) ? c.broken : [],
+            skipped: Array.isArray(c.skipped) ? c.skipped : [],
           },
           canRevise: true, mode: recovered.mode, lastRun: null, seedReadAt: mark.seedReadAt || null,
           comments: [], issueThread: null, proposalThread: null, botLogin: await live.botUsernameOf(github),

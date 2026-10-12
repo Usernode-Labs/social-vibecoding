@@ -150,6 +150,7 @@ async function checkActiveCap(pool, config, user) {
       log.warn('connector-limits', 'Could not free a session slot', { userId: user.id, err: err.message });
     }
     if (!freed) {
+      lifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'connector', userId: user.id });
       return limitError(
         'at_capacity',
         `${lifecycle.USER_SLOTS_BUSY} Or submit this work for review instead of sharing it as in-progress.`

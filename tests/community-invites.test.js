@@ -212,7 +212,7 @@ test('the shell: signed out it is the landing, remembered for after sign-in; sig
   assert.match(waiting, /fetch\('\/api\/invite-links\/queued'/);
 });
 
-test('the words: the landing card, the invite pane', () => {
+test('the words: the landing card, the invite pane', async () => {
   const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
   assert.equal(card.inviteTokenFrom('/invite/YigKXxtTzBB_TFZVTkjEtg'), 'YigKXxtTzBB_TFZVTkjEtg');
   assert.equal(card.inviteTokenFrom('/invite/nope'), null);
@@ -258,15 +258,21 @@ test('the words: the landing card, the invite pane', () => {
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
   const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
-  // #4785 (simpati): the row says whether anyone joined, not how many uses
-  // are taken. Nobody yet reads as words, not a zero.
-  assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 joined · 7 days left');
-  assert.equal(pane.linkDetail(fresh, now), 'No one joined yet · 7 days left');
-  // WP-D: a link with no end date, or for anyone, says so.
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
+  // WP-D: a link with no end date, or for anyone, says so. A link for anyone
+  // no longer counts its joiners on this line: that is the row's second line.
   const forever = { expiresAt: null, maxUses: null, uses: 0 };
-  assert.equal(pane.linkDetail(forever, now), 'No one joined yet · no end date');
-  assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
-  assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
+  assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), 'for anyone · no end date');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), 'for anyone · 7 days left');
+  // A link that has ended says why, in place of how long it had left.
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'expired' }, now), '3 of 25 used · expired');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, status: 'used_up' }, now), '1 of 1 used · all used');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'revoked' }, now), '3 of 25 used · turned off');
+  // The second line: who came in through the link.
+  assert.equal(pane.statusLine({ joined: 2, waiting: 1 }), '2 joined · 1 waiting');
+  assert.equal(pane.statusLine({ joined: 0, waiting: 1 }), '1 waiting');
+  assert.equal(pane.statusLine({ joined: 3, waiting: 0 }), '3 joined');
+  assert.equal(pane.statusLine({ joined: 0, waiting: 0 }), 'No one has joined yet');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
   assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);
@@ -283,6 +289,43 @@ test('the words: the landing card, the invite pane', () => {
   assert.doesNotMatch(inviteTexts, /Someone new to Homeroom|Change how long or how many|Anyone with this link can join/);
   assert.match(paneSrc, /id="app-invite-change-open"[^\n]*\n\s*\{t\('agent:appContext\.invite\.change'\)\}\n/);
   assert.equal(message('agent:appContext.invite.change'), 'Change');
+
+  // #4780: an ended row is greyed, carries its status, keeps its counts, and
+  // has no Turn off (it is already off); a live row keeps its own. The pane
+  // is rendered the way tests/invite-sheet-once.test.js does: the fetch
+  // stubbed, the read prepared, then the pane's first render from it.
+  const paneApi = loadTsx('tests/fixtures/invite-pane-api.ts');
+  const liveRow = {
+    id: 9, token: 'a'.repeat(22), path: '/invite/' + 'a'.repeat(22), maxUses: 25, uses: 3,
+    expiresAt: '2026-10-04T12:00:00Z', createdAt: '2026-10-05T12:00:00Z', createdBy: null,
+    mine: true, note: null, status: 'live', joined: 2, waiting: 1,
+  };
+  const endedRow = { ...liveRow, id: 8, token: 'b'.repeat(22), path: '/invite/' + 'b'.repeat(22), status: 'expired', joined: 1, waiting: 0 };
+  const rowsState = {
+    links: [liveRow, endedRow], manages: false, canCreate: true, grant: 'member',
+    defaults: { days: 7, maxUses: 25 }, limits: { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 },
+  };
+  const rowsFetch = async () => ({ ok: true, json: async () => rowsState });
+  const realFetch = global.fetch;
+  global.fetch = rowsFetch;
+  let rowsHtml;
+  try {
+    // The answer stays settled: the pane takes it on its first render, as
+    // tests/invite-sheet-once.test.js does.
+    await paneApi.prepareInvite('notes-ab12');
+    rowsHtml = renderToHtml(createElement(paneApi.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
+  } finally {
+    global.fetch = realFetch;
+    paneApi.forgetPreparedInvite();
+  }
+  const liveRowHtml = rowsHtml.match(/<div[^>]*data-invite-link="9"[^>]*>[\s\S]*?<\/div>/)?.[0] || '';
+  const endedRowHtml = rowsHtml.match(/<div[^>]*data-invite-link="8"[^>]*>[\s\S]*?<\/div>/)?.[0] || '';
+  assert.ok(liveRowHtml && endedRowHtml, 'both rows rendered');
+  assert.match(endedRowHtml, /data-invite-status="expired"/);
+  assert.match(liveRowHtml, /data-invite-status="live"/);
+  assert.doesNotMatch(endedRowHtml, /Turn off/, 'an ended row is already off');
+  assert.match(liveRowHtml, /Turn off/);
+  assert.match(endedRowHtml, /1 joined/, 'its counts stay on the row');
 
   // #3362: the menu's "Invite to community" row is gone; the pane opens from
   // the hub's Invite (and a just-yours project's Share it card), beside the

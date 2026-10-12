@@ -234,6 +234,18 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   }
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder, and every before shot of proposals 7608, 7871 and 7610 was
+// that placeholder, at the cost of half the agent's turn.
+test('the shots agent takes only the after side when the brief has afterOnly', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has afterOnly, the proposal builds the app's first real\s+screens/);
+  assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
+  assert.match(prompt, /create hints\.setup data on the after address only/);
+  assert.match(prompt, /A change is ready with its after shots\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+});
+
 // reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to
 // 10-12): a loading or error state no change declared, and a file to choose.
 test('the shots agent holds or fails an undeclared request, and chooses only sample files, both sides alike', () => {

@@ -77,6 +77,11 @@ const EXPORT_COLUMNS = Object.freeze([
   // Destinations the shots proxy refused, counted by reason and kind of
   // host ("private_address:pair_host"), never by destination.
   'egress_blocked_json',
+  // A failure on a platform step (shots-state PLATFORM_FAULT_KINDS:
+  // database, clone, worker_bootstrap, github_rate_limited, agent_exit),
+  // which the recovery sweep takes again once; the retry's own row has
+  // `trigger` platform-retry.
+  'platform_fault',
 ]);
 
 // The agent's own event ring holds up to 128 entries; the tail is what
@@ -329,6 +334,8 @@ function exportRecord(row) {
     worker_oom_kills: num(memory.oomKillsDuringTurn),
     worker_memory_by_process_json: Object.keys(obj(memory.peakRssMb)).length ? json(memory.peakRssMb) : null,
     egress_blocked_json: Object.keys(egress).length ? json(egress) : null,
+    platform_fault: typeof obj(trace.platformFault).kind === 'string'
+      && /^[a-z_]{1,32}$/.test(trace.platformFault.kind) ? trace.platformFault.kind : null,
     diagnostics_path: slug && row.session_id
       ? `/api/apps/${slug}/proposals/${row.session_id}/shots/diagnostics?runId=${row.id}`
       : null,
