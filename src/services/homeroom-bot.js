@@ -1089,6 +1089,36 @@ function parseVerdict(text) {
   return plainVerdict(readVerdict(text));
 }
 
+// How much of a reply whose verdict could not be read is kept on its run:
+// its start (what it set out to do) and its end (where a verdict block
+// would be). The run's error line keeps only a short tail.
+const KEPT_REPLY_HEAD_CHARS = 4 * 1024;
+const KEPT_REPLY_TAIL_CHARS = 12 * 1024;
+
+/**
+ * A reply kept for an admin to read: { text, chars }, the text whole when it
+ * fits, else its first and last characters around a line saying how many
+ * were left out; `chars` is the whole reply's length. Null for no reply.
+ * Pure.
+ */
+function keptReply(value) {
+  const text = String(value == null ? '' : value);
+  if (!text.trim()) return null;
+  const chars = text.length;
+  if (chars <= KEPT_REPLY_HEAD_CHARS + KEPT_REPLY_TAIL_CHARS) return { text, chars };
+  const left = chars - KEPT_REPLY_HEAD_CHARS - KEPT_REPLY_TAIL_CHARS;
+  return {
+    text: `${text.slice(0, KEPT_REPLY_HEAD_CHARS)}\n\n[… ${left} characters left out …]\n\n${text.slice(-KEPT_REPLY_TAIL_CHARS)}`,
+    chars,
+  };
+}
+
+/** A run's unreadable_reply: the reply, and the repair turn's reply if one was asked for. Null when neither has text. */
+function unreadableReplyOf(reply, repair = null) {
+  const kept = { reply: keptReply(reply), repair: keptReply(repair) };
+  return kept.reply || kept.repair ? kept : null;
+}
+
 /**
  * Every JSON object a reply holds, as text, the one that ends last first
  * (and, of two that end together, the outer one). Each `{` is matched to its
@@ -2223,6 +2253,13 @@ async function insertRun(pool, run) {
       'UPDATE homeroom_bot_runs SET plan = $2 WHERE id = $1',
       [id, JSON.stringify(run.plan)],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record a plan', { runId: id, err: err.message }));
+  }
+  // A reply whose verdict could not be read (keptReply), the same way.
+  if (id && run.unreadableReply && typeof run.unreadableReply === 'object') {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [id, JSON.stringify(run.unreadableReply)],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record an unreadable reply', { runId: id, err: err.message }));
   }
   // #4488: a ready verdict labelled complicated, the same way.
   if (id && run.complicated) {
@@ -3544,6 +3581,7 @@ async function runTriage(pool, config, {
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
     // … so it can", "Verdict below."). The reading is done; one short turn
     // on the same thread asks for the block alone before the run fails.
+    let repairText = null;
     const repair = await askForVerdictBlock(pool, config, {
       bot, session, model, containerName, harness: triageHarness,
       threadId: result.agentThreadId || null,
@@ -3556,7 +3594,8 @@ async function runTriage(pool, config, {
       costUsd = addKnown(costUsd, spent.costUsd);
       usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
       usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
-      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repair.routed?.result?.lastResultText);
+      repairText = repair.routed?.result?.lastResultText || null;
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText);
       log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
         app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
         stopped: repair.stopped || null, error: repair.routed?.error || null,
@@ -3564,7 +3603,7 @@ async function runTriage(pool, config, {
     }
     if (!parsed) {
       return recordFailure(`unparseable: ${body}`, {
-        sessionId: session.id, costUsd, ...usage,
+        sessionId: session.id, costUsd, ...usage, unreadableReply: unreadableReplyOf(text, repairText),
       });
     }
   }
@@ -6016,7 +6055,9 @@ async function runFollowUp(pool, config, {
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
     if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
-    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
+    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
+      ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
+    });
   }
 
   let runId = null;
@@ -9516,7 +9557,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.budget_stop,
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
-            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.unreadable_reply, r.created_at,
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
@@ -10287,6 +10328,8 @@ module.exports = {
   simulateCaps,
   planTripwire,
   parseVerdict,
+  keptReply,
+  unreadableReplyOf,
   parseRepo,
   BOT_USERNAME,
   MODES,
