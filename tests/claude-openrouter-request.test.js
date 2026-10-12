@@ -290,21 +290,37 @@ test('Claude Code gets the adapter and a local token, never the key', () => {
   assert.ok(!Object.values(env).includes(KEY));
 });
 
-test('Claude Code compacts at the limit Codex does, or the model\'s window when smaller, and knows the real window', () => {
+test('Claude Code compacts a non-Anthropic model at 120k, or the model\'s window when smaller, and knows the real window', () => {
   const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
   const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base);
-  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1.3M window is compacted at 200k, never at 1.2M');
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'a 1.3M GLM window is compacted at 120k, never at 1.2M');
   assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1310720');
-  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '128000' }, base);
-  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '100000' }, base);
+  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000');
   const unknown = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '' }, base);
-  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window: still compacted');
+  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'no catalog window: still compacted');
   assert.equal(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, 'and no window is made up');
   const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
   assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
   const codex = fs.readFileSync(require.resolve('../worker/build-codex-model-catalog.js'), 'utf8');
   assert.match(codex, /const AUTO_COMPACT_TOKEN_LIMIT = 200_000;/, 'the same limit as Codex');
   assert.equal(require('../worker/claude-openrouter-request').AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+});
+
+test('the compaction limit is per model family: Anthropic\'s at 200k, every other provider\'s at 120k', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
+  for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest']) {
+    assert.equal(mod.autoCompactLimit(model), 200_000, model);
+  }
+  for (const model of [GLM, 'z-ai/glm-4.6', 'moonshotai/kimi-k2', 'openai/gpt-5', '', undefined]) {
+    assert.equal(mod.autoCompactLimit(model), 120_000, String(model));
+  }
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local' };
+  const claude = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1000000' }, { ...base, model: 'anthropic/claude-sonnet-4.5' });
+  assert.equal(claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'Anthropic models unchanged');
+  const glm = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, { ...base, model: GLM });
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
 });
 
 test('redaction is literal and ignores values too short to be secrets', () => {

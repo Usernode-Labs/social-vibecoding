@@ -52,7 +52,7 @@ const PEOPLE_MIN = 10;
 const PEOPLE_FIVE = 20;
 const PEOPLE_EXACT = 50;
 // How many figures one topic may show.
-const MAX_TOPIC_FIGURES = 6;
+const MAX_TOPIC_FIGURES = 9;
 
 const NOTE_PEOPLE = 'Totals only. Smaller groups are rounded more; under 10 people shows “Not enough data”.';
 const FEW_PEOPLE = 'Fewer than 10 people so far';
@@ -244,6 +244,42 @@ const BOT_SPEND_SQL = `
            WHERE u.username = $6::text AND u.is_synthetic = TRUE AND cs.status = 'merged'
              AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
              AND ($3::boolean OR (cs.app_id = ANY($4::int[])) = $5::boolean))::int AS merged`;
+
+// The bot's live builds started in the window (a ready run with a build
+// session: homeroom_bot_runs.build_session_id) and what came of them. One
+// that became a proposal worked; one that ended without one failed, a build
+// a restart cut short or the platform lost among them. A build stopped
+// because it was no longer needed (build_error 'skipped: ...': its request
+// was closed, read again or already had a proposal; 'superseded: ...': a
+// later verdict replaced it) is not a failure and is not counted, nor is one
+// still under way. Shadow runs are left out, and the side builds a change
+// is compared with are kept in their own table. A first version is a
+// request filed as a project's first version (homeroom_bot_requesters,
+// homeroom_bot_first_versions). `spent` is every live build's spend, so
+// `failed_spent` is the part of it that bought no proposal.
+const BOT_BUILDS_SQL = `
+  WITH builds AS (
+    SELECT r.proposal_session_id IS NOT NULL AS proposed,
+           (r.proposal_session_id IS NULL
+             AND (r.build_error LIKE 'skipped:%' OR r.build_error LIKE 'superseded:%')) AS skipped,
+           (r.proposal_session_id IS NOT NULL OR r.build_ok IS NOT NULL) AS settled,
+           (EXISTS (SELECT 1 FROM homeroom_bot_requesters q
+                     WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number AND q.first_version)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_first_versions fv
+                         WHERE fv.app_id = r.app_id AND fv.issue_number = r.issue_number)) AS first_version,
+           COALESCE(r.build_cost_usd, 0) AS cost
+      FROM homeroom_bot_runs r
+     WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_session_id IS NOT NULL
+       AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz
+       AND ($3::boolean OR (r.app_id = ANY($4::int[])) = $5::boolean)
+  )
+  SELECT COUNT(*) FILTER (WHERE settled AND NOT skipped)::int AS built,
+         COUNT(*) FILTER (WHERE proposed)::int AS proposed,
+         COUNT(*) FILTER (WHERE settled AND NOT skipped AND first_version)::int AS first_built,
+         COUNT(*) FILTER (WHERE proposed AND first_version)::int AS first_proposed,
+         COALESCE(SUM(cost), 0)::float8 AS spent,
+         COALESCE(SUM(cost) FILTER (WHERE settled AND NOT skipped AND NOT proposed), 0)::float8 AS failed_spent
+    FROM builds`;
 
 // Check runs (merge_debug_runs kind 'checks', kept 30 days): the ones that
 // reached a verdict, how long they took (from the start of the preview build
@@ -439,6 +475,7 @@ const SOURCES = Object.freeze({
   botReplyTime: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_REPLY_TIME_SQL, [w.from, w.until, ...scoped(s)]) },
   botProposals: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_PROPOSALS_SQL, [w.from, w.until, ...scoped(s), BOT_USERNAME]) },
   botSpend: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_SPEND_SQL, [w.from, w.until, ...scoped(s), BOT_USERNAME]) },
+  botBuilds: { days: 7, scoped: true, read: (pool, w, s) => pool.query(BOT_BUILDS_SQL, [w.from, w.until, ...scoped(s)]) },
   checks: { days: 7, scoped: true, read: (pool, w, s) => pool.query(CHECKS_SQL, [w.from, w.until, ...scoped(s)]) },
   shots: { days: 7, scoped: true, read: (pool, w, s) => pool.query(SHOTS_SQL, [w.from, w.until, ...scoped(s)]) },
   voteToMerged: { days: 7, scoped: true, read: (pool, w, s) => pool.query(VOTE_TO_MERGED_SQL, [w.from, w.until, ...scoped(s)]) },
@@ -556,7 +593,8 @@ function peopleDuration(secs, count) {
 // each read from `source`, or from `sources[side]` when the two are
 // recorded apart). `target`: { atLeast } or { atMost } in the measure's
 // own unit (a share 0..1, seconds, dollars, a count). `noun` names what a
-// rate counts in its line ("13 of 412 runs").
+// rate counts in its line ("13 of 412 runs"); a `money` rate is a share of
+// dollars, and its line reads them ("$12.40 of $310").
 
 const FIGURES = Object.freeze({
   'onboarding.sign-up': {
@@ -624,6 +662,24 @@ const FIGURES = Object.freeze({
     tip: 'How long from a request being filed to the bot’s proposal being up for a vote. Half are faster.',
     target: { atMost: 3600 },
     measure: (r) => ({ secs: r.median_secs, n: r.timed }),
+  },
+  'bot.builds-proposed': {
+    source: 'botBuilds', kind: 'rate', covers: 'split', group: 'builds', column: 'quality', label: 'Builds that reached a vote', noun: 'builds',
+    tip: 'The share of the bot’s builds that ended as a proposal up for a vote. A build that failed, or that a restart or the platform cut short, counts against it. One stopped because it was no longer needed (its request was closed, read again or already had a proposal) is not counted, nor are practice builds.',
+    target: { atLeast: 0.9 },
+    measure: (r) => ({ hits: r.proposed, total: r.built }),
+  },
+  'bot.first-versions': {
+    source: 'botBuilds', kind: 'rate', covers: 'split', group: 'builds', column: 'quality', label: 'First versions built', noun: 'first versions',
+    tip: 'The share of the bot’s builds of a new project’s first version that ended as a proposal. It is the first thing someone sees the bot make for them.',
+    target: { atLeast: 0.9 },
+    measure: (r) => ({ hits: r.first_proposed, total: r.first_built }),
+  },
+  'bot.failed-spend': {
+    source: 'botBuilds', kind: 'rate', money: true, covers: 'split', group: 'builds', column: 'cost', label: 'Spend on failed builds', noun: 'build spend',
+    tip: 'The share of what the bot spent building that went on builds that ended without a proposal. Practice builds are left out.',
+    target: { atMost: 0.1 },
+    measure: (r) => ({ hits: r.failed_spent, total: r.spent }),
   },
   'pipeline.checks-time': {
     source: 'checks', kind: 'duration', covers: 'split', label: 'Time to a checks verdict',
@@ -786,8 +842,10 @@ function reading(def, measure) {
   const calm = (value, detail) => ({ state: 'calm', value, detail, off: null, final: true });
 
   if (def.kind === 'rate') {
-    const total = int(measure.total);
-    const hits = Math.min(int(measure.hits), total);
+    // A share of dollars keeps its cents; a count is whole.
+    const amount = def.money ? (v) => Math.max(0, num(v) || 0) : int;
+    const total = amount(measure.total);
+    const hits = Math.min(amount(measure.hits), total);
     if (def.people) {
       if (total < PEOPLE_MIN) return calm('Not enough data', FEW_PEOPLE);
       const shown = peopleRate(hits, total);
@@ -797,6 +855,10 @@ function reading(def, measure) {
     }
     if (!total) return empty(`No ${def.noun || 'runs'} yet`);
     const off = offTarget(def.target, hits / total);
+    if (def.money) {
+      return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false, since,
+        detail: `${formatUsd(hits)} of ${formatUsd(total)}` };
+    }
     return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false, since,
       detail: joinWords(`${hits.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} ${def.noun || ''}`.trim(), since && `since ${since}`) };
   }
@@ -1060,6 +1122,9 @@ const DEMO_MEASURES = Object.freeze({
   'bot.merged': { rate: 0.58, n: 24, other: 0.64 },
   'bot.merged-cost': { homeroom: { value: 5.9, n: 9 }, others: { value: 2.4, n: 5 } },
   'bot.request-to-proposal': { homeroom: { secs: 4800, n: 12 }, others: { secs: 2900, n: 8 } },
+  'bot.builds-proposed': { homeroom: { hits: 21, total: 26 }, others: { hits: 34, total: 36 } },
+  'bot.first-versions': { homeroom: { hits: 0, total: 0 }, others: { hits: 9, total: 17 } },
+  'bot.failed-spend': { homeroom: { hits: 18.4, total: 96.2 }, others: { hits: 3.1, total: 61.5 } },
   'pipeline.checks-time': { homeroom: { secs: 310, n: 140 }, others: { secs: 95, n: 259 } },
   'pipeline.checks-couldnt-run': { homeroom: { hits: 3, total: 143 }, others: { hits: 2, total: 262 } },
   'pipeline.shots': { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } },

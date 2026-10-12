@@ -185,13 +185,20 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // What started this read: the queue row's reason, and for a change what
     // moved (homeroom-bot.js readReasonOf).
     readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+    // A held ready verdict acted on again with no read of its own, because
+    // the request had not changed: the run it reused (homeroom-bot.js
+    // reuseHeldVerdict).
+    reused: r.reused_run_id != null,
+    reusedFrom: num(r.reused_run_id),
     // Its build wherever it got to: a ready verdict queued, building,
     // built or failed, or never built and why (skipped, superseded). A run
     // with none of those has no build.
     build: buildStateOf(r) == null ? null : {
       state: buildStateOf(r),
       ok: r.build_ok, branch: r.build_branch || null, sha: r.build_sha || null, commits: num(r.build_commits),
-      error: r.build_error ? clipText(r.build_error, 300) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
+      // Whole, as the run keeps it (600 characters): a failed turn's reason
+      // is followed by what it was last doing and its final message.
+      error: r.build_error ? clipText(r.build_error, 600) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
     },
     rating: r.rating || null,
     ratingNote: r.rating_note ? clipText(r.rating_note, 300) : null,
@@ -203,6 +210,11 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       versionId: Number(r.bot_config_version_id), key: r.bot_config_key || null,
       label: r.bot_config_label ? clipText(r.bot_config_label, 80) : null, version: num(r.bot_config_version),
     } : null,
+    // How big the plan the build worked from was, in characters of its
+    // markdown spec, to read against how the build went: a first version's
+    // spec is asked to plan about 25 minutes of its 40 (homeroom-bot-live.js
+    // FIRST_VERSION_SIZE_LINES). Null when the run has no spec.
+    specChars: r.build_spec_md ? String(r.build_spec_md).length : null,
     reviewRounds: num(r.review_rounds),
     reviewStop: r.review_stop || null,
     // Whose weekly building time it counted toward, if anybody's.

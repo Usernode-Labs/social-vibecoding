@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  PACK_NAME, buildLanguagePacks, collectCatalogs, formatReport, hash,
+  PACK_NAME, buildLanguagePacks, collectCatalogs, formatReport, hash, translationProblem,
 } = require('../scripts/language-packs');
 const { shellAssetCacheControl, IMMUTABLE } = require('../src/services/static-cache');
 const { classifyRequest } = require('../public/sw');
@@ -117,6 +117,28 @@ test('a translation never fails the build: what cannot be used falls back to Eng
   const broken = build().report.es;
   assert.deepEqual(broken.invalid, ['core:*']);
   assert.equal(broken.translated, 0);
+});
+
+test('a translation that spells a character as an escape code is not used, unless the English has one (#4838)', (t) => {
+  // "Auto\u00a0: langue de l'appareil" decodes to a backslash, a u and four
+  // digits, which a French screen showed as written.
+  const nbsp = from('Automatic: device language', 'Auto\\u00a0: langue de l’appareil');
+  assert.equal(translationProblem(nbsp, 'Automatic: device language'), 'invalid');
+  assert.equal(translationProblem(from('Dark', 'Sombre\\u202f!'), 'Dark'), 'invalid', 'a narrow no-break space too');
+  assert.equal(translationProblem(from('Dark', 'Sombre\u202f!'), 'Dark'), null, 'the character itself is what belongs there');
+  assert.equal(translationProblem(from('Type \\u00a0 for a no-break space', 'Tapez \\u00a0 pour une espace insécable'),
+    'Type \\u00a0 for a no-break space'), null, 'an escape code the English shows is kept');
+  assert.equal(translationProblem(from('Type \\u00a0 here', 'Tapez \\u00a0\\u00a0 ici'), 'Type \\u00a0 here'), 'invalid',
+    'one more escape code than the English has');
+  assert.equal(translationProblem(from('Type \\u00a0 here', 'Tapez \\u202f ici'), 'Type \\u00a0 here'), 'invalid',
+    'a different escape code from the English');
+  const { root, build } = catalogFixture(t, {
+    translations: { es: { ...SPANISH, hello: from('Hello {{name}}', 'Hola\\u00a0{{name}}') } },
+  });
+  const { report, manifest } = build();
+  assert.ok(report.es.invalid.includes('core:hello'));
+  const pack = JSON.parse(fs.readFileSync(path.join(root, 'public', manifest.es.core.url), 'utf8'));
+  assert.equal(pack.hello, undefined, 'the message shows in English');
 });
 
 test('a pack carries only usable text, and a hand-corrected entry may be locked', (t) => {

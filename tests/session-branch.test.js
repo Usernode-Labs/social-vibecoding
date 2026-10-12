@@ -256,6 +256,42 @@ test('the push heal never reports a commit it did not push', (t) => {
   assert.equal(git(origin, 'rev-parse', 'refs/heads/dev/me'), mine);
 });
 
+// ── A failed first version's work, kept (worker.buildPartialCommitScript) ──
+
+function runPartialScript(ws, branch, msg = 'Homeroom bot: #1 Plant log') {
+  const script = `BRANCH='${branch}'\nCOMMIT_MSG='${msg}'\n${worker.buildPartialCommitScript({ workspace: ws, lib: LIB })}`;
+  const r = spawnSync('sh', ['-c', script], { env: GIT_ENV, encoding: 'utf8' });
+  return { code: r.status, stdout: r.stdout, parsed: worker.parsePartialCommit(r.stdout), stderr: r.stderr };
+}
+
+test('a failed turn\'s uncommitted work is committed on the session branch, and how far it is ahead is read', (t) => {
+  const { ws } = fixture(t);
+  fs.writeFileSync(path.join(ws, 'board.js'), 'half a board\n');
+  fs.writeFileSync(path.join(ws, 'app.js'), 'v1 and more\n');
+  const r = runPartialScript(ws, 'dev/me');
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.parsed.ahead, 2, 'its earlier turn and this one');
+  assert.equal(r.parsed.sha, git(ws, 'rev-parse', 'HEAD'));
+  assert.equal(git(ws, 'log', '-1', '--format=%s'), 'Homeroom bot: #1 Plant log');
+  assert.equal(git(ws, 'status', '--porcelain'), '', 'everything it left is in the commit');
+});
+
+test('a checkout with nothing past main keeps nothing, and a turn that ended on another line is not committed', (t) => {
+  const { ws } = fixture(t);
+  git(ws, 'checkout', '-q', '-b', 'dev/fresh', 'origin/main');
+  const r = runPartialScript(ws, 'dev/fresh');
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.parsed, { ahead: 0, sha: git(ws, 'rev-parse', 'HEAD') });
+
+  const other = fixture(t);
+  git(other.ws, 'fetch', '-q', 'origin', 'dev/other');
+  git(other.ws, 'checkout', '-q', '-b', 'borrowed', other.theirs);
+  fs.writeFileSync(path.join(other.ws, 'calm.js'), 'calm\n');
+  const mismatch = runPartialScript(other.ws, 'dev/me');
+  assert.deepEqual(mismatch.parsed, { ahead: 0, sha: null });
+  assert.equal(worker.parsePartialCommit('no line'), null);
+});
+
 // ── The runners, end to end ────────────────────────────────────────────────
 
 function runnerEnv(t, ws, agentScript, extra = {}) {

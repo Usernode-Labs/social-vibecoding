@@ -51,7 +51,7 @@ function readSource(file = SOURCE_PATH) {
   }
 }
 
-/** Changes whenever a translation is added. */
+/** Changes whenever a translation is added or replaced. */
 async function cacheVersion(pool) {
   const { rows } = await pool.query(
     'SELECT COUNT(*)::int AS n, MAX(created_at) AS at FROM language_translations',
@@ -205,10 +205,17 @@ async function pack(pool, name) {
   return value?.files.get(name) || null;
 }
 
+// packs.writtenOutEscape's pattern, as a Postgres regular expression.
+const ESCAPE_CODE_SQL = '\\\\u[0-9a-fA-F]{4}';
+
 /**
  * Keeps what the translation step accepted: `entries` is language ->
  * namespace -> key -> { text, source }. A translation already cached for the
- * same English is left as it is. Resolves how many were added.
+ * same English is left as it is, unless it spells a character as an escape
+ * code (\u00a0, #4838): the build cannot use that one, so the step asks again
+ * and its answer has to land, with a new created_at so every server's
+ * cacheVersion moves. The answer passed textProblem, so it is usable even
+ * where the English itself shows such a code. Resolves how many were added or replaced.
  */
 async function saveTranslations(pool, entries, { model = null } = {}) {
   const rows = [];
@@ -227,8 +234,10 @@ async function saveTranslations(pool, entries, { model = null } = {}) {
     const { rowCount } = await pool.query(
       `INSERT INTO language_translations (language, namespace, key, source, text, model)
        SELECT l, n, k, s, t, $6 FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS u(l, n, k, s, t)
-       ON CONFLICT (language, namespace, key, source) DO NOTHING`,
-      [chunk.map((r) => r[0]), chunk.map((r) => r[1]), chunk.map((r) => r[2]), chunk.map((r) => r[3]), chunk.map((r) => r[4]), model],
+       ON CONFLICT (language, namespace, key, source) DO UPDATE SET text = EXCLUDED.text, model = EXCLUDED.model, created_at = NOW()
+       WHERE language_translations.text ~ $7 AND language_translations.text <> EXCLUDED.text`,
+      [chunk.map((r) => r[0]), chunk.map((r) => r[1]), chunk.map((r) => r[2]), chunk.map((r) => r[3]), chunk.map((r) => r[4]), model,
+        ESCAPE_CODE_SQL],
     );
     added += rowCount || 0;
   }
