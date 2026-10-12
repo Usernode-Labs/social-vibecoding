@@ -1606,9 +1606,10 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
     'headless and in_progress derivations both skip synthetic authors');
   const sessions = read('src/routes/sessions.js');
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  // Four: the fork's count went with the fork (#2779).
-  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 4,
-    'every global-cap count leaves synthetic sessions out');
+  // None: the bot's proposals hold preview pods like anyone's, and the cap is
+  // sized from the cluster's pod slots, so every count includes them.
+  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 0,
+    'no global-cap count leaves synthetic sessions out');
 });
 
 test('the loop is leader-only, locked, ships off, and its spend joins the shared weekly pool', () => {
