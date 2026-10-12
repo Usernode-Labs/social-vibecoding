@@ -274,11 +274,15 @@ What moves and what stays (`src/services/db-manager.js`, "Two servers"):
   database, app forks, and the advisory locks. The redacted dump is still
   read from the main server; it is restored on the preview server, and both
   redaction passes run there and fail the build if they cannot finish.
-- Nothing records which server a preview database is on. Its name says whose
-  it is, so a drop runs on both servers and the sweeps list both. A preview
-  built before the switch keeps working and is cleaned up on the main server.
-  A preview connects with the address its container was given when it was
-  built.
+- No table records which server a preview database is on. A drop runs on
+  both servers by the database's exact name, and the sweeps list both. A
+  preview built before the switch keeps working and is cleaned up on the main
+  server. A preview connects with the address its container was given when it
+  was built, and its runtime carries two labels written at deploy
+  (`usernode.db.name`, `usernode.db.server`): the exact database it was given
+  and the server it was made on. Those labels, not the session's number, are
+  what the heal pass judges by, because one proposal can have older copies on
+  the other server.
 - There is no fallback to the main server. If the preview server is down,
   preview builds fail as a platform fault and retry on the checks' own
   schedule; they do not move their full copies onto production.
@@ -304,8 +308,13 @@ The chart does not create the server. It needs:
   restored objects and ends sessions on its own disposable databases.
 - **A maintenance database that exists**, named in the URL's path
   (`postgres` if the path is empty).
-- **The same encoding and locale as the main server**, and every extension
-  an app's database uses, or a restore fails and so does that app's build.
+- **The same encoding, locale and collation provider as the main server.**
+  This is yours to ensure: each copy is created from the preview server's own
+  `template0`, nothing compares the two servers' settings, and a restore that
+  succeeds proves nothing about them. A mismatch can change sort order and
+  text comparison in previews without any error.
+- **Every extension an app's database uses.** A missing one fails the
+  restore, and with it that app's builds.
 - **Network reach from two places.** From the platform Pods: the chart adds
   that egress rule (`previewPostgresql.namespace`, `podSelector`, `port`),
   and the server's own ingress policy has to admit them. From preview and
@@ -341,6 +350,12 @@ known cost of the shared-block copy.
 2. Add `STAGING_DB_ADMIN_URL` to the platform Secret
    (`postgres://<user>:<password>@<host>:<port>/<maintenance database>`). It
    carries a password: keep it in the Secret, never in plaintext values.
+   The host, port, user, password and database go in the address. The only
+   query parameter accepted is `sslmode`; a URL with any other (`?host=`,
+   `?port=`, `?user=`, `?password=`, `?options=` and so on) is refused as a
+   whole and preview builds fail until it is corrected, because the
+   platform's two database clients would read such a URL as two different
+   servers.
    With `secrets.create=true` the chart writes it from `previewPostgresql.*`
    and `secrets.previewDatabasePassword`.
 3. Set `previewPostgresql.enabled: true` with `namespace`, `podSelector` and
@@ -350,8 +365,11 @@ known cost of the shared-block copy.
 
 From the next platform Pod on, new previews are made on the preview server.
 Each app's template is rebuilt there on its first build, and its old template
-on the main server is dropped by that build, or within six hours by the
-orphan database pass. Previews that already exist stay on the main server
+on the main server is dropped by that build. Templates of apps that do not
+build again are dropped by the orphan database pass, which runs every six
+hours, takes at most 50 apps a pass and skips what it cannot drop, so a large
+fleet takes several passes and nothing promises a deadline. A template left
+behind costs disk and nothing else. Previews that already exist stay on the main server
 until they are rebuilt or torn down. `Staging template refreshed` log lines
 carry `server: preview`; `refused a shared-block copy` and `older than
 PostgreSQL 18` say why a server gets plain copies. `STAGING_DB_FILE_CLONE=0`
@@ -364,26 +382,46 @@ turns the shared-block attempt off without moving anything.
    the preview server keep working and are still cleaned up there; a preview
    backing a live vote is rebuilt onto the main server by the heal pass, a
    few per sweep, and any other is rebuilt the next time somebody opens it.
-   Until then such a preview is reported as needing a rebuild.
-2. When no client is connected to a `%_staging_%` database on the preview
-   server (`pg_stat_activity` there), set `previewPostgresql.enabled: false`
-   and sync, then remove the key from the Secret and the server.
+   Until then such a preview is reported as needing a rebuild. Builds on the
+   main server do not need the preview server to answer: an old database of
+   the same name there is left for the sweep if it cannot be dropped.
+2. Wait until nothing depends on the preview server. Every ten minutes while
+   draining the platform logs `Preview database server drain: still in use`
+   with what it counted: running previews whose runtime was given a database
+   there (from their labels), previews it could not read, builds in flight,
+   and databases of before & after shots runs still on the server. The line
+   to wait for is `Preview database server drain: nothing depends on it any
+   more`. Open connections are not the test: a preview holds none between
+   requests or after its pool's idle timeout and still breaks when the server
+   goes, and shots databases are not named like preview databases. Use
+   `pg_stat_activity` on the server as a second look, not as the answer.
+3. Then set `previewPostgresql.enabled: false` and sync, and remove the key
+   from the Secret and the server. Do it in that order and without a long
+   gap: once the setting is off the platform no longer looks at that server
+   at all, so a preview built there in the meantime would not be noticed.
 
 Removing the setting at once, without draining, is safe for everything on
 the main server and for building: the platform is back to one server. What
 it leaves behind is on the preview server: previews there keep running for as
-long as the server exists, nothing cleans them up, and once the server is
-deleted each of them answers errors until its next rebuild.
+long as the server exists, nothing cleans them up, nothing checks whether
+their database is still there, and once the server is deleted each of them
+answers errors until its next rebuild.
 
 ### If the preview server is wiped
 
 Nothing has to be done by hand. The next build of each app finds no template
 and rebuilds it. A preview whose database is gone is detected by looking for
-its database on both servers (within a minute of the wipe, and only when
-both servers answer); the heal pass rebuilds the ones backing a live vote,
+the exact database its runtime was given, on the server it was made on
+(about a minute after the wipe at the earliest, and only when that server
+answers); the heal pass rebuilds the ones backing a live vote,
 a re-run of the checks rebuilds first, and any other is rebuilt when it is
-opened. If the server comes back on another version, the platform reads the
-new version within ten minutes.
+opened. A preview built before the setting was turned on carries no labels; it
+is on the main server and is not checked. If the server comes back on another version, the next copy sees it:
+the version is read on the connection that makes each copy.
+
+A failed build on the preview server is stored as a platform fault, so it
+is retried on the checks' platform-fault schedule and is not counted against
+the proposal.
 
 ## Harvesting check runs across platform rollouts
 

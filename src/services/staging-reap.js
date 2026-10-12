@@ -1062,6 +1062,57 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
   }
 }
 
+// ─── What still depends on a preview server that is being drained ───────
+//
+// Draining (STAGING_DB_SERVER_DRAIN) is the step before a preview database
+// server is removed, and "may it be removed yet" needs a real answer. Open
+// connections are not one: a preview holds none between requests or once its
+// pool's idle timeout passes, and it still breaks when its server goes. So
+// this counts what depends on the server: running previews whose runtime
+// was given a database there (their labels, which staging.js writes at
+// deploy), builds in flight, and the databases of before & after shots runs
+// still on it. Logged every pass while draining, so the line that says
+// nothing depends on it is the one to wait for. Null when not draining or
+// when something could not be read. Never throws.
+const DRAIN_STATUS_INTERVAL_MS = 10 * 60 * 1000;
+let _lastDrainStatusAt = 0;
+
+async function previewServerDrainStatus(config, { now = Date.now(), force = false } = {}) {
+  try {
+    if (isStagingEnv()) return null;
+    if (!dbManager.previewServerConfigured?.() || !dbManager.previewServerDraining?.()) return null;
+    if (!force && now - _lastDrainStatusAt < DRAIN_STATUS_INTERVAL_MS) return null;
+    _lastDrainStatusAt = now;
+    const pool = getPool(config);
+    const staging = require('./staging');
+    const stagingRecovery = require('./staging-recovery');
+    const { rows } = await pool.query(
+      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id
+         FROM chat_sessions WHERE staging_url IS NOT NULL ORDER BY id`
+    );
+    const status = { previews: [], unread: 0, buildsInFlight: 0, shotsDatabases: 0 };
+    for (const session of rows) {
+      if (staging.hasInFlightBuild(Number(session.id))) status.buildsInFlight += 1;
+      const state = await stagingRecovery.inspectPreviewRuntime(session, config);
+      if (!state) { status.unread += 1; continue; }
+      if (state.status !== 'running') continue;
+      if (state.labels?.[dbManager.LABEL_PREVIEW_DB_SERVER] === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
+    }
+    status.shotsDatabases = (await dbManager.previewServerShotsDatabases()).length;
+    const clear = !status.previews.length && !status.unread && !status.buildsInFlight && !status.shotsDatabases;
+    log.info('staging-reap', clear
+      ? 'Preview database server drain: nothing depends on it any more'
+      : 'Preview database server drain: still in use', {
+      previews: status.previews.length, sessionIds: status.previews.slice(0, 50),
+      previewsNotRead: status.unread, buildsInFlight: status.buildsInFlight, shotsDatabases: status.shotsDatabases,
+    });
+    return { ...status, clear };
+  } catch (err) {
+    log.warn('staging-reap', 'Preview database server drain status could not be read', { err: err.message });
+    return null;
+  }
+}
+
 function pressureSweepIntervalMs() {
   const raw = parseInt(process.env.STAGING_PRESSURE_SWEEP_INTERVAL_MS || '', 10);
   if (!Number.isFinite(raw) || raw < 0) return DEFAULT_PRESSURE_SWEEP_INTERVAL_MS;
@@ -1180,7 +1231,11 @@ async function sweepConnectionPressure(config, { limit = null, server = null } =
     // reason to do nothing: the other passes still run.
     let here = null;
     if (twoServers) {
-      here = await dbManager.stagingCloneSessionIds(onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER);
+      // A production database may be named like a clone; it is not one.
+      const apps = await pool.query('SELECT slug FROM apps');
+      const exclude = new Set(apps.rows.map((row) => dbManager.appDbName(String(row.slug || ''))));
+      here = await dbManager.stagingCloneSessionIds(
+        onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER, { exclude });
     }
     const where = twoServers ? { server: onPreviewServer ? 'preview' : 'main' } : {};
     const victims = selectPressureVictims({
@@ -1400,6 +1455,7 @@ module.exports = {
   selectOrphanDbs,
   // Connection-pressure pass (#1771).
   sweepConnectionPressure,
+  previewServerDrainStatus,
   selectPressureVictims,
   pressureSweepDue,
   pressureSweepIntervalMs,

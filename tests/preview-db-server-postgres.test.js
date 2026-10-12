@@ -12,7 +12,7 @@
 //   - on PostgreSQL 18 or later the preview server is asked for a
 //     shared-block copy (file_copy_method = clone, STRATEGY = FILE_COPY) and
 //     the main server never is;
-//   - a wiped preview server is noticed (previewDatabaseVerdict) and the
+//   - a wiped preview server is noticed (previewDatabaseVerdict, from the runtime's labels) and the
 //     next clone rebuilds the template and copies again;
 //   - switching both ways: draining makes new previews on the main server
 //     while old ones are still found and dropped on the preview server, the
@@ -242,21 +242,23 @@ test('preview databases live on the preview server, redacted, and the main serve
   assert.equal((await dbManager.stagingCloneSessionIds('primary')).has(901), false);
   const census = await require('../src/db/connection-census').connectionCensus(dbManager.previewServerQueryable());
   assert.ok(census && census.max > 0 && census.used >= 0, 'the connection census reads the preview server');
-  assert.equal(await dbManager.previewDatabaseVerdict(901), null);
+  const labels = dbManager.previewDatabaseLabels(target, cloned.server);
+  assert.deepEqual(labels, { 'usernode.db.name': target, 'usernode.db.server': 'preview' });
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), null);
   assert.equal(await dbManager.databaseExists(target, { strict: true }), true);
 
   // A wiped preview server: everything on it is gone, the containers are not.
   await ctx.wipe(preview);
-  assert.equal(await dbManager.previewDatabaseVerdict(901), null,
-    'for up to a minute the answer is the one read before the wipe: "there" is cached, "gone" never is');
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), null,
+    'for up to a minute the answer is the one read before the wipe: "there" is believed, "gone" is always read again');
   dbManager._resetPreviewServerStateForTest();
-  assert.equal(await dbManager.previewDatabaseVerdict(901), 'gone', 'the heal path is told the database is gone');
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), 'gone', 'the heal path is told the database is gone');
   assert.equal(await dbManager.databaseExists(target, { strict: true }), false);
   const rebuilt = await dbManager.cloneDatabase(source, target, { viaTemplate: true });
   assert.equal(rebuilt.server, 'preview');
   assert.equal(rebuilt.templateRefreshed, true, 'the template is rebuilt on the empty server without being told');
   assertRedacted(await readClone(dbManager, target, rebuilt));
-  assert.equal(await dbManager.previewDatabaseVerdict(901), null);
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), null);
 
   // Dropping finds it where it is, and takes its role.
   await dbManager.dropDatabase(target, { strict: true });
@@ -290,7 +292,7 @@ test('switching both ways: old previews are found where they are, and the templa
   assert.deepEqual(await names(main, `%${tok}%`), [source, before],
     'the old preview keeps its database on the main server; the old template is gone');
   assertRedacted(await readClone(dbManager, before, old));
-  assert.equal(await dbManager.previewDatabaseVerdict(911), null, 'a preview from before the switch is not "gone"');
+  assert.equal(await dbManager.previewDatabaseVerdict({}), null, 'a preview from before the switch has no labels and is not "gone"');
 
   // Its teardown still finds it.
   await dbManager.dropDatabase(before, { strict: true });
@@ -304,9 +306,9 @@ test('switching both ways: old previews are found where they are, and the templa
   assert.deepEqual(await names(main, `%${tok}%`), [source, drained, `${source}_stgtmpl`]);
   assert.deepEqual(await names(preview, `%${tok}%`), [during], 'the draining server keeps its preview and loses its template');
   assertRedacted(await readClone(dbManager, during, moved));
-  dbManager._resetPreviewServerStateForTest();
-  assert.equal(await dbManager.previewDatabaseVerdict(912), 'draining', 'a rebuild will move it to the main server');
-  assert.equal(await dbManager.previewDatabaseVerdict(913), null);
+  assert.equal(await dbManager.previewDatabaseVerdict(dbManager.previewDatabaseLabels(during, 'preview')), 'draining',
+    'a rebuild will move it to the main server');
+  assert.equal(await dbManager.previewDatabaseVerdict(dbManager.previewDatabaseLabels(drained, back.server)), null);
   await dbManager.dropDatabase(during, { strict: true });
   assert.deepEqual(await names(preview, `%${tok}%`), []);
 
@@ -320,6 +322,72 @@ test('switching both ways: old previews are found where they are, and the templa
   assert.equal(again.server, 'preview');
   assert.deepEqual(await names(main, `%${tok}%`), [source, drained]);
   await dbManager.dropDatabase(drained, { strict: true });
+});
+
+test('an old clone of the same session on the other server does not vouch for the current one', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, source, names } = ctx;
+  // A project whose slug itself contains `_staging_s7_…`, and one session
+  // (98017) built twice: an old commit before the preview server existed,
+  // the current commit after.
+  const tricky = `${source}_staging_s7_6cb80a`;
+  await main.query(`CREATE DATABASE ${tricky} TEMPLATE ${source}`).catch(async () => {
+    // The source may have a session on it; a plain empty database will do.
+    await main.query(`CREATE DATABASE ${tricky}`);
+  });
+  const seedTricky = await connect(at(MAIN, tricky));
+  await seedTricky.query('CREATE TABLE IF NOT EXISTS notes (id serial PRIMARY KEY, body text)');
+  await seedTricky.end();
+  const oldClone = `${tricky}_staging_s98017_aaaaaa`;
+  const current = `${tricky}_staging_s98017_bbbbbb`;
+
+  delete process.env.STAGING_DB_ADMIN_URL;
+  const before = await dbManager.cloneDatabase(tricky, oldClone, { viaTemplate: true });
+  assert.equal(before.server, 'primary');
+  process.env.STAGING_DB_ADMIN_URL = PREVIEW;
+  const now = await dbManager.cloneDatabase(tricky, current, { viaTemplate: true });
+  assert.equal(now.server, 'preview');
+  assert.ok((await names(main, `%${tok}%`)).includes(oldClone), 'a different commit\'s clone is not dropped by the new build');
+  const labels = dbManager.previewDatabaseLabels(current, now.server);
+
+  // The session id is read from the end of the name, not from the slug.
+  assert.equal((await dbManager.stagingCloneSessionIds('preview')).has(98017), true);
+  assert.equal((await dbManager.stagingCloneSessionIds('preview')).has(7), false);
+  assert.equal((await dbManager.stagingCloneSessionIds('primary', { exclude: new Set([tricky]) })).has(7), false,
+    'a production database that ends like a clone is not one');
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), null);
+
+  // Drain: the current clone is on the preview server, whatever is on main.
+  process.env.STAGING_DB_SERVER_DRAIN = '1';
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), 'draining');
+  delete process.env.STAGING_DB_SERVER_DRAIN;
+
+  // Wipe: the old clone on the main server is still there and says nothing.
+  await ctx.wipe(preview);
+  dbManager._resetPreviewServerStateForTest();
+  assert.equal(await dbManager.databaseExists(oldClone, { strict: true }), true);
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), 'gone');
+});
+
+test('a URL whose query points somewhere else is refused before anything runs', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, source, names } = ctx;
+  // The address names the preview server; the query names the main one.
+  // node-postgres would follow the query, psql the address.
+  const url = new URL(PREVIEW);
+  url.searchParams.set('port', ctx.mainPort);
+  process.env.STAGING_DB_ADMIN_URL = String(url);
+  dbManager._resetPreviewServerStateForTest();
+  sent.length = 0;
+  await assert.rejects(
+    dbManager.cloneDatabase(source, `${source}_staging_s951_abc123`, { viaTemplate: true }),
+    /STAGING_DB_ADMIN_URL has an unsupported parameter "port"/,
+  );
+  assert.equal(sent.filter((q) => /FILE_COPY|file_copy_method/.test(q.text)).length, 0, 'no server was asked for a file copy');
+  assert.deepEqual(await names(main, `%${tok}%`), [source]);
+  assert.deepEqual(await names(preview, `%${tok}%`), []);
 });
 
 test('a shots run keeps its frozen source and both clones together on the preview server', async (t) => {
@@ -395,7 +463,8 @@ test('an unreachable preview server fails the clone and makes nothing on the mai
     },
   );
   assert.deepEqual(await names(main, `%${tok}%`), [source], 'no fallback copy lands on the main server');
-  assert.equal(await dbManager.previewDatabaseVerdict(931), null, 'a server that cannot be read is "cannot tell"');
+  assert.equal(await dbManager.previewDatabaseVerdict({ 'usernode.db.name': target, 'usernode.db.server': 'preview' }), null,
+    'a server that cannot be read is "cannot tell"');
   await assert.rejects(dbManager.databaseExists(target, { strict: true }), 'a failed lookup is not absence');
 });
 
