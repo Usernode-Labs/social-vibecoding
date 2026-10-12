@@ -43,7 +43,10 @@ const DSN = process.env.TEST_DATABASE_URL
 
 const TOPIC_IDS = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
-  'homeroom-bot': ['bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal'],
+  'homeroom-bot': [
+    'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend',
+  ],
   'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused'],
   infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away'],
 };
@@ -126,6 +129,28 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   assert.deepEqual([unread.state, unread.value], ['error', 'Couldn’t load']);
   const merged = figures.present('bot.merged', { rate: 0.58, n: 24, other: 0.64 });
   assert.deepEqual([merged.state, merged.value, merged.sub], ['calm', '58%', 'people’s rate 64%']);
+});
+
+test('the bot\'s failed builds: a share of builds, of first versions, and of dollars, Homeroom beside the other projects', () => {
+  const proposed = figures.present('bot.builds-proposed', { homeroom: { hits: 113, total: 140 }, others: { hits: 9, total: 10 } });
+  assert.deepEqual(sidesOf(proposed), [['homeroom', 'warn', '81%', '113 of 140 builds'], ['others', 'ok', '90%', '9 of 10 builds']]);
+  assert.equal(proposed.sub, 'target 90%');
+  const firsts = figures.present('bot.first-versions', { homeroom: { hits: 0, total: 0 }, others: { hits: 9, total: 17 } });
+  assert.deepEqual(sidesOf(firsts), [['homeroom', 'empty', 'None yet', ''], ['others', 'warn', '53%', '9 of 17 first versions']]);
+  const spend = figures.present('bot.failed-spend', { homeroom: { hits: 12.4, total: 310 }, others: { hits: 0.75, total: 10 } });
+  assert.deepEqual(sidesOf(spend), [['homeroom', 'ok', '4%', '$12.40 of $310'], ['others', 'ok', '7.5%', '$0.75 of $10.00']],
+    'a share of dollars keeps its cents');
+  assert.equal(spend.sub, 'target under 10%');
+  const over = figures.present('bot.failed-spend', { homeroom: { hits: 10.01, total: 100 }, others: { hits: 0, total: 0 } });
+  assert.deepEqual(sidesOf(over)[0].slice(0, 3), ['homeroom', 'warn', '10.1%'], 'off target never reads as the target');
+  assert.deepEqual(sidesOf(over)[1].slice(0, 3), ['others', 'empty', 'None yet']);
+  for (const id of ['bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend']) {
+    assert.match(figures.FIGURES[id].tip, /^The share of /, id);
+    assert.deepEqual([figures.FIGURES[id].group, figures.FIGURES[id].covers], ['builds', 'split'], id);
+  }
+  assert.deepEqual(figures.readsFor(figures.FIGURES['bot.failed-spend']).map((r) => [r.side, r.name, r.scope]),
+    [['homeroom', 'botBuilds', 'homeroom'], ['others', 'botBuilds', 'others']]);
+  assert.equal(figures.present('bot.merged', { rate: 0.99, n: 114, other: 0.6 }).label, 'Proposals merged', 'kept as it was');
 });
 
 test('a record that began inside the window says when, so a new one never reads as none (#4697)', () => {
@@ -218,7 +243,7 @@ test('which figures split: the bot\'s cost and speed, the whole pipeline, merge 
   const split = figures.FIGURE_IDS.filter((id) => figures.FIGURES[id].covers === 'split');
   assert.deepEqual(split, [
     'bot.reply-cost', 'bot.reply-time', 'bot.merged-cost', 'bot.request-to-proposal',
-    'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged',
+    'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged',
     'pipeline.main-paused', 'infra.merge-to-live',
   ]);
   for (const id of figures.FIGURE_IDS) assert.ok(figures.COVERS.includes(figures.FIGURES[id].covers || 'all'), id);
@@ -273,7 +298,7 @@ test('an unknown figure is an error for the topics PR and costs the topic nothin
   assert.deepEqual(errors, [
     'topics[0].figures names an unknown figure: infra.uptime',
     'topics[1].figures must be a list of figure ids',
-    'topics[2].figures holds at most 6 figures',
+    'topics[2].figures holds at most 9 figures',
   ]);
   assert.deepEqual(topics.map((t) => [t.id, t.figures]), [
     ['infra', ['infra.apps-up']],
@@ -349,8 +374,22 @@ test('the Homeroom bot\'s strip is a grid: a row each for Answers and Builds, a 
   assert.match(html, /data-topic-figures-layout="grid"/);
   assert.deepEqual([...html.matchAll(/class="dev-ws-figs-colhead">([^<]+)</g)].map((m) => m[1]), ['Quality', 'Cost', 'Speed']);
   assert.deepEqual([...html.matchAll(/class="dev-ws-figs-rowname">([^<]+)</g)].map((m) => m[1]), ['Answers', 'Builds']);
-  assert.deepEqual([...html.matchAll(/data-topic-figure="([^"]+)"/g)].map((m) => m[1]), TOPIC_IDS['homeroom-bot']);
-  assert.equal([...html.matchAll(/class="dev-ws-fig-sides"/g)].length, 4, 'cost and speed split, quality does not');
+  // Builds runs on into two rows under its first: its failures under its
+  // merges, a column at a time, in the order the topic names them.
+  assert.deepEqual([...html.matchAll(/data-topic-figure="([^"]+)"/g)].map((m) => m[1]), [
+    'bot.answered', 'bot.reply-cost', 'bot.reply-time',
+    'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
+    'bot.builds-proposed', 'bot.failed-spend',
+    'bot.first-versions',
+  ]);
+  assert.deepEqual([...html.matchAll(/class="dev-ws-figs-row" data-fig-group="([^"]+)"/g)].map((m) => m[1]),
+    ['answers', 'builds', 'builds', 'builds']);
+  assert.equal([...html.matchAll(/class="dev-ws-figs-rowhead dev-ws-figs-rowhead-more" aria-hidden="true"/g)].length, 2);
+  assert.equal([...html.matchAll(/class="dev-ws-fig-sides"/g)].length, 7, 'cost and speed split, and the builds\' failures; the rest of quality does not');
+  assert.match(html, /data-fig-side="homeroom" data-fig-state="warn">[\s\S]*?81%<\/span><span class="dev-ws-fig-side-detail">21 of 26 builds</);
+  assert.match(html, /data-fig-side="homeroom" data-fig-state="warn">[\s\S]*?19%<\/span><span class="dev-ws-fig-side-detail">\$18\.40 of \$96\.20</);
+  // On a phone the row's name spans the grid; a row it runs on into has none.
+  assert.match(read('public/css/app.css'), /\.dev-ws-figs-rowhead-more \{ display: none; \}/);
 });
 
 test('a topic shows the strip only when it is live and names figures', () => {
@@ -679,6 +718,46 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.equal(got['bot.merged'].state, 'empty');
     assert.deepEqual(sidesOf(got['bot.merged-cost']), [['homeroom', 'empty', 'None yet', ''], ['others', 'ok', '$1.20', '']],
       'a shadow build could never become a proposal, so no merge pays for it');
+  });
+
+  await t.test('the bot\'s builds: those that reached a vote, first versions, and the spend that bought no proposal', async () => {
+    // A build session each; the one that became a proposal points at it.
+    const buildSession = async (app, status = 'paused') => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, $3) RETURNING id`, [app.id, bot, status],
+    )).rows[0].id;
+    const build = async (app, issue, { mode = 'live', ok = null, error = null, cost = 0, proposed = false, session = true }) => {
+      const sid = session ? await buildSession(app, proposed ? 'promoted' : 'paused') : null;
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error, build_cost_usd,
+                                        build_session_id, proposal_session_id, created_at)
+         VALUES ($1, $2, $3, 'ready', $4, $5, $6, $7, $8, $9)`,
+        [app.id, issue, mode, ok, error, cost, sid, proposed ? sid : null, ago(240)],
+      );
+    };
+    // The project: a first version proposed; a first version a restart cut
+    // short (a failure); a build stopped because its request was closed (not
+    // a failure, but its spend is spend); one still under way; a shadow build
+    // and a run never built, neither counted.
+    await pool.query(`INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, first_version) VALUES ($1, 21, $2, TRUE)`, [project.id, person]);
+    await pool.query(`INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number) VALUES ($1, $2, 'a garden log', 'filed', 22)`, [project.id, person]);
+    await build(project, 21, { ok: true, cost: 2, proposed: true });
+    await build(project, 22, { ok: false, cost: 1, error: 'interrupted: the build turn was cut short by a restart; the issue was sent back to be triaged again' });
+    await build(project, 23, { ok: false, cost: 0.5, error: 'skipped: the request was closed before it was proposed' });
+    await build(project, 24, { cost: 0.25 });
+    await build(project, 25, { mode: 'shadow', ok: false, cost: 9, error: 'the build did not succeed' });
+    await build(project, 26, { ok: false, cost: 7, error: 'skipped: nobody tapped Build it within a week', session: false });
+    // Homeroom: one build that failed.
+    await build(platform, 31, { ok: false, cost: 3, error: 'the build did not succeed' });
+
+    figures._resetForTests();
+    const got = byId(await figures.figuresFor(pool, TOPIC_IDS['homeroom-bot']));
+    assert.deepEqual(sidesOf(got['bot.builds-proposed']), [['homeroom', 'warn', '0%', '0 of 1 builds'], ['others', 'warn', '50%', '1 of 2 builds']],
+      'the skipped, the unfinished, the shadow and the never-built are not counted');
+    assert.deepEqual(sidesOf(got['bot.first-versions']), [['homeroom', 'empty', 'None yet', ''], ['others', 'warn', '50%', '1 of 2 first versions']],
+      'a first version is one the requester record or the first-version record names');
+    assert.deepEqual(sidesOf(got['bot.failed-spend']), [['homeroom', 'warn', '100%', '$3.00 of $3.00'], ['others', 'warn', '27%', '$1.00 of $3.75']],
+      'the restart\'s dollar of every live build\'s spend, the skipped and the unfinished included');
+    assert.equal(got['bot.merged'].label, 'Proposals merged');
   });
 
   await t.test('onboarding: people let in from the waitlist who made an account, real people only, rounded', async () => {

@@ -31,6 +31,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const registry = require('../src/agents/registry');
 const agentTurn = require('../src/services/agent-turn');
@@ -350,6 +351,7 @@ function runRunCc(env, fx, upstream, extra = {}) {
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
         RUNNER: path.join(ROOT, 'worker', 'run-cc.sh'),
         TURN_JOURNAL: journal,
+        ...RUNNER_TEST_ENV,
         ...extra,
       },
       stdio: ['ignore', 'ignore', 'ignore'],
@@ -774,7 +776,9 @@ test('a GLM bot build whose agent failed opens no proposal, even when its partia
   const run = await runBotBuild(t, GLM, { journal: FAILED_PUSHED_JOURNAL, propose: true });
   assert.equal(run.execs[1].agentHarness, 'claude');
   assert.equal(run.out.ok, false);
-  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1)');
+  // The reason first, then the turn's final message, so the run says why.
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1); it last said: '
+    + '# Pin the markers to the map ## User-facing changes The markers stay put. ## Technical implementation In map.js.');
   assert.deepEqual(run.promotions, [], 'nothing was put up for a vote');
   // And the build asked run-cc.sh not to keep a failed turn in the first place.
   assert.equal(run.execs[1].discardFailedTurn, true);
@@ -805,14 +809,16 @@ test('a build that ended on an error result, or on the runtime\'s API error noti
     '__USERNODE_EXIT__ 0',
   ];
   const isError = await runBotBuild(t, GLM, { journal: ended({ is_error: true, result: 'Stopped.' }), propose: true });
-  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error)');
+  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error); it last said: Stopped.');
   assert.deepEqual(isError.promotions, []);
   t.mock.restoreAll();
   const wire = await runBotBuild(t, GLM, {
     journal: ended({ is_error: false, result: 'Edited app.js.\n\nAPI Error: Connection lost mid-response. The response above may be incomplete.' }),
     propose: true,
   });
-  assert.equal(wire.out.error, 'the build turn failed (it ended on an API error)');
+  // The notice itself, read before any exit code, and not said twice.
+  assert.equal(wire.out.error, 'the build turn failed (it ended on an API error: API Error: Connection lost mid-response. '
+    + 'The response above may be incomplete.)');
   assert.deepEqual(wire.promotions, []);
 });
 
@@ -946,7 +952,9 @@ test('the worker and the host read one definition of the API error notice', () =
   assert.equal(shared.failedFinalResult(journal('done')), null);
   assert.equal(shared.failedFinalResult('no result at all'), null);
   // The host reads the same notice the same way.
-  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: API_ERROR }), 'it ended on an API error');
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: API_ERROR }), `it ended on an API error: ${API_ERROR}`);
+  // Read before the exit code: run-cc.sh exits 1 after such a turn.
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 1, lastResultText: API_ERROR }), `it ended on an API error: ${API_ERROR}`);
   assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: 'Fixed the API error handling.' }), null);
   // The image ships it beside the runner that calls it.
   assert.match(fs.readFileSync(path.join(ROOT, 'worker', 'Dockerfile'), 'utf8'), /COPY agent-api-failure\.js \/usr\/local\/bin\/agent-api-failure\.js/);
@@ -999,7 +1007,8 @@ test('a GLM follow-up that ended on an API error with exit 0 pushes nothing, and
   state.agentHarness = 'claude';
   for (const line of ran.out.split('\n')) worker.parseLine(line, () => {}, state);
   state.exitCode = ran.code;
-  assert.equal(live.failedClaudeTurn(state), 'the agent exited with code 1');
+  // The notice the turn ended on, not the wrapper's exit code it caused.
+  assert.equal(live.failedClaudeTurn(state), `it ended on an API error: ${API_ERROR}`);
   assert.equal(followup.headMoved({ mode: 'build', result: state, reviewedHeadSha: 'a'.repeat(40), action: 'revise' }), false);
 
   // A good turn that only mentions an API error is committed as before.

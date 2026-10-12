@@ -103,6 +103,27 @@ test('the cache fills what the committed catalogs lack, for the English as it is
   assert.equal(value.manifest.es.core.url, `/locales/live/${[...value.files.keys()][0]}`);
 });
 
+test('a committed entry that spells a character as an escape code gives way to the cache (#4838)', async (t) => {
+  cache.reset();
+  const source = sourceFor(t, { translations: { es: { join: from('Join', 'Unirse\\u00a0!') } } });
+  const pack = packOf(await cache.live(poolWith(ALL_SPANISH), { source }));
+  assert.equal(pack.join, 'Unirse', 'the cached translation, not the six characters');
+});
+
+test('a new answer replaces a cached translation that spells a character as an escape code, and nothing else (#4838)', async () => {
+  const sent = [];
+  await cache.saveTranslations({ query: async (sql, params) => { sent.push({ sql: String(sql), params }); return { rowCount: 1 }; } },
+    { es: { core: { join: { text: 'Unirse', source: hash('Join') } } } });
+  const [{ sql, params }] = sent;
+  // Without this the step would ask again on every pass and its answer would never land;
+  // created_at moves so every server's cacheVersion sees the change.
+  assert.match(sql, /ON CONFLICT \(language, namespace, key, source\) DO UPDATE SET text = EXCLUDED\.text, model = EXCLUDED\.model, created_at = NOW\(\)\s+WHERE language_translations\.text ~ \$7 AND language_translations\.text <> EXCLUDED\.text/);
+  // Postgres reads the pattern as a backslash, a u and four hex digits.
+  assert.equal(params[6], '\\\\u[0-9a-fA-F]{4}');
+  const pattern = new RegExp(params[6]);
+  assert.ok(pattern.test('Unirse\\u00a0!') && !pattern.test('Unirse\u00a0!'));
+});
+
 test('a language is offered only once the two together cover minimumCoverage, and a count only with all its forms', async (t) => {
   cache.reset();
   const source = sourceFor(t);

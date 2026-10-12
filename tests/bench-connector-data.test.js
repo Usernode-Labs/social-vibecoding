@@ -54,6 +54,8 @@ test('the bot overview carries the console\'s fields it names, and nothing else'
   assert.equal(out.runs[0].build.ok, true);
   assert.equal(out.runs[0].build.state, 'built');
   assert.equal(out.runs[0].readReason, null, 'a run from before read reasons');
+  assert.equal(out.runs[0].specChars, null, 'a run with no spec has no size');
+  assert.equal(out.runs[0].build_spec_md, undefined, 'the size, not the spec itself');
   assert.equal(out.buildLane, null, 'no lane in the payload, none here');
   assert.equal(out.nextBefore, 9, 'a full page names the next one');
   assert.equal(out.queue.items[0].app, 'bread');
@@ -295,4 +297,23 @@ test('a failed run in recent shots carries its code, its reason in full and how 
   // A lookup that fails never fails the listing.
   const broken = { async query() { throw new Error('relation does not exist'); } };
   assert.equal((await data.recentShots(broken, {}, { gallery })).proposals.length, 3);
+});
+
+test('a run carries the size of the spec its build worked from, to read against how the build went', async () => {
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: {}, bot: null, totals: {}, queue: { depth: 0, items: [] },
+        runs: [{
+          id: 3, app_slug: 'bread', issue_number: 1, verdict: 'ready', build_ok: false,
+          build_error: 'the build ran past its time limit', build_spec_md: '# Plan\n'.concat('x'.repeat(9993)),
+          bot_config_version_id: 4, created_at: '2026-10-01T00:00:00Z',
+        }],
+      };
+    },
+  };
+  const [run] = (await data.botOverview(null, {}, {}, { bot })).runs;
+  assert.equal(run.specChars, 10000);
+  assert.equal(run.build.state, 'failed');
+  assert.equal(run.botConfig.versionId, 4);
 });

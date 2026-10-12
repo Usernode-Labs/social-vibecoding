@@ -20,7 +20,7 @@
       "name": "Homeroom bot",
       "icon": "🤖",
       "about": "How it plans, builds and answers",
-      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal"]
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal", "bot.builds-proposed", "bot.first-versions", "bot.failed-spend"]
     },
     {
       "id": "proposal-pipeline",

@@ -10514,6 +10514,13 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 
+-- A live first version that did not finish and was tried once more on its
+-- own, from its plan (homeroom-bot.js buildLive claimAutoRetry): { at, error
+-- (why the first try failed), session_id (its session) }. At most one run of
+-- a request has it: a first version is retried automatically once.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
+
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, up to three builds per project at a time
 -- (homeroom-bot.js BUILDS_PER_PROJECT), so reading the project's next
@@ -13048,6 +13055,16 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAM
 -- from before, or one no queue row started.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
+-- What a read saw of its request (homeroom-bot.js readFingerprintOf): a
+-- hash of its title, body, GitHub comments and discussion messages (the
+-- screenshots they link included), the bot's own posts left out, with a
+-- few counts beside it. A ready verdict a cap held is reused when its turn
+-- comes (cap_freed) if the request still hashes the same: no new read, and
+-- the new run names the one it reused in `reused_run_id`, at no cost. Null
+-- on a run from before, or one that read nothing.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_fingerprint JSONB;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS reused_run_id INTEGER
+  REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL;
 -- #4533: why a queued row is waiting, and until when, as the refusal that
 -- left it there said (homeroom-bot.js recordRefusal; 'session_busy' when a
 -- turn was running on its session). A refusal keeps the row and its place,
