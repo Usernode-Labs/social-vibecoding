@@ -1232,8 +1232,8 @@ function proposalHandoffRoutes(config) {
         }
       }
       // The platform-wide cap, counted as every other start counts it
-      // (session-caps.countGlobalSessions): this path once had its own copy
-      // that counted the Homeroom bot's sessions too (12 Oct 2026).
+      // (session-caps.countGlobalSessions): this path once had its own copy,
+      // which disagreed with the others (12 Oct 2026).
       const global = await sessionLifecycle.claimGlobalSlot({
         pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
       });

@@ -5,11 +5,13 @@
 //
 // On 12 Oct 2026 every native proposal_start was refused "Platform is at
 // capacity" for over an hour while the count the browser's starts and the
-// admins' alert used read under 80%: routes/proposal-handoff.js had its own
-// copy of the count without the clause that leaves synthetic accounts out,
-// and with merges paused the Homeroom bot's proposals had piled up. Nobody
-// could see it: the alert samples its own count, and a refusal was recorded
-// nowhere.
+// admins' alert used read 62: routes/proposal-handoff.js had its own copy of
+// the count, which included the Homeroom bot's proposals (105 of 100) where
+// the others left them out. #4860 settled which is right (they hold preview
+// pods like anyone's, and the cap is sized from the pod slots) and raised the
+// cap; this keeps the count in one place so the copies cannot drift again.
+// Nobody could see the refusals either: the alert samples its own count, and
+// a refusal was recorded nowhere.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -23,21 +25,22 @@ const events = require('../src/services/events');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-test('one count spends the budget: active and promoted, not imported, not a synthetic account\'s', () => {
+test('one count spends the budget: active and promoted, whoever owns them, not imported', () => {
   const sql = sessionCaps.GLOBAL_SESSIONS_SQL;
   assert.match(sql, /status IN \('active', 'promoted'\)/);
   assert.match(sql, /source IS DISTINCT FROM 'imported'/);
-  assert.match(sql, /user_id NOT IN \(SELECT id FROM users WHERE is_synthetic = TRUE\)/);
+  assert.doesNotMatch(sql, /is_synthetic/, 'the bot\'s sessions hold preview pods like anyone\'s (#4860)');
   // Nothing counts its own copy any more.
   for (const file of ['src/routes/sessions.js', 'src/routes/proposal-handoff.js', 'src/services/platform-limit-alerts.js']) {
     assert.doesNotMatch(read(file), /COUNT\(\*\)[^`]*FROM chat_sessions\s+WHERE status IN \('active', 'promoted'\)/, file);
   }
   assert.match(read('src/services/platform-limit-alerts.js'), /count: \(pool\) => require\('\.\/session-caps'\)\.countGlobalSessions\(pool\)/,
     'the admins\' alert reads the count the refusals do');
-  // Pausing the bot's idle session would free nothing the count sees.
+  // What the count sees, the eviction can free: an idle session of the bot's
+  // is paused to make room like anyone's.
   const free = read('src/services/session-lifecycle.js');
   const freeSql = free.slice(free.indexOf('async function freeGlobalSlot'), free.indexOf('async function freeUserSlot'));
-  assert.match(freeSql, /AND user_id NOT IN \(SELECT id FROM users WHERE is_synthetic = TRUE\)/);
+  assert.doesNotMatch(freeSql, /is_synthetic/);
 });
 
 test('every start, resume and reopen passes the same gate, and says where it asked', () => {
