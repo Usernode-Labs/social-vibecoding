@@ -4607,10 +4607,6 @@ async function nudgeRecoveredBuild({
       repoOwner: repo.owner, repoName: repo.repo, branchName: full.branch_name, temporary: true, onProgress: () => {},
     });
     worker.clearPendingStop?.(session.id);
-    await pool.query(
-      "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1 AND status IN ('active', 'paused')",
-      [session.id],
-    );
     // On what is left of the build's own clock, as the live path's nudge.
     const budgetMs = Math.max(Number(deadlineMs) - Date.now(), 0);
     const stopAt = live.utcClock(Number(deadlineMs));
