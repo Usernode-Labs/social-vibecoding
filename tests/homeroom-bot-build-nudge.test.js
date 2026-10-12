@@ -531,7 +531,7 @@ test('a build turn a restart caught that changed nothing is kept and counted, no
 test('both recovery paths record it: the live one on its outcome, the lane\'s on its run', () => {
   const src = read('src/services/homeroom-bot.js');
   const finish = src.slice(src.indexOf('async function finishRecoveredTurn('), src.indexOf('async function finishConfiguredShadow('));
-  assert.match(finish, /component: activeTurn\?\.telemetryComponent \|\| null,\n\s+\}\)\) \{/, 'a live turn notes its ledger name for completeRecoveredLive');
+  assert.match(finish, /component: activeTurn\?\.telemetryComponent \|\| null,\n\s+harness: activeTurn\?\.harness \|\| null, deadlineMs,\n\s+\}\)\) \{/, 'a live turn notes its ledger name for completeRecoveredLive');
   assert.match(finish, /const noChange = await recoveredNoChange\(pool, \{/);
   assert.match(finish, /build_no_change = COALESCE\(\$9::jsonb, r\.build_no_change\)/);
   const complete = src.slice(src.indexOf('async function completeRecoveredLive('), src.indexOf('async function holdSlotDuringRecovery('));

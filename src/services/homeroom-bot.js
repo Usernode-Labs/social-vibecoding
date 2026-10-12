@@ -4451,6 +4451,47 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
   }
 }
 
+// How a recovered build whose commit could not be pushed ends its error. A
+// push failure, never "no change to propose": the build made one.
+const PUSH_FAILED_ERROR = 'couldn\'t push the build\'s commit';
+
+/**
+ * A build turn of the bot's (or a benchmark trial's) that restart recovery
+ * followed to its end, with its commit pushed when the restart kept the
+ * worker from pushing it. The worker's push asks this platform to push, so
+ * one that lands while the platform restarts fails, and the runner reports
+ * push_ok=0 with commits ahead of main. A person's recovered turn has been
+ * re-pushed from the worker since #295 (server.js finalizeRecoveredTurn);
+ * the bot's was read as "the build produced no change to propose", 7 times
+ * from 8 to 12 Oct 2026. Only a build that finished cleanly with a commit
+ * on its own branch: a stopped or failed turn's work is dropped, as the
+ * live path drops it. Resolves the result to decide on: pushOk set when
+ * the push went through, `pushFailed` (its reason) when it did not. Never
+ * throws.
+ */
+async function repushRecovered({ session, activeTurn, result, timedOut = false, deps = {} }) {
+  const r = result || {};
+  if (!activeTurn || activeTurn.mode !== 'build' || timedOut) return r;
+  if (r.pushOk === true || !(Number(r.ahead) > 0) || !r.sha || r.branchMismatch === true) return r;
+  if (!session || !session.branch_name || live.failedClaudeTurn(r)) return r;
+  const worker = deps.worker || require('./worker');
+  try {
+    const pushed = await worker.execPushFromWorker(session.id, session.branch_name);
+    const sha = (pushed && pushed.sha) || r.sha;
+    log.info('homeroom-bot', 'Pushed the commit of a build a restart caught mid-push', {
+      sessionId: session.id, branch: session.branch_name, sha: String(sha).slice(0, 8),
+    });
+    return { ...r, pushOk: true, sha, repushed: true };
+  } catch (err) {
+    const failure = typeof worker.describePushFailure === 'function'
+      ? worker.describePushFailure(err) : { code: err.code || 'push_failed', text: err.message };
+    log.warn('homeroom-bot', 'Could not push the commit of a build a restart caught mid-push', {
+      sessionId: session.id, branch: session.branch_name, sha: r.sha, code: failure.code || null, err: err.message,
+    });
+    return { ...r, pushOk: false, pushFailed: String(failure.code || 'push_failed') };
+  }
+}
+
 /**
  * What a build turn restart recovery followed to its end adds to its run's
  * record of a turn that changed nothing (build_no_change, homeroom-bot-live.js
@@ -4458,15 +4499,16 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
  *   - a nudge's outcome, added to what its build turn left on the run before
  *     the nudge started. A turn is a nudge by its ledger name, or by a record
  *     that says a nudge started and has none;
- *   - a build turn of its own that ended cleanly and changed nothing. It is
- *     not nudged here: that would mean rebuilding the whole build prompt and
- *     holding a slot for it, and a turn that quits early ends in seconds, so a
- *     restart rarely catches one. It is recorded as having changed nothing.
+ *   - a build turn of its own that ended cleanly and changed nothing, which
+ *     recovery did not nudge (`notNudged` says why: nudgeRecoveredBuild nudges
+ *     one with time left on its clock). It is recorded as having changed
+ *     nothing.
  * Resolves the record to keep, or null when there is nothing to add. Never
  * throws.
  */
 async function recoveredNoChange(pool, {
   runId, session, result = {}, timedOut = false, component = null, origin = null, appId = null, issueNumber = null,
+  notNudged = 'a restart caught the turn, and recovery does not nudge',
 }) {
   try {
     const { rows: [row] = [] } = await pool.query(
@@ -4494,7 +4536,7 @@ async function recoveredNoChange(pool, {
       if (facts.ended !== 'no_change' && facts.ended !== 'not_pushed') return null;
       noChange = {
         turns: [{ ...facts, said: live.agentSaid(result?.lastResultText) }],
-        nudged: false, notNudged: 'a restart caught the turn, and recovery does not nudge', committed: null, recovered: true,
+        nudged: false, notNudged, committed: null, recovered: true,
       };
       await live.recordNoChange(pool, { ...where, noChange, which: 'first', recovered: true });
     }
@@ -4510,6 +4552,119 @@ async function recoveredNoChange(pool, {
 }
 
 /**
+ * A build turn restart recovery followed to its end that ended cleanly and
+ * changed nothing, nudged once on what is left of the bot's clock
+ * (`deadlineMs`, server.js), as the live path nudges one (homeroom-bot-live.js
+ * buildAndPropose): in the same session, continuing the agent's thread, with
+ * the whole build prompt, rebuilt from the run's build snapshot and the
+ * session's spec, for when the thread cannot be continued. Recovery used to
+ * fail every such build "with no change to propose", where the live path
+ * would have nudged it. Runs once the session is free (the turn record a
+ * nudge writes needs it), holding the build's slot. What the first turn did
+ * is kept on the run before the nudge starts, as the live path keeps it, so
+ * a restart in the middle of the nudge is recovered as the nudge it is
+ * (recoveredNoChange). `skipNow` resolves why the build is not needed any
+ * more, when it is not. Resolves { ran: true, result, stopped, failed } once
+ * the nudge ran, else { ran: false, notNudged } with why not. Never throws.
+ */
+async function nudgeRecoveredBuild({
+  pool, config = {}, session, runId, appId, issueNumber, origin = null, result = {}, component = null,
+  harness = null, deadlineMs = null, skipNow = null, deps = {},
+}) {
+  const not = (notNudged) => ({ ran: false, notNudged });
+  try {
+    if (component === live.BUILD_NUDGE_TELEMETRY) return not('the turn was the nudge');
+    const worker = deps.worker || require('./worker');
+    const leftMs = deadlineMs == null || !Number.isFinite(Number(deadlineMs)) ? null : Number(deadlineMs) - Date.now();
+    if (leftMs == null) return not('a restart caught the turn, and its clock is not known');
+    const why = live.whyNotNudge({
+      routed: { result: result || {} }, stopped: false, leftMs, stopPending: !!worker.getPendingStop?.(session.id),
+    });
+    if (why) return not(why);
+    const { rows: [row] = [] } = await pool.query(
+      'SELECT build_no_change FROM homeroom_bot_runs WHERE id = $1', [runId],
+    );
+    if (row?.build_no_change?.nudged) return not('it was nudged already');
+    const skipped = skipNow ? await skipNow() : null;
+    if (skipped) return not(skipped);
+    const snapshot = await snapshots.snapshotForRun(pool, runId, 'build');
+    const texts = (snapshot && snapshot.texts) || {};
+    const extra = (snapshot && snapshot.extra) || {};
+    const seed = String(texts.seed || '');
+    if (!seed) return not('no build snapshot to rebuild its prompt from');
+    const { rows: [full] } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1`,
+      [session.id],
+    );
+    const repo = full ? parseRepo(full.repo_url) : null;
+    if (!full || !repo || !full.branch_name) return not('its session or repository is gone');
+    const model = full.agent_model || null;
+
+    const turnDeps = {
+      worker,
+      sessions: deps.sessions || require('../routes/sessions'),
+      agentTurn: deps.agentTurn || require('./agent-turn'),
+      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
+    };
+    await worker.ensureWorkerImage();
+    const containerName = await worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName: full.branch_name, temporary: true, onProgress: () => {},
+    });
+    worker.clearPendingStop?.(session.id);
+    // On what is left of the build's own clock, as the live path's nudge.
+    const budgetMs = Math.max(Number(deadlineMs) - Date.now(), 0);
+    const stopAt = live.utcClock(Number(deadlineMs));
+    const prompt = live.buildPrompt({
+      seed, buildNote: texts.build_note || '', spec: full.spec_md || null,
+      platformRepo: !!extra.platformRepo, firstVersion: !!extra.firstVersion, starter: extra.starter || null,
+    });
+    // The first turn, as the live path keeps it before its nudge starts:
+    // from here on, the nudge is under way.
+    const noChange = {
+      turns: [{
+        ...live.turnFacts({ routed: { result }, stopped: false }, { turn: 'build', model }),
+        said: live.agentSaid(result?.lastResultText),
+      }],
+      nudged: true, notNudged: null, committed: null, recovered: true,
+    };
+    await live.recordNoChange(pool, {
+      appId, sessionId: session.id, userId: full.user_id || null, issueNumber, origin, noChange, which: 'first', recovered: true,
+    });
+    await pool.query('UPDATE homeroom_bot_runs SET build_no_change = $2::jsonb WHERE id = $1', [runId, JSON.stringify(noChange)]);
+
+    const bot = { id: full.user_id, username: live.BOT_USERNAME };
+    const runBuildTurn = live.buildTurnRunner({
+      pool, config, bot, session: full, model, branchName: full.branch_name, containerName, deps: turnDeps,
+      // The CLI the turn ran in, so its thread can be continued.
+      harness: harness === 'claude' ? 'claude' : 'auto',
+    });
+    log.warn('homeroom-bot', 'A build turn a restart caught changed nothing; nudging it once', {
+      runId, sessionId: session.id, lane: origin?.lane || null, leftMs: Math.round(leftMs),
+    });
+    const nudging = runBuildTurn({
+      prompt: live.buildNudgePrompt({ stopAt }),
+      freshPrompt: [prompt, '', live.buildNudgePrompt({ stopAt, fresh: true })].join('\n'),
+      resumeThreadId: result?.agentThreadId || null,
+      budgetMs,
+      commitMsg: `Homeroom bot: #${issueNumber} ${full.title || ''}`.trim().slice(0, 120),
+      progress: live.lastActivity(),
+      telemetry: live.BUILD_NUDGE_TELEMETRY,
+    });
+    nudging.catch(() => {});
+    const { routed, stopped } = await holdSlotDuringRecovery(pool, session.id, nudging);
+    return {
+      ran: true, result: (routed && routed.result) || {}, stopped: !!stopped,
+      failed: routed?.error ? String(routed.error) : null,
+    };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not nudge a build a restart caught', { runId, sessionId: session?.id, err: err.message });
+    return not(`the nudge could not start: ${err.message}`);
+  }
+}
+
+/**
  * A recovered turn of the bot's, finished. `result` is what the journal
  * replay returned; `timedOut` says the bot's clock, re-armed by recovery,
  * ended it, its time given back for each restart that reached the turn
@@ -4517,7 +4672,10 @@ async function recoveredNoChange(pool, {
  * the turn record whatever this does.
  *
  *   - a build turn: recorded on its run, built or failed, as shadowBuild
- *     records one, and its cost debited from the allowance;
+ *     records one, and its cost debited from the allowance. One that changed
+ *     nothing with time left on its clock (`deadlineMs`) is first nudged
+ *     ('nudge_pending': completeRecoveredLive nudges it once the session is
+ *     free, then finishes it here again with the `nudge` it ran);
  *   - a spec turn: the spec kept on the run, and the run put back in the
  *     queue, where its build starts from that spec; a spec that found the
  *     request impossible is recorded as such;
@@ -4525,11 +4683,12 @@ async function recoveredNoChange(pool, {
  *     row it held is released and triaged again.
  */
 async function finishRecoveredTurn({
-  pool, session, activeTurn, result = {}, timedOut = false, deps = {},
+  pool, session, activeTurn, result = {}, timedOut = false, deadlineMs = null, nudge = null, deps = {},
 }) {
   const run = await runOfSession(pool, session.id);
   if (!run && await noteRecoveredLive(pool, session, {
     mode: activeTurn?.mode, result, timedOut, component: activeTurn?.telemetryComponent || null,
+    harness: activeTurn?.harness || null, deadlineMs,
   })) {
     return 'live_pending';
   }
@@ -4561,16 +4720,27 @@ async function finishRecoveredTurn({
     return 'requeued';
   }
 
-  const turnFailed = timedOut ? null : live.failedClaudeTurn(result);
+  // A build turn that ended cleanly and changed nothing is nudged once, as
+  // the live path nudges one, once the session is free (completeRecoveredLive
+  // runs the nudge and finishes the build here again).
+  if (!nudge && activeTurn?.mode === 'build' && !timedOut && deadlineMs != null
+    && activeTurn?.telemetryComponent !== live.BUILD_NUDGE_TELEMETRY
+    && !live.whyNotNudge({ routed: { result }, stopped: false, leftMs: Number(deadlineMs) - Date.now() })) {
+    pendingShadowNudges.set(Number(session.id), { session, activeTurn, result, deadlineMs });
+    return 'nudge_pending';
+  }
+  const turnFailed = timedOut ? null : (nudge?.failed || live.failedClaudeTurn(result));
   const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut && !turnFailed;
   const error = built ? null
     : timedOut ? `the build ran past its time limit${note}`
       : turnFailed ? `the build turn failed (${turnFailed})${note}`
-        : `the build produced no change to propose${note}`;
+        : result.pushFailed ? `${PUSH_FAILED_ERROR} (${result.pushFailed})${note}`
+          : `the build produced no change to propose${note}`;
   const costUsd = await sessionCostUsd(pool, session.id);
   const noChange = await recoveredNoChange(pool, {
     runId: run.id, session, result, timedOut, component: activeTurn?.telemetryComponent || null,
     origin: { lane: 'shadow', runId: run.id }, appId: run.app_id, issueNumber: run.issue_number,
+    ...(nudge && !nudge.ran && nudge.notNudged ? { notNudged: nudge.notNudged } : {}),
   });
   await pool.query(
     `UPDATE homeroom_bot_runs r
@@ -4677,6 +4847,32 @@ async function settleReapedTurn({ pool, config = {}, session }) {
 
 // sessionId → what recovery found, until completeRecoveredLive acts on it.
 const pendingLive = new Map();
+
+// sessionId → a shadow build recovery followed to its end that changed
+// nothing, until completeRecoveredLive nudges it (finishRecoveredTurn).
+const pendingShadowNudges = new Map();
+
+/**
+ * A shadow build finishRecoveredTurn left to be nudged, nudged now that the
+ * session is free (nudgeRecoveredBuild) and finished as finishRecoveredTurn
+ * finishes any: on what the nudge did, or on the first turn when it did not
+ * run. Resolves finishRecoveredTurn's outcome.
+ */
+async function finishShadowNudge({ pool, config, held, deps = {} }) {
+  const { session, activeTurn, result, deadlineMs } = held;
+  const run = await runOfSession(pool, session.id);
+  const nudge = run ? await nudgeRecoveredBuild({
+    pool, config, session, runId: run.id, appId: run.app_id, issueNumber: run.issue_number,
+    origin: { lane: 'shadow', runId: run.id }, result, component: activeTurn?.telemetryComponent || null,
+    harness: activeTurn?.harness || null, deadlineMs, deps,
+  }) : { ran: false, notNudged: 'its run is gone' };
+  return finishRecoveredTurn({
+    pool, session, nudge, deps,
+    activeTurn: nudge.ran ? { ...activeTurn, telemetryComponent: live.BUILD_NUDGE_TELEMETRY } : activeTurn,
+    result: nudge.ran ? nudge.result : result,
+    timedOut: nudge.ran ? nudge.stopped : false,
+  });
+}
 
 // How the run of a live build a restart cut short, and that was sent back to
 // be triaged again, ends its error. The piece of work goes on in the look
@@ -5001,9 +5197,12 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
  * Finish a live build recovery noted, once the session is free:
  *   - a build turn that pushed commits is proposed, and the proposal (and its
  *     spec) said on the issue, as the live path would have;
- *   - a build turn that pushed nothing, or whose time ran out (its clock
- *     gave back what its restarts cost it: recoveryDeadline), is said to
- *     have failed;
+ *   - a build turn that changed nothing is nudged once when its clock has
+ *     time left (nudgeRecoveredBuild), as the live path nudges one, and the
+ *     nudge is what is decided on;
+ *   - a build turn that pushed nothing, whose commit could not be pushed
+ *     (repushRecovered), or whose time ran out (its clock gave back what its
+ *     restarts cost it: recoveryDeadline), is said to have failed;
  *   - a spec turn that found the request impossible says so;
  *   - a spec turn that wrote a plan keeps it, and the build goes on from it
  *     (resumeLiveBuildFromSpec); so does (#4210) a build turn recovery could
@@ -5019,6 +5218,16 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
  * Never throws; returns what it did, or null when nothing was noted.
  */
 async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
+  const shadow = pendingShadowNudges.get(Number(sessionId));
+  if (shadow) {
+    pendingShadowNudges.delete(Number(sessionId));
+    try {
+      return await finishShadowNudge({ pool, config, held: shadow, deps });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not finish a recovered shadow build', { sessionId, err: err.message });
+      return 'error';
+    }
+  }
   const plan = pendingLive.get(Number(sessionId));
   if (!plan) return null;
   pendingLive.delete(Number(sessionId));
@@ -5034,14 +5243,33 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     );
     if (!session || !app) return 'gone';
     const archive = () => putAwayRecoveredSession(pool, session, { archive: true });
-    const costUsd = await sessionCostUsd(pool, session.id);
-    await debitRecovered(pool, session, costUsd, deps);
 
     // A first version in its review (bot-review.js) when the restart came:
     // its build landed, so it is proposed as it stands, its last committed
     // state, and the review is recorded as interrupted. A fix turn cut short
     // left nothing (a failed turn is neither committed nor pushed).
     const reviewing = plan.mode !== 'scout' ? await reviewInProgress(pool, plan.runId) : null;
+    // A build turn that ended cleanly and changed nothing is nudged once, on
+    // what is left of its clock, as the live path nudges one; what it does is
+    // what is decided on below. Before its cost is read, which holds the
+    // nudge's too.
+    const nudge = plan.mode !== 'scout' && !plan.lost && !plan.timedOut && !reviewing
+      ? await nudgeRecoveredBuild({
+        pool, config, session, runId: plan.runId, appId: app.id, issueNumber: plan.issueNumber,
+        origin: { lane: 'live', runId: plan.runId }, result: plan.result || {}, component: plan.component || null,
+        harness: plan.harness || null, deadlineMs: plan.deadlineMs ?? null, deps,
+        skipNow: () => whyNotBuild(pool, {
+          runId: plan.runId, botId: session.user_id, appId: app.id, issueNumber: plan.issueNumber,
+        }),
+      })
+      : null;
+    if (nudge?.ran) {
+      plan.result = nudge.result;
+      plan.timedOut = nudge.stopped;
+      plan.component = live.BUILD_NUDGE_TELEMETRY;
+    }
+    const costUsd = await sessionCostUsd(pool, session.id);
+    await debitRecovered(pool, session, costUsd, deps);
     // Its reviewer calls are not agent turns, so the session's ledger above
     // does not hold them: debited here as the live path debits them with
     // the build.
@@ -5169,7 +5397,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const note = ' (finished after a restart)';
     // A failed turn is a failed build here as on the live path.
     const turnFailed = plan.mode === 'scout' || plan.timedOut
-      ? null : live.failedClaudeTurn(plan.result);
+      ? null : (nudge?.failed || live.failedClaudeTurn(plan.result));
     // A build turn that changed nothing, or a nudge (recoveredNoChange): what
     // it said and did, kept on the run with the outcome below.
     const noChange = plan.mode !== 'scout' && !plan.lost && !reviewing && !restartedOut
@@ -5177,6 +5405,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         runId: plan.runId, session, result: plan.result || {}, timedOut: !!plan.timedOut,
         component: plan.component || null, origin: { lane: 'live', runId: plan.runId },
         appId: app.id, issueNumber: plan.issueNumber,
+        ...(nudge && !nudge.ran && nudge.notNudged ? { notNudged: nudge.notNudged } : {}),
       })
       : null;
     const noChangeOut = noChange ? { noChange } : {};
@@ -5275,7 +5504,8 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         ok: false, sessionId: Number(sessionId),
         error: (plan.timedOut ? 'the build ran past its time limit'
           : turnFailed ? `the build turn failed (${turnFailed})`
-            : 'the build produced no change to propose') + note,
+            : plan.result?.pushFailed ? `${PUSH_FAILED_ERROR} (${plan.result.pushFailed})`
+              : 'the build produced no change to propose') + note,
         ...noChangeOut,
       };
     }
@@ -10291,6 +10521,8 @@ module.exports = {
   recoveredNoChange,
   recoveryDeadline,
   finishRecoveredTurn,
+  repushRecovered,
+  nudgeRecoveredBuild,
   abandonRecoveredTurn,
   holdSlotDuringRecovery,
   isInfraBuildError,
@@ -10364,7 +10596,7 @@ module.exports = {
     liveBuildsInFlight.clear();
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
-    pendingLive.clear();
+    pendingLive.clear(); pendingShadowNudges.clear();
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);
