@@ -382,10 +382,12 @@ test('#4201: every entry the endpoint returns carries its app\'s icon: its image
   assert.deepEqual(dressed.history[0], { appSlug: 'b', iconUrl: null, iconEmoji: null }, 'an app with no icon known carries nulls');
 });
 
+// One story: the demo is drawn as the strip above the chat, a representative
+// one: 1 needs you, 2 ready to try, 2 in progress, 1 done today.
 test('the staging demo draws work in flight at the step its card shows, a question waiting, and a history, and links nowhere', () => {
   const now = Date.parse('2026-10-02T12:00:00Z');
   const demo = tray.demoWork(now);
-  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'building', 'follow_up_queued']);
+  assert.deepEqual(demo.now.map((job) => job.phase), ['building', 'building']);
   assert.ok(demo.now.every((job) => tray.PHASES.includes(job.phase)));
   const card = activity.demoState({ working: 1 }, now).cards[0];
   assert.deepEqual([demo.now[0].step, demo.now[0].of, demo.now[0].stepName], [card.step, card.of, card.stepName],
@@ -397,14 +399,22 @@ test('the staging demo draws work in flight at the step its card shows, a questi
   assert.deepEqual([demo.now[1].stage, demo.now[1].step, demo.now[1].of, demo.now[1].stepName, demo.now[1].doing],
     [joined.stage, joined.step, joined.of, joined.stepName, joined.doing], 'the tray and the card it was given say the same step');
   assert.deepEqual(demo.needsYou.map((job) => job.outcome), ['question']);
-  assert.ok(demo.history.length >= 2);
-  assert.ok(demo.history.some((job) => job.earlier.length >= 2), 'a request the bot came back to');
+  assert.equal(demo.needsYou[0].issueNumber, 18);
+  assert.equal(demo.needsYou[0].ask.question, 'Which night should the rota start on?');
+  assert.deepEqual(demo.history.map((job) => job.outcome), ['proposed', 'live', 'proposed']);
+  assert.deepEqual([demo.history[0], demo.history[2]].map((job) => [job.ready.approve, job.ready.waiting]), [[true, null], [false, '@ada']]);
+  assert.ok(Date.parse(demo.history[1].at) > now - 24 * 3600 * 1000, 'done today');
+  assert.ok(demo.history.some((job) => job.earlier.length >= 1), 'a request the bot came back to');
+  // With the fixture's messages, rows open their threads and act on their own message.
+  const placed = tray.demoWork(now, { story: 70, storyQuestion: 74, ready: 61, working: 50, underWay: 80, done: 51 });
+  assert.deepEqual([placed.needsYou[0].cardId, placed.needsYou[0].ask.messageId, placed.history[0].ready.messageId, placed.now[1].cardId],
+    [70, 74, 61, 80]);
   const all = [...demo.now, ...demo.needsYou, ...demo.history];
   assert.equal(new Set(all.map((job) => job.key)).size, all.length, 'one entry per request');
   for (const job of all) {
     assert.equal(job.href, null, 'no project stands behind the demo');
     assert.deepEqual(job.links, { request: null, proposal: null, project: null });
-    assert.equal(job.appName, 'Staging demo app');
+    assert.ok(['Staging demo app', 'Staging demo plants'].includes(job.appName), 'the fixture\'s own demo projects');
     for (const r of job.earlier) assert.ok(activity.OUTCOMES.includes(r.outcome));
   }
   assert.ok(demo.history.every((job, i, list) => i === 0 || Date.parse(list[i - 1].at) > Date.parse(job.at)), 'newest first');
@@ -878,4 +888,27 @@ test('only a conversation with the Homeroom bot carries the tray: its Activity d
 
   const { BOT_WORK_PANEL_ID } = loadTsx(TRAY);
   assert.equal(BOT_WORK_PANEL_ID, 'messages-bot-work-panel');
+});
+
+// One story: where each request is in its person's chat with the bot, for
+// the strip's rows and buttons (homeroom-bot-tray.js threadsOf).
+test('the strip learns each request\'s card, what waits on its person, and its ready card from the chat\'s records', () => {
+  const rows = [
+    { message_id: 90, kind: 'proposal', slug: 'a', issue_number: 2, meta: {
+      status: 'open', sessionId: 5, epoch: 1, actions: [{ id: 'try' }, { id: 'approve' }], waiting: 'you and @ada',
+    } },
+    { message_id: 80, kind: 'question', slug: 'a', issue_number: 3, meta: { status: 'open', question: 'Which night?', said: 'question' } },
+    { message_id: 70, kind: 'question', slug: 'a', issue_number: 4, meta: { status: 'answered', question: 'Old?' } },
+    { message_id: 60, kind: 'activity', slug: 'a', issue_number: 3, thread_root_id: null, meta: {} },
+    { message_id: 55, kind: 'proposal', slug: 'a', issue_number: 2, meta: { status: 'closed', sessionId: 4 } },
+    { message_id: 50, kind: 'activity', slug: 'a', issue_number: 2, thread_root_id: null, meta: {} },
+    { message_id: 40, kind: 'build_failed', slug: 'a', issue_number: 5, meta: { status: 'open', said: 'build_time' } },
+  ];
+  const found = tray.threadsOf(rows);
+  assert.deepEqual(found.get(tray.keyOf('a', 3)), { ask: { messageId: 80, kind: 'question', said: 'question', question: 'Which night?' }, cardId: 60 });
+  assert.deepEqual(found.get(tray.keyOf('a', 2)), {
+    ready: { messageId: 90, sessionId: 5, epoch: 1, open: true, approve: true, waiting: 'you and @ada' }, cardId: 50,
+  }, 'the newest ready card, and its approve only while open');
+  assert.equal(found.get(tray.keyOf('a', 4)).ask, undefined, 'an answered question waits on nobody');
+  assert.deepEqual(found.get(tray.keyOf('a', 5)).ask, { messageId: 40, kind: 'build_failed', said: 'build_time' });
 });
