@@ -1,7 +1,8 @@
 'use strict';
 
-// "Signing you in…": the plain screen over the story while Get started
-// spends a "You're in" mail's one-time sign-in
+// "Signing you in…": the plain screen over the story while a "You're in"
+// mail's one-time sign-in is spent: as the page opens, for a new account's
+// link, or while Get started spends it
 // (frontend/src/features/auth/landing.tsx SigningIn, over the sheet's `link`
 // step in frontend/src/features/auth/sign-in-sheet.tsx).
 //
@@ -61,29 +62,33 @@ test('the sheet says when the moment starts and ends, and stays down under the s
   assert.match(src, /: up \? 'translate-y-0 md:-translate-x-1\/2 md:-translate-y-1\/2' : 'translate-y-full md:-translate-x-1\/2 md:-translate-y-1\/2';/);
   assert.match(src, /bg-black\/40 transition-opacity duration-200 motion-reduce:transition-none \$\{up \? 'opacity-100' : 'opacity-0'\}/);
   // Nothing else opens the sheet held: the default is the sheet as it was.
-  assert.match(src, /onSigningIn, held = false, beforeFinish,/);
+  assert.match(src, /onSigningIn, held = false, linkUsed = false, onAccount,\s+beforeFinish,/);
   // The sheet's own words for the step stay, for a spend that runs long.
   assert.match(src, /step === 'link' \? t\('auth:signInSheet\.link\.title'\)/);
 });
 
-test('the story shows it over Get started\'s sheet only, and never for longer than its limit', () => {
+test('the story shows it as a new account\'s link opens and over Get started\'s sheet, and never for longer than its limit', () => {
   const src = read(LANDING);
   const { SIGNING_IN_MAX_MS } = loadTsx(LANDING);
   assert.equal(SIGNING_IN_MAX_MS, 20000);
   // Told by the story's sheet, the one that carries the link; the invite's
   // Join sheet carries none and says nothing.
-  assert.match(src, /releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}\s+beforeFinish=\{startedFromStory\}\s+onClose=\{closeSheet\}\s+primaryClass=\{PRIMARY_PILL\}\s+onSigningIn=\{setSigningIn\}\s+held=\{signingInShown\}\s+\/>/);
+  assert.match(src, /releaseSignIn=\{sheet === 'start' && !releaseUsed \? release\?\.signIn \?\? null : null\}\s+linkUsed=\{sheet === 'start' && releaseUsed\}\s+onAccount=\{sheet === 'start' && release\?\.route === 'signup' \? toWelcome : undefined\}\s+beforeFinish=\{startedFromStory\}\s+onClose=\{closeSheet\}\s+primaryClass=\{PRIMARY_PILL\}\s+onSigningIn=\{setSigningIn\}\s+held=\{signingInShown\}\s+\/>/);
   assert.equal((src.match(/onSigningIn=/g) || []).length, 1, 'one sheet tells it');
-  assert.match(src, /const signingInShown = signingIn && !signingInOverdue && storyOn && sheet === 'start';/);
+  assert.match(src, /const sheetSigningIn = signingIn && !signingInOverdue && storyOn && sheet === 'start';\s+const signingInShown = holding \|\| sheetSigningIn;/);
   assert.match(src, /\{signingInShown \? <SigningIn \/> : null\}/);
+  // As the page opens for a new account's link (Evan, 12 Oct 2026): up from
+  // the first frame while the link is checked and spent, and given way to
+  // the story, with nothing more spent on load, past the same limit.
+  assert.match(src, /if \(!holding\) return undefined;\s+const timer = window\.setTimeout\(\(\) => \{ straightRun\.current \+= 1; setHolding\(false\); \}, SIGNING_IN_MAX_MS\);/);
   // A spend that has not answered gives way to the sheet as it stands, with
   // its ✕: a stalled request never strands anyone on the spinner.
   assert.match(src, /setSigningInOverdue\(false\);\s+if \(!signingIn\) return undefined;\s+const timer = window\.setTimeout\(\(\) => setSigningInOverdue\(true\), SIGNING_IN_MAX_MS\);\s+return \(\) => window\.clearTimeout\(timer\);\s+\}, \[signingIn\]\);/);
   // Rendered nothing until then: the interior's first commit is unchanged.
   assert.match(src, /const \[signingIn, setSigningIn\] = useState\(false\);/);
-  // The story still waits for Get started (Evan, 10 Oct 2026): the link is
-  // spent on the tap, never on load.
-  assert.match(src, /if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  // Committed before the router reveals the screen, so the story is never
+  // seen first (tests/release-link-straight-flow.test.js pins the rest).
+  assert.match(src, /flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);\s+\}\);/);
 });
 
 test('it is plain: the logotype, a spinner and "Signing you in…", on the landing\'s ground', () => {

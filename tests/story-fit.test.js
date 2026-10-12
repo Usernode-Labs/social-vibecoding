@@ -114,9 +114,11 @@ test('a "You\'re in" link\'s address is greeted under the welcome', () => {
   const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', welcomeEmail: 'ada@example.com', onStart() {}, onSignIn() {} });
   assert.match(html, />Welcome to Homeroom<\/div><div data-landing-story-email="" class="[^"]*">ada@example\.com<\/div>/);
   assert.match(SOURCE, /if \(fittedFor\.current !== welcomeEmail\) \{\s+fittedFor\.current = welcomeEmail;\s+fitting\.current = null;\s+if \(fit !== 0\) \{ setFit\(0\); return; \}\s+\}/);
-  // The landing looks the address up from the link's token, as the sheet does.
+  // The landing looks the address up from the link's token, through the
+  // sign-in screen's own lookup, which also says whether the account is
+  // still new (tests/release-link-straight-flow.test.js).
   const landing = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/landing.tsx'), 'utf8');
-  assert.match(landing, /const releaseToken = release\?\.route === 'signup' \? release\.token : null;/);
-  assert.match(landing, /void inviteEmailFromToken\(releaseToken\)\.then\(\(email\) => \{ if \(live\) setReleaseEmail\(email\); \}\);/);
+  assert.match(landing, /if \(!release \|\| release\.route !== 'signup' \|\| !release\.token\) return undefined;/);
+  assert.match(landing, /void Promise\.all\(\[releaseAccountFromToken\(token\), straightLink\(link\) \? waitlistOptions\(\) : null\]\)\.then\(async \(\[account, options\]\) => \{\s+if \(!live\) return;\s+setReleaseEmail\(account\?\.email \?\? null\);/);
   assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\}/);
 });

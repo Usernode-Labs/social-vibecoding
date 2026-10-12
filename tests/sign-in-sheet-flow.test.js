@@ -4,10 +4,12 @@
 // do you want to make?" for an account's first session, whichever way in.
 //
 //   * The waitlist's "you're in" mail (`/?signup=1&t=<token>`, `/?login=1`)
-//     opens the story with the sheet already open (AuthScreens.enter keeps
-//     the link, the landing takes it on show), not the sign-in screen: for a
-//     new account the address its token names is filled in and the code
-//     sent, once per tab, through the sign-in screen's own lookup.
+//     opens the story, not the sign-in screen (AuthScreens.enter keeps the
+//     link, the landing takes it on show). A new account's link is spent as
+//     the page opens (tests/release-link-straight-flow.test.js); otherwise
+//     Get started's sheet spends it, or fills in the address its token names
+//     and sends the code, once per tab, through the sign-in screen's own
+//     lookup. An existing account's opens the Sign in sheet.
 //   * "Sign in with a password" is a step of the sheet, sending the sign-in
 //     screen's own exchange (passwordSignIn in features/auth/shared.ts).
 //   * A first sign-in through the sheet hands off to the make screen: the
@@ -146,19 +148,23 @@ test('the link\'s one-time sign-in (#4594) is kept for the sheet, off the addres
   assert.equal(enterHarness({ search: '?signup=1&key=short' }).auth._releaseLink.signIn, null);
 });
 
-test('the landing takes the link on show: Sign in opens at once, a new account waits for Get started', () => {
+test('the landing takes the link on show: Sign in opens at once, a new account\'s is checked before anything is spent', () => {
   const src = read(LANDING);
   const onShow = src.slice(src.indexOf('const landingOnShow = useCallback(() => {'), src.indexOf('}, [loadLandingApps, refreshHeader, runAnonBackShot, st]);'));
-  // Evan, 10 Oct 2026: the story first, and the sheet on Get started, which
-  // is when the one-time sign-in is spent.
-  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  // Evan, 12 Oct 2026: a new account's link puts "Signing you in…" up at
+  // once while it is checked (tests/release-link-straight-flow.test.js); no
+  // sheet opens for it. An existing account's opens Sign in.
+  assert.match(onShow, /const link = takeReleaseLink\(\);\s+if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);/);
+  assert.doesNotMatch(onShow, /setSheet\('start'\)|spendReleaseLink/);
   assert.match(src, /onStart=\{\(\) => setSheet\('start'\)\}/);
-  // Get started's sheet carries the token; Sign in's never does.
+  // Get started's sheet carries the token; Sign in's never does. The
+  // one-time sign-in too, unless the landing already found it used.
   assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}/);
-  assert.match(src, /releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}/);
+  assert.match(src, /releaseSignIn=\{sheet === 'start' && !releaseUsed \? release\?\.signIn \?\? null : null\}/);
   // The story switched off: the sign-in screen, as the link always opened,
   // with the token handed on for it.
-  assert.match(src, /if \(!release \|\| waitlistPayload\?\.story_landing !== false\) return;\s+if \(release\.token\) keepReleaseLink\(release\);\s+setRelease\(null\);\s+setSheet\(null\);\s+location\.hash = `#\$\{release\.route\}`;/);
+  // Nothing was spent on load for it, and "Signing you in…" goes too.
+  assert.match(src, /if \(!release \|\| waitlistPayload\?\.story_landing !== false\) return;\s+if \(release\.token\) keepReleaseLink\(release\);\s+setRelease\(null\);\s+setSheet\(null\);\s+setHolding\(false\);\s+location\.hash = `#\$\{release\.route\}`;/);
   assert.match(read('frontend/src/features/auth/login.tsx'),
     /const t = new URLSearchParams\(location\.search\)\.get\('t'\) \|\| takeReleaseLink\(\)\?\.token \|\| null;/);
 });
@@ -254,9 +260,16 @@ test('the account step asks for no password, and says how they sign in (#4891)',
   assert.ok(step.length > 0, 'the account step renders');
   assert.doesNotMatch(step, /PasswordInput|new-password|id="sign-in-sheet-password"/);
   assert.doesNotMatch(src, /passwordField|accountStepFields|signInSheet\.account\.password|signInSheet\.account\.skip|finishAccount\(true\)/);
+  // The request is `saveAccount`, which the full-page Welcome sends too
+  // (frontend/src/features/auth/welcome-page.tsx).
   const finishAccount = src.slice(src.indexOf('const finishAccount = useCallback'), src.indexOf('const signInWithPassword = useCallback'));
-  assert.match(finishAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
-  assert.doesNotMatch(finishAccount, /\{ password \}|\bpassword:|passwordConfirmation|passwordField/);
+  assert.match(finishAccount, /const saved = await saveAccount\(handle\);/);
+  const saveAccount = src.slice(src.indexOf('export async function saveAccount('), src.indexOf('export function linkSigningIn('));
+  assert.match(saveAccount, /fetchSessionMint\('\/api\/auth\/otp\/set-password', \{/);
+  assert.match(saveAccount, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  for (const body of [finishAccount, saveAccount]) {
+    assert.doesNotMatch(body, /\{ password \}|\bpassword:|passwordConfirmation|passwordField/);
+  }
   // The username is the step's one field, so its Return goes.
   assert.match(step, /<input ref=\{usernameField\} id="sign-in-sheet-username" defaultValue=\{suggestedUsername\} autoComplete="username" enterKeyHint="go" className=\{INPUT\}/);
   // In the password's place, how they sign in and where a password is added.
@@ -428,9 +441,11 @@ test('a new account from the sheet, the mail\'s included, gets the make screen a
     toMake = await startedFromStory('new');
   });
   assert.equal(toMake, true);
-  // The mail's sheet is the story's own, with this as its beforeFinish.
+  // The mail's sheet is the story's own, with this as its beforeFinish, and
+  // so is the full-page Welcome it hands the account to.
   const src = read(LANDING);
-  assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}\s+releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}\s+beforeFinish=\{startedFromStory\}/);
+  assert.match(src, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}\s+releaseSignIn=\{sheet === 'start' && !releaseUsed \? release\?\.signIn \?\? null : null\}\s+linkUsed=\{sheet === 'start' && releaseUsed\}\s+onAccount=\{sheet === 'start' && release\?\.route === 'signup' \? toWelcome : undefined\}\s+beforeFinish=\{startedFromStory\}/);
+  assert.match(src, /\{welcome \? <WelcomePage account=\{welcome\} beforeFinish=\{startedFromStory\} \/> : null\}/);
 });
 
 test('a first sign-in to an account that already existed, the password step\'s included, hands off too', async () => {
