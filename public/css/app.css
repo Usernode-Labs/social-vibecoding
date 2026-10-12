@@ -10999,7 +10999,7 @@ html .un-backdrop.platform-backdrop-dim {
     border-radius: 20px 20px 0 0;
     background-color: var(--dc-sheet-solid);
     box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-    max-height: 92%;
+    max-height: min(92%, calc(100% - var(--platform-safe-top, 0px) - 8px));
     overflow-y: auto;
     overscroll-behavior: contain;
     transform: translateY(100%);
@@ -11008,9 +11008,13 @@ html .un-backdrop.platform-backdrop-dim {
   [data-dialog-sheet][data-dialog-sheet-shown] [data-modal-backdrop] > div {
     transform: translateY(0);
   }
+  /* Its top stays under the status bar, as the comment sheet's does: with the
+     keys up a long form grew past it, and the Form / Comment switch and
+     "See your requests" went under the clock and the Dynamic Island, where a
+     tap never reaches the page (iPhone 17 Pro simulator, 12 Oct 2026). */
   html.platform-kb-open [data-dialog-sheet] [data-modal-backdrop] > div {
     bottom: var(--platform-kb-cover, 0px);
-    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
+    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - max(12px, var(--platform-safe-top, 0px) + 8px));
   }
   [data-dialog-sheet] .feedback-sheet-grabber {
     display: block;
@@ -11073,10 +11077,32 @@ html .un-backdrop.platform-backdrop-dim {
 @keyframes comment-shot-label-in {
   from { opacity: 0; }
 }
+/* The bar comes in with the picture rather than ahead of it: drawn over the
+   live page while the first picture drew, it covered the page's own header
+   for a few frames (iPhone 17 Pro simulator, 12 Oct 2026). */
+.comment-bar-in { animation: comment-shot-ground-in 320ms ease-out; }
+
+/* THE MODE LEAVES THE WAY IT CAME (12 Oct 2026). Done, Esc and Form used to
+   unmount it in a frame: the picture and its grey ground vanished and the
+   form slid up over a page that had just jumped. Now the picture grows back
+   over the page it shows (the entrance played backwards, to the same
+   --comment-shot-from), the ground fades with it, and everything else the
+   mode drew fades a little faster, before the layer goes
+   (comment-pin.tsx `leave`, 200ms). Transform and opacity only. */
+.comment-mode-leaving .comment-shot-in { animation: comment-shot-out 200ms ease-in forwards; }
+.comment-mode-leaving .comment-shot-ground-in { animation: comment-fade-out 200ms ease-in forwards; }
+.comment-mode-leaving > :not(.comment-shot-in):not(.comment-shot-ground-in) { animation: comment-fade-out 120ms ease-in forwards; }
+@keyframes comment-shot-out {
+  to { transform: var(--comment-shot-from, none); border-radius: 0; }
+}
+@keyframes comment-fade-out {
+  to { opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .comment-shot-in,
   .comment-shot-ground-in,
-  .comment-shot-label-in { animation: none; }
+  .comment-shot-label-in,
+  .comment-bar-in { animation: none; }
 }
 /* The sheet's grabber, the same handle the feedback sheet's carries — the
    component renders it only on a phone, so no media query here. */

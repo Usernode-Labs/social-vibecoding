@@ -393,6 +393,45 @@ export const PAGE_EXCLUDES = [
   '.un-backdrop',
 ] as const;
 
+/**
+ * Whether one of the flow's own overlays (PAGE_EXCLUDES) is still on
+ * screen: laid out, visible and not see-through. The menu's dim is always
+ * mounted at opacity 0, and a closed menu sheet is `visibility: hidden`, so
+ * neither counts once it has gone; the form mid-slide-down and a kit sheet
+ * playing its exit do.
+ */
+export function overlayOnScreen(
+  doc: Pick<Document, 'querySelectorAll'> = document,
+  styleOf: (el: Element) => Pick<CSSStyleDeclaration, 'visibility' | 'opacity'> = (el) => getComputedStyle(el),
+): boolean {
+  for (const el of Array.from(doc.querySelectorAll(PAGE_EXCLUDES.join(',')))) {
+    if (!el.getClientRects().length) continue;
+    const s = styleOf(el);
+    if (s.visibility === 'hidden' || Number(s.opacity) < 0.02) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Resolves once the overlay the mode was opened from has left the screen,
+ * or after `maxMs` whatever is still there (it is cut out of the picture
+ * anyway). The first picture waits on it: drawn at once, it held the main
+ * thread while the menu sheet or the form slid away, and the picture landed
+ * on the form halfway down its slide, cutting it off in a frame (iPhone 17
+ * Pro simulator, 12 Oct 2026).
+ */
+export function overlaysGone(maxMs = 600): Promise<void> {
+  return new Promise((resolve) => {
+    const until = performance.now() + maxMs;
+    const check = () => {
+      if (!overlayOnScreen() || performance.now() >= until) { resolve(); return; }
+      requestAnimationFrame(check);
+    };
+    check();
+  });
+}
+
 /** Whether an element is one of the flow's own overlays the picture leaves out. */
 export function isPageOverlay(el: Element): boolean {
   if (!el || typeof el.matches !== 'function') return false;

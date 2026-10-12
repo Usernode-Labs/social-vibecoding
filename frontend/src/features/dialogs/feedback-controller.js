@@ -909,7 +909,7 @@ export function init() {
       feedbackText.setAttribute('aria-invalid', 'true');
       feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
       // The field is the thing to fix, so put the caret in it.
-      try { feedbackText.focus(); } catch { /* detached in tests */ }
+      try { feedbackText.focus({ preventScroll: true }); } catch { /* detached in tests */ }
     };
 
     const clearDescriptionError = () => {
@@ -1138,7 +1138,7 @@ export function init() {
       const restoreCaret = (framesLeft) => {
         if (feedbackText.readOnly) return;
         try {
-          feedbackText.focus();
+          feedbackText.focus({ preventScroll: true });
           feedbackText.setSelectionRange(caretStart, caretEnd);
         } catch { /* a browser that refuses the range still has the text */ }
         if (framesLeft > 0) requestAnimationFrame(() => restoreCaret(framesLeft - 1));
@@ -1734,7 +1734,7 @@ export function init() {
             ? t('dialogs:feedback.queue.rejectedReason', { reason: failed.lastError })
             : t('dialogs:feedback.queue.rejected'), true);
           queueLineText = '';
-          feedbackText.focus();
+          feedbackText.focus({ preventScroll: true });
           return;
         }
       }
@@ -2346,7 +2346,7 @@ export function init() {
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
           feedbackStatus.classList.remove('hidden');
           queueLineText = '';
-          feedbackText.focus();
+          feedbackText.focus({ preventScroll: true });
         }).catch(() => { /* nothing to hand back */ });
       }
 
@@ -2385,7 +2385,12 @@ export function init() {
         }
       }
 
-      feedbackText.focus();
+      // Without a scroll: a plain focus() had iOS pan the whole page to
+      // reveal the field while the phone sheet was still sliding up and the
+      // keys were rising, and the sheet bounced between the three before it
+      // settled (iPhone 17 Pro simulator, 12 Oct 2026). The sheet stands on
+      // the keys itself (`useKeyboardSurface`, app.css `[data-dialog-sheet]`).
+      feedbackText.focus({ preventScroll: true });
     };
     // The header's #feedback-btn used to be wired here. THE UI OVERHAUL
     // retired it: the dialog's entry point is the Improve panel's "Give
