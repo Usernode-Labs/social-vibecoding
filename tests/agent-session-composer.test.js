@@ -336,8 +336,8 @@ test('the low-credits note sits between the field and the send row, before the f
   const panel = read('frontend/src/features/agent-session/index.tsx');
   assert.match(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
     'a sent message shown or still on its way is a conversation under way');
-  assert.match(panel, /\{!archived && showLowCreditNote\(credit, snapshot\.started\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
-    'the note is the red pill before the first message, and never in an archived conversation');
+  assert.match(panel, /\{!archived && !pendingSend && showLowCreditNote\(credit, snapshot\.started\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
+    'the note is the red pill before the first message, never in an archived conversation, and it gives way while the low-credits check is open (#4792)');
   const field = panel.indexOf('<textarea');
   const note = panel.indexOf('showLowCreditNote(credit, snapshot.started)');
   const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', note);
@@ -347,6 +347,32 @@ test('the low-credits note sits between the field and the send row, before the f
     'Only $0.60 of credits left. A build can cost more than that and may stop partway.');
   assert.equal(message('agent:session.credits.lowNoteNone'),
     'No credits left. A build may not start, or may stop partway.');
+});
+
+test('a send with almost no credits stops for one tap first, then never again this visit (#4792)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'text' \}\);\s*return;\s*\}\s*sendTyped\(\);/,
+    'submit asks before it clears the box, so Cancel keeps the message');
+  assert.match(panel, /const onSendDraft = \(draft: SavedDraft\) => \{\s*if \(running\) return;\s*if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'draft', draft \}\);\s*return;\s*\}/,
+    'a saved draft\'s Send asks the same question');
+  assert.match(panel, /const onConfirmSend = \(\) => \{\s*const held = pendingSend;\s*confirmLowCredit\(\);\s*setPendingSend\(null\);/,
+    'Continue confirms for the rest of the visit, then runs the held send');
+  assert.match(panel, /const onCancelSend = \(\) => setPendingSend\(null\);/, 'Cancel only closes the check');
+  assert.match(panel, /setPendingSend\(null\);\s*\}, \[target, running\]\)/,
+    'a switch of conversation or a turn that starts closes the check');
+  assert.match(panel, /if \(pendingSend && !isLowCredit\(credit\)\) setPendingSend\(null\)/,
+    'figures that refresh above the threshold (a top-up) close it too');
+  assert.match(panel, /\{!archived && pendingSend && credit \? \(/, 'the check shows only where a send is held');
+  assert.match(panel, /buttonClass=\{CARD_BUTTON\}\s*primaryClass=\{CARD_PRIMARY\}/,
+    'the check reuses the composer\'s own card buttons, not a copied class string');
+  const field = panel.indexOf('<textarea');
+  const check = panel.indexOf('<LowCreditConfirm');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', check);
+  assert.ok(field !== -1 && check !== -1 && row !== -1 && field < check && check < row,
+    'the check sits between the box and the row with Send, in the note\'s slot');
+
+  assert.equal(message('agent:session.credits.confirmContinue'), 'Continue');
+  assert.equal(message('agent:session.credits.confirmCancel'), 'Cancel');
 });
 
 

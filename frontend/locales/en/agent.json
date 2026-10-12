@@ -197,11 +197,19 @@
   },
   "session.credits.lowNote": {
     "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red because less than 15% of the AI allowance is left: what remains may not cover a build, which may stop partway. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it."
+    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red because less than 15% of the AI allowance is left: what remains may not cover a build, which may stop partway. It is a note, not a block; the person can still send. It is also the sentence of the low-credits check the composer shows when Send is pressed with almost no credits left, with Cancel and Continue beside it. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it."
   },
   "session.credits.lowNoteNone": {
     "text": "No credits left. A build may not start, or may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red and nothing at all remains of the AI allowance: a build may not start, or may stop partway. It is a note, not a block; the person can still send."
+    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red and nothing at all remains of the AI allowance: a build may not start, or may stop partway. It is a note, not a block; the person can still send. It is also the sentence of the low-credits check the composer shows when Send is pressed with no credits at all, with Cancel and Continue beside it."
+  },
+  "session.credits.confirmContinue": {
+    "text": "Continue",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it sends the message anyway, and the check is not shown again for the rest of the visit."
+  },
+  "session.credits.confirmCancel": {
+    "text": "Cancel",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it closes the check and nothing is sent; the message stays in the box."
   },
   "session.model.pillLabel": {
     "text": "Model: {{model}}",

@@ -298,6 +298,56 @@ test('the low-credits note shows before the first message of a conversation whos
   assert.match(none, new RegExp(`>${message('agent:session.credits.lowNoteNone')}<`));
 });
 
+// ── 3b. The low-credits check (#4792) ──────────────────────────────────
+
+test('a send with almost nothing left is held for one tap: under $1, or under 10% of the allowance (#4792)', () => {
+  const figures = (remainingCents, limitCents = 5000) => (
+    { limitCents, remainingCents, spentCents: limitCents - remainingCents, byokCents: 0, weekly: true, level: 'ok' }
+  );
+  const view = (remainingCents, limitCents = 5000) => parts.creditView(figures(remainingCents, limitCents));
+  assert.equal(parts.isLowCredit(view(99)), true, '$0.99 of $5 (20%) is low: under a dollar');
+  assert.equal(parts.isLowCredit(view(400, 5000)), true, '$4 of $50 (8%) is low: under 10% of the allowance');
+  assert.equal(parts.isLowCredit(view(100, 500)), false, '$1.00 of $5 (20%) exactly is not low');
+  assert.equal(parts.isLowCredit(view(600, 5000)), false, '$6 of $50 (12%) is not low');
+  assert.equal(parts.isLowCredit(view(0)), true, 'nothing left at all is low');
+  assert.equal(parts.isLowCredit(null), false, 'no figures, no check');
+  assert.equal(parts.isLowCredit(view(1500)), false, 'the yellow pill is not low either');
+
+  parts.resetLowCreditConfirmedForTest();
+  assert.equal(parts.lowCreditConfirmed(), false);
+  assert.equal(parts.needsLowCreditCheck(view(99)), true, 'not yet confirmed: the next send is held');
+  assert.equal(parts.needsLowCreditCheck(view(1500)), false, 'credits with room are never held');
+  assert.equal(parts.needsLowCreditCheck(null), false, 'no figures, nothing to hold');
+  parts.confirmLowCredit();
+  assert.equal(parts.lowCreditConfirmed(), true);
+  assert.equal(parts.needsLowCreditCheck(view(99)), false, 'confirmed: sends go straight through for the rest of the visit');
+  parts.resetLowCreditConfirmedForTest();
+  assert.equal(parts.needsLowCreditCheck(view(99)), true, 'the reset is a fresh page');
+});
+
+test('the low-credits check is the note\'s words in a red strip, with Cancel and Continue beside them (#4792)', () => {
+  const figures = (remainingCents) => ({ limitCents: 5000, remainingCents, spentCents: 5000 - remainingCents, byokCents: 0, weekly: true, level: 'ok' });
+  const check = (credit) => renderToHtml(createElement(parts.LowCreditConfirm, {
+    credit,
+    buttonClass: 'card-button-outlined',
+    primaryClass: 'card-button-filled',
+    onContinue() {},
+    onCancel() {},
+  }));
+
+  const html = check(parts.creditView(figures(60)));
+  assert.match(html, /role="alert"/);
+  assert.match(html, /data-agent-session-low-credit-confirm="true"/);
+  assert.match(html, new RegExp(`>${message('agent:session.credits.lowNote', { amount: '$0.60' }).replace('$', '\\$')}<`));
+  assert.match(html, /class="card-button-outlined"[^>]*>Cancel</, 'Cancel in the outlined card-button style');
+  assert.match(html, /class="card-button-filled"[^>]*>Continue</, 'Continue in the filled card-button style');
+  assert.match(html, /bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950\/40 dark:text-red-300/, 'the red tint of the credits pill');
+  assert.equal((html.match(/type="button"/g) || []).length, 2, 'neither button submits the form');
+
+  const empty = check(parts.creditView(figures(0)));
+  assert.match(empty, new RegExp(`>${message('agent:session.credits.lowNoteNone')}<`), 'nothing left says the none-left sentence');
+});
+
 test('the pill is gray in every state and only its ink changes; a bar along its bottom drains from the right', () => {
   const view = (remainingCents) => parts.creditView({ limitCents: 5000, remainingCents, spentCents: 0, byokCents: 0, weekly: true, level: 'ok' });
   const pill = (credit) => renderToHtml(createElement(parts.CreditPill, { credit, onOpen() {} }));
