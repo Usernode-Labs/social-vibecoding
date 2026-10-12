@@ -224,6 +224,23 @@ function requiredMessages(source, language) {
 }
 
 /**
+ * True when a translation spells a character as an escape code, the six
+ * characters \u00a0 where a no-break space belongs (#4838), that the English
+ * does not have as many times. JSON decodes "\\u00a0" to a backslash, a u
+ * and four hex digits, which the screen shows as written.
+ */
+const ESCAPE_CODES = /\\u[0-9a-fA-F]{4}/g;
+function writtenOutEscape(text, english) {
+  const left = (english.match(ESCAPE_CODES) || []).map((code) => code.toLowerCase());
+  return (text.match(ESCAPE_CODES) || []).some((code) => {
+    const at = left.indexOf(code.toLowerCase());
+    if (at === -1) return true;
+    left.splice(at, 1);
+    return false;
+  });
+}
+
+/**
  * 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null.
  *
  * A translation carries exactly the English text's parameters, with one
@@ -244,6 +261,7 @@ function translationProblem(entry, english, counted = false) {
   try {
     if (!sameList(componentTags(entry.text), componentTags(english))) return 'invalid';
   } catch { return 'invalid'; }
+  if (writtenOutEscape(entry.text, english)) return 'invalid';
   return null;
 }
 
@@ -420,4 +438,5 @@ if (require.main === module) {
 module.exports = {
   PACK_NAME, SOURCE_FILE, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, materializeSource,
   minimumCoverage, parameters, readConfig, requiredMessages, shippedLanguages, translationProblem, writeSource,
+  writtenOutEscape,
 };
