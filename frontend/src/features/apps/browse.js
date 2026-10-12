@@ -31,7 +31,7 @@
 // ./app-card-view.tsx, off the same descriptor functions the home grid's strings
 // are built from. The rest is still Home's, reached through the global,
 // because each one reads Home's loaded-app list or the viewer's permissions:
-// isYours, matchesQuery, toggleAdded, menuItemsFor.
+// isYours, filterApps, toggleAdded, menuItemsFor.
 //
 // WHAT THIS FILE DOES NOW (#1191 slice 6, conversion 3): every decision, and
 // no markup. The sort, the search filter, the level derivation, the two
@@ -652,12 +652,14 @@ const Browse = {
   // The rows for the current chip and query. The chip picks the set first
   // (filterApps), then the sort orders it, then the search narrows it. The
   // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's matcher so both fields behave identically.
-  // The three compose, and searching never changes the order.
+  // "Your apps"), reusing Home's search (Home.filterApps) so both fields
+  // behave identically. The three compose, and searching keeps the sort's
+  // order with one exception (#4793): an app whose name or slug IS the
+  // query moves to the top, the rest staying where the sort put them.
   visibleApps() {
     const pool = Browse.filterApps(Browse._apps, Browse._filter);
     const sorted = Browse.sortApps(pool, Browse._sort);
-    return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
+    return Home.filterApps(sorted, Browse._query);
   },
 
   // ── Row rendering ─────────────────────────────────────────────────
