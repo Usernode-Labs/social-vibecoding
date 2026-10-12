@@ -2345,3 +2345,77 @@ test('only a busy agent reads as retryable, never a failed one', () => {
   assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_timeout' }), false);
   assert.equal(orchestrator.agentBusyRetryable(null), false);
 });
+
+// ── A platform fault is recorded so the sweep can take the run again ──
+
+test('a failure on a platform step is recorded as one, and anything else is not', async () => {
+  const database = setup();
+  database.dependencies.environment.preparePair = async () => {
+    throw Object.assign(new Error('No answer from Postgres within 90 seconds, psql\'s time limit.'),
+      { shotsPlatformFault: 'database' });
+  };
+  await assert.rejects(execute(database), /No answer from Postgres/);
+  assert.deepEqual(database.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'database' });
+
+  // The agent's process exited 1 and nothing recorded why: taken again once.
+  const exited = setup({
+    dispatch: async () => {
+      throw Object.assign(new Error('The shots agent stopped with an error before it finished.'),
+        { code: 'shots_agent_failed', shotsExitCode: 1, shotsExitCause: null });
+    },
+  });
+  await assert.rejects(execute(exited), { code: 'shots_agent_failed' });
+  assert.equal(exited.calls.dispatches, 1, 'no second dispatch inside the run for an exit with no cause');
+  assert.deepEqual(exited.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'agent_exit' });
+
+  // A revision that does not build is the proposal's to fix.
+  const build = setup();
+  build.dependencies.environment.preparePair = async () => {
+    throw new Error('Image build failed: npm ci exited 1');
+  };
+  await assert.rejects(execute(build), /Image build failed/);
+  assert.equal(Object.hasOwn(build.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+
+  // So is a state the copies cannot reach.
+  const skipped = setup({
+    dispatch: async (options) => {
+      controlFor(options).skipChange({ change: 'invite-suggestions', reason: 'No such state here.' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(skipped), { code: 'shots_capture_incomplete' });
+  assert.equal(Object.hasOwn(skipped.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+});
+
+test('a platform fault is read off the error, and GitHub\'s limit waits for its reset', () => {
+  const now = Date.parse('2026-10-12T09:00:00Z');
+  const fault = (error) => orchestrator.platformFault(error, { now });
+  assert.deepEqual(fault({ shotsPlatformFault: 'database' }), { kind: 'database' });
+  assert.deepEqual(fault({ shotsPlatformFault: 'clone' }), { kind: 'clone' });
+  assert.deepEqual(fault({ code: 'shots_agent_failed', shotsExitCode: 1 }), { kind: 'agent_exit' });
+  assert.deepEqual(fault(new Error("clone failed: Cloning into '.'... | fatal: could not read Username")),
+    { kind: 'worker_bootstrap' });
+  assert.deepEqual(fault(new Error('warm-ready timeout for usernode-worker-42')), { kind: 'worker_bootstrap' });
+  // GitHub's hourly limit: once it has reset, with a minute to spare; within
+  // the hour when the reset is not known.
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 3 * 60_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 4 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited' }),
+    { kind: 'github_rate_limited', retryAt: now + 15 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 5 * 3600_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 65 * 60_000 }, 'never more than the hour and a little');
+
+  for (const error of [
+    null,
+    new Error('Image build failed'),
+    // The wrapper dying is structural; the worker does not retry it either.
+    new Error('warm wrapper exited before warm-ready (code=1)'),
+    { code: 'shots_capture_incomplete' },
+    { code: 'shots_change_failed' },
+    { code: 'shots_stopped' },
+    { code: 'visible_changes_conflict' },
+    { shotsPlatformFault: 'not_a_kind' },
+  ]) {
+    assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
+  }
+});

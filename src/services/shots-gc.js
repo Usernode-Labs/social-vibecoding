@@ -308,6 +308,68 @@ async function retryInterrupted(config, pool, {
   return { examined: rows.length, scheduled };
 }
 
+// A run that a platform step failed (shots-state PLATFORM_RETRY_TRIGGER: the
+// copies' database, a clone, the worker's bootstrap, GitHub's hourly limit,
+// the shots agent's exit) is taken again ONCE on the same head, after
+// `minAgeMs`, or for GitHub's limit once the `retryAt` its trace recorded has
+// passed. The count is the `platform_retries` subquery the loaders select
+// (state.platformRetryAllowed), so the card says "trying again" exactly
+// while this sweep will start it. A second failure stays failed.
+const { PLATFORM_RETRY_TRIGGER, MAX_PLATFORM_RETRIES, PLATFORM_FAULT_KINDS } = state;
+
+async function retryPlatformFaults(config, pool, {
+  limit = 10, minAgeMs = 60_000, maxRetries = MAX_PLATFORM_RETRIES,
+  schedule = null, stateService = state, isShuttingDown = lifecycle.isShuttingDown,
+} = {}) {
+  if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
+  if (isShuttingDown()) return { examined: 0, scheduled: 0 };
+  const { rows } = await pool.query(
+    `SELECT r.id AS run_id, r.head_sha, r.trace_summary->'platformFault'->>'kind' AS fault,
+            cs.id, cs.source, cs.imported_pr_head_sha,
+            cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha
+       FROM chat_sessions cs
+       JOIN shot_runs r ON r.id = cs.shots_run_id
+       CROSS JOIN LATERAL (
+         SELECT (SELECT COUNT(*) FROM shot_runs retry
+                  WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                    AND retry.trigger = 'platform-retry')::int AS platform_retries
+       ) n
+      WHERE r.state = 'failed'
+        AND r.trace_summary->'platformFault'->>'kind' = ANY($3::text[])
+        AND cs.status NOT IN ('merged', 'archived')
+        AND n.platform_retries < $4
+        AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+        AND (CASE WHEN jsonb_typeof(r.trace_summary->'platformFault'->'retryAt') = 'number'
+              THEN (r.trace_summary->'platformFault'->>'retryAt')::numeric ELSE 0 END)
+          <= EXTRACT(EPOCH FROM NOW()) * 1000
+      ORDER BY r.updated_at ASC LIMIT $2`,
+    [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)),
+      [...PLATFORM_FAULT_KINDS], Math.max(0, Number(maxRetries) || 0)]
+  );
+  const dispatch = schedule || require('./shots-orchestrator').scheduleForSession;
+  let scheduled = 0;
+  for (const row of rows) {
+    // A newer commit owns the proposal now; its own checks start shots.
+    if (!sameSha(visualHeadForSession(row), row.head_sha)) continue;
+    try {
+      await stateService.rerunSameHead(pool, row.run_id, { trigger: PLATFORM_RETRY_TRIGGER });
+      const result = await dispatch(config, {
+        pool, sessionId: row.id, headSha: row.head_sha, trigger: PLATFORM_RETRY_TRIGGER,
+      });
+      if (result.scheduled) scheduled += 1;
+      log.info('shots', 'Taking before & after shots again after a platform fault', {
+        sessionId: row.id, runId: row.run_id, fault: row.fault, scheduled: !!result.scheduled,
+      });
+    } catch (error) {
+      // Another pod or a person may have retried it first; both are fine.
+      log.warn('shots', 'Could not retry a before & after shots run a platform fault ended', {
+        sessionId: row.id, runId: row.run_id, fault: row.fault, code: error.code, error: error.message,
+      });
+    }
+  }
+  return { examined: rows.length, scheduled };
+}
+
 async function prune(pool, config = {}) {
   const failedMediaHours = Math.max(1,
     Number(config.shots?.failedArtifactRetentionHours) || FAILED_MEDIA_HOURS);
@@ -463,6 +525,9 @@ module.exports = {
   MAX_UNEXPLAINED_RETRIES,
   MAX_RETRY_DELAY_MS,
   INTERRUPTED_RETRY_TRIGGER,
+  retryPlatformFaults,
+  MAX_PLATFORM_RETRIES,
+  PLATFORM_RETRY_TRIGGER,
   prune,
   sweepOrphanCheckouts,
   sweepOrphanRuntimes,

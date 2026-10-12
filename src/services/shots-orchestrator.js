@@ -61,6 +61,33 @@ function agentBusyRetryable(error) {
   return state.agentBusyCode(error.code);
 }
 
+// A run that failed on a platform step that says nothing about the proposal,
+// by its kind, so the recovery sweep takes the same head again once
+// (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
+// wording: a database or clone step the platform runs for the copies tags
+// its own error (shots-environment), GitHub's hourly limit and the shots
+// agent's exit have their own codes, and the worker's bootstrap names its
+// transient failures. Anything else, a revision that does not build
+// included, is the proposal's and is not taken again.
+const GITHUB_RESET_GRACE_MS = 60_000;
+const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
+const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
+
+function platformFault(error, { now = Date.now() } = {}) {
+  if (!error || typeof error !== 'object') return null;
+  if (error.code === 'github_rate_limited') {
+    // Taken again once the hour's budget has reset, not into the same wall.
+    const resetMs = Number(error.retryAfterMs);
+    const waitMs = Number.isFinite(resetMs) && resetMs > 0
+      ? resetMs + GITHUB_RESET_GRACE_MS : GITHUB_UNKNOWN_RESET_WAIT_MS;
+    return { kind: 'github_rate_limited', retryAt: now + Math.min(MAX_PLATFORM_RETRY_WAIT_MS, waitMs) };
+  }
+  if (error.code === 'shots_agent_failed') return { kind: 'agent_exit' };
+  if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  if (worker.isRetryableBootstrapError(error)) return { kind: 'worker_bootstrap' };
+  return null;
+}
+
 // Runs a person stopped while this process executes them. The stop already
 // made the run terminal in the database; this keeps its runner from handing
 // the shots agent another turn before a state transition refuses it.
@@ -1567,8 +1594,11 @@ async function executeRun(config, options, injected = {}) {
     const control = registration?.control;
     const toolFailure = control?.lastToolFailure;
     const detail = boundedErrorDetail(error);
+    // A stop ends the run as the person asked; nothing takes it again.
+    const fault = run && stopRequested.has(run.id) ? null : platformFault(error);
     const failureTrace = traceSummary(metrics, {
       terminalFailureClass: errorCode(error),
+      ...(fault ? { platformFault: fault } : {}),
       ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
       failure: {
         phase: failurePhase,
@@ -1877,6 +1907,7 @@ module.exports = {
   waitForSessionIdle,
   agentBusyRetryable,
   MAX_AGENT_BUSY_RETRIES,
+  platformFault,
   visibleError,
   newRunMetrics,
   recordAgentDiagnostic,

@@ -445,6 +445,60 @@ test('an interrupted run with an automatic retry to come says so, and is not off
   assert.equal(view.fromSnapshot(session(), HEAD).automaticRetryPending, false);
 });
 
+test('a run a platform step failed is taken again once, and the card says so until then', () => {
+  const state = require('../src/services/shots-state');
+  const row = {
+    id: 'f'.repeat(32), session_id: 42, state: 'failed', base_sha: BASE, head_sha: HEAD,
+    failure_code: 'shots_failed', intent: null,
+    failure_reason: 'No answer from Postgres within 90 seconds, psql\'s time limit, so psql was stopped.',
+    trace_summary: { platformFault: { kind: 'database' } },
+    interrupted_retries: 0, unexplained_interruptions: 0, platform_retries: 0,
+  };
+  const open = view.serialize(state.runSummary(row, []), session({ status: 'paused' }), 'demo', HEAD);
+  assert.equal(open.automaticRetryPending, true);
+  assert.equal(open.repairAvailable, false, 'the sweep starts it; a second way to start it is not offered');
+  assert.equal(open.failureCode, 'shots_failed', 'the card tells it from a restart by its code');
+
+  const spent = view.serialize(state.runSummary({ ...row, platform_retries: state.MAX_PLATFORM_RETRIES }, []),
+    session({ status: 'paused' }), 'demo', HEAD);
+  assert.equal(state.MAX_PLATFORM_RETRIES, 1, 'once: a second failure stays failed');
+  assert.equal(spent.automaticRetryPending, false);
+  assert.equal(spent.repairAvailable, true, 'then a person can take them again');
+
+  for (const kind of ['database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit']) {
+    assert.equal(state.runSummary({ ...row, trace_summary: { platformFault: { kind } } }, []).automaticRetryPending,
+      true, kind);
+  }
+  // Only a failure the platform tagged: a broken build, a change that failed
+  // or a state the copies cannot reach is the proposal's to fix.
+  assert.equal(state.runSummary({ ...row, trace_summary: {} }, []).automaticRetryPending, false);
+  assert.equal(state.runSummary({ ...row, trace_summary: { platformFault: { kind: 'image_build' } } }, [])
+    .automaticRetryPending, false);
+  assert.equal(state.runSummary({ ...row, state: 'verified' }, []).automaticRetryPending, false);
+  // A loader that did not count the retries cannot promise one.
+  assert.equal(state.runSummary({ ...row, platform_retries: undefined }, []).automaticRetryPending, false);
+  assert.equal(view.serialize(state.runSummary(row, []), session({ status: 'merged' }), 'demo', HEAD)
+    .automaticRetryPending, false, 'a merged proposal gets no automatic retry');
+  assert.equal(view.serialize(state.runSummary(row, []), session({ status: 'paused' }), 'demo', OTHER)
+    .automaticRetryPending, false, 'nor does a commit the proposal has moved past');
+
+  // Both loaders and the sweep count them the same way, under the trigger
+  // the sweep writes.
+  assert.equal(state.PLATFORM_RETRY_TRIGGER, 'platform-retry');
+  const counted = (file) => {
+    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, file), 'utf8');
+    const end = src.indexOf('AS platform_retries');
+    const start = src.lastIndexOf('(SELECT COUNT(*) FROM shot_runs retry', end);
+    assert.ok(start >= 0 && end > start, `${file} counts the platform retries`);
+    return src.slice(start, end).replace(/\s+/g, ' ');
+  };
+  const reference = counted('../src/services/shots-state.js');
+  assert.match(reference, /retry\.trigger = 'platform-retry'\)::int $/);
+  for (const file of ['../src/services/shots-view.js', '../src/services/shots-gc.js']) {
+    assert.equal(counted(file), reference, `${file} counts exactly as shots-state does`);
+  }
+});
+
 test('a verified run\'s screens reach the card as integers and its own story ids only', () => {
   const screens = [{
     viewport: 'desktop', shot: 'dialog', stories: ['dialog', 'someone-else'],

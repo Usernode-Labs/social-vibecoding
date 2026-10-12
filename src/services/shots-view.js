@@ -215,9 +215,10 @@ function serialize(run, session, slug, currentHead) {
       ? (run.failureReason || null)
       : 'A newer revision of this proposal replaced these shots.',
     notStartedReason: notStartedReason(session, !matchesCurrent),
-    // A restart interrupted this run and the recovery sweep starts it again
-    // by itself, so the card says it is trying again instead of asking a
-    // person to. A merged or archived proposal gets no automatic retry.
+    // A restart or a platform fault ended this run and the recovery sweep
+    // starts it again by itself, so the card says it is trying again instead
+    // of asking a person to. A merged or archived proposal gets no automatic
+    // retry.
     automaticRetryPending: matchesCurrent && run.automaticRetryPending === true
       && !['merged', 'archived'].includes(session?.status),
     repairAvailable: matchesCurrent && run.repairAvailable === true
@@ -280,7 +281,10 @@ async function getForSessions(pool, sessions, slug) {
               (SELECT COUNT(*) FROM shot_runs crash
                 WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
                   AND crash.failure_code = 'shots_run_interrupted'
-                  AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
+                  AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions,
+              (SELECT COUNT(*) FROM shot_runs retry
+                WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                  AND retry.trigger = 'platform-retry')::int AS platform_retries
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
       [runIds]
     );
