@@ -6525,6 +6525,21 @@ async function cleanup() {
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
+  // The bot's builds under way in this process are waited on until each one
+  // has finished or is parked inside a detached turn whose record and journal
+  // are saved, never between two of its steps, which a restart would lose
+  // (homeroom-bot-drain.js). Up to 75s on Kubernetes, where the Pod's grace
+  // allows it; most waits are seconds. The listener still closes at once
+  // below, and the leader lock is still released last, so the next leader
+  // adopts the parked turns. Awaited with the handler drain.
+  const botDrain = require('./src/services/homeroom-bot-drain');
+  const botDeadlineMs = botDrain.deadlineMs(process.env, { fallbackMs: DRAIN_TIMEOUT_MS });
+  const botPipelines = botDrain.snapshot();
+  const botSafe = botDrain.waitForSafePoint({ timeoutMs: botDeadlineMs })
+    .catch((err) => {
+      log.warn('server', 'Waiting for the Homeroom bot\'s builds failed', { err: err.message });
+      return { safe: false, waitedMs: 0, midStep: [], parked: [] };
+    });
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
@@ -6622,14 +6637,29 @@ async function cleanup() {
     activeWorkers: startingCount,
     activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
+    botPipelines: botPipelines.length,
+    botDeadlineMs,
   });
 
-  const [drained] = await Promise.all([
+  const [drained, , botWait] = await Promise.all([
     lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
+    botSafe,
   ]);
+  if (botPipelines.length || botWait.midStep.length) {
+    const summary = (p) => ({ kind: p.kind, runId: p.runId, trialId: p.trialId, step: p.step });
+    if (botWait.safe) {
+      log.info('server', 'Homeroom bot builds reached a saved point', {
+        waitedMs: botWait.waitedMs, parked: botWait.parked.slice(0, 20).map(summary),
+      });
+    } else {
+      log.warn('server', 'Shutdown deadline passed with Homeroom bot builds mid-step', {
+        waitedMs: botWait.waitedMs, deadlineMs: botDeadlineMs, midStep: botWait.midStep.slice(0, 20).map(summary),
+      });
+    }
+  }
 
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
@@ -6641,6 +6671,19 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
+
+  // The builds the deadline caught between steps: one incident each, so
+  // admins see what the restart cut short. Bounded like the marks below.
+  if (botWait.midStep.length && shutdownPool) {
+    let markTimer = null;
+    await Promise.race([
+      botDrain.recordMidStep(shutdownPool, botWait.midStep).catch(() => 0),
+      new Promise((resolve) => {
+        markTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (markTimer) clearTimeout(markTimer);
+  }
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can
