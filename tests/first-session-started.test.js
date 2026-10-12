@@ -177,8 +177,30 @@ test('#4900: a card under the project says how far its setup has got, in words, 
   assert.ok(at('data-featured-card=') < at('data-made-setup="started"'));
   assert.ok(at('data-made-setup="started"') < at('>Invite people to use it and help improve it together.</p>'));
   assert.match(CODE, /\{settingUp \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} \/> : null\}/);
-  // A plain card's own "Setting it up…" gives way to it while it shows.
-  assert.match(CODE, /\{settingUp \? null : \(\s+<div className="mt-4 flex items-center gap-2 text-\[14px\] text-zinc-600 dark:text-zinc-300">/);
+  // A plain card's own "Setting it up…" gives way to it while it shows, and
+  // once it has run, to the same card in its place (READY IN PLACE).
+  assert.match(CODE, /\{settingUp \|\| ranInPlace \? null : \(\s+<div className="mt-4 flex items-center gap-2 text-\[14px\] text-zinc-600 dark:text-zinc-300">/);
+});
+
+test('READY IN PLACE: once the app runs its setup card stays where it was, so nothing over or under it moves (onboarding run two)', () => {
+  const { SetupProgress, SETUP_DONE, SETUP_SET_UP } = made;
+  assert.equal(message(SETUP_DONE), 'It’s running now.');
+  assert.equal(message(SETUP_SET_UP), 'It’s set up.');
+  const done = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'Ready to use.', busy: false } }));
+  assert.match(done, /data-made-setup="done"/);
+  // The same card, row and sizes as while it ran: 15 over 13, two lines.
+  assert.match(done, /class="flex items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
+  assert.match(done, /<div role="status" class="min-w-0 flex-1"><p class="text-\[15px\] font-\[650\] leading-snug">Ready to use\.<\/p><p class="text-\[13px\] text-zinc-500 dark:text-zinc-400">It’s running now\.<\/p><\/div>/);
+  // Full and quiet: a done state wears no accent, and turns only while the bot builds.
+  assert.match(done, />4\/4<\/text>/);
+  assert.match(done, /stroke-zinc-400/);
+  assert.doesNotMatch(done, /data-progress-ring-spinning/);
+  const building = renderToHtml(createElement(SetupProgress, { step: 4, slow: false, waitedOut: false, done: { line: 'It’s set up.', busy: true } }));
+  assert.match(building, /data-progress-ring-spinning=""/);
+  // Only once it has shown here, and never over a setup that stopped.
+  assert.match(CODE, /useEffect\(\(\) => \{ if \(settingUp\) setSetupShown\(true\); \}, \[settingUp\]\);/);
+  assert.match(CODE, /const ranInPlace = setupShown && !settingUp && !stalled;/);
+  assert.match(CODE, /\{ranInPlace \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} done=\{\{ line: card \? t\(SETUP_SET_UP\) : plainLine, busy \}\} \/> : null\}/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {

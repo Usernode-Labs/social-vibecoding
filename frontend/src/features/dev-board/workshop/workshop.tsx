@@ -90,7 +90,7 @@ import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
   ApprovalLine, CommunityCard, ShareItCard, canLeave,
-  leaveCommunity, useCommunity,
+  communityPending, leaveCommunity, useCommunity,
 } from './community-card';
 import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
@@ -4475,7 +4475,9 @@ export function DevWorkshop(): ReactNode {
     if (v.slug) publishSide(v.slug, sideOpen);
   }, [v.slug, sideOpen]);
 
-  if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
+  // The hub is drawn once, with its community record (ONE DRAW, NOT TWO,
+  // ./community-card.tsx communityPending).
+  if (v.loading || communityPending(v.slug || '')) return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;

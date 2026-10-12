@@ -8,7 +8,8 @@
 // 2. The make and made screens are fixed boxes that ended above the
 //    toolbar, cutting off what scrolled (Make it in half). They now run on
 //    past the foot of the screen, with as much kept after the last line, so
-//    the end scrolls up to where it stopped before.
+//    the end scrolls up to where it stopped before. That room is an empty
+//    last item: as padding, Safari never scrolled it.
 //
 // Run with: node --test tests/first-run-safari-toolbar.test.js
 
@@ -46,8 +47,12 @@ test('the make and made screens run on under the toolbar and scroll clear of it'
   const scope = 'html.un-ios.web-browser-chrome:not(.platform-kb-open)';
   assert.ok(rules.includes(`${scope} :is([data-first-session-make], [data-first-session-made]) {\n    bottom: -200px;\n  }`));
   // The same 200px after the last line, in whatever scrolls, so the end
-  // scrolls up to where it stopped before.
-  assert.ok(rules.includes(`${scope} :is([data-first-session-make-scroll], [data-first-session-made]) {\n    padding-bottom: 200px;\n  }`));
+  // scrolls up to where it stopped before. As an empty last item, not
+  // padding: WebKit leaves a flex scroller's end padding out of what it
+  // scrolls, which left Make it under the toolbar with nothing to scroll
+  // (onboarding run two, 12 Oct 2026).
+  assert.ok(rules.includes(`${scope} :is([data-first-session-make-scroll], [data-first-session-made])::after {\n    content: '';\n    flex: 0 0 200px;\n  }`));
+  assert.doesNotMatch(rules, /padding-bottom/);
   assert.doesNotMatch(rules, /lvh|svh/);
   // Those are the boxes: the make screen's root and scroller, the made
   // screen's root (which scrolls itself).

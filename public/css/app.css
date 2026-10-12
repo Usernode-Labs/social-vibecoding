@@ -21010,13 +21010,26 @@ html.un-kb #platform-tabs {
    the box itself, so `100% - 100lvh` extended nothing (#4691's first try).
    200px is more than the toolbar and the home indicator together. In a
    phone browser on iOS, with the keys down: the keyboard surface measures
-   its padding against the box as it was. */
+   its padding against the box as it was.
+
+   THOSE 200PX ARE A SPACER, NOT PADDING (onboarding run two, 12 Oct 2026,
+   iPhone 17 simulator, Safari 26, measured on a copy of the screen): Safari
+   paints a fixed box only down to the foot of its layout viewport (714px
+   tall there, ending above the toolbar), whatever runs on past it, so what
+   lies in the last 200px is never seen. And WebKit leaves a flex
+   scroller's end padding out of what it scrolls: the scroller was 862px
+   with 862px to scroll, so Make it, once a starting idea had grown the
+   form, sat under the toolbar with nothing to scroll it up. The page lock
+   (#4909) also keeps Safari from collapsing its toolbar, which a drag on
+   the page used to. An empty last item is counted: with it the same
+   screen scrolled 962px, and Make it came up clear of the toolbar. */
 @media (max-width: 767px) {
   html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make], [data-first-session-made]) {
     bottom: -200px;
   }
-  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made]) {
-    padding-bottom: 200px;
+  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made])::after {
+    content: '';
+    flex: 0 0 200px;
   }
 }
 /* AND OVER THEIR TOP, UNDER THE STATUS BAR (onboarding run, 12 Oct 2026,
