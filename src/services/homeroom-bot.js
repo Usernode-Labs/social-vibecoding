@@ -56,6 +56,7 @@ const log = require('./logger');
 const githubBudget = require('./github-budget');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
+const drain = require('./homeroom-bot-drain');
 const followup = require('./homeroom-bot-followup');
 const snapshots = require('./homeroom-bot-snapshots');
 const { withoutEmDashes } = require('./em-dashes');
@@ -4157,7 +4158,7 @@ async function drainBuilds(pool, config, deps = {}) {
   // Shutting down (stop()): nothing new starts on a process about to close
   // its pool. A build that started anyway failed at dispatch with "Cannot use
   // a pool after calling end on the pool" (page-turners #2, 2026-10-05).
-  if (stopped) { out.paused = 'stopped'; return out; }
+  if (refusingNew()) { out.paused = 'stopped'; return out; }
   // A pass is already filling the lane: it runs again when it ends.
   if (buildDrainRunning) { buildDrainAgain = true; return { ...out, busy: true }; }
   buildDrainRunning = true;
@@ -4190,9 +4191,14 @@ async function drainBuilds(pool, config, deps = {}) {
       out.detail = budget.reason || budget.error;
       return out;
     }
+    // Shutdown may have begun during the reads above.
+    if (refusingNew()) { out.paused = 'stopped'; return out; }
     const { rows } = await pool.query(CLAIM_BUILDS_SQL, [free, settings.pausedApps || []]);
     for (const claim of rows) {
-      const promise = runQueuedBuild(pool, config, { bot, claim, settings, deps })
+      const promise = drain.run(
+        { kind: 'shadow_build', runId: claim.id, appId: claim.app_id, issueNumber: claim.issue_number },
+        () => runQueuedBuild(pool, config, { bot, claim, settings, deps }),
+      )
         .catch(async (err) => {
           log.error('homeroom-bot', 'Shadow build threw', { runId: claim.id, err: err.message });
           await pool.query(
@@ -8818,7 +8824,12 @@ function track(pool, slot, entry, work) {
   return (async () => {
     let o;
     try {
-      o = await work();
+      // A pipeline shutdown waits on until it is parked in a saved turn
+      // (homeroom-bot-drain.js).
+      o = await drain.run({
+        kind: entry.build ? 'live_build' : entry.followUp ? 'follow_up' : entry.lane === 'live' ? 'read' : 'background',
+        runId: entry.runId ?? null, appId: entry.appId, issueNumber: entry.issueNumber,
+      }, work);
     } catch (err) {
       log.error('homeroom-bot', 'Work slot failed', { appId: entry.appId, err: err.message });
       o = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
@@ -8845,7 +8856,7 @@ function track(pool, slot, entry, work) {
  * starting the same row twice.
  */
 async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
-  if (stopped || settings.mode === 'off') return [];
+  if (refusingNew() || settings.mode === 'off') return [];
   if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
   const started = [];
   // A staging copy never acts (live.liveScope), so there every app is the
@@ -8894,6 +8905,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       const byId = new Map(apps.map((a) => [Number(a.id), a]));
       const dm = deps.dm || require('./homeroom-bot-dm');
       for (const pick of picks) {
+        // Shutdown began during this pass: start nothing more.
+        if (refusingNew()) break;
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         seen.add(`build:${Number(pick.id)}`);
@@ -8955,6 +8968,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       );
       const byId = new Map(apps.map((a) => [Number(a.id), a]));
       for (const pick of picks) {
+        if (refusingNew()) break;
         const app = byId.get(Number(pick.app_id));
         if (!app) continue;
         // Claimed before the work starts: the row is this Pod's.
@@ -8997,6 +9011,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   // Background: a batch of one app's issues per start, as before.
   const shadowActive = [...inFlight.values()].filter((e) => e.lane === 'background').length;
   for (let i = shadowActive; i < (settings.concurrency || DEFAULTS.concurrency); i += 1) {
+    if (refusingNew()) break;
     const batch = await nextBatch(pool, {
       batchSize: settings.batchSize,
       excludeAppIds: [...new Set([...inFlight.values()].map((e) => Number(e.appId))), ...backedOff],
@@ -9381,6 +9396,16 @@ function start(config) {
  * on the pool" lines from 10-03 to 10-05, and one live build lost at
  * dispatch). A turn still running is restart recovery's, as before.
  */
+/**
+ * True once the loops are stopped or shutdown has begun (lifecycle, set
+ * first thing in server.js cleanup): no new read, build, follow-up or checks
+ * fix starts. Work already under way goes on to its next saved point
+ * (homeroom-bot-drain.js).
+ */
+function refusingNew() {
+  return stopped || drain.refusing();
+}
+
 function stop() {
   stopped = true;
   if (timer) clearTimeout(timer);

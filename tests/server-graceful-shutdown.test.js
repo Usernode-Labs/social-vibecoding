@@ -333,6 +333,46 @@ test('shutdown hands its checks runs to the next harvest before closing the pool
   }
 });
 
+// The Homeroom bot's builds under way are waited on until they reach a saved
+// point (homeroom-bot-drain.js). One still between steps at the deadline is
+// logged and recorded as an incident, and the shutdown goes on to its exit.
+test('a bot build still mid-step at the deadline is logged, recorded and does not hold the exit', async () => {
+  const { server, logs, restore } = loadServer();
+  const drain = require('../src/services/homeroom-bot-drain');
+  const savedEnv = process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+  process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = '150';
+  let release;
+  const pipeline = drain.run({ kind: 'live_build', runId: 77, appId: 4, issueNumber: 9 },
+    () => new Promise((resolve) => { release = resolve; }));
+  try {
+    const listener = fakeListener();
+    const writes = [];
+    const pool = { ...fakePool(), query: async (sql, params) => { writes.push({ sql, params }); return { rows: [] }; } };
+
+    const startedAt = Date.now();
+    const order = await runCleanup(server, { listener, pool });
+    const elapsed = Date.now() - startedAt;
+
+    assert.deepEqual(order, ['exit:0']);
+    assert.ok(elapsed >= 140, `cleanup took ${elapsed}ms; it must wait out the bot deadline`);
+    const warned = logs.find((l) => l.msg === 'Shutdown deadline passed with Homeroom bot builds mid-step');
+    assert.ok(warned, 'the deadline passing is logged');
+    assert.equal(warned.data.deadlineMs, 150);
+    assert.deepEqual(warned.data.midStep.map((p) => p.runId), [77]);
+    const incident = writes.find((w) => /INSERT INTO events/.test(w.sql));
+    assert.ok(incident, 'an incident is recorded for the build');
+    const meta = JSON.parse(incident.params[4]);
+    assert.equal(meta.kind, 'build_interrupted');
+    assert.equal(meta.why, 'shutdown deadline passed during its first step');
+  } finally {
+    release();
+    await pipeline;
+    if (savedEnv === undefined) delete process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
+    else process.env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS = savedEnv;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {
