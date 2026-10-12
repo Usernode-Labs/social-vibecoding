@@ -61,7 +61,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'proposal_alerts',
     label: 'Change alerts',
-    description: 'Changes needing attention, failed previews, new changes waiting for approval, and votes on yours or yours going live.',
+    description: 'Changes needing attention, failed previews, new changes waiting for approval, and votes on yours, or changes going live.',
     defaultEnabled: true,
     // #1374 adds three: a vote on your proposal, your proposal merging, and
     // the daily "what needs your vote" summary. All three are proposal
@@ -71,11 +71,15 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // #1688 adds two more of the same kind: the re-confirm ask after a
     // proposal you backed gets a new version, and the weekly "this week"
     // card. Kept in lockstep with the seed in db/schema.sql.
+    // #4787: the change a person voted on going live is proposal lifecycle
+    // the same way, even though the per-app switch that gates the
+    // notification itself is its own voted_changes_live.
     kinds: Object.freeze([
       'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
       'revision_recheck', 'weekly_digest',
       // B7: a change you can approve is ready to try.
       'change_ready',
+      'voted_change_merged',
     ]),
   }),
   Object.freeze({

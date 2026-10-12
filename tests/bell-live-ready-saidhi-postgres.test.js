@@ -144,16 +144,17 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.deepEqual(changedFor(), []);
   });
 
-  await t.test('a read "ready to try" comes back unread as the news, once, for whoever had not said yes', async () => {
+  await t.test('a read "ready to try" comes back unread as the news, once, for whoever never voted on it (#4787: a voter now hears the merge itself)', async () => {
     const next = await change('Show whose place we meet at');
     const seen = await notify(mo.id, 'change_ready', { sessionId: next, detail: 'epoch:0', read: true });
     const noVote = await notify(priya.id, 'change_ready', { sessionId: next, detail: 'epoch:0', read: true });
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'no')`, [next, priya.id]);
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [next]);
     const told = await notifications.settleDecidedChange(pool, next);
-    assert.deepEqual(told.sort(), [priya.id, mo.id].sort());
+    assert.deepEqual(told, [mo.id], 'only Mo, who never voted: it went live without him');
     assert.equal((await row(seen)).read_at, null, 'Mo looked but never voted: it went live without him');
-    assert.equal((await row(noVote)).read_at, null, 'a No is not a Yes: Priya hears it went live anyway');
+    assert.notEqual((await row(noVote)).read_at, null,
+      'a No is a say in it: she hears it went live through voted_change_merged, so her read row stays read');
     // No second row, so nothing rang twice.
     const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE session_id = $1`, [next]);
     assert.equal(rows[0].n, 2);

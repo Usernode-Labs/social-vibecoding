@@ -645,24 +645,39 @@ async function writeMergedLine(tx: Tx, w: any, ctx: WriteContext) {
 }
 
 // The author's "your change is live", once (the push trigger rings it), and
-// on their open tabs.
+// on their open tabs. #4787: everyone who voted on it, yes or no, hears it
+// went live too, in the same transition — the voters' part runs even when
+// the author's id is null (a bot build's), and a failure there must never
+// abort the transition that made the change live.
 async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
-  if (!w.userId) return;
-  let credits: string | null = null;
-  if (w.includedIn) {
-    credits = legacy('services/included-changes').authorLine(legacyRow(w.includedIn));
-  } else if (!w.force) {
-    const votes = legacy('routes/votes');
-    const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
-    credits = votes.creditsSentence(c, { withAuthor: false }) || null;
+  if (w.userId) {
+    let credits: string | null = null;
+    if (w.includedIn) {
+      credits = legacy('services/included-changes').authorLine(legacyRow(w.includedIn));
+    } else if (!w.force) {
+      const votes = legacy('routes/votes');
+      const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
+      credits = votes.creditsSentence(c, { withAuthor: false }) || null;
+    }
+    const created = await legacy('services/notifications').createPrMergedNotification(tx, {
+      userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
+    });
+    // Named, not carried: the relaying web process reads the row for the
+    // author's tabs (ws.js relayNotification), so the bell's query never runs
+    // in, or holds up, the transition that makes the change live.
+    for (const row of created || []) {
+      ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
+    }
   }
-  const created = await legacy('services/notifications').createPrMergedNotification(tx, {
-    userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
-  });
-  // Named, not carried: the relaying web process reads the row for the
-  // author's tabs (ws.js relayNotification), so the bell's query never runs
-  // in, or holds up, the transition that makes the change live.
-  for (const row of created || []) {
-    ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
+  try {
+    const created = await legacy('services/notifications').createVotedChangeMergedNotifications?.(tx, {
+      appId: w.appId, sessionId: w.sessionId, authorId: w.userId ?? null,
+    });
+    for (const row of created || []) {
+      ctx.push(toUser(Number(row.user_id), { type: 'notification_new', notificationId: Number(row.id) }));
+    }
+  } catch (err) {
+    (legacy('services/logger') as { warn: (...args: unknown[]) => void })
+      .warn('workflow', 'Voted-change merged notification failed', { sessionId: w.sessionId, message: (err as Error).message });
   }
 }
