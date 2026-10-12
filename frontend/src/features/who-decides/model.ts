@@ -219,25 +219,21 @@ export function ruleToday(rule: Rule, ctx: { groups: readonly Group[]; creator: 
 
 /**
  * What "How it plays out" says: one line for `anyone`, or one for the person
- * reading (`you`) and one for someone else (`other`).
+ * reading (`you`) and one for anyone else (`other`).
  */
 export type PlaysOutLines = { anyone: string } | { you: string; other: string };
 
 /**
- * What "How it plays out" says for one preset (#4894). Only You or the group
- * treats a change by its creator differently from anyone else's, so it says
- * both, from the reader's side; Two yeses, Open floor and Group vote treat
- * every change alike and say it once, for anyone. A project's own rules keep
- * both lines.
+ * What "How it plays out" says for one preset, or for a project's own rules
+ * (`key` null) (#4894). Only You or the group treats a change by its creator
+ * differently from anyone else's, so it says both, from the reader's side:
+ * the reader's own change, then anyone else's. Two yeses, Open floor and
+ * Group vote treat every change alike, and a project's own rules say in one
+ * line how any change goes live, so each says it once, for anyone.
  */
-export function playsOut(key: PresetKey | null, viewer: { isCreator: boolean; creator: string | null; other: string }): PlaysOutLines {
-  const values = { creator: viewer.creator || translate('dialogs:whoDecides.group.creator'), name: viewer.other };
-  if (!key) {
-    return {
-      you: translate('dialogs:whoDecides.plays.own.you'),
-      other: translate('dialogs:whoDecides.plays.own.other', values),
-    };
-  }
+export function playsOut(key: PresetKey | null, viewer: { isCreator: boolean; creator: string | null }): PlaysOutLines {
+  if (!key) return { anyone: translate('dialogs:whoDecides.plays.own.anyone') };
+  const values = { creator: viewer.creator || translate('dialogs:whoDecides.group.creator') };
   if (key === 'you_or_the_group' && !viewer.isCreator) {
     return {
       you: translate('dialogs:whoDecides.plays.you_or_the_group.youOther', values),

@@ -73,59 +73,86 @@ test('the rule a project has, as the sheet starts from it', () => {
 
 test('a preset is said from the reader’s side', () => {
   const model = loadTsx(MODEL);
-  const creator = { isCreator: true, creator: 'evan', other: 'maya' };
-  const member = { isCreator: false, creator: 'evan', other: 'snait' };
+  const creator = { isCreator: true, creator: 'evan' };
+  const member = { isCreator: false, creator: 'evan' };
   assert.equal(model.presetName('you_or_the_group', creator), 'You or the group');
   assert.equal(model.presetName('you_or_the_group', member), 'evan or the group');
   assert.equal(model.presetName('two_yeses', member), 'Two yeses');
   assert.equal(model.playsOut('you_or_the_group', creator).you, 'Your yes is enough. Live once its checks pass.');
   assert.equal(model.playsOut('you_or_the_group', creator).other, 'Live when you say yes, or when most of the group does.');
   assert.equal(model.playsOut('you_or_the_group', member).other, 'Live when evan says yes, or when most of the group does.');
-  assert.equal(model.playsOut(null, creator).you, 'Live when any one of its rules passes.');
+  assert.equal(model.playsOut(null, creator).anyone, 'Live when any one of its rules passes. Their own yes counts toward the rules they’re in.');
 });
 
 test('#4894: a rule that treats every change alike says how it plays out once, for anyone', () => {
   const model = loadTsx(MODEL);
-  const creator = { isCreator: true, creator: 'evan', other: 'maya' };
-  const member = { isCreator: false, creator: 'evan', other: 'snait' };
+  const creator = { isCreator: true, creator: 'evan' };
+  const member = { isCreator: false, creator: 'evan' };
+  const own = 'Live when any one of its rules passes. Their own yes counts toward the rules they’re in.';
   const anyone = {
     two_yeses: 'Live once one more person says yes.',
     open_floor: 'Their own yes is enough. Live once its checks pass.',
     group_vote: 'Live when most active members say yes, or after a wait if nobody objects.',
   };
-  for (const [key, line] of Object.entries(anyone)) {
-    assert.deepEqual({ ...model.playsOut(key, creator) }, { anyone: line }, key);
+  // A project's own rules (Make your own, or an old setting no preset is:
+  // `null`) go live the same way whoever made the change, so they say it
+  // once too.
+  const once = [...Object.entries(anyone), [null, own]];
+  for (const [key, line] of once) {
+    assert.deepEqual({ ...model.playsOut(key, creator) }, { anyone: line }, String(key));
     assert.deepEqual({ ...model.playsOut(key, member) }, { anyone: line }, `${key}, read by someone who did not make the project`);
   }
-  // You or the group keeps both: the creator's own change and someone
-  // else's really do differ. So do a project's own rules.
+  // You or the group keeps both: the creator's own change and anyone
+  // else's really do differ.
   assert.deepEqual(Object.keys(model.playsOut('you_or_the_group', creator)), ['you', 'other']);
   assert.deepEqual(Object.keys(model.playsOut('you_or_the_group', member)), ['you', 'other']);
-  assert.deepEqual(Object.keys(model.playsOut(null, creator)), ['you', 'other']);
 
-  // On screen: one row titled "Anyone makes a change", or the two rows.
+  // On screen: one row titled "Anyone makes a change" beside the group's
+  // tile, or, for You or the group, the reader's row and "Anyone else makes
+  // a change" beside the same tile, never a member picked by name.
   const { PlaysOut } = loadTsx('frontend/src/features/who-decides/parts.tsx');
   const draw = (preset, viewer = creator) => renderToHtml(createElement(PlaysOut, { preset, viewer }));
-  for (const [key, line] of Object.entries(anyone)) {
+  const svgs = (html) => html.match(/<svg[\s\S]*?<\/svg>/g) || [];
+  const faces = (html) => (html.match(/rounded-full text-\[11px\] font-bold/g) || []).length;
+  const [groupTile] = svgs(draw('group_vote'));
+  assert.ok(groupTile, 'the Anyone makes a change row has a tile');
+  for (const [key, line] of once) {
     const html = draw(key);
-    assert.equal(html.match(/>Anyone makes a change</g)?.length, 1, key);
-    assert.ok(html.includes(`>${line}<`), key);
-    assert.doesNotMatch(html, /You make a change|maya makes a change/, key);
+    assert.equal(html.match(/makes? a change</g)?.length, 1, `${key}: one row`);
+    assert.match(html, />Anyone makes a change</, String(key));
+    assert.ok(html.includes(`>${line}<`), String(key));
+    assert.deepEqual(svgs(html), [groupTile], `${key}: the group's tile`);
+    assert.equal(faces(html), 0, `${key}: no face`);
   }
-  const two = draw('you_or_the_group');
-  assert.match(two, />You make a change<[\s\S]*>Your yes is enough\. Live once its checks pass\.</);
-  assert.match(two, />maya makes a change<[\s\S]*>Live when you say yes, or when most of the group does\.</);
-  assert.doesNotMatch(two, /Anyone makes a change/);
-  assert.match(draw(null), />You make a change<[\s\S]*>maya makes a change</);
+  for (const viewer of [creator, member]) {
+    const two = draw('you_or_the_group', viewer);
+    const lines = model.playsOut('you_or_the_group', viewer);
+    const you = two.indexOf('>You make a change<');
+    const others = two.indexOf('>Anyone else makes a change<');
+    assert.ok(you >= 0 && others > you, 'the reader’s row, then anyone else’s');
+    assert.ok(two.indexOf(`>${lines.you}<`) > you && two.indexOf(`>${lines.you}<`) < others);
+    assert.ok(two.lastIndexOf(`>${lines.other}<`) > others);
+    assert.deepEqual(svgs(two), [groupTile], 'anyone else is the group’s tile');
+    assert.ok(two.indexOf(groupTile) > you && two.indexOf(groupTile) < others);
+    assert.equal(faces(two), 1, 'one face, the reader’s');
+    assert.doesNotMatch(two, /Anyone makes a change|evan makes a change/);
+  }
+  assert.match(draw('you_or_the_group', creator), />Anyone else makes a change<[\s\S]*>Live when you say yes, or when most of the group does\.</);
+  assert.match(draw('you_or_the_group', member), />Anyone else makes a change<[\s\S]*>Live when evan says yes, or when most of the group does\.</);
 
-  // The six retired lines are gone from the English catalog.
+  // The retired lines are gone from the English catalog.
   const dialogs = JSON.parse(read('frontend/locales/en/dialogs.json'));
   for (const key of ['two_yeses', 'open_floor', 'group_vote']) {
     assert.equal(dialogs[`whoDecides.plays.${key}.anyone`].text, anyone[key]);
     assert.equal(dialogs[`whoDecides.plays.${key}.you`], undefined, `${key}.you retired`);
     assert.equal(dialogs[`whoDecides.plays.${key}.other`], undefined, `${key}.other retired`);
   }
+  assert.equal(dialogs['whoDecides.plays.own.anyone'].text, own);
   assert.equal(dialogs['whoDecides.plays.anyoneTitle'].text, 'Anyone makes a change');
+  assert.equal(dialogs['whoDecides.plays.anyoneElseTitle'].text, 'Anyone else makes a change');
+  for (const id of ['whoDecides.plays.own.you', 'whoDecides.plays.own.other', 'whoDecides.plays.otherTitle', 'whoDecides.someone']) {
+    assert.equal(dialogs[id], undefined, `${id} retired`);
+  }
 });
 
 test('each rule in words, and what it asks for today', () => {

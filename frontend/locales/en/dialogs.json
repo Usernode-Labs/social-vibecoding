@@ -2779,10 +2779,6 @@
     "text": "Now",
     "description": "Small badge on the approval option the project uses today."
   },
-  "whoDecides.someone": {
-    "text": "Someone else",
-    "description": "Stand-in for another member's name in \"How it plays out\" when nobody else is in the project yet."
-  },
   "whoDecides.waiting": {
     "text": "A change to who can see and change it is already up for a vote.",
     "description": "Note at the top of the sheet when such a proposal is waiting for votes; followed by a link that opens it."
@@ -2881,19 +2877,19 @@
   },
   "whoDecides.plays.title": {
     "text": "How it plays out",
-    "description": "Section label over the rows showing what the picked rule means: one row for anyone, or two, for the reader and for someone else."
+    "description": "Section label over the rows showing what the picked rule means: one row for anyone, or two, for the reader and for anyone else."
   },
   "whoDecides.plays.anyoneTitle": {
     "text": "Anyone makes a change",
-    "description": "Row title under How it plays out, for a rule that treats every change alike (Two yeses, Open floor, Group vote): what happens to a change anyone makes, the reader's included."
+    "description": "Row title under How it plays out, for a rule that treats every change alike (Two yeses, Open floor, Group vote, or a project's own rules): what happens to a change anyone makes, the reader's included."
   },
   "whoDecides.plays.youTitle": {
     "text": "You make a change",
-    "description": "Row title: what happens to a change the reader makes."
+    "description": "Row title under How it plays out, for You or the group: what happens to a change the reader makes."
   },
-  "whoDecides.plays.otherTitle": {
-    "text": "{{name}} makes a change",
-    "description": "Row title: what happens to a change someone else makes. {{name}} is another member's username."
+  "whoDecides.plays.anyoneElseTitle": {
+    "text": "Anyone else makes a change",
+    "description": "Row title under How it plays out, for You or the group, below the row You make a change: what happens to a change anyone other than the reader makes."
   },
   "whoDecides.plays.you_or_the_group.you": {
     "text": "Your yes is enough. Live once its checks pass.",
@@ -2923,13 +2919,9 @@
     "text": "Live when most active members say yes, or after a wait if nobody objects.",
     "description": "Group vote, under the row Anyone makes a change: the group decides, whoever made the change."
   },
-  "whoDecides.plays.own.you": {
-    "text": "Live when any one of its rules passes.",
-    "description": "A project's own rules, for a change the reader makes."
-  },
-  "whoDecides.plays.own.other": {
-    "text": "Same as yours: any one rule passing is enough.",
-    "description": "A project's own rules, for a change someone else makes."
+  "whoDecides.plays.own.anyone": {
+    "text": "Live when any one of its rules passes. Their own yes counts toward the rules they’re in.",
+    "description": "A project's own rules, under the row Anyone makes a change: one passing rule puts a change live. \"Their\" and \"they\" are whoever made the change, whose own yes counts in each rule whose group includes them."
   },
   "whoDecides.alwaysYou": {
     "text": "Changing who can see it, its admins or this rule always works like You or the group: your yes is enough, or the group’s real yes votes are.",
