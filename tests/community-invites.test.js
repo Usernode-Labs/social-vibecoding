@@ -263,6 +263,24 @@ test('the words: the landing card, the invite pane', () => {
   const forever = { expiresAt: null, maxUses: null, uses: 0 };
   assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
+  // #4779: people the link brought who have not got in yet sit between the
+  // two facts; with nobody waiting, the line is as it was.
+  const fiveDays = { expiresAt: '2026-10-02T12:00:00Z', maxUses: 25, uses: 1 };
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1 }, now), '1 of 25 used · 1 waiting · 5 days left');
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 0 }, now), '1 of 25 used · 5 days left');
+  // On a no-limit link the joined count is people who got in, not uses spent.
+  assert.equal(pane.linkDetail({ ...forever, uses: 3, joined: 2, pending: 1 }, now), '2 joined · 1 waiting · no end date');
+  // A link that no longer works says why in place of the days left.
+  assert.equal(pane.linkDetail({ ...fresh, uses: 2, ended: 'expired' }, now), '2 of 25 used · expired');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, ended: 'used_up' }, now), '1 of 1 used · ended');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 4, ended: 'revoked' }, now), '4 of 25 used · turned off');
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1, ended: 'expired' }, now), '1 of 25 used · 1 waiting · expired');
+  assert.equal(message('agent:appContext.invite.detail.waiting', { count: 1 }), '1 waiting');
+  assert.equal(message('agent:appContext.invite.detail.waiting', { count: 3 }), '3 waiting');
+  assert.equal(message('agent:appContext.invite.detail.ended.expired'), 'expired');
+  assert.equal(message('agent:appContext.invite.detail.ended.usedUp'), 'ended');
+  assert.equal(message('agent:appContext.invite.detail.ended.revoked'), 'turned off');
+  assert.equal(message('agent:appContext.invite.allLinks'), 'All links');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
   assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);

@@ -327,6 +327,7 @@ export function notePostable(how: SentHow, note: string, example: string | null 
 export function linkNote(links: unknown): string | null {
   if (!Array.isArray(links)) return null;
   const mine = links.find((l) => l && typeof l === 'object' && (l as { mine?: boolean }).mine
+    && !(l as { ended?: unknown }).ended
     && typeof (l as { note?: unknown }).note === 'string' && (l as { note: string }).note);
   return mine ? (mine as { note: string }).note : null;
 }

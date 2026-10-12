@@ -8,7 +8,9 @@
  *                 DEFAULT_DAYS and works for DEFAULT_USES people unless they
  *                 choose otherwise, within the LIMITS.
  *   listInvites   the viewer's own live links (every live link, for someone
- *                 who manages the project).
+ *                 who manages the project), and each link's pending and
+ *                 joined counts; links that ended in the last ENDED_SHOWN_DAYS
+ *                 stay listed with a reason.
  *   revokeInvite  its maker, a project admin or a platform admin turns it
  *                 off. People it queued who were not let in yet are cancelled
  *                 with it; people who already joined stay.
@@ -48,6 +50,10 @@ const communities = require('./communities');
 
 const DEFAULT_DAYS = 7;
 const DEFAULT_USES = 25;
+// How long a link that no longer works stays in the pane's list: 30 days, the
+// longest a dated link can last, so a link from its whole life can still be
+// seen with its final counts.
+const ENDED_SHOWN_DAYS = 30;
 const LIMITS = Object.freeze({ minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 });
 // Live links one person may hold for one project at a time. Links are cheap
 // to make; a cap keeps a single account from minting an unbounded supply.
@@ -159,6 +165,14 @@ function serializeLink(row, viewerId) {
     createdBy: row.created_by_username || null,
     mine: row.created_by != null && row.created_by === viewerId,
     note: row.note || null,
+    // People the link brought who have not got in yet, and people it joined.
+    // A redemptions row the link cannot grant yet stays 'queued'.
+    pending: row.pending || 0,
+    joined: row.joined || 0,
+    // Why the link no longer works, or null while it does. createInvite's
+    // RETURNING row carries none of a dead link's marks, so a new link
+    // serializes as ended: null, like listInvites lists it.
+    ended: deadReason(row),
   };
 }
 
@@ -208,21 +222,32 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
 }
 
 /**
- * The live links for `app` the viewer may see: their own, or every live
- * link when they manage the project. Newest first.
+ * The links for `app` the viewer may see: their own, or every link when they
+ * manage the project. The live ones first, newest first; one that ended in
+ * the last ENDED_SHOWN_DAYS stays listed after them (it says why), so a link
+ * does not quietly vanish from the pane a week after it went out. Each link
+ * carries its pending (queued, not let in yet) and joined counts.
  */
 async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
     `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
-            u.username AS created_by_username
+            i.revoked_at,
+            u.username AS created_by_username,
+            (SELECT COUNT(*)::int FROM community_invite_redemptions r
+              WHERE r.invite_id = i.id AND r.status = 'queued' AND r.applied_at IS NULL) AS pending,
+            (SELECT COUNT(*)::int FROM community_invite_redemptions r
+              WHERE r.invite_id = i.id AND r.status = 'joined') AS joined
        FROM community_invites i
        LEFT JOIN users u ON u.id = i.created_by
       WHERE i.app_id = $1
-        AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
-        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+        AND ((i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+              AND (i.max_uses IS NULL OR i.uses < i.max_uses))
+             OR i.created_at > NOW() - make_interval(days => ${ENDED_SHOWN_DAYS}))
         AND ($3::boolean OR i.created_by = $2)
-      ORDER BY i.created_at DESC, i.id DESC
+      ORDER BY (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+                AND (i.max_uses IS NULL OR i.uses < i.max_uses)) DESC,
+               i.created_at DESC, i.id DESC
       LIMIT 50`,
     [app.id, user?.id || null, manages]
   );
