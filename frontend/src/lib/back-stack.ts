@@ -81,6 +81,7 @@
  * only direction a phone has).
  */
 
+import { useSyncExternalStore } from 'react';
 import { isEmbeddedPanel } from './side-panel-mode';
 
 /** What a dismissible surface answers when back reaches it. */
@@ -124,6 +125,8 @@ export interface BackStack {
    */
   handlePopstate(): boolean;
   readonly size: number;
+  /** Called after every change to `size`. Returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
 }
 
 type HistoryLike = {
@@ -156,6 +159,8 @@ export const DISMISS_ID_KEY = '__unDismissId';
 
 export function createBackStack(win: WindowLike): BackStack {
   const stack: BackStackEntry[] = [];
+  const listeners = new Set<() => void>();
+  const changed = () => { for (const listener of listeners) listener(); };
   // Set while we spend a record ourselves, so the popstate it causes is not
   // read as a fresh press. Cleared by that popstate, or by a push that
   // overtakes it.
@@ -303,6 +308,7 @@ export function createBackStack(win: WindowLike): BackStack {
     selfSpent = false;
     skipping = null;
     record(entry);
+    changed();
     return (options?: ReleaseOptions) => release(entry, options);
   }
 
@@ -312,6 +318,7 @@ export function createBackStack(win: WindowLike): BackStack {
     // which is the ordinary path when the viewer pressed back.
     if (at === -1) return;
     stack.splice(at, 1);
+    changed();
     // Not the top — somebody else's record is newer than ours. Dropping the
     // entry is enough; spending a record here would steal theirs. Ours is now
     // unowned, so a traversal that lands on it later passes through.
@@ -350,6 +357,7 @@ export function createBackStack(win: WindowLike): BackStack {
       stack.push(top);
       record(top);
     }
+    changed();
     return true;
   }
 
@@ -382,6 +390,10 @@ export function createBackStack(win: WindowLike): BackStack {
     get size() {
       return stack.length;
     },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
   };
 }
 
@@ -406,6 +418,20 @@ export function backStack(): BackStack | null {
 export function pushDismissible(close: () => DismissResult): Release {
   if (!shared) return () => {};
   return shared.push(close);
+}
+
+const noSubscription = () => () => {};
+
+/**
+ * Whether a dismissible surface (a dialog, a sheet) is open right now. False
+ * in the prerender pass and in the side panel, which have no back stack.
+ */
+export function useDismissibleOpen(): boolean {
+  return useSyncExternalStore(
+    shared ? shared.subscribe : noSubscription,
+    () => (shared?.size ?? 0) > 0,
+    () => false,
+  );
 }
 
 // NOT IN THE SIDE PANEL'S DOCUMENT (`?panel=1`, framed beside a running app).

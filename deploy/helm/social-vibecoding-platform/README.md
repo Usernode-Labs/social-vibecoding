@@ -347,21 +347,22 @@ namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQ
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Staging preview and production app Deployments receive two preferred Pod
-affinity terms matching that cluster's `cnpg.io/instanceRole: primary`: weight
-100 across `topology.kubernetes.io/zone`, and weight 50 across
-`kubernetes.io/hostname`. The zone term is the one that matters on a cluster
-spread over data centres: a page makes many sequential queries, so a pod in
-another data centre pays that round trip on every one, and checks against such
-a preview fail on data that arrives too late. Label every node with its
+Staging preview and production app Deployments receive one preferred Pod
+affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
+100 across `topology.kubernetes.io/zone`. It matters on a cluster spread over
+data centres: a page makes many sequential queries, so a pod in another data
+centre pays that round trip on every one, and checks against such a preview
+fail on data that arrives too late. There is deliberately no term for the
+primary's own node: it gains nothing measurable inside one data centre and
+fills that node to its Pod limit while its neighbours stay half empty. Label every node with its
 location for the zone term to apply, for example:
 
 ```sh
 kubectl label node <node> topology.kubernetes.io/zone=<location>
 ```
 
-A node without the label matches no zone, so an unlabelled cluster keeps the
-host preference alone. Other eligible nodes remain available if the zone is
+A node without the label matches no zone, so an unlabelled cluster gets normal
+placement. Other eligible nodes remain available if the zone is
 full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
 no extra runtime RBAC or node lookup.

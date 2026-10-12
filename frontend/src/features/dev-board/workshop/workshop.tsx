@@ -2405,7 +2405,7 @@ function useSwipeVote(
  * button is `doneLabel` (else "See what's live") and calls `onDone`; `onHub`,
  * where there is one, is its way back to the project's Hub.
  */
-export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSuggest, doneLabel, renderApp, openOn = null }: {
+export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSuggest, doneLabel, renderApp, openOn = null, onAnswered }: {
   rows: DevWorkshopView['queue'];
   models: DevWorkshopView['models'];
   slug: string;
@@ -2423,6 +2423,13 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
    * vote here, landed on (`vote:<card key>`). Read at mount.
    */
   openOn?: string | null;
+  /**
+   * #4794: the Communities screen's hook on a vote this feed has SAVED —
+   * called once, inside the `ok === true` branch, never on a cancel, a
+   * refusal or a network failure. A project's own feed passes nothing: its
+   * refresh already drops the row from its own store.
+   */
+  onAnswered?: (row: QueueRow, which: 'yes' | 'no') => void;
 }): ReactNode {
   const t = useMessages('project');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -2856,6 +2863,12 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
         });
         if (ok === true) {
           setAnswered((cur) => ({ ...cur, [key]: which }));
+          // #4794: the vote is IN. Tell the screen that owns this feed's
+          // store copy, so it drops the row while the viewer is still here —
+          // its bookkeeping must not be able to undo a saved vote.
+          if (onAnswered) {
+            try { onAnswered(row, which); } catch { /* the vote stands whatever the hook did */ }
+          }
         } else if (pinnedHere) {
           pinsRef.current.delete(key);
           setPinsVersion((v) => v + 1);

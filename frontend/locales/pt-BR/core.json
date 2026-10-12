@@ -322,5 +322,161 @@
   "sectionColumn.label": {
     "text": "Lugares",
     "source": "eb5cfb73677d98eb9b976131e0aa92d19838605ea67cc9e6a44c90d0aeefe594"
+  },
+  "tabs.votesWaiting_many": {
+    "text": "{{count}} de votos aguardando você",
+    "source": "97eae8058bc74ad7a9cccdea340b233ed37e1b3b29befe92a8e0382687314d79"
+  },
+  "tabs.votesWaiting_one": {
+    "text": "{{count}} voto aguardando você",
+    "source": "ff3b3a8d943428b6681d07709ea1fa96705f8cfe4a779218e33e05df12cd883a"
+  },
+  "tabs.votesWaiting_other": {
+    "text": "{{count}} votos aguardando você",
+    "source": "97eae8058bc74ad7a9cccdea340b233ed37e1b3b29befe92a8e0382687314d79"
+  },
+  "time.ago.minutes_many": {
+    "text": "há {{count}}min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "time.ago.minutes_one": {
+    "text": "há {{count}}min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "time.ago.minutes_other": {
+    "text": "há {{count}}min",
+    "source": "96da0d6c543c29bdad16bee63e9c9d4bd4516ac1c9d0296e73b2f24bc8ed74d6"
+  },
+  "time.ago.hours_many": {
+    "text": "há {{count}}h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "time.ago.hours_one": {
+    "text": "há {{count}}h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "time.ago.hours_other": {
+    "text": "há {{count}}h",
+    "source": "f9fd95fe176ea25b5a5a8741cdd8564ef60faa4da09674c70ba0e82b3f58bb13"
+  },
+  "time.ago.days_many": {
+    "text": "há {{count}}d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "time.ago.days_one": {
+    "text": "há {{count}}d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "time.ago.days_other": {
+    "text": "há {{count}}d",
+    "source": "477879d991b4f84f84011ea85e3e3f55bd1e0f64148a26a0cdb4d59a478d1cde"
+  },
+  "ui.chat.replies_many": {
+    "text": "{{count}} de respostas",
+    "source": "058b2c42c294f95ec02d03d78564dccc682d1cf4b7da8e85a15d409a4eb20502"
+  },
+  "ui.chat.replies_one": {
+    "text": "{{count}} resposta",
+    "source": "1c9e6fb4290c21bca50c72205018b2472e04921fe55e3cf8ab46ec9ebe35761e"
+  },
+  "ui.chat.replies_other": {
+    "text": "{{count}} respostas",
+    "source": "058b2c42c294f95ec02d03d78564dccc682d1cf4b7da8e85a15d409a4eb20502"
+  },
+  "ui.cardRun.more_many": {
+    "text": "… mais {{count}}",
+    "source": "47335b28af9172b3a0a8e5b2261c97395f058249094e1b4b046569e3bda89bb7"
+  },
+  "ui.cardRun.more_one": {
+    "text": "… mais {{count}}",
+    "source": "47335b28af9172b3a0a8e5b2261c97395f058249094e1b4b046569e3bda89bb7"
+  },
+  "ui.cardRun.more_other": {
+    "text": "… mais {{count}}",
+    "source": "47335b28af9172b3a0a8e5b2261c97395f058249094e1b4b046569e3bda89bb7"
+  },
+  "release.sentence.minutes_many": {
+    "text": "Mesclada; entra no ar na próxima versão (em cerca de {{count}} de minutos)",
+    "source": "5df28e81d289eeced9d8031d4c38f904fabc1088818029d0aa28c7a1af31e63b"
+  },
+  "release.sentence.minutes_one": {
+    "text": "Mesclada; entra no ar na próxima versão (em cerca de um minuto)",
+    "source": "f88ccfbb6b44103786a34db1e68b8f86da32c93d67b6742a8a4275b0607f6756"
+  },
+  "release.sentence.minutes_other": {
+    "text": "Mesclada; entra no ar na próxima versão (em cerca de {{count}} minutos)",
+    "source": "5df28e81d289eeced9d8031d4c38f904fabc1088818029d0aa28c7a1af31e63b"
+  },
+  "release.short.minutes_many": {
+    "text": "Entra no ar em cerca de {{count}} de minutos",
+    "source": "8492239da0b9b50c1635e8897ed70ab6f1ad9b0ca6405f502c4e81b6f4e1eba5"
+  },
+  "release.short.minutes_one": {
+    "text": "Entra no ar em cerca de um minuto",
+    "source": "fe7ce89959a4b6f5f970d5483e310934e295256967c4e6830dbb42d132cec36c"
+  },
+  "release.short.minutes_other": {
+    "text": "Entra no ar em cerca de {{count}} minutos",
+    "source": "8492239da0b9b50c1635e8897ed70ab6f1ad9b0ca6405f502c4e81b6f4e1eba5"
+  },
+  "release.countLine.waiting_many": {
+    "text": "{{count}} de alterações mescladas aguardando uma versão",
+    "source": "b253d5bfe33da076de597b8412ed0c31b4e11d2fdadfd33240baedbaa61d7677"
+  },
+  "release.countLine.waiting_one": {
+    "text": "{{count}} alteração mesclada aguardando uma versão",
+    "source": "8f2d40008cc3d63972322ce7df9a733e7088de6e0f88781daf79854e48c07e80"
+  },
+  "release.countLine.waiting_other": {
+    "text": "{{count}} alterações mescladas aguardando uma versão",
+    "source": "b253d5bfe33da076de597b8412ed0c31b4e11d2fdadfd33240baedbaa61d7677"
+  },
+  "release.countLine.now_many": {
+    "text": "{{count}} de alterações mescladas entrando no ar agora",
+    "source": "8d40060e7403f452f3742490dbd2f1185bef60c458ccc7769c94046afa1cd39e"
+  },
+  "release.countLine.now_one": {
+    "text": "{{count}} alteração mesclada entrando no ar agora",
+    "source": "54a5889af3ff480945c2c0d8af834d26c7c80239b2dfa5adc5ff24b526f3d895"
+  },
+  "release.countLine.now_other": {
+    "text": "{{count}} alterações mescladas entrando no ar agora",
+    "source": "8d40060e7403f452f3742490dbd2f1185bef60c458ccc7769c94046afa1cd39e"
+  },
+  "release.countLine.next_many": {
+    "text": "{{count}} de alterações mescladas entram no ar na próxima versão",
+    "source": "dd3b205c695e718fa17a786ae27eae74475eb62890c397fd9419f0608b063d1e"
+  },
+  "release.countLine.next_one": {
+    "text": "{{count}} alteração mesclada entra no ar na próxima versão",
+    "source": "87a2ea3127d348fb0364956b01272b9474b27141cc759c283cb79c3840d093ff"
+  },
+  "release.countLine.next_other": {
+    "text": "{{count}} alterações mescladas entram no ar na próxima versão",
+    "source": "dd3b205c695e718fa17a786ae27eae74475eb62890c397fd9419f0608b063d1e"
+  },
+  "release.countLine.estimate_many": {
+    "text": "{{count}} de alterações mescladas entram no ar na próxima versão ({{eta}})",
+    "source": "668eae67d36f3e2252810ba822cd3360395578e7ec01d746eb7ddafc70b1d782"
+  },
+  "release.countLine.estimate_one": {
+    "text": "{{count}} alteração mesclada entra no ar na próxima versão ({{eta}})",
+    "source": "30dfc6b5fab55cbb053a7b63c1682bd304b191d06a81a874e2b685114d1695d5"
+  },
+  "release.countLine.estimate_other": {
+    "text": "{{count}} alterações mescladas entram no ar na próxima versão ({{eta}})",
+    "source": "668eae67d36f3e2252810ba822cd3360395578e7ec01d746eb7ddafc70b1d782"
+  },
+  "release.countLine.eta_many": {
+    "text": "em cerca de {{count}} de minutos",
+    "source": "d795de09b742111c17f45089b0d26511a629a54f239560ee9ec9be08c18debb0"
+  },
+  "release.countLine.eta_one": {
+    "text": "em cerca de um minuto",
+    "source": "f0e9296b65fb3df006c9147e26b1bb9de5a2482799eafce58057e1f7d07ef354"
+  },
+  "release.countLine.eta_other": {
+    "text": "em cerca de {{count}} minutos",
+    "source": "d795de09b742111c17f45089b0d26511a629a54f239560ee9ec9be08c18debb0"
   }
 }
