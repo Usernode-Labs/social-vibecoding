@@ -331,6 +331,23 @@ function markUnchanged(stories, ids) {
   });
 }
 
+// What a change's result reads as wherever results are read
+// (shots-state.runSummary's shotResults, the admin listing, the runs
+// export): ready, unchanged, skipped or failed. The verdict stores an
+// unchanged change as `status: 'ready'` with `unchanged: true`, because its
+// shots are still published and the run still counts it as ready (`passed`,
+// the manifest and the outlines read it so), and runs saved before the
+// flag existed have neither. A reader that knows only ready, skipped and
+// failed can take unchanged for ready: its shots are there, and its note
+// says they came out the same. Until 2026-10-12 results said 'ready' for
+// these (at least six changes in the 200 proposals merged 10-09 to 10-12),
+// so only their note told them apart.
+const RESULT_STATUSES = Object.freeze(['ready', 'unchanged', 'skipped', 'failed']);
+function resultStatus(story) {
+  if (story?.status === 'ready') return story.unchanged === true ? 'unchanged' : 'ready';
+  return story?.status === 'failed' ? 'failed' : 'skipped';
+}
+
 function missingWords(viewport, side, variant) {
   const which = side === 'base' ? 'before' : 'after';
   return `the ${which} ${variant === 'animation' ? 'clip' : 'shot'} on ${viewport}`;
@@ -456,6 +473,8 @@ module.exports = {
   checkElementSize,
   identicalStories,
   markUnchanged,
+  RESULT_STATUSES,
+  resultStatus,
   OUTCOMES,
   outcome,
   reason,

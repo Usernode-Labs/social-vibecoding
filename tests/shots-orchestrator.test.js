@@ -993,6 +993,43 @@ test('Homeroom\'s own brief says a project made on the copies never finishes set
   }
 });
 
+// PR 4626's notification for a reply in a topic's thread was skipped: "it
+// needs a second account to reply to my message, and I can't sign in as
+// another account" (2026-10-09). The other signed-in browsers are that
+// account, and the brief says so, in fixed words.
+test('the brief says another persona\'s browser can be the second account a change needs', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-second-account-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Reply threads in topics' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/js/group-chat.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const own = briefFor({ selfApp: true });
+    assert.deepEqual(own.secondAccount.personas, ['member', 'read_only_admin', 'full_admin']);
+    assert.ok(own.secondAccount.personas.every((persona) => persona in own.browsers));
+    assert.match(own.secondAccount.note, /^The member, read_only_admin and full_admin browsers are three different signed-in accounts\./);
+    assert.match(own.secondAccount.note, /a reply to the member's message, a vote on\s+their change/);
+    assert.match(own.secondAccount.note, /take that step in another of these browsers, the same way on the before and the after address, then shoot in the browser screenBrowsers names/);
+    assert.match(own.secondAccount.note, /use full_admin when you can: it is a member of Homeroom's own project on these copies/);
+    assert.match(own.secondAccount.note, /The guest browser is not signed in, so it cannot be that account\.$/);
+    const child = briefFor({ childApp: true });
+    assert.match(child.secondAccount.note, /three different signed-in accounts/);
+    assert.doesNotMatch(child.secondAccount.note, /Homeroom's own project/, 'only Homeroom\'s copies make the full admin a member');
+    assert.doesNotMatch(JSON.stringify(own.secondAccount), /[—]/, 'no em dashes in model copy');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test('slow paired environment provisioning does not consume the agent budget', async () => {
   const fixture = setup();
   const preparePair = fixture.dependencies.environment.preparePair;

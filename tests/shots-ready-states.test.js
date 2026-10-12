@@ -81,6 +81,61 @@ test('the states that cost changes their shots are ready-made on Homeroom\'s cop
   assert.match(child[2], /^bot-thanks seems to need an answered first-version plan/);
 });
 
+// The changes that ended with no shots from 9 to 12 October 2026, in the
+// words their authors declared them with.
+test('the states the October changes went unshot for are ready-made on Homeroom\'s copies, and named on a child app\'s', () => {
+  const held = declare(
+    story('voted-merged-bell-row', 'When a change you voted on goes live, your bell now has one new row for it.',
+      { steps: ['Open the notifications panel from the bell in the header'] }),
+    story('low-credits-note', 'Starting a brand new conversation when the credits pill is already red, a short red note appears.',
+      { steps: ['Sign in as a member whose weekly AI allowance is almost spent, so the credits pill beside Send is red'] }),
+    story('your-work-bot-tag', 'In Your work, a change Homeroom bot built from your request now wears a small tag.'),
+    story('working-line', 'Messaging the bot on its change gets a line in that change\'s discussion.',
+      { steps: ['Open a change built by Homeroom bot that is up for a vote', 'Open its Discussion'] }),
+    story('person-card', 'In the chat with Homeroom bot, a request on a project somebody else runs says who decides there.',
+      { steps: ['Find the newest card about a request that needs a person to decide'] }),
+    story('testing-card', 'While a change\'s tests run, the Testing card\'s bar fills only as far as the slower half.',
+      { steps: ['Open a change whose checks are mid-run'] }),
+  );
+  const own = readyStates.declarationAdvice(held, { selfApp: true });
+  // Each has a ready-made state. PR 4622's line still needs the bot to take
+  // its turn, which no state makes, so it is warned about the model; and
+  // the nearly spent allowance is the full admin's, so a member's change
+  // that needs it is told whose it is.
+  assert.equal(own.warnings.length, 2);
+  assert.match(own.warnings[0], /^low-credits-note seems to need a weekly allowance nearly spent, and the ready-made state that holds it on these copies is for full_admin \(see availableStates\)\. Declare the change for full_admin, or add hints\.setup/);
+  assert.match(own.warnings[1], /^working-line seems to need a live reply from a model/);
+  const asFullAdmin = declare(story('low-credits-note', held.stories[1].claim,
+    { persona: 'full_admin', steps: held.stories[1].intent.steps }));
+  assert.deepEqual(warned(asFullAdmin, true), [], 'declared for the persona the state is for');
+  const names = own.availableStates.map((state) => state.name);
+  for (const id of ['shots-demo-member-voted-change-live-v1', 'shots-demo-full-admin-allowance-low-v1',
+    'shots-demo-member-bot-built-proposal-v1', 'shots-demo-member-bot-deciders-v1',
+    'shots-demo-member-checks-part-way-v1']) {
+    const state = readyStates.READY_STATES.find((each) => each.id === id);
+    assert.ok(names.includes(state.name), id);
+  }
+  // The allowance is the full admin's: the member is shot far more often.
+  assert.deepEqual(own.availableStates.find((state) => /allowance/.test(state.name)).personas, ['full_admin']);
+  const child = warned(held, false).map((w) => w.split(' to need ')[1].split(', and ')[0]);
+  assert.deepEqual(child.filter((need) => !/^a live reply/.test(need)).sort(), [
+    'a change you voted on that went live',
+    'a change Homeroom bot built from a request',
+    'a Homeroom bot hand-off that needs a person to decide',
+    'checks part-way through',
+    'a weekly allowance nearly spent',
+    // PR 4622's steps open the bot's change "that is up for a vote".
+    'a change waiting for approval',
+  ].sort());
+});
+
+test('every answer says another persona\'s browser can be the second account', () => {
+  for (const selfApp of [true, false]) {
+    const { dataNote } = readyStates.declarationAdvice(declare(story('a', 'A reply shows in the thread.')), { selfApp });
+    assert.match(dataNote, /Each signed-in persona is its own account, so a step somebody else takes \(a reply to the member's message, a vote on their change\) can be one of those steps, in another persona's browser\./);
+  }
+});
+
 test('a change needing a state no ready-made state holds is warned about, once per state', () => {
   const warnings = warned(declare(
     story('tour-plan', 'The tour\'s last card names the plan.'),

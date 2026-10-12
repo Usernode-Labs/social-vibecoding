@@ -457,24 +457,31 @@ function runSummary(row, artifactSummary = []) {
         || platformRetryAllowed(row)),
     planHash: row.plan_hash || null,
     // One result per declared change: ready (with the shots agent's note
-    // on what its shots leave out, if any), or skipped with the reason
-    // people see on the proposal. Runs from before shots have none.
+    // on what its shots leave out, if any), unchanged, or skipped with the
+    // reason people see on the proposal. Runs from before shots have none.
     // The screens the card shows, with where each change's before and after
     // differ (services/shots-diff.js). Runs from before it have none.
     screens: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.screens)
       ? row.hard_verdict.screens : [],
-    // `failed`: the agent did the steps and the after build broke.
+    // `unchanged`: ready, but its before and after came out the same, so
+    // its shots cannot show the change (shots-files.resultStatus); it keeps
+    // the note that says so. `failed`: the agent did the steps and the
+    // after build broke.
     shotResults: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.stories)
-      ? row.hard_verdict.stories.map((story) => ({
-        id: story?.id,
-        status: story?.status === 'ready' || story?.status === 'failed' ? story.status : 'skipped',
-        reason: story?.status === 'ready' ? null : (story?.reason || null),
-        note: story?.status === 'ready' ? (story?.note || null) : null,
-        // What the shots agent did to both builds to reach it, when it did
-        // anything (shots-files.condition).
-        ...(Array.isArray(story?.conditions) && story.conditions.length
-          ? { conditions: shots.cleanConditions(story.conditions) } : {}),
-      }))
+      ? row.hard_verdict.stories.map((story) => {
+        const status = shots.resultStatus(story);
+        const shown = status === 'ready' || status === 'unchanged';
+        return {
+          id: story?.id,
+          status,
+          reason: shown ? null : (story?.reason || null),
+          note: shown ? (story?.note || null) : null,
+          // What the shots agent did to both builds to reach it, when it did
+          // anything (shots-files.condition).
+          ...(Array.isArray(story?.conditions) && story.conditions.length
+            ? { conditions: shots.cleanConditions(story.conditions) } : {}),
+        };
+      })
       : [],
     // What the shots agent noticed broken on the after build besides the
     // declared changes (shots-files.notice). Advisory only: brokenOnHead and

@@ -9,6 +9,8 @@
 // accident. Writes stay the console's, except a run's rating, which is how a
 // run is labelled for the benchmark.
 
+const { RESULT_STATUSES } = require('../shots-files');
+
 const clipText = (value, max) => {
   const s = String(value == null ? '' : value);
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
@@ -387,6 +389,12 @@ async function recentShots(pool, query = {}, deps = {}) {
   const proposals = (page.proposals || []).map((p) => {
     const shots = p.shots || null;
     const artifacts = Array.isArray(shots?.artifacts) ? shots.artifacts : [];
+    const claims = (Array.isArray(shots?.claims) ? shots.claims : []).slice(0, 3);
+    const results = Array.isArray(shots?.shotResults) ? shots.shotResults : [];
+    const statusOf = (id) => {
+      const status = results.find((result) => result && result.id === id)?.status;
+      return RESULT_STATUSES.includes(status) ? status : null;
+    };
     return {
       sessionId: Number(p.id),
       app: p.appSlug || null,
@@ -399,10 +407,23 @@ async function recentShots(pool, query = {}, deps = {}) {
       captureReason: p.captureReason ? clipText(p.captureReason, 200) : null,
       shots: shots ? {
         state: shots.state || null,
-        claims: (Array.isArray(shots.claims) ? shots.claims : []).slice(0, 3).map((c) => ({
+        // Each declared change with how it came out (its shotResults
+        // status), or null when the run has no result for it.
+        claims: claims.map((c) => ({
           id: c && c.id != null ? String(c.id).slice(0, 96) : null,
           claim: c && c.claim ? clipText(c.claim, 300) : null,
+          status: c && c.id != null ? statusOf(c.id) : null,
         })),
+        // How many declared changes came out each way, so a run that shot
+        // one change of three does not read as a success. A run that ended
+        // without results (still under way, stopped before it saved
+        // anything, or on an older revision) counts none.
+        changes: {
+          declared: claims.length,
+          ...Object.fromEntries(RESULT_STATUSES.map((status) => [
+            status, claims.filter((c) => c && statusOf(c.id) === status).length,
+          ])),
+        },
         images: artifacts.filter((a) => a.media === 'png').length,
         clips: artifacts.filter((a) => a.media !== 'png').length,
         // What the shots agent noticed broken on the after build besides
@@ -428,11 +449,18 @@ async function recentShots(pool, query = {}, deps = {}) {
   };
 }
 
-/** The gallery's counters for a filter: how many proposals have each capture problem. */
+/**
+ * The current before & after shots over a recent window (routes/gallery.js
+ * shotsStats): for proposals merged in the last `days` days, one app or all,
+ * how their shots ended, how the declared changes came out, whether the
+ * problems the shots agent noted are on the before build too, and why runs
+ * failed. Not the console strip's counters, which are the retired
+ * route-capture pipeline's over all time; the capture-problem filter does
+ * not apply to these.
+ */
 async function shotStats(pool, query = {}, deps = {}) {
   const gallery = deps.gallery || require('../../routes/gallery');
-  const out = await gallery.galleryStats(pool, { app: query.app, problem: query.problem });
-  return { ok: true, stats: out.stats || {} };
+  return { ok: true, stats: await gallery.shotsStats(pool, { app: query.app, days: query.days }) };
 }
 
 /**

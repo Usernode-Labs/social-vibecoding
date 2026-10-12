@@ -505,6 +505,24 @@ test('markUnchanged only marks ready changes, once', () => {
   assert.deepEqual(shots.markUnchanged(stories, new Set()), stories);
 });
 
+// The verdict keeps an unchanged change ready (its shots publish and count
+// toward the run); every result read off it says unchanged, so a change
+// whose before and after came out the same is not read as plain ready.
+test('a result reads unchanged for a ready change marked unchanged, and keeps the other three', () => {
+  assert.deepEqual(shots.RESULT_STATUSES, ['ready', 'unchanged', 'skipped', 'failed']);
+  const [unchanged] = shots.markUnchanged([{ id: 'a', status: 'ready', files: 2 }], new Set(['a']));
+  assert.equal(unchanged.status, 'ready', 'the verdict itself is as it was');
+  assert.equal(shots.resultStatus(unchanged), 'unchanged');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', files: 2 }), 'ready');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'ready', unchanged: 'yes' }), 'ready', 'only the flag the fold sets');
+  assert.equal(shots.resultStatus({ id: 'a', status: 'failed', reason: 'A 500.' }), 'failed');
+  for (const other of [{ status: 'skipped' }, { status: 'published' }, { status: 'skipped', unchanged: true }, {}, null]) {
+    assert.equal(shots.resultStatus(other), 'skipped', JSON.stringify(other));
+  }
+  const verdict = shots.summarize(stillIntent(), new Map()).verdict;
+  assert.ok(verdict.stories.every((story) => shots.RESULT_STATUSES.includes(shots.resultStatus(story))));
+});
+
 test('an element shot must fit the screen it was taken on', () => {
   const intent = twoScreenIntent();
   const story = intent.stories[0];
