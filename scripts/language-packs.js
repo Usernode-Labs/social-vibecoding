@@ -92,6 +92,39 @@ function sourceProblem(key, entry) {
   return null;
 }
 
+// The top-level keys a catalog names more than once. JSON.parse keeps the
+// last and says nothing: on 12 Oct 2026 two proposals that fixed the same
+// request each added kudos.rankNote to leaderboard.json, git merged both,
+// and the second's wording replaced the first's without an error anywhere.
+// `text` is valid JSON (it has parsed already).
+function duplicateKeys(text) {
+  const seen = new Set();
+  const twice = new Set();
+  let depth = 0;
+  let expectKey = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (depth === 1 && expectKey) {
+        const key = JSON.parse(text.slice(i, j + 1));
+        if (seen.has(key)) twice.add(key); else seen.add(key);
+        expectKey = false;
+      }
+      i = j;
+    } else if (c === '{' || c === '[') {
+      depth += 1;
+      if (depth === 1 && c === '{') expectKey = true;
+    } else if (c === '}' || c === ']') {
+      depth -= 1;
+    } else if (c === ',' && depth === 1) {
+      expectKey = true;
+    }
+  }
+  return [...twice];
+}
+
 function readSource(directory) {
   const errors = [];
   const english = {};
@@ -105,10 +138,17 @@ function readSource(directory) {
     const namespace = file.slice(0, -5);
     if (!NAMESPACE.test(namespace)) { errors.push(`en/${file}: a namespace is lower-case letters and "-"`); continue; }
     let source;
-    try { source = JSON.parse(fs.readFileSync(path.join(directory, 'en', file), 'utf8')); } catch (err) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(directory, 'en', file), 'utf8');
+      source = JSON.parse(text);
+    } catch (err) {
       errors.push(`en/${file}: ${err.message}`); continue;
     }
     if (!isObject(source)) { errors.push(`en/${file}: the catalog is an object of entries`); continue; }
+    for (const key of duplicateKeys(text)) {
+      errors.push(`en/${namespace}:${key}: defined more than once in en/${file}; only the last would show`);
+    }
     const messages = {};
     for (const [key, entry] of Object.entries(source)) {
       const problem = sourceProblem(key, entry);
