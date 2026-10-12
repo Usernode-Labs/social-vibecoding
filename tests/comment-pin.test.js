@@ -241,7 +241,47 @@ test('the first picture animates out of the live page instead of a bare grey gro
   assert.match(css, /\.comment-shot-ground-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
   assert.match(css, /\.comment-shot-label-in \{ animation: comment-shot-label-in 160ms ease-out 200ms both; \}/);
   assert.match(css, /@keyframes comment-shot-in \{\s*from \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in \{ animation: none; \}\s*\}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in,\s*\.comment-bar-in \{ animation: none; \}\s*\}/);
+});
+
+test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2026)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const css = read('public/css/app.css');
+  // The first picture waits for the sheet the mode was opened from (the menu,
+  // the form) to finish leaving, rather than landing on it mid-slide.
+  assert.match(src, /void overlaysGone\(\)\.then\(\(\) => \{ if \(live\) takeViewShot\(\); \}\);/);
+  // Nothing of the mode is drawn over the live page before the first picture:
+  // the state starts as drawing, and the bar and the first-use note wait.
+  assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
+  assert.match(src, /shotIntro \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
+  assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  // The picture is decoded before it goes up, or its first frame is a white box.
+  assert.match(src, /decoded\.src = url;[\s\S]*?decoded\.decode\(\) : Promise\.resolve\(\)\)\.then\(show, show\);/);
+  // Leaving plays the entrance backwards, then closes and opens what follows.
+  assert.match(src, /const LEAVE_MS = 200;/);
+  assert.match(src, /if \(!inset \|\| shotIntro \|\| !viewShot\?\.url \|\| reducedMotion\(\)\) \{ finish\(\); return; \}/);
+  assert.match(src, /setLeaving\(true\);\s*setTimeout\(finish, LEAVE_MS\);/);
+  assert.match(src, /className=\{leaving \? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'\}/);
+  assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
+  assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
+  assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
+  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 2, 'onClose only inside leave and on the card\'s link, which navigates');
+  assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
+  assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
+  assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
+});
+
+test('overlayOnScreen: a leaving sheet counts, the always-mounted dim and a hidden menu do not', () => {
+  const el = (style, rects = 1) => ({ style, getClientRects: () => ({ length: rects }) });
+  const doc = (els) => ({ querySelectorAll: (sel) => { assert.equal(sel, picture.PAGE_EXCLUDES.join(',')); return els; } });
+  const styleOf = (e) => e.style;
+  assert.equal(picture.overlayOnScreen(doc([]), styleOf), false);
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' })]), styleOf), false, 'the menu\'s dim at rest');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'hidden', opacity: '1' })]), styleOf), false, 'a closed menu sheet');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' }, 0)]), styleOf), false, 'a hidden form');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' })]), styleOf), true, 'the form sliding away');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' }), el({ visibility: 'visible', opacity: '0.5' })]), styleOf), true, 'a fading dim');
 });
 
 test('"Screenshot" leads the bar above the picture, never over the picture (#4774)', () => {

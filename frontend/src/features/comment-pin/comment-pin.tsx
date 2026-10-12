@@ -81,7 +81,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
-  closeUpView, coverCrop, describeElement, encodeUnder, inRect, insetFrame, pictureScale, placeBeside,
+  closeUpView, coverCrop, describeElement, encodeUnder, inRect, insetFrame, overlaysGone, pictureScale, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type ElementInfo, type Point, type Rect, type Size,
 } from './picture';
@@ -105,6 +105,11 @@ const HEADER_BAND = 60;
  *  resize of the page is still the keyboard's doing, not the person's (ms).
  *  iOS puts a pan back 50-80ms after the blur (ios-keyboard-timing). */
 const KEYBOARD_SETTLE_MS = 800;
+/** How long the mode takes to leave: the picture growing back over the page (app.css `.comment-mode-leaving`). */
+const LEAVE_MS = 200;
+const reducedMotion = (): boolean => {
+  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+};
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {
@@ -396,7 +401,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [titleLoading, setTitleLoading] = useState(false);
   const [hover, setHover] = useState<Rect | null>(null);
   const [tick, setTick] = useState(0);
-  const [viewShot, setViewShot] = useState<ViewShot | null>(null);
+  // The first picture is on its way from the first render: until it lands
+  // the live page shows through and nothing of the mode is drawn over it.
+  const [viewShot, setViewShot] = useState<ViewShot | null>({ url: '', view: 0, state: 'drawing' });
   const [budget, setBudget] = useState<Budget>(kudosBudget);
   const [boxAt, setBoxAt] = useState<Point>({ x: -9999, y: -9999 });
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
@@ -535,9 +542,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         if (key !== viewShotKeys.current) return;
         if (!blob) { fail(); return; }
         const url = URL.createObjectURL(blob);
-        if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
-        viewShotUrl.current = url;
-        setViewShot({ url, view: at, state: 'ready' });
+        // Decoded before it is shown: put up undecoded, the picture's first
+        // frame was its white box over the whole screen, a flash before it
+        // shrank in (iPhone 17 Pro simulator, 12 Oct 2026).
+        const decoded = new Image();
+        decoded.src = url;
+        const show = () => {
+          if (key !== viewShotKeys.current) { URL.revokeObjectURL(url); return; }
+          if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
+          viewShotUrl.current = url;
+          setViewShot({ url, view: at, state: 'ready' });
+        };
+        (typeof decoded.decode === 'function' ? decoded.decode() : Promise.resolve()).then(show, show);
       }, 'image/png');
     }, () => {
       if (key === viewShotKeys.current) {
@@ -548,8 +564,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   useEffect(() => {
     if (tick === 0) {
-      takeViewShot();
-      return undefined;
+      // The first picture waits for the menu sheet or the form the mode was
+      // opened from to finish leaving (`overlaysGone`).
+      let live = true;
+      void overlaysGone().then(() => { if (live) takeViewShot(); });
+      return () => { live = false; };
     }
     const timer = setTimeout(takeViewShot, 250);
     return () => clearTimeout(timer);
@@ -578,6 +597,25 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // above it whenever the picture is on show: in the bar, never over the
   // picture, where it covered the page's own header (#4774).
   const shotLabel = !!inset && !shotIntro;
+
+  // ── Leaving ─────────────────────────────────────────────────────────
+  //
+  // The mode leaves the way it came: the picture grows back over the page it
+  // shows while the ground and the controls fade, and only then does the
+  // layer go and what follows (the form) open. Unmounted at once, it vanished
+  // in a frame and the form slid up over a page that had just jumped (iPhone
+  // 17 Pro simulator, 12 Oct 2026). With no picture on show, or under
+  // reduced motion, it goes at once.
+  const [leaving, setLeaving] = useState(false);
+  const leavingRef = useRef(false);
+  const leave = useCallback((then?: () => void) => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    const finish = () => { onClose(); then?.(); };
+    if (!inset || shotIntro || !viewShot?.url || reducedMotion()) { finish(); return; }
+    setLeaving(true);
+    setTimeout(finish, LEAVE_MS);
+  }, [inset, shotIntro, viewShot, onClose]);
 
   // Images the person added are object URLs until the mode closes.
   const urls = useRef(new Set<string>());
@@ -885,24 +923,24 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       return;
     }
     if (outcome.handover) {
-      onClose();
-      handOver(post);
+      leave(() => handOver(post));
       return;
     }
     update(d.key, { sending: false, error: outcome.error });
-  }, [draft, update, postFor, app, onClose, t]);
+  }, [draft, update, postFor, app, leave, t]);
 
   /** The form instead, with whatever the request holds. */
   const toForm = useCallback(async () => {
     const d = draft;
     const post = d && (hasWords(d) || d.images.length) ? await postFor(d) : null;
-    onClose();
-    if (post) {
-      handOver(post);
-      return;
-    }
-    (window as unknown as { App?: { openFeedbackModal?: (opts: unknown) => void } }).App?.openFeedbackModal?.({ mode: 'form' });
-  }, [draft, postFor, onClose]);
+    leave(() => {
+      if (post) {
+        handOver(post);
+        return;
+      }
+      (window as unknown as { App?: { openFeedbackModal?: (opts: unknown) => void } }).App?.openFeedbackModal?.({ mode: 'form' });
+    });
+  }, [draft, postFor, leave]);
 
   const discard = useCallback(() => {
     setDraft(null);
@@ -923,8 +961,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       setConfirm('exit');
       return;
     }
-    onClose();
-  }, [draft, carry, onClose]);
+    leave();
+  }, [draft, carry, leave]);
 
   /** "Add a comment": the request's next comment goes where the next click is. */
   const addComment = useCallback(() => {
@@ -955,8 +993,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (confirm) { setConfirm(null); return; }
     if (draft && draft.active == null && draft.comments.length) { openComment(draft.comments[draft.comments.length - 1].key); return; }
     if (draft) { if (!draft.sending) requestDiscard(); return; }
-    onClose();
-  }, [open, confirm, draft, openComment, requestDiscard, onClose]);
+    leave();
+  }, [open, confirm, draft, openComment, requestDiscard, leave]);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -1194,7 +1232,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   return (
     <div
-      className="fixed inset-0"
+      className={leaving ? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'}
       style={{ zIndex: 2147483000, ['--comment-band' as string]: `${inset ? band : safeTop}px` }}
     >
       {/* Measures the status bar's height (see `safeTop`). */}
@@ -1711,7 +1749,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {/* The first-use note (#4541): how comment mode works, shown once per
           device, above the bar's starting place. It takes no focus, and
           closes on "Got it", the first pin, or a drag of the bar. */}
-      {intro && !confirm ? (
+      {intro && !confirm && !shotIntro ? (
         <div
           role="dialog"
           aria-label={t('devchat:commentPin.intro.title')}
@@ -1747,6 +1785,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
             : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
           !inset && !barPlace ? 'left-1/2 -translate-x-1/2' : '',
+          // Not over the live page while the first picture draws: drawn there
+          // it covered the page's own header for a few frames, then the
+          // picture shrank in under it. It fades in with the picture.
+          shotIntro ? 'pointer-events-none opacity-0' : 'comment-bar-in',
         ].filter(Boolean).join(' ')}
         style={inset
           ? {
@@ -1803,7 +1845,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             </button>
             <button
               type="button"
-              onClick={() => { if (confirm === 'discard') discard(); else onClose(); }}
+              onClick={() => { if (confirm === 'discard') discard(); else leave(); }}
               className="h-[34px] shrink-0 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
             >
               {t('devchat:commentPin.bar.discard')}
