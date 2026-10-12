@@ -40,11 +40,15 @@ function maskPhoneTestCode(text, code) {
 }
 
 class RunControl {
-  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null }) {
+  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null, afterOnly = false }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
+    // A project's first version: the before address is still the starter
+    // template's placeholder (shots-starter.js), so this run takes and
+    // publishes the after side only, and a before shot is refused.
+    this.afterOnly = afterOnly === true;
     // The brief hands the agent this code; what the agent writes for people
     // (a skip reason, a note) is shown on the proposal, so it never keeps it.
     this.phoneTestCode = this.context?.phoneSignIn?.code || null;
@@ -110,6 +114,11 @@ class RunControl {
     try {
       this.assertOpen();
       const target = shots.shotTarget(this.intent, rawTarget);
+      if (this.afterOnly && target.side === 'base') {
+        throw new ShotsControlError('before_not_needed',
+          'This app is new: the before address shows only the starter template\'s placeholder, so this run '
+          + 'takes after shots only. Save the after side of each change and leave the before address alone.', 400);
+      }
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
@@ -213,11 +222,25 @@ class RunControl {
         alsoBefore: entry.alsoBefore,
         notices: this.notices.length,
         remaining: shots.MAX_NOTICES - this.notices.length,
+        // "unknown" says nothing to a person reading it, and the agent
+        // shoots the before side of every screen it shoots the after side
+        // of, so it is asked to look and say.
+        ...(entry.alsoBefore === 'unknown' ? { hint: this.alsoBeforeHint(entry) } : {}),
       };
     } catch (error) {
       this.lastToolFailure = { operation: 'note-problem', error };
       throw error;
     }
+  }
+
+  // What a notice without alsoBefore asks of the agent: to look at the
+  // before shot of that screen, now or once it has taken it.
+  alsoBeforeHint({ change, screen }) {
+    const lead = this.saved.has(shots.slotKey({ storyId: change, viewport: screen, side: 'base', variant: 'context' }))
+      ? 'You saved the before shot of this screen: look at it'
+      : 'Once you have shot the before side of this screen, look at it';
+    return `${lead} and note this problem again with alsoBefore true or false, so people can tell whether this `
+      + 'change brought it. Noting the same problem at the same place updates it.';
   }
 
   // The shots bridge records what it is about to do to both builds for a
@@ -255,7 +278,7 @@ class RunControl {
     return shots.summarize(this.intent, this.saved, this.skipped, {
       fallbackReason: this.skippedAll, notes: this.notes,
       failed: this.failed, fallbackFailed: this.skippedAllFailed, notices: this.notices,
-      conditions: this.conditions,
+      conditions: this.conditions, afterOnly: this.afterOnly,
     });
   }
 

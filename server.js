@@ -1233,6 +1233,13 @@ async function becomeLeader() {
         if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
       })
       .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
+      // A run a platform step failed (the copies' database, a clone, GitHub's
+      // hourly limit, the shots agent's exit) is taken again once, the same way.
+      .then(() => shotsGc.retryPlatformFaults(config, getPool(config)))
+      .then((result) => {
+        if (result?.scheduled) log.info('shots', 'Retried before & after shots runs a platform fault ended', result);
+      })
+      .catch((err) => log.warn('shots', 'Platform-fault shots retry failed', { err: err.message }))
       .finally(() => { shotsRetryRunning = false; });
   };
   retryInterruptedShots();

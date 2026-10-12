@@ -178,14 +178,13 @@ export async function settleVoteDigests(
  * ('merged') or closed ('archived'), so the bell stops asking about it:
  *
  *   - the asks it answered (DECIDED_ASK_KINDS) are read;
- *   - "ready to try" rows: closed, they are read. Live, the newest one each
- *     person was sent is the news that it is live (the bell words it Live,
- *     from the change's status) and is unread again for whoever never voted
- *     on it and so did not see it go; the ones about older versions are
- *     read. #4787: a voter now hears the merge through
- *     voted_change_merged, so their newest row is left as they read it and
- *     the bell does not show two unread rows about one change.
- *     Unread again, never a new row: nothing rings twice;
+ *   - "ready to try" rows are read, whatever the decision. #4795: on a
+ *     merge they leave the list altogether (services/notifications.js
+ *     listForUser hides them for a merged change), so the rule that re-opened
+ *     the newest one as the unread news that it is live is retired: the news
+ *     now arrives as its own row (pr_merged to the author,
+ *     voted_change_merged to the voters), which a person who was asked to
+ *     try the change and never voted also does not get;
  *   - digests of several changes it was the last one waiting in are read.
  *
  * Everyone whose bell changed is returned, to hear `notifications_changed`
@@ -221,33 +220,16 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
     [id, DECIDED_ASK_KINDS]
   )).rows);
 
-  if (session.status === 'merged') {
-    // The newest "ready to try" each person was sent about it.
-    const NEWEST = `n.id = (SELECT MAX(newest.id) FROM notifications newest
-                             WHERE newest.user_id = n.user_id AND newest.session_id = n.session_id
-                               AND newest.kind = 'change_ready')`;
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NOW()
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NULL AND NOT (${NEWEST})
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NULL
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NOT NULL AND ${NEWEST}
-          AND NOT EXISTS (SELECT 1 FROM pr_votes voted
-                           WHERE voted.session_id = n.session_id AND voted.user_id = n.user_id)
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-  } else {
-    note((await pool.query(
-      `UPDATE notifications SET read_at = NOW()
-        WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
-        RETURNING user_id`,
-      [id]
-    )).rows);
-  }
+  // #4795: both decisions read every "ready to try" about the change. On a
+  // merge the rows leave the list (MERGED_HIDDEN_KINDS in
+  // services/notifications.js listForUser); on a close they stay, where the
+  // bell words them Closed.
+  note((await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
+      RETURNING user_id`,
+    [id]
+  )).rows);
 
   for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from, decided: id })) {
     touched.add(userId);

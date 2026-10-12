@@ -331,6 +331,23 @@ function markUnchanged(stories, ids) {
   });
 }
 
+// What a change's result reads as wherever results are read
+// (shots-state.runSummary's shotResults, the admin listing, the runs
+// export): ready, unchanged, skipped or failed. The verdict stores an
+// unchanged change as `status: 'ready'` with `unchanged: true`, because its
+// shots are still published and the run still counts it as ready (`passed`,
+// the manifest and the outlines read it so), and runs saved before the
+// flag existed have neither. A reader that knows only ready, skipped and
+// failed can take unchanged for ready: its shots are there, and its note
+// says they came out the same. Until 2026-10-12 results said 'ready' for
+// these (at least six changes in the 200 proposals merged 10-09 to 10-12),
+// so only their note told them apart.
+const RESULT_STATUSES = Object.freeze(['ready', 'unchanged', 'skipped', 'failed']);
+function resultStatus(story) {
+  if (story?.status === 'ready') return story.unchanged === true ? 'unchanged' : 'ready';
+  return story?.status === 'failed' ? 'failed' : 'skipped';
+}
+
 function missingWords(viewport, side, variant) {
   const which = side === 'base' ? 'before' : 'after';
   return `the ${which} ${variant === 'animation' ? 'clip' : 'shot'} on ${viewport}`;
@@ -349,11 +366,16 @@ function missingWords(viewport, side, variant) {
 // a notice names its shot only while that shot is published. A change's
 // `conditions` (what the agent did to both builds to reach it) go on its
 // result whatever its status, and only when there are some.
+// `afterOnly` is a project's first version, whose before side is the
+// starter template's placeholder (shots-starter.js): a change is ready with
+// its after shots alone, nothing from the before side is published, and the
+// verdict says so for the card.
 function summarize(intent, saved, skipped = new Map(), {
   fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false, notices = [],
-  conditions = new Map(),
+  conditions = new Map(), afterOnly = false,
 } = {}) {
   const published = [];
+  const sides = afterOnly ? ['head'] : ['base', 'head'];
   const resultFor = (story) => {
     if (skipped.has(story.id)) {
       return { id: story.id, status: failed.has(story.id) ? 'failed' : 'skipped', reason: skipped.get(story.id) };
@@ -362,7 +384,7 @@ function summarize(intent, saved, skipped = new Map(), {
     const files = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
     for (const viewport of story.viewports) {
-      for (const side of ['base', 'head']) {
+      for (const side of sides) {
         for (const variant of ['context', 'focus', 'animation']) {
           const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
           if (file) files.push(file);
@@ -388,8 +410,9 @@ function summarize(intent, saved, skipped = new Map(), {
   });
   // A ready change is still published when its before and after are the same
   // image (people judge the shots), but the card says so rather than letting
-  // two copies of one screen pass for the change.
-  const stories = markUnchanged(results, identicalStories(intent, saved));
+  // two copies of one screen pass for the change. An after-only run has no
+  // before to compare.
+  const stories = afterOnly ? results : markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
     .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
@@ -411,8 +434,12 @@ function summarize(intent, saved, skipped = new Map(), {
     // which files were published.
     manifestHash: sha256(Buffer.from(planContract.canonicalJson({ mode: SHOTS_MODE, intent, manifest }))),
     // A run without notices stores no `notices` key, as every run before
-    // them did.
-    verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories, ...(noticed.length ? { notices: noticed } : {}) },
+    // them did, and only an after-only run stores `afterOnly`.
+    verdict: {
+      passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories,
+      ...(noticed.length ? { notices: noticed } : {}),
+      ...(afterOnly ? { afterOnly: true } : {}),
+    },
   };
 }
 
@@ -446,6 +473,8 @@ module.exports = {
   checkElementSize,
   identicalStories,
   markUnchanged,
+  RESULT_STATUSES,
+  resultStatus,
   OUTCOMES,
   outcome,
   reason,

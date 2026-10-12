@@ -5445,6 +5445,43 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   outline-offset: 2px;
 }
 
+/* ── EDIT MODE (#4669): the wiggle ───────────────────────────
+   A held tile puts My apps into edit mode, and the tiles gently wiggle the
+   way a phone's home screen does. The animation is on the ICON WRAPPER
+   (the card's `.relative` child), not on the card itself: the kit's drag
+   writes `transform` to the CARD element for the lift, displacement preview
+   and release spring, and an animation transform on the same element would
+   fight it. The wrapper is React's alone.
+
+   `alternate` swings the one keyframe pair between -1.5deg and 1.5deg, and
+   the per-row delays (2n / 3n) spread the phase so the grid reads as a
+   jelly of tiles rather than one rigid tile repeated. */
+@keyframes home-wiggle {
+  from { transform: rotate(-1.5deg); }
+  to { transform: rotate(1.5deg); }
+}
+#app-list[data-editing] > .app-card > .relative {
+  animation: home-wiggle 260ms ease-in-out infinite alternate;
+}
+#app-list[data-editing] > .app-card:nth-child(2n) > .relative {
+  animation-delay: -130ms;
+}
+#app-list[data-editing] > .app-card:nth-child(3n) > .relative {
+  animation-delay: -65ms;
+}
+/* While a drag is live the kit puts .un-reordering on the list; the wiggle
+   pauses so the dragged tile's wrapper is not also turning under the finger. */
+#app-list.un-reordering[data-editing] > .app-card > .relative {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The arrangement affordances stay — the remove buttons, "Done" and the
+     Add apps tile are markup, not motion — only the wiggle goes. */
+  #app-list[data-editing] > .app-card > .relative {
+    animation: none;
+  }
+}
+
 /* ── Phone density ──────────────────────────────────────────
    Below 640px the grid is 4 columns with a tighter tile, so the cell is 8px
    shorter (p-2 instead of p-3) and the gap is 6px instead of 8, and the

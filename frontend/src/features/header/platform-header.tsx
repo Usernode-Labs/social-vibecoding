@@ -50,6 +50,7 @@ import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
+import { useDismissibleOpen } from '../../lib/back-stack';
 import { HeaderPlace } from '../dev-board/workshop/place-bar';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
@@ -279,12 +280,12 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  const dialogOpen = useDismissibleOpen();
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
-    paneHref: paneBack,
+    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen,
   }));
 
   return (

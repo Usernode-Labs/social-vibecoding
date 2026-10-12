@@ -98,6 +98,29 @@ test('a clip is saved only for a motion change, and a refused file saves nothing
   assert.equal(run.saved.size, 1);
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder (services/shots-starter.js), so the run takes the after side
+// only, and a before shot is refused while the agent can still move on.
+test('a first version\'s run refuses a before shot and is ready with the after side alone', () => {
+  const run = control({ intent: fixtures.intent(), afterOnly: true });
+  assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
+    sideShot('before')), (error) => {
+    assert.equal(error.code, 'before_not_needed');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /starter template's placeholder/);
+    assert.match(error.message, /takes after shots only/);
+    return true;
+  });
+  assert.equal(run.saved.size, 0, 'nothing from the before side is kept');
+  assert.equal(run.lastToolFailure.operation, 'save-shot');
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.deepEqual(statuses(run), [['invite-suggestions', 'ready']]);
+  assert.equal(run.summary().verdict.afterOnly, true);
+  // An ordinary run takes both sides, as before.
+  assert.equal(control({ intent: fixtures.intent() }).saveShot(
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before')).side, 'before');
+});
+
 test('progress reports each change as missing, ready or skipped', () => {
   const run = control();
   const initial = run.progress();
@@ -313,6 +336,25 @@ test('a problem noticed on the after build is kept with the run, capped, and cha
   run.skipChange({ reason: 'Nothing else loads.' });
   assert.throws(() => run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Too late.' }),
     { code: 'shots_turn_finished', status: 409 });
+});
+
+// Every problem noted in the proposals merged 2026-10-09 to 10-12 said
+// "unknown", though the agent shoots the before side of every screen.
+test('a problem noted without saying whether the before build has it asks the agent to look', () => {
+  const run = control({ intent: threeChanges() });
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  const early = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.' });
+  assert.equal(early.alsoBefore, 'unknown');
+  assert.match(early.hint, /^Once you have shot the before side of this screen, look at it and note this problem again with alsoBefore true or false/);
+
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before'));
+  const later = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: 'unknown' });
+  assert.match(later.hint, /^You saved the before shot of this screen: look at it and note this problem again/);
+  assert.match(later.hint, /Noting the same problem at the same place updates it\.$/);
+
+  const said = run.noteProblem({ change: 'invite-suggestions', screen: 'desktop', problem: 'The table is cut off.', alsoBefore: false });
+  assert.equal(Object.hasOwn(said, 'hint'), false, 'a notice that says true or false is not asked again');
+  assert.deepEqual(run.notices.map((entry) => entry.alsoBefore), [false], 'noting it again updated the one notice');
 });
 
 // control_request and upload_file record what they are about to do to both

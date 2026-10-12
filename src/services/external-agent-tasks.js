@@ -1561,6 +1561,8 @@ function buildWorkOrder({
       '   and a ready change\'s `note` says what its shots leave out. A skip or',
       '   note usually means the declared steps or data cannot reach the state:',
       '   fix `steps` or `hints` rather than accepting a partial pair.',
+      '   An `unchanged` change\'s before and after came out the same, so its',
+      '   shots cannot show it: treat it as a skip.',
       '   A change whose `shotResults` status is `failed` was tried and broke',
       '   on the after build (for example a server error): fix the code.',
       '   `failed` includes a specific reason.',

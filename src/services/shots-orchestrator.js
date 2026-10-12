@@ -17,6 +17,7 @@ const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
 const shotsHomeTile = require('./shots-home-tile');
+const shotsStarter = require('./shots-starter');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
@@ -58,6 +59,33 @@ function agentBusyRetryable(error) {
   if (!error) return false;
   if (error.sessionBusy === true || error.persistCode === 'session_busy') return true;
   return state.agentBusyCode(error.code);
+}
+
+// A run that failed on a platform step that says nothing about the proposal,
+// by its kind, so the recovery sweep takes the same head again once
+// (shots-state PLATFORM_RETRY_TRIGGER). Read off the error, never off its
+// wording: a database or clone step the platform runs for the copies tags
+// its own error (shots-environment), GitHub's hourly limit and the shots
+// agent's exit have their own codes, and the worker's bootstrap names its
+// transient failures. Anything else, a revision that does not build
+// included, is the proposal's and is not taken again.
+const GITHUB_RESET_GRACE_MS = 60_000;
+const GITHUB_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
+const MAX_PLATFORM_RETRY_WAIT_MS = 65 * 60_000;
+
+function platformFault(error, { now = Date.now() } = {}) {
+  if (!error || typeof error !== 'object') return null;
+  if (error.code === 'github_rate_limited') {
+    // Taken again once the hour's budget has reset, not into the same wall.
+    const resetMs = Number(error.retryAfterMs);
+    const waitMs = Number.isFinite(resetMs) && resetMs > 0
+      ? resetMs + GITHUB_RESET_GRACE_MS : GITHUB_UNKNOWN_RESET_WAIT_MS;
+    return { kind: 'github_rate_limited', retryAt: now + Math.min(MAX_PLATFORM_RETRY_WAIT_MS, waitMs) };
+  }
+  if (error.code === 'shots_agent_failed') return { kind: 'agent_exit' };
+  if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
+  if (worker.isRetryableBootstrapError(error)) return { kind: 'worker_bootstrap' };
+  return null;
 }
 
 // Runs a person stopped while this process executes them. The stop already
@@ -451,6 +479,35 @@ const INSTALL_STRIP = Object.freeze({
   note: 'Homeroom\'s "Add it to your home screen" strip is dismissed on every page these browsers open. For a change to the strip itself, add param to the start path\'s query (before any #) on both addresses, in the phone browser.',
 });
 
+// What making a project does on Homeroom's own copies. Make it is accepted
+// there (the copies lift the server-wide cap, shots-environment.js
+// shotsCapacityEnv, and the personas get free app slots, shots-demo-states.js
+// shots-demo-room-to-make-v1), but no copy can set a project up: it runs
+// unreviewed code, so it gets no rights to create a database (its role owns
+// only its own clone), no image builder or container runtime, and no
+// GitHub. The setup stops at its first step, the database, and the screen
+// after Make it says so; a remix stops the same way and an import is
+// refused. Said up front so a change that needs a made project running is
+// skipped at once with the copies' reason, rather than tried in every
+// browser or reported as the change failing (PR 4777's ready-made Study
+// timer, 2026-10-12). Fixed words only.
+const MAKE_PROJECT = Object.freeze({
+  setupFinishes: false,
+  note: 'Make it on "What do you want to make?" (/#create) works on these copies for whoever has free app slots '
+    + '(availableFixtures says who), and the screen after it shows the new project\'s card. But these copies cannot '
+    + 'set a project up: they have no rights to create its database, no image builder and no GitHub. So within '
+    + 'seconds the screen says "Setting it up didn’t finish" and "Setup stopped before it was running" with Try '
+    + 'again, on both addresses alike, and Try again stops the same way. A remix stops the same way too, and '
+    + 'importing a GitHub repository is refused. That is '
+    + 'these copies, not the change failing: never use outcome "failed" for it. A change to the make screen, or '
+    + 'to the screen after Make it, can be shot once the setup has stopped on both addresses; say in note_change '
+    + 'what that leaves out. A change that needs a made project to run (its app open, its first version built, '
+    + 'its repository) cannot be shown here: call skip_change for it at once, saying these copies cannot set up '
+    + 'a new project, and do not try the other browsers. Each persona can make five projects an hour on each '
+    + 'address, its phone browser included, so make one only where a change needs it, the same one on both '
+    + 'addresses.',
+});
+
 // Who the signed-in browsers are to an app built on Homeroom. Its identity
 // token says who is signed in ({ id, username, usernode_pubkey, locale }),
 // never a role in the app: there is no creator or admin claim, and no
@@ -477,13 +534,48 @@ const CHILD_APP_ROLES = Object.freeze({
     + 'app itself is different: when hints.setup says how to get it, do that first.',
 });
 
+// The signed-in browsers are three different accounts, so a step somebody
+// other than a change's persona takes (a reply to the member's message, a
+// vote on their change) can be taken in another persona's browser. The
+// shots of PR 4626's notification for a reply in a topic's thread were
+// skipped because "producing one needs a second account to reply to my
+// message, and I can't sign in as another account" (2026-10-09). On
+// Homeroom's own copies the full admin is a member of Homeroom's own project
+// (shots-fixtures.js installFullAdminFixture). Fixed words only.
+function secondAccountBrief(selfApp) {
+  return {
+    personas: ['member', 'read_only_admin', 'full_admin'],
+    note: 'The member, read_only_admin and full_admin browsers are three different signed-in accounts. When a '
+      + 'change needs somebody other than its persona to act first (a reply to the member\'s message, a vote on '
+      + 'their change, a friend request back), take that step in another of these browsers, the same way on the '
+      + 'before and the after address, then shoot in the browser screenBrowsers names. '
+      + (selfApp ? 'Here, use full_admin when you can: it is a member of Homeroom\'s own project on these copies. ' : '')
+      + 'The guest browser is not signed in, so it cannot be that account.',
+  };
+}
+
+// A project's first version (shots-starter.js): the before address is still
+// the starter template's placeholder, which shows none of the declared
+// changes. Before this, every before shot of such a proposal was that
+// placeholder and the agent spent half its turn taking it (proposals 7608,
+// 7871 and 7610, each with a note saying so). Fixed words only.
+const AFTER_ONLY = Object.freeze({
+  beforeIsStarter: true,
+  note: 'This proposal builds the app\'s first real screens. The before address still shows only the starter '
+    + 'template\'s placeholder screen, which has none of the declared changes, so there is no before to take: do not '
+    + 'open the before address, and save only after shots (side "after"), plus an after clip for a motion change. '
+    + 'save_shot refuses a before shot in this run. Do not call note_change to say the before side is a placeholder: '
+    + 'the proposal already says the app is new.',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
 // `childApp` is an app built on Homeroom rather than Homeroom itself.
+// `afterOnly` is a project's first version: only the after side is taken.
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
-  childApp = false,
+  childApp = false, afterOnly = false,
 }) {
   const testingPaths = testingPathsForSession(session);
   const phones = new Set(planContract.phonePersonas(intent));
@@ -517,7 +609,9 @@ function shotsBrief({
       guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
     },
     screenBrowsers: screenBrowsers(intent),
+    secondAccount: secondAccountBrief(selfApp),
     ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
+    ...(afterOnly ? { afterOnly: { ...AFTER_ONLY } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -541,6 +635,7 @@ function shotsBrief({
     ...(homeTile ? { homeTile } : {}),
     // Only Homeroom's own copies have the strip, and only a phone shows it.
     ...(selfApp && phones.size ? { installStrip: { ...INSTALL_STRIP } } : {}),
+    ...(selfApp ? { makeProject: { ...MAKE_PROJECT } } : {}),
     ...(moment ? {
       previewAt: {
         at: moment.at,
@@ -1053,6 +1148,7 @@ function traceSummary(metrics, extra = {}) {
     ...(metrics.workerMemory ? { workerMemory: workerMemorySummary(metrics.workerMemory) } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
+    ...(metrics.afterOnly ? { afterOnly: true } : {}),
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
   };
 }
@@ -1095,7 +1191,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
       failureCode: errorCode(error),
       failureReason: visibleError(error),
       ...(runTrace ? { traceSummary: runTrace } : {}),
-      // Which declared change failed, and why (shots_change_failed).
+      // Which declared change failed or was skipped, and why
+      // (shots_change_failed, shots_capture_incomplete).
       ...(error?.hardVerdict ? { hardVerdict: error.hardVerdict } : {}),
     });
     return true;
@@ -1118,6 +1215,7 @@ async function executeRun(config, options, injected = {}) {
     identities: injected.identities || identities,
     shotsAgent: injected.shotsAgent || shotsAgent,
     shotsControl: injected.shotsControl || shotsControl,
+    shotsStarter: injected.shotsStarter || shotsStarter,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
   };
@@ -1254,12 +1352,28 @@ async function executeRun(config, options, injected = {}) {
         sessionId: session.id, runId: run.id, error: error.message,
       });
     }
+    // A project's first version: its before build is still the starter
+    // template's placeholder, read from the two checkouts' own sentinel
+    // (shots-starter.js), so only the after side is taken and published.
+    // Homeroom itself never ships the starter. A read that fails takes both
+    // sides, as every run did before.
+    let afterOnly = false;
+    if (app.slug !== config.selfAppSlug) {
+      try { afterOnly = await deps.shotsStarter.beforeIsStarter(pair); }
+      catch (error) {
+        log.warn('shots', 'Could not tell whether the before build is the starter', {
+          sessionId: session.id, runId: run.id, error: error.message,
+        });
+      }
+    }
+    metrics.afterOnly = afterOnly;
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
       selfApp: app.slug === config.selfAppSlug,
       childApp: app.slug !== config.selfAppSlug,
+      afterOnly,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
@@ -1281,6 +1395,7 @@ async function executeRun(config, options, injected = {}) {
       context,
       expiresAt: Date.now() + runBudgetMs,
       homeTiles,
+      afterOnly,
     });
 
     const agentStartedAt = Date.now();
@@ -1444,31 +1559,38 @@ async function executeRun(config, options, injected = {}) {
         failure.hardVerdict = summary.verdict;
         throw failure;
       }
-      throw new ShotsOrchestrationError(
+      const incomplete = new ShotsOrchestrationError(
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
       );
+      // Each change's own reason is kept too, so whoever can supply the
+      // data it lacked hears which change it was (shots-state.skippedOnHead).
+      incomplete.hardVerdict = summary.verdict;
+      throw incomplete;
     }
     // Where each change's before and after screens differ, so the card can
     // outline it. A screen that cannot be compared is shown without outlines;
-    // it never holds the run back.
-    try {
-      const ready = intent.stories.filter((story) => summary.stories
-        .some((result) => result.id === story.id && result.status === 'ready'));
-      const diff = deps.shotsDiff || shotsDiff;
-      summary.verdict.screens = await diff.screensFor(ready, summary.files);
-      // A change whose screens show no difference anywhere says so on its
-      // card, as a byte-identical pair already does (shots-files.summarize).
-      if (typeof diff.unchangedStories === 'function') {
-        summary.verdict.stories = shotsFiles.markUnchanged(
-          summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
-        );
-        summary.stories = summary.verdict.stories;
+    // it never holds the run back. An after-only run has nothing to compare,
+    // and its card shows each after screen on its own.
+    if (!afterOnly) {
+      try {
+        const ready = intent.stories.filter((story) => summary.stories
+          .some((result) => result.id === story.id && result.status === 'ready'));
+        const diff = deps.shotsDiff || shotsDiff;
+        summary.verdict.screens = await diff.screensFor(ready, summary.files);
+        // A change whose screens show no difference anywhere says so on its
+        // card, as a byte-identical pair already does (shots-files.summarize).
+        if (typeof diff.unchangedStories === 'function') {
+          summary.verdict.stories = shotsFiles.markUnchanged(
+            summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
+          );
+          summary.stories = summary.verdict.stories;
+        }
+      } catch (error) {
+        log.warn('shots', 'Could not compare the before and after screens', {
+          runId: run.id, error: String(error?.message || error).slice(0, 300),
+        });
       }
-    } catch (error) {
-      log.warn('shots', 'Could not compare the before and after screens', {
-        runId: run.id, error: String(error?.message || error).slice(0, 300),
-      });
     }
     failurePhase = 'persist_shots';
     stage(failurePhase);
@@ -1528,8 +1650,11 @@ async function executeRun(config, options, injected = {}) {
     const control = registration?.control;
     const toolFailure = control?.lastToolFailure;
     const detail = boundedErrorDetail(error);
+    // A stop ends the run as the person asked; nothing takes it again.
+    const fault = run && stopRequested.has(run.id) ? null : platformFault(error);
     const failureTrace = traceSummary(metrics, {
       terminalFailureClass: errorCode(error),
+      ...(fault ? { platformFault: fault } : {}),
       ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
       failure: {
         phase: failurePhase,
@@ -1832,11 +1957,14 @@ module.exports = {
   resolveRevisionContext,
   declaredCheckSummary,
   INSTALL_STRIP,
+  MAKE_PROJECT,
+  AFTER_ONLY,
   shotsBrief,
   sameProvenance,
   waitForSessionIdle,
   agentBusyRetryable,
   MAX_AGENT_BUSY_RETRIES,
+  platformFault,
   visibleError,
   newRunMetrics,
   recordAgentDiagnostic,

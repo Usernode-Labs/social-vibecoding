@@ -149,9 +149,11 @@ function Hero({ hero }: { hero: HeroView }) {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('leaderboard:eventBar.noneSelected')}</p>;
   }
   return (
-    <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+    // #4869: the card every other Leaderboard pane draws (History's season
+    // cards, Your standing): white on the page ground, no border.
+    <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{hero.name}</h2>
+        <h2 className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{hero.name}</h2>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${hero.statusClass}`}>
           {hero.statusLabel}
         </span>
