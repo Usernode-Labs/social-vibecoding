@@ -3650,6 +3650,23 @@ html[data-browser-scroller] body {
     overscroll-behavior-y: contain;
   }
 }
+/* ── THE PAGE HOLDS STILL UNDER A FULL-SCREEN SCREEN (#4893) ──────────────
+   Onboarding run, 12 Oct 2026, iPhone 17 Safari: with "What do you want to
+   make?" open, Home could still be scrolled underneath, and its cards came
+   up behind the status bar. The make, made and "You're in" screens are fixed
+   boxes, and in a phone browser the document is Home's scroller (above), so
+   a drag their own scroller did not take went on to it.
+   frontend/src/lib/page-lock.ts marks <html> `platform-page-locked` while one
+   is up, and the document stops scrolling: `hidden` rather than `auto`,
+   which keeps where it was (the page is not moved, and is there again when
+   the screen goes) and which iOS honours on the root since 16, bounce and
+   all, so the overscroll rules above are left as they are. What scrolls
+   inside the screen still does. The second selector outranks the paged
+   document's own `overflow-y: auto` by weight, not only by coming later. */
+html.platform-page-locked,
+html.platform-page-locked[data-browser-scroller] {
+  overflow: hidden;
+}
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
@@ -20961,6 +20978,22 @@ html.un-kb #platform-tabs {
     padding-bottom: 200px;
   }
 }
+/* AND OVER THEIR TOP, UNDER THE STATUS BAR (onboarding run, 12 Oct 2026,
+   iPhone 17 Safari, #4893). Safari draws the page behind the status bar,
+   above these boxes as it does under its toolbar below them, and what showed
+   there, behind the clock, was Home's cards once it had scrolled. The page
+   holds still under them now (`platform-page-locked`, above), and their
+   ground also runs on 200px above them, as the box's own shadow in the
+   ground's colour: a scroller (the made screen is one) clips what it holds
+   but not its own shadow, as the sign-in sheet's foot has it, and nothing in
+   the box moves, so the wallpaper's star and washes stay where they are.
+   Where a box already starts at the top of the glass the shadow is off the
+   screen. Not from Create, whose screens begin under the platform header. */
+@media (max-width: 767px) {
+  html.un-ios.web-browser-chrome :is([data-first-session-make], [data-first-session-made], [data-first-session-welcome]):not(.platform-under-header) {
+    box-shadow: 0 -200px 0 0 var(--home-ground, #f4f2e4);
+  }
+}
 
 .platform-tabs {
   /* FIXED TO THE REAL VIEWPORT. `.dev-ws-tabs` above documents the three
@@ -23060,6 +23093,13 @@ html.in-side-panel body {
 .dev-ws-strip[data-ws-mine] > .dev-ws-head > .dev-ws-head-title { font-size: 15px; font-weight: 650; }
 .dev-ws-strip[data-ws-mine] .dev-ws-wlist { margin-top: 0; }
 .dev-ws-strip[data-ws-mine] .dev-ws-wlist + .dev-ws-reveal { margin-top: 2px; }
+/* #4772: Waiting on you, Yours, up for a vote and Going live are Your
+   work's sections, cards drawn exactly as it is. */
+.dev-ws-strip[data-ws-mine-section] { container-type: inline-size; gap: 0; }
+.dev-ws-strip[data-ws-mine-section] > .dev-ws-head { align-items: baseline; padding: 4px 2px 8px; }
+.dev-ws-strip[data-ws-mine-section] > .dev-ws-head > .dev-ws-head-title { font-size: 15px; font-weight: 650; }
+.dev-ws-strip[data-ws-mine-section] .dev-ws-wlist { margin-top: 0; }
+.dev-ws-strip[data-ws-mine-section] .dev-ws-wlist + .dev-ws-reveal { margin-top: 2px; }
 .dev-ws-lrow { gap: 10px; padding: 8px 2px 8px 19px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px; }
 .dev-ws-lrow:hover, .dev-ws-lrow[data-on] { margin: 0; padding-left: 19px; padding-right: 2px; }
 .dev-ws-lrow:hover + .dev-ws-lrow, .dev-ws-lrow[data-on] + .dev-ws-lrow { border-top-color: var(--app-sheet-line); }

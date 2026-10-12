@@ -1421,8 +1421,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
   ON chat_sessions(user_id, handoff_request_id)
   WHERE handoff_request_id IS NOT NULL;
 
--- ===================================================================
--- #907: local coding agents.
+-- ============================================================-- #907: local coding agents.
 --
 -- A user can attach a coding agent running on their own machine to one of
 -- their dev sessions and have the Mayor dispatch that session's coding turns
@@ -10559,6 +10558,14 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
 -- itself rather than the project it was filed on (the triage's `platform`
 -- flag). Its requester is offered to move it to Homeroom's own board.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
+-- What became of that offer, for the console and get_homeroom_bot
+-- (homeroom-bot-move.js noteMoveOffer): 'sent'; or why none went out:
+-- 'no_requester' (nobody is known to have asked for it), 'no_bot' (its
+-- requester does not have the bot), 'repeat_held' (the note was not said
+-- again: nobody addressed the bot since the last one), 'already_offered'
+-- (they were offered it before), 'not_sent' (the DM did not go out). NULL
+-- on a run from before this was recorded.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS move_offer TEXT;
 -- #4488: a `ready` verdict on an existing project the triage labelled
 -- complicated (a new screen or kind of thing, a change to how people get
 -- around or what it stores, two quite different ways to do it, or large).
@@ -13055,6 +13062,14 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAM
 -- from before, or one no queue row started.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
+-- A reply whose verdict could not be read, kept whole enough to read why:
+-- { reply: { text, chars }, repair: { text, chars } | null }, each text its
+-- first 4 KB and last 12 KB (homeroom-bot.js keptReply), `repair` the reply
+-- to the one turn that asked for the JSON block. The run's error stays one
+-- short line; 17 such failures in a week left only a clipped 300-character
+-- tail to read. Shown to admins beside that error (the console's run row,
+-- the connector's get_homeroom_bot). Null on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS unreadable_reply JSONB;
 -- What a read saw of its request (homeroom-bot.js readFingerprintOf): a
 -- hash of its title, body, GitHub comments and discussion messages (the
 -- screenshots they link included), the bot's own posts left out, with a

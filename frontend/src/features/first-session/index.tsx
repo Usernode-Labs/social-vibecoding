@@ -70,6 +70,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { pushDismissible, type Release } from '../../lib/back-stack';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { usePageLock } from '../../lib/page-lock';
 import { AppContext } from '../app-context/app-context-controller.js';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { swatchFor } from '../messages/format';
@@ -730,12 +731,17 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
 /**
  * "You're in"'s ground: the landing's wallpaper, full screen, under the
  * Homeroom logo bar every first-run screen wears (owner, 7 October). Held
- * empty (WelcomeHeld) while the invite's standing is read.
+ * empty (WelcomeHeld) while the invite's standing is read. The page under it
+ * holds still and takes no tap or focus, as under the make screen
+ * (../../lib/page-lock.ts).
  */
 function WelcomeFrame({ children, foot = null, held = false }: { children: React.ReactNode; foot?: React.ReactNode; held?: boolean }) {
   const t = useMessages('onboarding');
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef);
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-labelledby={held ? undefined : 'first-session-title'}
       aria-label={held ? t('onboarding:firstSession.welcome.opening') : undefined}
