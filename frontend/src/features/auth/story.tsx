@@ -15,6 +15,13 @@
  * "Get started" and "Sign in" both open the sign-in sheet over this
  * screen; an account made from it is asked what to make next
  * (../first-session/make.tsx).
+ *
+ * A "You're in" mail's link for an account that is still new does not wait
+ * here (Evan, 12 Oct 2026): the landing spends it as the page opens and
+ * shows the full-page Welcome instead (./landing.tsx, ./welcome-page.tsx).
+ * The story, greeting the link's address, is for an account already set up,
+ * whose link only Get started spends, and for a link already used or
+ * expired, whose Get started sends a code.
  */
 
 // The three examples are the make screen's own starting points (Evan, 8 Oct

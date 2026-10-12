@@ -64,7 +64,9 @@
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
  * sent, as the sign-in screen does for the same link (./login.tsx), with
- * the same once-per-tab record of the send.
+ * the same once-per-tab record of the send. With such a link the account
+ * step is not the sheet's: it hands the account to the story (`onAccount`),
+ * which shows the full-page Welcome (./welcome-page.tsx).
  *
  * Every success ends in finishLogin(), so where the person lands is the
  * shell's decision (AuthScreens.finishLogin, then the invite link's path).
@@ -283,9 +285,10 @@ export const CLOSE_MS = 240;
  * The spinner on Continue while it finishes a new account: the account is
  * saved, and a sheet bound for the make screen then waits there, up and
  * busy, until that screen is ready to draw (#4892). The label beside it
- * says "Finishing…".
+ * says "Finishing…". The full-page Welcome's Continue is the same
+ * (./welcome-page.tsx).
  */
-function FinishingSpinner() {
+export function FinishingSpinner() {
   return <SpinnerArcIcon className="mr-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
 }
 
@@ -354,7 +357,7 @@ function keyboardUp(): boolean {
   return root.contains(KB_OPEN_CLASS) || root.contains('un-kb');
 }
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   try {
     return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch {
@@ -420,6 +423,9 @@ export type ReleaseSpend = {
   next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean; suggestedUsername: string;
 };
 
+/** The account step's three facts: whose address, and its username to choose. */
+export type AccountStep = { email: string; needsUsername: boolean; suggestedUsername: string };
+
 /**
  * Spend the release mail's one-time sign-in link (src/services/release-links.js)
  * with a POST, never on the GET that opened the page, so a mail scanner's
@@ -427,14 +433,20 @@ export type ReleaseSpend = {
  * expired, used or unknown; null on anything else (offline, a server
  * error). Either way the sheet falls back to the address and a code, and a
  * refused link says why.
+ *
+ * `newAccountOnly` is the story's spend as the page opens (./landing.tsx),
+ * before any tap: the server then answers only `set-password`, and refuses
+ * an account already set up (`account_set_up`, which comes back here as
+ * null) without spending the link or making a session. The sheet, opened by
+ * Get started, never sends it.
  */
-export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'refused' | null> {
+export async function spendReleaseLink(key: string, { newAccountOnly = false }: { newAccountOnly?: boolean } = {}): Promise<ReleaseSpend | 'refused' | null> {
   try {
     const res = await fetchSessionMint('/api/auth/release-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ token: key }),
+      body: JSON.stringify(newAccountOnly ? { token: key, newAccountOnly: true } : { token: key }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 422 && data.code === 'invalid_release_link') return 'refused';
@@ -449,6 +461,34 @@ export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'ref
   } catch {
     return null;
   }
+}
+
+/**
+ * The account step's request (#4891): the username when the account has
+ * none, and no password (the account signs in with an emailed code, and adds
+ * a password in Settings if it wants one; set-password takes a request with
+ * none as exactly that). It mints the session, on the person's Continue.
+ * The sheet's account step and the full-page Welcome (./welcome-page.tsx)
+ * both send it. May throw what fetchSessionMint throws.
+ */
+export async function saveAccount(handle: string | null): Promise<{ ok: true } | { ok: false; error: string; field: string | null }> {
+  const res = await fetchSessionMint('/api/auth/otp/set-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      ...(handle ? { username: handle } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.user) {
+    return {
+      ok: false,
+      error: data.error || translate('auth:signInSheet.account.failed'),
+      field: typeof data.field === 'string' ? data.field : null,
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -540,6 +580,20 @@ export type SignInSheetProps = {
    */
   held?: boolean;
   /**
+   * The link was refused before the sheet opened: the story spent it as the
+   * page opened and it was already used, or had expired (./landing.tsx). The
+   * code step then says why a code came instead, as it does for a link the
+   * sheet itself found used.
+   */
+  linkUsed?: boolean;
+  /**
+   * Given by a screen that shows the account step itself (the story's
+   * full-page Welcome, ./welcome-page.tsx, for a "You're in" link): where the
+   * sheet would go on to its own `account` step, after the link or a right
+   * code, it hands the account to this instead and the screen closes it.
+   */
+  onAccount?: (account: AccountStep) => void;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made). Answers
@@ -567,7 +621,8 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, beforeFinish, onClose, primaryClass,
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, linkUsed = false, onAccount,
+  beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const t = useMessages('auth');
   const otherWays: Step = providers.length ? 'choose' : 'email';
@@ -626,6 +681,12 @@ export function SignInSheet({
   // and must not send it back from the code to the first step.
   const firstStepRef = useRef(firstStep);
   firstStepRef.current = firstStep;
+  // Read when they are needed, like the first step: the link's state when
+  // the sheet opens, and the account's hand-off when a step gets there.
+  const linkUsedRef = useRef(linkUsed);
+  linkUsedRef.current = linkUsed;
+  const onAccountRef = useRef(onAccount);
+  onAccountRef.current = onAccount;
   const releaseSeen = useRef<string | null>(null);
   // The address an email code carried to the password step, for its first field.
   const identifierPrefill = useRef('');
@@ -662,7 +723,7 @@ export function SignInSheet({
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
     setWelcome(null);
-    setLinkRefused(false);
+    setLinkRefused(linkUsedRef.current);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -772,7 +833,15 @@ export function SignInSheet({
   // not the email step with its Send code button, which the first open
   // used to show for the length of the request. The story covers that step
   // with a plain "Signing you in…" screen of its own (`onSigningIn`, `held`;
-  // ./landing.tsx SigningIn), and the step after it comes up as that goes.
+  // ./landing.tsx SigningIn), and the step after it comes up as that goes:
+  // the code, or the story's full-page Welcome (`onAccount`).
+  //
+  // A new account's link is usually spent before this sheet opens, by the
+  // story as the page opens (Evan, 12 Oct 2026). The sheet still spends it
+  // on Get started when the story did not: an account already set up, whose
+  // link waits for that tap, and the rarer ways the page could not decide
+  // or the spend ran long. A link the story found used comes here without
+  // its one-time sign-in, and with `linkUsed`: the code, saying why.
   const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
     const seen = releaseSignIn || releaseToken;
@@ -794,6 +863,10 @@ export function SignInSheet({
         if (!spent || spent === 'refused') { prefill(); return; }
         setEmail(spent.email);
         if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
+        if (onAccountRef.current) {
+          onAccountRef.current({ email: spent.email, needsUsername: spent.needsUsername, suggestedUsername: spent.suggestedUsername });
+          return;
+        }
         setWelcome(spent.email);
         setNeedsUsername(spent.needsUsername);
         setSuggestedUsername(spent.suggestedUsername);
@@ -890,8 +963,15 @@ export function SignInSheet({
         await finish('existing');
         return;
       }
+      const suggested = typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '';
+      // A "You're in" link's code (one the story found used, say): the
+      // story's full-page Welcome, not this sheet's account step.
+      if (onAccountRef.current) {
+        onAccountRef.current({ email, needsUsername: data.needsUsername === true, suggestedUsername: suggested });
+        return;
+      }
       setNeedsUsername(data.needsUsername === true);
-      setSuggestedUsername(typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '');
+      setSuggestedUsername(suggested);
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -1006,7 +1086,7 @@ export function SignInSheet({
   // first step; the account signs in with an emailed code and adds a
   // password in Settings if it wants one (POST /api/me/password, which sets
   // a first password with no current one). set-password takes the request
-  // with no password in it as exactly that.
+  // with no password in it as exactly that (`saveAccount`).
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
@@ -1014,18 +1094,10 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const res = await fetchSessionMint('/api/auth/otp/set-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          ...(handle ? { username: handle } : {}),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.user) {
-        setError(data.error || translate('auth:signInSheet.account.failed'));
-        if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
+      const saved = await saveAccount(handle);
+      if (!saved.ok) {
+        setError(saved.error);
+        if (saved.field === 'username') usernameField.current?.focus({ preventScroll: true });
         return;
       }
       await finish('new');

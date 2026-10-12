@@ -379,12 +379,34 @@ function inviteTokenFromQuery(): string | null {
  * prefill is a convenience, and the screen is perfectly usable without it.
  */
 export async function inviteEmailFromToken(token: string): Promise<string | null> {
+  return (await releaseAccountFromToken(token))?.email ?? null;
+}
+
+/** What a waitlist "you're in" link's token says about its account. */
+export type ReleaseAccount = {
+  email: string;
+  /**
+   * The account the address would sign in to is still new: none yet, or one
+   * with no username and no password (src/services/release-links.js
+   * isNewAccount). Only then does the story spend the mail's one-time
+   * sign-in as the page opens (./landing.tsx).
+   */
+  newAccount: boolean;
+};
+
+/**
+ * The same lookup, with `new_account` beside the address. A GET, so it spends
+ * nothing: no link, no session. Null on anything unexpected, and anything
+ * but a literal `true` is not a new account.
+ */
+export async function releaseAccountFromToken(token: string): Promise<ReleaseAccount | null> {
   try {
     const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
-    return email.includes('@') && email.length <= 255 ? email : null;
+    if (!email.includes('@') || email.length > 255) return null;
+    return { email, newAccount: data?.new_account === true };
   } catch {
     return null;
   }
