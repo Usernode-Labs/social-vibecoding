@@ -420,7 +420,7 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
   const readyLeft = model.ready.length - ready.length;
   return (
     <section
-      className="max-h-[33vh] shrink-0 overflow-y-auto overscroll-contain bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_-1px_0_var(--app-sheet-line)]"
+      className="max-h-[45vh] shrink-0 overflow-y-auto overscroll-contain bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_-1px_0_var(--app-sheet-line)]"
       aria-label={t('messages:bot.strip.name')}
       data-bot-strip={open ? 'open' : 'closed'}
     >

@@ -167,7 +167,7 @@ test('the summary bar: zero parts left out, the need part in the need colour, an
   const one = stripGroups(work({ needsYou: [past({ outcome: 'question' })], history: [past({ outcome: 'proposed' })] }), NOW);
   assert.deepEqual(summaryParts(one).map((part) => part.text), ['1 needs you', '1 ready to try']);
   const html = draw({ work: work({ needsYou: [past({ outcome: 'question' })], now: [working({})] }) });
-  assert.match(html, /<section class="max-h-\[33vh\] [^"]*overflow-y-auto[^"]*" aria-label="Your requests" data-bot-strip="open">/);
+  assert.match(html, /<section class="max-h-\[45vh\] [^"]*overflow-y-auto[^"]*" aria-label="Your requests" data-bot-strip="open">/);
   assert.match(html, /<span class="text-amber-700 dark:text-amber-400" data-bot-strip-count="needs">1 needs you<\/span><\/span><span><span aria-hidden="true"> · <\/span><span data-bot-strip-count="progress">1 in progress<\/span>/);
   assert.match(html, /aria-expanded="true" data-bot-strip-toggle="">Hide<\/button>/);
   assert.match(html, /NEEDS YOU|>Needs you</);
@@ -244,7 +244,7 @@ test('each kind of news says a few words after the request\'s title, in the need
     const html = line(botMessage(meta));
     const label = JSON.stringify(meta);
     assert.match(html, /<strong class="[^"]*">Dark mode<\/strong>/, label);
-    assert.match(html, new RegExp(`<span class="${need ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-600 dark:text-zinc-300'}" data-bot-news-words="">${words}</span>`), label);
+    assert.match(html, new RegExp(`<span class="${need ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-600 dark:text-zinc-300'}" data-bot-news-words=""> ${words}</span>`), label);
   }
 });
 
@@ -259,7 +259,7 @@ test('a line keeps the message\'s id and opens its thread; one from before threa
   // A card with its thread opens that thread, and says how many updates it holds.
   const card = botMessage({ kind: 'activity' }, { thread: { replyCount: 5, lastReplyAt: null, participants: [], lastReply: null } });
   assert.equal(newsThread(card), card.id);
-  assert.match(line(card), /I’ve started on it<\/span> <span class="text-violet-700 dark:text-violet-300" data-bot-thread-link="\d+">· 5 updates ›<\/span>/);
+  assert.match(line(card), /I’ve started on it<\/span><span class="text-violet-700 dark:text-violet-300" data-bot-thread-link="\d+"> · 5 updates ›<\/span>/);
   // An old card, from before threads: no thread to open, so it opens in place.
   const old = botMessage({ kind: 'proposal' });
   assert.equal(newsThread(old), null);
@@ -269,6 +269,23 @@ test('a line keeps the message\'s id and opens its thread; one from before threa
   assert.match(source, /if \(rootId\) openThreadAt\(rootId, message\.threadRootId \? message\.id : null\);\s*else setOpen\(true\);/);
   assert.equal(newsTitle({ kind: 'merged', appName: 'Plant Pal', issueNumber: 1, firstVersion: true }), 'Plant Pal, first version');
   assert.equal(newsTitle({ kind: 'merged', appName: 'Plant Pal', issueNumber: 9 }), 'Request #9');
+});
+
+test('a line wears the project\'s icon the strip has, else its initial', () => {
+  const { newsIcon } = loadTsx(NEWS);
+  const job = (appSlug, iconUrl, iconEmoji, appName = 'Project') => ({ appSlug, appName, iconUrl, iconEmoji });
+  const work = {
+    now: [job('plants', null, null)],
+    needsYou: [job(null, null, '🧪', 'Staging demo app')],
+    history: [job('plants', null, '🌱'), job('rota', '/app-icons/7', null)],
+  };
+  assert.deepEqual(newsIcon(work, 'plants'), { iconUrl: null, iconEmoji: '🌱' }, 'the first entry with artwork, wherever it is');
+  assert.deepEqual(newsIcon(work, 'rota'), { iconUrl: '/app-icons/7', iconEmoji: null });
+  assert.deepEqual(newsIcon(work, 'elsewhere'), { iconUrl: null, iconEmoji: null });
+  assert.deepEqual(newsIcon(null, 'plants'), { iconUrl: null, iconEmoji: null }, 'before the tray loads: the initial');
+  assert.deepEqual(newsIcon(work, null, 'Staging demo app'), { iconUrl: null, iconEmoji: '🧪' }, 'a project with no slug, by its name');
+  assert.deepEqual(newsIcon(work, null, 'Project'), { iconUrl: null, iconEmoji: null }, 'a name never matches a project that has a slug');
+  assert.match(read(NEWS), /iconUrl=\{icon\.iconUrl\} emoji=\{meta\.appEmoji \|\| icon\.iconEmoji\}/);
 });
 
 test('the bot\'s replies, offers, hellos and words about no request stay messages', () => {

@@ -3,8 +3,9 @@ import { useState, type ReactNode } from 'react';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { ProjectTile } from './bot-strip';
+import { useBotWork } from './bot-work';
 import { openThreadAt } from './store';
-import type { ConversationMessage, HomeroomBotMeta } from './types';
+import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
 
 /*
  * One request, one story: the bot's news in the main chat, ONE short line
@@ -109,6 +110,22 @@ export function newsThread(message: ConversationMessage): number | null {
   return meta?.kind === 'activity' && message.thread ? message.id : null;
 }
 
+/**
+ * Pure: the project's icon as the strip has it. A bot message names its
+ * project but carries no artwork, so a line takes the tray's, and the strip
+ * and the chat show the same tile; with none it is the project's initial.
+ */
+export function newsIcon(work: HomeroomBotWork | null, slug: string | null | undefined, name: string | null | undefined = null): { iconUrl: string | null; iconEmoji: string | null } {
+  if (work && (slug || name)) {
+    for (const job of [...work.needsYou, ...work.now, ...work.history]) {
+      // A project with no slug (the staging demo's) is known by its name.
+      const same = slug ? job.appSlug === slug : !job.appSlug && job.appName === name;
+      if (same && (job.iconUrl || job.iconEmoji)) return { iconUrl: job.iconUrl, iconEmoji: job.iconEmoji };
+    }
+  }
+  return { iconUrl: null, iconEmoji: null };
+}
+
 const NEED_INK = 'text-amber-700 dark:text-amber-400';
 
 export function BotNewsLine({ message, focused = false, full }: {
@@ -120,11 +137,13 @@ export function BotNewsLine({ message, focused = false, full }: {
 }) {
   const t = useMessages('messages');
   const [open, setOpen] = useState(false);
+  const { work } = useBotWork();
   const meta = metaOf(message);
   if (!meta) return null;
   if (open) return <>{full()}</>;
   const words = newsWords(meta);
   const rootId = newsThread(message);
+  const icon = newsIcon(work, meta.appSlug, meta.appName);
   const updates = meta.kind === 'activity' && message.thread ? message.thread.replyCount : 0;
   function tap() {
     if (rootId) openThreadAt(rootId, message.threadRootId ? message.id : null);
@@ -146,12 +165,11 @@ export function BotNewsLine({ message, focused = false, full }: {
         data-bot-news-open={rootId ? 'thread' : 'inline'}
         onClick={tap}
       >
-        <ProjectTile name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} emoji={meta.appEmoji || null} size="line" />
+        <ProjectTile name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} iconUrl={icon.iconUrl} emoji={meta.appEmoji || icon.iconEmoji} size="line" />
         <span className="min-w-0 flex-1 truncate">
           <strong className="font-[650] text-zinc-900 dark:text-zinc-100">{newsTitle(meta)}</strong>
-          {' '}
-          <span className={words.need ? NEED_INK : 'text-zinc-600 dark:text-zinc-300'} data-bot-news-words="">{t(words.key)}</span>
-          {updates ? <>{' '}<span className="text-violet-700 dark:text-violet-300" data-bot-thread-link={message.id}>{t('messages:bot.news.updates', { count: updates })}</span></> : null}
+          <span className={words.need ? NEED_INK : 'text-zinc-600 dark:text-zinc-300'} data-bot-news-words="">{` ${t(words.key)}`}</span>
+          {updates ? <span className="text-violet-700 dark:text-violet-300" data-bot-thread-link={message.id}>{` ${t('messages:bot.news.updates', { count: updates })}`}</span> : null}
         </span>
       </button>
     </article>
