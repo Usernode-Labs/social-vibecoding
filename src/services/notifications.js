@@ -1611,6 +1611,13 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // keyset comparison still ride idx_notifications_user_recent on
 // (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
 // that index already produced.
+//
+// #4797: a read ask about a decided change (DECIDED_HIDDEN_KINDS on a session
+// 'merged' or 'archived') is not listed — the merge already read it, and a
+// row that only opens the merged page is not news. The COALESCE keeps a row
+// with no session (a digest of several) or a deleted session listed, as
+// today. Unread rows are never hidden, so the badge and the list agree, and
+// getForUser (a push opening one row) still returns it.
 async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
   const params = [userId];
   let cursorClause = '';
@@ -1658,6 +1665,9 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+     AND NOT (n.read_at IS NOT NULL
+              AND n.kind = ANY(${DECIDED_HIDDEN_KINDS_SQL})
+              AND COALESCE(cs.status IN ('merged', 'archived'), false))
      ${cursorClause}
      ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
@@ -1827,6 +1837,20 @@ async function markReadForSession(pool, userId, sessionId) {
 // named it alone has nothing left to count. "Ready to try" (change_ready) is
 // settled apart, because a change that went live makes it news.
 const DECIDED_ASK_KINDS = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest']);
+
+// #4797 (Page Turners): once a change is decided, the asks about it leave the
+// bell's LIST as soon as they are read — nobody scrolls past a "New change"
+// that only opens the merged page, waiting for 100 newer rows to push it off.
+// DECIDED_ASK_KINDS plus "ready to try": a read change_ready row has been
+// seen, and the news the merge made of it (relit unread for a non-voter)
+// stays until it is read too. The news kinds (voted_change_merged, pr_merged,
+// a live wording) are not asks and are never hidden. A digest of several has
+// no single change to be decided and is never hidden.
+const DECIDED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready']);
+// A static literal, not a bound parameter: listForUser's cursor and kinds
+// already hold the positional parameters, and the kinds are this file's own
+// frozen constants.
+const DECIDED_HIDDEN_KINDS_SQL = `ARRAY[${DECIDED_HIDDEN_KINDS.map((kind) => `'${kind}'`).join(',')}]::text[]`;
 
 /**
  * "Waiting for your approval" digests that no longer count anything
