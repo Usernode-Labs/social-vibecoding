@@ -71,6 +71,8 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
+import { openBot } from '../../messages/store';
+import type { StagedObject } from '../../messages/types';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
@@ -576,6 +578,17 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
 }
 
 /**
+ * #4896: what "Tell Homeroom bot what to change" hands the bot: this
+ * project, as the object its chat attaches on the composer
+ * (../../messages/store.ts openBot), so the bot reads which project is
+ * meant and the box asks "What should change?". The name is the chip's
+ * until the server's own reading of the project comes. Pure, for the tests.
+ */
+export function startHereBotReference(slug: string, name: string): StagedObject {
+  return { type: 'app', appSlug: slug, title: name || null };
+}
+
+/**
  * #2573 — the start-here prompt, at the very top of Current status.
  *
  * ── When it is up ───────────────────────────────────────────────────────
@@ -611,10 +624,47 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
  * both themes come from the tokens every strip beside it already reads. The
  * action is the shell's own primary Button, which is the violet accent in
  * light and dark alike.
+ *
+ * ── Where Homeroom bot builds for you, it sends you to the bot (#4896) ──
+ *
+ * A newcomer reached this card at the end of the first-session tour
+ * (onboarding run, 12 Oct 2026), and "Start working on this app … The first
+ * change is yours to start" with Start a new change read like a developer
+ * tool. So for a viewer Homeroom bot builds changes for here (`bot`, the
+ * view's `mine.bot`, AppView._botDoor: the gate Your work's "tell Homeroom
+ * bot" line uses) the card asks what they want changed and its one button
+ * is "Tell Homeroom bot what to change": their chat with the bot, with this
+ * project attached on the composer and the box asking "What should
+ * change?" (../../messages/store.ts openBot, the change page's Ask for
+ * changes' door; startHereBotReference). Building it yourself is not
+ * offered twice: it is the hub's ⋯, Build it now, the same
+ * Improve.startSession(). Everyone else (the bot does not build here, or
+ * not for them) keeps the card as it was, with Start a new change.
  */
-function StartHereBanner(): ReactNode {
+function StartHereBanner({ slug, name, bot }: { slug: string; name: string; bot: boolean }): ReactNode {
   const readOnly = useStoreState(improveStore).readOnly;
   const t = useMessages('project');
+  if (bot && !readOnly && slug) {
+    return (
+      <section className="dev-ws-strip" data-ws-start-here="bot">
+        <div className="dev-ws-head">
+          <span className="dev-ws-head-title">{t('project:hub.startHere.bot.title')}</span>
+        </div>
+        <p className="dev-ws-strip-text">
+          {t('project:hub.startHere.bot.text')}
+        </p>
+        <Button
+          type="button"
+          data-ws-start-here-bot=""
+          size="sm"
+          className="self-start"
+          onClick={() => { void openBot(startHereBotReference(slug, name)); }}
+        >
+          {t('project:hub.startHere.bot.button')}
+        </Button>
+      </section>
+    );
+  }
   return (
     <section className="dev-ws-strip" data-ws-start-here="">
       <div className="dev-ws-head">
@@ -4636,7 +4686,7 @@ export function DevWorkshop(): ReactNode {
           this says what to do about an app nobody has started on, and the
           product decision put it at the top of the page. See
           StartHereBanner for the three conditions. */}
-      {startHere ? <StartHereBanner /> : null}
+      {startHere ? <StartHereBanner slug={slug} name={projectName} bot={!!(v.mine && v.mine.bot)} /> : null}
       {v.emptyNote && !building ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
