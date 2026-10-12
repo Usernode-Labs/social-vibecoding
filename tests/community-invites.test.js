@@ -270,15 +270,17 @@ test('the words: the landing card, the invite pane', () => {
   // #4779: people the link brought who have not got in yet sit between the
   // two facts; with nobody waiting, the line is as it was.
   const fiveDays = { expiresAt: '2026-10-02T12:00:00Z', maxUses: 25, uses: 1 };
-  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1 }, now), '1 of 25 used · 1 waiting · 5 days left');
-  assert.equal(pane.linkDetail({ ...fiveDays, pending: 0 }, now), '1 of 25 used · 5 days left');
+  // #4785, merged while this change was open: a limited link counts people
+  // who joined, so its first fact reads "N of M joined".
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1 }, now), '1 of 25 joined · 1 waiting · 5 days left');
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 0 }, now), '1 of 25 joined · 5 days left');
   // On a no-limit link the joined count is people who got in, not uses spent.
   assert.equal(pane.linkDetail({ ...forever, uses: 3, joined: 2, pending: 1 }, now), '2 joined · 1 waiting · no end date');
   // A link that no longer works says why in place of the days left.
-  assert.equal(pane.linkDetail({ ...fresh, uses: 2, ended: 'expired' }, now), '2 of 25 used · expired');
-  assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, ended: 'used_up' }, now), '1 of 1 used · ended');
-  assert.equal(pane.linkDetail({ ...fresh, uses: 4, ended: 'revoked' }, now), '4 of 25 used · turned off');
-  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1, ended: 'expired' }, now), '1 of 25 used · 1 waiting · expired');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 2, ended: 'expired' }, now), '2 of 25 joined · expired');
+  assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, ended: 'used_up' }, now), '1 of 1 joined · ended');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 4, ended: 'revoked' }, now), '4 of 25 joined · turned off');
+  assert.equal(pane.linkDetail({ ...fiveDays, pending: 1, ended: 'expired' }, now), '1 of 25 joined · 1 waiting · expired');
   assert.equal(message('agent:appContext.invite.detail.waiting', { count: 1 }), '1 waiting');
   assert.equal(message('agent:appContext.invite.detail.waiting', { count: 3 }), '3 waiting');
   assert.equal(message('agent:appContext.invite.detail.ended.expired'), 'expired');

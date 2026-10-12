@@ -303,8 +303,8 @@ test('#4779: a viewer whose only link ended gets a new one made on opening, and 
   const html = renderToHtml(createElement(api.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
   assert.match(html, /value="\/invite\/tok9"/, 'the new link is in the box, not the ended one');
   assert.match(html, /data-invite-ended="expired"/, 'the ended row says why it is ended');
-  assert.match(html, /0 of 25 used · 1 waiting · expired/,
-    'the ended row keeps its counts and its waiting people');
+  assert.match(html, /No one joined yet · 1 waiting · expired/,
+    'the ended row keeps its facts and its waiting people');
 });
 
 // ── the pane ─────────────────────────────────────────────────────────────
