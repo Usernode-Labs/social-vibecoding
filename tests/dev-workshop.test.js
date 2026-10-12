@@ -1629,6 +1629,54 @@ test('#2573: the banner presses the same Start a new change the hub\'s ⋯ does'
   assert.doesNotMatch(SHEET_TSX, /improve-row-new-session/, 'the menu no longer carries one');
 });
 
+// ── #4896: where Homeroom bot builds for the viewer, the card sends them to it ──
+//
+// Onboarding run, 12 Oct 2026: a newcomer reached their new project's page
+// at the end of the tour and met "Start working on this app. Nothing is open
+// and nothing has shipped yet. The first change is yours to start." over
+// Start a new change, which read like a developer tool.
+
+test('#4896: an unstarted project the bot builds for asks what to change, and its one button is Homeroom bot', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  AppView._ghIssuesMeta = { homeroomBot: { typicalMinutes: 8 } };
+  assert.equal(AppView._workshopView().mine.bot, true, 'the bot builds here for this viewer (AppView._botDoor)');
+  const html = workshopHtml(AppView);
+  assert.match(html, /<section class="dev-ws-strip" data-ws-start-here="bot"><div class="dev-ws-head"><span class="dev-ws-head-title">What do you want to change\?<\/span><\/div><p class="dev-ws-strip-text">Say it in your own words\. Homeroom bot makes the change for you\.<\/p><button[^>]*data-ws-start-here-bot=""[^>]*>Tell Homeroom bot what to change<\/button><\/section>/);
+  assert.match(html, /<button(?=[^>]*data-ws-start-here-bot="")[^>]*class="[^"]*bg-violet-600/, 'the accent: it is the one thing to do here');
+  assert.doesNotMatch(html, /Start working on this app|The first change is yours|data-ws-start-here-btn|>Start a new change</,
+    'not the developer\'s card, and no second button: building it yourself is the ⋯\'s Build it now');
+  // Same place on the hub, and the note under it still names the ⋯.
+  const order = ['data-ws-band', 'data-ws-start-here="bot"', 'data-ws-empty'].map((k) => html.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), JSON.stringify(order));
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order);
+  // Where the bot does not build (no door: it is off, paused here, or not
+  // this viewer's), the card is as it was, Start a new change and all.
+  AppView._ghIssuesMeta = {};
+  const without = workshopHtml(AppView);
+  assert.match(without, /data-ws-start-here=""[\s\S]*Start working on this app[\s\S]*data-ws-start-here-btn=""[^>]*>Start a new change</);
+  assert.doesNotMatch(without, /data-ws-start-here-bot|Tell Homeroom bot/);
+});
+
+test('#4896: the button opens the chat with Homeroom bot with this project attached, as Ask for changes attaches a change', async () => {
+  assert.match(WORKSHOP, /import \{ openBot \} from '\.\.\/\.\.\/messages\/store';/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => \{ void openBot\(startHereBotReference\(slug, name\)\); \}\}/);
+  assert.match(WORKSHOP, /if \(bot && !readOnly && slug\) \{/, 'never for a viewer who may not start a change');
+  const { startHereBotReference } = devCardApi();
+  const ref = plain(startHereBotReference('demo-app', 'Geneva hikes'));
+  assert.deepEqual(ref, { type: 'app', appSlug: 'demo-app', title: 'Geneva hikes' });
+  assert.equal(plain(startHereBotReference('demo-app', '')).title, null);
+  // A reference naming its project is attached on the bot chat's composer
+  // directly, the box asking "What should change?": no Share item dialog.
+  const fakeApi = new Proxy({ async openBotConversation() { return 77; } },
+    { get: (t, k) => (k in t ? t[k] : () => { throw new Error(`api.${String(k)} not stubbed`); }) });
+  const store = loadTsx('frontend/src/features/messages/store.ts', { stubs: { './api': fakeApi } });
+  assert.equal(store.stagedComplete(ref), true);
+  await store.openBot(ref);
+  assert.equal(store.takePendingShare(), undefined, 'no Share item dialog');
+  assert.deepEqual(plain(store.takePendingAttach(77)), { object: ref, placeholder: 'What should change?' });
+});
+
 test('"try taking this one next" names an open issue nobody is on', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -4445,7 +4493,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   assert.equal((WORKSHOP.match(/'project:boardEmpty\.press\./g) || []).length, 8, 'where the ⋯ is, what it holds, and whether "make one yourself" is said');
   assert.equal(message('project:boardEmpty.press.hub.plain.full'),
     'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
-  assert.match(WORKSHOP, /\{startHere \? <StartHereBanner \/> : null\}/);
+  assert.match(WORKSHOP, /\{startHere \? <StartHereBanner slug=\{slug\} name=\{projectName\} bot=\{!!\(v\.mine && v\.mine\.bot\)\} \/> : null\}/);
   assert.match(WORKSHOP, /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
 });
 
