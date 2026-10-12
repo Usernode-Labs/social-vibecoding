@@ -3540,6 +3540,9 @@ async function execInWorker(sessionId, {
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: mode === 'shots' ? shotsControlUrl() : PLATFORM_INTERNAL_URL,
+    // usernode-push rides out a platform restart only when asked to: every
+    // real turn asks, and a test or a stray run of the script tries once.
+    USERNODE_PUSH_RETRY: '1',
     ...(mode === 'shots' ? {
       SHOTS_RUN_ID: shotsRunId,
       SHOTS_BASE_ORIGIN: new URL(shotsOrigins.base).origin,

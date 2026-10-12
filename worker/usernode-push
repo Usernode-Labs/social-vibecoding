@@ -47,7 +47,18 @@ URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/push"
 # 429, and never on any other answer, nor on a failure the platform marks
 # permanent. The pauses, in seconds, between six tries come to about two
 # minutes; USERNODE_PUSH_BACKOFF overrides them (tests).
-BACKOFF="${USERNODE_PUSH_BACKOFF:-5 10 20 30 45}"
+#
+# The retry is opt-in. The platform sets USERNODE_PUSH_RETRY=1 on every turn
+# it runs in a worker (worker.js, the per-turn env), so a real push rides out
+# a restart. Anything else that runs this script, such as a test whose
+# platform is never there or a branch's own copy of a runner suite, tries
+# once, as before the retry existed, unless it names its own pauses.
+if [ "${USERNODE_PUSH_RETRY:-}" = "1" ]; then
+  DEFAULT_BACKOFF="5 10 20 30 45"
+else
+  DEFAULT_BACKOFF=""
+fi
+BACKOFF="${USERNODE_PUSH_BACKOFF:-$DEFAULT_BACKOFF}"
 
 attempt=1
 for pause in $BACKOFF ""; do
