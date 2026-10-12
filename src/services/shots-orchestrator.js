@@ -825,6 +825,9 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
     event.identityAttached = raw.identityAttached;
   }
+  // And whether the proxy sent that page load on to the same address with
+  // the persona's display token, as Homeroom's frame opens an app.
+  if (kind === 'document_request' && raw.identityRedirect === true) event.identityRedirect = true;
   // Why the shots proxy refused a destination outside the pair, by reason
   // only (worker/shots-boundary.js): never which destination.
   if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
