@@ -122,6 +122,12 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The member, read_only_admin and full_admin browsers are three different
+accounts. When a change needs somebody other than its persona to act first,
+such as a reply to the member's message or a vote on their change, take that
+step in another of those browsers as the brief's secondAccount says, on both
+addresses alike, then shoot in the browser screenBrowsers names.
+
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:
 add the query parameter named by previewAt.param, set to previewAt.at, to

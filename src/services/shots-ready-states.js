@@ -13,8 +13,9 @@
 // states of shots-demo-states.js, which only Homeroom's own copies get) and
 // where anything else must come from. A WARNING is added only for a declared
 // change whose own words name a state from NEEDS that no ready-made state
-// holds, and whose author gave no hints.setup: the steps the shots agent
-// takes through the UI on both copies are the author saying how it is made.
+// holds for its persona, and whose author gave no hints.setup: the steps the
+// shots agent takes through the UI on both copies are the author saying how
+// it is made.
 // Advisory, like shots-identities.personaWarnings: a declaration is never
 // refused for it.
 //
@@ -52,6 +53,8 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-standings-activities-v1', 'standings players with recorded point activities',
     ['member', 'read_only_admin', 'full_admin']],
+  ['shots-demo-member-bot-deciders-v1', 'Homeroom bot\'s "needs a person" message naming who decides on a project',
+    ['member']],
   ['shots-demo-member-first-version-thanks-v1', 'an answered first-version plan with Homeroom bot\'s thanks under it',
     ['member']],
   ['shots-demo-member-bot-close-offer-v1', 'your chat with Homeroom bot, ending in its offer to close a request',
@@ -60,6 +63,14 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
+  ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live, with its row in your bell',
+    ['member']],
+  ['shots-demo-member-bot-built-proposal-v1', 'a change Homeroom bot built from your request, up for a vote',
+    ['member', 'read_only_admin', 'full_admin']],
+  ['shots-demo-member-checks-part-way-v1', 'a change of yours whose checks are part-way through',
+    ['member', 'read_only_admin', 'full_admin']],
+  ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (a red credits pill)',
+    ['full_admin']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -88,6 +99,33 @@ const NEEDS = Object.freeze([
     needs: 'an agent run in progress',
     test: /\b(?:agent (?:run|turn)s? (?:in progress|running|under ?way)|while (?:the |an )?agent (?:is )?(?:runs|running|working)|retry stop)\b/i,
     states: ['shots-demo-member-agent-runs-v1'],
+  },
+  // The changes that ended with no shots from 9 to 12 October 2026, in their
+  // own words: PR 4825, 4736 and 4622, 4763, 4733, 4829.
+  {
+    needs: 'a change you voted on that went live',
+    test: /\b(?:change|proposal)s? (?:you|they|the member|people|someone) voted (?:on|for) (?:is|goes|went|has gone|going) live\b/i,
+    states: ['shots-demo-member-voted-change-live-v1'],
+  },
+  {
+    needs: 'a change Homeroom bot built from a request',
+    test: /\b(?:homeroom[_ ]?)?bot (?:built|made) (?:it |a change |the change )?(?:from|for) (?:your|the member's|their|a member's|my|a) (?:own )?request\b|\b(?:change|proposal)s? (?:built|made) by (?:the )?homeroom[_ ]?bot\b/i,
+    states: ['shots-demo-member-bot-built-proposal-v1'],
+  },
+  {
+    needs: 'a Homeroom bot hand-off that needs a person to decide',
+    test: /\bneeds? a (?:person|human|decision)\b|\bwho decides\b/i,
+    states: ['shots-demo-member-bot-deciders-v1'],
+  },
+  {
+    needs: 'checks part-way through',
+    test: /\bchecks? (?:are |is )?(?:still )?(?:mid[- ]?run|part[- ]?way|half[- ]?way|part done|half done)\b|\b(?:mid[- ]?run|part[- ]?way through)\b|\bwhile (?:a |the |its )?(?:change's |proposal's )?(?:checks|tests) (?:run|are running)\b/i,
+    states: ['shots-demo-member-checks-part-way-v1'],
+  },
+  {
+    needs: 'a weekly allowance nearly spent',
+    test: /\b(?:allowance|credits?|budget)(?: \w+){0,2} (?:is |are )?(?:almost|nearly|mostly) (?:spent|used up|used|gone)\b|\bcredits? pill\b[^.]{0,30}\bred\b|\blow[- ](?:credits?|balance|allowance)\b/i,
+    states: ['shots-demo-full-admin-allowance-low-v1'],
   },
   { needs: 'a friend request', test: /\bfriend requests?\b/i, states: ['shots-demo-member-friend-request-v1'] },
   { needs: 'a remix', test: /\b(?:remix(?:ed|es)?|suggest (?:this|it) back)\b/i, states: ['shots-demo-member-remix-v1'] },
@@ -147,7 +185,7 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
   const stories = Array.isArray(intent?.stories) ? intent.stories.filter((s) => s && typeof s === 'object') : [];
   if (intent?.impact === 'none' || !stories.length) return null;
   const available = selfApp ? READY_STATES : [];
-  const held = new Set(available.map((state) => state.id));
+  const personasOf = new Map(available.map((state) => [state.id, state.personas]));
   const seeds = selfApp ? SEEDS.self : SEEDS.child;
   const lacking = new Map();
   for (const story of stories) {
@@ -155,7 +193,11 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
     const words = wordsOf(story);
     for (const need of NEEDS) {
       if ((need.skipPersonas || []).includes(story.persona)) continue;
-      if (!need.live && (setup || need.states.some((id) => held.has(id)))) continue;
+      // A ready-made state helps only a change shot as somebody it is for:
+      // the nearly spent allowance is the full admin's, not the member's.
+      const heldForThem = need.states.some((id) => personasOf.has(id)
+        && (!story.persona || personasOf.get(id).includes(story.persona)));
+      if (!need.live && (setup || heldForThem)) continue;
       if (!need.test.test(words)) continue;
       if (!lacking.has(need)) lacking.set(need, []);
       lacking.get(need).push(String(story.id || 'A declared change'));
@@ -171,6 +213,13 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
         + `${selfApp ? 'a ready-made state that already holds it (see availableStates)' : 'a reply the copies already hold'}, `
         + `or ${seedIt}`;
     }
+    const holders = [...new Set(need.states.filter((id) => personasOf.has(id)).flatMap((id) => personasOf.get(id)))];
+    if (holders.length) {
+      const who = holders.join(' or ');
+      return `${lead}the ready-made state that holds it on these copies is for ${who} (see availableStates). `
+        + `Declare the change for ${holders.length > 1 ? 'one of them' : who}, or add hints.setup with the steps `
+        + `that make it through the UI, which the shots agent takes on both copies, or ${seedIt}`;
+    }
     return `${lead}${selfApp ? 'no ready-made state on these copies holds it (see availableStates)'
       : 'this app\'s copies have no ready-made states'}. Add hints.setup with the steps that make it through `
       + `the UI, which the shots agent takes on both copies, or ${seedIt}`;
@@ -181,6 +230,8 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
       + 'availableStates, on both sides' : `This app's before & after copies hold what ${seeds} writes, and no `
       + 'ready-made states'}. Anything else a change needs comes from hints.setup steps the shots agent takes `
       + `through the UI on both copies, or from ${seeds}; a seed this proposal adds reaches only the after copy. `
+      + 'Each signed-in persona is its own account, so a step somebody else takes (a reply to the member\'s '
+      + 'message, a vote on their change) can be one of those steps, in another persona\'s browser. '
       + `Nothing on them answers with a model${selfApp ? ', the Homeroom bot included' : ''}: they have no model key.`,
     warnings,
   };
