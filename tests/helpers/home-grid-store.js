@@ -51,6 +51,7 @@ const INITIAL_GRID = {
   emptyQuery: null,
   notice: null,
   create: null,
+  editing: false,
 };
 
 /** Mirrors INITIAL_CHROME in frontend/src/features/home/chrome-store.ts. */

@@ -527,6 +527,55 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await invites.preview(pool, made.link.token)).project, undefined, 'a dead link shows nothing');
     });
 
+    await t.test('#4780: the list says who came in through each link, and keeps the ones that ended for 30 days', async () => {
+      const arena = await app('arena');
+      // One person with access (joined) and one still waiting to get in, on
+      // a fresh link: the counts read off the real redemptions. A redemption
+      // that waits is one the link could not grant at the time (a private
+      // member without the phone it needs, say): rin's is inserted as such,
+      // its use spent, the way an earlier link's would have left it.
+      await pool.query(`INSERT INTO users (id, username, has_platform_access) VALUES (31, 'pia', TRUE), (32, 'rin', FALSE)`);
+      const made = await invites.createInvite(pool, { app: arena, user: ADA, maxUses: 25 });
+      assert.equal((await invites.redeem(pool, { token: made.link.token, user: as(31, 'pia', true) })).status, 'joined');
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 32, 'queued')", [made.link.id]);
+      await pool.query('UPDATE community_invites SET uses = 2 WHERE id = $1', [made.link.id]);
+      const listed = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([listed.status, listed.joined, listed.waiting], ['live', 1, 1]);
+      // A cancelled redemption counts as neither joined nor waiting.
+      await pool.query(
+        "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, 5, 'cancelled')", [made.link.id]);
+      const withCancelled = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([withCancelled.joined, withCancelled.waiting], [1, 1], 'cancelled counts as neither');
+
+      // Turned off: still listed, as revoked, with nobody waiting (its queued
+      // redemptions were cancelled with it).
+      await invites.revokeInvite(pool, { inviteId: made.link.id, user: ADA });
+      const off = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === made.link.id);
+      assert.deepEqual([off.status, off.joined, off.waiting], ['revoked', 1, 0]);
+
+      // Expired, and past the keep window: gone from the list. Recent: kept.
+      const old = await invites.createInvite(pool, { app: arena, user: ADA });
+      await pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '31 days' WHERE id = $1", [old.link.id]);
+      let ids = (await invites.listInvites(pool, { app: arena, user: ADA })).links.map((l) => l.id);
+      assert.equal(ids.includes(old.link.id), false, 'an ended link from more than 30 days back is not listed');
+      await pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 day' WHERE id = $1", [old.link.id]);
+      const recent = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === old.link.id);
+      assert.equal(recent.status, 'expired');
+
+      // Used up, ended within the window (its latest redemption is recent).
+      const full = await invites.createInvite(pool, { app: arena, user: ADA, maxUses: 1 });
+      assert.equal((await invites.redeem(pool, { token: full.link.token, user: as(4, 'dee', true) })).status, 'joined');
+      const spent = (await invites.listInvites(pool, { app: arena, user: ADA })).links.find((l) => l.id === full.link.id);
+      assert.deepEqual([spent.status, spent.joined, spent.waiting], ['used_up', 1, 0]);
+
+      // Live links sort before ended ones.
+      const fresh = (await invites.createInvite(pool, { app: arena, user: ADA })).link;
+      ids = (await invites.listInvites(pool, { app: arena, user: ADA })).links.map((l) => l.id);
+      assert.ok(ids.indexOf(fresh.id) < ids.indexOf(recent.id), 'live before ended');
+      assert.ok(ids.indexOf(fresh.id) < ids.indexOf(full.link.id), 'live before used up');
+    });
+
     await t.test('WP-D: what joining means, said from the project\'s real rule', async () => {
       const governance = require('../src/services/governance');
       // The default rule is said for the vote's own headcount

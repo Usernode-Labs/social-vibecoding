@@ -1673,19 +1673,31 @@
   },
   "appContext.invite.detail.joined_one": {
     "text": "{{count}} joined",
-    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people got in through this link, which has no limit of people. People it brought who have not got in yet are said by the waiting fact, not counted here. {{count}} is that number."
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu: how many people actually got in through this link. {{count}} is that number."
   },
   "appContext.invite.detail.joined_other": {
     "text": "{{count}} joined",
-    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people got in through this link, which has no limit of people. People it brought who have not got in yet are said by the waiting fact, not counted here. {{count}} is that number."
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu: how many people actually got in through this link. {{count}} is that number."
   },
-  "appContext.invite.detail.nobodyYet": {
-    "text": "No one joined yet",
-    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: nobody has joined through the link yet. Sentence case because it starts the line."
+  "appContext.invite.detail.used": {
+    "text": "{{used}} of {{max}} used",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many of the link's uses are taken. {{used}} is how many people followed it (each use is spent whether they got in or are still waiting), {{max}} how many it allows."
   },
-  "appContext.invite.detail.joinedOf": {
-    "text": "{{joined}} of {{max}} joined",
-    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: how many people have joined through the link. {{joined}} is how many people joined through it, {{max}} how many it allows."
+  "appContext.invite.detail.anyone": {
+    "text": "for anyone",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link has no limit of people. Lower case; it follows the first fact. How many came in through it is the row's second line."
+  },
+  "appContext.invite.detail.expired": {
+    "text": "expired",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link's end date has passed, so it no longer works. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.usedUp": {
+    "text": "all used",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: every use of the link is taken, so it no longer works. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.turnedOff": {
+    "text": "turned off",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: someone turned the link off, or its maker can no longer grant what it grants, so it no longer works. Lower case; it follows the first fact."
   },
   "appContext.invite.detail.noEnd": {
     "text": "no end date",
@@ -1832,12 +1844,8 @@
     "description": "Small link beside the heading of the invite links list in the Invite pane of the app menu: a verb, unfolds the two drop-downs that set how long a new link works and for how many people."
   },
   "appContext.invite.liveLinks": {
-    "text": "Live links",
-    "description": "Small heading in the Invite pane of the app menu over the list of every invite link that still works, shown to someone who manages the project. Used when no link in the list has ended; one that has makes the heading \"All links\"."
-  },
-  "appContext.invite.allLinks": {
     "text": "All links",
-    "description": "Small heading in the Invite pane of the app menu over the list of every invite link, shown to someone who manages the project when a link in the list has ended (expired, used up or turned off); the ended ones sit under the live ones."
+    "description": "Small heading in the Invite pane of the app menu over the list of every invite link, the ones that still work first and the ones that ended in the last 30 days after them, shown to someone who manages the project."
   },
   "appContext.invite.yourLinks": {
     "text": "Your links",
@@ -1846,6 +1854,22 @@
   "appContext.invite.madeBy": {
     "text": "by @{{username}}",
     "description": "Small line on a row of the list of invite links in the Invite pane of the app menu: who made the link. {{username}} is that person's username; keep the @ before it."
+  },
+  "appContext.invite.status.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, beside the joined count: how many people followed this link and are still waiting to get in. {{count}} is that number."
+  },
+  "appContext.invite.status.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, beside the joined count: how many people followed this link and are still waiting to get in. {{count}} is that number."
+  },
+  "appContext.invite.status.nobody": {
+    "text": "No one has joined yet",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu when nobody has used the link at all: no one has joined and no one is waiting."
+  },
+  "appContext.invite.status.pair": {
+    "text": "{{joined}} · {{waiting}}",
+    "description": "The second line on a row of the list of invite links in the Invite pane of the app menu, when people have both joined through the link and are waiting: the joined count, already worded, for example \"2 joined\", then the waiting count, for example \"1 waiting\". Keep the middle dot between them, or use the separator this language puts between two short facts."
   },
   "appContext.invite.turnOff": {
     "text": "Turn off",

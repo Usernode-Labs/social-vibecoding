@@ -257,6 +257,17 @@ const EVENT_TYPES = Object.freeze({
   LIVE_BUILD_STREAM: 'live_build_stream',
   LIVE_BUILD_OPENED: 'live_build_opened',
   LIVE_BUILD_WATCHED: 'live_build_watched',
+  // Somebody was refused a session because a session cap was full
+  // (services/session-lifecycle.js recordCapacityRefusal): { cap: 'global'
+  // | 'user', path: where they asked }. The infra topic's "Turned away at a
+  // session cap" figure counts these (services/topic-figures.js).
+  SESSION_CAPACITY_REFUSED: 'session_capacity_refused',
+  // An app's merges paused by a red main, and the pause ending
+  // (services/main-watch.js notePauseChange): { sha, confirming } and
+  // { sha, by: 'green' | 'flakes' | 'admin' }. The proposal-pipeline
+  // topic's "Merges paused by a red main" figure pairs them.
+  MAIN_PAUSED: 'main_paused',
+  MAIN_RESUMED: 'main_resumed',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

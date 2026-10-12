@@ -39,12 +39,12 @@ export type InviteLink = {
   expiresAt: string | null;
   createdBy: string | null;
   mine: boolean;
-  /** People the link brought who have not got in yet (queued redemptions). */
-  pending: number;
-  /** People the link joined (redemptions applied). */
+  /** 'live', or how the link ended (the same names as deadReason). */
+  status: 'live' | 'expired' | 'used_up' | 'revoked';
+  /** People this link actually let in. */
   joined: number;
-  /** Why the link no longer works, or null while it does. */
-  ended: 'expired' | 'used_up' | 'revoked' | null;
+  /** People who followed it and are still waiting to get in. */
+  waiting: number;
 };
 
 export type InviteState = {
@@ -82,14 +82,17 @@ export function inviteLinksUrl(slug: string): string {
  *
  * The new link goes on the front of the list the first read returned rather
  * than costing a second read: POST answers with the link exactly as GET lists
- * it (services/community-invites.js `serializeLink`), and GET lists newest
- * first. One round trip fewer is the difference between the sheet waiting for
- * its link and going up without it.
+ * it (services/community-invites.js `serializeLink`, live with no counts yet),
+ * and GET lists the live ones first, newest first. One round trip fewer is
+ * the difference between the sheet waiting for its link and going up without
+ * it.
  */
 export async function readInviteState(slug: string, makeIfNone: boolean): Promise<InviteState> {
   const base = inviteLinksUrl(slug);
   const state: InviteState = await inviteApi(base);
-  if (!makeIfNone || !state.canCreate || state.links.some((l) => l.mine && !l.ended)) return state;
+  // An ended link of their own (it stays on the list for 30 days) does not
+  // stand for a working one: the first link is still made.
+  if (!makeIfNone || !state.canCreate || state.links.some((l) => l.mine && l.status === 'live')) return state;
   const made = await inviteApi(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   if (made?.link) return { ...state, links: [made.link as InviteLink, ...state.links] };
   return inviteApi(base);

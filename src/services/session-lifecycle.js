@@ -360,6 +360,49 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
 // session of theirs is in the middle of a turn.
 const USER_SLOTS_BUSY = 'Your other sessions are all busy finishing turns. Try again in a moment.';
 
+// What anybody is told when the platform-wide cap is full and nothing idle
+// could be paused to make room.
+const PLATFORM_AT_CAPACITY = 'Platform is at capacity right now. Try again in a few minutes.';
+
+/**
+ * Somebody was turned away by a session cap: `cap` 'global' (the
+ * platform-wide one) or 'user' (their own), `path` where they asked. One
+ * event each (events.SESSION_CAPACITY_REFUSED), which the infra topic's
+ * "Turned away at a session cap" figure counts: the admins' alert samples
+ * the count every few minutes, so it shows how often a cap was full, not
+ * how many people met it. Fire-and-forget, never throws.
+ */
+function recordCapacityRefusal(pool, { cap, path, userId = null, appId = null } = {}) {
+  const events = require('./events');
+  log.info('session-lifecycle', 'Turned away at a session cap', { cap, path, userId });
+  return events.record(pool, {
+    type: events.EVENT_TYPES.SESSION_CAPACITY_REFUSED, userId, appId, metadata: { cap, path },
+  });
+}
+
+/**
+ * The platform-wide gate every start, resume and reopen passes: under
+ * config.maxGlobalSessions (session-caps.countGlobalSessions), or at it with
+ * an idle session paused to make room (freeGlobalSlot). `discount` is a slot
+ * the request gives back (a replaced session). Answers { ok } and, when not,
+ * records the refusal; the caller answers 429 with PLATFORM_AT_CAPACITY.
+ */
+async function claimGlobalSlot({
+  pool, config, path, userId = null, appId = null, excludeSessionId = null, discount = 0,
+}) {
+  const { countGlobalSessions } = require('./session-caps');
+  const cap = config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100;
+  if ((await countGlobalSessions(pool)) - discount < cap) return { ok: true };
+  // Through the exports, as the routes called it before this gate existed,
+  // so a test's stand-in applies here too.
+  const { freed } = await module.exports.freeGlobalSlot({
+    pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId,
+  });
+  if (freed) return { ok: true };
+  await recordCapacityRefusal(pool, { cap: 'global', path, userId, appId });
+  return { ok: false };
+}
+
 // Tear down a session's staging preview (container + cloned DB + Caddy
 // route) WITHOUT changing the session's status. This is the staging GC
 // path — pausing no longer does it, so a separate, longer-horizon
@@ -804,6 +847,9 @@ module.exports = {
   freeGlobalSlot,
   freeUserSlot,
   USER_SLOTS_BUSY,
+  PLATFORM_AT_CAPACITY,
+  recordCapacityRefusal,
+  claimGlobalSlot,
   teardownStagingForSession,
   archiveSession,
   finalizeArchivedSession,
