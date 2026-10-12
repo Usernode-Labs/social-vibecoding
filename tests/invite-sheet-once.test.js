@@ -211,6 +211,7 @@ test('the hub and the Share dialog open it with one call, not open() then a pane
 const LINK = {
   id: 7, token: 'tok', path: '/invite/tok', maxUses: 25, uses: 0,
   expiresAt: '2026-10-12T12:00:00Z', createdAt: '2026-10-05T12:00:00Z', createdBy: 'maya', mine: true, note: null,
+  status: 'live', joined: 0, waiting: 0,
 };
 const STATE = {
   links: [],
