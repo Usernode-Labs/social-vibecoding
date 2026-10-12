@@ -306,6 +306,34 @@ const DEMO_WEEKS = Array.from({ length: journey.TREND_WEEKS }, (_, i) => {
   return { start, end: new Date(start.getTime() + journey.WEEK_MS), label: start.toISOString().slice(0, 10) };
 });
 
+// Where the time to running went (#4895), for the projects that ran since
+// creation was timed: the record services/app-creation-timing.js writes,
+// read back the way journey.creationTiming reads a real one.
+const demoTimed = (totalMs, stages, build, pod) => journey.creationTiming({
+  outcome: 'running', kind: 'new_repo', totalMs, stages: { lock: 10, manifest: 300, checkout: 250, card: 20, ...stages }, build, pod,
+});
+const BUILDKIT_STEPS = [
+  { name: 'exporting cache to registry', ms: 19000 },
+  { name: '[css 3/7] RUN npm ci --include=dev', ms: 16000 },
+  { name: 'exporting to image', ms: 11000 },
+];
+const DEMO_TIMING = {
+  pantry: demoTimed(95000, { database: 1100, repository: 4300, build: 70000, deploy: 800, rollout: 18300 },
+    { engine: 'kpack', phases: [{ name: 'build', ms: 31000 }, { name: 'export', ms: 17000 }, { name: 'restore', ms: 9000 }] },
+    { scheduleMs: 1000, startMs: 12000, readyMs: 5000 }),
+  'run-club': demoTimed(118000, { database: 900, repository: 5200, build: 92000, deploy: 700, rollout: 18600 },
+    { engine: 'kpack', phases: [{ name: 'build', ms: 44000 }, { name: 'export', ms: 21000 }, { name: 'restore', ms: 12000 }] },
+    { scheduleMs: 1000, startMs: 13000, readyMs: 4000 }),
+  'reading-pile': demoTimed(90000, { database: 1000, repository: 4100, build: 66000, deploy: 600, rollout: 17800 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 12000, readyMs: 4000 }),
+  'bird-log': demoTimed(94000, { database: 1200, repository: 4600, build: 69000, deploy: 700, rollout: 18100 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 13000, readyMs: 4000 }),
+  tally: demoTimed(101000, { database: 1000, repository: 6900, build: 73000, deploy: 800, rollout: 19500 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 2000, startMs: 13000, readyMs: 4000 }),
+  'book-swap': demoTimed(87000, { database: 900, repository: 3900, build: 64000, deploy: 600, rollout: 17200 },
+    { engine: 'buildkit', steps: BUILDKIT_STEPS }, { scheduleMs: 1000, startMs: 12000, readyMs: 4000 }),
+};
+
 // [person, slug, project, created at, seconds to running, first version,
 // preview opened, requested change live]; null is not reached.
 const DEMO_PROJECTS = [
@@ -333,6 +361,7 @@ const DEMO_PROJECTS = [
       preview: ev(preview),
       change_live: ev(changeLive),
     },
+    timing: DEMO_TIMING[slug] || null,
   };
 });
 
@@ -358,10 +387,12 @@ function creation(day, all = false) {
       steps: journey.creationSteps(projects.filter((p) => inDemoSpan(p.createdAt, w)))
         .map((s) => ({ key: s.key, reached: s.reached, medianSeconds: s.medianSeconds })),
     })),
+    timing: { from: DEMO_RECORDED_FROM, ...journey.creationTimingSummary(inWeek) },
     examples: [...inWeek].reverse().slice(0, 6).map((p) => ({
       userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: p.createdAt,
       steps: journey.CREATION_STEPS.filter((key) => key !== 'created')
         .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+      timing: p.timing,
     })),
   };
 }

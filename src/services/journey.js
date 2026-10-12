@@ -19,6 +19,7 @@ const { NAV_SCREENS } = require('./ui-telemetry');
 const changePerson = require('./change-person');
 const { loadOnboarding } = require('./topochain/challenge-onboarding');
 const { fetchCurrentSeason } = require('../routes/home-panels');
+const { STAGES: TIMED_STAGES } = require('./app-creation-timing');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -1520,6 +1521,13 @@ async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
 // step is counted over the projects created since its first record, says
 // how many that is (`of`), and is "not recorded" when no project in the
 // window is that recent. Never a zero for something nobody recorded.
+//
+// Under Running, where that time went (#4895): each project's first
+// creation attempt that ran has an `app_creation_timed` record
+// (services/app-creation-timing.js), its stages each on their own clock.
+// The reading is per project, over the ones made from a starter into a new
+// repository (an import builds whatever it imported), and only from the day
+// creation was first timed.
 
 const CREATION_STEPS = Object.freeze(['created', 'running', 'first_version', 'preview', 'change_live']);
 const CREATION_TARGETS = Object.freeze({ running: 300, first_version: 120, change_live: 600 });
@@ -1546,9 +1554,16 @@ const CREATION_PATH_SQL = `WITH made AS (
     SELECT e.app_id, e.created_at, e.metadata->'requesterIds' AS requester_ids
       FROM events e
      WHERE e.event_type = 'change_live' AND e.app_id IN (SELECT m.id FROM made m)
+  ), timed AS (
+    SELECT DISTINCT ON (e.app_id) e.app_id, e.metadata
+      FROM events e
+     WHERE e.event_type = 'app_creation_timed' AND e.metadata->>'outcome' = 'running'
+       AND e.app_id IN (SELECT m.id FROM made m)
+     ORDER BY e.app_id, e.created_at, e.id
   )
   SELECT m.id AS app_id, m.slug, m.name, m.created_at, m.user_id, m.username,
          m.first_running_at AS running_at,
+         (SELECT t.metadata FROM timed t WHERE t.app_id = m.id) AS timing,
          (SELECT MIN(COALESCE(cs.promoted_at, cs.created_at))
             FROM homeroom_bot_first_versions f
             JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
@@ -1564,7 +1579,8 @@ const CREATION_PATH_SQL = `WITH made AS (
 const CREATION_RECORDED_SQL = `SELECT
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'app_running') AS running,
     (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'preview_opened') AS preview,
-    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'change_live') AS change_live`;
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'change_live') AS change_live,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.event_type = 'app_creation_timed') AS timed`;
 
 function median(values) {
   if (!values.length) return null;
@@ -1596,6 +1612,48 @@ function creationProject(row, recordedFrom) {
   return {
     appId: Number(row.app_id), slug: row.slug, project: row.name,
     userId: Number(row.user_id), name: row.username, createdAt: row.created_at, steps,
+    timing: creationTiming(row.timing),
+  };
+}
+
+// One project's creation timing, as the page shows it: its stages in
+// pipeline order, its total, the build's engine and slowest steps, and the
+// Pod's start. Only the known, well-formed fields of the stored record.
+const POD_STEPS = Object.freeze(['scheduleMs', 'startMs', 'readyMs']);
+function creationTiming(metadata) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  const stages = {};
+  for (const key of TIMED_STAGES) {
+    const v = num(metadata.stages && metadata.stages[key]);
+    if (v != null) stages[key] = v;
+  }
+  const out = { kind: metadata.kind === 'new_repo' ? 'new_repo' : 'existing_repo', totalMs: num(metadata.totalMs), stages };
+  const b = metadata.build;
+  if (b && typeof b.engine === 'string') {
+    const steps = (Array.isArray(b.steps) && b.steps.length ? b.steps : (Array.isArray(b.phases) ? b.phases : []))
+      .filter((st) => st && typeof st.name === 'string' && num(st.ms) != null)
+      .slice(0, 3).map((st) => ({ name: st.name.slice(0, 60), ms: num(st.ms) }));
+    out.build = { engine: b.engine.slice(0, 16), ...(b.reused ? { reused: true } : {}), steps };
+  }
+  if (metadata.pod && POD_STEPS.every((k) => num(metadata.pod[k]) != null)) {
+    out.pod = Object.fromEntries(POD_STEPS.map((k) => [k, num(metadata.pod[k])]));
+  }
+  return out;
+}
+
+/** Where the time to running went, per project: each stage's median, over projects made from a starter. */
+function creationTimingSummary(projects) {
+  const timed = projects.map((p) => p.timing).filter((t) => t && t.kind === 'new_repo');
+  const of = (values) => values.filter((v) => v != null);
+  const withPod = timed.filter((t) => t.pod);
+  return {
+    of: timed.length,
+    totalMs: median(of(timed.map((t) => t.totalMs))),
+    stages: TIMED_STAGES
+      .map((key) => ({ key, medianMs: median(of(timed.map((t) => t.stages[key]))) }))
+      .filter((st) => st.medianMs != null),
+    pod: withPod.length ? Object.fromEntries(POD_STEPS.map((k) => [k, median(withPod.map((t) => t.pod[k]))])) : null,
   };
 }
 
@@ -1673,10 +1731,12 @@ async function creationPath(pool, { week, now = new Date(), leftOutIds = [], mem
     targets: CREATION_TARGETS,
     recordedFrom: { running: iso(recordedFrom.running), preview: iso(recordedFrom.preview), change_live: iso(recordedFrom.change_live) },
     weeks,
+    timing: { from: iso(r.timed), ...creationTimingSummary(inWeek) },
     examples: [...inWeek].reverse().slice(0, CREATION_EXAMPLES).map((p) => ({
       userId: p.userId, name: p.name, slug: p.slug, project: p.project, createdAt: iso(p.createdAt),
       steps: CREATION_STEPS.filter((key) => key !== 'created')
         .map((key) => ({ key, recorded: p.steps[key].counted, seconds: p.steps[key].seconds })),
+      timing: p.timing,
     })),
   };
 }
@@ -2235,6 +2295,8 @@ module.exports = {
   creationPath,
   creationProject,
   creationSteps,
+  creationTiming,
+  creationTimingSummary,
   pairReading,
   pairs,
   cohorts,

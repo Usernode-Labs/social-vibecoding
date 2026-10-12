@@ -433,6 +433,64 @@ for (const [name, listPods, expected] of [
   });
 }
 
+// #4895: how the new Pod's start was spent, read off its own status, and the
+// moment everything is applied, for app-creator's 'deploy' and 'rollout'.
+const TIMED_POD = {
+  metadata: { creationTimestamp: '2026-10-12T15:32:10Z' },
+  spec: { nodeName: 'talos-hel1-node', containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+  status: {
+    conditions: [
+      { type: 'PodScheduled', status: 'True', lastTransitionTime: '2026-10-12T15:32:11Z' },
+      { type: 'Ready', status: 'True', lastTransitionTime: '2026-10-12T15:32:19Z' },
+    ],
+    containerStatuses: [{ name: 'app', restartCount: 0, state: { running: { startedAt: '2026-10-12T15:32:16Z' } } }],
+  },
+};
+
+test('podStartTimeline: scheduled, pulled and started, booted to Ready', () => {
+  assert.deepEqual(kubernetes.podStartTimeline(TIMED_POD), { scheduleMs: 1000, startMs: 5000, readyMs: 3000 });
+  assert.equal(kubernetes.podStartTimeline(null), null);
+  const restarted = structuredClone(TIMED_POD);
+  restarted.status.containerStatuses[0].restartCount = 1;
+  assert.equal(kubernetes.podStartTimeline(restarted), null, 'a restart is not the first start');
+  const waiting = structuredClone(TIMED_POD);
+  waiting.status.containerStatuses[0].state = { waiting: { reason: 'ContainerCreating' } };
+  assert.equal(kubernetes.podStartTimeline(waiting), null);
+});
+
+test('deploy says when everything is applied, then returns the Pod\'s start timeline', async () => {
+  let deployment;
+  const order = [];
+  const missing = async () => { throw notFound(); };
+  const record = async ({ body }) => body;
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing, createNamespacedSecret: record,
+      readNamespacedService: missing, createNamespacedService: record,
+      listNamespacedPod: async () => ({ items: [TIMED_POD] }),
+    },
+    apps: {
+      readNamespacedDeployment: async () => {
+        if (!deployment) throw notFound();
+        order.push('rollout read');
+        return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+          status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+    },
+    networking: { readNamespacedIngress: missing, createNamespacedIngress: async ({ body }) => { order.push('ingress'); return body; } },
+  });
+  const result = await kubernetes.deployApplication(config(), {
+    app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    onRollout: () => { order.push('applied'); throw new Error('an observer cannot fail the deploy'); },
+  });
+  assert.deepEqual(order.slice(0, 2), ['ingress', 'applied']);
+  assert.ok(order.indexOf('applied') < order.lastIndexOf('rollout read'));
+  assert.equal(result.node, 'talos-hel1-node');
+  assert.deepEqual(result.podTimeline, { scheduleMs: 1000, startMs: 5000, readyMs: 3000 });
+});
+
 test('the staging deploy log names the node the preview was scheduled on', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/staging.js'), 'utf8');
   const call = src.slice(src.indexOf("log.info('staging', 'Staging deployed'"));
