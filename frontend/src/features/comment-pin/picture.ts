@@ -30,19 +30,29 @@
  * every pin is drawn on its own, and the mode's layer never is. The layout
  * helpers are pure and exported for tests.
  *
- * A picture can also come out with part of the page missing: the sticky and
- * fixed parts (the header, the rail, the section column, the place bar)
- * survive, and the in-flow content under them does not (#4773). SnapDOM
- * lifts the sticky parts out of the page on their own path; against the
- * built shell the loss did not reproduce, scrolled or not, so the cause is
- * read as timing, a reused capture cache or a draw taken while an island was
- * re-rendering. `takeBase` therefore reads the element under the pin before
- * it draws, and when that element's rectangle in the picture is one flat
- * colour while the live element has words, it takes one more picture two
- * animation frames later with the cache off, and uses that whatever it
- * shows. One retake, and only for a pin on something with words: a page
- * that really draws flat never loops, and a pin on the running app's frame
- * or on empty background never asks for one.
+ * A picture used to come out with part of the page missing: the sticky and
+ * fixed parts (the header, the rail, the section column, the tab bar)
+ * survived, and the in-flow content under them did not (#4773). The cause
+ * was the overlays the picture leaves out (PAGE_EXCLUDES, below), drawn
+ * through SnapDOM's `hide` mode: it stands a plain block of the element's
+ * size in its place, and that block keeps neither `position: fixed` nor
+ * `absolute`. The Homeroom menu's dim (`#apps-switcher-overlay`) is always
+ * mounted, transparent, `fixed inset-0`, so every picture carried a
+ * screen-tall block in the page's flow, and in the bounded shell (the
+ * Homeroom app, a computer) it pushed the whole screen out of the body.
+ * Reproduced in WebKit with `?un-native-webview=1`, 12 Oct 2026: Home,
+ * Settings and Discover all drew header and tab bar only. Those overlays are
+ * now cut out (`filter`, `filterMode: 'remove'`): they are out of the
+ * flow, so cutting one out moves nothing. The comment layer's host and the
+ * frames keep `hide`, which holds their place.
+ *
+ * `takeBase` still reads the element under the pin before it draws, and
+ * when that element's rectangle in the picture is one flat colour while the
+ * live element has words, it takes one more picture two animation frames
+ * later with the cache off, and uses that whatever it shows. One retake,
+ * and only for a pin on something with words: a page that really draws flat
+ * never loops, and a pin on the running app's frame or on empty background
+ * never asks for one.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -165,6 +175,32 @@ export function toScreen(p: Point, frame: { x: number; y: number; scale: number 
 export function toPage(p: Point, frame: { x: number; y: number; scale: number }): Point {
   const s = frame.scale || 1;
   return { x: (p.x - frame.x) / s, y: (p.y - frame.y) / s };
+}
+
+/**
+ * A picture drawn to cover a box, as `object-fit: cover` would, slid so the
+ * point that matters (`focus`, as fractions of the picture) is as near the
+ * box's middle as the picture's edges allow, rather than always showing its
+ * top-left corner. Returns the drawn size and its top-left corner in the
+ * box; a pin goes at `x + pin.x * width`, `y + pin.y * height`. A phone's
+ * picture in a wide preview shows a third of its height at most, so a pin
+ * placed as a fraction of the box instead landed on another part of the
+ * page entirely.
+ */
+export function coverCrop(box: Size, picture: Size, focus: Point): Rect {
+  const pw = Math.max(1, picture.width);
+  const ph = Math.max(1, picture.height);
+  const s = Math.max(box.width / pw, box.height / ph);
+  const width = pw * s;
+  const height = ph * s;
+  const fx = Number.isFinite(focus?.x) ? focus.x : 0.5;
+  const fy = Number.isFinite(focus?.y) ? focus.y : 0.5;
+  return {
+    x: clamp(box.width / 2 - fx * width, box.width - width, 0),
+    y: clamp(box.height / 2 - fy * height, box.height - height, 0),
+    width,
+    height,
+  };
 }
 
 /** What the close-up draws, and where. */
@@ -342,8 +378,9 @@ export function pinTarget(pin: Point, host: Element): Rect | null {
  * #feedback-modal is display:none whenever the form is not mid-exit itself,
  * and a hidden element is skipped outright. The Homeroom menu on a computer
  * (`#apps-switcher-sheet`, over `#apps-switcher-overlay`) is a CSS dropdown
- * and not a kit shell, so it is named by id; a menu that is already closed
- * with the hide mode on costs nothing.
+ * and not a kit shell, so it is named by id. Every one of them is out of the
+ * page's flow (fixed, or display:none when not showing), which is why the
+ * capture cuts them out rather than holding their place (`drawShell`).
  */
 export const PAGE_EXCLUDES = [
   '#feedback-modal',
@@ -356,14 +393,42 @@ export const PAGE_EXCLUDES = [
   '.un-backdrop',
 ] as const;
 
+/** Whether an element is one of the flow's own overlays the picture leaves out. */
+export function isPageOverlay(el: Element): boolean {
+  if (!el || typeof el.matches !== 'function') return false;
+  return PAGE_EXCLUDES.some((sel) => { try { return el.matches(sel); } catch { return false; } });
+}
+
+/**
+ * The page's own size and scroll for a picture. `viewport` is the size
+ * comment mode keeps for the page, which the keyboard does not change (iOS
+ * collapses `innerHeight` to what is above the keys). Only a document that
+ * is the page's scroller (`data-browser-scroller`, a phone browser) has a
+ * scroll position of its own: in the bounded shell the document never
+ * scrolls, and an offset there is iOS panning a field into view, which the
+ * picture should not follow.
+ */
+export function pageClip(viewport?: Size | null): Rect {
+  const paged = document.documentElement.hasAttribute('data-browser-scroller');
+  return {
+    x: paged ? window.scrollX : 0,
+    y: paged ? window.scrollY : 0,
+    width: viewport?.width || window.innerWidth,
+    height: viewport?.height || window.innerHeight,
+  };
+}
+
 /**
  * The shell's own page as it is on screen, without the comment's own layer,
  * without frames, which are other documents (the app's is laid in from its
- * own picture), and without the flow's own overlays (PAGE_EXCLUDES). With
+ * own picture), and without the flow's own overlays (PAGE_EXCLUDES). The
+ * layer and the frames keep their places (`hide`); the overlays are cut out
+ * (`filter` with `remove`), because `hide` would stand an in-flow block the
+ * size of the screen in each one's place (the header comment, #4773). With
  * `fresh` the capture's cache is off: a first picture that lost the content
- * under a pin is retaken on a clean read of the page (the header comment).
+ * under a pin is retaken on a clean read of the page.
  */
-async function drawShell(scale: number, host: Element, fresh = false): Promise<HTMLCanvasElement> {
+async function drawShell(scale: number, host: Element, fresh = false, viewport?: Size | null): Promise<HTMLCanvasElement> {
   const snapdom = await loadLibrary();
   // `dpr: 1`: SnapDOM multiplies `scale` by the screen's pixel ratio
   // unless told otherwise, and `scale` here already is that ratio.
@@ -371,10 +436,12 @@ async function drawShell(scale: number, host: Element, fresh = false): Promise<H
     scale,
     dpr: 1,
     cache: fresh ? 'disabled' : 'soft',
-    clip: { x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight },
+    clip: pageClip(viewport),
     backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
-    exclude: [(el: Element) => el === host, 'iframe', ...PAGE_EXCLUDES],
+    exclude: [(el: Element) => el === host, 'iframe'],
     excludeMode: 'hide',
+    filter: (el: Element) => !isPageOverlay(el),
+    filterMode: 'remove',
   });
   return capture.toCanvas();
 }
@@ -397,18 +464,21 @@ export function takeBase(opts: {
   frame: HTMLIFrameElement | null;
   frameRect: Rect | null;
   pin: Point;
+  /** The page's size as comment mode keeps it (see `pageClip`); the window's when absent. */
+  viewport?: Size | null;
 }): Promise<Base | null> {
-  const { host, scale, frame, frameRect, pin } = opts;
+  const { host, scale, frame, frameRect, pin, viewport } = opts;
+  const width = Math.max(1, viewport?.width || window.innerWidth);
   const target = pinTarget(pin, host);
   const app = frame && frameRect
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
-  const shell = drawShell(scale, host).catch(() => null);
+  const shell = drawShell(scale, host, false, viewport).catch(() => null);
   return Promise.all([shell, app]).then(async ([canvas, picture]) => {
     if (!canvas) return null;
     // The scale the picture really has, read off it: everything drawn on it
     // (the app, the pin, the words) is placed in CSS pixels times this.
-    const actual = canvas.width / Math.max(1, window.innerWidth);
+    const actual = canvas.width / width;
     if (frameRect) await layInApp(canvas, actual, frameRect, picture);
     const checked = await missingUnderPin(canvas, actual, target);
     if (checked) {
@@ -416,9 +486,9 @@ export function takeBase(opts: {
       // clean read of the page. Whatever it shows is used: the comment's pin
       // data still names the element, so a second miss does not loop.
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-      const again = await drawShell(scale, host, true).catch(() => null);
+      const again = await drawShell(scale, host, true, viewport).catch(() => null);
       if (again) {
-        const retaken = again.width / Math.max(1, window.innerWidth);
+        const retaken = again.width / width;
         if (frameRect) await layInApp(again, retaken, frameRect, picture);
         return { canvas: again, scale: retaken, app: picture };
       }

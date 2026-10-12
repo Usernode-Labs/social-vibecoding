@@ -11088,6 +11088,41 @@ html .un-backdrop.platform-backdrop-dim {
   background: var(--border);
   flex: none;
 }
+/* THE COMMENT SHEET STAYS UNDER THE BAR (iPhone 17 simulator, 12 Oct 2026).
+   With the keyboard up the sheet grew past the top of the screen, over the
+   bar and its Done and Form, under the status bar, and nothing was left to
+   tap to put the keys away: the only ways out were Post or quitting the
+   app. Its height is now capped to what lies between the band the bar sits
+   in (`--comment-band`, the status bar plus the bar's 60px, which the
+   component writes on its root) and its foot, the keys' top with them up
+   (`--platform-kb-cover`, lib/keyboard-open.ts, which `.platform-kb-sheet`
+   already stands it on). The id outranks `.platform-kb-sheet`'s own caps.
+   With the keys down its foot clears the home indicator. */
+#comment-pin-box.comment-sheet {
+  --comment-sheet-pb: calc(0.75rem + var(--platform-safe-bottom, 0px));
+  max-height: min(85%, calc(100% - var(--comment-band, 0px) - 8px));
+  padding-bottom: var(--comment-sheet-pb);
+}
+html.platform-kb-open #comment-pin-box.comment-sheet {
+  /* The home indicator is behind the keys. */
+  --comment-sheet-pb: 1.25rem;
+  max-height: calc(100% - var(--comment-band, 0px) - 8px - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px));
+}
+/* Capped like that, the sheet is shorter than what it holds while the keys
+   are up, and Post was below its fold. The row with Post stays at the
+   sheet's foot while the rest scrolls, the feedback sheet's rule
+   (`[data-dialog-sheet] .feedback-actions`, #4033): its fill runs down over
+   the sheet's bottom padding, so nothing scrolls through under it. A sticky
+   box stops at the scroller's padding, so it is held that far lower, or the
+   row above it showed through the last 20px. */
+#comment-pin-box.comment-sheet .comment-sheet-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--comment-sheet-pb));
+  z-index: 1;
+  margin-bottom: calc(-1 * var(--comment-sheet-pb));
+  padding-bottom: var(--comment-sheet-pb);
+  background-color: var(--dc-sheet-solid);
+}
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
    and shadow) and the "+" menu's rows. Absolute under the paperclip rather
