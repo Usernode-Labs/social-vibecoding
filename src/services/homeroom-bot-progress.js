@@ -73,21 +73,21 @@ function buildsPerProject() { return require('./homeroom-bot').BUILDS_PER_PROJEC
 
 // #4053: a first version's steps are named for what is happening, never as
 // an instruction: "Step 4 of 7: Build it" read to an invited member as if
-// they were asked to build it (onboarding test, 6 October 2026). Steps 4 to
-// 7 are the build line's own words (BUILD_LINE_STATES below), so Homeroom
-// bot's chat, the one place a step's number is said, names it the way every
-// thumbnail does. A request's steps keep their names for now.
+// they were asked to build it (onboarding test, 6 October 2026). One story
+// per request: a request's steps are named the same way, in the same words
+// everywhere they are said (the card, the tray, the bot's answers).
 const FIRST_VERSION_STEPS = Object.freeze([
-  'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
+  'Setting up', 'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
 ]);
 const REQUEST_STEPS = Object.freeze([
-  'Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live',
+  'Reading', 'Planning', 'Building', 'Testing', 'Ready to try', 'Live',
 ]);
 
 // Which step each stage is part of. A request's first step is "Read".
 const STEP_OF_STAGE = Object.freeze({
   setting_up: 'setup',
   queued: 'read',
+  on_hold: 'read',
   reading: 'read',
   question: 'read',
   // B6: a first version's plan, waiting for its creator's Build it.
@@ -369,6 +369,15 @@ function stageOf(input, { now = new Date() } = {}) {
     return { stage: 'planning', since: row.build_started_at || row.run_at, doing: 'writing the plan for the build', limit: 'plan' };
   }
   if (row.queue_id) {
+    // One story: held until the week resets, because its payer's building
+    // time is used up (homeroom-bot.js runTriage): On hold until Monday.
+    const held = row.held_until ? new Date(row.held_until) : null;
+    if (held && !Number.isNaN(held.getTime()) && held > now) {
+      return {
+        stage: 'on_hold', since: row.enqueued_at, waitingOn: 'time',
+        doing: 'on hold until Monday: this week\'s building time is used up',
+      };
+    }
     // Not its number in the queue: that counts every project's requests, and
     // the per-project and per-person limits decide more (queuedWait).
     return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder' };
@@ -466,7 +475,7 @@ async function requestRows(pool, userId) {
                            WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
      )
      SELECT m.app_id, a.slug, a.name, a.repo_url, m.issue_number, m.issue_title, m.first_version,
-            q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason,
+            q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
@@ -733,18 +742,35 @@ async function botWorkByIssue(pool, appId) {
   // change) and it waits for a free builder: it is the bot's already, and
   // nobody starts it a second time.
   // B6: and a first version's plan, waiting for its creator's Build it.
+  // The request page's status card says which (`plan`: a plan waits for
+  // whoever asked for it to say Build it).
   const { rows: asked } = await pool.query(
-    `SELECT issue_number, enqueued_at FROM homeroom_bot_queue
+    `SELECT issue_number, enqueued_at, FALSE AS plan FROM homeroom_bot_queue
       WHERE app_id = $1 AND priority = 0 AND started_at IS NULL
         AND (held_until IS NULL OR held_until <= NOW())
      UNION ALL
-     SELECT issue_number, awaiting_go_at FROM homeroom_bot_runs
+     SELECT issue_number, awaiting_go_at, TRUE AS plan FROM homeroom_bot_runs
       WHERE app_id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL`,
     [id],
   );
   for (const q of asked) {
     const n = Number(q.issue_number);
-    if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at });
+    if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at, ...(q.plan === true ? { plan: true } : {}) });
+  }
+  // And a request whose build its own limit holds: it starts when one of
+  // its changes on the project is voted in or closed (live.heldText).
+  const { rows: held } = await pool.query(
+    `SELECT DISTINCT ON (r.issue_number) r.issue_number, r.created_at, r.cap_suppressed
+       FROM homeroom_bot_runs r
+      WHERE r.app_id = $1 AND r.mode = 'live'
+        AND r.created_at > NOW() - make_interval(days => $2)
+      ORDER BY r.issue_number, r.id DESC`,
+    [id, ABANDONED_LIVE_WINDOW_DAYS],
+  ).catch(() => ({ rows: [] }));
+  for (const h of held) {
+    const n = Number(h.issue_number);
+    if (out.has(n) || !['proposals_per_app', 'proposals_total'].includes(h.cap_suppressed)) continue;
+    out.set(n, { what: 'queued', since: h.created_at, held: true });
   }
   return out;
 }
