@@ -159,6 +159,7 @@ function systemPrompt(language, languageName, glossary) {
       `- Never translate these names; write them exactly as they are: ${glossary.doNotTranslate.join(', ') || '(none)'}.`,
       '- Do not use an em dash (—) unless the English has one.',
       '- Keep the ellipsis character … where the English has it, and keep emoji as they are.',
+      '- Write every character itself, such as a no-break space, never an escape code such as \\u00a0.',
       '- Use the conventions of the language for punctuation, capitalisation and quotation marks.',
       '- Keep it as short as the English where the language allows: much of this text sits on buttons and narrow phone screens.',
       '- A counted message gives its English forms and the plural categories the language uses; write a form for every category. {{count}} is the number: include it wherever the form needs to show the number.',
@@ -264,6 +265,7 @@ const count = (text, pattern) => (text.match(pattern) || []).length;
 function textProblem(english, text, { counted = false, doNotTranslate = [] } = {}) {
   if (typeof text !== 'string' || !text.trim()) return 'empty';
   if (text !== text.trim()) return 'space at an edge';
+  if (packs.writtenOutEscape(text, english)) return 'an escape code such as \\u00a0';
   const entry = { text, source: packs.hash(english) };
   if (packs.translationProblem(entry, english, counted)) return 'parameters or tags differ from the English';
   if (count(text, /\n/g) !== count(english, /\n/g)) return 'line breaks differ from the English';
