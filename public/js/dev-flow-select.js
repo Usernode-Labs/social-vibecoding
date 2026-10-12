@@ -65,10 +65,16 @@
   // and it covers three more venues than this list ever could. What stays
   // here is the allowlist, because these three ids are a persisted column's
   // domain and this module is one of the copies that must agree.
+  //
+  // The titles are the venues' own names, read from the same catalog entries
+  // build-venues.js reads, when a caller asks: this table is evaluated before
+  // the language runtime exists.
+  function t(id, values) { return PlatformI18n.t(id, values); }
+
   var FLOWS = [
-    { id: 'platform', title: 'Homeroom · Claude' },
-    { id: 'claude-code', title: 'Claude Code on the web' },
-    { id: 'codex', title: 'Codex on the web' },
+    { id: 'platform', get title() { return t('session:venue.usernodeClaude.label'); } },
+    { id: 'claude-code', get title() { return t('session:venue.webClaudeCode.label'); } },
+    { id: 'codex', get title() { return t('session:venue.webCodex.label'); } },
   ];
 
   function escapeHtml(value) {
@@ -80,10 +86,16 @@
       .replace(/'/g, '&#39;');
   }
 
-  function agentLabel(agent) {
+  // The agent's product name, which is not translated; null for an agent
+  // this build does not know, whose sentences have their own wording.
+  function agentName(agent) {
     if (agent === 'claude-code') return 'Claude Code';
     if (agent === 'codex') return 'Codex';
-    return 'your coding agent';
+    return null;
+  }
+
+  function agentLabel(agent) {
+    return agentName(agent) || t('session:flow.agent.generic');
   }
 
   function agentUrl(agent) {
@@ -101,10 +113,10 @@
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
     if (reason === 'no_repository') {
-      return 'This app has no GitHub repository yet, so it can only be built here on Homeroom.';
+      return t('session:flow.unavailable.noRepository');
     }
     if (reason === 'platform_unavailable' || reason === 'link_unavailable' || reason === 'unavailable') {
-      return 'Handing work to Claude Code or Codex is unavailable on this deployment right now.';
+      return t('session:flow.unavailable.platform');
     }
     return '';
   }
@@ -120,7 +132,7 @@
     var st = status || {};
     var gh = st.github || {};
     var fork = st.fork || null;
-    var label = agentLabel(agent);
+    var name = agentName(agent);
     // #1054 + #1071. A CONTINUATION goes back onto work that already exists,
     // so the instructions name that proposal and the step says so. The server
     // decides which it is; this only renders the difference.
@@ -133,18 +145,18 @@
     var list = [
       {
         key: 'github',
-        title: 'Link your GitHub account',
+        title: t('session:flow.github.title'),
         done: !!gh.linked,
         detail: gh.linked
-          ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
-          : 'Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
+          ? (gh.login ? t('session:flow.github.linkedAs', { login: gh.login }) : t('session:flow.github.linked'))
+          : t('session:flow.github.detail'),
         actions: gh.linked
           ? []
-          : [{ action: 'link-github', label: 'Link GitHub', primary: true, href: GITHUB_CONNECT_HREF }],
+          : [{ action: 'link-github', label: t('session:flow.github.link'), primary: true, href: GITHUB_CONNECT_HREF }],
       },
       {
         key: 'fork',
-        title: 'Fork the app repository',
+        title: t('session:flow.fork.title'),
         // 'unknown' means the read failed, not that there is no fork. Treat
         // it as not-done but say so honestly rather than asserting.
         done: !!(fork && fork.state === 'ready'),
@@ -153,7 +165,9 @@
       },
       {
         key: 'handoff',
-        title: connected ? 'Hand it to ' + label : 'Connect Homeroom',
+        title: connected
+          ? (name ? t('session:flow.handoff.title', { agent: name }) : t('session:flow.handoff.titleGeneric'))
+          : t('session:flow.connect.title'),
         // Terminal. Homeroom used to track the rest — a work order minted
         // here, a branch to watch for, a Submit button to come back and press
         // — and that tracking is exactly what left a stale work order sitting
@@ -162,16 +176,14 @@
         // there is nothing further for this tab to know.
         done: false,
         detail: connected
-          ? handoffDetail(label, targetKind)
-          : 'Homeroom hands ' + label + ' a short set of instructions; '
-            + label + ' asks what you want to build and takes it from there: '
-            + 'writing the work order, reading this app\'s rules, pushing the '
-            + 'branch and opening the proposal. It needs the connector in the '
-            + connectorProduct(agent) + ' account it runs as to do any of that.',
+          ? handoffDetail(name, targetKind)
+          : (name
+            ? t('session:flow.connect.detail', { agent: name, product: connectorProduct(agent) })
+            : t('session:flow.connect.detailGeneric', { product: connectorProduct(agent) })),
         actions: connected
           ? handoffActions(agent)
-          : [{ action: 'link-connector', label: 'Connect Homeroom', primary: true },
-            { action: 'refresh', label: 'Check again' }],
+          : [{ action: 'link-connector', label: t('session:flow.connect.action'), primary: true },
+            { action: 'refresh', label: t('session:flow.connect.checkAgain') }],
       },
     ];
 
@@ -202,40 +214,52 @@
   }
 
   function forkDetail(fork) {
-    if (!fork) return 'Your agent needs somewhere to push. Homeroom checks GitHub for your fork of this app.';
-    if (fork.state === 'ready') return 'Found ' + fork.owner + '/' + fork.repo + '.';
+    if (!fork) return t('session:flow.fork.checking');
+    if (fork.state === 'ready') return t('session:flow.fork.found', { repository: fork.owner + '/' + fork.repo });
     if (fork.state === 'name_conflict') {
-      return 'You already own a repository called ' + fork.repo.replace(/-usernode$/, '')
-        + ' that is not a fork of this app, so fork it as ' + fork.repo + ' instead.';
+      return t('session:flow.fork.nameConflict', {
+        existing: fork.repo.replace(/-usernode$/, ''), forkName: fork.repo,
+      });
     }
-    if (fork.state === 'unknown') return 'Homeroom could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.';
-    return 'No fork yet. Fork the app on GitHub, then come back and check again.';
+    if (fork.state === 'unknown') return t('session:flow.fork.unknown');
+    return t('session:flow.fork.none');
   }
 
   function forkActions(fork) {
     if (!fork || fork.state === 'ready') return [];
     var actions = [];
     if (fork.pageUrl) {
-      actions.push({ action: 'open-fork', label: 'Fork on GitHub', href: fork.pageUrl, primary: true });
+      actions.push({ action: 'open-fork', label: t('session:flow.fork.open'), href: fork.pageUrl, primary: true });
     }
-    actions.push({ action: 'refresh', label: 'Check again' });
+    actions.push({ action: 'refresh', label: t('session:flow.fork.checkAgain') });
     return actions;
   }
-  function handoffDetail(label, targetKind) {
-    var base = 'Copy the instructions and paste them into ' + label + '. It will ask '
-      + 'what you want to build, then write the work order, push the branch and open '
-      + 'the proposal itself. You do not come back here to finish.';
-    if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The instructions name the ' + (targetKind === 'session' ? 'session' : 'proposal')
-        + ' this continues, so the work lands as an update to it rather than as a second copy.';
+  // `name` is the agent's product name, or null for one this build does not
+  // know. Each of the six cases is a whole message.
+  function handoffDetail(name, targetKind) {
+    if (targetKind === 'session') {
+      return name ? t('session:flow.handoff.detailSession', { agent: name })
+        : t('session:flow.handoff.detailSessionGeneric');
     }
-    return base;
+    if (targetKind === 'proposal') {
+      return name ? t('session:flow.handoff.detailProposal', { agent: name })
+        : t('session:flow.handoff.detailProposalGeneric');
+    }
+    return name ? t('session:flow.handoff.detail', { agent: name })
+      : t('session:flow.handoff.detailGeneric');
   }
 
   function handoffActions(agent) {
-    var actions = [{ action: 'copy', label: 'Copy instructions', primary: true }];
+    var actions = [{ action: 'copy', label: t('session:flow.handoff.copy'), primary: true }];
     var url = agentUrl(agent);
-    if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
+    var name = agentName(agent);
+    if (url) {
+      actions.push({
+        action: 'open-agent',
+        label: name ? t('session:flow.handoff.open', { agent: name }) : t('session:flow.handoff.openGeneric'),
+        href: url,
+      });
+    }
     return actions;
   }
 
@@ -280,11 +304,12 @@
   // on a phone. The inactive one carries the action; the active one is a
   // statement and is inert.
   function vendorToggleHtml(agent, busy) {
+    // Claude and ChatGPT are product names and are not translated.
     var vendors = [
       { id: 'claude-code', label: 'Claude' },
       { id: 'codex', label: 'ChatGPT' },
     ];
-    return '<div class="dc-flow-vendors" role="group" aria-label="Which agent builds this">'
+    return '<div class="dc-flow-vendors" role="group" aria-label="' + PlatformI18n.htmlText('session:flow.vendor.groupLabel') + '">'
       + vendors.map(function (v) {
         var on = v.id === agent;
         return '<button type="button" class="dc-flow-vendor'
@@ -310,25 +335,28 @@
   function wizardHtml(state) {
     var s = state || {};
     var agent = s.agent || (s.status && s.status.task && s.status.task.agent) || 'claude-code';
-    var label = agentLabel(agent);
+    var name = agentName(agent);
+    var lead = name
+      ? PlatformI18n.htmlText('session:flow.lead.buildingWith', { agent: name })
+      : PlatformI18n.htmlText('session:flow.lead.buildingWithGeneric');
 
     if (!s.status) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-        + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + '<div class="dc-flow-card-lead">' + lead + '</div>'
         + vendorToggleHtml(agent, true)
-        + '<div class="dc-flow-card-detail">Checking where you are&hellip;</div>'
+        + '<div class="dc-flow-card-detail">' + PlatformI18n.htmlText('session:flow.status.checking') + '</div>'
         + '</div>';
     }
 
     if (s.status.available === false) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-        + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + '<div class="dc-flow-card-lead">' + lead + '</div>'
         + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">'
-        + escapeHtml(unavailableNote(s.status.reason) || 'This flow is unavailable right now.')
+        + escapeHtml(unavailableNote(s.status.reason) || t('session:flow.unavailable.generic'))
         + '</div>'
         + '<div class="dc-flow-actions">'
-        + actionHtml({ action: 'cancel', label: 'Build here instead', primary: true }, false)
+        + actionHtml({ action: 'cancel', label: t('session:flow.cancel.buildHere'), primary: true }, false)
         + '</div>'
         + '</div>';
     }
@@ -355,7 +383,7 @@
       var brief = step.brief
         ? '<textarea class="dc-flow-brief" data-flow-brief="1" rows="3"'
           + (s.busy ? ' disabled' : '')
-          + ' placeholder="What should it build?">' + escapeHtml(s.brief || '') + '</textarea>'
+          + ' placeholder="' + PlatformI18n.htmlText('session:flow.brief.placeholder') + '">' + escapeHtml(s.brief || '') + '</textarea>'
         : '';
       return ''
         + '<div class="dc-flow-step dc-flow-step-' + step.state + '" data-flow-step="'
@@ -382,7 +410,7 @@
     // details:not([open]), as the other details-based checks in dapp.json
     // do, because a collapsed body is not there to be seen.
     var order = s.status.instructions
-      ? '<details class="dc-flow-order"><summary>Instructions</summary>'
+      ? '<details class="dc-flow-order"><summary>' + PlatformI18n.htmlText('session:flow.instructions.summary') + '</summary>'
         + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(s.status.instructions) + '</pre>'
         + '</details>'
       : '';
@@ -400,18 +428,19 @@
     // picks it up with no new wiring. Settings is still one tap away, from
     // the card the button opens.
     var connectors = s.status.connectors && s.status.connectors.count
-      ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
-        + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected. You can also just ask it to pick this task up.'
-        + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
-        + ' account it was added in, so pasting into a different account needs its own: '
-        + '<button type="button" class="dc-flow-hint-link" data-flow-action="link-connector">'
-        + 'show the steps</button>.</div>'
+      ? '<div class="dc-flow-card-hint">'
+        + PlatformI18n.htmlRich('session:flow.connectors.hint',
+          { count: Number(s.status.connectors.count), product: connectorProduct(agent) },
+          [function (inner) {
+            return '<button type="button" class="dc-flow-hint-link" data-flow-action="link-connector">'
+              + inner + '</button>';
+          }])
+        + '</div>'
       : '';
 
     return ''
       + '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
-      + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+      + '<div class="dc-flow-card-lead">' + lead + '</div>'
       + vendorToggleHtml(agent, !!s.busy)
       + (s.error ? '<div class="dc-flow-error">' + escapeHtml(s.error) + '</div>' : '')
       + (s.notice ? '<div class="dc-flow-notice">' + escapeHtml(s.notice) + '</div>' : '')
@@ -419,7 +448,7 @@
       + order
       + connectors
       + '<div class="dc-flow-actions dc-flow-actions-footer">'
-      + actionHtml({ action: 'cancel', label: 'Build on the Homeroom platform instead' }, !!s.busy)
+      + actionHtml({ action: 'cancel', label: t('session:flow.cancel.buildOnPlatform') }, !!s.busy)
       + '</div>'
       + '</div>';
   }

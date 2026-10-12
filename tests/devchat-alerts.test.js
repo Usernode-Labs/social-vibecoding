@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -79,6 +80,7 @@ function makeNotifEnv() {
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInNewContext(NOTIF_SRC, sandbox);
   return { Notifications: sandbox.window.Notifications, elements, sandbox };
 }
@@ -136,6 +138,7 @@ function makeEnv({
   sandbox.Notification.permission = permission;
   sandbox.Notification.requestPermission = () => { calls.permissionRequests += 1; return Promise.resolve(permission); };
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInNewContext(DEV_ALERTS_SRC, sandbox);
   return { DevAlerts: sandbox.window.DevAlerts, calls, store, sandbox };
 }
@@ -311,7 +314,15 @@ test('settings.js runs a ticking countdown for the test-alert button', () => {
   // A real interval that rewrites the status text each second, plus cleanup.
   assert.match(src, /setInterval\(/);
   assert.match(src, /_clearAlertsTestCountdown/);
-  assert.match(src, /Alert in \$\{remaining\}s/);
+  // The countdown is a whole catalog sentence per outcome, counted by `remaining`.
+  assert.match(src, /status\.textContent = tr\(COUNTDOWN\[outcome\], \{ count: remaining \}\);/);
+  for (const outcome of ['queued', 'preferenceDisabled', 'unavailable']) {
+    assert.ok(src.includes(`${outcome}: 'settings:alerts.test.countdown.${outcome}',`), `${outcome} is wired`);
+    for (const remaining of [10, 1]) {
+      assert.match(message(`settings:alerts.test.countdown.${outcome}`, { count: remaining }),
+        new RegExp(`^Alert in ${remaining}s\\. `), `${outcome} counts down from ${remaining}`);
+    }
+  }
   // Cleared on modal close so a countdown can't outlive the panel.
   const close = src.slice(src.indexOf('close() {'), src.indexOf('close() {') + 300);
   assert.match(close, /_clearAlertsTestCountdown\(\)/);
@@ -502,6 +513,8 @@ test('settings reports queue outcomes and never turns a countdown into a deliver
       DevAlerts: { testAlert: async () => { if (result instanceof Error) throw result; return result; } },
       setInterval: (fn) => { tick = fn; return 1; },
       _clearAlertsTestCountdown() {},
+      // The slice reads its text through settings.js's `tr`.
+      tr: englishPlatformI18n().t,
     };
     sandbox.window = sandbox;
     vm.runInNewContext(src.slice(start, end), sandbox);

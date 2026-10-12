@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { createStore } from '../../lib/plain-store.js';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { proposalsView, requestsView, votesView } from './profile-store.js';
@@ -63,15 +64,22 @@ const READS: Record<WorkKind, string> = {
 
 /** What each view is called, on the bar and in its messages. */
 export const WORK_TITLES: Record<WorkKind, string> = {
-  changes: 'Your changes',
-  requests: 'Your requests',
-  votes: 'Your votes',
+  changes: 'profile:work.changes.title',
+  requests: 'profile:work.requests.title',
+  votes: 'profile:work.votes.title',
 };
 
 const EMPTY: Record<WorkKind, string> = {
-  changes: 'You have not started a change yet.',
-  requests: 'You have not suggested an improvement yet.',
-  votes: 'You have not voted on anything yet.',
+  changes: 'profile:work.changes.empty',
+  requests: 'profile:work.requests.empty',
+  votes: 'profile:work.votes.empty',
+};
+
+/** "Your changes could not be loaded.": one whole message per list. */
+const LOAD_FAILED: Record<WorkKind, string> = {
+  changes: 'profile:work.changes.loadFailed',
+  requests: 'profile:work.requests.loadFailed',
+  votes: 'profile:work.votes.loadFailed',
 };
 
 /** A folded group shows this many rows until "Show all" is pressed. */
@@ -79,8 +87,8 @@ export const FOLD_AT = 5;
 
 /** The groups that fold, and what their "Show all" says. */
 const FOLDS: Record<string, string> = {
-  'changes:merged': 'Show all live',
-  'votes:decided': 'Show all',
+  'changes:merged': 'profile:work.fold.allLive',
+  'votes:decided': 'profile:work.fold.allDecided',
 };
 
 const TITLE = 'text-base font-semibold whitespace-normal line-clamp-2';
@@ -116,6 +124,7 @@ function viewOf(kind: WorkKind, data: unknown): { loaded: boolean; sections: Sec
 }
 
 function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNode {
+  const t = useMessages('profile');
   const foldLabel = FOLDS[`${kind}:${section.key}`];
   const [all, setAll] = useState(false);
   const folded = !!foldLabel && !all && section.rows.length > FOLD_AT;
@@ -154,7 +163,7 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
           <ListRow
             as="button"
             data-profile-work-all={section.key}
-            title={foldLabel}
+            title={t(foldLabel)}
             titleClassName="text-[0.9375rem] font-semibold text-violet-700 dark:text-violet-400"
             chevron={false}
             onClick={() => setAll(true)}
@@ -168,6 +177,8 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
 export function ProfileProposalsScreen(): ReactNode {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(profileProposalsStore) as WorkState;
+  // Subscribed: the rows' words are read by the view helpers as it renders.
+  const t = useMessages('profile');
   useVisibilityHiddenClass(screenRef, 'profile-proposals-screen', false);
   const kind = state.kind;
   const data = state.data[kind];
@@ -193,19 +204,19 @@ export function ProfileProposalsScreen(): ReactNode {
       <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
         {state.error ? (
           <div className={NOTE}>
-            <p>{`${WORK_TITLES[kind]} could not be loaded.`}</p>
+            <p>{t(LOAD_FAILED[kind])}</p>
             <button
               type="button"
               className="mt-2 font-medium text-violet-600 dark:text-violet-400"
               onClick={() => { void profileProposalsController.reload(); }}
             >
-              Try again
+              {t('core:common.tryAgain')}
             </button>
           </div>
         ) : data == null || !view.loaded ? (
-          state.open ? <p className={NOTE}>Loading…</p> : null
+          state.open ? <p className={NOTE}>{t('core:common.loading')}</p> : null
         ) : view.empty ? (
-          <p className={NOTE}>{EMPTY[kind]}</p>
+          <p className={NOTE}>{t(EMPTY[kind])}</p>
         ) : (
           // Keyed by view, so a fold opened on one list is not open on the next.
           view.sections.map((section) => (
@@ -214,7 +225,7 @@ export function ProfileProposalsScreen(): ReactNode {
         )}
         {kind === 'votes' && view.loaded && !view.empty ? (
           <p className="px-4 mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-            A vote can be changed while it is open, so each row says your vote as it stands.
+            {t('profile:work.votes.note')}
           </p>
         ) : null}
         {/* Your requests ends on the way to make another, the dialog every
@@ -227,7 +238,7 @@ export function ProfileProposalsScreen(): ReactNode {
               className="w-full"
               onClick={() => { (window as any).App?.openFeedbackModal?.(); }}
             >
-              Suggest an improvement
+              {t('profile:work.requests.suggest')}
             </Button>
           </div>
         ) : null}

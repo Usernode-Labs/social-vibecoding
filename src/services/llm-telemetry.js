@@ -63,6 +63,9 @@ const COMPONENTS = new Set([
   'chat_ask',
   'workshop_ask',
   'content_review',
+  // The translation step's catalog requests (services/language-sync.js), sent
+  // one by one or as a Message Batch.
+  'language_sync',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

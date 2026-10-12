@@ -16,6 +16,7 @@ const express = require('express');
 
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
+const { firstPerson } = require('../src/services/homeroom-bot-words');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -318,6 +319,36 @@ test('the thread card is the same spec card a person\'s Share posts', () => {
   assert.equal(live.specTitle('no title'), null);
 });
 
+test('#4612: an updated plan\'s card says so, and its metadata is the same card a Share posts', () => {
+  const revised = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true, revised: true });
+  assert.match(revised.content, /^📋 The plan, updated for this change \(version 2\): "Hourly feed refresh"\.$/);
+  const first = live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, proposed: true });
+  assert.deepEqual(revised.metadata.specShare, first.metadata.specShare, 'the transcript shows the same card, as v2');
+  assert.doesNotMatch(first.content, /updated/, 'the first card says what it always said');
+  // A revised card is only ever a proposed one; without `proposed` the wording is unchanged.
+  assert.doesNotMatch(live.specCard({ sessionId: 5001, version: 2, spec: SPEC, bot: BOT, revised: true }).content, /updated/);
+});
+
+test('#4612: the issue copy of an updated plan names the version and folds the document away', () => {
+  const text = live.revisedSpecCommentText(SPEC, 2);
+  assert.match(text, /^Homeroom bot updated the plan for this change to match \(version 2\)\.\n/);
+  assert.ok(text.includes(`<details><summary>The plan</summary>\n\n${SPEC}\n\n</details>`), 'the same collapsed block the first plan was posted in');
+  const long = live.revisedSpecCommentText('x'.repeat(70_000), 3);
+  assert.ok(long.length < 65_536, 'GitHub refuses a comment over 65,536 characters');
+  assert.ok(!/—/.test(text));
+});
+
+test('#4612: publishSpec says when the plan it stores is a revision', async () => {
+  const published = [];
+  const pool = { async query() { return { rows: [] }; } };
+  const sessions = { async persistScoutPublication(args) { published.push(args); return { specVersion: 4 }; } };
+  const session = { id: 5001 };
+  assert.equal(await live.publishSpec({ pool, sessions, session, specMd: SPEC, model: 'm', revised: true }), 4);
+  assert.equal(published[0].hadSpec, true, 'the transcript line says the plan was revised');
+  assert.equal(await live.publishSpec({ pool, sessions, session, specMd: SPEC, model: 'm' }), 4);
+  assert.equal(published[1].hadSpec, false, 'the first plan is stored as it always was');
+});
+
 test('live.post puts the card in the thread and the full spec on GitHub', async () => {
   const sent = [];
   const comments = [];
@@ -332,9 +363,11 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
   assert.equal(out.githubCreatedAt, '2026-09-28T10:00:00Z', 'so the bot does not read its own comment as a change');
   assert.equal(comments[0].body, live.specCommentText(SPEC));
   assert.deepEqual(sent, [{
-    appId: 9, user: BOT, content: card.content, metadata: card.metadata,
+    // In Homeroom the card is the bot's own words (homeroom-bot-words.js).
+    appId: 9, user: BOT, content: firstPerson(card.content), metadata: card.metadata,
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
+  assert.match(sent[0].content, /^📋 My plan for this request: "Hourly feed refresh"\. I'm building it now\.$/);
   assert.equal(live.tagsPoster('spec'), true, 'whoever filed it and took part are tagged on the spec');
 });
 

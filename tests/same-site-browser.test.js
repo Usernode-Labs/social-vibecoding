@@ -137,12 +137,20 @@ const EXEMPT = new Map([
   ['apps.js POST /api/apps/:slug/visibility-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/admins-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/governance-pr', JSON_FIELD],
+  // #4666: who can see it and how changes are approved, one proposal, read
+  // from a JSON body like the two single-block PRs it stands in for.
+  ['apps.js POST /api/apps/:slug/who-decides-pr', JSON_FIELD],
+  // #4417: a topics proposal needs its `op` (and the topic's fields) in a
+  // JSON body, like the rename and visibility PRs beside it.
+  ['apps.js POST /api/apps/:slug/topics-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/favorite', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/membership', JSON_FIELD],
   ['auth.js POST /api/auth/login', JSON_FIELD],
   ['auth.js POST /api/auth/otp/request', JSON_FIELD],
   ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
   ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
+  // #4594: the release mail's one-time link, read from the JSON body.
+  ['auth.js POST /api/auth/release-link', JSON_FIELD],
   ['auth.js POST /api/auth/register', JSON_FIELD],
   ['auth.js POST /api/me/api-key', JSON_FIELD],
   ['auth.js POST /api/me/password', JSON_FIELD],
@@ -215,6 +223,7 @@ const EXEMPT = new Map([
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/note', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/problem', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/condition', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/diagram', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visual-evidence-intent', TOKEN],

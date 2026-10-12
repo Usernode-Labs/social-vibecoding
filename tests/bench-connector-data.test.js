@@ -94,6 +94,59 @@ test('a ready verdict that was never built says where it got to and why; a run s
   });
 });
 
+test('the voice outside the DM: its switches, its week in counts and codes, and the incidents, never anybody\'s words', async () => {
+  const bot = {
+    async adminPayload() {
+      return {
+        settings: { mode: 'live', voiceSession: true, voiceIssue: false },
+        bot: null, totals: {}, queue: { depth: 0, items: [] }, runs: [],
+        voice: {
+          turns: 12, replied: 9, quiet: 2, fallback: 0, failed: 1, people: 5, costUsd: 0.031,
+          byPlace: { session: { replied: 6, quiet: 1, failed: 1 }, chat: { replied: 3, quiet: 1, words: 'never' }, governance: { replied: 1 } },
+          recentFailures: [{
+            at: '2026-10-10T09:00:00.000Z', app: 'bread', place: 'session', ref: 70, outcome: 'failed',
+            error: 'no_key', failures: ['v1:rate_limited:429', 'Make the header blue please', 'claims:started'], rounds: 2, text: 'never',
+          }],
+          asks: {
+            byStatus: { queued: 1, done: 4, failed: 1, secret: 9 },
+            bySource: { thread: 3, dm: 2, 'Not A Source': 1 },
+            waiting: [{ app: 'bread', change: 70, issueNumber: 12, status: 'queued', asks: 1, since: '2026-10-10T08:00:00.000Z', tries: 1, instruction: 'never' }],
+          },
+          offers: { file_request: { done: 2, declined: 1 }, withdraw_change: { open: 1 }, mystery: { open: 3 } },
+        },
+        incidents: {
+          days: 7, total: 1,
+          items: [{ at: '2026-10-10T09:00:00.000Z', kind: 'checks_not_change', app: 'bread', runId: 5, issueNumber: 12, why: 'w'.repeat(400), outcome: null, detail: 'never' }],
+        },
+      };
+    },
+  };
+  const out = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(
+    [out.settings.voiceSession, out.settings.voiceIssue, out.settings.voiceChat], [true, false, true],
+    'on unless switched off, as the bot reads them',
+  );
+  assert.deepEqual(out.voice.byPlace, { session: { replied: 6, quiet: 1, failed: 1 }, chat: { replied: 3, quiet: 1 } });
+  assert.equal(out.voice.turns, 12);
+  assert.equal(out.voice.people, 5);
+  assert.deepEqual(out.voice.recentFailures, [{
+    at: '2026-10-10T09:00:00.000Z', app: 'bread', place: 'session', ref: 70, outcome: 'failed',
+    error: 'no_key', failures: ['v1:rate_limited:429', 'claims:started'], rounds: 2,
+  }], 'codes only: a message or anybody\'s words never ride along');
+  assert.deepEqual(out.voice.asks.byStatus, { queued: 1, done: 4, failed: 1 });
+  assert.deepEqual(out.voice.asks.bySource, { thread: 3, dm: 2 });
+  assert.deepEqual(out.voice.asks.waiting, [{ app: 'bread', change: 70, issueNumber: 12, status: 'queued', asks: 1, since: '2026-10-10T08:00:00.000Z', tries: 1 }]);
+  assert.deepEqual(out.voice.offers, { file_request: { done: 2, declined: 1 }, withdraw_change: { open: 1 } });
+  assert.equal(out.incidents.items[0].kind, 'checks_not_change');
+  assert.equal(out.incidents.items[0].why.length, 300, 'a reason is clipped');
+  assert.equal(out.incidents.items[0].detail, undefined);
+  assert.doesNotMatch(JSON.stringify(out), /never/);
+
+  const none = await data.botOverview(null, {}, {}, { bot: { async adminPayload() { return { settings: {}, queue: {}, runs: [] }; } } });
+  assert.equal(none.voice, null);
+  assert.equal(none.incidents, null);
+});
+
 test('recent shots page through the gallery\'s own listing and counts, and keep only what they name', async () => {
   const gallery = {
     async listProposals(_pool, q) {

@@ -79,6 +79,9 @@ function incidents() { return require('./platform-incidents'); }
 // #4530: whether the new words on a request the bot already answered were
 // for the bot, so a repeat note is held back when they were not.
 function addressedMod() { return require('./homeroom-bot-addressed'); }
+// The bot's voice outside its DM (homeroom-bot-voice.js): which places it
+// answers in, and the asks it queues on its changes.
+function voiceModule(deps) { return (deps && deps.voice) || require('./homeroom-bot-voice'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -116,6 +119,10 @@ const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
 // platform pays; this is the ceiling that keeps one person from spending
 // it all.
 const KEY_USER_WEEKLY_CENTS = 'homeroom_bot_user_weekly_cents';
+// The same ceiling for an admin (users.is_admin, view-only admins included),
+// which applies to them instead of the one above (homeroom-bot-dm.js
+// weeklyCapCents). Admins build the platform itself, so theirs starts higher.
+const KEY_ADMIN_WEEKLY_CENTS = 'homeroom_bot_admin_weekly_cents';
 // #3654: the OpenRouter model each stage runs on. Blank means the platform
 // default (OPENROUTER_DEFAULT_CODEX_MODEL), which every stage used before.
 // `followup` covers both kinds of follow-up turn: an answer to people's
@@ -138,6 +145,14 @@ const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // (homeroom-bot-mayor.js). On by default; the switch is there to stop it
 // without switching the whole bot off.
 const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
+// Its voice outside the DM (homeroom-bot-voice.js), one switch per place, on
+// unless switched off: on, the bot answers there as it does in a DM; off, a
+// place goes back to the fixed notes it had before. On its own changes (any
+// person's message there), on requests (a mention or a reply to it), and in
+// project chats, topics and #general (a mention or a reply to it).
+const KEY_VOICE_SESSION = 'homeroom_bot_voice_session';
+const KEY_VOICE_ISSUE = 'homeroom_bot_voice_issue';
+const KEY_VOICE_CHAT = 'homeroom_bot_voice_chat';
 // Whether reading a request again continues the conversation that read it
 // last (previousRead), so the model starts from what it already found
 // rather than from the repository. On by default; off reads every time
@@ -168,7 +183,8 @@ const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
-  KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
   KEY_LIVE_BUILD_STREAM,
   ...Object.values(KEY_MODELS),
@@ -190,6 +206,7 @@ const DEFAULTS = Object.freeze({
   buildConcurrency: 2,
   shadowBuildPlatform: false,
   userWeeklyCents: 5000,
+  adminWeeklyCents: 10000,
   // #3654: per-stage models; blank is the platform default (stageModel).
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
   // Raised from 6 and 2 when every project went live: the background
@@ -198,6 +215,9 @@ const DEFAULTS = Object.freeze({
   liveAtOnce: 12,
   perPerson: 3,
   dmChat: true,
+  voiceSession: true,
+  voiceIssue: true,
+  voiceChat: true,
   continueReads: true,
   everyoneSince: null,
   proposalCeiling: 0,
@@ -260,6 +280,21 @@ const BUSY_PASS_DELAY_MS = 2 * 1000;
 const IDLE_PASS_DELAY_MS = 30 * 1000;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const BUS_KIND = 'homeroom_bot';
+// One turn for a burst. People write a thought in two or three messages, or
+// a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
+// and its ping 2 seconds apart were answered twice, 23 seconds apart). A
+// reply turn waits until a person's last message on the request, or on the
+// bot's change for it, is this old, so it reads them all at once
+// (liveCandidates); a wake that long after the message picks it up then
+// (wakeAfterSettle).
+const SETTLE_MS = 20 * 1000;
+// What wakes the loop for a person's words, and so waits to settle.
+const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
+// What a person asked for in their DM with the bot queues with one of these
+// (homeroom-bot-mayor.js, homeroom-bot-dm.js): that work gets a card in the
+// DM (homeroom-bot-activity.js startCard `inDm`); anything else is followed
+// in the tray until it needs them.
+const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
 
 // Eligibility windows. A human claim counts while it is younger than the
 // board's own claim TTL; a paused human session counts while it is inside
@@ -553,6 +588,9 @@ function parseSettings(rows) {
   const userWeeklyCents = clampInt(
     map.get(KEY_USER_WEEKLY_CENTS), DEFAULTS.userWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
   );
+  const adminWeeklyCents = clampInt(
+    map.get(KEY_ADMIN_WEEKLY_CENTS), DEFAULTS.adminWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
+  );
   const models = {};
   for (const stage of MODEL_STAGES) {
     const raw = String(map.get(KEY_MODELS[stage]) || '').trim();
@@ -561,6 +599,9 @@ function parseSettings(rows) {
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
+  const voiceSession = map.get(KEY_VOICE_SESSION) !== 'off';
+  const voiceIssue = map.get(KEY_VOICE_ISSUE) !== 'off';
+  const voiceChat = map.get(KEY_VOICE_CHAT) !== 'off';
   const continueReads = map.get(KEY_CONTINUE_READS) !== 'off';
   // Written once by schema.sql; readSettings fills in a database without it.
   const sinceMs = Date.parse(map.get(KEY_EVERYONE_SINCE) || '');
@@ -569,8 +610,8 @@ function parseSettings(rows) {
   const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents,
-    liveAtOnce, perPerson, dmChat, continueReads, models,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
+    liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     everyoneSince, proposalCeiling, liveBuildStream,
   };
 }
@@ -686,6 +727,11 @@ function validateSettingsPatch(patch) {
     if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
     updates.push([KEY_DM_CHAT, body.dmChat ? 'on' : 'off']);
   }
+  for (const [field, key] of [['voiceSession', KEY_VOICE_SESSION], ['voiceIssue', KEY_VOICE_ISSUE], ['voiceChat', KEY_VOICE_CHAT]]) {
+    if (body[field] === undefined) continue;
+    if (typeof body[field] !== 'boolean') return { ok: false, error: `${field} must be true or false` };
+    updates.push([key, body[field] ? 'on' : 'off']);
+  }
   if (body.continueReads !== undefined) {
     if (typeof body.continueReads !== 'boolean') return { ok: false, error: 'continueReads must be true or false' };
     updates.push([KEY_CONTINUE_READS, body.continueReads ? 'on' : 'off']);
@@ -752,6 +798,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'userWeeklyCents must be a non-negative integer' };
     }
     updates.push([KEY_USER_WEEKLY_CENTS, String(n)]);
+  }
+  if (body.adminWeeklyCents !== undefined) {
+    const n = Number(body.adminWeeklyCents);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_USER_WEEKLY_CENTS) {
+      return { ok: false, error: 'adminWeeklyCents must be a non-negative integer' };
+    }
+    updates.push([KEY_ADMIN_WEEKLY_CENTS, String(n)]);
   }
   if (body.models !== undefined) {
     if (!body.models || typeof body.models !== 'object' || Array.isArray(body.models)) {
@@ -1148,6 +1201,11 @@ function readVerdict(text) {
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
+      // A request whose ask is already there (in the app, or done by a merged
+      // change): its requester is offered a vote on closing it, not left at a
+      // "person decides" with nothing to decide. A person or empty verdict
+      // carries it; one about Homeroom itself is offered the move instead.
+      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
@@ -1449,7 +1507,10 @@ async function refreshApp(pool, app, {
     issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
-    capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
+    // With the bot's voice on in changes' discussions, what people say there
+    // is the voice's to answer: it brings nothing back (homeroom-bot-voice.js).
+    capRoom && bot && !voiceModule(null).voiceOn(settings, { type: 'session' })
+      ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
@@ -1750,9 +1811,16 @@ ${designGuidance}
 // The last thing the model reads says what it is doing and restates the one
 // format parseVerdict accepts, so the verdict does not depend on it
 // remembering instructions from earlier in the turn.
+// The one shape parseVerdict reads, as the end of every triage prompt says
+// it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
+// without it, a re-read answered in keys of its own (`next_step`,
+// `ask_reporter`) that nothing reads, and so did the ask to repair it.
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}';
+const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
+
 function triageClosing(issueNumber) {
   return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
-{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
+${VERDICT_FORMAT}`;
 }
 
 /**
@@ -1770,9 +1838,15 @@ function triagePromptFor({
   guidance = null,
   // The game starter a first version builds on (firstVersionNote).
   starter = null,
+  // #4645: the requester's language preference (users.locale; null unset).
+  // The wording rule is in the prompt file above; this names the value it
+  // matches, and says nothing when it is unset, so the default stands.
+  locale = null,
 }) {
   return [
-    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), live.requestRulesLines().join('\n').trim(),
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    locale ? `The requester's locale is \`${locale}\`.` : null,
+    live.requestRulesLines().join('\n').trim(),
     firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
@@ -1900,35 +1974,88 @@ async function projectMembers(pool, app) {
  * member, the person who asked IS the group: Ear Trainer #13 (sounds from a
  * MIDI instrument) was left for a group of one, who was told someone in the
  * group would have to take it up. There, a decision they can make is a
- * question to them with choices to tap, and their answer decides it. A
- * project with more people keeps the rule as it was. Pure; null says
- * nothing.
+ * question to them with choices to tap, and their answer decides it.
+ * On a project with more people, its creator and its admins steer what gets
+ * built (the group still votes on every change): a request one of them made
+ * is decided the same way, and anyone else's names them, so a go-ahead from
+ * one of them decides it and nobody's go-ahead loops back to "a person"
+ * (Geneva hike planner #2, read three times to the same answer). Pure; null
+ * says nothing.
  */
 function deciderNote(decider) {
-  if (!decider?.requesterDecides) return null;
+  if (decider?.requesterDecides) {
+    const who = decider.role === 'creator'
+      ? `@${decider.requester} asked for this, and made this project: the decisions its group would make before building are theirs. The group still votes on the change it becomes.`
+      : decider.role === 'admin'
+        ? `@${decider.requester} asked for this, and is an admin of this project: the decisions its group would make before building are theirs. The group still votes on the change it becomes.`
+        : `@${decider.requester} asked for this, and is the only member of this project: the decisions its group would make are theirs.`;
+    return [
+      '==== WHO DECIDES ON THIS PROJECT ====',
+      '',
+      who,
+      '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
+      '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
+      '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+      rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
+    ].join('\n');
+  }
+  const deciders = (Array.isArray(decider?.deciders) ? decider.deciders : []).filter((d) => d?.username);
+  if (!deciders.length) return null;
+  const named = spokenList(deciders.map((d) => `@${d.username} (${d.role === 'creator' ? 'who made it' : 'an admin'})`), 'and');
+  const either = spokenList(deciders.map((d) => `@${d.username}`), 'or');
   return [
     '==== WHO DECIDES ON THIS PROJECT ====',
     '',
-    `@${decider.requester} asked for this, and is the only member of this project: the decisions its group would make are theirs.`,
-    '- A request that fails a `ready` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is a `question` to them, not `person`. Ask it plainly, say what it would add, and give `answers` they can tap: the choice that needs no approval (for example the browser\'s built-in way) first when there is one, then the one that needs it (for example "Add the library"), then "Leave it".',
-    '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
+    `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
+    `- A request that fails a \`ready\` criterion only because it needs a decision they can make (a new dependency or external service that needs no credentials, a design or product choice) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
+    `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
     '- Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still `person`.',
+    rulesLine(`${either} can`),
   ].join('\n');
 }
+
+/**
+ * #4666: how a project's changes are approved, and who can see it, are set
+ * in its Who can see & change it sheet by whoever may manage it, as one
+ * proposal; a request to change them is never built (Homeroom Maps #30 was
+ * read five times to "the group decides"). `who` says who can, by name.
+ */
+function rulesLine(who) {
+  return `- A request to change how this project's changes are approved (who says yes, how many yeses) or who can see it is not code: ${who} change it on the project's page, under ⋯, Settings & rules, Who can see & change it, as one proposal for the group. It is \`person\`, and \`reason\` says where and who.`;
+}
+
+/** "a", "a and b", "a, b and c". */
+function spokenList(items, word) {
+  if (items.length < 2) return items.join('');
+  return `${items.slice(0, -1).join(', ')} ${word} ${items[items.length - 1]}`;
+}
+
+// How many of a project's creator and admins the note names.
+const DECIDERS_SHOWN = 4;
 
 /**
  * #3772: whether the person a request is for decides on its project alone:
  * they are its only member (or, on a project not in a community, its
  * creator). { requester, members, requesterDecides }, or null.
+ * On a project with more people, its creator and admins decide what gets
+ * built: a requester who is one of them decides (`role` 'creator' or
+ * 'admin'), and anyone else's request names them (`deciders`, the creator
+ * first). Homeroom's own project keeps the rule as it was: its group is
+ * everyone, and its admins are the platform's.
  */
 async function whoDecides(pool, app, requester) {
   if (!app?.id || !requester?.userId) return null;
   const { rows } = await pool.query(
-    `SELECT a.created_by,
+    `SELECT a.created_by, a.self_hosted, cu.username AS creator,
             (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members,
             EXISTS (SELECT 1 FROM community_members m
-                     WHERE m.community_id = a.community_id AND m.user_id = $2) AS member
-       FROM apps a WHERE a.id = $1`,
+                     WHERE m.community_id = a.community_id AND m.user_id = $2) AS member,
+            EXISTS (SELECT 1 FROM app_admins aa WHERE aa.app_id = a.id AND aa.user_id = $2) AS admin,
+            ARRAY(SELECT u.username FROM app_admins aa JOIN users u ON u.id = aa.user_id
+                   WHERE aa.app_id = a.id AND aa.user_id IS DISTINCT FROM a.created_by
+                   ORDER BY aa.created_at, u.username) AS admins
+       FROM apps a LEFT JOIN users cu ON cu.id = a.created_by
+      WHERE a.id = $1`,
     [app.id, requester.userId],
   );
   const row = rows[0];
@@ -1937,7 +2064,16 @@ async function whoDecides(pool, app, requester) {
   const alone = members === 0
     ? Number(row.created_by) === Number(requester.userId)
     : members === 1 && row.member === true;
-  return { requester: requester.username, members, requesterDecides: alone };
+  const decider = { requester: requester.username, members, requesterDecides: alone };
+  if (alone || row.self_hosted === true) return decider;
+  if (app.slug && (await platformAppSlugs(pool)).includes(app.slug)) return decider;
+  if (Number(row.created_by) === Number(requester.userId)) return { ...decider, requesterDecides: true, role: 'creator' };
+  if (row.admin === true) return { ...decider, requesterDecides: true, role: 'admin' };
+  const deciders = [
+    ...(row.creator ? [{ username: row.creator, role: 'creator' }] : []),
+    ...(Array.isArray(row.admins) ? row.admins : []).filter(Boolean).map((username) => ({ username, role: 'admin' })),
+  ].slice(0, DECIDERS_SHOWN);
+  return deciders.length ? { ...decider, deciders } : decider;
 }
 
 /**
@@ -2449,7 +2585,7 @@ function continuedTriagePrompt({ seed, issueNumber }) {
     live.screenshotNote(seed).join('\n').trim() || null,
     '==== DECIDE IT AGAIN ====',
     'Decide it again, by the same instructions as before, taking in what is new. You have already read the code it touches: read only what the change needs, and do not repeat reads you made before. The app\'s code may have changed since then, so check any file your verdict depends on rather than relying on memory.',
-    `END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #${issueNumber}, and nothing after it.`,
+    `END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #${issueNumber}, and nothing after it:\n${VERDICT_FORMAT}\n${VERDICT_KEYS_LINE}`,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -2505,7 +2641,9 @@ const VERDICT_REPAIR_MS = 3 * 60 * 1000;
 const VERDICT_REPAIR_PROMPT = [
   'Your reply ended without the fenced JSON block your instructions asked for, so it could not be read.',
   'Do not read any more files and do not use any tool.',
-  'Reply now with ONLY that one fenced ```json block, for the verdict you reached, in exactly the format your instructions gave, with nothing before or after it.',
+  'Reply now with ONLY that one fenced ```json block, for the verdict you reached, in exactly the format your instructions gave, with nothing before or after it:',
+  VERDICT_FORMAT,
+  VERDICT_KEYS_LINE,
 ].join('\n');
 
 /**
@@ -2774,6 +2912,8 @@ async function runTriage(pool, config, {
   const budget = await limits.checkBudget(pool, bot.id);
   if (budget.error) {
     log.info('homeroom-bot', 'Pass paused on budget', { reason: budget.reason || null });
+    // #4610: a person waiting on an answer on the bot's change hears why.
+    if (liveMode) await noteFollowUpWait(pool, { app, issueNumber, bot, why: 'budget', ws: liveD.ws });
     return { ran: false, reason: 'budget', detail: budget.reason || null };
   }
 
@@ -2837,6 +2977,9 @@ async function runTriage(pool, config, {
       log.info('homeroom-bot', 'Request held until the week resets: its payer\'s building time is used up', {
         app: app.slug, issueNumber, userId: payerId,
       });
+      // #4610: and a person who wrote on the bot's change for it hears it
+      // there, where they wrote, not only in the requester's DM.
+      await noteFollowUpWait(pool, { app, issueNumber, bot, why: 'allowance', ws: liveD.ws });
       return { ran: false, reason: 'user_allowance' };
     }
   }
@@ -2852,11 +2995,13 @@ async function runTriage(pool, config, {
         followUpTurn = true;
         return runFollowUp(pool, config, {
           bot, app, repo, item, issue, proposal: open, runMode,
-          model: stageModel(settings, config, 'followup'), turnBudgetMs, startedMs,
+          model: stageModel(settings, config, 'followup'),
+          turnBudgetMs: followUpBudgetMs(app, config, turnBudgetMs), startedMs,
           recordFailure,
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
+            ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
       }
@@ -2879,6 +3024,10 @@ async function runTriage(pool, config, {
       || item.reason === RETRY_FAILED_REASON || item.reason === READ_AGAIN_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
+      // 10 October: with the bot's voice on in requests' discussions, a read
+      // is recorded but not announced: the request's card and the tray say
+      // it is reading, and what it posts there is what it found.
+      ...(voiceModule(deps).voiceOn(settings, { type: 'issue' }) ? { skipIssueThread: true, skipGithub: true } : {}),
     }).catch((err) => {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -2889,7 +3038,9 @@ async function runTriage(pool, config, {
     // not twice for a restart or a read started over, and not for a backlog
     // pass. Never throws.
     if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON) {
-      await activity().startCard(pool, { app, issueNumber, requester, bot, jobKey: item.id, settings, deps: { dm: deps.dm } });
+      await activity().startCard(pool, {
+        app, issueNumber, requester, bot, jobKey: item.id, settings, inDm: DM_REASONS.has(item.reason), deps: { dm: deps.dm },
+      });
       // B9: the chat message it was asked in, if it was, says it is read.
       await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
     }
@@ -2930,7 +3081,8 @@ async function runTriage(pool, config, {
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   // #3772: on a project of one, the person who asked decides what the group
-  // would. Only on a project the bot acts on, where it says its verdict.
+  // would; on a project with more, its creator and admins do. Only on a
+  // project the bot acts on, where it says its verdict.
   const decider = liveMode && requester
     ? await whoDecides(pool, app, requester).catch((err) => {
       log.warn('homeroom-bot', 'Could not read who decides on a project', { app: app.slug, err: err.message });
@@ -2976,6 +3128,8 @@ async function runTriage(pool, config, {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
     ...(starter ? { starter } : {}),
+    // #4645: their language preference, for the triage's wording rule.
+    locale: requester?.locale || null,
     ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
   };
@@ -2997,7 +3151,7 @@ async function runTriage(pool, config, {
     },
     extra: {
       model, firstVersion: !!requester?.firstVersion, mode: runMode, reason: item.reason || null,
-      ...(decider?.requesterDecides ? { decider } : {}),
+      ...(deciderNote(decider) ? { decider } : {}),
       // So the benchmark rebuilds the prompt this look read (bench/runner.js).
       ...(members ? { members } : {}),
       ...(starter ? { starter } : {}),
@@ -3496,6 +3650,8 @@ async function runTriage(pool, config, {
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
         firstVersion: !!requester?.firstVersion,
+        // Who a person hand-off waits on, for the requester's DM.
+        decider,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -3644,6 +3800,19 @@ function buildBudgets(app, config, turnBudgetMs, { firstVersion = false } = {}) 
   const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR
     : firstVersion ? FIRST_VERSION_BUILD_TIME_FACTOR : 1;
   return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
+}
+
+/**
+ * #4610: the clock for a follow-up on `app` (a fix of its red checks, or an
+ * answer to a person). It used to be the plain turn budget everywhere, so on
+ * the platform's own repository, where a build gets
+ * PLATFORM_BUILD_TIME_FACTOR times it for reading a large codebase and
+ * running its slower suites, the fix of that same build ran out of time
+ * (PR #4582, change 7490). It gets what the build got; a first version's
+ * longer clock is for its size, which a follow-up does not have.
+ */
+function followUpBudgetMs(app, config, turnBudgetMs) {
+  return isPlatformRepo(app, config) ? turnBudgetMs * PLATFORM_BUILD_TIME_FACTOR : turnBudgetMs;
 }
 
 /**
@@ -3829,10 +3998,15 @@ async function shadowBuild({
   const buildStartedMs = Date.now();
   // A first version builds as the live lane builds it: its doubled clock,
   // and the spec and build that decide its look (buildOne).
+  // #4645: the requester's language preference, for the prompts' wording
+  // rule (localeRule); unset, everything the group reads stays English.
+  const requester = await (deps.dm || require('./homeroom-bot-dm'))
+    .requesterOf(pool, app.id, issueNumber).catch(() => null);
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
     ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, presetSpec,
     firstVersion, starter,
+    locale: requester?.locale || null,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
@@ -4551,14 +4725,15 @@ async function restartedBuildsBefore(pool, { appId, issueNumber, runId }) {
  * cleared, and what the spec turn cost stays on the run for the build to
  * carry. True when the run was put back; never throws.
  */
-async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, costUsd = null }) {
+async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, specHtml = null, costUsd = null }) {
   try {
     const { rows } = await pool.query(
       `UPDATE homeroom_bot_runs
-          SET build_spec_md = $2, build_cost_usd = $3, build_session_id = NULL, live_build_waiting_at = NOW()
+          SET build_spec_md = $2, build_cost_usd = $3, build_session_id = NULL, live_build_waiting_at = NOW(),
+              build_spec_html = $4
         WHERE id = $1 AND mode = 'live' AND build_ok IS NULL AND proposal_session_id IS NULL
         RETURNING id`,
-      [runId, specMd, Number.isFinite(costUsd) ? costUsd : null],
+      [runId, specMd, Number.isFinite(costUsd) ? costUsd : null, specHtml || null],
     );
     if (!rows.length) return false;
   } catch (err) {
@@ -4572,9 +4747,10 @@ async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, costUsd = n
 /** The plan a live run kept from an earlier build (resumeLiveBuildFromSpec), or null. Never throws. */
 async function keptRunSpec(pool, runId) {
   const { rows: [r] = [] } = await pool.query(
-    'SELECT build_spec_md FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
+    'SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
   ).catch(() => ({ rows: [] }));
-  return r?.build_spec_md || null;
+  if (!r?.build_spec_md) return null;
+  return { md: r.build_spec_md, html: r.build_spec_html || null };
 }
 
 /** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
@@ -4842,7 +5018,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
   pendingLive.delete(Number(sessionId));
   try {
     const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model,
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model, cs.spec_html,
               (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
          FROM chat_sessions cs WHERE cs.id = $1`,
       [sessionId],
@@ -4916,10 +5092,11 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         // only once its spec turn finished with one (homeroom-bot-live.js
         // draftSpec publishes it after the turn), so a spec turn cut short
         // has none to carry on from.
-        const keptSpec = specRead?.ok ? specRead.specMd
-          : session.spec_md || await keptRunSpec(pool, plan.runId);
-        if (keptSpec && await resumeLiveBuildFromSpec(pool, {
-          runId: plan.runId, appId: plan.appId, specMd: keptSpec, costUsd,
+        const keptSpec = specRead?.ok ? { md: specRead.specMd, html: specRead.specHtml || null }
+          : session.spec_md ? { md: session.spec_md, html: session.spec_html || null }
+          : await keptRunSpec(pool, plan.runId);
+        if (keptSpec?.md && await resumeLiveBuildFromSpec(pool, {
+          runId: plan.runId, appId: plan.appId, specMd: keptSpec.md, specHtml: keptSpec.html, costUsd,
         })) {
           log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
             app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
@@ -5422,6 +5599,84 @@ async function proposalSpec(pool, sessionId) {
   }
 }
 
+// #4610: how recent a person's message must be for a wait to be said
+// under it: a wait is news about a message somebody is waiting on now.
+const WAIT_NOTE_WINDOW_HOURS = 6;
+
+/**
+ * #4610: say in the change's thread why the bot's answer waits, instead of
+ * waiting silently. Only on the bot's own change while it is up for a vote,
+ * and only while a person's message is the newest word in its thread, so it
+ * is said once per message waited on: the note itself is the bot's word, and
+ * the next pass that waits finds it there. `why` is a key of
+ * followup.WAIT_WORDS. Never throws; resolves whether it said it.
+ */
+async function noteFollowUpWait(pool, { app, issueNumber, bot, why, sessionId = null, ws = null }) {
+  const text = followup.waitText(why);
+  if (!text || !app || !bot?.id) return false;
+  try {
+    const open = sessionId ? { id: sessionId, status: 'promoted' }
+      : await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+    if (!open || open.status !== 'promoted') return false;
+    const { rows } = await pool.query(
+      `SELECT (u.is_synthetic IS TRUE) AS by_bot,
+              (m.created_at > NOW() - make_interval(hours => $3)) AS recent
+         FROM chat_messages m
+         LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.thread_type = 'session' AND m.thread_ref = $2
+          AND m.msg_type = 'message' AND m.deleted_at IS NULL
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT 1`,
+      [app.id, Number(open.id), WAIT_NOTE_WINDOW_HOURS],
+    );
+    const last = rows[0];
+    if (!last || last.by_bot || !last.recent) return false;
+    await live.postOnProposal({
+      pool, ws: ws || liveDeps().ws, app, issueNumber, kind: 'followup_wait', text, bot, sessionId: Number(open.id),
+    });
+    log.info('homeroom-bot', 'Said why its answer on its change waits', { app: app.slug, issueNumber, sessionId: open.id, why });
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not say why a follow-up waits', { app: app?.slug, issueNumber, why, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * #4610: a short line from the bot in the thread a person wrote in: the
+ * change's own (`sessionId`), else the request's. Homeroom only, never a
+ * GitHub comment: a comment moves the issue's updated_at, which reads as new
+ * activity and would start another look. Never throws.
+ */
+async function postThreadNote({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null }) {
+  try {
+    if (sessionId) {
+      await live.postOnProposal({ pool, ws, app, issueNumber, runId, kind, text, bot, sessionId: Number(sessionId) });
+      return true;
+    }
+    await pool.query(
+      'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
+      [app.id, issueNumber, runId, kind],
+    );
+    await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: require('./homeroom-bot-words').firstPerson(text), thread: { type: 'issue', ref: Number(issueNumber) },
+    });
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
+    return false;
+  }
+}
+
+// #4610: the plain cause of a reply turn that failed, for the note it posts
+// (followup.replyFailedText). The record stays on the run.
+function replyFailedWhy(error) {
+  const e = String(error || '');
+  if (/^budget: wall clock/.test(e)) return 'it ran out of time';
+  if (/^unparseable:/.test(e)) return 'its answer came back unreadable';
+  return 'something went wrong while it worked on it';
+}
+
 /**
  * #3264: a follow-up on the bot's own open proposal for this issue. Runs
  * where runTriage would otherwise have stopped at "already has a bot
@@ -5449,9 +5704,73 @@ async function runFollowUp(pool, config, {
   const recordSnapshot = (runId) => (snapshot && runId
     ? snapshots.recordSnapshot(pool, { runId, ...snapshot })
     : Promise.resolve(null));
+  // #4610: where the person wrote, once the replies are read, and how many
+  // turns already failed to answer them (followup.repliesSince).
+  let noteSessionId = null;
+  let priorFailures = 0;
+  // #4613: what this run has read through, once the replies are read. The
+  // queue row's mark can be older than them, or missing (a checks row, Run
+  // now, a restart): recording only it had the next look read the same
+  // message as new and answer it a second time. Set below, before any run
+  // is recorded; fail() reads it.
+  let seenThrough = null;
+  // 10 October: with the bot's voice on in a change's discussion
+  // (homeroom-bot-voice.js), what people say there, and on its request once
+  // the change is up, is the voice's to answer, at once. What they ask it to
+  // change is queued as an ask wherever they asked (the discussion, a chat,
+  // the DM, a No vote's line), and this turn takes those asks: the voice
+  // tells each of them what came of it, where they asked, and this turn
+  // posts nothing there itself. GitHub's comments come here as before.
+  const voice = voiceModule(deps);
+  const voiceSettings = await readSettings(pool).catch(() => null);
+  const voiceOnChange = voice.voiceOn(voiceSettings, { type: 'session' });
+  const voiceOnRequest = voice.voiceOn(voiceSettings, { type: 'issue' });
+  const voiceDeps = { ...(deps.voiceDeps || {}), ...(deps.ws ? { ws: deps.ws } : {}) };
+  const runTag = recovered?.mark?.askTag || `fu${Number(item.id) || 0}-${Date.now().toString(36)}`;
+  let asks = [];
+  // The replies that are not asks, which this turn answers itself (set once
+  // they are read).
+  let others = [];
+  let reportSession = { id: proposal.id, pr_number: proposal.pr_number || null, title: proposal.title || null };
+  // Asks that came in while this ran, or that wait to be tried again, are
+  // its follow-up's next.
+  const requeueAsks = async () => {
+    if (!(await voice.asksWaiting(pool, proposal.id).catch(() => false))) return;
+    await enqueueFront(pool, { appId: app.id, issueNumber, reason: 'voice_update' })
+      .catch((err) => log.warn('homeroom-bot', 'Could not queue the asks waiting on a change', { app: app.slug, err: err.message }));
+  };
+  // A run that took asks and did not make them: they wait for the next one,
+  // unless they were tried as often as they may be, and then the people who
+  // asked hear so. A refusal or a platform fault never got going, so it is
+  // not a try.
+  const asksFailed = async (error, { refund = false } = {}) => {
+    const gaveUp = await voice.releaseAsks(pool, { runTag, refund }).catch(() => []);
+    if (gaveUp.length) {
+      await voice.reportFollowUp(pool, config, {
+        app, session: reportSession, bot, asks: gaveUp, outcome: { action: 'failed', why: replyFailedWhy(error) }, deps: voiceDeps,
+      });
+    }
+    if (!refund) await requeueAsks();
+  };
   const fail = async (error, extra = {}, opts = {}) => {
-    const out = await recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+    const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
+    if (asks.length) {
+      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) });
+      if (!others.length) return out;
+    }
+    // #4610: a reply turn that failed used to post nothing, so the person
+    // who wrote heard nothing at all. A wait (a refusal) is said where it
+    // happens, and a platform fault is retried on its own row: neither is
+    // this. One plain line, and whether it tries again on its own.
+    if (!opts.infra && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
+      await postThreadNote({
+        pool, ws: deps.ws, app, issueNumber, runId: out.runId || null, kind: 'followup_failed', bot, sessionId: noteSessionId,
+        text: followup.replyFailedText({
+          why: replyFailedWhy(error), retrying: priorFailures + 1 < followup.MAX_REPLY_TRIES,
+        }),
+      });
+    }
     return out;
   };
 
@@ -5464,6 +5783,22 @@ async function runFollowUp(pool, config, {
     [app.id, issueNumber],
   );
   const lastRun = lastRows[0] || null;
+  // #4610: the runs since the last one that answered, so a reply turn that
+  // failed does not count the message it failed on as answered
+  // (followup.repliesSince). Without any, the last run's mark stands.
+  const { rows: recentRuns } = recovered ? { rows: [] } : await pool.query(
+    `SELECT verdict, error, thread_seen_at, proposal_session_id, checks_head_sha
+       FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
+      ORDER BY created_at DESC LIMIT 8`,
+    [app.id, issueNumber],
+  ).catch(() => ({ rows: [] }));
+  const since = recentRuns?.length
+    ? followup.repliesSince(recentRuns, proposal.id)
+    : { sinceAt: lastRun?.thread_seen_at || null, failures: 0, gaveUp: false };
+  priorFailures = since.gaveUp ? 0 : since.failures;
 
   const seedReadAt = recovered?.mark.seedReadAt || new Date().toISOString();
   const [{ comments = [] } = {}, issueThread, proposalThread, botLogin] = await Promise.all([
@@ -5474,14 +5809,35 @@ async function runFollowUp(pool, config, {
   ]);
   // #4533: a recovered turn answered what it read before the restart; its
   // mark says where that was, which is where the answer goes.
-  const replies = recovered ? [{ where: recovered.mark.onProposal ? 'proposal' : 'issue' }] : followup.newReplies({
+  let replies = recovered ? [{ where: recovered.mark.onProposal ? 'proposal' : 'issue' }] : followup.newReplies({
     comments,
     issueThread: issueThread?.messages || [],
     proposalThread: proposalThread?.messages || [],
     botLogin,
     botUsername: BOT_USERNAME,
-    sinceMs: toMs(lastRun?.thread_seen_at),
+    sinceMs: toMs(since.sinceAt),
   });
+  if (!recovered) {
+    // What people wrote where the voice answers is the voice's; what they
+    // asked it to change comes here as asks.
+    replies = replies.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
+    if (voiceOnChange) {
+      asks = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+        log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
+        return [];
+      });
+      replies = [...replies, ...asks.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
+    }
+  } else if (recovered.mark.askTag) {
+    asks = await voice.asksOf(pool, runTag).catch(() => []);
+  }
+  others = recovered ? (asks.length ? [] : replies) : replies.filter((r) => r.via !== 'ask');
+  noteSessionId = others.some((r) => r.where === 'proposal') ? proposal.id : null;
+  // #4613: every run this turn records carries a mark past what it read, so
+  // the next look does not read the same replies again (followup.readThrough).
+  // advanceSeen still raises it further when it can (the GitHub comment's
+  // own stamp), and a person writing while the turn runs stays after it.
+  seenThrough = followup.readThrough(replies, item.thread_seen_at || null);
   // Its own red checks: a failing verdict on the proposal's current head
   // that no follow-up has looked at yet is a reason to look again even when
   // nobody said anything. A person's reply comes first; a fix still due
@@ -5514,8 +5870,18 @@ async function runFollowUp(pool, config, {
   const session = sessionRows[0];
   if (!session || !session.branch_name) {
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    if (asks.length) {
+      // Merged or closed before its update: what was asked of it goes, and
+      // the people who asked hear so.
+      await voice.finishAsks(pool, { runTag, status: 'dropped' }).catch(() => {});
+      await voice.dropAsks(pool, proposal.id);
+      await voice.reportFollowUp(pool, config, {
+        app, session: reportSession, bot, asks, outcome: { action: 'gone' }, deps: voiceDeps,
+      });
+    }
     return { ran: false, reason: 'has_proposal' };
   }
+  reportSession = session;
   // #4533: whether a recovered turn moved the head is read against the head
   // it started from: the person's recovery tail has made its push the
   // reviewed head since.
@@ -5558,8 +5924,22 @@ async function runFollowUp(pool, config, {
     const design = canRevise
       ? live.revisionDesignText({ readsImages: await live.buildSeesImages({ pool, config, userId: bot.id, model }) })
       : '';
+    // #4572: a person writing on a change whose checks fail is shown them
+    // too, so the reply can fix them (followup.failingNowLines). Whether or
+    // not a fix turn already looked at this head.
+    const failingNow = await failingChecksNow(pool, session.id);
+    // #4645: the requester's language preference (users.locale), for the
+    // prompts' wording rule: a question the bot asks reaches them in their
+    // DM with it, so that is where the rule can match their locale.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const locale = requester?.locale || null;
     const prompt = followup.followUpPrompt({
-      seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design,
+      seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design, checks: failingNow,
+      // #4612: how an updated plan is written, when the revision changes
+      // what the change does for people.
+      planFormat: canRevise ? live.followUpPlanFormat({ config, app, locale }) : undefined,
+      locale,
     });
     snapshot = {
       stage: 'followup', appId: app.id, issueNumber,
@@ -5579,10 +5959,20 @@ async function runFollowUp(pool, config, {
       pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
       turnMark: followUpMark({
         kind: 'reply', app, item, runMode, model, startedMs, seedReadAt, session,
-        threadSeenAt: item.thread_seen_at || null,
-        extra: { onProposal: replies.some((r) => r.where === 'proposal') },
+        threadSeenAt: seenThrough,
+        extra: { onProposal: others.some((r) => r.where === 'proposal'), ...(asks.length ? { askTag: runTag } : {}) },
       }),
+      // #4610: once the turn is really going ahead, the person hears so. An
+      // ask was told so by the voice when it was queued.
+      onStart: deps.ws && !asks.length ? () => postThreadNote({
+        pool, ws: deps.ws, app, issueNumber, kind: 'followup_working', text: followup.workingText(), bot,
+        sessionId: noteSessionId,
+      }) : null,
     });
+    // #4610: and when it has to wait for another turn on the change, why.
+    if (turn.routed?.error === 'session_busy' && deps.ws && !asks.length) {
+      await noteFollowUpWait(pool, { app, issueNumber, bot, why: 'session_busy', sessionId: session.id, ws: deps.ws });
+    }
   }
   const result = turn.result || {};
   const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
@@ -5642,8 +6032,17 @@ async function runFollowUp(pool, config, {
       pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot, senderId: bot.id,
       mentions: live.tagsPoster(kind) ? targets : [], notifications: deps.notifications || null,
       // Answered where it was asked: the proposal's thread too, when that
-      // is where somebody wrote.
-      proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
+      // is where somebody wrote, and there alone when nobody wrote anywhere
+      // else (live.post onlyProposal).
+      proposalSessionId: others.some((r) => r.where === 'proposal') ? session.id : null,
+      onlyProposal: others.length > 0 && others.every((r) => r.where === 'proposal'),
+      // What the voice tells the people who asked is not said again in the
+      // request's thread, and GitHub hears an update, or an answer to a
+      // comment left there, and nothing else.
+      ...(asks.length ? {
+        skipIssueThread: !others.some((r) => r.where === 'issue' && r.via === 'homeroom'),
+        skipGithub: kind !== 'followup_revise' && !others.some((r) => r.via === 'github'),
+      } : {}),
       ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
@@ -5658,7 +6057,7 @@ async function runFollowUp(pool, config, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
-      reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
+      reason: parsed.reply, threadSeenAt: seenThrough, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
     });
     await recordSnapshot(runId);
@@ -5671,10 +6070,14 @@ async function runFollowUp(pool, config, {
     // (`why`) stays on the run and in the line above (followup.revisionFailedText).
     // The requester hears it in their DM too, with the change's card.
     const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
-    await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
-      dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
-    })
-      .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    // Asks are tried again, once, and the voice says when they give up.
+    if (asks.length) await asksFailed(`revise: ${why}`);
+    if (others.length) {
+      await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
+        dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
+      })
+        .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
       proposalSessionId: session.id,
@@ -5693,6 +6096,25 @@ async function runFollowUp(pool, config, {
   // options with the number of sounds" when it merged.
   if (moved && parsed?.title) await renameRevised({ pool, github, repo, session, title: parsed.title, app });
 
+  // #4612: when the revision changed what the plan says, the turn wrote the
+  // whole updated plan before its JSON block. Store it as the change's next
+  // spec version; when it could not be read or stored, the revision goes on
+  // with the plan it has.
+  let planVersion = null;
+  let planRead = null;
+  if (moved && parsed?.planChanged) {
+    planRead = live.readSpec(followup.planOutOf(result.lastResultText));
+    if (planRead.ok) {
+      planVersion = await live.publishSpec({
+        pool, sessions, session, specMd: planRead.specMd, specHtml: planRead.specHtml, model, revised: true,
+      });
+    } else {
+      log.warn('homeroom-bot', 'The revised plan could not be read; keeping the previous one', {
+        app: app.slug, issueNumber, sessionId: session.id, error: planRead.error,
+      });
+    }
+  }
+
   const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     ...billingOf(item, runMode),
@@ -5702,7 +6124,7 @@ async function runFollowUp(pool, config, {
     questionAnswers: askAnswers,
     reason: reply,
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
-    threadSeenAt: item.thread_seen_at || null, model,
+    threadSeenAt: seenThrough, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
   });
   await recordSnapshot(runId);
@@ -5716,7 +6138,7 @@ async function runFollowUp(pool, config, {
   const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl,
+      summary: parsed?.summary, reply: parsed?.reply, planVersion, prNumber, link: proposalUrl,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
@@ -5731,13 +6153,47 @@ async function runFollowUp(pool, config, {
   // B4: an update carries the change's card in the thread, in place of an address.
   const card = action === 'revise'
     ? { msgType: 'vote', metadata: { vote: { sessionId: session.id, prNumber } } } : {};
-  await say(`followup_${action}`, text, postedAt, { ...card, ...(dm ? { dm } : {}) })
+  // With asks, a question or a note reaches the requester's DM only when
+  // somebody asked there; an update still moves their card.
+  const dmHere = dm && (!asks.length || action === 'revise' || others.length > 0 || asks.some((a) => a.source === 'dm'))
+    ? dm : null;
+  await say(`followup_${action}`, text, postedAt, { ...card, ...(dmHere ? { dm: dmHere } : {}) })
     .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+  if (asks.length) {
+    // The people who asked hear what came of it, where they asked, in the
+    // voice's own words.
+    await voice.reportFollowUp(pool, config, {
+      app, session, bot, asks, deps: voiceDeps,
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+    });
+    await voice.finishAsks(pool, { runTag, runId }).catch(() => {});
+  }
+  // #4612: the updated plan, where the first plan was posted: the spec card
+  // in the change's discussion, then its copy on the GitHub issue. Its own
+  // comment is pushed into postedAt so the turn does not read it back as
+  // new activity.
+  if (planVersion && planRead) {
+    await live.postSpecOnProposal({
+      pool, ws: deps.ws, app, bot, sessionId: session.id, version: planVersion, spec: planRead.specMd, revised: true,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not post the revised plan card', {
+      app: app.slug, issueNumber, err: err.message,
+    }));
+    const planComment = await live.postRevisedSpecComment({
+      github, repo, issueNumber, spec: planRead.specMd, version: planVersion,
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not post the revised plan on the issue', {
+        app: app.slug, issueNumber, err: err.message,
+      });
+      return null;
+    });
+    if (planComment?.created_at) postedAt.push(planComment.created_at);
+  }
   await live.advanceSeen({
     pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
     proposalSessionId: session.id,
   }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
   if (!moved) await requeueChecks();
+  await requeueAsks();
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
 }
 
@@ -5814,6 +6270,21 @@ const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_stat
        JOIN apps a ON a.id = cs.app_id
        JOIN users u ON u.id = cs.user_id
       WHERE cs.id = $1 AND cs.status = 'promoted' AND u.username = $2 AND u.is_synthetic = TRUE`;
+
+/**
+ * #4572: the checks failing on the bot's proposal `sessionId` now, and what
+ * its shots show failing, whether or not a fix turn looked at this head
+ * already: what a reply turn is shown (followup.failingNowLines). Null when
+ * nothing fails or the read fails.
+ */
+async function failingChecksNow(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(CHECKS_ROW_SQL, [Number(sessionId), BOT_USERNAME]);
+    return rows[0] ? followup.checksDue({ ...rows[0], looked: false }) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The fix the bot's proposal `sessionId` is due, or null (followup.checksDue). */
 async function checksToFix(pool, sessionId) {
@@ -5917,7 +6388,7 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
-  const handOff = async ({ why, verdict, extra = {} }) => {
+  const handOff = async ({ why, verdict, extra = {}, notChange = false }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -5928,6 +6399,27 @@ async function runChecksFix(pool, config, {
     });
     await recordSnapshot(runId);
     await dropRow();
+    if (notChange) {
+      // Not the change's doing: the platform's to look at. Admins are told
+      // (the Unexpected events list and its digest), the group voting on the
+      // change gets one line where it votes, and nobody else is told.
+      await incidents().record(pool, {
+        kind: incidents().KINDS.CHECKS_NOT_CHANGE, appId: app.id, sessionId: session.id,
+        detail: {
+          runId, issueNumber, prNumber: prNumber || null, head: head || null,
+          failing: failing.slice(0, 5).map((f) => clip(String(f?.name || f?.title || f || ''), 120)),
+          why: clip(String(why || ''), 300),
+        },
+      });
+      await live.postOnProposal({
+        pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_not_change', bot, sessionId: session.id,
+        text: followup.checksNotChangeText({ failingCount: failing.length }),
+      }).catch((err) => log.warn('homeroom-bot', 'Checks note failed', { app: app.slug, issueNumber, err: err.message }));
+      log.info('homeroom-bot', 'Its proposal\'s failing checks are not its doing; told admins', {
+        app: app.slug, issueNumber, sessionId: session.id, head, runId,
+      });
+      return { ran: true, verdict, runId, acted: 'checks_not_change' };
+    }
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
@@ -5937,7 +6429,11 @@ async function runChecksFix(pool, config, {
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
-      dm: { reason: failing.length ? `its checks are failing: ${why}` : `part of it does not work yet: ${why}` },
+      // A change's checks are its discussion's news, not a DM message
+      // (homeroom-bot-dm.js cardOnly); what does not work yet is theirs.
+      dm: failing.length
+        ? { reason: `its checks are failing: ${why}`, checks: true }
+        : { reason: `part of it does not work yet: ${why}` },
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -5976,7 +6472,13 @@ async function runChecksFix(pool, config, {
       sessionId: session.id, prNumber,
       threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
     });
-    const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
+    // #4645: the requester's language preference, for the prompt's wording
+    // rule (localeRule); unset, the note to the group stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const prompt = followup.checksFixPrompt({
+      seed, proposalBlock, prNumber, failing, total, broken, locale: requester?.locale || null,
+    });
     snapshot = {
       stage: 'checks_fix', appId: app.id, issueNumber,
       baseSha: head,
@@ -6069,6 +6571,34 @@ async function runChecksFix(pool, config, {
     return { ran: true, verdict: 'revise', runId, acted: 'checks_revise' };
   }
 
+  // #4572: a fix that ran out of time is tried once more before anybody is
+  // asked: it used to mark the head looked at and hand over at once, though
+  // nothing about the change said a person was needed (PR #4582, change
+  // 7490). Its own one retry per head (checksRetryError): the run keeps no
+  // `checks_head_sha`, so the head is still due, and a failed run never
+  // counts toward MAX_REVISIONS. The second time out hands over as before.
+  if (turn.stopped && !await checksRetried(pool, session.id, head)) {
+    runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
+      readReason: readReasonOf(item),
+      appId: app.id, issueNumber, mode: runMode, verdict: 'failed',
+      reason: 'its attempt to fix them ran out of time', error: checksRetryError(head),
+      threadSeenAt, model, durationMs: Date.now() - startedMs,
+      proposalSessionId: session.id, ...spent, budgetStop: 'wall clock',
+    });
+    await recordSnapshot(runId);
+    await dropRow();
+    await live.postOnProposal({
+      pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_retry', bot, sessionId: session.id,
+      text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0 }),
+    }).catch((err) => log.warn('homeroom-bot', 'Checks retry post failed', { app: app.slug, issueNumber, err: err.message }));
+    log.warn('homeroom-bot', 'Fix of its proposal\'s checks ran out of time; trying once more', {
+      app: app.slug, issueNumber, sessionId: session.id, head, runId,
+    });
+    await noteProposalChecks(pool, { sessionId: session.id });
+    return { ran: true, verdict: 'failed', runId, acted: 'checks_retry' };
+  }
+
   // The turn could not fix them: one note, and a person takes it from here.
   const turnFailed = !turn.stopped && !code ? live.failedClaudeTurn(result) : null;
   const why = turn.stopped ? 'its attempt to fix them ran out of time'
@@ -6081,7 +6611,29 @@ async function runChecksFix(pool, config, {
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
     extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
+    // The turn found the failures are not the change's (followup.CAUSES).
+    notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
   });
+}
+
+// #4572: the error a timed-out fix records when it is tried once more, one
+// per head, so the retry is counted by the head it was for.
+function checksRetryError(head) {
+  return `checks: ran out of time on ${String(head || '').toLowerCase()}, trying once more`;
+}
+
+/** Whether a fix of `head` on proposal `sessionId` already ran out of time once (checksRetryError). */
+async function checksRetried(pool, sessionId, head) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND error = $2 LIMIT 1',
+      [Number(sessionId), checksRetryError(head)],
+    );
+    return rows.length > 0;
+  } catch {
+    // A read that fails hands over, as before: never a loop of retries.
+    return true;
+  }
 }
 
 // ── A follow-up after a restart (#4533) ──────────────────────────────────
@@ -6409,7 +6961,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [], deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [],
+  decider = null, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -6428,9 +6981,14 @@ async function actOnVerdict({
   // while the bot's last word there is itself one of those notes (after a
   // failed build or a held verdict, asking is what brings it back), and an
   // edit of the request since counts as news.
+  // With the bot's voice on in requests' discussions, a mention or a reply
+  // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
+  // say the note again.
+  const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
   const gate = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict)
     ? await addressedMod().shouldSpeak(pool, {
       appId: app.id, issueNumber, botId: bot.id, comments, botLogin, waitingOnly: !relook, updatedAt: issue?.updatedAt || null,
+      voiceAnswers,
     })
     : { speak: true };
   if (!gate.speak) {
@@ -6467,10 +7025,20 @@ async function actOnVerdict({
     });
   } else if (parsed.verdict === 'person') {
     // #4239: about Homeroom itself, the requester's DM offers to move it to
-    // Homeroom's own board (homeroom-bot-dm.js relayIssuePost).
-    await say('person', live.personText(parsed), { dm: { reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}) } });
+    // Homeroom's own board (homeroom-bot-dm.js relayIssuePost). A requester
+    // who does not decide on the project is told who does, rather than
+    // offered a Go ahead that would only read it again (whoDecides).
+    const deciders = decider && !decider.requesterDecides && Array.isArray(decider.deciders)
+      ? decider.deciders.map((d) => d?.username).filter(Boolean)
+      : [];
+    await say('person', live.personText(parsed), {
+      dm: {
+        reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
+        ...(parsed.done ? { done: true } : {}),
+      },
+    });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
+    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}) } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. #4175: it is never built without it. A plan that
@@ -6880,11 +7448,16 @@ async function planBeforeBuilding({
   let drafted;
   liveBuildsInFlight.add(runId);
   try {
+    // #4645: the requester's language preference, for the plan's wording
+    // rule (localeRule); unset, the plan stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
     drafted = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed,
       buildNote: `${parsed.buildNote || ''}${planChoicesNote(questions)}`,
       ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps,
       platformRepo: isPlatformRepo(app, config), planOnly: true,
+      locale: requester?.locale || null,
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
       origin: { lane: 'live', runId },
       ...(harnessed ? { harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null } : {}),
@@ -7072,8 +7645,9 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
 
 /**
  * B6: a plan nobody tapped Build it under for PLAN_WAIT_DAYS stops waiting.
- * Its card keeps its bullets and says so; a reply to it brings a new plan.
- * Nothing notifies. Resolves how many stopped. Never throws.
+ * Its card keeps its bullets and says so, and one message under it says so
+ * too (homeroom-bot-dm.js closePlanCards); a reply to it brings a new plan.
+ * Nothing rings. Resolves how many stopped. Never throws.
  */
 async function settleStalePlans(pool, deps = {}) {
   try {
@@ -7261,10 +7835,15 @@ async function buildLive({
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
     const buildStartedMs = Date.now();
+    // #4645: the requester's language preference, for the prompts' wording
+    // rule (localeRule); unset, everything the group reads stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
     built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      locale: requester?.locale || null,
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
       firstVersion, starter,
@@ -7313,9 +7892,12 @@ async function buildLive({
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
       } : {}),
+      // #4662: a kept plan's screens ride along whatever the build: a
+      // recovered build publishes its plan whole, as a fresh one does.
+      ...(presetSpecHtml ? { presetSpecHtml } : {}),
       // #4488: a complicated change's review, whatever builds later changes;
-      // its spec's screens; and its description says it was checked first.
-      ...(checkFirst ? { review, presetSpecHtml, checkedFirst: !!presetSpec } : {}),
+      // and its description says it was checked first.
+      ...(checkFirst ? { review, checkedFirst: !!presetSpec } : {}),
     });
     buildMs = Date.now() - buildStartedMs;
   } finally {
@@ -7663,10 +8245,21 @@ async function liveCandidates(pool, {
            WHERE fv.app_id = q.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM q.issue_number
              AND ${FIRST_VERSION_PENDING_SQL}
         ))
+        -- One turn for a burst (SETTLE_MS): a person still writing on the
+        -- request, or on the bot's change for it, is read once they pause.
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages m
+            LEFT JOIN users mu ON mu.id = m.user_id
+           WHERE m.app_id = q.app_id AND m.msg_type = 'message' AND m.deleted_at IS NULL
+             AND mu.is_synthetic IS NOT TRUE
+             AND ((m.thread_type = 'issue' AND m.thread_ref = q.issue_number)
+               OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
+             AND m.created_at > NOW() - make_interval(secs => $11)
+        )
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
     [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
-      scope.all, scope.except],
+      scope.all, scope.except, SETTLE_MS / 1000],
   );
   return rows;
 }
@@ -7700,7 +8293,7 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
-            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id, r.complicated, r.plan,
+            r.build_spec_md, r.build_spec_html, r.build_cost_usd, r.charged, r.payer_user_id, r.complicated, r.plan,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -7940,10 +8533,15 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     carriedCostUsd: run.build_spec_md ? Number(run.build_cost_usd) || 0 : 0,
     // #4488: a complicated change, planned with its requester first; once
     // they said Build it, built from exactly the spec they were shown (its
-    // markdown above, its screens read back here).
+    // markdown above, its screens read back here). A plan kept from a build
+    // a restart interrupted carries its own HTML beside it (#4662): a
+    // complicated plan still prefers the exact version its requester
+    // approved, and falls back to the run's when that cannot be read.
     complicated: run.complicated === true && !requester?.firstVersion,
     plan: run.plan && typeof run.plan === 'object' ? run.plan : null,
-    presetSpecHtml: run.build_spec_md && run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null,
+    presetSpecHtml: run.build_spec_md
+      ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
+      : null,
   };
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
@@ -8830,8 +9428,20 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return false;
   interruptRead({ appId: id, issueNumber: n, reason });
   wake({ appId: id });
+  if (SETTLE_REASONS.has(reason)) wakeAfterSettle(id);
   publishWake({ appId: id, issueNumber: n, reason: String(reason).slice(0, 40) });
   return true;
+}
+
+/**
+ * A person's message waits SETTLE_MS before a turn reads it (liveCandidates),
+ * so the loop is woken again once it has: the idle poll would find it too,
+ * up to IDLE_PASS_DELAY_MS later. Only where the loop runs (wake answers
+ * false elsewhere, and the leader schedules its own from the bus).
+ */
+function wakeAfterSettle(appId) {
+  const t = setTimeout(() => { wake({ appId }); }, SETTLE_MS + 1000);
+  if (typeof t?.unref === 'function') t.unref();
 }
 
 /**
@@ -8840,15 +9450,30 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
  * answers; any other proposal's thread is none of the bot's business and
  * costs one indexed lookup. Never throws.
  */
-async function noteProposalActivity(pool, { appId, sessionId } = {}) {
+async function noteProposalActivity(pool, { appId, sessionId, deps = {} } = {}) {
   try {
     const { rows } = await pool.query(
-      `SELECT cs.linked_issues FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+      `SELECT cs.linked_issues, u.id AS bot_id, u.username AS bot_username, a.slug
+         FROM chat_sessions cs JOIN users u ON u.id = cs.user_id JOIN apps a ON a.id = cs.app_id
         WHERE cs.id = $1 AND cs.app_id = $2 AND cs.status = 'promoted' AND u.username = $3`,
       [Number(sessionId), Number(appId), BOT_USERNAME],
     );
     const issueNumber = Array.isArray(rows[0]?.linked_issues) ? rows[0].linked_issues[0] : null;
     if (!issueNumber) return false;
+    // #4610: on a project the bot is paused on, nothing will read this
+    // message (refreshQueue skips the app): the person hears why, once.
+    const settings = await readSettings(pool).catch(() => null);
+    if (settings && settings.mode !== 'off' && (settings.pausedApps || []).includes(rows[0].slug)) {
+      await noteFollowUpWait(pool, {
+        app: { id: Number(appId), slug: rows[0].slug }, issueNumber: Number(issueNumber),
+        bot: { id: rows[0].bot_id, username: rows[0].bot_username }, why: 'paused', sessionId: Number(sessionId),
+        ws: deps.ws || null,
+      });
+    }
+    // With the bot's voice on in changes' discussions, it answers there
+    // itself (homeroom-bot-voice.js), and a change asked for is queued as an
+    // ask: a message is no reason to look at the change again.
+    if (voiceModule(deps).voiceOn(settings, { type: 'session' })) return false;
     return noteIssueActivity({ appId, issueNumber, reason: 'proposal_thread' });
   } catch (err) {
     log.warn('homeroom-bot', 'Proposal activity check failed', { err: err.message });
@@ -8862,7 +9487,9 @@ function onBusMessage(data) {
   if (data.builds) return wakeBuilds();
   // The activity may have landed on another Pod than the one reading.
   if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
-  return wake({ appId: data.appId, all: !!data.all });
+  const woke = wake({ appId: data.appId, all: !!data.all });
+  if (woke && SETTLE_REASONS.has(data.reason)) wakeAfterSettle(Number(data.appId));
+  return woke;
 }
 
 // ── The dashboard's read and writes ─────────────────────────────────────
@@ -8887,11 +9514,16 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
             bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
+            r.charged, r.payer_user_id, pu.username AS payer_username,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
        LEFT JOIN users u ON u.id = r.rating_by
        LEFT JOIN bot_config_versions bc ON bc.id = r.bot_config_version_id
+       -- Whose weekly building time it counts toward when it is charged
+       -- (homeroom-bot-dm.js weeklySpentCents): its payer, else the requester.
+       LEFT JOIN homeroom_bot_requesters rq ON rq.app_id = r.app_id AND rq.issue_number = r.issue_number
+       LEFT JOIN users pu ON pu.id = COALESCE(r.payer_user_id, rq.user_id)
        -- #3624: whether this run's news reached the requester's DM, and when
        -- they answered its question there (homeroom-bot-dm.js records each
        -- DM it sends, with its run).
@@ -9163,6 +9795,8 @@ async function adminPayload(pool, config, {
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
     dmChat: await dmChatSummary(pool),
+    // And its voice outside the DM this week (homeroom-bot-voice.js).
+    voice: await voiceModule(null).voiceSummary(pool),
     // Whether it is working, over the last week (homeroom-bot-health.js).
     health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
     // #4210: errors that should not happen (a build a restart cut short),
@@ -9495,6 +10129,9 @@ module.exports = {
   previousRead,
   rememberRead,
   continuedTriagePrompt,
+  VERDICT_FORMAT,
+  VERDICT_REPAIR_PROMPT,
+  triageClosing,
   MAX_CONTINUED_READS,
   CONTINUE_READ_MAX_AGE_MS,
   wasStoppedRecently,
@@ -9572,10 +10209,15 @@ module.exports = {
   laterSideSkipReason,
   isPlatformRepo,
   buildBudgets,
+  followUpBudgetMs,
+  noteFollowUpWait,
+  replyFailedWhy,
   PLATFORM_BUILD_TIME_FACTOR,
   isRecoveredBotSession,
   settleReapedTurn,
   completeRecoveredLive,
+  // #4662: put a live run back in line with its kept plan, markdown and HTML.
+  resumeLiveBuildFromSpec,
   reviewRecoveredBuild,
   liveSayer,
   announceBuilt,
@@ -9645,6 +10287,9 @@ module.exports = {
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
   KEY_DM_CHAT,
+  KEY_VOICE_SESSION,
+  KEY_VOICE_ISSUE,
+  KEY_VOICE_CHAT,
   KEY_CONTINUE_READS,
   KEY_LIVE_BUILD_STREAM,
   KEY_EVERYONE_SINCE,

@@ -21,6 +21,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -176,7 +180,7 @@ test('the stale sweep skips a queued session while it has a row in line, and onl
   const sql = queries[0].sql;
   assert.match(sql, /cs\.check_phase IS DISTINCT FROM 'queued'\s+OR NOT EXISTS \(SELECT 1 FROM check_runs cr\s+WHERE cr\.session_id = cs\.id AND cr\.admitted_at IS NULL\)/,
     'a queued session with no row left in line is overdue by the usual clock: the backstop');
-  assert.deepEqual(queries[0].params, [600000, 6, 50]);
+  assert.deepEqual(queries[0].params, [600000, 6, 50, stagingRecovery.PLATFORM_FAULT_RETRY_MS]);
 });
 
 test('the merge gate kicks no recheck for a queued run, and says it is waiting', () => {
@@ -315,6 +319,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext([
     read('public/js/merge-status.js'),
@@ -377,6 +382,7 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const mock = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000054)));
@@ -424,6 +430,7 @@ test('the proposal page itself says where a waiting run is in line, without open
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const mock = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000054)));

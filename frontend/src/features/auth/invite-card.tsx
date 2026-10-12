@@ -52,6 +52,9 @@ import { useEffect, useState } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 import { FeaturedCard, sketchCardOf } from '../first-session/sketch-card';
 
 export type InvitePicture =
@@ -86,11 +89,12 @@ export type InvitePreview = {
   memberCount?: number;
 };
 
+// Message ids, read when the card renders.
 const DEAD: Record<string, string> = {
-  expired: 'This invite link has expired. Ask whoever sent it for a new one.',
-  revoked: 'This invite link was turned off. Ask whoever sent it for a new one.',
-  used_up: 'This invite link has been used as many times as it allows. Ask whoever sent it for a new one.',
-  unknown: 'This invite link does not work. Check it was copied whole.',
+  expired: 'auth:invite.dead.expired',
+  revoked: 'auth:invite.dead.revoked',
+  used_up: 'auth:invite.dead.usedUp',
+  unknown: 'auth:invite.dead.unknown',
 };
 
 // The pieces share the landing's card: white on the wallpaper, the sheet
@@ -105,8 +109,13 @@ export function inviteTokenFrom(pathname: string): string | null {
 
 /** "@ada invited you to join Game Corner." */
 export function invitedLine(preview: InvitePreview): string {
-  const name = preview.project?.name || 'a project';
-  return preview.inviter ? `@${preview.inviter} invited you to join ${name}.` : `You are invited to join ${name}.`;
+  const name = preview.project?.name;
+  if (preview.inviter) {
+    return name
+      ? translate('auth:invite.joinInvitedBy', { username: preview.inviter, project: name })
+      : translate('auth:invite.joinInvitedByUnnamed', { username: preview.inviter });
+  }
+  return name ? translate('auth:invite.joinInvited', { project: name }) : translate('auth:invite.joinInvitedUnnamed');
 }
 
 /**
@@ -125,7 +134,7 @@ export function inviterLabel(preview: Pick<InvitePreview, 'inviter' | 'inviterNa
 /** "26 people are in it", "1 person is in it", or '' for none. */
 export function membersPhrase(count: number | undefined): string {
   if (!count || count < 1) return '';
-  return `${count} ${count === 1 ? 'person is' : 'people are'} in it`;
+  return translate('auth:invite.members', { count });
 }
 
 /**
@@ -135,11 +144,18 @@ export function membersPhrase(count: number | undefined): string {
  * zero count says nothing.
  */
 export function inviteLine(preview: InvitePreview): string {
-  const name = preview.project?.name || 'a project';
+  const name = preview.project?.name;
   const who = inviterLabel(preview);
-  const invited = who ? `${who} invited you to ${name}` : `You're invited to ${name}`;
+  let invited: string;
+  if (who) {
+    invited = name
+      ? translate('auth:invite.invitedBy', { inviter: who, project: name })
+      : translate('auth:invite.invitedByUnnamed', { inviter: who });
+  } else {
+    invited = name ? translate('auth:invite.invited', { project: name }) : translate('auth:invite.invitedUnnamed');
+  }
   const members = membersPhrase(preview.memberCount);
-  return members ? `${invited} · ${members}` : invited;
+  return members ? translate('auth:invite.facts', { first: invited, second: members }) : invited;
 }
 
 /**
@@ -149,18 +165,19 @@ export function inviteLine(preview: InvitePreview): string {
  */
 export function invitedYouLine(preview: InvitePreview): string {
   const who = inviterLabel(preview);
-  const invited = who ? `${who} invited you` : "You're invited";
+  const invited = who ? translate('auth:invite.invitedYouBy', { inviter: who }) : translate('auth:invite.invitedYou');
   const members = membersPhrase(preview.memberCount);
-  return members ? `${invited} · ${members}` : invited;
+  return members ? translate('auth:invite.facts', { first: invited, second: members }) : invited;
 }
 
 /** The one line that names Homeroom, at the foot of the invite page (#4049). */
-export const HOMEROOM_LINE = 'On Homeroom, people using an app build and improve it together.';
+// A message id: MadeForYou reads it when it renders.
+export const HOMEROOM_LINE = 'auth:invite.homeroomLine';
 
 /** "12 people are in it." or '' for none. */
 export function membersLine(count: number | undefined): string {
-  const members = membersPhrase(count);
-  return members ? `${members}.` : '';
+  if (!count || count < 1) return '';
+  return translate('auth:invite.membersSentence', { count });
 }
 
 // How long the landing waits on a preview before it shows its own pitch
@@ -258,8 +275,9 @@ function Picture({ project }: { project: NonNullable<InvitePreview['project']>; 
  * first.
  */
 export function InvitePending() {
+  const t = useMessages('auth');
   return (
-    <SkeletonGroup label="Opening your invite" data-landing-invite="pending">
+    <SkeletonGroup label={t('auth:invite.opening')} data-landing-invite="pending">
       <div className={`${CARD} mt-4 flex items-center gap-3`}>
         <Skeleton shape="block" className="h-12 w-12 rounded-xl" />
         <div className="min-w-0 flex-1">
@@ -274,9 +292,10 @@ export function InvitePending() {
 
 /** A dead link's one sentence, above the landing's own pitch. */
 export function DeadInvite({ preview }: { preview: InvitePreview }) {
+  const t = useMessages('auth');
   return (
     <section data-landing-invite="dead" className="mx-4 mt-4 rounded-[20px] bg-white/80 dark:bg-zinc-900/80 p-4 text-[15px] text-zinc-600 dark:text-zinc-300">
-      {DEAD[preview.reason || 'unknown'] || DEAD.unknown}
+      {t(DEAD[preview.reason || 'unknown'] || DEAD.unknown)}
     </section>
   );
 }
@@ -287,6 +306,7 @@ export function DeadInvite({ preview }: { preview: InvitePreview }) {
  * scroller.
  */
 export function MadeForYou({ preview }: { preview: InvitePreview }) {
+  const t = useMessages('auth');
   const project = preview.project!;
   const sketch = sketchOf(project);
   const tile = pictureIsTile(project);
@@ -348,14 +368,17 @@ export function MadeForYou({ preview }: { preview: InvitePreview }) {
         {preview.note ? (
           <section className={`${CARD} mt-3`}>
             <p data-landing-invite-note="" className="rounded-2xl bg-violet-500/10 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              <span className="font-medium">{`${inviterLabel(preview) || 'They'}:`}</span>
-              {` “${preview.note}”`}
+              <RichMessage
+                id={inviterLabel(preview) ? 'auth:invite.note' : 'auth:invite.noteUnnamed'}
+                values={{ inviter: inviterLabel(preview), note: preview.note }}
+                components={[<span className="font-medium" />]}
+              />
             </p>
           </section>
         ) : null}
       </div>
       <p data-landing-invite-homeroom="" className="mx-4 pt-1 text-center text-[14px] leading-5 text-zinc-500 dark:text-zinc-400 text-pretty">
-        {HOMEROOM_LINE}
+        {t(HOMEROOM_LINE)}
       </p>
     </>
   );
@@ -377,6 +400,7 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
   /** Opens the sign-in sheet over this screen (./sign-in-sheet.tsx). */
   onJoin: () => void;
 }) {
+  const t = useMessages('auth');
   const project = preview.project!;
   return (
     <div
@@ -393,7 +417,7 @@ export function InviteJoinBar({ preview, primaryClass, onJoin }: {
           className={primaryClass}
           onClick={(e) => { e.preventDefault(); onJoin(); }}
         >
-          {`Join ${project.name}`}
+          {t('auth:invite.join', { project: project.name })}
         </a>
       </div>
     </div>

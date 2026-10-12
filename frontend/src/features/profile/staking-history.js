@@ -1,11 +1,12 @@
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 import { createEpochCache } from './staking-cache.js';
 import { fetchStakingEpoch } from './staking-observability.js';
 
 async function readJson(path, signal) {
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Could not load epoch data.');
+  if (!response.ok) throw new Error(data.error || t('profile:staking.error.epochData'));
   return data;
 }
 
@@ -40,7 +41,7 @@ export function createStakingHistory(wallet, { read = readJson, readEpoch = fetc
         if (data.chainId !== chainId || data.wallet !== wallet
             || !Number.isInteger(data.epoch) || data.epoch < 0
             || (epoch !== 'current' && data.epoch !== epoch)) {
-          throw new Error('The wallet or network changed. Retry to refresh epoch data.');
+          throw new Error(t('profile:staking.error.changed'));
         }
         if (data.complete) await cache.put(data);
         if (!current()) return null;
@@ -50,7 +51,7 @@ export function createStakingHistory(wallet, { read = readJson, readEpoch = fetc
         return data;
       } catch (error) {
         if (current()) store.set({ errors: { ...store.get().errors,
-          [epoch]: error.message || 'Could not load epoch data.' } });
+          [epoch]: error.message || t('profile:staking.error.epochData') } });
         return null;
       } finally { pending.delete(key); }
     })();
@@ -69,7 +70,7 @@ export function createStakingHistory(wallet, { read = readJson, readEpoch = fetc
       try {
         const context = await read('/api/me/staking/context', controller.signal);
         if (disposed) return;
-        if (!context.chainId) throw new Error('The network is unavailable.');
+        if (!context.chainId) throw new Error(t('profile:staking.error.network'));
         const observabilityUrl = context.observabilityUrl || null;
         if (context.chainId !== store.get().chainId || observabilityUrl !== store.get().observabilityUrl) {
           generation += 1;
@@ -78,7 +79,7 @@ export function createStakingHistory(wallet, { read = readJson, readEpoch = fetc
         }
         const data = await load('current', true);
         if (disposed) return;
-        if (!data) throw new Error(store.get().errors.current || 'Could not load the current epoch.');
+        if (!data) throw new Error(store.get().errors.current || t('profile:staking.error.currentEpoch'));
         const s = store.get();
         // Follow an epoch rollover only while viewing the former current card.
         const selectedEpoch = s.selectedEpoch === null || s.selectedEpoch === s.currentEpoch
@@ -89,7 +90,7 @@ export function createStakingHistory(wallet, { read = readJson, readEpoch = fetc
         const selected = store.get().selectedEpoch;
         if (selected !== data.epoch && !store.get().records[selected]?.complete) await load(selected, true);
       } catch (error) {
-        if (!disposed) store.set({ loading: false, error: error.message || 'Could not load epoch data.' });
+        if (!disposed) store.set({ loading: false, error: error.message || t('profile:staking.error.epochData') });
       } finally { refreshing = null; }
     })();
     return refreshing;

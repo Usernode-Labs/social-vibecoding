@@ -353,12 +353,8 @@ export const LockIcon = stroked(
   'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
 );
 
-// LockIcon with its shackle swung open: something that was locked is not
-// any more (Getting started's "6 challenges unlocked").
-export const LockOpenIcon = stroked(
-  'LockOpenIcon',
-  'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
-);
+// LockOpenIcon (its shackle swung open) went with the Getting started card's
+// done state, its one user (#4635).
 
 export const KeyIcon = stroked(
   'KeyIcon',
@@ -418,6 +414,13 @@ export const HandRaisedIcon = stroked(
   'HandRaisedIcon',
   'M10.05 4.575a1.575 1.575 0 10-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 013.15 0v1.5m-3.15 0l.075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 013.15 0V15M6.9 7.575a1.575 1.575 0 10-3.15 0v8.175a6.75 6.75 0 006.75 6.75h2.018a5.25 5.25 0 003.712-1.537l1.732-1.732a5.25 5.25 0 001.538-3.712l.003-2.024a.668.668 0 01.198-.471 1.575 1.575 0 10-2.228-2.228 3.818 3.818 0 00-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0116.35 15m.002 0h-.002',
 );
+// #4666: the approval presets' own glyphs. A bolt for You or the group (you
+// ship on your own), sliders for Make your own.
+export const BoltIcon = stroked('BoltIcon', 'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z');
+export const AdjustmentsIcon = stroked('AdjustmentsIcon', [
+  'M4 7h9M17 7h3M4 17h3M11 17h9',
+  'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+]);
 export const SparklesIcon = stroked(
   'SparklesIcon',
   'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',

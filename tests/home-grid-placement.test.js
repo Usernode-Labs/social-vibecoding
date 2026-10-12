@@ -43,6 +43,7 @@ const { installGridStore } = require('./helpers/home-grid-store');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 // Returns { Home, HomeLayout, fetchCalls, toasts, setFetch, sandbox,
 // attachCalls, setWidth, fireResize, fireMediaChange, mediaQueries }.
@@ -124,6 +125,7 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.

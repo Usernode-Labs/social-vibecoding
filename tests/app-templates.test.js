@@ -5,7 +5,7 @@
 // general starters (social productivity, multimedia social, a 2D game and a
 // 3D game) were deleted with the create dialog that offered them. What came
 // back (Evan, 8 October 2026) are apps finished enough that a project made
-// from one needs nothing built: the make screen's eight choices that need no
+// from one needs nothing built: the make screen's nine choices that need no
 // typing (frontend/src/features/first-session/examples.ts; the make screen's
 // side is tests/first-session-make.test.js). And the four game starters
 // (Evan, the same day): working multiplayer games the make screen's game
@@ -18,7 +18,7 @@
 //
 //   1. THE ALLOW-LIST. POST /api/apps takes `template` from
 //      services/app-templates.js's TEMPLATE_IDS and nothing else: `empty`,
-//      the eight ready-made apps and the four game starters; absent is
+//      the nine ready-made apps and the four game starters; absent is
 //      `empty`; a deleted starter's id is refused, not swapped.
 //   2. EMPTY IS THE DEFAULT. Absent and `empty` write exactly the same
 //      files (#4047 dropped the scaffold's Press! demo, so "always got" is
@@ -52,7 +52,7 @@ const APP_FRAME_SANDBOX = /APP_FRAME_SANDBOX =\s*'([^']+)'/.exec(
 const DELETED = ['social-productivity', 'multimedia-social', 'game-2d', 'game-3d'];
 const READY = [
   'tier-list-restaurants', 'tier-list-hikes', 'tier-list-cities', 'tier-list-games',
-  'grocery-list', 'chore-list', 'lending-library', 'potluck-planner',
+  'grocery-list', 'chore-list', 'lending-library', 'potluck-planner', 'study-timer',
 ];
 const GAMES = ['game-board', 'game-space', 'game-blocks', 'game-trivia'];
 
@@ -64,7 +64,7 @@ const file = (files, p) => {
 
 const generate = (id, name = 'Demo App') => getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id });
 
-test('the allow-list: Empty, the default, the eight ready-made apps and the four game starters; a deleted starter is refused', () => {
+test('the allow-list: Empty, the default, the nine ready-made apps and the four game starters; a deleted starter is refused', () => {
   assert.deepEqual([...appTemplates.TEMPLATE_IDS], ['empty', ...READY, ...GAMES]);
   assert.deepEqual([...appTemplates.READY_IDS], READY);
   assert.equal(appTemplates.DEFAULT_TEMPLATE, 'empty');
@@ -93,6 +93,19 @@ test('the allow-list: Empty, the default, the eight ready-made apps and the four
   assert.match(fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8'),
     /ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR\(40\);/);
   for (const id of appTemplates.TEMPLATE_IDS) assert.ok(id.length <= 40, `${id} fits apps.template`);
+});
+
+// Evan, 10 Oct 2026, iPhone: Home showed a new ready-made project as its
+// name's letter until the first deploy read dapp.json's icon back. The icon
+// is on the record from the moment it is made, the one dapp.json is written
+// with, so that reconcile finds nothing to change.
+test('a ready-made app\'s icon is on its record from the start', () => {
+  const route = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
+  assert.match(route, /const readyIcon = appTemplates\.isReadyMade\(template\) \? appTemplates\.get\(template\)\.icon \|\| null : null;\s+const \{ rows: templated \} = await pool\.query\(\s+`UPDATE apps SET template = \$1, icon_emoji = COALESCE\(\$3, icon_emoji\) WHERE id = \$2 RETURNING \*`,\s+\[template, appRow\.id, readyIcon\]/);
+  for (const id of READY) {
+    const dapp = JSON.parse(file(getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { template: id }), 'dapp.json'));
+    assert.deepEqual(dapp.icon, { emoji: appTemplates.get(id).icon }, id);
+  }
 });
 
 test('Empty is the scaffold every project always got, byte for byte', () => {
@@ -129,7 +142,7 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   assert.deepEqual(appTemplates.starterFiles('empty'), []);
   for (const id of DELETED) assert.deepEqual(appTemplates.starterFiles(id), [], id);
   const dirs = new Set(READY.map((id) => appTemplates.dirOf(id)));
-  assert.deepEqual([...dirs].sort(), ['chore-list', 'grocery-list', 'lending-library', 'potluck-planner', 'tier-list']);
+  assert.deepEqual([...dirs].sort(), ['chore-list', 'grocery-list', 'lending-library', 'potluck-planner', 'study-timer', 'tier-list']);
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');
@@ -179,6 +192,17 @@ test('a tier list ranks what its entry says, escaped where it lands, and its scr
   }
   const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'tier-list/public/app.js'), 'utf8');
   assert.doesNotMatch(script, /\{\{/, 'the script is the same for every tier list');
+  // It opens on Yours, so a newcomer can drag straight away; a saved choice
+  // of the group's still wins.
+  assert.match(html, /<div id="board" class="list" data-view="yours">/);
+  assert.match(html, /data-view="yours" aria-checked="true"/);
+  assert.match(html, /data-view="group" aria-checked="false"/);
+  assert.match(script, /var view = 'yours';\n\s*try \{ if \(localStorage\.getItem\('tier-list:view'\) === 'group'\) view = 'group'; \}/);
+  // With nothing added yet, the empty tiers still show under "No hikes yet".
+  assert.match(script, /el\.ranking\.hidden = state !== 'ready' && state !== 'empty';/);
+  assert.doesNotMatch(script, /if \(!data\.items\.length\) return show\('empty'\)/);
+  const board = appTemplates.get('tier-list-hikes').tests.find((c) => c.id === 'tiers.board');
+  assert.match(board.expectSelector, /#board\[data-view="yours"\]/, 'the visual check reads the board it opens on');
 });
 
 for (const id of READY) {
@@ -217,8 +241,14 @@ for (const id of READY) {
     assert.doesNotThrow(() => new vm.Script(`(function (module, require, process) {${api}\n})`), `${id}: api.js parses`);
     assert.match(api, /module\.exports = \{ migrate, routes \};/);
     assert.match(api, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging';/);
-    assert.match(api, /if \(IS_STAGING\) \{[\s\S]*'staging-demo-user'/);
-    assert.match(api, /'Staging demo /, 'seeded rows say so');
+    // The study timer seeds nothing: its only data is each viewer's own
+    // count of finished sessions, and the staging conventions forbid
+    // seeding rows the viewer owns. Its Today card starts empty in a
+    // preview, which is the honest state for it.
+    if (id !== 'study-timer') {
+      assert.match(api, /if \(IS_STAGING\) \{[\s\S]*'staging-demo-user'/);
+      assert.match(api, /'Staging demo /, 'seeded rows say so');
+    }
     assert.doesNotMatch(api.replace(/\/\/.*$/gm, ''), /new Date\(\)/, 'now is req.now, not the server clock');
     assert.doesNotMatch(api, /err\.message \}\)/, 'a failure is logged, not sent to the screen');
     const server = file(files, 'server.js');
@@ -270,10 +300,30 @@ for (const id of READY) {
       for (const [, attr] of c.expectSelector.matchAll(/\[(data-[\w-]+)/g)) assert.ok(src.includes(attr), `${id}: [${attr}]`);
     }
     // Each is reached on a staging preview through seeded rows: the API
-    // seeds ids the screen draws.
-    assert.match(own.find((f) => f.path === 'api.js').content, /VALUES\s*\(900001,/);
+    // seeds ids the screen draws. The study timer's count is each viewer's
+    // own data (its table is staging:private) and starts empty in a
+    // preview, which is what its check reads.
+    if (id !== 'study-timer') {
+      assert.match(own.find((f) => f.path === 'api.js').content, /VALUES\s*\(900001,/);
+    }
   });
 }
+
+// The study timer keeps its session on the device and counts a finished one
+// by the key it made when it started. It goes by the clock, not by counting
+// ticks: what is left of a session is endsAt minus now, so a locked phone
+// or a background tab still ends it at the right moment.
+test('the study timer counts by the clock, keeps its key, and beeps from the browser', () => {
+  const script = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'study-timer/public/app.js'), 'utf8');
+  assert.match(script, /window\.usernode && window\.usernode\.now \? window\.usernode\.now\(\) : new Date\(\)/, 'now comes from the platform when it says so');
+  assert.match(script, /AudioContext/, 'the beep is made by the browser, no sound file');
+  assert.match(script, /'study-timer:session'/, 'the session is kept on the device across a reload');
+  assert.match(script, /endsAt - now\(\)\.getTime\(\)/, 'what is left of a session is endsAt minus now');
+  assert.doesNotMatch(script, /-=\s*\d+\s*;|--\)/, 'no countdown arithmetic: the interval only reads the clock');
+  const api = fs.readFileSync(path.join(appTemplates.STARTERS_DIR, 'study-timer/api.js'), 'utf8');
+  assert.match(api, /ON CONFLICT \(user_id, client_key\) DO NOTHING/, 'a retried session counts once');
+  assert.match(api, /staging:private/, 'each person’s study record is theirs, never seeded into a preview');
+});
 
 // ── The game starters ────────────────────────────────────────────────────
 

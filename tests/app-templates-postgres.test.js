@@ -61,17 +61,26 @@ const DAY = 24 * 60 * 60 * 1000;
 /**
  * A game's live connection, as its page opens one (/api/live?token=):
  * `opened` resolves once connected, or rejects with the refusal's status;
- * `next(test)` resolves with the next message that passes `test`.
+ * `next(test)` reads on from the last message it returned and resolves with
+ * the first that passes `test`, skipping the rest.
+ *
+ * A message that arrives while nobody is waiting is kept until it is read.
+ * The ws client hands over every frame of one socket read in a single
+ * synchronous run, before the code awaiting the first of them resumes, so
+ * two messages sent back to back (a winning roll's view, then the room's
+ * "over") both land before the test asks for the second whenever the test
+ * process reads late, as it does on a loaded runner. Dropping them timed the
+ * board game out there.
  */
 function liveOf(app, tok) {
   const WebSocket = require('ws');
   const ws = new WebSocket(`${app.base.replace(/^http/, 'ws')}/api/live${tok ? `?token=${encodeURIComponent(tok)}` : ''}`);
-  const waiters = [];
+  const unread = [];
+  let waiter = null;
   ws.on('message', (data) => {
     const msg = JSON.parse(String(data));
-    for (const w of waiters.slice()) {
-      if (w.test(msg)) { waiters.splice(waiters.indexOf(w), 1); w.resolve(msg); }
-    }
+    if (!waiter) unread.push(msg);
+    else if (waiter.test(msg)) { const w = waiter; waiter = null; w.resolve(msg); }
   });
   const opened = new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -83,9 +92,14 @@ function liveOf(app, tok) {
     opened,
     send: (msg) => ws.send(JSON.stringify(msg)),
     next(test, ms = 6000) {
+      assert.equal(waiter, null, 'one next() at a time on a live connection');
+      while (unread.length) {
+        const msg = unread.shift();
+        if (test(msg)) return Promise.resolve(msg);
+      }
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('no such message in time')), ms);
-        waiters.push({ test, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+        const timer = setTimeout(() => { waiter = null; reject(new Error('no such message in time')); }, ms);
+        waiter = { test, resolve: (m) => { clearTimeout(timer); resolve(m); } };
       });
     },
     close: () => ws.close(),
@@ -246,8 +260,11 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
   await t.test('a tier list: anyone adds, each ranks, the group\'s tier is where the average lands', async () => {
     await run('tier-list-restaurants', '/api/items', (d) => demo(d.items), async (app) => {
       const seeded = (await app.call('GET', '/api/items', { as: ada })).data;
-      assert.deepEqual(seeded.items.find((i) => i.id === 900001).tier, 'S', 'the check\'s S row has an item');
+      assert.deepEqual(seeded.items.find((i) => i.id === 900001).tier, 'S', 'the group\'s S row has an item');
       assert.equal(seeded.items.find((i) => i.id === 900005).tier, null, 'one nobody has ranked yet');
+      // The board opens on Yours: whoever the check signs in as has ranked
+      // nothing, so every item waits in the tray as a chip to drag.
+      assert.ok(seeded.items.length > 0 && seeded.items.every((i) => i.yours === null), 'the check\'s tray has items');
 
       assert.equal((await app.call('POST', '/api/items', { as: ada, body: { name: '   ' } })).status, 400);
       const added = await app.call('POST', '/api/items', { as: ada, body: { name: '  Noodle   Bar ' } });
@@ -561,6 +578,83 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       p = (await app.call('GET', '/api/potlucks', { as: ada, now })).data.upcoming.find((x) => x.id === id);
       assert.equal(p, undefined);
     });
+  });
+
+  // A study timer through its own flow, not run(): it seeds nothing, so
+  // `run`'s staging assertions do not apply. Its only data is each viewer's
+  // own count of finished sessions (its table is staging:private), which
+  // the staging conventions keep out of a preview: a preview's Today card
+  // starts empty, which is the honest state for it.
+  await t.test('a study timer: one count per person, a retried session counts once, the day where the person is', async () => {
+    const dir = writeRepo('study-timer');
+    dirs.push(dir);
+
+    // The zone's wall-clock "yesterday 23:30" as of PINNED NOW, as an ISO
+    // instant: what x-usernode-now sends, and what finished_at then stores.
+    const PINNED_NOW = '2026-10-11T12:00:00Z';
+    function yesterdayEnd(zone) {
+      const offsetOf = (at) => {
+        const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+          .formatToParts(at).find((p) => p.type === 'timeZoneName').value; // "GMT+02:00"
+        const sign = part.startsWith('GMT-') ? -1 : 1;
+        const [h, m] = part.replace(/^GMT[+-]/, '').split(':').map(Number);
+        return sign * (h * 60 + m) * 60000;
+      };
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date(Date.parse(PINNED_NOW) - DAY));
+      const get = (type) => parts.find((p) => p.type === type).value;
+      const wall = `${get('year')}-${get('month')}-${get('day')}T23:30:00Z`;
+      const first = Date.parse(wall);
+      return new Date(first - offsetOf(new Date(first))).toISOString();
+    }
+
+    // Production: the table, and nothing in it.
+    const prodDb = await database();
+    let app = await boot(dir, prodDb, 'production', env);
+    let today = (await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada })).data;
+    assert.deepEqual([today.me.id, today.me.username, today.count], [101, 'ada', 0], 'production seeds nothing');
+    assert.match(today.day, /^\d{4}-\d{2}-\d{2}$/, 'the day is the viewer’s own');
+    assert.equal(await app.stop(), 0, `SIGTERM drains and exits 0:\n${app.output()}`);
+    assert.match(app.output(), /\[shutdown\] SIGTERM received, draining/);
+
+    // Staging: no seed, and the app still works for whoever opens it.
+    const stagingDb = await database();
+    app = await boot(dir, stagingDb, 'staging', env);
+    await common(app, '/api/today');
+    assert.equal((await app.call('GET', '/api/today', { as: ada })).data.count, 0, 'a preview starts empty');
+
+    // A session that runs out is counted once, however many times the same
+    // key arrives; each person's count is their own. Posted and read as of
+    // the pinned "now", so every session lands on Oct 11 in every zone
+    // named below.
+    let posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.data.count, 1);
+    posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201, 'the same key again is accepted, and counts no more');
+    assert.equal(posted.data.count, 1);
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-2', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2);
+    assert.equal((await app.call('GET', '/api/today', { as: grace })).data.count, 0, 'nobody else’s sessions');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: { key: 'short' } })).status, 400, 'a key that is not a key');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: {} })).status, 400);
+
+    // The day is the viewer's own. The reads are pinned to a fixed "now"
+    // (Oct 11, midday UTC) so the day each session lands in is the same
+    // whenever this runs.
+    const berlin = yesterdayEnd('Europe/Berlin');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-berlin-late', tz: 'Europe/Berlin' }, now: berlin });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2, 'not today where they are');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 2, 'an unknown zone falls back to UTC');
+
+    // And one that is yesterday on the US west coast is already today in
+    // UTC: the fallback really does count by UTC.
+    const angeles = yesterdayEnd('America/Los_Angeles');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-angeles-late', tz: 'America/Los_Angeles' }, now: angeles });
+    assert.equal((await app.call('GET', '/api/today?tz=America/Los_Angeles', { as: ada, now: PINNED_NOW })).data.count, 2, 'yesterday there');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 3, 'and today in UTC');
+    assert.equal(await app.stop(), 0, app.output());
   });
 
   // ── The game starters ──────────────────────────────────────────────────

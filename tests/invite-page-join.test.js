@@ -28,6 +28,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -201,6 +202,7 @@ function follow({ standing, pressed = false, confirm = true, redeem = null, coun
     firstSession: { welcome() { return false; } },
     ...(island ? { invitePreview: { open(info) { previews.push(info); events.push(`preview:${info.name}`); return true; } } } : {}),
   };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
   Object.assign(App, {
     _markNavigationVia() {},
@@ -265,7 +267,7 @@ test('signed in and not in a private community: its invite preview, from the sta
   assert.deepEqual(
     Object.keys(info).sort(),
     ['audienceLabel', 'building', 'description', 'iconColor', 'iconEmoji', 'iconUrl', 'inviter', 'inviterMadeIt',
-      'inviterName', 'land', 'memberCount', 'name', 'note', 'settle', 'token', 'welcome'],
+      'inviterName', 'land', 'memberCount', 'name', 'note', 'settle', 'token', 'unnamed', 'welcome'],
     'what the preview is handed: no slug, no members, no items',
   );
   assert.deepEqual(
@@ -430,8 +432,9 @@ const PAGE_OFFER = {
 
 test('the hero of a page opened from a link leads with who invited them and one Join', async () => {
   const html = await hero({ offer: PAGE_OFFER });
-  assert.match(html, /<section class="dev-ws-hero" data-ws-community="" data-audience="open"><div class="dev-ws-invite" data-ws-invite="">/,
-    'first in the hero, above who is here');
+  assert.match(html, /<section class="dev-ws-hero dev-ws-hero-summary" data-ws-community="" data-audience="open"><div class="dev-ws-invite" data-ws-invite="">/,
+    'first in the hero, above what it is and who is here');
+  assert.ok(html.indexOf('data-ws-invite=""') < html.indexOf('data-ws-community-name=""'), 'then the name it is about');
   assert.match(html, /<p class="dev-ws-invite-from" data-ws-invite-from="">@maya invited you<\/p>/);
   assert.match(html, /<p class="dev-ws-invite-note" data-ws-invite-note="">“Come vote”<\/p>/);
   assert.match(html, /<div class="dev-ws-join-anchor"><button type="button" data-ws-invite-join="" class="w-full rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-3 text-\[17px\] font-semibold text-white transition-colors">Join Arena<\/button><\/div>/,
@@ -473,7 +476,7 @@ test('the page lands its Join, and the platform reaches it by URL', () => {
   // new one: the manifest stands at its floor (tests/lib/check-cap.js).
   const checks = JSON.parse(read('dapp.json')).tests.filter((t) => /shot=invite-join/.test(t.path));
   assert.equal(checks.length, 1, 'a declared check reaches the invite head');
-  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite:first-child \[data-ws-invite-join\]\) \[data-ws-community-audience\]$/);
+  assert.match(checks[0].expectSelector, /:has\(> \.dev-ws-invite:first-child \[data-ws-invite-join\]\) > \.dev-ws-hero-id \[data-ws-community-name\] \+ \[data-ws-members-cell\] > \[data-ws-community-audience\]$/);
   assert.match(read('public/css/app.css'), /\.dev-ws-invite \{\s+display: flex; flex-direction: column; gap: 10px;/);
 });
 
@@ -500,7 +503,8 @@ test('a private community\'s invite preview shows the community and Join, and no
   assert.doesNotMatch(html, /will see that you joined/, 'the Join stands alone (#4395)');
   assert.match(html, /<b>Private community<\/b><\/span> · 4 members/, 'the member count');
   assert.match(html, /data-invite-preview-description="">Our monthly pick</);
-  assert.ok(html.includes(CLOSED_LINE), 'and why there is no more to see');
+  assert.equal(message(CLOSED_LINE), 'Its members, its app and what it is deciding open once you join.');
+  assert.ok(html.includes(message(CLOSED_LINE)), 'and why there is no more to see');
   assert.doesNotMatch(html, /dev-ws-hero-face|dev-ws-hero-faces/, 'no faces');
   assert.doesNotMatch(html, /data-ws-community-open-app|Open app/, 'no Open app');
   assert.doesNotMatch(html, /data-ws-members-trend|data-ws-members-stats/, 'no trend');

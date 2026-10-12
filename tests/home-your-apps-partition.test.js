@@ -187,6 +187,52 @@ test('filterApps: returns only the matches, in input order', () => {
   assert.deepEqual(Home.filterApps(apps, 'nope'), []);
 });
 
+test('filterApps: an exact name or slug match leads; the rest keep input order (#4793)', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ name: 'Chess Arena', slug: 'arena-1' }),
+    app({ name: 'Chess Club', slug: 'club-2' }),
+    app({ name: 'Speed Chess', slug: 'speed-3' }),
+    app({ name: 'Chess', slug: 'chess-4' }),
+    app({ name: 'Board Games', slug: 'chess' }),
+  ];
+  const slugs = (q) => Home.filterApps(apps, q).map((a) => a.slug);
+  assert.deepEqual(slugs('chess'), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'name and slug exact matches lead, in input order among themselves');
+  assert.deepEqual(slugs('  CHESS '), ['chess-4', 'chess', 'arena-1', 'club-2', 'speed-3'],
+    'case and surrounding whitespace do not matter');
+  assert.deepEqual(slugs('speed-3'), ['speed-3'], 'an exact slug match');
+  assert.deepEqual(slugs('chess club'), ['club-2'], 'an exact name match');
+  assert.deepEqual(slugs('ches'), ['arena-1', 'club-2', 'speed-3', 'chess-4', 'chess'],
+    'no exact match: input order unchanged');
+  assert.deepEqual(slugs(''), apps.map((a) => a.slug), 'empty query: everything, unchanged');
+  assert.deepEqual(slugs('   '), apps.map((a) => a.slug), 'blank query: everything, unchanged');
+});
+
+test('isExactMatch: whole name or slug, trimmed, any case; never on an empty query', () => {
+  const Home = makeHome();
+  const a = app({ name: 'Chess Arena', slug: 'chess-arena-3f2a' });
+  assert.equal(Home.isExactMatch(a, 'chess arena'), true);
+  assert.equal(Home.isExactMatch(a, ' CHESS-ARENA-3F2A '), true);
+  assert.equal(Home.isExactMatch(a, 'chess'), false, 'a substring is not exact');
+  assert.equal(Home.isExactMatch(a, ''), false);
+  assert.equal(Home.isExactMatch(a, null), false);
+});
+
+test('search: a composed and a decomposed accent are the same letter', () => {
+  const Home = makeHome();
+  const decomposed = 'Café';         // e + combining acute, as stored
+  const composed = 'Café';            // é as one code point, as typed
+  const a = app({ name: decomposed, slug: 'cafe-1' });
+  assert.equal(Home.isExactMatch(a, composed), true, 'exact across forms');
+  assert.equal(Home.isExactMatch(app({ name: composed }), decomposed), true, 'and the other way');
+  assert.equal(Home.matchesQuery(app({ name: `Le ${decomposed} Bar` }), composed.toLowerCase()), true,
+    'substring across forms');
+  const apps = [app({ name: `${composed} Crawl`, slug: 'crawl' }), a];
+  assert.deepEqual(Home.filterApps(apps, composed).map((x) => x.slug), ['cafe-1', 'crawl'],
+    'the decomposed exact match leads');
+});
+
 // ── The home grid is "Your apps" only ─────────────────────────────
 //
 // Source pins for the home-screen split: the grid renders the `yours`

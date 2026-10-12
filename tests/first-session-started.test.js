@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -32,9 +33,9 @@ const MADE = { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description:
 const draw = (props) => renderToHtml(createElement(made.MadeScreen, { made: MADE, me: 'maya', onContinue() {}, onOpenChat() {}, ...props }));
 
 test('the words: the community first, one quiet line, buttons that say what comes next', () => {
-  assert.equal(made.COMMUNITY_LABEL, 'Your new community');
-  assert.equal(made.INVITE_HINT, 'Invite people to use it and help improve it together.');
-  assert.equal(made.PREVIEW_LABEL, 'What they\'ll see');
+  assert.equal(message(made.COMMUNITY_LABEL), 'Your new community');
+  assert.equal(message(made.INVITE_HINT), 'Invite people to use it and help improve it together.');
+  assert.equal(message(made.PREVIEW_LABEL), 'What they\'ll see');
   assert.equal(made.sharedLine('shared'), 'Invite shared. Next, a short tour.');
   // Where there is no share sheet, the link is copied (decided 6 October 2026).
   assert.equal(made.sharedLine('copied'), 'Link copied. Next, a short tour.');
@@ -43,7 +44,7 @@ test('the words: the community first, one quiet line, buttons that say what come
   assert.equal(made.sharedLine('copied', false), 'Link copied.');
   assert.equal(made.continueLabel('first-session', true, 'Plant Pal'), 'Start the tour');
   assert.equal(made.continueLabel('first-session', false, 'Plant Pal'), 'Invite people later');
-  for (const words of [made.COMMUNITY_LABEL, made.INVITE_HINT, made.PREVIEW_LABEL, made.sharedLine('shared'), made.sharedLine('copied'), made.NO_BOT_NOTE]) {
+  for (const words of [message(made.COMMUNITY_LABEL), message(made.INVITE_HINT), message(made.PREVIEW_LABEL), made.sharedLine('shared'), made.sharedLine('copied'), message(made.NO_BOT_NOTE)]) {
     assert.doesNotMatch(words, /!|—|\bgroup\b/, words);
   }
 });
@@ -77,7 +78,33 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   // Nothing else: no note under the card, no plan, no old invite heading.
   assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour/);
   // Invite people later starts the tour with nothing sent.
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} className=\{SECONDARY\} aria-busy=\{waiting !== null \|\| undefined\}>\s*\{onLabel\(false\)\}/);
+  assert.match(CODE, /const onLabel = \(sent: boolean\) => \(waiting !== null \? t\(GETTING_READY\) : continueLabel\(entry, sent, made\.name\)\);/);
+});
+
+// Evan, 10 Oct 2026, iPhone: a ready-made app was still being set up when
+// the made screen let him on, so Home showed a grey letter the tour's first
+// card asked him to tap. A press of the way on now waits for it to run.
+test('on a ready-made app still being set up, the way on waits for it to run', () => {
+  const { holdsContinue, READY_POLL_MS, READY_WAIT_MS, GETTING_READY } = made;
+  assert.equal(holdsContinue(true, 'creating', false), true, 'being set up: it waits');
+  assert.equal(holdsContinue(true, null, false), true, 'nothing read yet: it waits');
+  assert.equal(holdsContinue(true, 'running', false), false, 'running, and its icon is on the record: on at once');
+  assert.equal(holdsContinue(true, 'error', false), false, 'a setup that failed: on, its card says so');
+  assert.equal(holdsContinue(true, 'awaiting_secrets', false), false, 'one that waits on secrets: on');
+  assert.equal(holdsContinue(true, 'creating', true), false, 'the wait is up: on, and the tile catches up');
+  assert.equal(holdsContinue(false, 'creating', false), false, 'one the bot builds never waits');
+  assert.equal(READY_POLL_MS, 2000);
+  assert.equal(READY_WAIT_MS, 45000);
+  assert.equal(message(GETTING_READY), 'Getting it ready…');
+  // Read every two seconds while it is set up, every ten after.
+  assert.match(CODE, /const settingUp = holdsContinue\(readyMade, appStatus, false\);/);
+  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp\]\);/);
+  // A press held goes on by itself once it no longer holds.
+  assert.match(CODE, /const onContinue = \(skipped: boolean\) => \{\s+if \(holds\) setWaiting\(skipped\);\s+else goOn\(skipped\);\s+\};/);
+  assert.match(CODE, /if \(waiting === null \|\| holds\) return;\s+setWaiting\(null\);\s+goOn\(waiting\);/);
+  // The first render presses nothing: the way on says where it goes.
+  assert.match(draw(), /<button type="button" data-first-session-continue="" class="[^"]*">Invite people later<\/button>/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {
@@ -97,9 +124,10 @@ test('C5: after sharing, the line says so, and the buttons keep their places: Sh
   // Invite people later was.
   const shared = CODE.slice(CODE.indexOf('{sent ? ('), CODE.indexOf('{inviting ? ('));
   assert.ok(shared.indexOf('data-first-session-share-again=""') < shared.indexOf('data-first-session-continue=""'));
-  assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*Share again/);
+  assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*\{t\('onboarding:firstSession\.made\.shareAgain'\)\}/);
+  assert.equal(message('onboarding:firstSession.made.shareAgain'), 'Share again');
   assert.match(CODE, /<Button type="button" data-first-session-continue="" onClick=\{\(\) => onContinue\(false\)\} layout="full" variant="pillAccent"/);
-  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : INVITE_HINT\}/);
+  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : t\(INVITE_HINT\)\}/);
   assert.match(CODE, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   // The logo bar stays behind the sheet and after sharing; Share invite is gone.
   assert.doesNotMatch(draw(), /Go to the Homeroom app|Invite sent|joined\./);

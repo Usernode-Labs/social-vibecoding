@@ -2,6 +2,7 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { NotificationPrefsList } from '../notification-prefs-list';
 import { SwitchRow } from '@/components/ui/switch';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * #138: Dev-chat sound & alerts (default ON). Client-only preference
@@ -25,24 +26,25 @@ import { SwitchRow } from '@/components/ui/switch';
  * anything.
  */
 export function AlertsSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="alerts" className="hidden">
       <div id="settings-alerts-section">
-        <SectionHeading title={<>Agent session sound &amp; alerts</>}>
-          Get a heads-up when an agent session finishes and is waiting for your reply.
+        <SectionHeading title={t('settings:alerts.title')}>
+          {t('settings:alerts.intro')}
         </SectionHeading>
         <SwitchRow id="devchat-alerts-toggle">
-          Play a sound, and notify me when the app is in the background
+          {t('settings:alerts.toggle.label')}
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          When you're in the app a soft chime plays. A browser can show notifications while its tab stays open. To receive push notifications with the mobile app backgrounded or closed, enable Activity notifications on your phone and Agent sessions below. The test queues a phone push with a 10-second delay so you can switch away.
+          {t('settings:alerts.toggle.description')}
         </p>
         <button
           id="devchat-alerts-test"
           type="button"
           className="mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         >
-          Send a test alert
+          {t('settings:alerts.test')}
         </button>
         <StatusLine
           as="p"
@@ -55,91 +57,91 @@ export function AlertsSection() {
           id="settings-mobile-push-preferences"
           className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800"
         >
-          <SectionHeading title="Mobile push categories" blurbClassName="leading-relaxed">
-            Choose which Social activity can send a phone notification. Your phone&apos;s Activity notifications switch remains the master control for that device.
+          <SectionHeading title={t('settings:alerts.push.title')} blurbClassName="leading-relaxed">
+            {t('settings:alerts.push.intro')}
           </SectionHeading>
           <div className="space-y-3">
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="messages">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Messages</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Conversation invitations, messages, mentions, replies, and reactions.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.messages.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.messages.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="builds">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Your builds</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">When something you asked Homeroom bot for is ready to try, needs your answer, stops, or goes live.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.builds.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.builds.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invite_activity">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Your invites</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">When someone opens your invite link, joins through it, or says hi for the first time.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.inviteActivity.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.inviteActivity.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions and replies to your messages.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.directInteractions.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.directInteractions.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Invitations</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Collaboration and approver invitations, including when yours are accepted.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.invitations.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.invitations.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Shared work</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Plans that someone privately shares with you.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.sharedWork.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.sharedWork.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Agent sessions</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Agent sessions and unattended runs that finish while you are away.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.developerSessions.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.developerSessions.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Change alerts</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Changes needing attention, failed previews, new changes waiting for approval, and votes on yours or yours going live.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.proposalAlerts.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.proposalAlerts.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="app_alerts">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App alerts</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">New issues filed on your apps, and apps that stop working.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.appAlerts.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.appAlerts.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
               <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Lightweight activity</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Reactions and kudos on your work.</span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.lightweightActivity.label')}</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.lightweightActivity.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
           </div>
           <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
-            Loading mobile push preferences…
+            {t('settings:alerts.push.loading')}
           </p>
         </div>
         <div
           id="settings-notification-prefs"
           className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800"
         >
-          <SectionHeading title="What apps tell you about" blurbClassName="leading-relaxed">
-            Your default for every app, and the apps you have set differently. Each of these covers the bell here and a notification on your phone, together. Change one app from its Notifications entry in the app menu.
+          <SectionHeading title={t('settings:alerts.apps.title')} blurbClassName="leading-relaxed">
+            {t('settings:alerts.apps.intro')}
           </SectionHeading>
           <div id="notification-prefs-list">
             <NotificationPrefsList />

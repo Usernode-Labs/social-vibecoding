@@ -19,6 +19,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+
 const gcJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
 
 class Node extends EventTarget {
@@ -65,6 +67,7 @@ function load() {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     App: { user: { id: 1, username: 'evan' } },
     PlatformUI: { attachScreenFx() {} },
+    PlatformI18n: englishPlatformI18n(),
     console,
     fetch: async () => ({ ok: true, json: async () => ({ messages: [] }) }),
     setTimeout, clearTimeout, setInterval, clearInterval,

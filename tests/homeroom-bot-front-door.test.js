@@ -9,6 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,18 +30,27 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it now"/);
+  // The mark menu's Build it now row left with its Agent chats section
+  // (#4729); building it yourself is Messages' "+" choice, named the same.
+  assert.doesNotMatch(read('frontend/src/features/app-context/app-context-sheet.tsx'), /improve-row-new-session|app-menu-sessions/);
+  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
-  assert.match(row, /title="Build it now"\s+sub="With a coding agent, then ask for approval"/);
+  assert.match(row, /title=\{t\('project:menu\.build\.title'\)\}\s+sub=\{t\('project:menu\.build\.sub'\)\}/);
+  assert.deepEqual(['title', 'sub'].map((part) => require('./lib/platform-i18n').message(`project:menu.build.${part}`)),
+    ['Build it now', 'With a coding agent, then ask for approval']);
   // The tour no longer sends a newcomer to the menu's Build it now: that
   // row shows only once they have had an agent session (first-session
   // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
-  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'Say what should change\. It doesn\\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along\.',/);
+  assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'onboarding:tour\.step\.menuActions\.body',/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.body'),
+    'Say what should change. It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.');
   assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
+  assert.doesNotMatch(JSON.stringify(JSON.parse(read('frontend/locales/en/onboarding.json'))), /tap Build it now/);
   // The made screen's plan card is the door after a new project (the
   // retired create dialog's "Open chat" was before it).
-  assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*Go to chat/);
+  assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*\{t\('onboarding:firstSession\.made\.goToChat'\)\}/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:firstSession.made.goToChat'), 'Go to chat');
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /openBot: \(reference\?: StagedObject \| null\) => \{ void openBot\(reference\); \},/);
   // B8: Ask for changes attaches the change on the composer when it names
@@ -110,7 +120,7 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(await communities.appNeedsJoin(pool, 'nowhere', sam), null, 'a missing app is the route\'s own 404');
   });
 
-  await t.test('on a project the bot builds on, it goes to the bot first, in her words, with its card', async () => {
+  await t.test('on a project the bot builds on, it goes to the bot first, in her words, followed in her tray', async () => {
     const out = await dm.noteRequestFiled(pool, {
       app: plantPal, user: maya, issueNumber: 12, title: 'Weekly reminder', askedText: 'Remind me to water on Sundays',
     });
@@ -128,9 +138,12 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
         WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = 12 AND d.kind = 'activity'`,
       [maya.id, plantPal.id],
     );
-    assert.equal(cards.length, 1);
-    assert.match(cards[0].content, /Filed\. This card follows it from here\./);
-    assert.equal(cards[0].metadata.homeroomBot.askedText, 'Remind me to water on Sundays');
+    // Filed through the form, not in her DM: no card there (9 Oct 2026: one
+    // person's DM got 45 of them in an afternoon). The tray above the DM
+    // follows it, and the DM speaks when it needs her.
+    assert.equal(cards.length, 0);
+    const work = await require('../src/services/homeroom-bot-progress').botWorkByIssue(pool, plantPal.id);
+    assert.equal(work.get(12).what, 'queued', 'the bot has it, waiting for a builder');
   });
 
   await t.test('elsewhere it goes to the group; and nothing for somebody the bot does not talk to', async () => {

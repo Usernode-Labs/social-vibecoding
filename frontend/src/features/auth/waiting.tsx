@@ -47,6 +47,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AddPhoneCard, type JoinedGroup } from './add-phone';
@@ -80,12 +82,16 @@ export function waitingShot(search: string): 'plain' | 'invite' | null {
 /** "Sunday Run Club", "A and B", "A, B and C": the invite box's names. */
 export function namesLine(names: readonly string[]): string {
   if (names.length < 2) return names[0] || '';
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return translate('auth:waiting.names.last', {
+    names: names.slice(0, -1).reduce((first, second) => translate('auth:waiting.names.pair', { first, second })),
+    last: names[names.length - 1],
+  });
 }
 
 export function WaitingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waiting, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -260,14 +266,14 @@ export function WaitingScreen() {
         <div className="mx-auto flex min-h-full w-full max-w-sm flex-col px-6 pt-16 pb-9 text-center">
           <Wordmark className="mx-auto h-6 w-auto text-zinc-950 dark:text-white" />
           <h1 className="mt-12 text-[30px] font-extrabold leading-[34px] text-zinc-900 dark:text-zinc-100">
-            You're on the waitlist
+            {t('auth:waiting.title')}
           </h1>
           <p className="mt-3 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">
-            We let people in a few at a time, and we'll email you when your spot is ready.
+            {t('auth:waiting.lead')}
           </p>
           {queued.length ? (
             <p data-waiting-queued="" className="mt-7 text-balance rounded-[20px] bg-white px-4 py-3.5 text-[15px] leading-5 text-zinc-600 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-300">
-              {`When you get access, you join ${namesLine(queued.map((q) => q.name))}.`}
+              {t('auth:waiting.youJoin', { communities: namesLine(queued.map((q) => q.name)) })}
             </p>
           ) : null}
           {phoneOffered && queued.length ? (
@@ -305,7 +311,7 @@ export function WaitingScreen() {
             className="mx-auto px-2 py-3 text-[15px] font-medium text-violet-700 hover:underline dark:text-violet-400"
             onClick={onLogout}
           >
-            Sign out
+            {t('auth:waiting.signOut')}
           </button>
         </div>
         </>

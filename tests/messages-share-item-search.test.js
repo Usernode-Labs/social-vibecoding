@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -52,7 +53,8 @@ test('the search narrows the apps by name or short name, every word in any order
 
 test('the group chips filter the list, and combine with the search', () => {
   const { filterAppChoices, offersAppGroups, APP_GROUPS } = mod();
-  assert.deepEqual(APP_GROUPS.map((g) => [g.value, g.label]), [
+  assert.equal(message('messages:shareItem.group.all'), 'All');
+  assert.deepEqual(APP_GROUPS.map((g) => [g.value, message(g.label)]), [
     ['all', 'All'], ['mine', 'Your projects'], ['others', 'Other projects'],
   ], 'All first, then the dropdown’s two option groups');
   assert.deepEqual(ids(filterAppChoices(APPS, { group: 'all' })), [2, 4, 1, 3]);
@@ -71,7 +73,7 @@ test('the group chips filter the list, and combine with the search', () => {
 test('the item types are the dropdown’s, as chips, App first', () => {
   const { SHARE_TYPES } = mod();
   assert.deepEqual(SHARE_TYPES.map((t) => t.value), ['app', 'issue', 'proposal', 'governance', 'spec']);
-  assert.deepEqual(SHARE_TYPES.map((t) => t.label), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Plan version']);
+  assert.deepEqual(SHARE_TYPES.map((t) => message(t.label)), ['App', 'GitHub issue', 'Code proposal', 'Governance proposal', 'Plan version']);
 });
 
 test('the prerendered dialog leads with the search box, then the type chips, and no dropdown', () => {
@@ -127,7 +129,8 @@ test('Enter in the search box attaches nothing, and attaching is unchanged', () 
   const source = src();
   assert.match(source, /onKeyDown=\{\(event\) => \{ if \(event\.key === 'Enter'\) event\.preventDefault\(\); \}\}/);
   assert.ok(!/<form\b/.test(source), 'no form for Enter to submit');
-  assert.match(source, /<Button type="button" disabled=\{!canAttach\} onClick=\{attach\}>Attach item<\/Button>/,
+  assert.equal(message('messages:shareItem.attach'), 'Attach item');
+  assert.match(source, /<Button type="button" disabled=\{!canAttach\} onClick=\{attach\}>\{t\('messages:shareItem\.attach'\)\}<\/Button>/,
     'Attach item stays the only way to attach');
   assert.match(source, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{ detail: reference \}\)\);/);
   // Pressing the chosen type again keeps the number already typed.

@@ -27,6 +27,9 @@ require('../src/db/pool').getPool = () => testPool;
 const { seedStagingShotsNoticed } = require('../src/db/migrate');
 const shotsView = require('../src/services/shots-view');
 const shotsState = require('../src/services/shots-state');
+// app-view.js reads its words through the language runtime's global, as the
+// shell publishes it.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';

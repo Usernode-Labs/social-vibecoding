@@ -66,6 +66,7 @@ function router({ catalog = [WHITEBOARD, NOTES], appsLoaded = true, storage = ne
   const noop = () => undefined;
   const elements = new Map();
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     URL, URLSearchParams, setTimeout, clearTimeout,
     console: { ...console, error: (...a) => errors.push(a) },
     document: {

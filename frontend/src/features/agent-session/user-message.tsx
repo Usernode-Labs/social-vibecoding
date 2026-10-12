@@ -67,6 +67,7 @@ import { useLayoutEffect, useRef, useState, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { overflowsClamp } from '../dev-board/comment-clamp';
 
 /**
@@ -121,6 +122,7 @@ export function UserMessageBody({
   bubbleRef?: Ref<HTMLDivElement>;
   textRef?: Ref<HTMLParagraphElement>;
 }) {
+  const t = useMessages('agent');
   const textClass = expanded
     ? 'whitespace-pre-wrap'
     : overflowing
@@ -147,7 +149,7 @@ export function UserMessageBody({
           data-agent-session-user-more
           onClick={onToggle}
         >
-          {expanded ? 'Show less' : 'Show more'}
+          {expanded ? t('agent:session.userMessage.showLess') : t('agent:session.userMessage.showMore')}
         </Button>
       ) : null}
     </div>

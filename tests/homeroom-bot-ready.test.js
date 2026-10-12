@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -187,8 +188,11 @@ test('B7: the approved line, in words, in the reader\'s own week', () => {
     'names who can give the one Yes it needs, and that either will do');
   assert.equal(line({ missing: 2, waitingOn: [], at: on(2026, 9, 5) }), 'You approved it. It goes live when 2 more people approve, or tomorrow if nobody objects.');
   assert.equal(line({ missing: 0, at: on(2026, 9, 4, 22) }), 'You approved it. It goes live later today if nobody objects.');
-  assert.equal(liveDay(on(2026, 9, 12), sunday, 'en-US'), 'on October 12', 'past the week, its date');
-  assert.equal(liveDay(on(2026, 9, 1), sunday, 'en-US'), 'on October 1', 'a day already past, read later');
+  // The day is a kind and its words; the sentence that holds it is one whole message.
+  assert.deepEqual(liveDay(on(2026, 9, 12), sunday, 'en-US'), { kind: 'date', date: 'October 12' }, 'past the week, its date');
+  assert.equal(line({ missing: 0, at: on(2026, 9, 12) }), 'You approved it. It goes live on October 12 if nobody objects.');
+  assert.deepEqual(liveDay(on(2026, 9, 1), sunday, 'en-US'), { kind: 'date', date: 'October 1' }, 'a day already past, read later');
+  assert.equal(line({ missing: 0, at: on(2026, 9, 1) }), 'You approved it. It goes live on October 1 if nobody objects.');
   assert.equal(liveDay('not a date', sunday, 'en-US'), null);
   assert.deepEqual(goesLiveFromReady({ group: false, last: true, waitingOn: [], more: 0 }), { soon: true, at: null, missing: 0, waitingOn: [], more: 0 });
   assert.deepEqual(goesLiveFromReady({ group: true, last: false, waitingOn: ['ada'], more: 2 }), { soon: false, at: null, missing: 3, waitingOn: ['ada'], more: 2 });
@@ -229,6 +233,7 @@ test('B7: "ready to try" in the bell and on the phone, on by default', async () 
   assert.equal(copy.title, "@ben's change to Supper Club is ready to try");
   assert.equal(copy.body, 'Sunday host reminder');
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   const row = globalThis.window.Notifications._rowView({
     id: 1, kind: 'change_ready', createdAt: new Date().toISOString(), readAt: null,

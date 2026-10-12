@@ -20,6 +20,7 @@
 // optional v4 capability and affects only the card inside this Wallet sheet.
 import { walletSheetStore, WALLET_EMPTY } from './wallet-sheet-store';
 import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
+import { t } from '../../lib/i18n/runtime';
 
 (function () {
   'use strict';
@@ -79,9 +80,9 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       if (!addr) return;
       try {
         await navigator.clipboard.writeText(addr);
-        PlatformUI.toast('Address copied');
+        PlatformUI.toast(t('wallet:toast.addressCopied'));
       } catch (_) {
-        PlatformUI.toast('Could not copy address');
+        PlatformUI.toast(t('wallet:toast.addressCopyFailed'));
       }
     },
 
@@ -105,25 +106,26 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
     async sendFromSheet(to, amount) {
       if (WalletSheet._demo) { WalletSheet._demoToast(); return false; }
       if (!WalletSheet._submissionSupported) {
-        PlatformUI.toast('Sending is unavailable in this app version');
+        PlatformUI.toast(t('wallet:toast.sendUnavailable'));
         return false;
       }
       try {
         await window.sendTransaction(to, amount, '', {
           waitForInclusion: false,
-          confirmTitle: 'Send from wallet',
-          confirmSubtitle:
-            `Sending ${amount} ${WalletSheet._symbol()} to ` +
-            WalletSheet._shortAddr(to),
+          confirmTitle: t('wallet:send.confirmTitle'),
+          confirmSubtitle: t('wallet:send.confirmSubtitle', {
+            amount, symbol: WalletSheet._symbol(), address: WalletSheet._shortAddr(to),
+          }),
         });
-        PlatformUI.toast('Transaction submitted');
+        PlatformUI.toast(t('wallet:toast.submitted'));
         await WalletSheet._refreshRecords();
         WalletSheet._publish();
         return true;
       } catch (err) {
         console.warn('[wallet-sheet] send failed:', err);
-        PlatformUI.toast('Send failed: ' +
-          ((err && err.message) || 'unknown error'));
+        PlatformUI.toast(err && err.message
+          ? t('wallet:toast.sendFailed', { reason: err.message })
+          : t('wallet:toast.sendFailedUnknown'));
         return false;
       }
     },
@@ -154,7 +156,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
 
     _demoToast() {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('Preview only. Nothing was changed.');
+        PlatformUI.toast(t('wallet:toast.previewOnly'));
       }
     },
 
@@ -234,13 +236,13 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
           WalletSheet._stateError = null;
         } else if (readError) {
           WalletSheet._stateError = readError.message ||
-            'Could not refresh wallet state.';
+            t('wallet:error.refreshState');
         }
       } catch (err) {
         // Keep the last valid snapshot; the error is intentionally inline and
         // non-blocking so Send/Receive and navigation remain usable.
         WalletSheet._stateError = (err && err.message) ||
-          'Could not refresh wallet state.';
+          t('wallet:error.refreshState');
       }
     },
 
@@ -335,20 +337,26 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       if (items == null) return null;
       return items.map((r, i) => {
         const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '';
-        let status;
+        // The second line is one message per status, with the time in it.
+        let line2;
         if (r.status === 'confirmed' || r.confirmedAt) {
-          status = r.blockHeight != null
-            ? `confirmed · block ${Number(r.blockHeight).toLocaleString()}`
-            : 'confirmed';
+          line2 = r.blockHeight != null
+            ? t('wallet:receipt.confirmedInBlock', { when, block: Number(r.blockHeight).toLocaleString() })
+            : t('wallet:receipt.confirmed', { when });
         } else if (r.status === 'submitted') {
-          status = 'pending';
+          line2 = t('wallet:receipt.pending', { when });
+        } else if (r.status) {
+          // A status this client has no words for: the native app's own word.
+          line2 = t('wallet:receipt.otherStatus', { when, status: r.status });
         } else {
-          status = r.status || 'unknown';
+          line2 = t('wallet:receipt.unknown', { when });
         }
         return {
           key: String(r.txId || `${r.destinationPubkey}-${r.submittedAt}-${i}`),
-          line1: `Sent ${r.amount} ${WalletSheet._symbol()} to ${WalletSheet._shortAddr(r.destinationPubkey)}`,
-          line2: `${when} · ${status}`,
+          line1: t('wallet:receipt.sent', {
+            amount: r.amount, symbol: WalletSheet._symbol(), address: WalletSheet._shortAddr(r.destinationPubkey),
+          }),
+          line2,
         };
       });
     },
@@ -362,7 +370,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       panel.className = 'px-4 pb-4 max-h-[75vh] overflow-y-auto';
       const title = document.createElement('div');
       title.className = 'text-lg font-bold py-3';
-      title.textContent = 'Wallet';
+      title.textContent = t('wallet:sheet.title');
       panel.appendChild(title);
       const bodyEl = document.createElement('div');
       bodyEl.id = 'wallet-sheet-body';
@@ -425,7 +433,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         await WalletSheet._refreshState();
       } catch (err) {
         WalletSheet._stateError = (err && err.message) ||
-          'Could not open delegation management.';
+          t('wallet:error.openDelegation');
       } finally {
         WalletSheet._stakingPending = false;
         WalletSheet._renderChip();
@@ -440,4 +448,9 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
   // (frontend/scripts/build-shell.mjs), which imports this island's module
   // graph. Same guard as features/notifications/notifications.js.
   if (typeof window !== 'undefined') window.WalletSheet = WalletSheet;
+  // The receipts are worded in the view model, so it is published again from
+  // the same snapshot when the language changes.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', () => WalletSheet._publish());
+  }
 })();

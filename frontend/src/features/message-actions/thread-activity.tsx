@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 
 import { ChevronRightIcon, ThreadIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /** One reply as a thread-activity card lists it. */
 export interface ThreadActivityReply {
   key: string | number;
@@ -37,16 +39,22 @@ export function ThreadActivityCard({ rootText, rootDeleted = false, time, timeTi
   replies: ThreadActivityReply[];
   onOpen: () => void;
 }) {
+  const t = useMessages('messages');
   const count = replies.length;
-  const what = count === 1 ? 'Replied in thread' : `${count} replies in thread`;
-  const root = rootDeleted ? 'Message deleted' : (rootText || 'a message');
+  const what = t('messages:thread.activity.what', { count });
+  const root = rootDeleted ? t('messages:thread.activity.rootDeleted') : (rootText || t('messages:thread.activity.rootNoText'));
+  const name = rootDeleted
+    ? t('messages:thread.activity.openDeleted', { count, time })
+    : rootText
+      ? t('messages:thread.activity.open', { count, message: rootText, time })
+      : t('messages:thread.activity.openNoText', { count, time });
   return (
     <div className="msgx-thread-activity">
       <span className="msgx-thread-activity-glyph" aria-hidden="true"><ThreadIcon /></span>
       <button
         type="button"
         className="msgx-thread-activity-card"
-        aria-label={`${what}: ${root}, ${time}. Open thread`}
+        aria-label={name}
         onClick={(event) => { event.stopPropagation(); onOpen(); }}
       >
         <span className="msgx-thread-activity-head">
@@ -59,7 +67,7 @@ export function ThreadActivityCard({ rootText, rootDeleted = false, time, timeTi
           <span key={reply.key} className="msgx-thread-line">
             {reply.face}
             <strong className="msgx-thread-line-name">@{reply.name}</strong>
-            <span className="msgx-thread-line-text">{reply.text || 'Attachment'}</span>
+            <span className="msgx-thread-line-text">{reply.text || t('messages:thread.activity.attachment')}</span>
           </span>
         ))}
       </button>

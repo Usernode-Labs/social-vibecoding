@@ -94,6 +94,21 @@ test('projection: diagrams by their title, tables as GFM, pre as a fence, script
   assert.doesNotMatch(md, /alert\(1\)/);
 });
 
+// #4662: the report's paste showed a numbered list inside a table cell as
+// bare "1." "2." "3." lines above the table, its items run together in the
+// cell. A list in a cell is written into the cell, one item after another.
+test('projection: a list inside a table cell reads as numbered steps in the cell', () => {
+  const doc = (list) => `<article data-spec><h1>T</h1><section data-spec-tab="tech"><h3>Changes</h3><table><tr><td>\`a.tsx\`</td><td>${list}</td></tr></table></section></article>`;
+  const ol = specHtmlToMarkdown(doc('<ol><li>On x.</li><li>Derive z.</li><li>In p.</li></ol>'));
+  assert.ok(ol.includes('| `a.tsx` | 1. On x. 2. Derive z. 3. In p. |'), ol);
+  assert.doesNotMatch(ol, /^\d+\.$/m, 'no bare numbered lines left over');
+  const ul = specHtmlToMarkdown(doc('<ul><li>a</li><li>b</li></ul>'));
+  assert.ok(ul.includes('| `a.tsx` | - a - b |'), ul);
+  // Lists outside a cell are unchanged.
+  const outside = specHtmlToMarkdown('<article data-spec><h1>T</h1><section data-spec-tab="tech"><ol><li>a</li><li>b</li></ol></section></article>');
+  assert.match(outside, /\n1\. a\n2\. b\n/);
+});
+
 test('projection tolerates broken markup and stray angle brackets', () => {
   const md = specHtmlToMarkdown('<article data-spec><h1>T</h1><section data-spec-tab="user"><p>a < b <b>unclosed');
   assert.match(md, /# T/);

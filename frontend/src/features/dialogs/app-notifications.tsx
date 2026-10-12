@@ -37,6 +37,7 @@ import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
 type Category = {
@@ -49,6 +50,7 @@ type Category = {
 };
 
 export function AppNotificationsDialog(): ReactNode {
+  const t = useMessages('dialogs');
   const [appName, setAppName] = useState('');
   const [slug, setSlug] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
@@ -62,11 +64,11 @@ export function AppNotificationsDialog(): ReactNode {
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(target)}/notification-preferences`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load notification settings.');
+      if (!res.ok) throw new Error(data.error || t('dialogs:appNotifications.error.load'));
       setAppName(data.app?.name || target);
       setCategories(data.categories || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load notification settings.');
+      setError(err instanceof Error ? err.message : t('dialogs:appNotifications.error.load'));
     } finally {
       setLoading(false);
     }
@@ -101,10 +103,10 @@ export function AppNotificationsDialog(): ReactNode {
         body: JSON.stringify({ preferences: { [key]: value } }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not save that.');
+      if (!res.ok) throw new Error(data.error || t('dialogs:appNotifications.error.save'));
       setCategories(data.categories || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save that.');
+      setError(err instanceof Error ? err.message : t('dialogs:appNotifications.error.save'));
     } finally {
       setBusy(false);
     }
@@ -119,16 +121,16 @@ export function AppNotificationsDialog(): ReactNode {
     >
       <DialogCard size="md" relative>
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Notifications
+          {t('dialogs:appNotifications.title')}
         </h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
           {appName
-            ? `What ${appName} can tell you about. Each of these covers the bell here and a notification on your phone, together.`
-            : 'What this app can tell you about.'}
+            ? t('dialogs:appNotifications.intro.named', { app: appName })
+            : t('dialogs:appNotifications.intro.unnamed')}
         </p>
 
         {loading ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>
         ) : null}
 
         <div className="space-y-3">
@@ -147,11 +149,11 @@ export function AppNotificationsDialog(): ReactNode {
                     className="mt-1 text-xs text-violet-700 underline dark:text-violet-300"
                     onClick={() => { void write(category.key, null); }}
                   >
-                    Follow my default
+                    {t('dialogs:appNotifications.followDefault')}
                   </button>
                 ) : (
                   <span className="block text-xs text-zinc-400 mt-1 dark:text-zinc-500">
-                    {category.source === 'account' ? 'Your default for all apps' : 'Default'}
+                    {category.source === 'account' ? t('dialogs:appNotifications.source.account') : t('dialogs:appNotifications.source.default')}
                   </span>
                 )}
               </span>
@@ -174,7 +176,7 @@ export function AppNotificationsDialog(): ReactNode {
         ) : null}
 
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-4 leading-relaxed">
-          Turning something off stops the notification, not the thing itself. New issues and proposals still appear on this app&apos;s board.
+          {t('dialogs:appNotifications.note')}
         </p>
 
         <div className="flex justify-end mt-5">
@@ -185,7 +187,7 @@ export function AppNotificationsDialog(): ReactNode {
             ink="neutral"
             onClick={() => dialog.close()}
           >
-            Done
+            {t('core:common.done')}
           </Button>
         </div>
       </DialogCard>

@@ -19,35 +19,36 @@
 
 import { type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { nodePillStore, type NodeStatusKind } from './node-pill-store';
 
 export const STATUS_STYLES: Record<NodeStatusKind, {
-  dot: string; label: string; ink: string;
+  dot: string; labelId: string; ink: string;
 }> = {
   synced: {
     dot: 'bg-emerald-500',
-    label: 'Synced',
+    labelId: 'wallet:node.status.synced',
     ink: 'text-emerald-700 dark:text-emerald-400',
   },
   syncing: {
     dot: 'bg-amber-500',
-    label: 'Syncing',
+    labelId: 'wallet:node.status.syncing',
     ink: 'text-amber-800 dark:text-amber-400',
   },
   connecting: {
     dot: 'bg-zinc-400 animate-pulse',
-    label: 'Connecting',
+    labelId: 'wallet:node.status.connecting',
     ink: 'text-zinc-500 dark:text-zinc-400',
   },
   offline: {
     dot: 'bg-red-500',
-    label: 'Offline',
+    labelId: 'wallet:node.status.offline',
     ink: 'text-red-700 dark:text-red-400',
   },
   unavailable: {
     dot: 'bg-zinc-400',
-    label: 'Unavailable',
+    labelId: 'wallet:node.status.unavailable',
     ink: 'text-zinc-500 dark:text-zinc-400',
   },
 };
@@ -69,6 +70,7 @@ function controller(): any {
 
 export function NodePillRow(): ReactNode {
   const s = useStoreState(nodePillStore);
+  const t = useMessages('wallet');
   const style = styleFor(s.status);
   return (
     <button
@@ -83,7 +85,7 @@ export function NodePillRow(): ReactNode {
       >
       </span>
       <span className="text-sm font-medium">
-        Node
+        {t('wallet:node.row.label')}
       </span>
       {/* Empty until the module has something to say — the hand-written row
           shipped this span blank, and the prerender has to agree. */}
@@ -91,7 +93,7 @@ export function NodePillRow(): ReactNode {
         id="account-node-status"
         data-node-status={s.status}
         className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
-      >{s.visible ? style.label : ''}</span>
+      >{s.visible ? t(style.labelId) : ''}</span>
     </button>
   );
 }

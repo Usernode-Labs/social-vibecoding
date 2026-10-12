@@ -7,6 +7,7 @@ import { type ReactNode } from 'react';
 
 import { WalletIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
+import { useMessages } from '../../lib/i18n/react';
 import { walletSheetStore } from './wallet-sheet-store';
 
 /** The row's class run; the `hidden` in front of it is the model's. */
@@ -22,6 +23,7 @@ function controller(): any {
 
 export function WalletRow(): ReactNode {
   const s = useStoreState(walletSheetStore);
+  const t = useMessages('wallet');
   return (
     <button
       id="account-row-wallet"
@@ -30,7 +32,7 @@ export function WalletRow(): ReactNode {
     >
       <WalletIcon className="w-5 h-5 shrink-0" />
       <span className="text-sm font-medium">
-        Wallet
+        {t('wallet:row.label')}
       </span>
       {/* Blank until the module has a snapshot — the hand-written row shipped
           this span empty and the prerender has to agree. */}

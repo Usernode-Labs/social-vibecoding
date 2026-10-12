@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
@@ -27,6 +28,7 @@ const KEY_PAN = 3;
 const KEY_ZOOM = 1.08;
 
 export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose: () => void }) {
+  const t = useMessages('discover');
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -55,7 +57,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     const controller = new AbortController();
     fetch(endpoint, { signal: controller.signal }).then(async res => {
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load the illustration. Reopen the editor to try again.');
+      if (!res.ok) throw new Error(data.error || t('discover:illustration.loadFailed'));
       if (controller.signal.aborted) return;
       setArt(data.illustration ? { ...data.illustration, ...clampFrame(data.illustration) } : null);
       setPending(data.pending || null); setLoading(false);
@@ -151,7 +153,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         // 409 carries the card already waiting; keep it on screen with the
         // message so the link is one tap away.
         if (data.pending) setPending(data.pending);
-        throw new Error(data.error || 'Could not save. Try again.');
+        throw new Error(data.error || t('discover:illustration.saveFailed'));
       }
       // Nothing changed on the app: the caches the editor used to patch here
       // are patched by the illustration_changed broadcast when the vote
@@ -172,18 +174,18 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     contributors: Number(app.contributor_count ?? cachedApp?.contributor_count) || 0, illustration: art,
   };
   return <div ref={root} className="rounded-2xl bg-white dark:bg-zinc-900 mb-5">
-    <div ref={card} className="flex flex-col px-4 pb-5" aria-label="Featured illustration">
-      <h2 className="text-lg font-bold pt-3 pb-4">Featured illustration</h2>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Preview on Discover</p>
-      <div className="flex gap-2 mb-3" role="group" aria-label="Preview theme">
+    <div ref={card} className="flex flex-col px-4 pb-5" aria-label={t('discover:illustration.title')}>
+      <h2 className="text-lg font-bold pt-3 pb-4">{t('discover:illustration.title')}</h2>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">{t('discover:illustration.previewCaption')}</p>
+      <div className="flex gap-2 mb-3" role="group" aria-label={t('discover:illustration.theme.group')}>
         {(['light', 'dark'] as const).map(theme => <Button key={theme} type="button" variant="neutral" ink="muted"
           aria-pressed={previewTheme === theme} className={previewTheme === theme ? 'ring-2 ring-violet-500' : undefined} onClick={() => setPreviewTheme(theme)}>
-          {theme === 'light' ? 'Light' : 'Dark'}
+          {theme === 'light' ? t('discover:illustration.theme.light') : t('discover:illustration.theme.dark')}
         </Button>)}
       </div>
       <div className="flex justify-center mb-4">
         <div ref={surface} data-framing-surface={art ? 'true' : 'false'} role="group"
-          aria-label="Illustration framing: drag to move, scroll or pinch to zoom, arrow keys to nudge"
+          aria-label={t('discover:illustration.framingLabel')}
           tabIndex={interactive ? 0 : -1}
           className="rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
           // touchAction so a pan is a pan and not a page scroll; userSelect
@@ -229,20 +231,24 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         </div>
       </div>
       <input ref={file} name="featured-illustration" type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-        aria-label="Upload featured illustration" onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+        aria-label={t('discover:illustration.upload.fileLabel')} onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
       <fieldset disabled={busy || loading || !!sent} className="flex flex-col gap-3">
-        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}>{art ? 'Replace light image' : 'Upload light image'}</Button>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">PNG, JPEG or WebP, up to 20 MB.</p>
+        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}>{art ? t('discover:illustration.upload.replaceLight') : t('discover:illustration.upload.light')}</Button>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('discover:illustration.upload.formats')}</p>
         {art ? <>
           <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]"
             onClick={() => { uploadTheme.current = 'dark'; file.current?.click(); }}>
-            {art.darkUrl ? 'Replace dark image' : 'Upload dark image'}
+            {art.darkUrl ? t('discover:illustration.upload.replaceDark') : t('discover:illustration.upload.dark')}
           </Button>
           {art.darkUrl ? <Button type="button" variant="neutral" ink="muted"
-            onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}>Use light image in both themes</Button> : null}
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">Use images with the same dimensions. Framing and colour are shared across both themes.</p>
+            onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}>{t('discover:illustration.upload.useLightInBoth')}</Button> : null}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('discover:illustration.upload.sameDimensions')}</p>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
+            <RichMessage
+              id="discover:illustration.framingHelp"
+              values={{ percent: Math.round(art.zoom * 100) }}
+              components={[<span data-zoom-readout />]}
+            />
           </p>
           {/*
               The twelve tone-50 colours, and nothing else: no hex field and
@@ -257,8 +263,8 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
               until a colour is picked — which is the honest reading of "the
               colour this card wears is not one of these".
           */}
-          <div data-tint-picker role="radiogroup" aria-label="Card colour" className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">Card colour</span>
+          <div data-tint-picker role="radiogroup" aria-label={t('discover:illustration.cardColour')} className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">{t('discover:illustration.cardColour')}</span>
             {TONES.map(tone => {
               const chosen = art.tint === tone;
               return <button key={tone} type="button" role="radio" aria-checked={chosen}
@@ -271,26 +277,30 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
             })}
           </div>
           <div className="flex gap-3">
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>Reset position</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}>Use app icon</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>{t('discover:illustration.resetPosition')}</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}>{t('discover:illustration.useAppIcon')}</Button>
           </div>
         </> : null}
       </fieldset>
-      {loading && !error ? <p role="status" className="text-sm mt-3">Loading preview…</p> : null}
+      {loading && !error ? <p role="status" className="text-sm mt-3">{t('discover:illustration.loadingPreview')}</p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
       {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
-        {'Sent to the group for approval. The illustration changes when the vote passes. '}
-        <a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>Open the proposal</a>
+        <RichMessage
+          id="discover:illustration.sent"
+          components={[<a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+        />
       </p> : pending ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
-        {'A change to this illustration is already waiting for the group\'s vote. Another can be proposed once it settles. '}
-        <a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>Open the proposal</a>
-      </p> : <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">Proposing opens a governance card on the board. The change applies when the group votes it in.</p>}
+        <RichMessage
+          id="discover:illustration.pending"
+          components={[<a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+        />
+      </p> : <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">{t('discover:illustration.proposeNote')}</p>}
       <div className="flex gap-3 mt-5">
         {sent
-          ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>Done</Button>
+          ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>{t('core:common.done')}</Button>
           : <>
-            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}>{busy ? 'Please wait…' : 'Propose change'}</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>Cancel</Button>
+            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : t('discover:illustration.propose')}</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>{t('core:common.cancel')}</Button>
           </>}
       </div>
     </div>

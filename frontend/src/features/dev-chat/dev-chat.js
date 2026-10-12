@@ -124,15 +124,14 @@ const DevChat = {
   // The idle placeholder lives here (not only in the template) because
   // _setStreamingUI swaps it for the busy variant while a turn runs and
   // has to put the original back afterwards.
-  COMPOSER_PLACEHOLDER:
-    'Describe a change in plain English, e.g. "add a dark mode toggle". No coding needed.',
+  // Getters, so the words are read in the language on screen when a
+  // render asks for them rather than once when this module loads.
+  get COMPOSER_PLACEHOLDER() { return PlatformI18n.t('devchat:composer.placeholder'); },
   // #810: the save icon exists ONLY while a turn runs (that's the state
   // where sending is impossible), so the busy copy points at it again.
-  COMPOSER_PLACEHOLDER_BUSY:
-    'Claude is working. Type your next note and tap 💾 to save it for later.',
-  SAVE_DRAFT_TITLE:
-    'Save this text as a draft (Ctrl+Enter). It stays here until you send it',
-  SEND_TITLE: 'Send (Ctrl+Enter)',
+  get COMPOSER_PLACEHOLDER_BUSY() { return PlatformI18n.t('devchat:composer.placeholderBusy', { agent: 'Claude' }); },
+  get SAVE_DRAFT_TITLE() { return PlatformI18n.t('devchat:composer.saveDraftTitle'); },
+  get SEND_TITLE() { return PlatformI18n.t('devchat:composer.sendTitle'); },
   // #920's hint used to be a LINE under the box, because the keystroke does
   // two different things and nothing else said which. It is the one circle's
   // title now: the button and the shortcut perform the same action in every
@@ -142,6 +141,15 @@ const DevChat = {
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
+
+  // Independent facts shown side by side ("Opus 5.5 · general coding work"),
+  // joined the way the language on screen joins them. Each part is a whole
+  // message or a name; empty parts are left out.
+  _dotList(parts) {
+    const said = (parts || []).filter(Boolean).map(String);
+    if (!said.length) return '';
+    return said.reduce((first, second) => PlatformI18n.t('devchat:list.dot', { first, second }));
+  },
 
   _titleStatus: null, // null | 'thinking'
   // null | 'sessionDone' | 'sessionStalled' | 'autoSolveDone' | 'autoSolveFailed'
@@ -390,17 +398,17 @@ const DevChat = {
     // that shows a cost renders it. "about" carries the estimate; what a
     // typical change IS stays defined once, in the server's TYPICAL_CHANGE
     // profile, which the admin screen prints.
-    const perChange = money ? `about ${money} for a typical change` : '';
+    const perChange = money ? PlatformI18n.t('devchat:model.cost.perChange', { amount: money }) : '';
     return {
       note,
       // The bare amount, for arithmetic and tests. Not for display on its
       // own: render `compact` or `full`.
       estimate: money,
       // "general coding work · about $1.55 for a typical change (estimate)"
-      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      full: DevChat._dotList([note, money ? PlatformI18n.t('devchat:model.cost.perChangeEstimate', { amount: money }) : '']),
       // The same sentence, minus the explicit label, for the one line a
       // closed native control shows.
-      compact: [note, perChange].filter(Boolean).join(' · '),
+      compact: DevChat._dotList([note, perChange]),
     };
   },
 
@@ -459,9 +467,9 @@ const DevChat = {
       const cost = disabled ? null : DevChat._modelCostNote(id, model);
       options.push({
         value: `${OPENROUTER_MODEL_PREFIX}${id}`,
-        label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
+        label: label || DevChat._dotList([model?.name || id, cost?.compact]),
         // The secondary hint, not part of the label (#2569).
-        title: 'Runs on your OpenRouter key',
+        title: PlatformI18n.t('devchat:model.option.openRouterKeyTitle'),
         ...(disabled ? { disabled: true } : null),
       });
     };
@@ -476,8 +484,8 @@ const DevChat = {
       const label = (meta && meta.label) || id;
       options.push({
         value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-        label: cost.compact ? `${label} · ${cost.compact}` : label,
-        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        label: DevChat._dotList([label, cost.compact]),
+        title: PlatformI18n.t('devchat:model.option.claudeKeyTitle'),
       });
     }
 
@@ -492,8 +500,8 @@ const DevChat = {
     // 4. The door to the full catalog, still last.
     options.push({
       value: OPENROUTER_MORE_VALUE,
-      label: 'Add more OpenRouter models…',
-      title: 'Browse every model your OpenRouter key can reach',
+      label: PlatformI18n.t('devchat:model.option.addMore'),
+      title: PlatformI18n.t('devchat:model.option.addMoreTitle'),
     });
     return options;
   },
@@ -582,7 +590,7 @@ const DevChat = {
       // Old/incomplete rows should say that they are still loading rather
       // than make the select visually fall into the first real option.
       selectedOpenRouterId = '__loading__';
-      extraIds.unshift({ id: selectedOpenRouterId, label: 'Loading model', disabled: true });
+      extraIds.unshift({ id: selectedOpenRouterId, label: PlatformI18n.t('devchat:model.option.loading'), disabled: true });
     }
 
     // The two starting models are the server's curated pair
@@ -609,8 +617,8 @@ const DevChat = {
         const label = (meta && meta.label) || id;
         return {
           value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
-          label: cost.compact ? `${label} · ${cost.compact}` : label,
-          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+          label: DevChat._dotList([label, cost.compact]),
+          title: PlatformI18n.t('devchat:model.option.claudeKeyTitle'),
         };
       });
 
@@ -640,7 +648,7 @@ const DevChat = {
       options.splice(Math.max(options.length - 1, 0), 0, {
         value: selected,
         label: model?.name || id,
-        title: 'Runs on your OpenRouter key',
+        title: PlatformI18n.t('devchat:model.option.openRouterKeyTitle'),
       });
     }
     return {
@@ -910,7 +918,7 @@ const DevChat = {
     const m = DevChat._RUNNING_VENUE_RE.exec(content);
     if (!m) return null;
     return {
-      text: `Coding agent is running${content.slice(m[0].length)}`,
+      text: PlatformI18n.t('devchat:transcript.agentRunning', { tail: content.slice(m[0].length) }),
       caption: DevChat._agentName(DevChat._activityAgentBackend(msg)),
     };
   },
@@ -1270,7 +1278,7 @@ const DevChat = {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
       ? 'OpenRouter'
       : 'Claude';
-    return `${name} is working. Type your next note and tap 💾 to save it for later.`;
+    return PlatformI18n.t('devchat:composer.placeholderBusy', { agent: name });
   },
 
   _formatOpenRouterPrice(value) {
@@ -1285,35 +1293,38 @@ const DevChat = {
   },
 
   _openRouterModelCostSummary(model) {
-    const tier = {
-      free: 'Free',
-      low: 'Low cost',
-      medium: 'Medium cost',
-      high: 'High cost',
-      unknown: 'Price unavailable',
-    }[model?.costTier] || 'Price unavailable';
+    const tier = PlatformI18n.t({
+      free: 'devchat:model.tier.free',
+      low: 'devchat:model.tier.low',
+      medium: 'devchat:model.tier.medium',
+      high: 'devchat:model.tier.high',
+      unknown: 'devchat:model.tier.unknown',
+    }[model?.costTier] || 'devchat:model.tier.unknown');
     const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
     const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
     if (!input && !output) return tier;
-    return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+    return PlatformI18n.t('devchat:model.cost.summary', { tier, inputPrice: input || '?', outputPrice: output || '?' });
   },
 
   _openRouterModelOptionLabel(model) {
     const badges = [];
     if (model?.isFavorite) badges.push('★');
-    if (model?.isRecommended) badges.push('Recommended');
+    if (model?.isRecommended) badges.push(PlatformI18n.t('devchat:model.badge.recommended'));
     // #3296: the platform runs some OpenRouter models in Claude Code rather
     // than Codex. Only that exception is named; Codex is every other row.
     if (model?.harness === 'claude') badges.push('Claude Code');
     if (model?.createdAt) {
       const age = Date.now() - Date.parse(model.createdAt);
-      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(PlatformI18n.t('devchat:model.badge.new'));
     }
     const compatibility = model?.compatibility === 'verified'
-      ? ' · verified'
-      : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-    const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
-    return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      ? PlatformI18n.t('devchat:model.compatibility.verified')
+      : (model?.compatibility === 'blocked' ? PlatformI18n.t('devchat:model.compatibility.limited') : PlatformI18n.t('devchat:model.compatibility.unverified'));
+    // "<name · badges>: <cost · compatibility>", each side a list of facts.
+    return PlatformI18n.t('devchat:model.option.label', {
+      model: DevChat._dotList([model?.name || model?.id || PlatformI18n.t('devchat:model.unknown'), ...badges]),
+      facts: DevChat._dotList([this._openRouterModelCostSummary(model), compatibility]),
+    });
   },
 
   _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
@@ -1348,11 +1359,11 @@ const DevChat = {
     const refreshed = Date.parse(refreshedAt || '');
     if (!Number.isFinite(refreshed)) return '';
     const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-    if (seconds < 60) return 'Updated just now';
+    if (seconds < 60) return PlatformI18n.t('devchat:model.catalog.updatedNow');
     const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `Updated ${minutes}m ago`;
+    if (minutes < 60) return PlatformI18n.t('devchat:model.catalog.updatedMinutes', { count: minutes });
     const hours = Math.round(minutes / 60);
-    return `Updated ${hours}h ago`;
+    return PlatformI18n.t('devchat:model.catalog.updatedHours', { count: hours });
   },
 
   async _setOpenRouterModelFavorite(modelId, favorite) {
@@ -1364,18 +1375,18 @@ const DevChat = {
       body: JSON.stringify({ modelId, favorite }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
+    if (!response.ok) throw new Error(body.error || PlatformI18n.t('devchat:agentChoice.error.favorite'));
     return body;
   },
 
   _openRouterModelCompatibilitySummary(model) {
     if (!model) return '';
-    if (model.compatibility === 'verified') return 'Verified for repository coding.';
+    if (model.compatibility === 'verified') return PlatformI18n.t('devchat:model.compatibility.verifiedNote');
     if (model.meetsCodexMinimums) {
-      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.';
+      return PlatformI18n.t('devchat:model.compatibility.unverifiedNote');
     }
     return model.compatibilityNote
-      || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
+      || PlatformI18n.t('devchat:model.compatibility.limitedNote');
   },
 
   // Prepare the saved provider for a REAL build action (currently Generate
@@ -1393,7 +1404,7 @@ const DevChat = {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(body.error || 'Could not load your coding-agent settings.');
+        throw new Error(body.error || PlatformI18n.t('devchat:agentChoice.error.loadSettings'));
       }
       return body;
     };
@@ -1413,7 +1424,7 @@ const DevChat = {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(body.error || 'Could not check your OpenRouter credential.');
+        throw new Error(body.error || PlatformI18n.t('devchat:agentChoice.error.checkCredential'));
       }
       return body;
     };
@@ -1448,7 +1459,7 @@ const DevChat = {
       if (status.configured !== true || status.status !== 'valid') {
         const err = new Error(
           provisioned.error
-            || `OpenRouter could not be set up automatically (HTTP ${provisionResponse.status}).`,
+            || PlatformI18n.t('devchat:agentChoice.error.provision', { status: provisionResponse.status }),
         );
         err.code = provisioned.code || 'provision_failed';
         throw err;
@@ -1462,7 +1473,7 @@ const DevChat = {
     if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
     prefs = await readPreferences();
     if (prefs.defaultBackend !== 'codex_openrouter') {
-      throw new Error('OpenRouter was created, but it was not saved as your default. Contact an administrator.');
+      throw new Error(PlatformI18n.t('devchat:agentChoice.error.notDefault'));
     }
     return { ...prefs, openrouterCredentialSource };
   },
@@ -1484,7 +1495,7 @@ const DevChat = {
 
     try {
       const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
-      if (!prefsRes.ok) throw new Error('Could not load your coding-agent settings.');
+      if (!prefsRes.ok) throw new Error(PlatformI18n.t('devchat:agentChoice.error.loadSettings'));
       const prefs = await prefsRes.json();
       data.defaultBackend = prefs.defaultBackend === 'codex_openrouter'
         ? 'codex_openrouter'
@@ -1492,7 +1503,7 @@ const DevChat = {
       data.backends = prefs.backends || {};
       data.codexAvailable = !!prefs.codexAvailable;
     } catch (err) {
-      data.loadError = err.message || 'Could not load coding-agent settings.';
+      data.loadError = err.message || PlatformI18n.t('devchat:agentChoice.error.loadSettingsShort');
       return data;
     }
 
@@ -1509,11 +1520,11 @@ const DevChat = {
       const credentialRes = await fetch('/api/me/credentials/openrouter', {
         credentials: 'same-origin',
       });
-      if (!credentialRes.ok) throw new Error('Could not check your OpenRouter key.');
+      if (!credentialRes.ok) throw new Error(PlatformI18n.t('devchat:agentChoice.error.checkKey'));
       const credential = await credentialRes.json();
       data.credentialConfigured = credential.configured === true && credential.status === 'valid';
     } catch (err) {
-      data.catalogError = err.message || 'Could not check your OpenRouter key.';
+      data.catalogError = err.message || PlatformI18n.t('devchat:agentChoice.error.checkKey');
       return data;
     }
 
@@ -1522,15 +1533,15 @@ const DevChat = {
     try {
       const { res: modelsRes, body: catalog, err } = await catalogRead;
       if (err) throw err;
-      if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      if (!modelsRes.ok) throw new Error(catalog.error || PlatformI18n.t('devchat:agentChoice.error.loadModels'));
       data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
       data.refreshedAt = catalog.refreshedAt || null;
       data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
-      if (!data.models.length) data.catalogError = 'No OpenRouter models are available right now. Try Refresh.';
+      if (!data.models.length) data.catalogError = PlatformI18n.t('devchat:agentChoice.error.noModels');
     } catch (err) {
-      data.catalogError = err.message || 'Could not load OpenRouter models.';
+      data.catalogError = err.message || PlatformI18n.t('devchat:agentChoice.error.loadModels');
     }
     return data;
   },
@@ -1562,50 +1573,50 @@ const DevChat = {
       <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${PlatformI18n.htmlText(openRouterModelOnly ? 'devchat:agentChoice.title.model' : (mode === 'switch' ? 'devchat:agentChoice.title.switch' : 'devchat:agentChoice.title.create'))}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(openRouterModelOnly ? 'devchat:agentChoice.intro.model' : (mode === 'switch' ? 'devchat:agentChoice.intro.switch' : 'devchat:agentChoice.intro.create'))}</p>
           </div>
-          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">✕</button>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="${PlatformI18n.htmlText('core:common.close')}">✕</button>
         </div>
-        <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
+        <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="${PlatformI18n.htmlText('devchat:agentChoice.groupLabel')}">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included credits or personal key, with any available model.</span>
-            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.openRouterBlurb')}</span>
+            ${data.defaultBackend === 'codex_openrouter' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Homeroom · Claude</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
-            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.claudeBlurb')}</span>
+            ${data.defaultBackend === 'claude_code' ? `<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">${PlatformI18n.htmlText('devchat:agentChoice.savedDefault')}</span>` : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
+          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">${PlatformI18n.htmlText('devchat:agentChoice.modelLabel')}</label>
           <div class="mt-1 flex flex-wrap gap-2">
-            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="Filter by model or provider…" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">☆ Favorites</button>
-            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">Refresh</button>
+            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="${PlatformI18n.htmlText('devchat:agentChoice.filterPlaceholder')}" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">${PlatformI18n.htmlText('devchat:agentChoice.favoritesOff')}</button>
+            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">${PlatformI18n.htmlText('devchat:agentChoice.refresh')}</button>
           </div>
           <div class="mt-2 flex items-stretch gap-2">
             <select id="dc-agent-choice-model" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
-            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="Add selected model to favorites" title="Add selected model to favorites">☆</button>
+            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="${PlatformI18n.htmlText('devchat:agentChoice.star.add')}" title="${PlatformI18n.htmlText('devchat:agentChoice.star.add')}">☆</button>
           </div>
           <p id="dc-agent-choice-catalog-meta" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Platform recommendations start in Favorites. Clear the Favorites filter to browse the complete key-visible catalog. Rates are per 1M tokens; actual spend depends on usage.</p>
-          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('devchat:agentChoice.catalogNote')}</p>
+          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">${PlatformI18n.htmlText('devchat:agentChoice.effort.label')}</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Default</option>
-            <option value="minimal">Minimal</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">Extra high</option>
+            <option value="">${PlatformI18n.htmlText('devchat:agentChoice.effort.default')}</option>
+            <option value="minimal">${PlatformI18n.htmlText('devchat:agentChoice.effort.minimal')}</option>
+            <option value="low">${PlatformI18n.htmlText('devchat:agentChoice.effort.low')}</option>
+            <option value="medium">${PlatformI18n.htmlText('devchat:agentChoice.effort.medium')}</option>
+            <option value="high">${PlatformI18n.htmlText('devchat:agentChoice.effort.high')}</option>
+            <option value="xhigh">${PlatformI18n.htmlText('devchat:agentChoice.effort.xhigh')}</option>
           </select>
         </div>
         <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
-          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Open OpenRouter settings</button>
-          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
+          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">${PlatformI18n.htmlText('devchat:agentChoice.openSettings')}</button>
+          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">${PlatformI18n.htmlText('core:common.cancel')}</button>
           <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
         </div>
       </div>`;
@@ -1656,11 +1667,11 @@ const DevChat = {
       }
       modelSelect.disabled = visibleModels.length === 0;
       favoritesOnlyButton.setAttribute('aria-pressed', String(favoritesOnly));
-      favoritesOnlyButton.textContent = favoritesOnly ? '★ Favorites' : '☆ Favorites';
+      favoritesOnlyButton.textContent = favoritesOnly ? PlatformI18n.t('devchat:agentChoice.favoritesOn') : PlatformI18n.t('devchat:agentChoice.favoritesOff');
       const age = this._openRouterCatalogAgeText(data.refreshedAt);
       catalogMeta.textContent = visibleModels.length
-        ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
-        : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
+        ? DevChat._dotList([PlatformI18n.t('devchat:agentChoice.catalog.count', { shown: visibleModels.length, count: data.totalModels || data.models.length }), age])
+        : DevChat._dotList([PlatformI18n.t('devchat:agentChoice.catalog.noMatch'), age]);
       if (!visibleModels.length) {
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1682,13 +1693,13 @@ const DevChat = {
       applyButton.disabled = false;
       const venueName = codex ? 'Homeroom · OpenRouter' : 'Homeroom · Claude';
       applyButton.textContent = openRouterModelOnly
-        ? 'Use this OpenRouter model'
-        : (mode === 'switch' ? `Switch to ${venueName}` : `Build on ${venueName}`);
+        ? PlatformI18n.t('devchat:agentChoice.apply.model')
+        : (mode === 'switch' ? PlatformI18n.t('devchat:agentChoice.apply.switch', { venue: venueName }) : PlatformI18n.t('devchat:agentChoice.apply.build', { venue: venueName }));
 
       if (!codex) {
         status.textContent = data.loadError
-          ? `${data.loadError} Homeroom · Claude is still available.`
-          : 'Homeroom · Claude builds in this chat on your daily Homeroom credits.';
+          ? PlatformI18n.t('devchat:agentChoice.status.claudeAfterError', { error: data.loadError })
+          : PlatformI18n.t('devchat:agentChoice.status.claude');
         return;
       }
       if (data.loadError) {
@@ -1697,23 +1708,23 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'Homeroom · OpenRouter is not enabled for this account or deployment.';
+        status.textContent = PlatformI18n.t('devchat:agentChoice.status.openRouterDisabled');
         applyButton.disabled = true;
         return;
       }
       if (!data.credentialConfigured) {
-        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing OpenRouter.';
-        applyButton.textContent = 'Set up OpenRouter';
+        status.textContent = data.catalogError || PlatformI18n.t('devchat:agentChoice.status.addKey');
+        applyButton.textContent = PlatformI18n.t('devchat:agentChoice.apply.setUp');
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No OpenRouter models are available right now. Try Refresh.';
+        status.textContent = data.catalogError || PlatformI18n.t('devchat:agentChoice.error.noModels');
         applyButton.disabled = true;
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
       if (!model) {
-        status.textContent = 'No models match. Clear the search or show all models.';
+        status.textContent = PlatformI18n.t('devchat:agentChoice.status.noMatch');
         applyButton.disabled = true;
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1724,8 +1735,8 @@ const DevChat = {
       starModelButton.textContent = model.isFavorite ? '★' : '☆';
       starModelButton.setAttribute('aria-pressed', String(model.isFavorite === true));
       starModelButton.setAttribute('aria-label', model.isFavorite
-        ? 'Remove selected model from favorites'
-        : 'Add selected model to favorites');
+        ? PlatformI18n.t('devchat:agentChoice.star.remove')
+        : PlatformI18n.t('devchat:agentChoice.star.add'));
       starModelButton.title = starModelButton.getAttribute('aria-label');
       const supportsReasoning = model?.supportsReasoning === true;
       effortSelect.disabled = !supportsReasoning;
@@ -1734,10 +1745,10 @@ const DevChat = {
       } else {
         effortSelect.value = '';
       }
-      const reasoningNote = supportsReasoning
-        ? ''
-        : ' This model does not expose reasoning-effort controls.';
-      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)}${reasoningNote} This session bills directly to your OpenRouter key.`;
+      const about = { cost: this._openRouterModelCostSummary(model), compatibility: this._openRouterModelCompatibilitySummary(model) };
+      status.textContent = supportsReasoning
+        ? PlatformI18n.t('devchat:agentChoice.status.model', about)
+        : PlatformI18n.t('devchat:agentChoice.status.modelNoEffort', about);
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
@@ -1760,13 +1771,13 @@ const DevChat = {
         renderModelOptions();
         render();
       } catch (err) {
-        status.textContent = err.message || 'Could not update that favorite.';
+        status.textContent = err.message || PlatformI18n.t('devchat:agentChoice.error.favorite');
         starModelButton.disabled = false;
       }
     });
     refreshModelsButton.addEventListener('click', async () => {
       refreshModelsButton.disabled = true;
-      refreshModelsButton.textContent = 'Refreshing…';
+      refreshModelsButton.textContent = PlatformI18n.t('devchat:agentChoice.refreshing');
       try {
         const fresh = await this._loadCodingAgentChoiceData({ forceRefresh: true });
         if (fresh.loadError || (!fresh.catalogLoaded && fresh.catalogError)) {
@@ -1790,10 +1801,10 @@ const DevChat = {
         renderModelOptions();
         render();
       } catch (err) {
-        status.textContent = err.message || 'Could not refresh OpenRouter models.';
+        status.textContent = err.message || PlatformI18n.t('devchat:agentChoice.error.refresh');
       } finally {
         refreshModelsButton.disabled = false;
-        refreshModelsButton.textContent = 'Refresh';
+        refreshModelsButton.textContent = PlatformI18n.t('devchat:agentChoice.refresh');
       }
     });
     effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
@@ -1885,7 +1896,7 @@ const DevChat = {
       && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
     if (same) {
       if (!quietBusy) {
-        PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+        PlatformUI.toast(PlatformI18n.t('devchat:agentSwitch.alreadySelected', { venue: DevChat._agentName(choice.backend) }));
       }
       return 'same';
     }
@@ -1901,7 +1912,7 @@ const DevChat = {
       if (!response.ok) {
         const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
         if (!(busy && quietBusy)) {
-          PlatformUI.toast(data.error || 'Could not switch coding agents.');
+          PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.failed'));
         }
         return busy ? 'busy' : 'failed';
       }
@@ -1915,10 +1926,10 @@ const DevChat = {
       Object.assign(DevChat.currentSession, data.session || {});
       if (data.message) DevChat.messages.push(data.message);
       DevChat.renderChatView();
-      PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+      PlatformUI.toast(PlatformI18n.t('devchat:agentSwitch.nowUses', { venue: DevChat._agentName(choice.backend) }));
       return 'applied';
     } catch {
-      PlatformUI.toast('Network error while switching coding agents.');
+      PlatformUI.toast(PlatformI18n.t('devchat:agentSwitch.networkError'));
       return 'failed';
     }
   },
@@ -1950,7 +1961,7 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || 'Could not switch to the platform agent.');
+        PlatformUI.toast(data.error || PlatformI18n.t('devchat:agentSwitch.platformFailed'));
         return;
       }
       if (!DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
@@ -1983,7 +1994,7 @@ const DevChat = {
       // this one: nothing on screen changes when the round trip fails.
       DevChat.renderChatView();
     } catch {
-      PlatformUI.toast('Network error while switching coding agents.');
+      PlatformUI.toast(PlatformI18n.t('devchat:agentSwitch.networkError'));
     }
   },
 
@@ -2108,8 +2119,12 @@ const DevChat = {
     if (DevChat._isOpenRouterSession()) return { kind: 'none', label: '' };
     const agent = DevChat._localAgent;
     if (!agent && DevChat._runner !== 'local') return { kind: 'none', label: '' };
-    const label = agent?.label || DevChat._runnerLabel || 'your machine';
-    return { kind: agent ? 'live' : 'past', label };
+    // A machine's own name, or none. The stand-in is for where the label is
+    // shown alone; `unnamed` tells the tooltips to use their own wording
+    // instead of taking the stand-in as a name.
+    const name = agent?.label || DevChat._runnerLabel || '';
+    const label = name || PlatformI18n.t('devchat:runner.yourMachine');
+    return { kind: agent ? 'live' : 'past', label, unnamed: !name };
   },
 
   // Release the lease from the browser. This is the escape hatch for the
@@ -2119,8 +2134,9 @@ const DevChat = {
   async _handBackToUsernode() {
     const agent = DevChat._localAgent;
     if (!agent || agent.demo) return;
-    const label = agent.label || 'your machine';
-    if (!confirm(`Hand coding turns back to Homeroom?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    if (!confirm(agent.label
+      ? PlatformI18n.t('devchat:runner.handBack.confirm', { machine: agent.label })
+      : PlatformI18n.t('devchat:runner.handBack.confirmUnnamed'))) return;
     try {
       const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
         method: 'DELETE',
@@ -2130,7 +2146,7 @@ const DevChat = {
       DevChat._localAgent = null;
       DevChat._renderRunnerControls();
     } catch {
-      alert('Could not hand the session back. Try again in a moment.');
+      alert(PlatformI18n.t('devchat:runner.handBack.failed'));
     }
   },
 
@@ -2168,7 +2184,7 @@ const DevChat = {
   // short guidance directly, but these helpers remain safe for an older
   // cached shell during a rolling update. Nothing measured feeds either one.
 
-  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
+  get MODEL_GUIDANCE_TOOLTIP() { return PlatformI18n.t('devchat:model.guidanceTooltip'); },
 
   // Plain text for one <option>. Degrades to the bare label when the
   // server sent no guidance (e.g. an older payload).
@@ -2177,7 +2193,7 @@ const DevChat = {
     const label = meta.label || '';
     const hint = meta.changeSize && meta.changeSize.short;
     if (!hint) return label;
-    return `${label}: ${hint}`;
+    return PlatformI18n.t('devchat:model.option.withHint', { model: label, hint });
   },
 
   // Full-sentence caption retained for an older cached shell during a rolling
@@ -2191,7 +2207,7 @@ const DevChat = {
     // "One small thing at a time: …" reads as "best for one small thing
     // at a time: …" once it follows the label.
     const guidance = long.charAt(0).toLowerCase() + long.slice(1);
-    return `${label}: best for ${guidance}`;
+    return PlatformI18n.t('devchat:model.option.bestFor', { model: label, guidance });
   },
 
   // Clears all per-app state. Called when the user leaves an app (via
@@ -2442,17 +2458,39 @@ const DevChat = {
     const CO = typeof window !== 'undefined' && window.CreditOptions;
     const state = DevChat._creditState();
     if (!CO || !state) return '';
-    const sentence = CO.resetSentence(state);
-    const utc = withUtc && CO.resetTitle ? CO.resetTitle(state) : null;
-    return utc ? sentence.replace(/\.$/, ` (${utc}).`) : sentence;
+    return CO.resetSentence(state, undefined, { withUtc });
   },
 
-  // #3230: the reset boundary in the viewer's clock ("Sunday at 8:00 PM",
-  // "at 8:00 PM"), or the server's UTC spelling where ResetTime is absent.
-  _resetWhen(weekly) {
+  // #3230: the reset boundary in the viewer's clock, as the weekday and
+  // time the callers' sentences take ({ day, time }). Null where ResetTime
+  // is absent: the callers below then say the server's UTC boundary in a
+  // whole sentence of their own.
+  _resetMoment(weekly) {
     const RT = typeof window !== 'undefined' && window.ResetTime;
-    if (RT) return RT.resetWhen(weekly ? 'weekly' : 'daily');
-    return weekly ? 'Monday 00:00 UTC' : 'at midnight UTC';
+    if (RT) return RT.resetMoment(weekly ? 'weekly' : 'daily');
+    return null;
+  },
+
+  // "Resets Sunday at 8:00 PM." for the meter's tooltips.
+  _resetFallbackSentence(weekly) {
+    const moment = DevChat._resetMoment(weekly);
+    if (moment) return PlatformI18n.t(weekly ? 'devchat:budget.reset.weekly' : 'devchat:budget.reset.daily', moment);
+    return weekly ? PlatformI18n.t('devchat:budget.reset.weeklyUtc') : PlatformI18n.t('devchat:budget.reset.dailyUtc');
+  },
+
+  // A pill worded as ONE message whose numbered tags are its coloured parts
+  // ("limit <0>$3.20</0><1>/$10.00</1>"): each tag takes the part spec of
+  // its number, and text outside any tag takes `outside`.
+  _pillParts(id, values, specs, outside) {
+    const parts = [];
+    let spec = outside;
+    for (const token of PlatformI18n.t(id, values).split(/(<\/?\d+>)/g)) {
+      const open = /^<(\d+)>$/.exec(token);
+      if (open) spec = specs[Number(open[1])] || outside;
+      else if (/^<\/\d+>$/.test(token)) spec = outside;
+      else if (token) parts.push({ text: token, ...spec });
+    }
+    return parts;
   },
 
   // #1788 gave the allowance two windows and reported whichever was
@@ -2468,15 +2506,9 @@ const DevChat = {
     return {
       weekly,
       // "Today: …" / "This week: …"
-      label: b.windowLabel || (weekly ? 'This week' : 'Today'),
-      // "…left today" / "…left this week"
-      when: weekly ? 'this week' : 'today',
-      // "your $50.00 platform weekly limit"
-      limitNoun: weekly ? 'weekly limit' : 'daily limit',
-      // "your free daily AI credits"
-      creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
+      label: b.windowLabel || (weekly ? PlatformI18n.t('devchat:budget.window.thisWeek') : PlatformI18n.t('devchat:budget.window.today')),
       // Fallback for the reset sentence when CreditOptions is absent.
-      resetFallback: `Resets ${DevChat._resetWhen(weekly)}.`,
+      resetFallback: DevChat._resetFallbackSentence(weekly),
     };
   },
 
@@ -2517,13 +2549,15 @@ const DevChat = {
       parts: [...view.parts,
         ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
         {
-          text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
+          text: spend.estimated
+            ? PlatformI18n.t('devchat:budget.pill.thisTurnEstimated', { amount: (spend.costCents / 100).toFixed(2) })
+            : PlatformI18n.t('devchat:budget.pill.thisTurn', { amount: (spend.costCents / 100).toFixed(2) }),
           className: 'text-zinc-500 dark:text-zinc-400',
           title: openRouter
-            ? 'Estimated from the model\u2019s OpenRouter list price and the tokens this turn used. OpenRouter\u2019s own usage records determine billing.'
+            ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.openRouter')
             : spend.estimated
-              ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
-              : 'Token spend reported by Claude Code for this turn.',
+              ? PlatformI18n.t('devchat:budget.pill.thisTurnTitle.estimated')
+              : PlatformI18n.t('devchat:budget.pill.thisTurnTitle.reported'),
         },
       ],
     };
@@ -2556,28 +2590,28 @@ const DevChat = {
       if (hasApiKey) {
         const last4 = window.Settings.state.keyLast4 || '••••';
         return {
-          title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
-          parts: [
-            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/linked-accounts' },
-            { text: ' · ', className: muted },
-            { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
-          ],
+          title: PlatformI18n.t('devchat:budget.pill.lockedWithKeyTitle'),
+          parts: DevChat._pillParts('devchat:budget.pill.lockedWithKey', { last4 }, [
+            { className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/linked-accounts' },
+            { className: muted },
+            { className: 'text-emerald-700 dark:text-emerald-400' },
+          ], { className: muted }),
         };
       }
       return {
         title: null,
         parts: [{
-          text: 'verify account · unlock $10/day',
+          text: PlatformI18n.t('devchat:budget.pill.verify'),
           className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
           href: '#settings/linked-accounts',
-          title: 'Connect GitHub or X to unlock $10/day',
+          title: PlatformI18n.t('devchat:budget.pill.verifyTitle'),
         }],
       };
     }
     if (state && state.level === 'unavailable') {
       return hasApiKey
-        ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
-        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
+        ? { title: null, parts: [{ text: PlatformI18n.t('devchat:budget.pill.keyAvailable'), className: 'text-emerald-700 dark:text-emerald-400', title: PlatformI18n.t('devchat:budget.pill.keyAvailableTitle') }] }
+        : { title: null, parts: [{ text: PlatformI18n.t('devchat:budget.pill.unavailable'), className: 'text-amber-800 dark:text-amber-400', title: PlatformI18n.t('devchat:budget.pill.unavailableTitle') }] };
     }
 
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
@@ -2600,7 +2634,7 @@ const DevChat = {
         // Budget fetch hasn't landed yet — static badge until it does.
         return {
           title: null,
-          parts: [{ text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400', title: 'Using your Anthropic API key' }],
+          parts: [{ text: PlatformI18n.t('devchat:budget.pill.key', { last4 }), className: 'text-emerald-700 dark:text-emerald-400', title: PlatformI18n.t('devchat:budget.pill.keyTitle') }],
         };
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
@@ -2609,21 +2643,18 @@ const DevChat = {
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
       const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
-      const parts = [
-        { text: 'limit ', className: muted },
-        { text: `$${spent}`, className: color },
-        { text: `/$${limit}`, className: muted },
-      ];
-      if (byokCents > 0) {
-        parts.push({ text: ' · ', className: muted });
-        parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
-      }
+      const parts = DevChat._pillParts(
+        byokCents > 0 ? 'devchat:budget.pill.limitWithKey' : 'devchat:budget.pill.limit',
+        { spent, limit, keySpend: byok },
+        [{ className: color }, { className: muted }, { className: muted }, { className: 'text-emerald-700 dark:text-emerald-400' }],
+        { className: muted },
+      );
       const win = DevChat._creditWindow();
+      const said = { window: win.label, spent, limit, keySpend: byok, last4, reset: resetTip || win.resetFallback };
       return {
-        title: `${win.label}: $${spent} of your $${limit} platform ${win.limitNoun}`
-          + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-          + `. The ${win.limitNoun} is used first; your key (…${last4}) takes over once it runs out. `
-          + (resetTip || win.resetFallback),
+        title: win.weekly
+          ? (byokCents > 0 ? PlatformI18n.t('devchat:budget.title.key.weeklyWithKeySpend', said) : PlatformI18n.t('devchat:budget.title.key.weekly', said))
+          : (byokCents > 0 ? PlatformI18n.t('devchat:budget.title.key.dailyWithKeySpend', said) : PlatformI18n.t('devchat:budget.title.key.daily', said)),
         parts,
       };
     }
@@ -2637,8 +2668,9 @@ const DevChat = {
     if (DevChat._creditsExhausted()) {
       const winOut = DevChat._creditWindow();
       return {
-        title: `Your ${winOut.creditsNoun} are used up. ${
-          resetTip || winOut.resetFallback} Or add your own Anthropic API key in Settings to keep working now.`,
+        title: winOut.weekly
+          ? PlatformI18n.t('devchat:budget.title.usedUp.weekly', { reset: resetTip || winOut.resetFallback })
+          : PlatformI18n.t('devchat:budget.title.usedUp.daily', { reset: resetTip || winOut.resetFallback }),
         parts: [
           { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
@@ -2649,8 +2681,9 @@ const DevChat = {
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
     const winOk = DevChat._creditWindow();
     return {
-      title: `${winOk.label}: $${spent} of your $${limit} ${winOk.creditsNoun}. ${
-        resetTip || winOk.resetFallback}`,
+      title: winOk.weekly
+        ? PlatformI18n.t('devchat:budget.title.credits.weekly', { window: winOk.label, spent, limit, reset: resetTip || winOk.resetFallback })
+        : PlatformI18n.t('devchat:budget.title.credits.daily', { window: winOk.label, spent, limit, reset: resetTip || winOk.resetFallback }),
       parts: [
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
@@ -2677,6 +2710,40 @@ const DevChat = {
   // is a change to this meter's contract (and to the ?shot= fixture and
   // declared checks behind it), so it is deliberately left for its own
   // change rather than folded into this one.
+  // The allowance tooltip, one whole message per owner and shape.
+  _OPENROUTER_TITLE_IDS: {
+    included: {
+      left: 'devchat:budget.openRouter.title.included.left',
+      leftDaily: 'devchat:budget.openRouter.title.included.leftDaily',
+      leftWeekly: 'devchat:budget.openRouter.title.included.leftWeekly',
+      leftMonthly: 'devchat:budget.openRouter.title.included.leftMonthly',
+      allowance: 'devchat:budget.openRouter.title.included.allowance',
+      allowanceDaily: 'devchat:budget.openRouter.title.included.allowanceDaily',
+      allowanceWeekly: 'devchat:budget.openRouter.title.included.allowanceWeekly',
+      allowanceMonthly: 'devchat:budget.openRouter.title.included.allowanceMonthly',
+    },
+    own: {
+      left: 'devchat:budget.openRouter.title.own.left',
+      leftDaily: 'devchat:budget.openRouter.title.own.leftDaily',
+      leftWeekly: 'devchat:budget.openRouter.title.own.leftWeekly',
+      leftMonthly: 'devchat:budget.openRouter.title.own.leftMonthly',
+      allowance: 'devchat:budget.openRouter.title.own.allowance',
+      allowanceDaily: 'devchat:budget.openRouter.title.own.allowanceDaily',
+      allowanceWeekly: 'devchat:budget.openRouter.title.own.allowanceWeekly',
+      allowanceMonthly: 'devchat:budget.openRouter.title.own.allowanceMonthly',
+    },
+    ownLast4: {
+      left: 'devchat:budget.openRouter.title.ownLast4.left',
+      leftDaily: 'devchat:budget.openRouter.title.ownLast4.leftDaily',
+      leftWeekly: 'devchat:budget.openRouter.title.ownLast4.leftWeekly',
+      leftMonthly: 'devchat:budget.openRouter.title.ownLast4.leftMonthly',
+      allowance: 'devchat:budget.openRouter.title.ownLast4.allowance',
+      allowanceDaily: 'devchat:budget.openRouter.title.ownLast4.allowanceDaily',
+      allowanceWeekly: 'devchat:budget.openRouter.title.ownLast4.allowanceWeekly',
+      allowanceMonthly: 'devchat:budget.openRouter.title.ownLast4.allowanceMonthly',
+    },
+  },
+
   _openRouterAllowanceView() {
     const NONE = { title: null, parts: [] };
     const a = DevChat.openrouterAllowance;
@@ -2690,21 +2757,19 @@ const DevChat = {
     const cadence = a.limitReset === 'daily' ? 'daily'
       : a.limitReset === 'weekly' ? 'weekly'
         : a.limitReset === 'monthly' ? 'monthly' : null;
-    const when = cadence === 'daily' ? ' today'
-      : cadence === 'weekly' ? ' this week'
-        : cadence === 'monthly' ? ' this month' : '';
     const pct = hasLimit ? Math.min(100, ((limit - remaining) / limit) * 100) : 0;
     const color = hasLimit && remaining <= 0 ? 'text-red-700 font-semibold dark:text-red-400'
       : pct > 80 ? 'text-red-700 dark:text-red-400'
         : pct > 50 ? 'text-yellow-700 dark:text-yellow-400'
           : 'text-emerald-700 dark:text-emerald-400';
-    const owner = a.source === 'usernode_managed'
-      ? 'Your included OpenRouter key'
-      : `Your OpenRouter key${a.last4 ? ` (\u2026${a.last4})` : ''}`;
-    const allowance = hasLimit
-      ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
-      : `$${remaining.toFixed(2)} left`;
-    const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    const owner = a.source === 'usernode_managed' ? 'included' : (a.last4 ? 'ownLast4' : 'own');
+    const cadenceKey = cadence === 'daily' ? 'Daily' : cadence === 'weekly' ? 'Weekly' : cadence === 'monthly' ? 'Monthly' : '';
+    const titleId = DevChat._OPENROUTER_TITLE_IDS[owner][`${hasLimit ? 'allowance' : 'left'}${cadenceKey}`];
+    const pillId = {
+      daily: 'devchat:budget.pill.openRouter.leftToday',
+      weekly: 'devchat:budget.pill.openRouter.leftThisWeek',
+      monthly: 'devchat:budget.pill.openRouter.leftThisMonth',
+    }[cadence] || 'devchat:budget.pill.openRouter.left';
     // #2666: name the budget. This pill and the platform one occupy the
     // same slot and measure DIFFERENT things — `limit $7.05/$50.00` is the
     // platform's weekly allowance, this is what OpenRouter says is left on
@@ -2721,14 +2786,14 @@ const DevChat = {
     // checks select it that way, and their expectText is unchanged.
     return {
       title: null,
-      parts: [
-        { text: 'OpenRouter ', className: 'text-zinc-500 dark:text-zinc-400' },
-        {
-          text: `$${remaining.toFixed(2)} left${when}`,
-          className: color,
-          title: `${owner} has ${allowance}.${reset}`,
-        },
-      ],
+      parts: DevChat._pillParts(pillId, { remaining: remaining.toFixed(2) }, [{
+        className: color,
+        title: PlatformI18n.t(titleId, {
+          remaining: remaining.toFixed(2),
+          limit: hasLimit ? limit.toFixed(2) : '',
+          last4: a.last4 || '',
+        }),
+      }], { className: 'text-zinc-500 dark:text-zinc-400' }),
     };
   },
 
@@ -2823,8 +2888,8 @@ const DevChat = {
         icon: 'person',
         // #4378: the allowance is weekly (#2571); an unverified account
         // is asked to verify for more, in the sheet the button opens.
-        lead: 'You\u2019re out of this week\u2019s free AI credits.',
-        tail: ' Verify your account to get more: add your phone number, or link GitHub and X.',
+        lead: PlatformI18n.t('devchat:banner.credits.locked.lead'),
+        tail: PlatformI18n.t('devchat:banner.credits.locked.tail'),
         actionsHtml: actions({ verificationRequired: true }),
       };
     }
@@ -2833,8 +2898,8 @@ const DevChat = {
         ...base,
         tone: 'amber',
         icon: null,
-        lead: 'Credit eligibility could not be verified.',
-        tail: ' Try again shortly, or use your own API key or another build venue.',
+        lead: PlatformI18n.t('devchat:banner.credits.unavailable.lead'),
+        tail: PlatformI18n.t('devchat:banner.credits.unavailable.tail'),
         actionsHtml: actions({ verificationRequired: false }),
       };
     }
@@ -2844,16 +2909,14 @@ const DevChat = {
       tone: 'red',
       icon: 'warn',
       lead: userOut
-        ? `You\u2019ve used up ${DevChat._creditWindow().when === 'this week'
-          ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
-        : 'The platform\u2019s shared daily AI budget is used up.',
-      reset: DevChat._creditResetSentence()
-        || `Free credits reset ${DevChat._resetWhen(DevChat._creditWindow().weekly)}.`,
+        ? (DevChat._creditWindow().weekly ? PlatformI18n.t('devchat:banner.credits.out.leadWeekly') : PlatformI18n.t('devchat:banner.credits.out.leadDaily'))
+        : PlatformI18n.t('devchat:banner.credits.out.leadPlatform'),
+      reset: DevChat._creditResetSentence() || DevChat._freeCreditsResetSentence(),
       resetTitle: state && window.CreditOptions && CreditOptions.resetTitle
         ? CreditOptions.resetTitle(state) : null,
-      tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
-        ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
-        : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
+      tail: DevChat._externalFlowsAvailable()
+        ? PlatformI18n.t('devchat:banner.credits.out.tailPlans')
+        : PlatformI18n.t('devchat:banner.credits.out.tailKey'),
       actionsHtml: actions({
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: !userOut,
@@ -2867,6 +2930,15 @@ const DevChat = {
   // — precisely so a banner could change mid-session without re-rendering the
   // transcript under an in-flight stream. A publish does that by
   // construction, and the message list is not in the subtree.
+  // "Free credits reset Sunday at 8:00 PM.", when CreditOptions has no
+  // sentence of its own.
+  _freeCreditsResetSentence() {
+    const weekly = DevChat._creditWindow().weekly;
+    const moment = DevChat._resetMoment(weekly);
+    if (moment) return PlatformI18n.t(weekly ? 'devchat:banner.credits.out.resetWeekly' : 'devchat:banner.credits.out.resetDaily', moment);
+    return weekly ? PlatformI18n.t('devchat:banner.credits.out.resetWeeklyUtc') : PlatformI18n.t('devchat:banner.credits.out.resetDailyUtc');
+  },
+
   _applyCreditsBanner() {
     DevChat._publishBanners();
   },
@@ -2913,7 +2985,7 @@ const DevChat = {
       leadTagged: true,
       reset: CO.resetSentence(state),
       resetTitle: CO.resetTitle ? CO.resetTitle(state) : null,
-      tail: ' Set up another way to keep building before it runs out mid-change.',
+      tail: PlatformI18n.t('devchat:banner.credits.low.tail'),
       actionsHtml: CO.bannerActionsHtml({
         hasApiKey: false,
         globalOut: false,
@@ -3216,13 +3288,12 @@ const DevChat = {
     if (state && state.level === 'locked') {
       return window.CreditOptions && CreditOptions.VERIFY_LINE
         ? CreditOptions.VERIFY_LINE
-        : 'Verify your account to get more: add your phone number, or link GitHub and X.';
+        : PlatformI18n.t('devchat:venue.refusal.verify');
     }
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
-      ? 'The platform\u2019s shared daily AI budget is used up.'
-      : `You\u2019ve used up ${DevChat._creditWindow().weekly
-        ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`;
+      ? PlatformI18n.t('devchat:venue.refusal.platformOut')
+      : (DevChat._creditWindow().weekly ? PlatformI18n.t('devchat:venue.refusal.outWeekly') : PlatformI18n.t('devchat:venue.refusal.outDaily'));
     return reset ? `${lead} ${reset}` : lead;
   },
 
@@ -3742,7 +3813,7 @@ const DevChat = {
     const flow = DevChat._devFlow;
     const bridge = window.usernode;
     if (!bridge || !bridge.isNative) {
-      flow.notice = 'Finish linking GitHub in the tab that just opened, then come back here.';
+      flow.notice = PlatformI18n.t('devchat:flow.linkGithub.tab');
       await DevChat._devFlowEnsureStatus(true);
       return;
     }
@@ -3761,7 +3832,7 @@ const DevChat = {
         accountId: typeof App !== 'undefined' && App.user ? App.user.id : null,
         origin: window.location.origin,
       });
-      flow.notice = 'Finish linking GitHub in your browser, then come back to the app. Sign in with the same Homeroom account if asked.';
+      flow.notice = PlatformI18n.t('devchat:flow.linkGithub.browser');
     } catch (err) {
       flow.error = err.message;
     }
@@ -3837,7 +3908,7 @@ const DevChat = {
       // this tab at all.
       const text = (flow.status && flow.status.instructions) || '';
       if (!text) {
-        flow.error = 'No instructions to copy yet.';
+        flow.error = PlatformI18n.t('devchat:flow.instructions.none');
         DevChat._repaintDevFlow();
         return;
       }
@@ -3846,8 +3917,8 @@ const DevChat = {
         await navigator.clipboard.writeText(text);
         copied = true;
       } catch { copied = false; }
-      if (copied) flow.notice = 'Instructions copied. Paste them into your agent, which will ask what you want to build.';
-      else flow.error = 'Could not reach the clipboard. Open the instructions below and copy them by hand.';
+      if (copied) flow.notice = PlatformI18n.t('devchat:flow.instructions.copied');
+      else flow.error = PlatformI18n.t('devchat:flow.instructions.copyFailed');
       DevChat._repaintDevFlow();
       return;
     }
@@ -3877,8 +3948,8 @@ const DevChat = {
     const brief = input ? String(input.value || '').trim() : '';
     if (!brief) {
       flow.error = box
-        ? 'Say what to build first. The work order needs something to hand your agent.'
-        : 'Describe the change in the message box below first. The work order needs something to hand your agent.';
+        ? PlatformI18n.t('devchat:flow.prepare.needBrief')
+        : PlatformI18n.t('devchat:flow.prepare.needBriefBelow');
       DevChat._repaintDevFlow();
       // Repainting replaced the node, so focus what is on screen NOW rather
       // than the detached element captured above.
@@ -3906,7 +3977,7 @@ const DevChat = {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        flow.error = data.error || 'Could not prepare the work order.';
+        flow.error = data.error || PlatformI18n.t('devchat:flow.prepare.failed');
         return;
       }
       // Clear the box: the brief now lives on the work order, and leaving
@@ -3916,10 +3987,10 @@ const DevChat = {
         input.style.height = 'auto';
       }
       flow.notice = data.reused
-        ? 'You already had a work order for this app, so this reuses it.'
-        : 'Work order ready.';
+        ? PlatformI18n.t('devchat:flow.prepare.reused')
+        : PlatformI18n.t('devchat:flow.prepare.ready');
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = PlatformI18n.t('devchat:flow.networkError', { detail: err.message });
     } finally {
       flow.busy = false;
       await DevChat._devFlowEnsureStatus(true);
@@ -3946,7 +4017,7 @@ const DevChat = {
     const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
-      flow.error = 'No work order to put away.';
+      flow.error = PlatformI18n.t('devchat:flow.discard.none');
       DevChat._repaintDevFlow();
       return;
     }
@@ -3959,13 +4030,13 @@ const DevChat = {
       );
       if (res.ok || res.status === 404) {
         flow.brief = '';
-        flow.notice = 'Work order put away. Say what you want to build instead.';
+        flow.notice = PlatformI18n.t('devchat:flow.discard.done');
       } else {
         const data = await res.json().catch(() => ({}));
-        flow.error = data.error || 'Could not put that work order away.';
+        flow.error = data.error || PlatformI18n.t('devchat:flow.discard.failed');
       }
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = PlatformI18n.t('devchat:flow.networkError', { detail: err.message });
     } finally {
       flow.busy = false;
       await DevChat._devFlowEnsureStatus(true);
@@ -3980,7 +4051,7 @@ const DevChat = {
     const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
-      flow.error = 'No work order to submit yet.';
+      flow.error = PlatformI18n.t('devchat:flow.submit.none');
       DevChat._repaintDevFlow();
       return;
     }
@@ -3998,10 +4069,12 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        flow.error = data.error || 'Could not submit the branch.';
+        flow.error = data.error || PlatformI18n.t('devchat:flow.submit.failed');
         return;
       }
-      PlatformUI.toast(`Proposal opened from PR #${data.prNumber || ''}`.trim());
+      PlatformUI.toast(data.prNumber
+        ? PlatformI18n.t('devchat:flow.submit.opened', { number: data.prNumber })
+        : PlatformI18n.t('devchat:flow.submit.openedUnnumbered'));
       flow.dismissed = true;
       if (data.sessionId) {
         await DevChat.openSession(data.sessionId, { userOpened: true });
@@ -4010,7 +4083,7 @@ const DevChat = {
       }
       await DevChat._devFlowEnsureStatus(true);
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = PlatformI18n.t('devchat:flow.networkError', { detail: err.message });
     } finally {
       flow.busy = false;
       DevChat._repaintDevFlow();
@@ -4030,7 +4103,7 @@ const DevChat = {
     const task = flow.status && flow.status.task;
     const target = task && task.targetProposal;
     if (!task || !target || !target.id) {
-      flow.error = 'No proposal to update yet.';
+      flow.error = PlatformI18n.t('devchat:flow.update.none');
       DevChat._repaintDevFlow();
       return;
     }
@@ -4052,25 +4125,25 @@ const DevChat = {
         // server's own sentence is the one that names it. Surfaced verbatim
         // rather than flattened into "could not submit", which would leave
         // the user with nothing to do next.
-        flow.error = data.message || data.error || 'Could not submit the update.';
+        flow.error = data.message || data.error || PlatformI18n.t('devchat:flow.update.failed');
         return;
       }
       if (data.unchanged) {
         // Nothing landed, so the card stays: the branch is still the thing
         // the user is waiting on, and dismissing the walkthrough here would
         // take away the only place to press again.
-        flow.notice = 'Nothing new to submit. This session is already on that commit.';
+        flow.notice = PlatformI18n.t('devchat:flow.update.nothingNew');
         DevChat._repaintDevFlow();
         return;
       }
       if (data.resumeRequired) {
         // The paused tail: the commit landed, the preview and checks did not
         // start. Saying so is the whole point — silence here looks broken.
-        PlatformUI.toast('Update landed. Reopen this session to rebuild its preview and re-run its checks.');
+        PlatformUI.toast(PlatformI18n.t('devchat:flow.update.landed'));
       } else if (data.votesCleared) {
-        PlatformUI.toast(`Update submitted: ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
+        PlatformUI.toast(PlatformI18n.t('devchat:flow.update.submittedVotesCleared', { count: data.votesCleared }));
       } else {
-        PlatformUI.toast('Update submitted');
+        PlatformUI.toast(PlatformI18n.t('devchat:flow.update.submitted'));
       }
       flow.dismissed = true;
       // Re-open the target — the same session in the continue case, the
@@ -4083,7 +4156,7 @@ const DevChat = {
       }
       return;
     } catch (err) {
-      flow.error = `Network error: ${err.message}`;
+      flow.error = PlatformI18n.t('devchat:flow.networkError', { detail: err.message });
     } finally {
       flow.busy = false;
       DevChat._repaintDevFlow();
@@ -4259,7 +4332,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
+        PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
       }
       return false;
     } catch {
@@ -4416,7 +4489,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
+            PlatformUI.toast(data.error || PlatformI18n.t('devchat:session.resumeFailed'));
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -4864,7 +4937,7 @@ const DevChat = {
           if (openRouterSession) {
             DevChat.messages.push({
               role: 'assistant',
-              content: `**OpenRouter turn could not start.** ${data.error || 'Please try again.'}`,
+              content: PlatformI18n.t('devchat:send.openRouterFailed', { detail: data.error || PlatformI18n.t('devchat:send.pleaseTryAgain') }),
               created_at: new Date().toISOString(),
             });
             DevChat._finishStreaming();
@@ -4887,7 +4960,7 @@ const DevChat = {
             role: 'assistant',
             content: '',
             creditsCard: {
-              error: data.error || 'They reset Monday 00:00 UTC.',
+              error: data.error || PlatformI18n.t('devchat:send.creditsResetFallback'),
               capWindow: (DevChat.budget || {}).capWindow || 'weekly',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
@@ -4901,7 +4974,7 @@ const DevChat = {
           // credits" state is visible without waiting for a usage event.
           DevChat.refreshBudget();
         } else {
-          DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+          DevChat.messages.push({ role: 'assistant', content: PlatformI18n.t('devchat:send.rateLimited', { detail: data.error || PlatformI18n.t('devchat:send.tryAgainLater') }), created_at: new Date().toISOString() });
         }
         DevChat._finishStreaming();
         // #370: the cap rejected the send before any turn ran. Put the
@@ -4932,7 +5005,7 @@ const DevChat = {
         DevChat._removeSpinner();
         DevChat.messages.push({
           role: 'assistant',
-          content: `**Couldn't send message:** ${errText}`,
+          content: PlatformI18n.t('devchat:send.failed', { detail: errText }),
           created_at: new Date().toISOString(),
         });
         DevChat._finishStreaming();
@@ -5259,7 +5332,7 @@ const DevChat = {
                 break;
               case 'error':
                 DevChat._removeSpinner();
-                assistantMsg.content += `\n\n> **Error:** ${data.error}`;
+                assistantMsg.content += `\n\n${PlatformI18n.t('devchat:send.streamError', { error: data.error })}`;
                 DevChat.renderMessages();
                 break;
               case 'usage':
@@ -5867,8 +5940,8 @@ const DevChat = {
       case 'error': {
         DevChat._removeSpinner();
         const am = lastAssistantMsg();
-        if (am) am.content += `\n\n> **Error:** ${data.error}`;
-        else DevChat.messages.push({ role: 'assistant', content: `> **Error:** ${data.error}`, created_at: new Date().toISOString() });
+        if (am) am.content += `\n\n${PlatformI18n.t('devchat:send.streamError', { error: data.error })}`;
+        else DevChat.messages.push({ role: 'assistant', content: PlatformI18n.t('devchat:send.streamError', { error: data.error }), created_at: new Date().toISOString() });
         DevChat.renderMessages();
         break;
       }
@@ -5928,16 +6001,23 @@ const DevChat = {
   // Status text leads the title so it survives browser-tab truncation —
   // a glance at a narrow tab shows "⏳ Thinking…" even when the app
   // name doesn't fit.
+  // Message ids. Each message holds the page's own title as {{title}}, so a
+  // language can put the marker where it reads best.
   TITLE_STATUS_MARKERS: {
-    thinking: '⏳ Thinking… · ',
+    thinking: 'devchat:title.thinking',
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
-    sessionDone: '✅ Session done · ',
+    sessionDone: 'devchat:title.sessionDone',
     // #3181: the turn stopped before finishing.
-    sessionStalled: '⏸️ Session stopped · ',
-    autoSolveDone: '🤖 Proposal ready · ',
-    autoSolveFailed: '⚠️ Proposal failed · ',
+    sessionStalled: 'devchat:title.sessionStopped',
+    autoSolveDone: 'devchat:title.proposalReady',
+    autoSolveFailed: 'devchat:title.proposalFailed',
   },
+
+  // What this module last wrote into document.title (less the unread count)
+  // and the title it decorated. The marker is taken off again by this
+  // record, never by reading the words back: they differ by language.
+  _titleApplied: null,
 
   // "Away" = the user can't currently see this page: the browser tab is
   // hidden, or the window has lost focus (another window on top). Used
@@ -6015,16 +6095,16 @@ const DevChat = {
     const countMatch = full.match(/^\(\d+\)\s*/);
     const count = countMatch ? countMatch[0] : '';
     let base = full.slice(count.length);
-    for (const m of Object.values(DevChat.TITLE_STATUS_MARKERS)) {
-      if (base.startsWith(m)) { base = base.slice(m.length); break; }
-    }
+    const applied = DevChat._titleApplied;
+    if (applied && base === applied.text) base = applied.base;
     // Precedence (#161): completion marker outranks the streaming
     // status; clearing the completion falls back to the live status, so
     // a still-streaming watched session reverts to "⏳ Thinking…".
     const active = DevChat._titleCompletion || DevChat._titleStatus
       || (DevChat._agentSessionThinking ? 'thinking' : null);
-    const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
-    const next = count + marker + base;
+    const decorated = active ? PlatformI18n.t(DevChat.TITLE_STATUS_MARKERS[active], { title: base }) : base;
+    DevChat._titleApplied = active ? { text: decorated, base } : null;
+    const next = count + decorated;
     if (next === full) return;
     document.title = next;
     // Mirror setHeaderTitle's fast-path sync to the native shell so the
@@ -6164,6 +6244,17 @@ const DevChat = {
   // plainly and offers Force stop.
   STOPPING_STUCK_MS: 40000,
 
+  // The "stopping" row's sentence: whose stop it is, and whether it has
+  // run past STOPPING_SLOW_MS. Four whole messages, chosen by state.
+  _stoppingText(by, slow) {
+    if (by) {
+      return slow
+        ? PlatformI18n.t('devchat:stop.otherStoppingSlow', { username: by })
+        : PlatformI18n.t('devchat:stop.otherStopping', { username: by });
+    }
+    return slow ? PlatformI18n.t('devchat:stop.stoppingSlow') : PlatformI18n.t('devchat:stop.stopping');
+  },
+
   _stoppingRow() {
     return DevChat.messages.find((m) => m && m._stopping) || null;
   },
@@ -6189,7 +6280,8 @@ const DevChat = {
     const slow = () => {
       const row = DevChat._stoppingRow();
       if (!row) return;
-      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
+      row._stoppingSlow = true;
+      row.content = DevChat._stoppingText(row._stoppingBy, true);
       DevChat._retryStopRequest();
       DevChat.renderMessages();
     };
@@ -6197,7 +6289,7 @@ const DevChat = {
     const stuck = () => {
       const row = DevChat._stoppingRow();
       if (!row) return;
-      row.content = 'Still stopping. The agent isn’t responding.';
+      row.content = PlatformI18n.t('devchat:stop.stuck');
       row._forceOffered = true;
       DevChat.renderMessages();
     };
@@ -6228,7 +6320,7 @@ const DevChat = {
     if (!sessionId) return;
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Forcing…';
+      btn.textContent = PlatformI18n.t('devchat:stop.forcing');
     }
     let res;
     try {
@@ -6284,7 +6376,8 @@ const DevChat = {
     const mine = !by || by === window.App?.user?.username;
     DevChat.messages.push({
       role: 'system',
-      content: mine ? 'Stopping the agent…' : `@${by} is stopping the agent…`,
+      content: DevChat._stoppingText(mine ? null : by, false),
+      _stoppingBy: mine ? null : by,
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
       _active: true,
@@ -6410,7 +6503,7 @@ const DevChat = {
       // work is already committed; only the summary is still being written.
       DevChat.messages.push({
         role: 'system',
-        content: 'Almost done. The wrap-up can’t be interrupted.',
+        content: PlatformI18n.t('devchat:stop.wrapUp'),
         created_at: new Date().toISOString(),
         _slug: Math.random().toString(36).slice(2, 8),
       });
@@ -6437,7 +6530,7 @@ const DevChat = {
     DevChat._clearStoppingState();
     DevChat.messages.push({
       role: 'system',
-      content: 'Couldn’t stop the agent. Please try again.',
+      content: PlatformI18n.t('devchat:stop.failed'),
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
     });
@@ -7028,7 +7121,7 @@ const DevChat = {
     const checksNeedAttention = checkState === 'failing' || checkState === 'error';
     const content = session.staging_url
       ? 'Staging deployed!'
-      : (checksNeedAttention ? 'Changes ready. Checks need attention.' : 'Changes ready.');
+      : (checksNeedAttention ? PlatformI18n.t('devchat:transcript.changesReadyChecks') : PlatformI18n.t('devchat:transcript.changesReady'));
     return [...messages, {
       role: 'system',
       content,
@@ -7126,8 +7219,9 @@ const DevChat = {
       const n = Number(m[1]);
       if (Number.isInteger(n) && n > 0) nums.add(n);
     }
-    const verb = session.status === 'merged' ? 'Closed' : 'Closes';
-    return [...nums].sort((a, b) => a - b).map((n) => ({ n, verb }));
+    // Which of the chip's two wordings: "Closed #12" once merged, "Closes #12" before.
+    const closed = session.status === 'merged';
+    return [...nums].sort((a, b) => a - b).map((n) => ({ n, closed }));
   },
 
   // #3605: the card's refs navigate inside Homeroom: a request opens its
@@ -7158,7 +7252,7 @@ const DevChat = {
     )) return;
     DevChat.messages.push({
       role: 'system',
-      content: data.text || 'The AI suggests reporting this to the platform',
+      content: data.text || PlatformI18n.t('devchat:issueDraft.suggestion'),
       platformIssueDraft: draft,
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
@@ -7183,7 +7277,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || 'Failed. Try again');
+        PlatformUI.toast(data.error || PlatformI18n.t('devchat:issueDraft.failed'));
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -7200,7 +7294,7 @@ const DevChat = {
         DevChat.renderMessages();
       }
     } catch {
-      PlatformUI.toast('Network error');
+      PlatformUI.toast(PlatformI18n.t('devchat:issueDraft.networkError'));
       if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
     }
   },
@@ -7224,7 +7318,10 @@ const DevChat = {
     // A live row carries the flag from its usage event, a reloaded row
     // from the persisted metadata.
     const approx = (msg.costEstimated || msg.metadata?.costEstimated) ? '~' : '';
-    return ` · reply ${approx}$${(cents / 100).toFixed(3)}`;
+    // The fact alone; the caller joins it to the model's name.
+    return approx
+      ? PlatformI18n.t('devchat:transcript.replyCostEstimated', { amount: (cents / 100).toFixed(3) })
+      : PlatformI18n.t('devchat:transcript.replyCost', { amount: (cents / 100).toFixed(3) });
   },
 
   // ── The transcript, as a MODEL ────────────────────────────────────
@@ -7265,7 +7362,7 @@ const DevChat = {
   _elapsedSpec(msg) {
     const fmtEl = typeof formatElapsed === 'function' ? formatElapsed : null;
     if (msg.durationMs != null && fmtEl) {
-      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg.durationMs))})` };
+      return { kind: 'fixed', label: PlatformI18n.t('devchat:transcript.took', { duration: fmtEl(Math.max(0, msg.durationMs)) }) };
     }
     if (msg._active && msg.created_at) {
       const since = new Date(msg.created_at).getTime();
@@ -7273,7 +7370,7 @@ const DevChat = {
       return { kind: 'since', since: Math.min(since, Date.now()) };
     }
     if (msg._elapsedFinalMs != null && fmtEl) {
-      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg._elapsedFinalMs))})` };
+      return { kind: 'fixed', label: PlatformI18n.t('devchat:transcript.took', { duration: fmtEl(Math.max(0, msg._elapsedFinalMs)) }) };
     }
     return null;
   },
@@ -7310,11 +7407,12 @@ const DevChat = {
       const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
       const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
       if (!url) continue;
-      const name = String(a.filename || 'file');
-      if (a.kind === 'image') out.push({ kind: 'image', href: url, name });
+      const name = String(a.filename || PlatformI18n.t('devchat:attach.unnamedFile'));
+      const unnamed = !a.filename;
+      if (a.kind === 'image') out.push({ kind: 'image', href: url, name, unnamed });
       else {
         out.push({
-          kind: 'file', href: url, name, download: true,
+          kind: 'file', href: url, name, unnamed, download: true,
           badgeHtml: DevChat._attachKindBadgeHtml(a),
           size: DevChat._humanSize(a.sizeBytes),
         });
@@ -7407,7 +7505,7 @@ const DevChat = {
         // it opens a one-line input scoped to THIS group rather than sending
         // the reader off to the composer to do a form's job.
         escape: num ? null : {
-          label: numeric ? 'Let me type a number' : 'Something else',
+          label: numeric ? PlatformI18n.t('devchat:transcript.qa.typeNumber') : PlatformI18n.t('devchat:transcript.qa.somethingElse'),
           open: !!DevChat._qaTypedOpen[gi],
           value: DevChat._qaTyped[gi] || '',
         },
@@ -7592,8 +7690,8 @@ const DevChat = {
             status: DevChat._statusRow(msg, msgIdx, { icon: 'check', elapsed: DevChat._elapsedSpec(msg) }),
             version: msg.specVersion != null ? String(msg.specVersion) : 'latest',
             header: msg.specVersion != null
-              ? `Plan v${msg.specVersion} · ${lineCount} lines`
-              : `Plan drafted · ${lineCount} lines`,
+              ? PlatformI18n.t('devchat:transcript.spec.versionHeader', { version: msg.specVersion, count: lineCount })
+              : PlatformI18n.t('devchat:transcript.spec.draftedHeader', { count: lineCount }),
             snippetHtml: DevChat.renderMarkdown(snippet, { breaks: false }),
           });
           return;
@@ -7625,23 +7723,25 @@ const DevChat = {
           }
           let action = { kind: 'none' };
           if (d.status === 'filed' && d.issueUrl) {
-            action = { kind: 'link', href: d.issueUrl, label: `Reported: issue #${d.issueNumber}` };
+            action = { kind: 'link', href: d.issueUrl, label: PlatformI18n.t('devchat:issueDraft.reportedLink', { number: d.issueNumber }) };
           } else if (d.status === 'filed') {
-            action = { kind: 'note', text: isAppTarget ? "Filed on this app's repo" : 'Reported to the platform' };
+            action = { kind: 'note', text: isAppTarget ? PlatformI18n.t('devchat:issueDraft.filedOnApp') : PlatformI18n.t('devchat:issueDraft.reportedToPlatform') };
           } else if (d.status === 'dismissed') {
-            action = { kind: 'note', text: 'Dismissed' };
+            action = { kind: 'note', text: PlatformI18n.t('devchat:issueDraft.dismissed') };
           } else if (d.msgId) {
-            action = { kind: 'buttons', confirmLabel: isAppTarget ? 'File issue' : 'Report to platform' };
+            action = { kind: 'buttons', confirmLabel: isAppTarget ? PlatformI18n.t('devchat:issueDraft.fileIssue') : PlatformI18n.t('devchat:issueDraft.reportToPlatform') };
           }
           rows.push({
             t: 'issueDraft', key,
             status: {
               t: 'status', key: `${key}:s`, icon: 'flag',
-              text: msg.content || 'The AI suggests reporting this to the platform',
+              text: msg.content || PlatformI18n.t('devchat:issueDraft.suggestion'),
               elapsed: null, stamp,
             },
             msgId: d.msgId || null,
-            destLabel: isAppTarget ? `Issue draft: ${d.appName || 'this app'}` : 'Suggested platform report',
+            destLabel: isAppTarget
+              ? (d.appName ? PlatformI18n.t('devchat:issueDraft.destApp', { app: d.appName }) : PlatformI18n.t('devchat:issueDraft.destThisApp'))
+              : PlatformI18n.t('devchat:issueDraft.destPlatform'),
             title: d.title || '',
             body, action,
           });
@@ -7667,7 +7767,7 @@ const DevChat = {
             t: 'attached', key,
             details: DevChat._detailsSpec(msg, 'ccrunorphan', DevChat._ccDefaultOpen(msg)),
             icon: 'check',
-            text: `${DevChat._activityAgentName(msg)} output`,
+            text: PlatformI18n.t('devchat:transcript.agentOutput', { agent: DevChat._activityAgentName(msg) }),
             elapsed: null, stamp,
             body: {
               kind: 'log',
@@ -7898,7 +7998,7 @@ const DevChat = {
 
       rows.push({
         t: 'msg', key, who: isUser ? 'user' : 'ai',
-        model: msg.model ? `${msg.model.split('-').slice(0, 2).join('-')}${DevChat._messageCostLabel(msg)}` : '',
+        model: msg.model ? DevChat._dotList([msg.model.split('-').slice(0, 2).join('-'), DevChat._messageCostLabel(msg)]) : '',
         stamp: msgStamp,
         // The live row's text is still growing, so each republish mid-turn
         // would cache one more prefix of it that nobody asks for again. It
@@ -7908,7 +8008,7 @@ const DevChat = {
           ? (msgIdx === liveIdx
             ? DevChat.renderMarkdown(content, { cache: false })
             : DevChat.renderMarkdown(content))
-          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply, see reasoning below)</span>',
+          : `<span style="color:var(--text-muted);font-style:italic">${PlatformI18n.htmlText('devchat:transcript.noVisibleReply')}</span>`,
         ...(msgIdx === liveIdx ? { live: true } : null),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
@@ -8490,12 +8590,12 @@ const DevChat = {
   // number. `sha: null` is the ordinary case and gets one honest chip.
   _stopLandingChips(landing) {
     const s = landing || {};
-    if (!s.sha) return ['nothing committed'];
+    if (!s.sha) return [PlatformI18n.t('devchat:transcript.stopLanding.nothingCommitted')];
     const chips = [s.commits == null
-      ? 'changes committed'
-      : `${s.commits} change${s.commits === 1 ? '' : 's'} committed`];
+      ? PlatformI18n.t('devchat:transcript.stopLanding.changesCommitted')
+      : PlatformI18n.t('devchat:transcript.stopLanding.countCommitted', { count: s.commits })];
     chips.push(s.sha);
-    chips.push(s.pushOk ? 'pushed' : 'not pushed');
+    chips.push(s.pushOk ? PlatformI18n.t('devchat:transcript.stopLanding.pushed') : PlatformI18n.t('devchat:transcript.stopLanding.notPushed'));
     return chips;
   },
 
@@ -8587,7 +8687,7 @@ const DevChat = {
     // behind a small notice so the degradation is obvious and diagnosable.
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now, so this is the raw markdown.</div>`
+      return `<div class="dc-md-fallback-notice">${PlatformI18n.htmlText('devchat:markdown.fallbackNotice')}</div>`
         + `<pre class="dc-md-fallback">${escaped}</pre>`;
     }
 
@@ -8600,7 +8700,7 @@ const DevChat = {
         // scaled issue screenshot itself the link to its original asset, so
         // a click, tap or keyboard activation opens the full-size image.
         if (DevChat._renderImageWithinLink) return image;
-        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">${image}</a>`;
+        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="${PlatformI18n.htmlText('devchat:markdown.viewImage')}">${image}</a>`;
       };
 
       marked.use({
@@ -9248,7 +9348,7 @@ const DevChat = {
   // from the status alone — see ./session-list-store.ts's header for the
   // three rules, and why Archive is gated independently of the rest.
   _sessionRow(s) {
-    const title = s.session_title || s.pr_title || s.branch_name || 'Session';
+    const title = s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('devchat:sessions.row.untitled');
     // #1038: this list is the one session surface that never had a working
     // indicator — GET /api/apps/:slug/sessions returns `warm` (a container
     // exists) but no `busy`. The live store supplies it client-side, so the
@@ -9267,15 +9367,15 @@ const DevChat = {
     const actions = [];
     if (s.status === 'promoted' && s.warm) {
       actions.push({
-        key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
-        title: 'Frees the AI worker. The PR stays up for voting.',
+        key: 'free', label: PlatformI18n.t('devchat:sessions.action.free'), busy: PlatformI18n.t('devchat:sessions.action.freeing'), tone: 'quiet',
+        title: PlatformI18n.t('devchat:sessions.action.freeTitle'),
         fn: '_sessionListPause', args: [s.id, 'pause'],
       });
     }
     if (s.status === 'archived') {
       actions.push({
-        key: 'unarchive', label: 'Unarchive', busy: '...', tone: 'go',
-        title: 'Restore this session (reopens the PR)',
+        key: 'unarchive', label: PlatformI18n.t('devchat:sessions.action.unarchive'), busy: '...', tone: 'go',
+        title: PlatformI18n.t('devchat:sessions.action.unarchiveTitle'),
         fn: '_sessionListUnarchive', args: [s.id],
       });
     }
@@ -9286,8 +9386,8 @@ const DevChat = {
     // the regression this restores.)
     if (s.status === 'active' || s.status === 'promoted' || s.status === 'paused') {
       actions.push({
-        key: 'archive', label: 'Archive', busy: '...', tone: 'danger',
-        title: 'Archive (frees the slot; restorable for a while)',
+        key: 'archive', label: PlatformI18n.t('devchat:sessions.action.archive'), busy: '...', tone: 'danger',
+        title: PlatformI18n.t('devchat:sessions.action.archiveTitle'),
         fn: '_sessionListArchive', args: [s.id, title],
       });
     }
@@ -9377,7 +9477,9 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || `Failed to ${action} session`);
+        PlatformUI.toast(body.error || (action === 'resume'
+          ? PlatformI18n.t('devchat:sessions.toast.resumeFailed')
+          : PlatformI18n.t('devchat:sessions.toast.pauseFailed')));
         return null;
       }
     } catch {
@@ -9394,7 +9496,7 @@ const DevChat = {
     await DevChat._reloadSessionList();
     // The row re-renders without the button (warm flips false), so flash the
     // outcome here, where the user just clicked.
-    return body.keptPromoted ? 'Worker freed' : null;
+    return body.keptPromoted ? PlatformI18n.t('devchat:sessions.toast.workerFreed') : null;
   },
 
   // Archive. Reversible: it frees the active-session slot, tears down
@@ -9403,9 +9505,9 @@ const DevChat = {
   // purges memory). Wording reflects that it's recoverable.
   async _sessionListArchive(id, name) {
     const ok = await ConfirmModal.show({
-      title: `Archive "${name || 'this session'}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-      confirmLabel: 'Archive',
+      title: name ? PlatformI18n.t('devchat:sessions.archive.confirmTitle', { title: name }) : PlatformI18n.t('devchat:sessions.archive.confirmTitleUnnamed'),
+      message: PlatformI18n.t('devchat:sessions.archive.confirmBody'),
+      confirmLabel: PlatformI18n.t('devchat:sessions.archive.confirm'),
       danger: true,
     });
     if (!ok) return null;
@@ -9415,11 +9517,11 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || 'Failed to archive session');
+        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
         return null;
       }
     } catch {
-      PlatformUI.toast('Failed to archive session');
+      PlatformUI.toast(PlatformI18n.t('devchat:sessions.toast.archiveFailed'));
       return null;
     }
     await DevChat._reloadSessionList();
@@ -9434,11 +9536,11 @@ const DevChat = {
       const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || 'Failed to unarchive session');
+        PlatformUI.toast(data.error || PlatformI18n.t('devchat:sessions.toast.unarchiveFailed'));
         return null;
       }
       if (data.ccPurged) {
-        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
+        PlatformUI.alert({ title: PlatformI18n.t('devchat:sessions.restored.title'), message: PlatformI18n.t('devchat:sessions.restored.body') });
       }
     } catch {
       return null;
@@ -9471,9 +9573,9 @@ const DevChat = {
 
   _syncPhaseLabel(phase) {
     switch (phase) {
-      case 'resolving': return 'Resolving merge conflicts with Claude…';
-      case 'pushing': return 'Pushing the merged branch…';
-      default: return 'Syncing with main…'; // starting / merging
+      case 'resolving': return PlatformI18n.t('devchat:banner.sync.phase.resolving');
+      case 'pushing': return PlatformI18n.t('devchat:banner.sync.phase.pushing');
+      default: return PlatformI18n.t('devchat:banner.sync.phase.syncing'); // starting / merging
     }
   },
 
@@ -9520,9 +9622,7 @@ const DevChat = {
     return {
       id: v.id,
       label: v.label,
-      title: 'Building in ' + v.label + '. ' + v.blurb
-        + ' Pick a different venue: on Homeroom, on your computer, or handed to'
-        + ' Claude Code or Codex on the web.',
+      title: PlatformI18n.t('devchat:header.venue.title', { venue: v.label, blurb: v.blurb }),
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
       // `agentSelect.disabled` guarded against. `_chatBusyForPaint` keeps
@@ -9545,14 +9645,13 @@ const DevChat = {
       // set synchronously by _setStreamingUI — which also repaints this
       // strip — so the chip tracks every turn transition without a new hook.
       busy: !!DevChat._composerBusy,
-      title: s.session_title || s.pr_title || s.branch_name || 'Session',
+      title: s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('devchat:header.untitled'),
       branch: s.branch_name || '',
       pr: s.pr_number || null,
       prTitle: s.pr_number
-        ? `Open this change's proposal card (PR #${s.pr_number}). Every change in this chat goes to PR #${s.pr_number}. `
-          + 'Use “Start a new change” for separate work.'
+        ? PlatformI18n.t('devchat:header.openCardTitle', { number: s.pr_number })
         : '',
-      newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
+      newChangeTitle: PlatformI18n.t('devchat:header.newChangeTitle'),
       life: DevChat._headerLife(session),
       // #3976: where a read-only session is built is no longer a choice.
       venue: DevChat._classicReadOnlyView(session) ? null : DevChat._headerVenue(session),
@@ -9741,10 +9840,10 @@ const DevChat = {
       return { kind: 'inflight', message: DevChat._syncPhaseLabel(sync.phase) };
     }
     if (sync && sync.terminal && sync.ok) {
-      return { kind: 'ok', message: sync.message || 'Synced with main.' };
+      return { kind: 'ok', message: sync.message || PlatformI18n.t('devchat:banner.sync.done') };
     }
     if (sync && sync.terminal && !sync.ok) {
-      return { kind: 'failed', message: sync.message || 'Sync with main failed.', busy };
+      return { kind: 'failed', message: sync.message || PlatformI18n.t('devchat:banner.sync.failed'), busy };
     }
     return { kind: 'behind', behind, busy };
   },
@@ -9770,9 +9869,8 @@ const DevChat = {
     // discussion and its checks are.
     const slug = DevChat._sessionAppSlug(session);
     return {
-      stateLabel: proposed
-        ? `proposed to the group (PR #${session.pr_number})`
-        : `merged (PR #${session.pr_number})`,
+      state: proposed ? 'proposed' : 'merged',
+      prNumber: session.pr_number,
       cardHref: slug && session.id != null
         ? (Number(session.pr_number) > 0
           ? `#app/${slug}/dev/changes/${Number(session.pr_number)}`
@@ -9892,7 +9990,7 @@ const DevChat = {
         // inline banner text, never alert().
         DevChat._setSyncTerminal(sessionId, {
           ok: false,
-          message: data.error || `Sync failed (HTTP ${resp.status}).`,
+          message: data.error || PlatformI18n.t('devchat:banner.sync.failedHttp', { status: resp.status }),
         });
       } else {
         // The POST response is the authoritative final result —
@@ -9907,7 +10005,7 @@ const DevChat = {
         DevChat.renderChatView();
       }
     } catch (err) {
-      DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
+      DevChat._setSyncTerminal(sessionId, { ok: false, message: PlatformI18n.t('devchat:banner.sync.failedDetail', { detail: err.message }) });
     }
   },
 
@@ -9923,7 +10021,7 @@ const DevChat = {
       sessionId: Number(sessionId),
       terminal: true,
       ok: !!ok,
-      message: message || (ok ? 'Synced with main.' : 'Sync with main failed.'),
+      message: message || (ok ? PlatformI18n.t('devchat:banner.sync.done') : PlatformI18n.t('devchat:banner.sync.failed')),
       since: Date.now(),
     };
     DevChat._syncState = t;
@@ -10151,10 +10249,10 @@ const DevChat = {
     const unstoppable = notStoppable && !isWrapUp;
     return {
       kind: 'busy',
-      label: unstoppable ? 'Working' : 'Finishing up',
+      label: unstoppable ? PlatformI18n.t('devchat:composer.busy.working') : PlatformI18n.t('devchat:composer.busy.finishing'),
       title: unstoppable
-        ? 'This turn is still running but can’t be stopped from here'
-        : 'Finishing up…',
+        ? PlatformI18n.t('devchat:composer.busy.workingTitle')
+        : PlatformI18n.t('devchat:composer.busy.finishingTitle'),
     };
   },
 
@@ -10556,7 +10654,7 @@ const DevChat = {
     // "(attached files)" stub caption.
     if ((!msg && !atts.length) || DevChat.isStreaming) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._setAttachError('Still uploading, one moment…');
+      DevChat._setAttachError(PlatformI18n.t('devchat:attach.stillUploading'));
       return;
     }
     DevChat._clearComposerField();
@@ -10707,18 +10805,18 @@ const DevChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { error: PlatformI18n.t('devchat:attach.tooBig.image', { name: file.name, megabytes: Math.round(L.maxImageBytes / 1024 / 1024) }) };
       }
       return { kind: 'image' };
     }
     if (ext === 'zip') {
       if (file.size > L.maxZipBytes) {
-        return { error: `"${file.name}" is too big. Zip archives max ${Math.round(L.maxZipBytes / 1024 / 1024)} MB.` };
+        return { error: PlatformI18n.t('devchat:attach.tooBig.zip', { name: file.name, megabytes: Math.round(L.maxZipBytes / 1024 / 1024) }) };
       }
       return { kind: 'zip' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { error: PlatformI18n.t('devchat:attach.tooBig.file', { name: file.name, megabytes: Math.round(L.maxBinaryBytes / 1024 / 1024) }) };
     }
     if (file.size <= L.maxTextBytes) {
       try {
@@ -10750,7 +10848,7 @@ const DevChat = {
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
       if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
-        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
+        refuse(PlatformI18n.t('devchat:attach.tooMany', { count: L.maxPerMessage }), files.length - i);
         break;
       }
       const classified = await DevChat._classifyFile(file);
@@ -10777,7 +10875,7 @@ const DevChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('devchat:attach.uploadFailedHttp', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -10785,7 +10883,7 @@ const DevChat = {
       } catch (err) {
         DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
-        DevChat._setAttachError(err.message || 'Upload failed');
+        DevChat._setAttachError(err.message || PlatformI18n.t('devchat:attach.uploadFailed'));
       }
       DevChat._renderAttachStrip();
     }
@@ -10822,9 +10920,9 @@ const DevChat = {
   // Null for image/text, which carry no tag.
   _attachKindBadge(a) {
     if (a.kind === 'zip') {
-      const count = a.meta && Number.isFinite(Number(a.meta.entryCount))
-        ? ` · ${a.meta.entryCount} files` : '';
-      return `ZIP${count}`;
+      return a.meta && Number.isFinite(Number(a.meta.entryCount))
+        ? PlatformI18n.t('devchat:attach.zipBadge', { count: Number(a.meta.entryCount), files: a.meta.entryCount })
+        : 'ZIP';
     }
     if (a.kind === 'binary') return 'BIN';
     return null;
@@ -10855,7 +10953,8 @@ const DevChat = {
     react.publishAttachStrip({
       items: DevChat.pendingAttachments.map((a, i) => ({
         key: a.id || `p${i}:${a.filename}`,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('devchat:attach.unnamedFile'),
+        unnamed: !a.filename,
         kind: a.kind,
         badge: DevChat._attachKindBadge(a),
         size: DevChat._humanSize(a.sizeBytes),
@@ -11374,8 +11473,7 @@ const DevChat = {
 
     if (dropped) {
       DevChat._toast(
-        `That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. ${dropped} newer `
-        + `${dropped === 1 ? 'draft was' : 'drafts were'} dropped. Send or delete one first.`
+        PlatformI18n.t('devchat:drafts.toast.dropped', { limit: DevChat.MAX_SAVED_DRAFTS, count: dropped })
       );
     }
     await Promise.all([...deletes, ...uploads]);
@@ -11536,7 +11634,7 @@ const DevChat = {
     if (!text) return;
     const drafts = DevChat._getSavedDrafts(session.id);
     if (drafts.length >= DevChat.MAX_SAVED_DRAFTS) {
-      DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+      DevChat._toast(PlatformI18n.t('devchat:drafts.toast.full', { limit: DevChat.MAX_SAVED_DRAFTS }));
       return;
     }
     const saved = { id: DevChat._newDraftId(), text, savedAt: new Date().toISOString(), synced: false };
@@ -11547,7 +11645,7 @@ const DevChat = {
     DevChat._pushDraftAdd(session.id, saved);
     DevChat._clearComposerField();
     DevChat._renderSavedDrafts();
-    DevChat._toast('Draft saved. Send it whenever you\'re ready');
+    DevChat._toast(PlatformI18n.t('devchat:drafts.toast.saved'));
     if (!DevChat._isCoarsePointer()) { try { input.focus(); } catch {} }
   },
 
@@ -11572,14 +11670,14 @@ const DevChat = {
     const session = DevChat.currentSession;
     if (!session) return;
     if (DevChat.isStreaming) {
-      DevChat._toast('Claude is still working. This will send once the turn finishes');
+      DevChat._toast(PlatformI18n.t('devchat:drafts.toast.busy'));
       return;
     }
     const drafts = DevChat._getSavedDrafts(session.id);
     const draft = drafts.find((d) => d.id === id);
     if (!draft) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._toast('Still uploading a file, one moment…');
+      DevChat._toast(PlatformI18n.t('devchat:drafts.toast.uploading'));
       return;
     }
     const input = document.getElementById('dc-input');
@@ -11601,7 +11699,7 @@ const DevChat = {
     DevChat._pushDraftDelete(session.id, id);
     if (parkedDraft) DevChat._pushDraftAdd(session.id, parkedDraft);
     DevChat._renderSavedDrafts();
-    if (parked && parked !== draft.text) DevChat._toast('Kept what you had typed as another draft');
+    if (parked && parked !== draft.text) DevChat._toast(PlatformI18n.t('devchat:drafts.toast.keptTyped'));
     DevChat.sendMessage(draft.text);
   },
 
@@ -11641,7 +11739,7 @@ const DevChat = {
     }
     DevChat._syncSaveDraftBtn();
     DevChat._renderSavedDrafts();
-    if (parked) DevChat._toast('Kept what you had typed as another draft');
+    if (parked) DevChat._toast(PlatformI18n.t('devchat:drafts.toast.keptTyped'));
   },
 
   _deleteSavedDraft(id) {
@@ -11655,7 +11753,7 @@ const DevChat = {
     DevChat._addDraftTombstone(session.id, id);
     DevChat._pushDraftDelete(session.id, id);
     DevChat._renderSavedDrafts();
-    DevChat._toast('Draft deleted');
+    DevChat._toast(PlatformI18n.t('devchat:drafts.toast.deleted'));
   },
 
   // Which session's text the composer field is currently showing, as a
@@ -12117,7 +12215,11 @@ const DevChat = {
       // resumes following new versions; older options carry their number.
       return {
         value: isThisLatest ? 'latest' : String(v.version),
-        label: `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`,
+        label: DevChat._dotList([
+          isThisLatest ? PlatformI18n.t('devchat:spec.version.latest', { version: v.version }) : PlatformI18n.t('devchat:spec.version.label', { version: v.version }),
+          built,
+          v.pr_number ? PlatformI18n.t('devchat:spec.version.pr', { number: v.pr_number }) : '',
+        ]),
       };
     });
 
@@ -12168,8 +12270,8 @@ const DevChat = {
       body = {
         kind: 'empty',
         copy: isOwner
-          ? 'No plan yet. Ask the AI to draft one.'
-          : 'No plan has been shared for this session yet.',
+          ? PlatformI18n.t('devchat:spec.empty.owner')
+          : PlatformI18n.t('devchat:spec.empty.viewer'),
       };
     } else if (htmlDoc && htmlDoc.split) {
       const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
@@ -12317,7 +12419,7 @@ const DevChat = {
   // error} shape) so the popover can surface server-side 4xx messages
   // ("User not found", "That user doesn't have access…") inline.
   async _shareSpecToUser(version, username) {
-    if (!DevChat.currentSession || version == null) return { ok: false, error: 'No session' };
+    if (!DevChat.currentSession || version == null) return { ok: false, error: PlatformI18n.t('devchat:spec.share.noSession') };
     const sid = DevChat.currentSession.id;
     try {
       const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share-user`, {
@@ -12330,7 +12432,7 @@ const DevChat = {
       if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
       return data;
     } catch {
-      return { ok: false, error: 'Network error' };
+      return { ok: false, error: PlatformI18n.t('devchat:spec.share.networkError') };
     }
   },
 };
@@ -12404,7 +12506,27 @@ DevChat._awayReturnHandler = () => {
     }
   }
 };
+// The words this module hands the React views (rows, banners, the composer,
+// the header, the meter) are read when they are published. A language change
+// republishes them from the state already held; nothing is refetched.
+DevChat._repaintLanguage = () => {
+  DevChat._modelPickerMemo = null;
+  DevChat.applyTitleStatus();
+  if (!document.getElementById('dc-view')) return;
+  if (!DevChat.currentSession) {
+    DevChat.renderSessionList();
+    return;
+  }
+  DevChat._repaintSessionHeader();
+  DevChat._publishBanners();
+  DevChat._publishComposer();
+  DevChat._renderRunnerControls();
+  DevChat.renderBudget();
+  DevChat._publishSpecViewer();
+  DevChat.renderMessages();
+};
 if (typeof window !== 'undefined') {
+  document.addEventListener('homeroom:language-changed', DevChat._repaintLanguage);
   document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
   window.addEventListener('focus', DevChat._awayReturnHandler);
   window.addEventListener('blur', DevChat._awayReturnHandler);

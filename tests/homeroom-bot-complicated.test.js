@@ -26,6 +26,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
@@ -128,7 +129,7 @@ test('the plan card for an existing project says where its screens are and where
   const draw = (plan, props = {}) => renderToHtml(createElement(PlanCardView, { appName: 'Chores', plan, state: 'open', ...props }));
   const open = draw({ ...PLAN, complicated: true, spec: { sessionId: 5, version: 1 } });
   assert.match(open, /<p class="messages-bot-note mt-2\.5" data-bot-plan-note=""><svg[^>]*>[\s\S]*?<\/svg><span>Its before and after screens are on the request below\. What you ask to change is posted there, where the group can see it\.<\/span><\/p>/);
-  assert.equal(COMPLICATED_PLAN_NOTE, 'Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.');
+  assert.equal(message(COMPLICATED_PLAN_NOTE), 'Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.');
   assert.match(open, /data-bot-plan-build="">Build it<\/button>/);
   assert.match(open, /data-bot-plan-change="">Change something<\/button>/);
   assert.doesNotMatch(draw(PLAN), /data-bot-plan-note/, 'a first version\'s card is unchanged');
@@ -349,6 +350,32 @@ test('a first version labelled complicated is built exactly as a first version',
   assert.equal(seen.built[0].checkedFirst, undefined);
   assert.equal(seen.built[0].presetSpecHtml, undefined);
   assert.deepEqual(seen.built[0].review.reviewer, REVIEWER, 'its own review, from its own configuration');
+});
+
+// #4662: a plan kept from a build a restart interrupted carries its HTML
+// beside its markdown, and the build resumes from it whatever the change's
+// size: the version people open keeps its tabs and its screens. A complicated
+// change still prefers the exact spec its requester approved.
+test('a kept plan\'s screens ride along an ordinary resumed build, unreviewed and unchecked', async (t) => {
+  const seen = stubLive(t);
+  stubConfigs(t);
+  await bot.buildLive(verdictArgs({
+    presetSpec: '# Kept', presetSpecHtml: '<article data-spec><h1>Kept</h1></article>',
+    parsed: { verdict: 'ready', buildNote: 'Fix the typo.' },
+  }));
+  const built = seen.built[0];
+  assert.equal(built.presetSpec, '# Kept', 'built from the kept plan');
+  assert.equal(built.presetSpecHtml, '<article data-spec><h1>Kept</h1></article>', 'its screens are kept');
+  assert.equal(built.review, undefined, 'no check round: the change is not complicated');
+  assert.equal(built.checkedFirst, undefined, 'and not checked first');
+
+  // Where the kept HTML comes from: the build lane's candidates read the
+  // run's column, and buildOne falls back to it when the plan is not
+  // complicated and its approved screens cannot be read.
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /r\.build_spec_md, r\.build_spec_html, r\.build_cost_usd/, 'liveBuildCandidates reads it');
+  assert.match(src, /run\.complicated === true \? await approvedSpecHtml\(pool, run\.plan\) : null\) \|\| run\.build_spec_html \|\| null/,
+    'buildOne falls back to the run\'s kept HTML');
 });
 
 test('buildAndPropose\'s plan-only mode stops after the spec, and a preset spec keeps its screens', () => {

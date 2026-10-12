@@ -423,7 +423,8 @@ test('a Homeroom merge not live yet carries its next release; a child app\'s, or
   releaseWatch._forTest.resetOutlook();
   let loaded = loadVotes({ row, gateApp: { id: 1, slug: 'usernode-2d5619', self_hosted: true }, db });
   let { payload } = await callById(loaded.routes, { id: 4242 });
-  assert.deepEqual(payload.proposal.release, { state: 'next', etaAt: new Date(now + 8 * MIN).toISOString() });
+  // Released 3 minutes ago, merged 1 minute ago: built in 4 more, live a minute after.
+  assert.deepEqual(payload.proposal.release, { state: 'next', etaAt: new Date(now + 5 * MIN).toISOString() });
 
   releaseWatch._forTest.resetOutlook();
   loaded = loadVotes({ row, gateApp: { id: 2, slug: 'notes', self_hosted: false }, db });
@@ -446,7 +447,7 @@ test('?demo=1: the going-live mock reads the same on its page and in the Done co
   assert.equal(p.live_at, null);
   assert.equal(p.release.state, 'next');
   const minutes = Math.round((Date.parse(p.release.etaAt) - Date.now()) / 60000);
-  assert.equal(minutes, 8, 'eight minutes off, the example the words were written from');
+  assert.equal(minutes, 4, 'four minutes off: the demo waits out the release gap (four minutes since 10 Oct 2026)');
   const route = findRoute(routes, 'get', '/api/apps/:slug/merged');
   let payload;
   let statusCode = 200;

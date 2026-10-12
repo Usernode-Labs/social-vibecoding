@@ -30,6 +30,7 @@
  * in the box itself, with their words still in it.
  */
 
+import { t } from '../../lib/i18n/runtime';
 import type { ElementInfo } from './picture';
 import { noteFor } from './pin-data';
 
@@ -225,7 +226,7 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
     };
   }
   if (res.status >= 500) return { ok: false, handover: true };
-  const reason = typeof data.error === 'string' && data.error ? data.error : "That couldn't be posted.";
+  const reason = typeof data.error === 'string' && data.error ? data.error : t('devchat:commentPin.postFailed');
   return { ok: false, handover: false, error: reason };
 }
 

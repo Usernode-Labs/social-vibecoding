@@ -175,6 +175,18 @@ const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND cs.live_at IS N
 // joiner's first message (to their invite's maker) and a group's discussion
 // (channel_message, to the rest of the group; its message is the newest one
 // folded in).
+// #4417 follow-up: where a REPLY THREAD's first message is, for a row about
+// a message in one (`cm`, a 'message' thread whose ref is that first
+// message): the general stream (NULL) or one of the project's topic
+// channels ('category', its ref the topic), so notificationHref opens the
+// thread beside the channel it starts in. NULLs for every other row. The
+// socket's own live-alert reads (services/ws.js) spell the same two columns
+// out, so they stay static SQL.
+const THREAD_ROOT_COLUMNS_SQL = `(SELECT thread_root.thread_type FROM chat_messages thread_root
+              WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_type,
+            (SELECT thread_root.thread_ref FROM chat_messages thread_root
+              WHERE cm.thread_type = 'message' AND thread_root.id = cm.thread_ref) AS root_thread_ref`;
+
 const FILED_MESSAGE_JOIN_SQL = `LEFT JOIN chat_bot_requests bot_request
        ON n.kind IN ('first_message', 'channel_message') AND bot_request.chat_message_id = n.chat_message_id
       AND bot_request.kind IN ('filed', 'group', 'revise') AND bot_request.issue_number IS NOT NULL`;
@@ -671,10 +683,27 @@ async function notifyIssueFiled(pool, { appId, issueNumber, authorId, text = '' 
 // #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
 // for a merge the vote carried — it rides in `detail`, which a force merge
 // uses for its own marker, so the two never meet.
-async function createPrMergedNotification(pool, args) {
+// #4787: `alsoVoters` asks for the voters' rows in the same call. The
+// workflow's copy writes both and throws on either; here, outside the
+// machine's transaction, a voter's row failing must not take the author's
+// down with it, nor the merge that is being told about: logged, and the
+// author's rows still return.
+async function createPrMergedNotification(pool, { alsoVoters = false, ...args } = {}) {
   // The workflow's (src/workflow/rules/change-notifications.ts), with this
   // module's fail-open preference read: a broken read must not swallow it.
-  return changeNotifications.createPrMergedNotification(pool, args, notificationPreferences.allowsKind);
+  const created = await changeNotifications.createPrMergedNotification(pool, args, notificationPreferences.allowsKind);
+  if (alsoVoters && args.sessionId) {
+    try {
+      created.push(...await createVotedChangeMergedNotifications(pool, {
+        appId: args.appId, sessionId: args.sessionId, authorId: args.userId ?? null,
+      }));
+    } catch (err) {
+      log.warn('notifications', 'Voted-change merged notifications failed', {
+        appId: args.appId, sessionId: args.sessionId, err: err.message,
+      });
+    }
+  }
+  return created;
 }
 
 // #1688: a proposal this person had said yes to got a new version from its
@@ -710,6 +739,14 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
     params
   );
   return rows;
+}
+
+// #4787: the change a person voted on went live: one row per voter, yes or
+// no, the author never double-told (src/workflow/rules/change-notifications.ts),
+// with this module's preference read.
+async function createVotedChangeMergedNotifications(pool, args) {
+  return changeNotifications.createVotedChangeMergedNotifications(pool, args,
+    (db, q) => notificationPreferences.filterUsersByCategory(db, q));
 }
 
 // Somebody voted on a proposal of yours.
@@ -1135,6 +1172,7 @@ async function hydrateNotification(q, id) {
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1400,6 +1438,11 @@ async function createApproverInviteAcceptedNotification(pool, { appId, recipient
 // JOIN the project (`joins`: a private one, where being invited in is how
 // you join; services/collab-invites.js) or only to build it, the inviter's
 // note, and how many people are in it. An approver invite has none of them.
+// #4740: `inCommunity` says the viewer is already one of the project's
+// people (they joined through a link or the Join button while the build
+// invite was still waiting), so the drawer words its meta line as "You're
+// already in it" instead of a headcount the viewer is part of. FALSE for an
+// approver invite, which has no community membership of its own to read.
 async function listPendingInvites(pool, userId) {
   if (!userId) return [];
   const { rows } = await pool.query(
@@ -1408,7 +1451,9 @@ async function listPendingInvites(pool, userId) {
             (a.view_visibility IS DISTINCT FROM 'public') AS joins,
             ac.invite_note AS note,
             (SELECT COUNT(*)::int FROM community_members m
-              WHERE m.community_id = a.community_id) AS member_count
+              WHERE m.community_id = a.community_id) AS member_count,
+            EXISTS (SELECT 1 FROM community_members m
+              WHERE m.community_id = a.community_id AND m.user_id = $1) AS in_community
        FROM app_collaborators ac
        JOIN apps a ON a.id = ac.app_id
        LEFT JOIN users inv ON inv.id = ac.invited_by
@@ -1416,7 +1461,8 @@ async function listPendingInvites(pool, userId) {
      UNION ALL
      SELECT 'approver' AS kind, ap.app_id, a.slug AS app_slug, a.name AS app_name,
             ap.created_at, inv.username AS invited_by,
-            FALSE AS joins, NULL::text AS note, NULL::int AS member_count
+            FALSE AS joins, NULL::text AS note, NULL::int AS member_count,
+            FALSE AS in_community
        FROM app_approvers ap
        JOIN apps a ON a.id = ap.app_id
        LEFT JOIN users inv ON inv.id = ap.invited_by
@@ -1434,6 +1480,7 @@ async function listPendingInvites(pool, userId) {
     joins: !!r.joins,
     note: r.note || null,
     memberCount: r.member_count == null ? null : Number(r.member_count),
+    inCommunity: !!r.in_community,
   }));
 }
 
@@ -1509,6 +1556,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1553,6 +1601,7 @@ async function getForUser(pool, userId, id) {
             n.chat_message_id,
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
+            ${THREAD_ROOT_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             cs.agent_session_id,
@@ -1875,10 +1924,20 @@ function notificationHref(row) {
   if (!row || !APP_CHAT_MESSAGE_KINDS.has(row.kind) || !row.app_slug) return null;
   const slug = encodeURIComponent(row.app_slug);
   if (row.thread_type === 'message' && row.thread_ref != null) {
+    // #4417 follow-up: a reply thread that starts in one of the project's
+    // topic channels opens beside that channel (THREAD_ROOT_COLUMNS_SQL).
+    if (row.root_thread_type === 'category' && row.root_thread_ref != null) {
+      return `#messages/app/${slug}/c/${Number(row.root_thread_ref)}/thread/${Number(row.thread_ref)}`;
+    }
     return `#messages/app/${slug}/thread/${Number(row.thread_ref)}`;
   }
   if (!row.thread_type && row.chat_message_id != null) {
     return `#messages/app/${slug}/m/${Number(row.chat_message_id)}`;
+  }
+  // #4417: a message in one of the project's topic channels opens that
+  // channel, on the message (the router takes it to the channel's place).
+  if (row.thread_type === 'category' && row.thread_ref != null && row.chat_message_id != null) {
+    return `#messages/app/${slug}/c/${Number(row.thread_ref)}/m/${Number(row.chat_message_id)}`;
   }
   return null;
 }
@@ -1980,6 +2039,7 @@ module.exports = {
   createPrMergedNotification,
   createProposalVoteNotification,
   createRevisionRecheckNotifications,
+  createVotedChangeMergedNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
   createPlatformIncidentNotifications,
@@ -2025,6 +2085,7 @@ module.exports = {
   CONVERSATION_NOTIFICATION_KINDS,
   APP_CHAT_MESSAGE_KINDS,
   notificationHref,
+  THREAD_ROOT_COLUMNS_SQL,
   FRIEND_NOTIFICATION_KINDS,
   serialize,
 };

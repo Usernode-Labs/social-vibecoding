@@ -19,6 +19,8 @@
 import { PersonSilhouetteIcon } from '@/components/ui/icons';
 
 import { swatchFor } from '../../lib/community-color';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 
 export type Person = { username?: string | null; display_name?: string | null };
 
@@ -47,9 +49,9 @@ function nameOf(person: Person): string {
 /** The row in words, for a screen reader. The first person is you. */
 export function peopleLabel(people: readonly Person[]): string {
   const others = Math.max(0, people.length - 1);
-  if (!others) return 'You';
-  if (others === 1) return nameOf(people[1]) ? `You and ${nameOf(people[1])}` : 'You and 1 other';
-  return `You and ${others} others`;
+  if (!others) return translate('onboarding:firstSession.people.you');
+  if (others === 1 && nameOf(people[1])) return translate('onboarding:firstSession.people.youAndName', { name: nameOf(people[1]) });
+  return translate('onboarding:firstSession.people.youAndOthers', { count: others });
 }
 
 /** The five places: you in the middle, the others in the order they joined, the rest open. */
@@ -61,6 +63,8 @@ export function placesOf(people: readonly Person[]): (Person | null)[] {
 }
 
 export function PeopleRow({ people }: { people: readonly Person[] }) {
+  // Subscribed: the row's name (peopleLabel) is read in the language on screen.
+  useMessages('onboarding');
   const places = placesOf(people);
   const faces = places.filter(Boolean).length;
   return (

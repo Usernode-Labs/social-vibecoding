@@ -2,6 +2,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+// native-social-connect.js is import-free and reads the sentences it throws
+// from the PlatformI18n global, as it does in the shell. This is the real
+// English runtime, so the assertions below still check the words a person reads.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 
@@ -292,6 +296,12 @@ test('the settings screen explains a callback mismatch instead of staying silent
   const start = src.indexOf('_socialIdentityCallbackStatus(status) {');
   assert.ok(start > 0);
   const body = src.slice(start, src.indexOf('async _unlinkGithub', start));
-  assert.match(body, /callback_mismatch: `\$\{name\} did not accept Homeroom’s callback address/);
-  assert.match(body, /Ask an administrator to register this site’s callback URL \(\$\{window\.location\.origin\}\)/);
+  // The sentence is one catalog message; the screen hands it the provider's
+  // name and this site's own origin.
+  assert.match(body, /callback_mismatch: 'settings:socialIdentity\.callback\.callbackMismatch',/);
+  assert.match(body, /tr\(messages\[result\], \{ provider: name, origin: window\.location\.origin \}\)/);
+  const english = globalThis.PlatformI18n.t('settings:socialIdentity.callback.callbackMismatch',
+    { provider: 'GitHub', origin: 'https://homeroom.example' });
+  assert.match(english, /^GitHub did not accept Homeroom’s callback address/);
+  assert.match(english, /Ask an administrator to register this site’s callback URL \(https:\/\/homeroom\.example\)/);
 });

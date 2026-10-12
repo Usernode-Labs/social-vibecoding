@@ -18,6 +18,7 @@
  * are a spec and which are the same spec said twice.
  */
 
+import { t } from '../../../lib/i18n/runtime';
 import { createStore } from '../../../lib/plain-store.js';
 import type { TranscriptMessage } from '../../group-chat/transcript-store';
 
@@ -35,6 +36,10 @@ export interface RequestSpecCard {
   /** Null for the bot's GitHub copy, which carries no version. */
   version: number | null;
   by: string;
+  /** `by` is a stand-in word, not a name: the card uses its unnamed wording. */
+  byUnknown?: boolean;
+  /** `by` is the chat's "System" stand-in: the row came with no author. */
+  bySystem?: boolean;
   at: string | null;
   time: string;
   timeTitle: string;
@@ -68,6 +73,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         title: s.title,
         version: s.version,
         by: s.sharedBy,
+        byUnknown: !!s.sharedByUnknown,
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,
@@ -79,13 +85,14 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
     } else if (m.kind === 'github' && m.githubSpec) {
       specs.push({
         key: `g${m.key || specs.length}`,
-        title: m.githubSpec.title || 'The plan',
+        title: m.githubSpec.title || t('project:topic.request.spec.untitled'),
         version: null,
         by: displayName(m.username),
+        bySystem: !!m.usernameMissing,
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,
-        read: { kind: 'text', title: m.githubSpec.title || 'The plan', markdown: m.githubSpec.markdown, html: m.githubSpec.html },
+        read: { kind: 'text', title: m.githubSpec.title || t('project:topic.request.spec.untitled'), markdown: m.githubSpec.markdown, html: m.githubSpec.html },
       });
     }
   }
@@ -101,7 +108,7 @@ export function replyCount(rows: TranscriptMessage[]): number {
 export function eventText(m: TranscriptMessage): string {
   const text = m.systemText || '';
   const claimed = /^(\S+) claimed this (?:issue|request)$/.exec(text.trim());
-  return claimed ? `${claimed[1]} started working on this` : text;
+  return claimed ? t('project:topic.request.stream.claimedPlain', { member: claimed[1] }) : text;
 }
 
 /** Open a spec card's Read in the spec reader beside the page. */
@@ -117,11 +124,12 @@ export function openRequestSpec(card: RequestSpecCard): Promise<void> | void {
 /** Where a request is: the stepper's four stops. */
 export type RequestStage = 'asked' | 'spec' | 'built' | 'voted';
 
+/** Each stop and its label's message id, read where the stepper is drawn. */
 export const STAGES: { key: RequestStage; label: string }[] = [
-  { key: 'asked', label: 'Asked' },
-  { key: 'spec', label: 'Plan' },
-  { key: 'built', label: 'Built' },
-  { key: 'voted', label: 'Voted in' },
+  { key: 'asked', label: 'project:topic.request.stage.asked' },
+  { key: 'spec', label: 'project:topic.request.stage.spec' },
+  { key: 'built', label: 'project:topic.request.stage.built' },
+  { key: 'voted', label: 'project:topic.request.stage.voted' },
 ];
 
 /**

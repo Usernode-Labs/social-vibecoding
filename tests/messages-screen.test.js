@@ -6,6 +6,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -39,13 +40,13 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
     'the retired row tag stays retired');
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
-  // five tabs are adjacent siblings, with only the desktop rail's Recents
-  // (#2802) between the last section and Me — it is never drawn on the
-  // phone's bar. Messages sits in the middle; Communities (key `workshop`)
+  // five tabs are adjacent siblings, with only the desktop strip's recent
+  // apps (#4417; the rail's Recents, #2802, before them) between the last
+  // section and Me — never drawn on the phone's bar. Messages sits in the middle; Communities (key `workshop`)
   // comes after it, beside you.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop[href="#communities"] + #platform-recents + #platform-tab-me'),
+      + ' + #platform-tab-workshop[href="#communities"] + #platform-strip-apps + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -82,9 +83,12 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   // #2813 added the agent thread as a third argument, last in precedence;
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
-  // The hub's channel card points here, not at the app view.
+  // The hub's record still names the room at this address; the hub's own
+  // Discussion row opens the project page's Discussion place, where the
+  // room is drawn whole, and links nowhere else.
+  assert.match(read('src/routes/apps.js'), /href: `#messages\/app\/\$\{encodeURIComponent\(app\.slug\)\}`,/);
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
+    /data-ws-channel="preview"\s+data-ws-channel-open=""[\s\S]{0,120}onClick=\{onOpen\}/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
   assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);
@@ -140,10 +144,12 @@ test('an invitation resolves metadata before deciding whether history may be fet
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
   const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
-  assert.match(screen, /Accepting gives you access to the complete retained conversation history/);
+  assert.match(screen, /t\('messages:invitation\.invitedBy', \{ username: requesterUser\.username \}\)/);
+  assert.match(message('messages:invitation.invitedBy', { username: 'ada' }), /^@ada invited you\. Accepting gives you access to the complete retained conversation history\.$/);
   assert.match(api, /if \(raw === null \|\| \(action === 'decline'/,
     'a declined invitation never normalizes a synthetic id=0 conversation');
-  assert.match(screen, /Decline &amp; block @\{requesterUser\.username\}/,
+  assert.equal(message('messages:invitation.declineAndBlock', { username: 'ada' }), 'Decline & block @ada');
+  assert.match(screen, /t\('messages:invitation\.declineAndBlock', \{ username: requesterUser\.username \}\)/,
     'both direct and group invitations expose a pre-accept requester block action');
   const block = screen.slice(screen.indexOf('async function declineAndBlock()'),
     screen.indexOf('  return (', screen.indexOf('async function declineAndBlock()')));

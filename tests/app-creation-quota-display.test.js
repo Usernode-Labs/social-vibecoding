@@ -15,6 +15,7 @@ const path = require('node:path');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const poolMod = require('../src/db/pool');
+const { message } = require('./lib/platform-i18n');
 let appQuotaUsed = 0;
 let calls = [];
 let profileFails = false;
@@ -124,7 +125,9 @@ test('the make screen loads and renders the quota without reset copy', () => {
   assert.match(store, /fetcher\('\/api\/me\/app-allowance'/,
     'the dialog reads the independent current allowance endpoint');
   assert.match(source, /id="make-app-quota"/);
-  assert.match(shared, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
+  assert.match(shared, /translate\('dialogs:allowance\.headline\.used', \{ count: quota\.limit, used: quota\.used \}\)/);
+  assert.equal(message('dialogs:allowance.headline.used', { count: 3, used: 1 }), '1 of 3 app slots used');
+  assert.equal(message('dialogs:allowance.headline.used', { count: 1, used: 1 }), '1 of 1 app slot used');
   // Make it and Import it are pale at the limit, and only then or while busy.
   assert.match(source, /const \{ blocked: quotaBlocks \} = useAppAllowance\(\);/);
   assert.match(source, /disabled=\{busy \|\| quotaBlocks\}/,

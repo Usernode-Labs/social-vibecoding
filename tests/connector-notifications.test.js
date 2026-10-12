@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -276,7 +277,9 @@ test('the drawer renders both, and its waiting row uses the same safe wording', 
   assert.match(FE_SRC, /n\.kind === 'agent_awaiting_input'/);
   const block = FE_SRC.slice(FE_SRC.indexOf("n.kind === 'agent_awaiting_input'"));
   const row = block.slice(0, block.indexOf('#161'));
-  assert.match(row, /asked you something/i);
+  assert.match(row, /headline\(t\('notifications:row\.agentAsked'\), n\.sessionTitle \|\| null\)/);
+  assert.match(message('notifications:row.agentAsked'), /asked you something/i);
+  assert.doesNotMatch(message('notifications:row.agentAsked'), /is waiting (on|for) you/i);
   assert.doesNotMatch(row, /is waiting (on|for) you/i,
     'the row and the push must not disagree about what is being claimed');
 });

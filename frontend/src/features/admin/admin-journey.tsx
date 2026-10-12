@@ -164,8 +164,8 @@ type MilePerson = {
   userId: number | null; name: string; steps: MileStep[]; furthest: string | null; stuckAt: string | null;
   stuckReason: string | null; daysSince: number; failedAttempts: number; repeatedTaps: number;
   tour: { ended: string; step: number | null; at: string | null } | null;
-  // Getting started: the tour and the season's First challenges, x of n.
-  // `null` without an account; `shown: false` when the card was never drawn.
+  // The first-run list: the tour and the season's First challenges, x of n.
+  // `null` without an account; `shown: false` for an account from before it.
   onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
   // What the admit mail's tracking saw; `null` when it was not tracked.
   mail?: { opened: boolean; clicked: boolean } | null;
@@ -625,7 +625,7 @@ const MILE_HELP: Record<string, string> = {
   username: 'Chose a username. No time is recorded for it.',
   join: 'Answered \u201cWhat communities do you want to join?\u201d, or was not asked (an invite link or the story landing).',
   first_act: 'The first thing they did themselves: a message, a vote, feedback, a request, a change, using a project or joining a community.',
-  onboard: 'How much of Getting started on Home is done: the tour, then the season\u2019s First challenges. \u2014 means the card was never shown.',
+  onboard: 'How much of a new account\u2019s first run is done: the tour, then the season\u2019s First challenges. \u2014 means the account is from before the first-run list.',
 };
 
 const HELP_KEYS = [...MILE_KEYS, 'onboard'];
@@ -662,7 +662,7 @@ function MileLabel({ id, label, open, onOpen, onClose }: {
   );
 }
 
-/** The onboard cell: x/n, a dash when the card was never shown. */
+/** The onboard cell: x/n, a dash for an account from before the first-run list. */
 function OnboardCell({ onboard }: { onboard: MilePerson['onboard'] }) {
   if (!onboard || !onboard.shown) {
     return <span className="text-center text-[11px] leading-none text-zinc-400 dark:text-zinc-500">{'\u2014'}</span>;

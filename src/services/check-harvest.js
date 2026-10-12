@@ -102,6 +102,44 @@ function stillCurrent(session, commitSha) {
   return { current: true, why: '' };
 }
 
+// A run's capture shards, collected, read as one capture Job: their output
+// joined in shard order, as the live run joins it (visuals.runCaptureShards).
+// One shard gone, aborted or past its deadline is the run's state; the run
+// failed only if every shard did.
+function joinCaptures(results) {
+  const list = (results || []).filter(Boolean);
+  if (list.length <= 1) return list[0] || null;
+  const worst = ['gone', 'aborted', 'timeout'].find((state) => list.some((r) => r.state === state));
+  return {
+    state: worst || (list.every((r) => r.state === 'failed') ? 'failed' : 'succeeded'),
+    stdout: list.map((r) => String(r.stdout || '')).join('\n'),
+    stderr: list.map((r) => String(r.stderr || '')).filter(Boolean).join('\n'),
+    partial: list.some((r) => r.partial),
+    partialReason: [...new Set(list.map((r) => r.partialReason).filter(Boolean))].join('; '),
+  };
+}
+
+// A run's unit-suite shards, collected, read as one Job: the outputs joined
+// as the live run joins them (unit-suite.joinUnitShardOutputs). Null, a
+// suite that contributes no row, when a shard is missing: part of a suite
+// is not the suite. One shard gone or aborted is the suite's state; it
+// succeeded only if every shard did.
+function joinUnitResults(results, expectedShards = 1) {
+  const list = (results || []).filter(Boolean);
+  if (list.length <= 1 && expectedShards <= 1) return list[0] || null;
+  if (list.length < expectedShards) return null;
+  const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
+  const failed = list.find((r) => r.state !== 'succeeded');
+  const joined = require('./unit-suite').joinUnitShardOutputs(list);
+  return {
+    state: worst || (failed ? (list.some((r) => r.state === 'timeout') ? 'timeout' : 'failed') : 'succeeded'),
+    stdout: joined.stdout,
+    stderr: joined.stderr,
+    timedOut: list.some((r) => r.timedOut),
+    exitCode: failed ? failed.exitCode : 0,
+  };
+}
+
 function describeRow(row, reason) {
   const manifest = row.manifest || {};
   return {
@@ -208,8 +246,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   // the worker namespace's Job slots until their TTL. Detached; the TTL
   // still collects any this misses.
   const releaseJobs = () => {
-    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId })
-      .catch((err) => log.warn('check-harvest', 'Settled check Jobs not deleted; their TTL will', { ...base, err: err.message }));
+    for (const previewRunId of [runId, manifest.unitRunId].filter(Boolean)) {
+      kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId })
+        .catch((err) => log.warn('check-harvest', 'Settled check Jobs not deleted; their TTL will', { ...base, err: err.message }));
+    }
   };
 
   try {
@@ -234,11 +274,29 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     }
 
     const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
+    // A unit suite the run took over from the preview build runs under its
+    // own run id (services/early-unit-suite.js).
+    if (manifest.unitRunId) {
+      const early = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: manifest.unitRunId });
+      if (early.unitSuite) {
+        jobs.unitSuite = early.unitSuite;
+        jobs.unitSuites = early.unitSuites;
+        jobs.unitShards = early.unitShards;
+      }
+    }
+    // One unit-suite Job, or one per shard of a split suite.
+    const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
+      ? jobs.unitSuites : (jobs.unitSuite ? [jobs.unitSuite] : []);
+    const captureJobs = Array.isArray(jobs.captures) ? jobs.captures : (jobs.capture ? [jobs.capture] : []);
     // A deferred verdict on a range with no frontend files launches no
     // capture container at all (visuals: shotsOnly && !media) — its stamp is
     // the whole settlement, and there is nothing on the cluster to find.
     const captureExpected = !(manifest.shotsOnly && !manifest.media);
     if (captureExpected && !jobs.capture) return await redrive(session, 'capture Job not found');
+    // A run split across browser pods needs every shard's output.
+    if (captureExpected && captureJobs.length < (Number(manifest.captureShards) || 1)) {
+      return await redrive(session, 'a capture shard Job not found');
+    }
 
     log.info('check-harvest', 'Adopting an orphaned checks run', {
       ...base, owner: row.owner,
@@ -253,6 +311,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     const trigger = manifest.trigger || 'boot-reconcile';
     const progress = visuals.makeChecksProgressState({
       expected: Number(manifest.testsCount) || 0,
+      shards: captureJobs.length || 1,
       build: manifest.build || null,
       flush: async (snap) => {
         if (controller.signal.aborted) return;
@@ -265,17 +324,22 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     let unit = null;
     try {
       [capture, unit] = await Promise.all([
-        jobs.capture ? kubernetes.collectCheckJob(config, {
-          name: jobs.capture.name, kind: 'capture',
+        captureJobs.length ? Promise.all(captureJobs.map((job) => kubernetes.collectCheckJob(config, {
+          name: job.name, kind: 'capture',
           timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER,
           onStdoutLine: progress.observeCapture, signal: controller.signal,
-        }) : Promise.resolve(null),
-        jobs.unitSuite ? kubernetes.collectCheckJob(config, {
-          name: jobs.unitSuite.name, kind: 'unit-suite',
+        }))).then(joinCaptures) : Promise.resolve(null),
+        unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+          name: job.name, kind: 'unit-suite',
           timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
-          onStdoutLine: (line) => { if (unitTracker.feed(line)) progress.observeUnit(unitTracker.snapshot()); },
+          // Shards' summaries would replace one another here; the joined
+          // output's, added up, is fed when the outcome is read.
+          onStdoutLine: (line) => {
+            if (unitJobs.length > 1 && /^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) return;
+            if (unitTracker.feed(line)) progress.observeUnit(unitTracker.snapshot());
+          },
           signal: controller.signal,
-        }) : Promise.resolve(null),
+        }))).then((results) => joinUnitResults(results, Number(jobs.unitShards) || 1)) : Promise.resolve(null),
       ]);
     } finally {
       progress.close();
@@ -639,4 +703,6 @@ module.exports = {
   // Exported for tests.
   stillCurrent,
   loadSession,
+  joinCaptures,
+  joinUnitResults,
 };

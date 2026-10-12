@@ -42,6 +42,7 @@ import {
   PendingStrip,
   type PendingAttachmentView,
 } from '../attachments/pending-strip';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   composerStore,
@@ -100,19 +101,27 @@ export function useComposerSlot(scope: ComposerScope): ComposerSlot {
  * so staging a reply still reads as what it is about to produce.
  */
 function ReplyPreview({ scope, quote }: { scope: ComposerScope; quote: QuoteChipView | null }) {
+  const t = useMessages('chat');
   return (
     <div id={IDS[scope].preview} className={quote ? '' : 'hidden'}>
       {quote ? (
         <div className="gc-reply-preview-inner">
           <div className="gc-reply-preview-body">
-            <span className="gc-reply-preview-label">{`↩ Replying to ${quote.label}`}</span>
+            <span className="gc-reply-preview-label">
+              {quote.unnamed === 'event' ? t('chat:group.composer.replyingToPlatform')
+                : quote.unnamed === 'message' ? t('chat:group.composer.replyingToMessage')
+                  : quote.unnamed === 'system' ? t('chat:group.composer.replyingToSystem')
+                    : quote.unnamed === 'someone' ? t('chat:group.composer.replyingToSomeone')
+                  : quote.pr != null ? (quote.pr ? t('chat:group.composer.replyingToPr', { number: quote.pr }) : t('chat:group.composer.replyingToPrUnnumbered'))
+                    : t('chat:group.composer.replyingTo', { name: quote.label })}
+            </span>
             <span className="gc-reply-preview-snippet">{quote.snippet}</span>
           </div>
           <button
             type="button"
             id={scope === 'general' ? 'gc-reply-cancel' : undefined}
             className="gc-reply-preview-x"
-            aria-label="Cancel reply"
+            aria-label={t('chat:group.composer.cancelReply')}
             onClick={() => controller()?.clearQuote?.()}
           >
             ✕
@@ -194,6 +203,7 @@ export interface ComposerFormProps {
 }
 
 export function ComposerForm({ scope, fill, placeholder, maxLength, messages = false }: ComposerFormProps) {
+  const t = useMessages('chat');
   const ids = IDS[scope];
   // #4065: the drop zone, while a file is held over this composer or its
   // messages. The module's tracker publishes the flag; it lies over the card,
@@ -205,7 +215,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
       <form id={ids.form} className="messages-composer-card">
         <div className="flex items-end gap-1.5">
           <div className="messages-composer-add">
-            <button type="button" id={ids.attach} className="messages-composer-action" aria-label="Attach files" title="Attach files">
+            <button type="button" id={ids.attach} className="messages-composer-action" aria-label={t('chat:group.composer.page.attachFiles')} title={t('chat:group.composer.page.attachFiles')}>
               <PlusIcon aria-hidden="true" />
             </button>
           </div>
@@ -216,11 +226,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
             maxLength={maxLength}
             autoComplete="off"
             placeholder={placeholder}
-            aria-label="Reply"
+            aria-label={t('chat:group.composer.page.reply')}
             className="messages-composer-input"
           />
           {/* Keeps the field focused through the press, as Messages' Send does. */}
-          <button type="submit" className="messages-send" aria-label="Send" title="Send" onMouseDown={(event) => event.preventDefault()}>
+          <button type="submit" className="messages-send" aria-label={t('chat:group.composer.page.send')} title={t('chat:group.composer.page.send')} onMouseDown={(event) => event.preventDefault()}>
             <ArrowUpIcon aria-hidden="true" />
           </button>
         </div>
@@ -240,8 +250,8 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
         <button
           type="button"
           id={ids.attach}
-          title="Attach files"
-          aria-label="Attach files"
+          title={t('chat:group.composer.attachFiles')}
+          aria-label={t('chat:group.composer.attachFiles')}
           className="gc-composer-glyph shrink-0"
         >
           <PaperClipIcon aria-hidden="true" />
@@ -267,8 +277,8 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
         <button
           type="submit"
           className="gc-send shrink-0"
-          aria-label="Send"
-          title="Send"
+          aria-label={t('chat:group.composer.send')}
+          title={t('chat:group.composer.send')}
           onMouseDown={(event) => event.preventDefault()}
         >
           <ArrowUpIcon aria-hidden="true" />
@@ -282,8 +292,8 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
       <button
         type="button"
         id={ids.attach}
-        title="Attach files"
-        aria-label="Attach files"
+        title={t('chat:group.composer.attachFiles')}
+        aria-label={t('chat:group.composer.attachFiles')}
         className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors"
       >
         📎
@@ -303,7 +313,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
       />
       {/* Keeps the field focused through the press, as the card's Send above. */}
       <Button type="submit" size="sm" className="shrink-0" onMouseDown={(event) => event.preventDefault()}>
-        Send
+        {t('chat:group.composer.send')}
       </Button>
       {dropZone}
     </form>

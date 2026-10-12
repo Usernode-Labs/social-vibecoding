@@ -11,6 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -20,8 +21,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: the maker\'s nine cards, three reworded for someone invited, ending on the waitlist card', () => {
-  const { privateSteps, makerSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
+test('the private tour: the shared seven cards, three reworded for someone invited, ending on the waitlist card', () => {
+  const { privateSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
   const project = { slug: 'best-brunch', name: 'Best brunch spots' };
   const steps = privateSteps(project);
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
@@ -51,13 +52,13 @@ test('the private tour: the maker\'s nine cards, three reworded for someone invi
     ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  // The first seven are the maker's own steps, the same places and presses,
-  // with only the three reworded cards' text differing.
-  const maker = makerSteps({ ...project, conversationId: 12 }).slice(0, 7);
-  assert.deepEqual(maker, invitedSteps(project).slice(0, 7), 'which the join tour shares');
+  // The first seven are the steps every tour of a project shares (the join
+  // tour's first seven), the same places and presses, with only the three
+  // reworded cards' text differing.
+  const shared = invitedSteps(project).slice(0, 7);
   steps.slice(0, 7).forEach((s, i) => {
-    assert.deepEqual({ ...s, text: '' }, { ...maker[i], text: '' }, `step ${i + 1} is the maker's`);
-    if (![1, 3, 6].includes(i)) assert.equal(s.text, maker[i].text, `step ${i + 1} in the maker's words`);
+    assert.deepEqual({ ...s, text: '' }, { ...shared[i], text: '' }, `step ${i + 1} is the shared one`);
+    if (![1, 3, 6].includes(i)) assert.equal(s.text, shared[i].text, `step ${i + 1} in the shared words`);
   });
   // The Suggest card is the one in the menu, pointed at and not pressed.
   assert.equal(steps[3].inMenu, true);
@@ -117,8 +118,10 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
   assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"/);
   assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
-  assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.goToHomeroom\.title'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.title'), 'Go to Homeroom');
+  assert.match(card, /text-\[13px\][^>]*>\{t\('agent:appContext\.goToHomeroom\.sub'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.sub'), 'Your Home, your communities and Homeroom bot');
   assert.match(card.slice(0, card.indexOf('</button>')), /<ChevronRightIcon/);
   assert.match(sheet, /firstSession\?\.goHome\?\.\(info\)/);
   assert.match(sheet, /\{showTerminal && !privateMember \? \(/);
@@ -139,7 +142,8 @@ test('the Go to Homeroom card carries the home-screen offer, and the banner wait
   assert.match(card, /\{newcomer && homeScreenOs \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
   assert.match(card, /id="app-menu-row-add-home"/);
   assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Add Homeroom to your home screen</);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.addHomeroomToHomeScreen'\)\}</);
+  assert.equal(message('agent:appContext.addHomeroomToHomeScreen'), 'Add Homeroom to your home screen');
   assert.match(card, /<InstallStepsSheet os=\{homeScreenOs\}/);
   // The offer is the banner's own decision, an a2hs one, minus its dismissal.
   const hook = read('frontend/src/features/mobile-install/home-screen-offer.ts');

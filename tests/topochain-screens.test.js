@@ -31,6 +31,7 @@ const leaderboardJs = fs.readFileSync(path.join(root, 'frontend/src/features/lea
 const challengesJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
 const contextJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
 const mount = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/mount.ts'), 'utf8');
 const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
@@ -141,8 +142,9 @@ test('one entry point reaches all three surfaces', () => {
     path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
   // #1916: the link reads "Open challenges" and lands on the screen's
   // Challenges tab, one tab from the standings.
-  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open challenges"/,
+  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label=\{t\('home:challenges\.open\.label'\)\}/,
     'the area\u2019s title bar carries the link');
+  assert.equal(message('home:challenges.open.label'), 'Open challenges');
   assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
     'which is a real hash navigation onto the Leaderboard screen');
   assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,

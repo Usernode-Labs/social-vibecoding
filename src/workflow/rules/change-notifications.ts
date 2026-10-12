@@ -1,10 +1,11 @@
 // What the bell says about a change once it is decided: the author's "your
-// change is live" (pr_merged), and the asks it settles. The merge-followups
-// machine writes both inside its transaction; services/notifications.js
-// re-exports them for [main]'s merge, its included changes and every close.
+// change is live" (pr_merged) and its voters' (voted_change_merged), and the
+// asks it settles. The merge-followups machine writes them inside its
+// transaction; services/notifications.js re-exports them for [main]'s merge,
+// its included changes and every close.
 
 import type { Queryable } from './db.ts';
-import { kindAllowed } from './notification-preferences.ts';
+import { filterUsersByCategory, kindAllowed } from './notification-preferences.ts';
 
 // 5 October (Page Turners): what a "Waiting for your approval" digest
 // (services/vote-digest.js) counted that still waits on its reader: changes
@@ -37,26 +38,97 @@ export const DIGEST_WAITING_SQL = `${DIGEST_WAITING_HEAD}${DIGEST_WAITING_TAIL}`
 const DIGEST_WAITING_BUT_DECIDED_SQL = `${DIGEST_WAITING_HEAD}     AND waiting.id IS DISTINCT FROM $4::int
 ${DIGEST_WAITING_TAIL}`;
 
+// #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
+// for a merge the vote carried; it rides in `detail`, which a force merge
+// uses for its own marker, so the two never meet.
+//
+// #4787: `alsoVoters` writes the voters' rows (createVotedChangeMergedNotifications)
+// in the same call. The author's mute of pr_merged says nothing about the
+// voters: each side asks its own preference. Here a failure on the voters'
+// side throws, as it would abort the caller's transaction anyway;
+// services/notifications.js isolates it for a caller outside one.
 export async function createPrMergedNotification(
   pool: Queryable,
-  { userId, appId, sessionId, forced = false, credits = null }:
-    { userId: number | null; appId: number; sessionId: number; forced?: boolean; credits?: string | null },
+  { userId, appId, sessionId, forced = false, credits = null, alsoVoters = false }:
+    { userId: number | null; appId: number; sessionId: number; forced?: boolean; credits?: string | null; alsoVoters?: boolean },
   allows: (db: Queryable, q: { userId: number | null; appId?: number | null; kind: string }) => Promise<boolean> = kindAllowed,
 ): Promise<any[]> {
-  if (!userId || !sessionId) return [];
-  if (!await allows(pool, { userId, appId, kind: 'pr_merged' })) return [];
-  const detail = forced
-    ? 'forced'
-    : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
+  const created: any[] = [];
+  if (userId && sessionId && await allows(pool, { userId, appId, kind: 'pr_merged' })) {
+    const detail = forced
+      ? 'forced'
+      : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
+    const { rows } = await pool.query(
+      `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+       SELECT $1, $2, $3, NULL, 'pr_merged', $4
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
+        )
+       RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+      [userId, appId, sessionId, detail]
+    );
+    created.push(...rows);
+  }
+  if (alsoVoters && sessionId) {
+    created.push(...await createVotedChangeMergedNotifications(pool, { appId, sessionId, authorId: userId ?? null }));
+  }
+  return created;
+}
+
+// #4787: the change a person voted on went live. Until this, only its author
+// heard a merge; everybody who had a say had to stumble on the news.
+//
+// System-generated like pr_merged (source_user_id stays null: the group's
+// decision arriving, not a person doing something to you), one row per voter
+// per session, the author never double-told: their pr_merged row stays the
+// only one they get. A retried or repeated merge is stopped by the NOT
+// EXISTS on (voter, session, kind), as for its neighbours. `filter` is how
+// the voters' preference is read: services/notifications.js passes
+// services/notification-preferences.js's export, so a test that stubs that
+// module still reaches the read it stubbed.
+export async function createVotedChangeMergedNotifications(
+  pool: Queryable,
+  { appId, sessionId, authorId }: { appId: number; sessionId: number | null; authorId: number | null },
+  filter: typeof filterUsersByCategory = filterUsersByCategory,
+): Promise<any[]> {
+  if (!sessionId) return [];
+  // The voters are rows in pr_votes, and none of the three merge paths has
+  // their ids, so the producer reads them itself: every row, whatever its
+  // revision, yes or no; a no voter had a say too.
+  const { rows: voted } = await pool.query(
+    `SELECT DISTINCT user_id FROM pr_votes
+      WHERE session_id = $1 AND user_id IS NOT NULL`,
+    [Number(sessionId)]
+  );
+  const ids = voted
+    .map((row: { user_id: unknown }) => Number(row.user_id))
+    .filter((id: number) => Number.isFinite(id) && id !== Number(authorId));
+  if (!ids.length) return [];
+  const allowed = await filter(pool, {
+    userIds: ids, appId, categoryKey: 'voted_changes_live',
+  });
+  if (!allowed.length) return [];
+  const values: string[] = [];
+  const params: unknown[] = [appId, sessionId];
+  allowed.forEach((userId) => {
+    params.push(userId);
+    // Cast the columns: the VALUES row's parameters are otherwise typed
+    // text, and `n.user_id = v.user_id` in the NOT EXISTS is then an
+    // integer = text comparison Postgres refuses.
+    values.push(`($${params.length}::int, $1::int, $2::int, NULL::int, 'voted_change_merged'::text, NULL::text)`);
+  });
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'pr_merged', $4
+     SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.detail
+       FROM (VALUES ${values.join(', ')}) AS v (user_id, app_id, session_id, source_user_id, kind, detail)
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
+         WHERE n.user_id = v.user_id AND n.session_id = v.session_id
+           AND n.kind = 'voted_change_merged'
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [userId, appId, sessionId, detail]
+    params
   );
   return rows;
 }
@@ -108,9 +180,12 @@ export async function settleVoteDigests(
  *   - the asks it answered (DECIDED_ASK_KINDS) are read;
  *   - "ready to try" rows: closed, they are read. Live, the newest one each
  *     person was sent is the news that it is live (the bell words it Live,
- *     from the change's status) and is unread again for whoever had not said
- *     yes to it, who did not see it go; the ones about older versions are
- *     read. Unread again, never a new row: nothing rings twice;
+ *     from the change's status) and is unread again for whoever never voted
+ *     on it and so did not see it go; the ones about older versions are
+ *     read. #4787: a voter now hears the merge through
+ *     voted_change_merged, so their newest row is left as they read it and
+ *     the bell does not show two unread rows about one change.
+ *     Unread again, never a new row: nothing rings twice;
  *   - digests of several changes it was the last one waiting in are read.
  *
  * Everyone whose bell changed is returned, to hear `notifications_changed`
@@ -160,9 +235,8 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
     note((await pool.query(
       `UPDATE notifications n SET read_at = NULL
         WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NOT NULL AND ${NEWEST}
-          AND NOT EXISTS (SELECT 1 FROM pr_votes said_yes
-                           WHERE said_yes.session_id = n.session_id AND said_yes.user_id = n.user_id
-                             AND said_yes.vote = 'yes')
+          AND NOT EXISTS (SELECT 1 FROM pr_votes voted
+                           WHERE voted.session_id = n.session_id AND voted.user_id = n.user_id)
         RETURNING n.user_id`,
       [id]
     )).rows);

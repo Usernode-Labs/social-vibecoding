@@ -170,7 +170,9 @@ export const COVER_DEFAULTS = {
   iconKind: 'letter',
   iconHtml: '',
   name: '',
-  note: 'Opening…',
+  // null: the cover's own words ("Opening…"), which the component reads in
+  // the language on screen. A caller's note is text.
+  note: null,
   /** The 500ms rung of the reveal ladder. */
   spinner: false,
   /** `.app-launch-cover--out` — the 160ms fade before the cover is dropped. */

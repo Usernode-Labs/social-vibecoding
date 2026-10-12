@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 // `extra.App` adds to the App stub (a recording switchTab, say) and
 // `extra.location` is the one a navigation writes, for a test to read back.
@@ -15,6 +16,7 @@ function context(user = { id: 42, username: 'Builder' }, extra = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: extra.location || { search: '', hash: '' }, URLSearchParams };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   for (const path of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path, 'utf8'), c);
@@ -462,6 +464,7 @@ test('every change route mounts its thread, and an unshared change reads no disc
   const source = fs.readFileSync('public/js/app-view.js', 'utf8');
   const calls = [];
   const c = { AppView: av, document: { getElementById: () => ({}) },
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     GroupChat: { mountThread: (opts) => calls.push(opts), unmountThread: () => calls.push('detach') } };
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
@@ -729,8 +732,10 @@ test('the issue picker computes bounded add/remove deltas for the existing PATCH
   });
 
   const src = fs.readFileSync('frontend/src/features/dev-board/topic/topic-head.tsx', 'utf8');
-  assert.match(src, /Search by number or title/);
-  assert.match(src, /aria-label={`Remove #\$\{issue\.n}: \$\{issue\.title}`}/);
+  assert.match(src, /placeholder=\{t\('project:topic\.requests\.searchPlaceholder'\)\}/);
+  assert.equal(message('project:topic.requests.searchPlaceholder'), 'Search by number or title');
+  assert.match(src, /aria-label=\{t\('project:topic\.requests\.remove', \{ number: issue\.n, title: issue\.title \}\)\}/);
+  assert.equal(message('project:topic.requests.remove', { number: 27, title: 'Fix sign-in' }), 'Remove #27: Fix sign-in');
   assert.match(src, /event\.key === 'Escape'/);
   assert.match(src, /if \(suggestions\[0\]\) addIssue/);
   assert.match(src, /disabled=\{saving \|\| !changed\}/);

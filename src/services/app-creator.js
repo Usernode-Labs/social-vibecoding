@@ -51,6 +51,15 @@ function endPhases(slug) {
 // The approval rule a new app's row carries (POST /api/apps writes the
 // create screen's choice there), for the template's dapp.json.
 function governanceOf(row) {
+  // #4666: a preset or rules of its own, as the row stores them.
+  const rules = require('./governance').rulesFromColumn(row?.governance_rules);
+  if (rules) {
+    return {
+      preset: rules.preset,
+      groups: rules.groups.map((g) => ({ name: g.name, people: g.people })),
+      rules: rules.rules,
+    };
+  }
   return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
 }
 
@@ -379,6 +388,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     // deploy. No-op when the block is absent; an explicit [] clears it.
     await appManifest.reconcileAppAdmins(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Admins reconcile failed', { appId, err: err.message }));
+
+    // And the manifest's `topics` array (#4417): an imported repo that
+    // names topics starts with them. No-op when the block is absent.
+    await appManifest.reconcileAppTopics(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Topics reconcile failed', { appId, err: err.message }));
 
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at

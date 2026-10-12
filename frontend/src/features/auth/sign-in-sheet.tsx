@@ -141,6 +141,8 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { inviteEmailFromToken, readAutoSend, writeAutoSend } from './login';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { PhoneInput, readPhone } from './phone-input';
@@ -152,13 +154,13 @@ import {
   HANDLE_FIELD,
   legacy,
   type NativeLoginFailureDetails,
+  ONE_TIME_CODE_FIELD,
   passwordSignIn,
   sessionMintFailureMessage,
-  USERNAME_RULE,
 } from './shared';
 import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code' | 'link';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -166,20 +168,21 @@ export type SignInProvider = 'apple' | 'google';
 export type SignInResume = 'username' | `error-${string}`;
 
 // What went wrong at the provider, in words. The codes are the server's.
+// Message ids, read when the error is shown.
 const RESUME_ERRORS: Record<string, string> = {
-  cancelled: 'Sign-in was cancelled.',
-  expired: 'That sign-in took too long, or started somewhere else. Try again.',
-  no_verified_email: 'That account has no verified email address to sign in with. Use your email instead.',
-  password_required: 'This account signs in with a password. Use "Sign in with a password" below.',
-  admin_password_required: 'This admin account signs in with a password. Use "Sign in with a password" below.',
-  linked_elsewhere: 'Your Homeroom account is linked to a different account there. Use your email instead.',
-  logout_required: 'You are already signed in. Reload the page.',
+  cancelled: 'auth:signInSheet.resume.cancelled',
+  expired: 'auth:signInSheet.resume.expired',
+  no_verified_email: 'auth:signInSheet.resume.noVerifiedEmail',
+  password_required: 'auth:signInSheet.resume.passwordRequired',
+  admin_password_required: 'auth:signInSheet.resume.adminPasswordRequired',
+  linked_elsewhere: 'auth:signInSheet.resume.linkedElsewhere',
+  logout_required: 'auth:signInSheet.resume.logoutRequired',
 };
-const RESUME_FALLBACK = 'That did not work. Try again, or use your email.';
+const RESUME_FALLBACK = 'auth:signInSheet.resume.fallback';
 
 export function resumeError(resume: SignInResume | null | undefined): string | null {
   if (!resume || !resume.startsWith('error-')) return null;
-  return RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK;
+  return translate(RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK);
 }
 
 /** Where the provider's sign-in starts: carries what the sheet knows across the trip. */
@@ -200,7 +203,7 @@ export type NativeSignInOutcome =
   | { error: string | null };
 
 function nativeError(code: unknown): string {
-  return resumeError(`error-${typeof code === 'string' && code ? code : 'failed'}`) || RESUME_FALLBACK;
+  return resumeError(`error-${typeof code === 'string' && code ? code : 'failed'}`) || translate(RESUME_FALLBACK);
 }
 
 /**
@@ -213,7 +216,7 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
   followInvite: boolean;
 }): Promise<NativeSignInOutcome> {
   const bridge = legacy().usernode;
-  if (!bridge || typeof bridge.signInWithProvider !== 'function') return { error: RESUME_FALLBACK };
+  if (!bridge || typeof bridge.signInWithProvider !== 'function') return { error: translate(RESUME_FALLBACK) };
   const started = await fetch(`/api/auth/oauth/${provider}/native/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -230,9 +233,9 @@ export async function signInNatively(provider: SignInProvider, { from, followInv
     idToken = answer?.idToken;
   } catch (err) {
     if ((err as { usernodeCode?: unknown } | null)?.usernodeCode === 'cancelled') return { error: null };
-    return { error: RESUME_FALLBACK };
+    return { error: translate(RESUME_FALLBACK) };
   }
-  if (typeof idToken !== 'string' || !idToken) return { error: RESUME_FALLBACK };
+  if (typeof idToken !== 'string' || !idToken) return { error: translate(RESUME_FALLBACK) };
   const res = await fetchSessionMint(`/api/auth/oauth/${provider}/native`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -278,6 +281,16 @@ export const CLOSE_MS = 240;
  */
 export function mayFocusByCode({ touch, keysUp }: { touch: boolean; keysUp: boolean }): boolean {
   return !touch || keysUp;
+}
+
+/**
+ * `mayFocusByCode` for this device, now. The make screen asks it too
+ * (../first-session/make.tsx, #4597): the sheet hands off with the keys
+ * down, and a caret put in the description from code would raise them again
+ * over a screen that is meant to open whole.
+ */
+export function mayFocusByCodeNow(): boolean {
+  return mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
 }
 
 /**
@@ -383,6 +396,42 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   return { address, send: true };
 }
 
+/** A waitlist "you're in" link's one-time sign-in, spent (#4594). */
+export type ReleaseSpend = {
+  next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean; suggestedUsername: string;
+};
+
+/**
+ * Spend the release mail's one-time sign-in link (src/services/release-links.js)
+ * with a POST, never on the GET that opened the page, so a mail scanner's
+ * prefetch cannot use it up. 'refused' when the server says the link is
+ * expired, used or unknown; null on anything else (offline, a server
+ * error). Either way the sheet falls back to the address and a code, and a
+ * refused link says why.
+ */
+export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'refused' | null> {
+  try {
+    const res = await fetchSessionMint('/api/auth/release-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token: key }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 422 && data.code === 'invalid_release_link') return 'refused';
+    if (!res.ok || !data.ok || typeof data.email !== 'string') return null;
+    if (data.next !== 'signed-in' && data.next !== 'set-password') return null;
+    return {
+      next: data.next,
+      email: data.email,
+      needsUsername: data.needsUsername === true,
+      suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * On a step's main button: the press keeps the caret where it is until its
  * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
@@ -438,6 +487,12 @@ export type SignInSheetProps = {
   /** Opened by a waitlist "you're in" link: the token that names the address to sign up with. */
   releaseToken?: string | null;
   /**
+   * The same link's one-time sign-in (#4594): spent first, and on success
+   * the sheet says "Welcome <address>" and goes straight to the account
+   * step. Expired, used or unknown, it falls back to `releaseToken`'s code.
+   */
+  releaseSignIn?: string | null;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made).
@@ -465,8 +520,9 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
+  const t = useMessages('auth');
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
   const [step, setStep] = useState<Step>(firstStep);
@@ -477,6 +533,14 @@ export function SignInSheet({
   // Whose username step this is: a provider's (Apple, Google) or the phone's.
   const [usernameVia, setUsernameVia] = useState<'oauth' | 'phone'>('oauth');
   const [needsUsername, setNeedsUsername] = useState(false);
+  // The address a release link signed in (#4594), for the account step's welcome.
+  const [welcome, setWelcome] = useState<string | null>(null);
+  // The release link was refused (used, or expired): the code step says so,
+  // since that is why a code was sent instead.
+  const [linkRefused, setLinkRefused] = useState(false);
+  // The handle the account step's field arrives holding (#4596): made from
+  // the address by the server, or '' for an empty field.
+  const [suggestedUsername, setSuggestedUsername] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -502,12 +566,11 @@ export function SignInSheet({
   const phoneStepFields = [nameField, phoneField];
   const phoneName = useRef('');
   const phoneCodeField = useRef<HTMLInputElement>(null);
-  const confirmField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
   // Each multi-field step's fields in order, for Return (`returnWalks`).
   const passwordStepFields = [identifierField, currentPasswordField];
-  const accountStepFields = [usernameField, passwordField, confirmField];
+  const accountStepFields = [usernameField, passwordField];
   // The panel scrolls its fields; with the keyboard up they are revealed in
   // it, with the step's button, and tapped without iOS's pan. It rides the
   // keys up and down as one eased movement.
@@ -523,7 +586,10 @@ export function SignInSheet({
   const identifierPrefill = useRef('');
 
   useEffect(() => {
-    if (!open) { setShown(false); setLeaving(false); setClosing(false); return undefined; }
+    // Closed, the link is not "seen" any more: opened again (Get started
+    // again, Evan, 10 Oct 2026), it signs in from the email again rather
+    // than falling back to a code.
+    if (!open) { setShown(false); setLeaving(false); setClosing(false); releaseSeen.current = null; return undefined; }
     const raf = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(raf);
   }, [open]);
@@ -550,6 +616,8 @@ export function SignInSheet({
   useEffect(() => {
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
+    setWelcome(null);
+    setLinkRefused(false);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -561,7 +629,7 @@ export function SignInSheet({
   // field whose keys are up lands before anything can take them down.
   useIsomorphicLayoutEffect(() => {
     if (!open || step === 'choose') return;
-    const focus = mayFocusByCode({ touch: touchScreen(), keysUp: keyboardUp() });
+    const focus = mayFocusByCodeNow();
     if (step === 'password' && identifierPrefill.current && identifierField.current) {
       identifierField.current.value = identifierPrefill.current;
       identifierPrefill.current = '';
@@ -573,9 +641,9 @@ export function SignInSheet({
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
-              : (needsUsername ? usernameField : passwordField);
+              : (needsUsername && !suggestedUsername ? usernameField : passwordField);
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername]);
+  }, [open, step, needsUsername, suggestedUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -604,7 +672,7 @@ export function SignInSheet({
   const requestCode = useCallback(async (address: string) => {
     setError(null);
     const value = address.trim().toLowerCase();
-    if (!value || !value.includes('@')) { setError('Enter a valid email address'); return; }
+    if (!value || !value.includes('@')) { setError(translate('auth:signInSheet.email.invalid')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -622,14 +690,14 @@ export function SignInSheet({
         // limiter says.
         if (res.status === 429) {
           setStep('code');
-          setError(data.error || 'Too many requests. Wait a moment and try again.');
+          setError(data.error || translate('auth:signInSheet.email.tooMany'));
           const retryAfter = Number(res.headers.get('Retry-After'));
           setCooldownUntil(Date.now() + (Number.isFinite(retryAfter) && retryAfter > 0
             ? Math.min(retryAfter, 900) * 1000 : RESEND_COOLDOWN_MS));
           return;
         }
         setStep('email');
-        setError(data.error || 'Could not send a code');
+        setError(data.error || translate('auth:signInSheet.email.sendFailed'));
         return;
       }
       if (codeField.current) codeField.current.value = '';
@@ -637,7 +705,7 @@ export function SignInSheet({
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
       setNow(Date.now());
     } catch {
-      setError('Network error');
+      setError(translate('auth:signInSheet.networkError'));
     } finally {
       setBusy(false);
     }
@@ -647,13 +715,50 @@ export function SignInSheet({
   // names, filled in, and the code sent once per tab, exactly what the
   // sign-in screen does for the same link (./login.tsx). A token that names
   // nothing leaves the email step as it is, to be filled in by hand.
+  //
+  // #4594: a link that also carries its one-time sign-in spends that first.
+  // Spent, it is a proven mailbox, like a right code: the account step, with
+  // "Welcome <address>", or straight in for an account with nothing to set
+  // up. Expired, used or unknown, it is the prefill and the code as before,
+  // and the code step says the link was used (Evan, 10 Oct 2026: a second
+  // open, in another browser, asked for a code with no reason given).
+  //
+  // While it is spent the sheet says "Signing you in…" (the `link` step),
+  // not the email step with its Send code button, which the first open
+  // used to show for the length of the request.
+  const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!open || !releaseToken || releaseSeen.current === releaseToken) return undefined;
-    releaseSeen.current = releaseToken;
+    const seen = releaseSignIn || releaseToken;
+    if (!open || !seen || releaseSeen.current === seen) return undefined;
+    releaseSeen.current = seen;
     let live = true;
-    setStep('email');
-    void releaseArrival(releaseToken).then((arrival) => {
-      if (!live || !arrival) return;
+    setStep(releaseSignIn ? 'link' : 'email');
+    const prefill = () => {
+      if (!releaseToken) { setStep('email'); return; }
+      void releaseArrival(releaseToken).then(arrive);
+    };
+    if (releaseSignIn) {
+      setBusy(true);
+      // Not dropped when the sheet re-renders mid-request: the link is spent
+      // either way, so its answer must land.
+      void spendReleaseLink(releaseSignIn).then(async (spent) => {
+        setBusy(false);
+        if (spent === 'refused') setLinkRefused(true);
+        if (!spent || spent === 'refused') { prefill(); return; }
+        setEmail(spent.email);
+        if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
+        setWelcome(spent.email);
+        setNeedsUsername(spent.needsUsername);
+        setSuggestedUsername(spent.suggestedUsername);
+        setCooldownUntil(0);
+        setStep('account');
+      });
+    } else {
+      prefill();
+    }
+    function arrive(arrival: ReleaseArrival | null) {
+      if (!live) return;
+      if (!arrival) { setStep('email'); return; }
       setEmail(arrival.address);
       if (firstField.current) firstField.current.value = arrival.address;
       if (!arrival.send) {
@@ -663,13 +768,18 @@ export function SignInSheet({
         return;
       }
       void requestCode(arrival.address);
-    });
+    }
     return () => { live = false; };
-  }, [open, releaseToken, requestCode]);
+  }, [open, releaseToken, releaseSignIn, requestCode]);
 
   // Away to the make screen: the panel goes down while the wallpaper comes
   // up behind it. Resolves once that has had its time.
   const handOff = useCallback((): Promise<void> => {
+    // The keys go down with the sheet (#4597): Continue kept the caret in
+    // its field (HOLD_FIELD_FOCUS), and the make screen opens whole, its
+    // description waiting for a tap rather than under the keyboard.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && panelRef.current?.contains(active)) active.blur();
     setLeaving(true);
     const ms = prefersReducedMotion() ? 0 : HAND_OFF_MS;
     return new Promise((resolve) => { window.setTimeout(resolve, ms); });
@@ -684,11 +794,12 @@ export function SignInSheet({
     const opened = await confirmSession();
     if (!opened) setLeaving(false);
   }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
+  finishRef.current = finish;
 
   const verify = useCallback(async () => {
     setError(null);
     const code = (codeField.current?.value || '').trim();
-    if (!code) { setError('Enter the code from the email'); return; }
+    if (!code) { setError(translate('auth:signInSheet.code.missing')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -706,12 +817,12 @@ export function SignInSheet({
         if (data.code === 'password_required' || data.code === 'admin_password_required') {
           identifierPrefill.current = email;
           setStep('password');
-          setError(data.error || 'This account signs in with its password.');
+          setError(data.error || translate('auth:signInSheet.code.passwordAccount'));
           return;
         }
         setError(res.status === 429
-          ? data.error || 'Too many code attempts. Try again shortly.'
-          : data.error || 'Invalid or expired code.');
+          ? data.error || translate('auth:signInSheet.code.tooManyAttempts')
+          : data.error || translate('auth:signInSheet.code.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -719,6 +830,7 @@ export function SignInSheet({
         return;
       }
       setNeedsUsername(data.needsUsername === true);
+      setSuggestedUsername(typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '');
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -749,13 +861,13 @@ export function SignInSheet({
         // code is still the one to type, with the resend held.
         if (res.status === 429 && phoneSession.current && value === phoneNumber) {
           setStep('phone-code');
-          setError(data.error || 'Too many requests. Wait a moment and try again.');
+          setError(data.error || translate('auth:signInSheet.phone.tooMany'));
           setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
           setNow(Date.now());
           return;
         }
         setStep('phone');
-        setError(data.error || 'Could not send a code');
+        setError(data.error || translate('auth:signInSheet.phone.sendFailed'));
         return;
       }
       phoneSession.current = data.sessionInfo;
@@ -765,7 +877,7 @@ export function SignInSheet({
       setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
       setNow(Date.now());
     } catch {
-      setError('Network error');
+      setError(translate('auth:signInSheet.networkError'));
     } finally {
       setBusy(false);
     }
@@ -782,8 +894,8 @@ export function SignInSheet({
       return;
     }
     const name = (nameField.current?.value || '').replace(/\s+/g, ' ').trim();
-    if (!name) { setError('Enter your name.'); nameField.current?.focus({ preventScroll: true }); return; }
-    if (name.length > PHONE_NAME_MAX) { setError(`Your name can be up to ${PHONE_NAME_MAX} characters.`); return; }
+    if (!name) { setError(translate('auth:signInSheet.phone.nameMissing')); nameField.current?.focus({ preventScroll: true }); return; }
+    if (name.length > PHONE_NAME_MAX) { setError(translate('auth:signInSheet.phone.nameTooLong', { count: PHONE_NAME_MAX })); return; }
     phoneName.current = name;
     if (!read.ok) { setError(read.error); return; }
     void requestPhoneCode(read.e164);
@@ -792,7 +904,7 @@ export function SignInSheet({
   const verifyPhone = useCallback(async () => {
     setError(null);
     const code = (phoneCodeField.current?.value || '').trim();
-    if (!code) { setError('Enter the code from the text'); return; }
+    if (!code) { setError(translate('auth:signInSheet.phoneCode.missing')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -810,8 +922,8 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         setError(res.status === 429
-          ? data.error || 'Too many code attempts. Try again shortly.'
-          : data.error || 'Invalid or expired code.');
+          ? data.error || translate('auth:signInSheet.phoneCode.tooManyAttempts')
+          : data.error || translate('auth:signInSheet.phoneCode.rejected'));
         return;
       }
       if (data.next === 'signed-in') {
@@ -828,14 +940,19 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
+  // #4595: the password is optional. The field left empty finishes without
+  // one: the account then signs in with an email code, and can add a
+  // password in Settings. It is asked once, with no "again" field: a
+  // mistyped one is reset by email ("Forgot password?"). There is no "Skip
+  // for now" (Evan, 10 Oct 2026): beside a username that cannot be skipped
+  // it read as skipping the whole step, and "Password (optional)" with
+  // Continue already says it.
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
-    if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
+    if (handle === '') { setError(translate('auth:signInSheet.account.usernameMissing')); usernameField.current?.focus({ preventScroll: true }); return; }
     const password = passwordField.current?.value || '';
-    const confirm = confirmField.current?.value || '';
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirm) { setError('Passwords do not match'); return; }
+    if (password && password.length < 8) { setError(translate('auth:signInSheet.account.passwordTooShort')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -843,11 +960,14 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ password, passwordConfirmation: confirm, ...(handle ? { username: handle } : {}) }),
+        body: JSON.stringify({
+          ...(password ? { password } : {}),
+          ...(handle ? { username: handle } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
-        setError(data.error || 'Could not finish setting up your account');
+        setError(data.error || translate('auth:signInSheet.account.failed'));
         if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
         return;
       }
@@ -917,7 +1037,7 @@ export function SignInSheet({
   const finishProviderAccount = useCallback(async () => {
     setError(null);
     const handle = (providerUsernameField.current?.value || '').trim();
-    if (!handle) { setError('Enter a username.'); providerUsernameField.current?.focus({ preventScroll: true }); return; }
+    if (!handle) { setError(translate('auth:signInSheet.username.missing')); providerUsernameField.current?.focus({ preventScroll: true }); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -932,13 +1052,13 @@ export function SignInSheet({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
         if (data.field === 'username') {
-          setError(data.error || 'Choose another username.');
+          setError(data.error || translate('auth:signInSheet.username.refused'));
           providerUsernameField.current?.focus({ preventScroll: true });
           return;
         }
         // The continuation is gone: start over from the first step.
         setStep(firstStep);
-        setError(data.error || 'Your sign-in expired. Start again.');
+        setError(data.error || translate('auth:signInSheet.username.expired'));
         return;
       }
       await finish('new');
@@ -960,7 +1080,7 @@ export function SignInSheet({
           onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('password'); }}
           className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
         >
-          Sign in with a password
+          {t('auth:signInSheet.withPassword')}
         </a>
       </p>
       <TermsNotice />
@@ -981,16 +1101,18 @@ export function SignInSheet({
       {provider === 'apple'
         ? <AppleIcon className="h-[18px] w-[18px] -mt-0.5" aria-hidden="true" />
         : <GoogleIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
-      {`Continue with ${PROVIDER_LABEL[provider]}`}
+      {t('auth:signInSheet.continueWith', { provider: PROVIDER_LABEL[provider] })}
     </button>
   ));
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
-    : step === 'code' ? 'Check your email'
-      : step === 'phone-code' ? 'Check your texts'
-        : step === 'password' ? 'Sign in'
-          : step === 'username' ? 'Pick a username' : 'Finish your account';
+    : step === 'link' ? t('auth:signInSheet.link.title')
+    : step === 'code' ? t('auth:signInSheet.code.title')
+      : step === 'phone-code' ? t('auth:signInSheet.phoneCode.title')
+        : step === 'password' ? t('auth:signInSheet.password.title')
+          : step === 'username' ? t('auth:signInSheet.username.title')
+            : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
   // The first step says nothing under its title unless it is given a line:
   // "Make your account", "Join Sunday Run Club" and "Sign in" already say
   // it, and the field or the providers come next (#4037). With the phone
@@ -998,18 +1120,20 @@ export function SignInSheet({
   const sub = step === firstStep
     ? intro
     : step === 'choose'
-      ? 'Sign in to the account you have.'
+      ? t('auth:signInSheet.choose.lead')
       : step === 'email'
-      ? 'We\'ll email you a 6-digit code.'
+      ? t('auth:signInSheet.email.lead')
       : step === 'phone-code'
-        ? `We sent a 6-digit code to the number ending ${phoneNumber.slice(-4)}.`
+        ? t('auth:signInSheet.phoneCode.lead', { lastDigits: phoneNumber.slice(-4) })
+      : step === 'link'
+        ? ''
       : step === 'code'
-        ? `We sent a 6-digit code to ${email}. It expires in 10 minutes.`
+        ? (linkRefused ? t('auth:signInSheet.code.leadLinkUsed', { email }) : t('auth:signInSheet.code.lead', { email }))
         : step === 'password'
-          ? 'With your username or email, and your password.'
+          ? t('auth:signInSheet.password.lead')
           : step === 'username'
-            ? 'Your username is public on Homeroom. It is how people @mention you.'
-            : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+            ? t('auth:signInSheet.username.lead')
+            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : t('auth:signInSheet.account.lead'));
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades.
@@ -1051,11 +1175,11 @@ export function SignInSheet({
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
-          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
+          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
             type="button"
             onClick={close}
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
@@ -1067,10 +1191,10 @@ export function SignInSheet({
           <div className="mt-5 flex flex-col gap-2.5">
             {providerButtons}
             <button type="button" data-sign-in-provider="email" disabled={busy} className={EMAIL_BUTTON} onClick={() => { setError(null); setStep('email'); }}>
-              Continue with email
+              {t('auth:signInSheet.continueWithEmail')}
             </button>
             {phone ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
             ) : null}
             {oneLine}
           </div>
@@ -1080,17 +1204,17 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void requestCode(firstField.current?.value || ''); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-email" className={LABEL}>Email</label>
+                <label htmlFor="sign-in-sheet-email" className={LABEL}>{t('auth:signInSheet.email.label')}</label>
                 <input ref={firstField} id="sign-in-sheet-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="go" defaultValue={email} className={INPUT} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Send code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.email.sending') : t('auth:signInSheet.email.send')}</button>
             {oneLine}
             {providers.length ? (
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>Other ways to continue</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('choose'); }}>{t('auth:signInSheet.email.otherWays')}</button>
             ) : null}
             {phone ? (
-              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>New to Homeroom? Join with your phone</button>
+              <button type="button" data-sign-in-sheet-to-phone="" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.toPhone')}</button>
             ) : null}
           </form>
         ) : null}
@@ -1100,16 +1224,16 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               {askName ? (
                 <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-name" className={LABEL}>Your name</label>
+                  <label htmlFor="sign-in-sheet-name" className={LABEL}>{t('auth:signInSheet.phone.nameLabel')}</label>
                   <input ref={nameField} id="sign-in-sheet-name" type="text" autoComplete="name" enterKeyHint="next" maxLength={PHONE_NAME_MAX} defaultValue={phoneName.current} onKeyDown={returnWalks(phoneStepFields, 0)} className={INPUT} />
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-phone" className={LABEL}>Phone number</label>
+                <label htmlFor="sign-in-sheet-phone" className={LABEL}>{t('auth:signInSheet.phone.numberLabel')}</label>
                 <PhoneInput inputRef={phoneField} id="sign-in-sheet-phone" defaultValue={phoneNumber} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Sending code…' : 'Text me a code'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phone.sending') : t('auth:signInSheet.phone.send')}</button>
           </form>
         ) : null}
 
@@ -1117,16 +1241,16 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verifyPhone(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>Code</label>
-                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>{t('auth:signInSheet.phoneCode.label')}</label>
+                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">The code fills itself in on most phones.</p>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.phoneCode.autofill')}</p>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.phoneCode.checking') : t('auth:signInSheet.phoneCode.submit')}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>Use another number</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('phone'); }}>{t('auth:signInSheet.phoneCode.changeNumber')}</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestPhoneCode(phoneNumber); }}>
-                {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
+                {waitLeft > 0 ? t('auth:signInSheet.phoneCode.resendIn', { count: waitLeft }) : t('auth:signInSheet.phoneCode.resend')}
               </button>
             </div>
           </form>
@@ -1136,11 +1260,11 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishProviderAccount(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>Username</label>
-                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                <label htmlFor="sign-in-sheet-provider-username" className={LABEL}>{t('auth:signInSheet.username.label')}</label>
+                <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.providerUsernamePlaceholder')} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.username.finishing') : t('auth:signInSheet.username.submit')}</button>
           </form>
         ) : null}
 
@@ -1148,15 +1272,15 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void verify(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-code" className={LABEL}>Code</label>
-                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <label htmlFor="sign-in-sheet-code" className={LABEL}>{t('auth:signInSheet.code.label')}</label>
+                <input ref={codeField} id="sign-in-sheet-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Checking…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.code.checking') : t('auth:signInSheet.code.submit')}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>Use another email</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }}>{t('auth:signInSheet.code.changeEmail')}</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
-                {waitLeft > 0 ? `Send a new code in ${waitLeft}s` : 'Send a new code'}
+                {waitLeft > 0 ? t('auth:signInSheet.code.resendIn', { count: waitLeft }) : t('auth:signInSheet.code.resend')}
               </button>
             </div>
           </form>
@@ -1166,21 +1290,21 @@ export function SignInSheet({
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void signInWithPassword(); }}>
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-identifier" className={LABEL}>Username or email</label>
+                <label htmlFor="sign-in-sheet-identifier" className={LABEL}>{t('auth:signInSheet.password.identifierLabel')}</label>
                 <input ref={identifierField} id="sign-in-sheet-identifier" name="username" type="text" required autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(passwordStepFields, 0)} className={INPUT} {...HANDLE_FIELD} />
               </div>
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-current-password" className={LABEL}>Password</label>
+                <label htmlFor="sign-in-sheet-current-password" className={LABEL}>{t('auth:signInSheet.password.label')}</label>
                 <PasswordInput ref={currentPasswordField} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password" enterKeyHint="go" box="card" hint="dim" ring="bare" />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
             <div className="flex items-center justify-between">
               <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
-                {providers.length ? 'Other ways to continue' : 'Use an email code'}
+                {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
               </button>
               {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
-              <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}>Forgot password?</a>
+              <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}>{t('auth:signInSheet.password.forgot')}</a>
             </div>
           </form>
         ) : null}
@@ -1190,20 +1314,16 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               {needsUsername ? (
                 <div className={FIELD}>
-                  <label htmlFor="sign-in-sheet-username" className={LABEL}>Username</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={USERNAME_RULE} {...HANDLE_FIELD} />
+                  <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
+                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
-                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
-              </div>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-confirm" className={LABEL}>Password again</label>
-                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
+                <label htmlFor="sign-in-sheet-password" className={LABEL}>{t('auth:signInSheet.account.passwordLabel')}</label>
+                <PasswordInput ref={passwordField} id="sign-in-sheet-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" placeholder={t('auth:signInSheet.account.passwordPlaceholder')} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.account.finishing') : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
 
@@ -1219,7 +1339,7 @@ export function SignInSheet({
           <div data-sign-in-sheet-providers="" className="mt-4 flex flex-col gap-2.5">
             <div data-sign-in-sheet-or="" className="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
               <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
-              or
+              {t('auth:signInSheet.or')}
               <span aria-hidden="true" className="h-px flex-1 bg-[color:var(--app-sheet-line)]" />
             </div>
             {providerButtons}
@@ -1227,15 +1347,14 @@ export function SignInSheet({
         ) : null}
         {step === 'phone' ? (
           <p className="mt-4 text-center text-[13px] text-zinc-500 dark:text-zinc-400">
-            {'Already on Homeroom? '}
+            <RichMessage id="auth:signInSheet.phone.haveAccount" components={[
             <a
               href="#login"
               data-sign-in-sheet-to-email=""
               onClick={(e) => { e.preventDefault(); setError(null); setDetails(null); setStep('email'); }}
               className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-            >
-              Sign in with email
-            </a>
+            />,
+              ]} />
           </p>
         ) : null}
         {/* The first step's terms sit in its group (above); every later step keeps them here. */}

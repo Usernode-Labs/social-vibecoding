@@ -53,7 +53,7 @@ const log = require('./logger');
 const {
   UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
   MAX_TEST_EXCERPT_CHARS, MAX_UNIT_EXCERPTS, MAX_UNIT_DETAILS_BYTES,
-  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES,
+  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES, NOT_RUN_LEAD,
 } = require('./unit-suite-row');
 // The same scrubbing the check logs and the logger use: an excerpt is
 // persisted in test_results and read back by agents, so a credential a test
@@ -81,6 +81,46 @@ const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '8';
 const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '4g';
 const UNIT_SUITE_MAX_BUFFER = 32 * 1024 * 1024;
 
+// ── A suite split across Jobs ──
+//
+// On the platform's own app the unit suite is the longest part of a checks
+// run: about 190s for ~23,000 tests on 8 CPUs, 131s of it `npm test` itself,
+// and since the browser checks were split across pods (services/visuals.js
+// CAPTURE_SHARDS) every run ends when it does. So on Kubernetes a repo that
+// declares a `test:shard` script (its own test command, taking
+// TEST_SHARD=k/n) is run as UNIT_SUITE_SHARDS Jobs at once, each with the
+// same setup and 1/n of the files. Their outputs are joined into one, read
+// exactly as one Job's would be (joinUnitShardOutputs), so the row, its
+// reason, main-watch and the harvest see one suite. UNIT_SUITE_SHARDS=1
+// runs one Job, as before; a repo without `test:shard` always does.
+//
+// Each shard asks the scheduler for UNIT_SUITE_SHARD_CPU_REQUEST (it may
+// burst to UNIT_SUITE_CPUS): three shards ask for 4.5 CPUs where one Job
+// asked for 4, so the checks queue's four runs still fit the worker
+// namespace's 48-CPU quota beside their browser-check shards.
+function unitSuiteShardCount(raw = process.env.UNIT_SUITE_SHARDS) {
+  if (raw == null || String(raw).trim() === '') return 3;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : 3;
+}
+const UNIT_SUITE_SHARD_CPU_REQUEST = process.env.UNIT_SUITE_SHARD_CPU_REQUEST || '1500m';
+// A shard's memory limit. A whole-suite pod peaked at 1.1-1.9 GiB on 10 Oct
+// 2026 (Postgres and seven test processes), and a shard runs the same seven
+// at once. Three shards at 3g beside three 6g browser shards keep the queue's
+// four runs and main-watch inside the worker namespace's 128Gi of limits,
+// where 4g each would not.
+const UNIT_SUITE_SHARD_MEMORY = process.env.UNIT_SUITE_SHARD_MEMORY || '3g';
+
+// Does this package.json declare the command a shard runs?
+function hasShardScript(rawPkg) {
+  try {
+    const script = JSON.parse(String(rawPkg || '{}'))?.scripts?.['test:shard'];
+    return typeof script === 'string' && script.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // FAILURE_DETAIL_MAX (services/unit-suite-row.js) bounds the whole reason.
 const MAX_TAIL_LINES = 8;
 // One test's name, inside the reason. Long enough for this repo's
@@ -100,6 +140,20 @@ const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
 // strips this prefix so the reason names `tests/foo.test.js`, the path a fix
 // turn can hand straight back to `node --test`.
 const ROOT_SENTINEL = '__UNIT_SUITE_ROOT__';
+// Printed as `<sentinel>=<count>` after a red `npm test`, followed by every
+// failing top-level test's `not ok` line and its YAML block again, read back
+// from a copy of the run's own output. A long run's log can come back
+// without its start: on 9 October 2026 a red main counted its failures and
+// named none, because every `not ok` line had scrolled out of the log the
+// cluster kept. The recap puts them where the log always ends. `count` is
+// how many failing tests the run printed in all, so a reader knows whether
+// the names it holds are all of them (failuresNamedInFull).
+const RECAP_SENTINEL = '__UNIT_SUITE_RECAP__';
+// The recap's bounds: this many failing tests, each with this many lines of
+// its block. node:test prints `location:` third, so a clipped block still
+// says which file the test is in.
+const RECAP_MAX_TESTS = 50;
+const RECAP_MAX_BLOCK_LINES = 60;
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -150,14 +204,22 @@ const TAP_STRUCTURE = /^\s*(?:not ok\b|ok\b|\.\.\.|#\s|1\.\.\d+)/;
 // The block's own lines and the stdout just before the `not ok` ride along
 // (`blockLines`, `before`) for the per-test excerpts (#3978); the grouped
 // reason below reads only name and file, so its shape never moves.
+//
+// The recap (RECAP_SENTINEL) repeats failures the output may already hold.
+// A test it names that was seen before it is the same failure and is not
+// counted twice; one it alone names is a failure whose line the log lost,
+// and it carries no stdout of its own (the recap prints none).
 function failingTestsWithExcerpts(lines) {
   const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
   const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
+  const recapAt = recapIndex(lines);
+  const seen = new Map();
   const out = [];
   for (let i = 0; i < lines.length; i += 1) {
     const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
     if (!m) continue;
     if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
+    const inRecap = recapAt !== -1 && i > recapAt;
     let file = null;
     const blockLines = [];
     if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
@@ -173,16 +235,55 @@ function failingTestsWithExcerpts(lines) {
     // skipped, TAP structure and the container script's markers end the
     // walk — they are the runner's, not the test's.
     const before = [];
-    for (let j = i - 1; j >= 0 && before.length < MAX_EXCERPT_PRECEDING_LINES; j -= 1) {
+    for (let j = i - 1; !inRecap && j >= 0 && before.length < MAX_EXCERPT_PRECEDING_LINES; j -= 1) {
       const l = lines[j];
       if (!l.trim()) continue;
       if (/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l.trim())) break;
       if (TAP_STRUCTURE.test(l)) break;
       before.unshift(l.trim());
     }
-    out.push({ name: m[1].trim() || '(unnamed test)', file, blockLines, before });
+    const name = m[1].trim() || '(unnamed test)';
+    const key = `${file || ''}\u0000${name}`;
+    if (inRecap && seen.get(key) > 0) {
+      seen.set(key, seen.get(key) - 1);
+      continue;
+    }
+    if (!inRecap) seen.set(key, (seen.get(key) || 0) + 1);
+    out.push({ name, file, blockLines, before });
   }
   return out;
+}
+
+// The line the recap opens with, or -1 when the output has none (a green
+// run, or an older script).
+function recapIndex(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].startsWith(`${RECAP_SENTINEL}=`)) return i;
+  }
+  return -1;
+}
+
+// How many failing tests the run printed, by the recap's count; null when
+// the output carries no recap.
+function recapCount(lines) {
+  const at = recapIndex(lines);
+  if (at === -1) return null;
+  const n = parseInt(lines[at].slice(RECAP_SENTINEL.length + 1), 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+// Do the names parsed from this output cover EVERY failing test? main-watch
+// lets a red pass without pausing merges only when each failing test is a
+// known flake, and a list missing one could be missing the real failure.
+// Yes when the recap counted no more failures than it could print and all
+// of them were read; without a recap (an older script), only when the log
+// kept both its start (the workspace line) and its end (the summary).
+function failuresNamedInFull(lines, failures) {
+  const count = recapCount(lines);
+  if (count !== null) return count > 0 && count <= RECAP_MAX_TESTS && failures.length >= count;
+  return failures.length > 0
+    && lines.some((l) => l.startsWith(`${ROOT_SENTINEL}=`))
+    && summaryCounter(lines, 'fail') !== null;
 }
 
 function failingTests(lines) {
@@ -384,9 +485,38 @@ function failureDetailFromLines(lines, { timedOut = false } = {}) {
     const tail = lines.map((l) => l.trim())
       .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l))
       .slice(-MAX_TAIL_LINES);
+    const headline = buildErrorLine(lines);
+    if (headline && !tail.some((l) => l.includes(headline))) parts.push(headline);
     parts.push(...tail);
   }
   return parts.join(' | ').slice(0, FAILURE_DETAIL_MAX);
+}
+
+// The line that says what broke, when no test did. On 8 October 2026 two
+// proposals that each added the same icon export merged one after the
+// other, and the next `npm test` stopped in its pretest build at
+// `icons.tsx:…: ERROR: Multiple exports with the same name …`. The reason
+// kept only the last lines of output, a stack and npm's own complaint, so
+// the board named no culprit and an admin resumed merges into a main that
+// could not build. The first line of the most telling kind leads instead:
+// a bundler's ERROR, then a TypeScript error, then a thrown Error. npm's
+// lines and stack frames are never it.
+const BUILD_ERROR_PATTERNS = [
+  /\[ERROR\]\s+\S|(?:^|:\s*)ERROR:\s+\S/,
+  /\berror TS\d+:/,
+  /^(?:[A-Z][A-Za-z]*)?Error(?:\s*\[[A-Z0-9_]+\])?:\s+\S/,
+];
+const BUILD_ERROR_LINE_MAX = 300;
+function buildErrorLine(lines) {
+  const candidates = lines.map((l) => l.trim()).filter((l) => l
+    && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l)
+    && !/^npm (?:ERR!|error|warn)\b/i.test(l)
+    && !/^at\s/.test(l));
+  for (const re of BUILD_ERROR_PATTERNS) {
+    const hit = candidates.find((l) => re.test(l));
+    if (hit) return plainText(hit, BUILD_ERROR_LINE_MAX) || null;
+  }
+  return null;
 }
 
 function failureDetail(stdout, stderr, { timedOut = false } = {}) {
@@ -397,12 +527,21 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
 // One parse pass over a failed run's output yields both readers' answers:
 // the grouped reason (byte-for-byte what failureDetail always returned) and
 // the per-test excerpts beside it (#3978).
+//
+// `named` is the failing tests themselves, for main-watch: up to
+// MAX_NAMED_FAILURES `{ file, test }` and whether they are all of them.
+const MAX_NAMED_FAILURES = 50;
 function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
   const out = `${String(stdout || '')}\n${String(stderr || '')}`;
   const lines = out.split('\n');
+  const failures = failingTests(lines);
   return {
     reason: failureDetailFromLines(lines, { timedOut }),
     ...unitFailureDetails(lines),
+    named: {
+      tests: failures.slice(0, MAX_NAMED_FAILURES).map((f) => ({ file: f.file, test: clipName(f.name) })),
+      complete: !timedOut && failures.length <= MAX_NAMED_FAILURES && failuresNamedInFull(lines, failures),
+    },
   };
 }
 
@@ -439,11 +578,8 @@ function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
 // Output this cannot place, such as a log that lost its start and holds no
 // test line, keeps the failing verdict it had before.
 
-const NOT_RUN_LEAD = Object.freeze({
-  start: 'The unit suite could not start',
-  run: 'The unit suite could not run',
-  setup: 'The unit suite stopped before any test ran',
-});
+// NOT_RUN_LEAD (services/unit-suite-row.js) opens each sentence: the
+// error lane reads it to tell the platform's faults from the rest.
 // The card caps check_error_detail at 280 characters, and so does this.
 const NOT_RUN_DETAIL_MAX = 280;
 const NOT_RUN_RAW_MAX = 400;
@@ -749,10 +885,119 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   pg_ctl -D /home/node/pgdata -w -o "-c max_locks_per_transaction=1024 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -l /tmp/unit-suite-postgres.log start >/dev/null
   trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
-  npm run lint:sql
+  # A suite split across Jobs (TEST_SHARD=k/n) validates the SQL once, in
+  # its first shard; every shard keeps the server for its own tests.
+  if [ -z "\${TEST_SHARD:-}" ] || [ "\${TEST_SHARD%%/*}" = "1" ]; then
+    npm run lint:sql
+  fi
 fi
-npm test
+# One shard of a split suite runs the repo's own \`test:shard\` script, after
+# the pretest \`npm test\` would have run. A repo without one runs its whole
+# suite in every Job it is given, which is still correct.
+TEST_CMD="npm test"
+if [ -n "\${TEST_SHARD:-}" ] && node -e "process.exit(require('./package.json').scripts?.['test:shard']?0:1)"; then
+  npm run pretest --if-present
+  TEST_CMD="npm run test:shard"
+fi
+# A copy of the run's own output, so a red run can print its failures again
+# at the end (${RECAP_SENTINEL}): the log the cluster keeps of a long run
+# can lose its start. The exit code stays npm test's.
+TEST_LOG="$WS/.unit-suite-test.log"
+set +e
+$TEST_CMD | tee "$TEST_LOG"
+TEST_STATUS=\${PIPESTATUS[0]}
+set -e
+if [ "$TEST_STATUS" -ne 0 ]; then
+  echo "${ROOT_SENTINEL}=$(pwd -P)"
+  awk -v max=${RECAP_MAX_TESTS} -v block=${RECAP_MAX_BLOCK_LINES} '
+    /^not ok / {
+      inblk = 0
+      if (toupper($0) ~ /[ \\t]#[ \\t]*(SKIP|TODO)/) next
+      n++; keep = (n <= max); inblk = 1; blk = 0
+      if (keep) out[++k] = $0
+      next
+    }
+    inblk && /^[ \\t]/ { if (keep && blk < block) { out[++k] = $0; blk++ } next }
+    { inblk = 0 }
+    END { print "${RECAP_SENTINEL}=" n + 0; for (i = 1; i <= k; i++) print out[i] }
+  ' "$TEST_LOG" || true
+fi
+exit "$TEST_STATUS"
 `;
+
+// The TAP summary counters a run ends with. `duration_ms` is the longest
+// shard's, the rest add up.
+const SUMMARY_LINE = /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) (\d+(?:\.\d+)?)\s*$/;
+
+/**
+ * Join the outputs of one suite's shards into the output one Job would have
+ * printed: each shard's lines with its workspace path rewritten to the
+ * first shard's (so a test's file reads the same whichever shard ran it),
+ * one summary block that adds the shards' counters up, and, when any shard
+ * failed, one recap of every shard's failures with their total count.
+ * `parts` are `{ stdout, stderr }`, in shard order.
+ */
+function joinUnitShardOutputs(parts) {
+  let root = null;
+  const bodies = [];
+  const recapEntries = [];
+  let recapTotal = 0;
+  let anyRecap = false;
+  const totals = new Map();
+  for (const part of parts || []) {
+    let lines = String((part && part.stdout) || '').split('\n');
+    const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
+    const shardRoot = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
+    if (root === null && shardRoot) root = shardRoot;
+    if (shardRoot && root && shardRoot !== root) {
+      lines = lines.map((l) => (l.startsWith(`${ROOT_SENTINEL}=`) ? `${ROOT_SENTINEL}=${root}` : l.split(`${shardRoot}/`).join(`${root}/`)));
+    }
+    const at = recapIndex(lines);
+    const count = recapCount(lines);
+    if (at !== -1) {
+      anyRecap = true;
+      recapTotal += count || 0;
+      recapEntries.push(...lines.slice(at + 1).filter((l) => l !== ''));
+    }
+    for (const l of at === -1 ? lines : lines.slice(0, at)) {
+      const m = SUMMARY_LINE.exec(l);
+      if (!m) { bodies.push(l); continue; }
+      const value = Number(m[2]);
+      const prev = totals.get(m[1]);
+      totals.set(m[1], m[1] === 'duration_ms' ? Math.max(prev || 0, value) : (prev || 0) + value);
+    }
+  }
+  const out = bodies.filter((l, i, all) => l !== '' || (i > 0 && all[i - 1] !== ''));
+  for (const key of ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo', 'duration_ms']) {
+    if (totals.has(key)) out.push(`# ${key} ${totals.get(key)}`);
+  }
+  if (anyRecap) {
+    if (root) out.push(`${ROOT_SENTINEL}=${root}`);
+    out.push(`${RECAP_SENTINEL}=${recapTotal}`, ...recapEntries);
+  }
+  return {
+    stdout: out.join('\n'),
+    stderr: (parts || []).map((p) => String((p && p.stderr) || '')).filter(Boolean).join('\n'),
+  };
+}
+
+// One progress snapshot for a suite's shards, each read by its own tracker:
+// counts add up, the phase is the furthest-behind shard's, and it is done
+// when every shard is.
+const PHASE_ORDER = ['cloning', 'installing', 'running', 'done'];
+function combineUnitSnapshots(snaps, expected = null) {
+  const list = (snaps || []).filter(Boolean);
+  const phase = list.reduce((p, s) => (PHASE_ORDER.indexOf(s.phase) < PHASE_ORDER.indexOf(p) ? s.phase : p), 'done');
+  const sum = (key) => list.reduce((n, s) => n + (Number(s[key]) || 0), 0);
+  return {
+    phase,
+    ran: sum('ran'), passed: sum('passed'), failed: sum('failed'), skipped: sum('skipped'),
+    expected: Number.isInteger(expected) && expected > 0 ? expected : null,
+    done: phase === 'done',
+    shards: list.length,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 // Live progress of a run, read off the container's stdout as it streams
 // (docker.runOneShot's onStdoutLine). node:test, tap and most TAP-emitting
@@ -760,15 +1005,27 @@ npm test
 // and a `# tests / # pass / # fail / # skipped / # cancelled` block at the
 // end; jest prints neither, and then the phase is all this can say. The
 // running counts are an approximation on purpose — a parent test's own
-// `not ok` repeats a child's failure, and a describe() suite gets an `ok`
-// of its own — so the summary block, when it arrives, REPLACES them. None
-// of it touches the verdict, which stays the exit code.
+// `not ok` repeats a child's failure — so the summary block, when it
+// arrives, REPLACES them. A describe() suite also gets an `ok` of its own
+// with `type: 'suite'` in the YAML block right under it; `# tests` leaves
+// suites out, so the tracker takes that one line back off the running count
+// (node:test's `t.test` parents say `type: 'test'` and stay counted), which
+// makes the running count the same population as `# tests`. Until the
+// summary arrives, `expected` is the stored last-run figure as a FLOOR: a
+// run with more tests than the last one grows it to `ran`, so the row never
+// reads more than 100% done. None of it touches the verdict, which stays
+// the exit code.
 function makeUnitSuiteTracker(expected = null) {
   let phase = 'cloning';
   let passed = 0;
   let failed = 0;
   let skipped = 0;
   let summary = null;
+  let recap = false;
+  // Which counter the most recent result line bumped ('pass' | 'fail' |
+  // 'skip'), for the suite line that owns it to take back; the YAML block
+  // comes straight after its own result line.
+  let lastCounter = null;
   const total = Number.isInteger(expected) && expected > 0 ? expected : null;
   return {
     // Returns true when the line changed the state.
@@ -776,12 +1033,24 @@ function makeUnitSuiteTracker(expected = null) {
       const l = String(line || '');
       if (l === CLONED_SENTINEL) { phase = 'installing'; return true; }
       if (l === SETUP_DONE_SENTINEL) { phase = 'running'; return true; }
+      // The recap repeats failures already counted.
+      if (l.startsWith(`${RECAP_SENTINEL}=`)) { recap = true; return false; }
+      if (recap) return false;
+      // A describe() suite's YAML block says `type: 'suite'`: take its own
+      // result line back off the count, so suites are not counted as tests.
+      if (/^\s*type:\s*'suite'\s*$/.test(l) && lastCounter) {
+        if (lastCounter === 'pass') passed -= 1;
+        else if (lastCounter === 'fail') failed -= 1;
+        else skipped -= 1;
+        lastCounter = null;
+        return true;
+      }
       const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
       if (m) {
         if (phase !== 'running') phase = 'running';
-        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) skipped += 1;
-        else if (m[1] === 'ok') passed += 1;
-        else failed += 1;
+        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) { skipped += 1; lastCounter = 'skip'; }
+        else if (m[1] === 'ok') { passed += 1; lastCounter = 'pass'; }
+        else { failed += 1; lastCounter = 'fail'; }
         return true;
       }
       const sm = /^# (tests|pass|fail|skipped|cancelled|todo) (\d+)\s*$/.exec(l);
@@ -815,7 +1084,10 @@ function makeUnitSuiteTracker(expected = null) {
       return {
         phase,
         ran, passed: p, failed: f, skipped: k,
-        expected: s && Number.isInteger(s.tests) ? s.tests : total,
+        // Before the summary, the stored estimate is a floor: a run with
+        // more tests than the last one grows the total with the count,
+        // so the bar never reads past 100%.
+        expected: s && Number.isInteger(s.tests) ? s.tests : (total == null ? null : Math.max(total, ran)),
         done: phase === 'done',
         ...(phase === 'done' ? { exitOk: !!this.exitOk } : {}),
         ...(phase === 'done' && this.notRun ? { notRun: true } : {}),
@@ -886,7 +1158,10 @@ function readFailure({
 // stdout line changes it, and once more with phase 'done' when the run
 // ends; the caller owns any throttling. Normal failures become check rows;
 // explicit cancellation propagates to the preview lifecycle owner.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
+//
+// `jobNamePrefix` names the Job outside a preview run's own check Jobs: an
+// early unit suite started with the preview build (services/early-unit-suite.js).
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -938,6 +1213,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const options = {
       onStdoutLine: observe,
       signal, previewRunId,
+      ...(jobNamePrefix ? { namePrefix: jobNamePrefix } : {}),
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
@@ -953,9 +1229,14 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
       timeoutMs: UNIT_SUITE_TIMEOUT_MS,
       maxBuffer: UNIT_SUITE_MAX_BUFFER,
     };
-    const result = runtime === 'kubernetes'
-      ? await kubernetes.runUnitSuiteJob(config, { sessionId, ...options })
-      : await docker.runOneShot(`usernode-unit-suite-${sessionId}`, options);
+    const shards = runtime === 'kubernetes' && hasShardScript(rawPkg) ? unitSuiteShardCount() : 1;
+    const result = shards > 1
+      ? await runUnitSuiteShards(config, {
+        sessionId, options, shards, tracker, expected: tracker.snapshot().expected, report, signal,
+      })
+      : runtime === 'kubernetes'
+        ? await kubernetes.runUnitSuiteJob(config, { sessionId, ...options })
+        : await docker.runOneShot(`usernode-unit-suite-${sessionId}`, options);
     readSummary(result?.stdout);
     passed = true;
   } catch (err) {
@@ -964,7 +1245,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     ({ reason, unitDetails, notRun, setupFailed } = readFailure({
       sessionId, stdout: err.stdout, stderr: err.stderr, error: err, timedOut, runtime,
-      reachedTests: tracker.reachedTests(),
+      reachedTests: err.shardNotRun ? false : tracker.reachedTests(),
       fallback: String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX),
     }));
   }
@@ -979,6 +1260,55 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
   });
 
   return shapeOutcome({ passed, reason, graduated, summary, unitDetails, notRun, setupFailed });
+}
+
+// The suite as `shards` Jobs at once (see UNIT_SUITE_SHARDS above), each
+// with TEST_SHARD=k/n. Resolves `{ stdout, stderr }` joined as one Job's
+// would be when every shard passed; otherwise throws as one failed Job
+// would, carrying the joined output: a shard that could not run makes the
+// whole suite one that could not run, and a shard that failed makes it a
+// failed suite. Progress is each shard's tracker, combined. The run's own
+// `tracker` hears the joined output, so its final snapshot is the suite's.
+async function runUnitSuiteShards(config, {
+  sessionId, options, shards, tracker, expected = null, report = () => {}, signal = null,
+  runJob = (opts) => kubernetes.runUnitSuiteJob(config, opts),
+}) {
+  const trackers = Array.from({ length: shards }, () => makeUnitSuiteTracker(null));
+  const publish = () => report(combineUnitSnapshots(trackers.map((t) => t.snapshot()), expected));
+  const settled = await Promise.allSettled(trackers.map((shardTracker, i) => runJob({
+    sessionId, ...options,
+    onStdoutLine: (line) => {
+      if (shardTracker.feed(line)) publish();
+      // Setup and test lines reach the run's tracker too, so it can say the
+      // suite reached its tests; the summary is fed from the joined output.
+      if (!/^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) tracker.feed(line);
+    },
+    env: { ...options.env, TEST_SHARD: `${i + 1}/${shards}` },
+    nameSuffix: i === 0 ? null : `u${i + 1}`, unitShard: `${i + 1}-of-${shards}`,
+    cpuRequest: UNIT_SUITE_SHARD_CPU_REQUEST, memory: UNIT_SUITE_SHARD_MEMORY,
+  })));
+  if (signal?.aborted) throw signal.reason;
+  const parts = settled.map((r) => (r.status === 'fulfilled' ? (r.value || {}) : (r.reason || {})));
+  const failed = settled.filter((r) => r.status === 'rejected').map((r) => r.reason || new Error('unit-suite shard failed'));
+  if (!failed.length) return joinUnitShardOutputs(parts);
+  // A shard that never reached its tests (its Job refused, its setup gone):
+  // the suite did not run, whatever the others say.
+  for (const err of failed) {
+    const setup = notRunOutcome({
+      stdout: err.stdout, stderr: err.stderr, error: err,
+      timedOut: err.killed === true, runtime: 'kubernetes', reachedTests: false, exitCode: err.code,
+    });
+    // The other shards' lines reached the run's tracker, so say outright
+    // that this suite did not get going.
+    if (setup) throw Object.assign(err, { shardNotRun: true });
+  }
+  const joined = joinUnitShardOutputs(parts);
+  const first = failed[0];
+  const err = Object.assign(new Error(first.message || 'npm test failed'), {
+    stdout: joined.stdout, stderr: joined.stderr, code: first.code,
+    killed: failed.some((e) => e.killed === true), signal: first.signal,
+  });
+  throw err;
 }
 
 // Did a proposal's stored checks (chat_sessions.test_results) include a
@@ -1040,6 +1370,10 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null, 
     },
     history: neverRan ? null : { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
     ...(neverRan ? { notRun: notRun.detail } : {}),
+    // The failing tests by name, beside the row rather than in it: only
+    // main-watch reads them (its known-flake rule), and the row is what
+    // every proposal's checks store.
+    ...(!passed && !neverRan && unitDetails && unitDetails.named ? { failingTests: unitDetails.named } : {}),
   };
 }
 
@@ -1103,5 +1437,13 @@ module.exports = {
   SETUP_DONE_SENTINEL,
   CLONED_SENTINEL,
   ROOT_SENTINEL,
+  joinUnitShardOutputs,
+  combineUnitSnapshots,
+  runUnitSuiteShards,
+  unitSuiteShardCount,
+  hasShardScript,
+  RECAP_SENTINEL,
+  RECAP_MAX_TESTS,
   FAILURE_DETAIL_MAX,
+  RUN_SCRIPT,
 };

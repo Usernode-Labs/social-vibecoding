@@ -1,3 +1,7 @@
+// Import-free on purpose (a test loads this file on its own), so the three
+// sentences a person can be shown come from the `PlatformI18n` global.
+const message = (id) => globalThis.PlatformI18n.t(id);
+
 // A system-browser trip must retain the app account as an expectation, never
 // move its session cookie or OAuth state into the browser's independent realm.
 export async function openNativeSocialConnect({
@@ -6,10 +10,10 @@ export async function openNativeSocialConnect({
   if (!['github', 'x'].includes(provider)
       || !['connect', 'refresh', 'replace'].includes(intent)
       || !Number.isSafeInteger(accountId) || accountId <= 0) {
-    throw new Error('Your account could not be identified. Reopen Settings and try again.');
+    throw new Error(message('settings:linkedAccounts.native.accountUnknown'));
   }
   if (typeof bridge?.openExternal !== 'function') {
-    throw new Error('Update the Homeroom app to open account connections in your browser.');
+    throw new Error(message('settings:linkedAccounts.native.updateApp'));
   }
   const url = new URL(`/api/me/social-identities/${provider}/connect`, origin);
   url.searchParams.set('account', String(accountId));
@@ -18,7 +22,7 @@ export async function openNativeSocialConnect({
     const opened = await bridge.openExternal(url.href);
     if (opened !== true) throw new Error('browser_not_opened');
   } catch {
-    throw new Error('Could not open your browser. Tap Connect to try again.');
+    throw new Error(message('settings:linkedAccounts.native.browserNotOpened'));
   }
 }
 

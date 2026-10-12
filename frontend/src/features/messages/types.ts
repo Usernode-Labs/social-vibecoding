@@ -12,6 +12,8 @@ export type MemberRole = 'owner' | 'member';
 export interface ConversationUser {
   id: number;
   username: string;
+  /** `username` is the stand-in for a person whose username did not come with the row. */
+  unnamed?: boolean;
   avatarUrl?: string | null;
   /** A platform account (the Homeroom bot), not a person (#3624). */
   bot?: boolean;
@@ -204,6 +206,8 @@ export interface HomeroomBotJob {
   key: string;
   appSlug: string | null;
   appName: string;
+  /** `appName` is the stand-in for a project with neither a name nor a slug. */
+  appUnnamed?: boolean;
   /** #4201: the app's own icon, `/app-icons/<id>`, else null. */
   iconUrl: string | null;
   /** #4201: the app's emoji icon, for an app with no image; else null. */
@@ -465,6 +469,8 @@ export interface ConversationSummary {
   id: number;
   kind: ConversationKind;
   title: string;
+  /** `title` is the stand-in for a conversation nobody named and whose other member is not known. */
+  untitled?: boolean;
   avatarUrl?: string | null;
   members: ConversationMember[];
   memberCount: number;

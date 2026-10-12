@@ -15,6 +15,7 @@
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { appPermissionsStore } from './app-permissions-store.js';
 
@@ -35,6 +36,7 @@ function controller(): any {
 const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 function CapabilityRow({ app, item }: { app: PermissionAppView; item: PermissionItem }) {
+  const t = useMessages('settings');
   return (
     <div className="flex items-center gap-2 py-1">
       <span
@@ -57,7 +59,7 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
           size="xs"
           onClick={() => { void controller()?._onPermissionReenable?.(app.appId, app.appSlug, item.capability); }}
         >
-          Re-enable
+          {t('settings:appPermissions.reEnable')}
         </Button>
       ) : (
         /*
@@ -72,7 +74,7 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onPermissionRevoke?.(app.appId, item.capability); }}
         >
-          Revoke
+          {t('settings:appPermissions.revoke')}
         </button>
       )}
     </div>
@@ -80,18 +82,19 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
 }
 
 export function AppPermissionsList() {
+  const t = useMessages('settings');
   const state = useStoreState<AppPermissionsState>(appPermissionsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   }
   if (state.phase === 'error') {
-    return <p className="text-xs text-red-700 dark:text-red-400">Could not load app permissions.</p>;
+    return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:appPermissions.loadFailed')}</p>;
   }
   if (!state.apps.length) {
     return (
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        No app has asked for your camera, microphone, location or devices yet.
+        {t('settings:appPermissions.empty')}
       </p>
     );
   }

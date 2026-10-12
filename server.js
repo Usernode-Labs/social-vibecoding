@@ -78,6 +78,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { sinceSummaryRoutes } = require('./src/routes/since-summary');
+const { topicFiguresRoutes } = require('./src/routes/topic-figures');
 const { workshopOverviewRoutes, demoNeedsVoteRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
@@ -384,6 +385,11 @@ app.get('/api/version', async (_req, res) => {
     selfAppSlug: config.selfAppSlug,
   });
 });
+
+// The languages the shell is offered in, and their packs, from the
+// translation cache (src/routes/languages.js). Before authMiddleware: the
+// sign-in screens are translated too.
+app.use(require('./src/routes/languages').languageRoutes(config));
 
 // Public conventions endpoint. Apps' own CLAUDE.md files point here so
 // a developer (or Claude Code) running locally against a repo can
@@ -710,6 +716,8 @@ app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
 // The hub's since-your-last-visit line (services/since-summary.js).
 app.use(sinceSummaryRoutes(config));
+// The figures a topic's channel shows above its room (services/topic-figures.js).
+app.use(topicFiguresRoutes(config));
 // The top-level Workshop screen's per-app counts (#workshop): one query for
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
@@ -1295,6 +1303,11 @@ async function becomeLeader() {
   // copy of the broken fixture until it is. Every five minutes, at most
   // four syncs a pass. See services/fixed-check-sync.js.
   require('./src/services/fixed-check-sync').start(config, getPool(config));
+  // Interface text merged in English and not yet in Homeroom's other
+  // languages is translated and put to the community as one proposal. Every
+  // three hours; a whole language goes as a Message Batch. See
+  // services/language-sync-runner.js.
+  require('./src/services/language-sync-runner').start(config, getPool(config));
 
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
@@ -1572,7 +1585,9 @@ async function becomeLeader() {
     // proposal checks so PRs left permanently "still running its tests" by a
     // restart mid-capture self-heal on boot. Off the critical path; the
     // re-checked PRs become merge-eligible and the next vote (or the eligible-
-    // merge reconcile on a later boot) merges them.
+    // merge reconcile on a later boot) merges them. Platform faults are made
+    // due first, so it re-runs them too.
+    .then(() => rearmPlatformFaultsAtBoot(config))
     .then(() => reconcileStuckChecks(config))
     // The whole-tree check under direct merges (services/main-watch.js) is
     // fire-and-forget from the process that merged — which, for the
@@ -1713,6 +1728,8 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
+    // The merges into Homeroom this build carries are live now that it serves.
+    require('./src/services/platform-release').recordRunning(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
@@ -1906,9 +1923,29 @@ async function auditExistingRepoPrivacy(pool) {
 // We ask GitHub the truth rather than guessing. Bounded concurrency keeps
 // the boot scan cheap; genuinely-open PRs simply report merged=false and
 // are left untouched (only 'merging' rows are demoted to 'promoted').
-async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
+//
+// Every lookup spends GitHub's hourly budget, and on 9 Oct 2026 this sweep
+// was one of the callers refused when the bot token ran out (21 refusals in
+// a minute). So:
+//   - It is background work: it asks services/github-budget.js before each
+//     lookup and stops for the hour once the reserve is reached.
+//   - A refusal for the hourly limit ends the sweep: every remaining lookup
+//     would be refused too, and still counted.
+//   - The timer sweep (attemptedOnly) revisits a demoted attempt every time
+//     for its first hour, while GitHub may still report a merge the platform
+//     lost, and once an hour after that. A merge attempt is never cleared,
+//     so every open proposal that ever tried to merge used to cost one
+//     lookup per sweep, every four minutes, for as long as it stayed open.
+//     A row still 'merging' is looked up every time.
+const RECENT_MERGE_ATTEMPT_MS = 60 * 60 * 1000;
+const OLD_MERGE_ATTEMPT_RECHECK_MS = 60 * 60 * 1000;
+// sessionId -> when the timer sweep last looked up its old attempt.
+const oldMergeAttemptLookedUpAt = new Map();
+
+async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.now } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
+  const githubBudget = require('./src/services/github-budget');
   const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
 
@@ -1938,16 +1975,40 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
     return;
   }
 
-  log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length });
+  // An old attempt the timer looked up within the hour waits its turn.
+  let deferred = 0;
+  if (attemptedOnly) {
+    const listed = new Set(rows.map((row) => row.id));
+    for (const id of oldMergeAttemptLookedUpAt.keys()) {
+      if (!listed.has(id)) oldMergeAttemptLookedUpAt.delete(id);
+    }
+    rows = rows.filter((row) => {
+      if (row.status === 'merging' || !row.merge_attempt_at) return true;
+      if (now() - new Date(row.merge_attempt_at).getTime() < RECENT_MERGE_ATTEMPT_MS) return true;
+      const last = oldMergeAttemptLookedUpAt.get(row.id);
+      if (last && now() - last < OLD_MERGE_ATTEMPT_RECHECK_MS) { deferred++; return false; }
+      return true;
+    });
+    if (!rows.length) return;
+  }
+
+  log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length, deferred });
 
   const CONCURRENCY = 4;
   const queue = rows.slice();
   let healed = 0;
   let demoted = 0;
   let errors = 0;
+  let held = 0;
+  let stoppedForLimit = false;
 
   async function worker() {
     while (queue.length) {
+      if (!githubBudget.budgetAllows('background')) {
+        held += queue.length;
+        queue.length = 0;
+        break;
+      }
       const row = queue.shift();
       const release = await mergeLock.acquire(pool, row.id, { tryOnly: true });
       if (!release) continue; // A live process still owns this merge.
@@ -1963,6 +2024,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
         const [, owner, repo] = m;
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
+          if (attemptedOnly) oldMergeAttemptLookedUpAt.set(row.id, now());
           const workflow = require('./src/workflow/platform.ts');
           if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
             // The merge-followups machine records the merge and runs every
@@ -2006,10 +2068,24 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
           // Not merged + 'promoted' == genuinely open proposal: leave alone.
         } catch (err) {
           errors++;
-          log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
-            sessionId: row.id, prNumber: row.pr_number,
-            repo: `${owner}/${repo}`, err: err.message,
-          });
+          if (githubBudget.isRateLimitError(err)) {
+            // The hour is used up: the rest of the queue would be refused
+            // too. The next sweep after the reset picks them up.
+            if (!stoppedForLimit) {
+              stoppedForLimit = true;
+              log.warn('server', 'recoverStuckMerges: GitHub\'s hourly limit is used up; stopping until the next sweep', {
+                sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`,
+                left: queue.length,
+              });
+            }
+            held += queue.length;
+            queue.length = 0;
+          } else {
+            log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
+              sessionId: row.id, prNumber: row.pr_number,
+              repo: `${owner}/${repo}`, err: err.message,
+            });
+          }
           // A failed lookup is not proof the merge failed. The next timer
           // sweep retries without changing this session's status.
         }
@@ -2026,6 +2102,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
   }
   log.info('server', 'PR session reconciliation complete', {
     scanned: rows.length, healed, demoted, errors,
+    ...(held ? { heldForGithubBudget: held } : {}),
   });
 }
 
@@ -2160,6 +2237,23 @@ async function checkRunLeftToHarvest(config, pool, session, reason) {
     });
   }
   return !!run;
+}
+
+// A proposal whose checks errored on the platform's own fault (its unit
+// suite's Job refused or lost: chat_sessions.check_error_platform) waits for
+// its scheduled retry, up to 30 minutes, like any error. A boot is when the
+// fix most often arrives, so it makes them due now and the reconcile that
+// follows re-runs them (services/staging-recovery.js rearmPlatformFaults).
+async function rearmPlatformFaultsAtBoot(config) {
+  const { getPool } = require('./src/db/pool');
+  try {
+    const ids = await stagingRecovery.rearmPlatformFaults(getPool(config));
+    if (ids.length) {
+      log.info('server', 'Platform faults made due at boot', { count: ids.length, sessionIds: ids.slice(0, 20) });
+    }
+  } catch (err) {
+    log.warn('server', 'Could not make platform faults due at boot', { err: err.message });
+  }
 }
 
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
@@ -2396,8 +2490,13 @@ async function recoverSessions(config) {
        AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
   );
 
+  let backedOff = 0;
   for (const session of rows) {
     try {
+      // A preview that keeps failing waits out its retry, as the live heal
+      // does: a boot is not a reason to try it again
+      // (stagingRecovery.previewRetryPending).
+      if (stagingRecovery.previewRetryPending(session)) { backedOff += 1; continue; }
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       // Boot is when the old leader's runs are being harvested. A rebuild
       // would replace the preview under one and abort its harvest, so a
@@ -2409,6 +2508,9 @@ async function recoverSessions(config) {
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
     }
+  }
+  if (backedOff) {
+    log.info('server', 'Left failing previews to their retry backoff at boot', { count: backedOff });
   }
 }
 
@@ -4654,11 +4756,18 @@ async function resumeDetachedTurnInner({
   // noteTailMilestone throws invalid_turn_transition, the tail aborts with
   // the turn retained, and the retained-recovery timer replays the whole
   // tail every minute forever (session 3180: 13+ identical resume attempts,
-  // each re-running the finalize narration). Only the mid-exec case needs
-  // the stamp — an interrupted TAIL is already 'tail_pending' and re-stamping
+  // each re-running the finalize narration). A record still in
+  // 'dispatch_pending' needs it too, for the same reason: its replay is over
+  // as well, whether or not the agent ever started (change 7490, 9 Oct 2026:
+  // a follow-up a pending stop skipped left its record there, and recovery
+  // retried "milestone attempted from dispatch_pending" through five
+  // restarts while the proposal read as running). Only those two phases are
+  // stamped — an interrupted TAIL is already 'tail_pending' and re-stamping
   // would clobber its milestone map with the seed. A failed stamp propagates
   // to the caller's retain/quarantine triage like any other recovery error.
-  if (turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING) {
+  const replayedPhase = turnLifecycle.phaseOf(recoveryActiveTurn);
+  if (replayedPhase === turnLifecycle.PHASE_EXECUTING
+    || replayedPhase === turnLifecycle.PHASE_DISPATCH_PENDING) {
     await worker.markTurnTail(sessionId, {
       sha: result.sha || null,
       pushOk: result.pushOk === true,
@@ -5488,6 +5597,9 @@ function startSessionAutoPauseSweeper(config) {
         // and this pass would start a second, concurrent build of the same
         // commit. hasInFlightBuild() is the flag that build sets.
         if (stagingSvc.hasInFlightBuild(session.id)) continue;
+        // The retry its last failure scheduled, which outlives a restart as
+        // the cooldown below does not (stagingRecovery.previewRetryPending).
+        if (stagingRecovery.previewRetryPending(session)) continue;
         if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
@@ -6414,6 +6526,7 @@ async function cleanup() {
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
+  const languageSyncStop = require('./src/services/language-sync-runner').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
@@ -6619,7 +6732,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, checkRetentionStop, fixedCheckSyncStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, checkRetentionStop, fixedCheckSyncStop, languageSyncStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

@@ -59,13 +59,12 @@ export type InstallOffer =
   | { kind: 'a2hs'; os: MobileOs };
 
 /**
- * The fallback name of each platform's store, when the URL says nothing more.
- * Each reads as the tail of "Get the app on …", article included where the
- * name takes one.
+ * The strip's line for each platform's store, when the URL says nothing more:
+ * a message id whose text is the whole line ("Get the app on the App Store").
  */
 export const STORE_LABEL: Record<MobileOs, string> = {
-  ios: 'the App Store',
-  android: 'Google Play',
+  ios: 'agent:install.banner.getOnAppStore',
+  android: 'agent:install.banner.getOnGooglePlay',
 };
 
 /**
@@ -88,9 +87,9 @@ export function storeLabel(os: MobileOs, url: string): string {
   } catch {
     return STORE_LABEL[os];
   }
-  if (host === 'testflight.apple.com') return 'TestFlight';
-  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'the App Store';
-  if (host === 'play.google.com') return 'Google Play';
+  if (host === 'testflight.apple.com') return 'agent:install.banner.getOnTestFlight';
+  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'agent:install.banner.getOnAppStore';
+  if (host === 'play.google.com') return 'agent:install.banner.getOnGooglePlay';
   return STORE_LABEL[os];
 }
 
@@ -188,8 +187,8 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
  * Telling somebody where the menu item is works on both, every time.
  */
 export const A2HS_STEPS: Record<MobileOs, string> = {
-  ios: 'Tap Share, then Add to Home Screen.',
-  android: 'Open the browser menu, then Add to Home screen.',
+  ios: 'agent:install.sentence.ios',
+  android: 'agent:install.sentence.android',
 };
 
 /** One numbered line of the banner's "How" sheet, with the glyph it names. */
@@ -207,14 +206,14 @@ export interface A2hsStep {
  */
 export const A2HS_STEP_LIST: Record<MobileOs, readonly A2hsStep[]> = {
   ios: [
-    { text: "Tap Share in Safari's toolbar", glyph: 'share' },
-    { text: 'Choose Add to Home Screen' },
-    { text: 'Open Homeroom from its icon' },
+    { text: 'agent:install.ios.step1', glyph: 'share' },
+    { text: 'agent:install.ios.step2' },
+    { text: 'agent:install.ios.step3' },
   ],
   android: [
-    { text: "Tap the menu in your browser's toolbar", glyph: 'menu' },
-    { text: 'Choose Add to Home screen' },
-    { text: 'Open Homeroom from its icon' },
+    { text: 'agent:install.android.step1', glyph: 'menu' },
+    { text: 'agent:install.android.step2' },
+    { text: 'agent:install.android.step3' },
   ],
 };
 

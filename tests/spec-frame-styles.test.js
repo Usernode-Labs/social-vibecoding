@@ -187,7 +187,7 @@ function specSource(styles) {
 <figure data-screens><ol data-changes><li data-change="1">A probe for each stylesheet</li></ol>
 <template data-screen data-size="desktop">
   <div style="padding:40px">
-    <button id="probe-app" class="dev-ws-ctab" type="button" data-change="1">Tab</button>
+    <button id="probe-app" class="dev-ws-place" type="button" data-change="1">Place</button>
     <div id="probe-tailwind" class="rounded-[20px]">Card</div>
     <div id="probe-native" class="un-swipe-action">Action</div>
   </div>
@@ -254,7 +254,8 @@ test('a spec screen is drawn with its stylesheets inside the sandboxed frame', a
       const frames = await renderAndRead(page, 'platform');
       for (const f of frames) {
         assert.ok(f.links.some((p) => p.endsWith('/css/app.css')), `the ${f.side} frame links no app.css: ${f.links}`);
-        // .dev-ws-ctab (app.css) is a 40px flex button; a bare button is neither.
+        // .dev-ws-place (app.css, a row of a project's places list, #4417) is a
+        // 40px flex button; a bare button is neither.
         assert.equal(f.appHeight, '40px', `${unstyled} (app.css, ${f.side})`);
         assert.equal(f.appDisplay, 'flex', `${unstyled} (app.css, ${f.side})`);
         // .un-swipe-action (native.css) has min-width 80px; a bare div has auto.

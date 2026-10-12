@@ -77,8 +77,9 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // ben: admitted, mail sent, never asked for a code, no account.
     await signup('ben@example.test', null);
     await mail('waitlist_released', 'ben@example.test', 'sent', `${D}T09:00:06Z`);
-    // cy: asked for a code, the account exists, the password was never set.
-    const cy = await user('cy', { password_set: false, has_platform_access: true });
+    // cy: asked for a code, the account exists, its account step (a username,
+    // and a password or "Skip for now") never finished.
+    const cy = await user('cy', { password_set: false, needs_username_choice: true, has_platform_access: true });
     await signup('cy@example.test', cy);
     await mail('waitlist_released', 'cy@example.test', 'failed', `${D}T09:00:07Z`);
     await mail('otp', 'cy@example.test', 'sent', `${D}T11:00:00Z`);
@@ -123,8 +124,8 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     const host = await user('host', { platform_access_granted_at: '2026-06-01T00:00:00Z' });
     const guest = await user('guest', { admitted_by: host, platform_access_granted_at: '2026-09-25T08:00:00Z' });
 
-    // Getting started for the onboard column: a running season with two First
-    // challenges, and ana credited on both after finishing the tour.
+    // The first-run list for the onboard column: a running season with two
+    // First challenges, and ana credited on both after finishing the tour.
     const { rows: [season] } = await pool.query(
       `INSERT INTO seasons (name, starts_at, ends_at, is_active)
        VALUES ('Season 2', NOW() - INTERVAL '3 days', NOW() + INTERVAL '60 days', TRUE) RETURNING id`);
@@ -192,14 +193,14 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // The onboard column: the tour plus the season's First challenges, x of n.
     assert.deepEqual(by.ana.onboard, { shown: true, done: 2, total: 3, complete: false },
       'the tour and one of two First challenges');
-    assert.deepEqual(by.dee.onboard, { shown: false, done: null, total: null, complete: false },
-      'the card is drawn only after the join screen is answered');
-    assert.equal(by['ben@example.test'].onboard, null, 'no account, no card');
+    assert.deepEqual(by.dee.onboard, { shown: true, done: 0, total: 3, complete: false },
+      'every new account is on the list, join screen answered or not (#4601)');
+    assert.equal(by['ben@example.test'].onboard, null, 'no account, no list');
     await credit(ana, firsts[1].id);
     const again = (await journey.firstMile(pool, { day: D, now, leftOutIds })).people.find((p) => p.name === 'ana');
     assert.deepEqual(again.onboard, { shown: true, done: 3, total: 3, complete: true });
     assert.equal((await pool.query('SELECT getting_started_unlocked_at FROM users WHERE id = $1', [ana])).rows[0]
-      .getting_started_unlocked_at, null, 'an admin reading the first mile never opens the gate');
+      .getting_started_unlocked_at, null, 'an admin reading the first mile writes nothing');
 
     const passed = Object.fromEntries(mile.steps.map((s) => [s.key, s.passed]));
     assert.deepEqual(passed, {

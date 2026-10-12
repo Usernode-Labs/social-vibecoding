@@ -3,10 +3,11 @@
 const express = require('express');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
-const { adminMiddleware } = require('../middleware/admin');
+const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { uiTelemetryLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const telemetry = require('../services/ui-telemetry');
+const languageSync = require('../services/language-sync-runner');
 const log = require('../services/logger');
 
 function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
@@ -55,6 +56,23 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
         days: telemetry.daysWindow(req.query.days),
         includeAdmins: req.query.includeAdmins === 'true',
       }));
+    } catch (err) {
+      log.error('ui-telemetry', 'Browser language count failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The same count for a full admin's connector (get_browser_languages),
+  // outside /api/admin, which a connector token cannot reach
+  // (services/cli-api-policy.js), with where Homeroom's translation step
+  // stands (services/language-sync-runner.js). It changes nothing.
+  router.get('/api/browser-languages', requireAdminWrite, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const counts = await telemetry.browserLanguages(pool, {
+        days: telemetry.daysWindow(req.query.days),
+        includeAdmins: req.query.includeAdmins === 'true',
+      });
+      res.json({ ...counts, translation: await languageSync.status(pool) });
     } catch (err) {
       log.error('ui-telemetry', 'Browser language count failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

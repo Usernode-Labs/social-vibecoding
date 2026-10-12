@@ -357,6 +357,10 @@ const ADDED_IDS = {
   // ── #4405: custom domains ───────────────────────────────────────────────
   'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
   'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',
+  'topics-modal': '#4417: the Topics dialog (features/dialogs/topics.tsx), opened from the project page\'s Settings & rules › Topics row. Each change it makes (a new topic, a rename, a merge, an archive) opens a PR against dapp.json\'s `topics` for the group\'s vote. Ships hidden and EMPTY but for its title, its line and its error line; everything else is drawn from the community record once it is open, so the prerender and the first client render agree. The ids behind the open (not in the prerender, nor here): #topics-form with #topics-name, #topics-handle and #topics-about, #topics-into, #topics-submit and #topics-status.',
+  'who-decides-modal': '#4666: the Who can see & change it sheet (features/dialogs/who-decides.tsx), opened from the Workshop rule line\'s Rules, Settings & rules, App settings and Members. Who can see the project and how its changes are approved (four presets, or groups and rules of its own) go up as ONE PR against dapp.json\'s `visibility` and `governance` blocks. Ships hidden and EMPTY but for its root and card; everything is drawn from the community record once it is open, so the prerender and the first client render agree. The one id behind the open (not in the prerender, nor here): #who-group-name.',
+  'members-who-decides': '#4666: Members & approvals\' row that opens the Who can see & change it sheet, in place of the approval controls on every project but the platform\'s own. Ships hidden; members-controller.js shows it to whoever manages the project.',
+  'topics-error': '#4417: the Topics dialog\'s error line, hidden until a proposal is refused.',
   'share-homeroom-address': '#4405: the "Also at <homeroom host>" line under Share\'s link, shown only when the link offered is the project\'s custom domain. Ships hidden and empty.',
   // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
   'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',
@@ -402,7 +406,7 @@ const ADDED_IDS = {
   // a discussion or an agent chat has arrived, so none of them is in the
   // prerendered document, which is what this map is for.
   'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
-  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
+  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. Still presentation, so not in the route; since #4783 the choice is remembered per device, and All is both the fresh-device start and the fallback for an unknown saved value.',
   'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
   // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
   // (#messages-filter-channels, below). It was only ever an ADDED id, so it
@@ -428,8 +432,12 @@ const ADDED_IDS = {
   // feed opens from a row at its top ([data-workshop-needs-open]) as a page
   // with a way back, so neither is in the document any more.
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
-  'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
-  'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
+  // #4417: the rail's Recents (#platform-recents, #platform-recents-head,
+  // both ADDED here by #2802 and never in the frozen baseline) is retired:
+  // the desktop strip's five recent apps and the section column beside it
+  // take its place, and the conversations it listed are Messages' own list.
+  'platform-strip-apps': '#4417: the desktop strip\'s five recent apps, between the last section (Communities) and you: each app\'s tile over its name, the still-open dot on the apps kept alive (features/nav/strip-apps.tsx). Ships `hidden` and EMPTY; the apps arrive from localStorage one commit after mount, so the prerender and the first client render agree. Never drawn on the phone\'s bar. Its rows carry no ids, only data-strip-app.',
+  'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
   // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
   // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──
@@ -489,7 +497,10 @@ const ADDED_IDS = {
   // ── #3575: the person chooses the handle, and is told it is public ──
   'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
   // ── Communities, stage 5: the first run ─────────────────────────────
-  'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
+  // #home-getting-started left this map in #4635: every new account gets a
+  // tour, so Home's Getting started card went, and a new account's
+  // First challenges are ordinary cards in Home's Challenges area. It was
+  // only ever an ADDED id, so it simply leaves.
   // ── #1374: per-app notification settings ─────────────────────────
   // One switch per category governs the bell here AND the phone push,
   // because the preference gates whether the notification is CREATED and
@@ -523,8 +534,7 @@ const ADDED_IDS = {
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────
   'app-access-section': '#2304: the canonical app access editor, above the existing Danger zone. It ships hidden and appears only for a manageable, non-self-hosted app.',
-  'app-access-status': '#2304: proposal success, duplicate-proposal and failure feedback for the access editor. It ships empty so the React-owned dialog hydrates exactly.',
-  'app-access-propose': '#2304: the explicit action that turns a selected access draft into the existing vote-gated visibility proposal.',
+  'app-access-open': '#4666: the Access section\'s one button, which opens the Who can see & change it sheet (features/dialogs/who-decides.tsx). It replaced the three access choices and their Propose button (#app-access-propose) and status line (#app-access-status): who can see it and how changes are approved are one proposal now.',
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────
@@ -573,6 +583,8 @@ const ADDED_IDS = {
   'feedback-sent-notice': 'The "Thanks! Filed against …" line and any bounty outcome, carried into the sent confirmation (#3186).',
   'feedback-sent-mine': 'Opens the Me screen\'s "Your feedback" list (#profile?feedback) from the sent confirmation (#3186).',
   'feedback-sent-done': 'Dismisses the sent confirmation (#3186).',
+  // ── #4680: the form and the list point at each other ─────────────────
+  'feedback-form-mine': '#4680: the form\'s small "See your requests" link, under the intro line — the same route the two confirmations\' links open (#profile/your-requests), so what is already asked for is one tap away before writing a new one. Not hidden in the prerender, so the server render and the client render agree. Worded by React (t()); the click is ./feedback-controller\'s openMine, the same split as #feedback-sent-mine.',
   'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse (a small blue corner spinner since the #2779 follow-up), rendered only while a dev session the viewer can see is mid-turn (their own, since the same follow-up). It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
@@ -947,13 +959,15 @@ const ADDED_IDS = {
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
   'notifications-screen-tabs': 'The sheet\'s sticky Unread | Messages | All tab row. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
   'notifications-tab-unread': 'The sheet\'s FIRST tab, and the one it opens on. All led for a round, which meant opening an inbox on everything you had already read: the bell is tapped because it has a count, and the count is the unread.',
-  // (#notifications-see-older, the footer link that takes a filtered tab to
-  // All rather than paging another batch into the filter, is NOT here: it
-  // renders only when there is something more to see — rows the filter is
-  // hiding, or another server page — and the prerendered sheet has no rows at
-  // all. Same reason #notifications-all-messages is absent. Its counterpart
-  // #notifications-load-older, the real pager, renders only on All.)
-  'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
+  // (#notifications-see-older and #notifications-hide-older, the Unread
+  // footer's reveal and collapse pair, are NOT here: they render only when
+  // there is something more to see — rows the Unread filter is hiding, or
+  // another server page — and the prerendered sheet has no rows at all. Same
+  // reason #notifications-all-messages is absent. The Unread footer stays on
+  // Unread (#4700); the Messages footer's jump to All shares the
+  // #notifications-see-older id, and its counterpart #notifications-load-older,
+  // the real pager, renders on All and under an expanded Unread.)
+  'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them, and it is the only tab that pages more rows in on its own cursor. The Unread footer\'s reveal stays on Unread (#4700); only the Messages footer still steps sideways into this tab.',
   'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
   // ── #2377: Global Chat (experimental) ───────────────────────────

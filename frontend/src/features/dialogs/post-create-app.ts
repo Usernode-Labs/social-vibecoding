@@ -1,3 +1,5 @@
+import { t } from '../../lib/i18n/runtime';
+
 /**
  * POST /api/apps, for "What do you want to make?" (../first-session/make.tsx),
  * which both the first session and the Create button open, and its import
@@ -22,7 +24,7 @@ export async function postCreateApp(
       body: JSON.stringify(body),
     });
   } catch {
-    return { ok: false, error: 'Network error. Try again.' };
+    return { ok: false, error: t('dialogs:createApp.error.network') };
   }
   let data: Record<string, unknown> | null = null;
   try {
@@ -33,7 +35,7 @@ export async function postCreateApp(
   }
   if (res.ok) return { ok: true, data: data || {} };
   if (data && typeof data.error === 'string' && data.error) return { ok: false, error: data.error };
-  return { ok: false, error: `Homeroom couldn’t create the project (${res.status}). Try again in a moment.` };
+  return { ok: false, error: t('dialogs:createApp.error.status', { status: res.status }) };
 }
 
 /** The device's IANA time zone ("Europe/London"), or null where it cannot be read. */

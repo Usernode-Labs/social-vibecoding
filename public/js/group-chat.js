@@ -195,6 +195,54 @@ const GroupChat = {
   _historyFailed: false,
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
+  // #4640: the container the open thread was mounted INTO. The Workshop side
+  // panel is portalled to the end of <body>, while #messages-screen's reply
+  // pane keeps a hidden thread shell of its own — so a lookup by document
+  // id found the hidden pane and drew the panel's discussion into it, leaving
+  // the panel's own box empty. Every thread lookup goes through `_threadEl`,
+  // which scopes to this container when one is mounted.
+  _threadHost: null,
+  _threadEl(id) {
+    return GroupChat._threadHost
+      ? GroupChat._threadHost.querySelector('#' + id)
+      : document.getElementById(id);
+  },
+
+  // ── #4417 follow-up: the channel the general pane shows ─────────────
+  //
+  // Null is the app's own general stream. A project's TOPIC channel
+  // (`{ type: 'category', ref }`, dev-board/workshop/project-discussion.tsx
+  // TopicChannel) is the general stream one level down, as the server reads
+  // it (src/routes/chat.js selectStream): its own messages, and the replies
+  // of the reply threads that start in it. So it is the same pane, read and
+  // written by the same paths, and its messages open their reply threads
+  // beside it as #general's do. Only the scope differs: every read names
+  // the channel, every send and typing frame carries it, and the socket's
+  // frames are sorted by it (`_isChannel`).
+  _channel: null,
+
+  // The channel a mount names (`app.channel`), normalised, or null.
+  _channelOf(app) {
+    const c = app && app.channel;
+    const ref = c ? Number(c.ref) : NaN;
+    if (!c || c.type !== 'category' || !Number.isSafeInteger(ref) || ref <= 0 || ref > 2147483647) return null;
+    const markers = Array.isArray(c.markers) && c.markers.length ? c.markers : null;
+    return { type: 'category', ref, ...(markers ? { markers } : {}) };
+  },
+
+  // Is `scope` the stream the general pane shows? A frame's `thread`, or a
+  // reply root's own place (`{ type: root.thread_type, ref: root.thread_ref }`);
+  // no type is the app's general stream.
+  _isChannel(scope) {
+    const c = GroupChat._channel;
+    if (!scope || !scope.type) return !c;
+    return !!c && scope.type === c.type && Number(scope.ref) === c.ref;
+  },
+
+  // The open channel's ref, or null for the general stream.
+  _channelRef() {
+    return GroupChat._channel ? GroupChat._channel.ref : null;
+  },
 
   threadKey(type, ref) {
     return `${type}:${ref}`;
@@ -257,6 +305,8 @@ const GroupChat = {
    */
   mount(appSlug, app) {
     GroupChat._app = (app && app.slug === appSlug) ? app : null;
+    // #4417 follow-up: the channel this mount shows (null: the general stream).
+    const channel = GroupChat._channelOf(GroupChat._app);
     // Side-panel hooks: bind the draggable divider on every mount
     // (the handle DOM element is recreated on each tab render, so
     // there's no stale binding to worry about) and restore any
@@ -273,6 +323,16 @@ const GroupChat = {
     // dead socket until the user refreshed. Treat anything past
     // OPEN as "no socket" and reconnect.
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
+    // #4417 follow-up: another channel of the same app (#general and a
+    // topic, or two topics): the socket stays, and the stream starts over
+    // from it (`_showChannel` publishes the pane, as render() below does).
+    const here = GroupChat.appSlug === appSlug && liveWs;
+    if (here && (channel ? channel.ref : null) !== GroupChat._channelRef()) {
+      GroupChat._showChannel(channel);
+      return;
+    }
+    // The same channel: the cards it draws by time may have moved.
+    if (here && channel) GroupChat._channel = channel;
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
       // #4177: a catch-up still owed (the last one failed) runs on the way in;
@@ -289,12 +349,47 @@ const GroupChat = {
       setTimeout(() => { if (GroupChat.appSlug === appSlug) void GroupChat.markRead(); }, 0);
       return;
     }
-    GroupChat.connect(appSlug);
+    GroupChat.connect(appSlug, channel);
   },
 
-  connect(appSlug) {
+  // #4417 follow-up: the general pane moves to another channel of the app
+  // whose socket is up. The socket and the thread caches stay; the stream
+  // starts over as a newly opened app's does, read from that channel, and a
+  // read still on the wire for the one it leaves is dropped as it lands
+  // (`_historyLoad`, `_latestLoad`).
+  _showChannel(channel) {
+    GroupChat._historyLoad = null;
+    GroupChat._resetStreamCatchUp();
+    GroupChat._channel = channel || null;
+    GroupChat.messages = [];
+    GroupChat.oldestMessageId = null;
+    GroupChat.hasMore = true;
+    GroupChat._historyFailed = false;
+    GroupChat._lockedToBottom = true;
+    GroupChat._savedScrollTop = null;
+    GroupChat._didInitialScroll = false;
+    GroupChat._readUpTo = 0;
+    GroupChat._unreadHold = null;
+    GroupChat._unreadMark = null;
+    GroupChat._unreadOpened = false;
+    GroupChat.typingUsers.clear();
+    // A quote staged in the pane's composer was about the channel it left.
+    if (GroupChat.replyDraft && GroupChat.replyDraftScope !== 'thread') GroupChat.clearQuote();
+    GroupChat.render();
+    GroupChat.attachScrollHandlers();
+    void GroupChat.loadHistory();
+  },
+
+  connect(appSlug, channel = null) {
+    // #4640: a thread open on THIS app survives the reset. connect() used to
+    // null activeThread unconditionally, so a Workshop side-panel discussion
+    // (or any mounted thread) opened before a reconnect was orphaned:
+    // renderThread no-oped from then on and the panel never filled in.
+    const keep = GroupChat.appSlug === appSlug ? GroupChat.activeThread : null;
     GroupChat.disconnect();
     GroupChat.appSlug = appSlug;
+    // #4417 follow-up: the channel the general stream is (null: the app's own).
+    GroupChat._channel = channel || null;
     GroupChat.messages = [];
     GroupChat.threads = new Map();
     // B9: another project's cards and door are not this one's.
@@ -321,6 +416,7 @@ const GroupChat = {
     GroupChat._pressActive = false;
     GroupChat._clearPressTimer();
     GroupChat._closeReactionBar();
+    GroupChat.activeThread = keep;
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
@@ -332,6 +428,16 @@ const GroupChat = {
     if (!GroupChat._botWorkListener && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       GroupChat._botWorkListener = () => GroupChat.botWorkChanged();
       window.addEventListener('homeroom-bot-work-changed', GroupChat._botWorkListener);
+    }
+    // #4640: the thread this reset kept was read against the map the reset
+    // dropped. The same pair refreshAfterBlock uses: repaint the shell (its
+    // host, `#gc-thread-messages`, travels in `_threadHost`) and re-read the
+    // history, whose per-thread cache went with the old map. A thread of
+    // another app still starts with no thread, as before.
+    if (keep) {
+      GroupChat.renderThread();
+      // A `closed` change's thread is not read at all (see mountThread).
+      if (!keep.closed) void GroupChat.loadThreadHistory(keep.type, keep.ref);
     }
   },
 
@@ -502,9 +608,16 @@ const GroupChat = {
     const events = GroupChat._openLiveLog(GroupChat.messages);
     let ok = false;
     try {
-      const url = GroupChat.oldestMessageId
-        ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
-        : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
+      // #4417 follow-up: a topic's channel reads its own stream, by the
+      // same addresses its pages had as a thread (`_firstPageUrl`).
+      const channel = GroupChat._channel;
+      const url = channel
+        ? (GroupChat.oldestMessageId
+          ? `${GroupChat._threadQuery(GroupChat.appSlug, channel)}&limit=50&before=${GroupChat.oldestMessageId}`
+          : GroupChat._firstPageUrl(GroupChat.appSlug, null))
+        : GroupChat.oldestMessageId
+          ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
+          : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
 
       // Preserve scroll anchor when prepending older history so the viewport
       // doesn't jump to the top.
@@ -597,9 +710,22 @@ const GroupChat = {
         // chat-count badge on their issue/proposal row. #2387 follow-up:
         // except a REPLY thread's, which also lands in the general stream,
         // drawn there as a line where it happened.
-        if (msg.thread && msg.thread.type) {
+        // #4417 follow-up: a topic's channel, open in the general pane, is
+        // that pane's stream (`_isChannel`): its messages take the general
+        // path below, and the app's own general stream's do not.
+        const ownStream = msg.thread && msg.thread.type
+          ? msg.thread.type === 'category' && GroupChat._isChannel(msg.thread)
+          : GroupChat._isChannel(null);
+        if (msg.thread && msg.thread.type && !ownStream) {
           GroupChat._handleThreadIncoming(msg);
-          if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
+          // #4417: a reply under a message of one of the project's TOPIC
+          // channels is that channel's (its root says where it is), so it
+          // is drawn there, never in the general stream.
+          const root = msg.threadRoot || null;
+          const rootHere = GroupChat._isChannel(root && root.thread_type
+            ? { type: root.thread_type, ref: root.thread_ref } : null);
+          if (msg.thread.type === 'message' && rootHere
+              && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
             const shouldStick = GroupChat._lockedToBottom;
             GroupChat.messages.push(msg);
             if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
@@ -608,6 +734,8 @@ const GroupChat = {
           }
           break;
         }
+        // The app's general stream, while a topic's channel is the pane's.
+        if (!ownStream) break;
         // A catch-up read (#4177) can bring in a message a moment before its
         // own broadcast arrives.
         if (GroupChat.messages.some((m) => String(m.id) === String(msg.id))) break;
@@ -635,6 +763,11 @@ const GroupChat = {
       case 'bot_request_status': {
         // B9: a request asked of Homeroom bot here moved on.
         GroupChat._applyBotRequestStatus(msg);
+        break;
+      }
+      case 'chat_message_updated': {
+        // An offer of Homeroom bot's in a thread was decided.
+        GroupChat._applyMessageUpdate(msg);
         break;
       }
       case 'moderation_changed':
@@ -672,13 +805,19 @@ const GroupChat = {
       case 'typing': {
         // #194: thread typing renders inside the mounted thread only;
         // general typing keeps the original #gc-typing slot.
-        if (msg.thread && msg.thread.type) {
+        // #4417 follow-up: a topic's channel open in the general pane types
+        // into the pane's slot, and the app's general stream then does not.
+        const inPane = msg.thread && msg.thread.type
+          ? msg.thread.type === 'category' && GroupChat._isChannel(msg.thread)
+          : GroupChat._isChannel(null);
+        if (msg.thread && msg.thread.type && !inPane) {
           const a = GroupChat.activeThread;
           if (a && a.type === msg.thread.type && Number(a.ref) === Number(msg.thread.ref)) {
             GroupChat._renderThreadTyping(msg.username);
           }
           break;
         }
+        if (!inPane) break;
         GroupChat.typingUsers.set(msg.userId, msg.username);
         GroupChat.renderTyping();
         setTimeout(() => {
@@ -702,7 +841,7 @@ const GroupChat = {
     if (st.loaded && !st.stale) st.syncedMax = Math.max(st.syncedMax ?? -Infinity, Number(msg.id) || -Infinity);
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
-      const el = document.getElementById('gc-thread-messages');
+      const el = GroupChat._threadEl('gc-thread-messages');
       const scroll = GroupChat._threadScrollEl();
       if (el && scroll) {
         // #363: only stick to the newest message when the reader is already
@@ -749,7 +888,7 @@ const GroupChat = {
 
   _renderThreadTyping(username) {
     if (username === App.user?.username) return;
-    GroupChat._publishComposer('thread', { status: `${username} is typing...` });
+    GroupChat._publishComposer('thread', { status: PlatformI18n.t('chat:group.typing.one', { name: username }) });
     clearTimeout(GroupChat._threadTypingTimer);
     GroupChat._threadTypingTimer = setTimeout(() => {
       GroupChat._publishComposer('thread', { status: '' });
@@ -791,6 +930,9 @@ const GroupChat = {
     // #2387: only a quote staged in THIS composer rides along — with a reply
     // thread open beside the channel, the other composer's belongs to it.
     const sendScope = payload.thread ? 'thread' : 'general';
+    // #4417 follow-up: the pane's composer posts to the channel it shows.
+    const channel = GroupChat._channel;
+    if (!payload.thread && channel) payload.thread = { type: channel.type, ref: channel.ref };
     const quote = !GroupChat.replyDraftScope || GroupChat.replyDraftScope === sendScope
       ? GroupChat.replyDraft : null;
     if (quote) {
@@ -853,7 +995,9 @@ const GroupChat = {
       }
       return;
     }
-    window.PlatformUI?.toast?.(`Not sent. ${msg.error || 'Join this project to post here.'}`);
+    window.PlatformUI?.toast?.(msg.error
+      ? PlatformI18n.t('chat:group.send.notSentReason', { reason: msg.error })
+      : PlatformI18n.t('chat:group.send.notSentJoin'));
   },
 
   // The toast for a `rate_limited` frame. Worded here from the number rather
@@ -861,17 +1005,21 @@ const GroupChat = {
   // the server words its `error` the same way (socketRetryPhrase).
   _rateLimitedText(msg) {
     const n = Math.ceil(Number(msg && msg.retryAfterSeconds));
-    const when = Number.isFinite(n) && n > 0
-      ? `in ${n} ${n === 1 ? 'second' : 'seconds'}`
-      : 'in a moment';
-    return `Not sent. You're sending messages too fast. Try again ${when}.`;
+    return Number.isFinite(n) && n > 0
+      ? PlatformI18n.t('chat:group.send.rateLimited', { count: n })
+      : PlatformI18n.t('chat:group.send.rateLimitedMoment');
   },
 
   // An `error` frame: show what the server said. Only `channel_moved` is
   // sent today, and it answers a chat message, so it says that too.
   _showSocketError(msg) {
-    const text = (msg && (msg.message || msg.error)) || 'Something went wrong. Try again.';
-    window.PlatformUI?.toast?.(msg && msg.code === 'channel_moved' ? `Not sent. ${text}` : text);
+    const said = (msg && (msg.message || msg.error)) || '';
+    // #4417: `topic_closed` is a retired topic's channel, read-only too.
+    const notSent = !!msg && (msg.code === 'channel_moved' || msg.code === 'topic_closed');
+    // The server's own sentence when it sent one; the client's otherwise.
+    window.PlatformUI?.toast?.(said
+      ? (notSent ? PlatformI18n.t('chat:group.send.notSentReason', { reason: said }) : said)
+      : (notSent ? PlatformI18n.t('chat:group.send.notSentError') : PlatformI18n.t('chat:group.send.error')));
   },
 
   sendTyping(thread) {
@@ -879,8 +1027,10 @@ const GroupChat = {
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     if (GroupChat.typingTimeout) return;
     const payload = { type: 'typing' };
-    if (thread && thread.type && thread.ref) {
-      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    // #4417 follow-up: the pane's composer types in the channel it shows.
+    const scope = (thread && thread.type && thread.ref) ? thread : GroupChat._channel;
+    if (scope) {
+      payload.thread = { type: scope.type, ref: Number(scope.ref) };
     }
     GroupChat.ws.send(JSON.stringify(payload));
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
@@ -928,7 +1078,9 @@ const GroupChat = {
     const isSystem = kindRaw === 'system' || kindRaw === 'conflict'
       || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
-    const username = msg.username || 'System';
+    const username = msg.username || PlatformI18n.t('chat:group.systemSender');
+    // No author came with the row: `username` is a stand-in, never a name in a sentence.
+    const usernameMissing = !msg.username;
     const me = App.user && App.user.username;
     const editedAt = msg.editedAt || msg.edited_at;
     const q = meta.quote;
@@ -954,13 +1106,16 @@ const GroupChat = {
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
+      usernameMissing,
       text: deleted ? '' : String(msg.content == null ? '' : msg.content),
       deleted,
       // The reply thread under a general-chat message (#2387), as the chip
       // under it draws it; `thread` on a row is the server's summary, not the
       // live frame's `{ type, ref }` scope, which never reaches a general row.
       thread: GroupChat._threadSummaryView(msg),
-      canThread: !threadType && !deleted && (kind === 'message' || kind === 'spec_share'),
+      // #4417 follow-up: a message of a topic's channel starts one too, as
+      // #general's do; the transcript offers it in the pane's rows alone.
+      canThread: (!threadType || threadType === 'category') && !deleted && (kind === 'message' || kind === 'spec_share'),
       threadRoot: !!msg._threadRoot,
       // #2387 follow-up: a reply-thread reply, which the general transcript
       // draws as a line where it landed (TranscriptRows); `thread_root` on a
@@ -992,15 +1147,17 @@ const GroupChat = {
       showBookmark: !!(window.App && App.user),
       quote: q && !deleted ? {
         icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
-        username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
+        username: q.author || (q.source === 'pr' ? (q.prNumber ? PlatformI18n.t('chat:group.quote.pr', { number: q.prNumber }) : PlatformI18n.t('chat:group.quote.prUnnumbered')) : PlatformI18n.t('chat:group.quote.system')),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
         source: q.source || '',
         href: q.source === 'pr' ? (q.href || '') : null,
         targetId: q.refMsgId == null ? null : Number(q.refMsgId),
       } : null,
       // Set by a jump-to-original and cleared 1.5s later; never true on a
-      // freshly built row.
-      flash: false,
+      // freshly built row but the one a reveal is marking (`_revealFlash`),
+      // which a whole publish in those 1.5s (a channel's bot cards landing
+      // just after its first page) would otherwise take straight back off.
+      flash: GroupChat._revealFlashing(msg.id),
       reactions: (deleted ? [] : (msg.reactions || [])).map((r) => {
         const users = Array.isArray(r.users) ? r.users : [];
         return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
@@ -1024,7 +1181,7 @@ const GroupChat = {
         ...event,
         sender: event.actor
           || GroupChat._appName()
-          || 'System',
+          || PlatformI18n.t('chat:group.systemSender'),
         // Yours when you are the actor — the row then sits on the right, as
         // your messages do. A merge the vote decided is nobody's.
         mine: !!(event.actor && App.user && event.actor === App.user.username),
@@ -1062,7 +1219,53 @@ const GroupChat = {
       // channel carries its Open button (ws.sendFirstVersionMessage). Only
       // that metadata, which a person's post cannot set.
       openApp: GroupChat._openAppView(kind === 'message' && !deleted && !threadType ? meta : null),
+      // 10 October: Homeroom bot's offer in a thread (homeroom-bot-voice.js),
+      // with its buttons for the person it was offered to. Only that
+      // metadata, which a person's post cannot set.
+      botOffer: GroupChat._botOfferView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // The buttons under Homeroom bot's offer, from its message's metadata
+  // (homeroom-bot-voice.js say): open until the person it was offered to
+  // taps one, for everybody else only a record that it was offered.
+  _botOfferView(meta) {
+    const bot = meta && meta.homeroomBot;
+    if (!bot || bot.kind !== 'voice' || !bot.offer || typeof bot.offer !== 'object') return null;
+    const status = ['open', 'deciding', 'done', 'declined', 'failed'].includes(bot.offer.status) ? bot.offer.status : null;
+    if (!status) return null;
+    const me = window.App && App.user ? Number(App.user.id) : null;
+    const actions = (Array.isArray(bot.actions) ? bot.actions : [])
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
+    return { status, forMe: me != null && Number(bot.offer.forUserId) === me, actions };
+  },
+
+  // Yes or No under one of Homeroom bot's offers. The buttons go when the
+  // room hears it was decided (`chat_message_updated`); a refusal is said.
+  async decideBotOffer(messageId, choice) {
+    const slug = GroupChat.appSlug;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(data.error || PlatformI18n.t('chat:group.botOffer.failed'));
+    } catch {
+      if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.failed'));
+    }
+  },
+
+  // A message's metadata changed for everybody (`chat_message_updated`): an
+  // offer of Homeroom bot's was decided. Every copy, and its row.
+  _applyMessageUpdate(frame) {
+    if (!frame || frame.id == null || !frame.metadata || typeof frame.metadata !== 'object') return;
+    GroupChat._applyLive({ kind: 'metadata', id: frame.id, metadata: frame.metadata });
+    let msg = null;
+    GroupChat._eachCopy(frame.id, (m) => { if (!msg) msg = m; });
+    if (!msg) return;
+    GroupChat._react()?.patchTranscriptMessage(Number(frame.id), { botOffer: GroupChat._messageView(msg).botOffer });
   },
 
   _openAppView(meta) {
@@ -1086,23 +1289,29 @@ const GroupChat = {
     // AppView.renderDevChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
+    // #4417 follow-up: a topic's channel says so when it is empty, as it did
+    // when it was drawn as a thread, rather than with the app's quiet card;
+    // and it draws its merged topics' cards by time.
+    const channel = GroupChat._channel;
     GroupChat._react()?.publishTranscript(
       GroupChat.messages.map(GroupChat._messageView),
       'main',
       {
         earlier: false,
-        placeholder: null,
-        error: GroupChat._historyFailed ? 'Couldn’t load messages.' : null,
+        placeholder: channel && GroupChat._streamLoaded ? PlatformI18n.t('chat:group.topicChannel.empty') : null,
+        error: GroupChat._historyFailed ? PlatformI18n.t('chat:group.history.failed') : null,
+        ...(channel && channel.markers ? { markers: channel.markers, moreBefore: !!GroupChat.hasMore } : {}),
         // The quiet card's three facts (features/group-chat/quiet-card.tsx).
         // Whether the card SHOWS is the transcript's call — it knows whether a
         // person's message is among the rows, including one that lands live —
         // but "paged back to the beginning", "can this viewer post" and the
         // app's name are this module's to know.
-        quiet: GroupChat._historyFailed ? null : {
+        quiet: GroupChat._historyFailed || channel ? null : {
           exhausted: !GroupChat.hasMore,
           canPost: !GroupChat._readOnly(),
+          // '' when the project has no name yet: the card then says "this app".
           appName: GroupChat._appName()
-            || 'this app',
+            || '',
         },
         // Where reading stood when the channel opened: the transcript draws
         // its "New" line above the first message after it, and the pane
@@ -1179,7 +1388,14 @@ const GroupChat = {
 
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1;
     if (!(GroupChat.appSlug === slug && liveWs)) {
-      GroupChat.connect(slug);
+      // #4417 follow-up: a reconnect of the same app keeps the channel its
+      // pane shows (a reply thread opened beside a topic's channel).
+      // #4640: this mount replaces whatever thread was open, so drop it
+      // before connect() — connect keeps an open thread of the same app
+      // alive, and restoring the one being replaced here would render it
+      // over this mount's host.
+      GroupChat.activeThread = null;
+      GroupChat.connect(slug, GroupChat.appSlug === slug ? GroupChat._channel : null);
     }
     // `language: 'chat'` was the change page's Discussion (bubbles, and every
     // notice as a message) until #4455 made that page a thread of its own
@@ -1194,7 +1410,15 @@ const GroupChat = {
     // thread is not read at all (only its author can open the page).
     const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
-    GroupChat.activeThread = { type, ref: Number(ref), language, ...(closed ? { closed } : {}) };
+    // #4417: cards a topic's channel draws by time (a merged topic's), which
+    // the transcript places among the rows (TranscriptLead.markers).
+    const markers = Array.isArray(opts.markers) && opts.markers.length ? opts.markers : null;
+    GroupChat.activeThread = {
+      type, ref: Number(ref), language, ...(closed ? { closed } : {}), ...(markers ? { markers } : {}),
+    };
+    // #4640: the thread renders into the container it was mounted in, not
+    // whichever `#gc-thread-messages` a document-wide lookup finds first.
+    GroupChat._threadHost = container;
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -1229,8 +1453,8 @@ const GroupChat = {
       fill,
       withHeader,
       readOnly: !!opts.readOnly,
-      notice: opts.notice || 'This thread is read-only.',
-      placeholder: opts.placeholder || 'Reply in thread…',
+      notice: opts.notice || PlatformI18n.t('chat:group.thread.readOnly'),
+      placeholder: opts.placeholder || PlatformI18n.t('chat:group.thread.placeholder'),
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
       change: fill && language === 'change',
@@ -1349,6 +1573,25 @@ const GroupChat = {
     else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
   },
 
+  // #4417: the cards a topic's channel draws by time changed while it is
+  // open (a merge applied): redraw it with them, where the reader is.
+  // #4417 follow-up: and the topic's channel in the general pane, the same.
+  setThreadMarkers(type, ref, markers) {
+    const next = Array.isArray(markers) && markers.length ? markers : null;
+    const c = GroupChat._channel;
+    if (c && c.type === type && c.ref === Number(ref)) {
+      if (JSON.stringify(c.markers || null) === JSON.stringify(next)) return;
+      if (next) c.markers = next; else delete c.markers;
+      GroupChat.render();
+      return;
+    }
+    const a = GroupChat.activeThread;
+    if (!a || a.type !== type || Number(a.ref) !== Number(ref)) return;
+    if (JSON.stringify(a.markers || null) === JSON.stringify(next)) return;
+    if (next) a.markers = next; else delete a.markers;
+    GroupChat.renderThread({ keepScroll: true });
+  },
+
   // Drop the active thread render target (its history cache survives in
   // `threads` for instant re-open). Called when an accordion collapses
   // or the user leaves the sub-tab.
@@ -1357,6 +1600,7 @@ const GroupChat = {
     // general composer (replyDraft is global).
     if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
+    GroupChat._threadHost = null;
     // #4517: nothing typed into a left thread's composer may still post to it.
     GroupChat._threadComposerWiring?.abort();
     GroupChat._threadComposerWiring = null;
@@ -1396,12 +1640,27 @@ const GroupChat = {
     }
     const thread = { type, ref };
     const isFirstPage = !st.oldestId;
+    // #4640: a first page that never answers held "Loading…" up forever —
+    // nothing else re-reads a thread that is neither loaded nor failed. The
+    // abort lands in the catch below, so the state records the failure and
+    // the transcript offers "Try again". Later pages keep the browser's own
+    // timeout; "Load earlier" and catch-ups are unchanged.
+    let abort = null;
+    let timeout = null;
+    const init = {};
+    if (isFirstPage && typeof AbortController === 'function') {
+      try {
+        abort = new AbortController();
+        init.signal = abort.signal;
+        timeout = setTimeout(() => abort.abort(), GroupChat.THREAD_FIRST_PAGE_TIMEOUT_MS);
+      } catch { /* no timeout: the browser's own applies */ }
+    }
     // #4177: as in loadHistory, socket events during the read are replayed.
     const events = GroupChat._openLiveLog(st.messages);
     try {
       const res = await fetch(st.oldestId
         ? `${GroupChat._threadQuery(slug, thread)}&limit=50&before=${st.oldestId}`
-        : GroupChat._firstPageUrl(slug, thread));
+        : GroupChat._firstPageUrl(slug, thread), init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const messages = Array.isArray(data.messages) ? data.messages : [];
@@ -1416,6 +1675,7 @@ const GroupChat = {
       st.failed = false;
       if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread({ flush: true });
     } catch { /* surfaced below */ } finally {
+      if (timeout) clearTimeout(timeout);
       GroupChat._closeLiveLog(events);
       st.loading = false;
       // #2992: a failed FIRST page used to leave the thread on "Loading…"
@@ -1425,6 +1685,20 @@ const GroupChat = {
       if (!ok && !st.loaded && GroupChat.threads.get(GroupChat.threadKey(type, ref)) === st) {
         st.failed = true;
         if (GroupChat._isOpenThread(type, ref)) GroupChat.renderThread();
+      }
+      // #4640: the answer was thrown away because connect() or
+      // refreshAfterBlock swapped the cache while it was on the wire (a
+      // dropped success had already set ok, so the failure branch above
+      // passed it by; a failure that was swapped records into a discarded
+      // state), and nothing started a load for the state the open thread now
+      // reads. Run one, and let its `st.loading` guard stand down when
+      // refreshAfterBlock already did. One re-run per swap: connect,
+      // disconnect and refreshAfterBlock are the only swaps, so this cannot
+      // spin.
+      if (!st.loaded
+          && GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st
+          && GroupChat.appSlug === slug && GroupChat._isOpenThread(type, ref)) {
+        void GroupChat.loadThreadHistory(type, ref);
       }
       // #4177: a catch-up asked for while this page was on the wire.
       if (st.loaded && st.again && GroupChat._isOpenThread(type, ref)) void GroupChat._refreshLatest(thread);
@@ -1496,9 +1770,12 @@ const GroupChat = {
     return `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(thread.type)}`
       + `&thread_ref=${encodeURIComponent(thread.ref)}`;
   },
+  // #4417 follow-up: no thread is the general pane's stream, which is a
+  // topic's channel while one is open there (`_channel`).
   _firstPageUrl(slug, thread) {
-    return thread
-      ? `${GroupChat._threadQuery(slug, thread)}&limit=50${GroupChat._demoParam()}`
+    const scope = thread || GroupChat._channel;
+    return scope
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
 
@@ -1521,6 +1798,11 @@ const GroupChat = {
     return init;
   },
   CATCH_UP_TIMEOUT_MS: 30_000,
+
+  // #4640: the first page of a thread's history gives up after this long, so
+  // a request that never settles shows "Couldn't load this thread." with its
+  // Try again control instead of "Loading…" forever.
+  THREAD_FIRST_PAGE_TIMEOUT_MS: 20_000,
 
   // The service worker stamps its saved copies (CACHED_AT_HEADER in sw.js).
   _fromSavedCopy(res) {
@@ -1580,6 +1862,9 @@ const GroupChat = {
         break;
       case 'summary':
         m.thread = event.thread || null;
+        break;
+      case 'metadata':
+        m.metadata = event.metadata;
         break;
       case 'delete': {
         m.deleted = true;
@@ -1759,6 +2044,16 @@ const GroupChat = {
     if (GroupChat._streamLoaded || GroupChat._historyLoad) void GroupChat._refreshLatest(null);
     else void GroupChat.loadHistory();
     for (const [key, st] of GroupChat.threads) GroupChat._resyncThread(key, st);
+    // #4640: the open thread the loop above skipped — one that is neither
+    // loaded nor reading (a first page still on the wire when the socket
+    // dropped, or one that failed) is never re-read by `_resyncThread`. Read
+    // it now: on reconnect this also retries a failed load, and the
+    // `st.loading` guard keeps it off the back of one already in flight.
+    const a = GroupChat.activeThread;
+    if (a && !a.closed) {
+      const st = GroupChat.threads.get(GroupChat.threadKey(a.type, a.ref));
+      if (!st || (!st.loaded && !st.loading)) void GroupChat.loadThreadHistory(a.type, a.ref);
+    }
   },
 
   // A re-read live-reads.ts asks for: everything (`urls` null), or the streams
@@ -1781,8 +2076,13 @@ const GroupChat = {
       if (u.searchParams.has('before')) continue;
       const type = u.searchParams.get('thread_type');
       // The general stream, even one whose first page came back empty: that
-      // page may be the stale copy being corrected.
-      if (!type) { void GroupChat._refreshLatest(null); continue; }
+      // page may be the stale copy being corrected. #4417 follow-up: the
+      // general pane's stream is a topic's channel while one is open there.
+      if (GroupChat._isChannel(type ? { type, ref: u.searchParams.get('thread_ref') } : null)) {
+        void GroupChat._refreshLatest(null);
+        continue;
+      }
+      if (!type) continue;
       const key = GroupChat.threadKey(type, u.searchParams.get('thread_ref'));
       GroupChat._resyncThread(key, GroupChat.threads.get(key));
     }
@@ -1812,8 +2112,8 @@ const GroupChat = {
   },
 
   _threadScrollEl() {
-    return document.getElementById('gc-thread-scroll')
-      || document.getElementById('gc-thread-messages');
+    return GroupChat._threadEl('gc-thread-scroll')
+      || GroupChat._threadEl('gc-thread-messages');
   },
 
   // How near the bottom a thread counts as followed (thread-shell.tsx's
@@ -1879,7 +2179,9 @@ const GroupChat = {
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread(opts) {
     const a = GroupChat.activeThread;
-    const el = document.getElementById('gc-thread-messages');
+    // #4640: scoped to the mount's own host — a hidden Messages reply pane's
+    // shell must not win a document-wide id lookup over the side panel's.
+    const el = GroupChat._threadEl('gc-thread-messages');
     if (!a || !el) return;
     const scroll = GroupChat._threadScrollEl();
     // Unified topic layout: header + messages share #gc-thread-scroll.
@@ -1928,11 +2230,14 @@ const GroupChat = {
         // A request's page says it in its own "N replies" line instead.
         // A change's page (#4455) as well.
         placeholder: language === 'request' || language === 'change' ? null : st.loaded
-          ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
-          : (st.failed ? null : 'Loading…'),
-        error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
+          ? (st.messages.length || chat ? null
+            // #4417: a topic's channel is a room, not a reply thread.
+            : (a.type === 'category' ? PlatformI18n.t('chat:group.topicChannel.empty') : PlatformI18n.t('chat:group.thread.empty')))
+          : (st.failed ? null : PlatformI18n.t('chat:group.thread.loading')),
+        error: !st.loaded && st.failed ? PlatformI18n.t('chat:group.thread.failed') : null,
         language,
         ...(language === 'request' ? { request: { loaded: !!st.loaded, githubMore } } : {}),
+        ...(a.markers ? { markers: a.markers } : {}),
         ...(language === 'change' ? { change: { loaded: !!(st.loaded || a.closed), closed: a.closed || null } } : {}),
         ...(chat && st.loaded ? {
           quiet: {
@@ -1940,7 +2245,7 @@ const GroupChat = {
             exhausted: !st.hasMore,
             canPost: !GroupChat._readOnly(),
             appName: GroupChat._appName()
-              || 'this app',
+              || '',
           },
         } : {}),
       },
@@ -2040,9 +2345,16 @@ const GroupChat = {
     // either a platform message (a proposal event, #2390) or a message whose
     // author is gone; say which.
     const view = q ? {
+      // The name the strip says after "Replying to"; with nobody to name,
+      // `unnamed` says which sentence the composer draws instead.
       label: q.source === 'pr'
-        ? `PR #${q.prNumber || ''}`.trim()
-        : (q.author ? `@${q.author}` : (q.source === 'event' ? 'a platform message' : 'a message')),
+        ? (q.prNumber ? PlatformI18n.t('chat:group.quote.pr', { number: q.prNumber }) : PlatformI18n.t('chat:group.quote.prUnnumbered'))
+        : (q.author ? `@${q.author}` : ''),
+      // A pull request is not somebody's name: the strip has a sentence for it.
+      pr: q.source === 'pr' ? String(q.prNumber || '') : null,
+      unnamed: q.source === 'pr' ? null
+        : q.authorMissing && q.author ? q.authorMissing
+          : q.author ? null : (q.source === 'event' ? 'event' : 'message'),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
     // #2387: the chip goes to the composer the quote was staged in, now that
@@ -2077,7 +2389,9 @@ const GroupChat = {
       return {
         source: 'spec', refMsgId: id,
         author: row.dataset.sharedBy || null,
-        snippet: row.dataset.specTitle || 'Plan',
+        // The card names nobody: `author` is its stand-in, and the strip has its own sentence.
+        authorMissing: 'sharedByUnknown' in row.dataset ? 'someone' : null,
+        snippet: row.dataset.specTitle || PlatformI18n.t('chat:group.quote.spec'),
       };
     }
     // #2390: a proposal event (submitted / went live) is a platform message
@@ -2100,11 +2414,13 @@ const GroupChat = {
     // same way).
     if (!snippet) {
       const firstAtt = row.querySelector('.dc-msg-attachments .dc-attach-name, .dc-msg-attachments img');
-      if (firstAtt) snippet = `\u{1F4CE} ${firstAtt.textContent || firstAtt.getAttribute('alt') || 'file'}`;
+      if (firstAtt) snippet = `\u{1F4CE} ${firstAtt.textContent || firstAtt.getAttribute('alt') || PlatformI18n.t('chat:group.quote.file')}`;
     }
     return {
       source: 'message', refMsgId: id,
       author: row.dataset.username || null,
+      // The row came with no author: `author` is the chat's stand-in for one.
+      authorMissing: 'usernameMissing' in row.dataset ? 'system' : null,
       // Collapse newlines (multi-line messages render with pre-wrap) so the
       // quote chip stays single-line.
       snippet,
@@ -2255,13 +2571,16 @@ const GroupChat = {
       // so it doesn't also quote the row.
       if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
       // #130: PR / issue reference chips reveal the matching row in the
-      // activity drawer (GitHub fallback when it isn't there). Handled
-      // before tap-to-quote so a chip click doesn't also stage a reply.
+      // activity drawer (GitHub fallback when it isn't there); #4668: a chip
+      // with an address is a real link — Ctrl/Cmd/Shift/Alt click and the
+      // middle button are the browser's (a new tab), so stand down without
+      // preventing default and without staging a reply. Handled before
+      // tap-to-quote so a chip click doesn't also stage a reply.
       const ref = e.target.closest('.gc-ref');
       if (ref) {
-        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
-          AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
-        }
+        if (ref.tagName === 'A' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) return;
+        e.preventDefault();
+        GroupChat._openRef(ref);
         return;
       }
       // #130: the spec-share card's "PR #N" anchor previously rendered
@@ -2293,17 +2612,49 @@ const GroupChat = {
       if (quote) GroupChat.setQuote(quote, scope);
     });
 
-    // #130: chips are spans with role="link" tabindex="0" — give keyboard
-    // users the same drawer reveal a click gets.
+    // #130: chips are spans with role="link" tabindex="0" (or, since #4668,
+    // real anchors) — give keyboard users the same reveal a click gets.
     container.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       const ref = e.target.closest && e.target.closest('.gc-ref');
       if (!ref) return;
       e.preventDefault();
-      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
-        AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
-      }
+      GroupChat._openRef(ref);
     });
+  },
+
+  // #4668: what a tap (or Enter / Space) on a `.gc-ref` chip does. A plain
+  // span keeps #130's drawer reveal. A chip that names the request whose own
+  // page is open scrolls back up to the request head, where its status and
+  // any open vote are — reopening the page would change nothing on screen,
+  // which is the case the request's screenshot shows. A chip with an address
+  // for a different project than the one the app view has open follows it,
+  // so a chip in a Messages-mounted thread opens the project it names.
+  _openRef(chip) {
+    const type = chip.dataset.refType;
+    const num = chip.dataset.refNumber;
+    const n = parseInt(num, 10);
+    const slug = GroupChat._appSlug();
+    const appSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || null;
+    const sameApp = !!(slug && appSlug && slug === appSlug);
+    if (type === 'issue' && sameApp && typeof AppView !== 'undefined'
+      && AppView._devTopic && AppView._devTopic.kind === 'issue'
+      && Number(AppView._devTopic.id) === n) {
+      GroupChat._threadPinned = false;
+      const scroll = GroupChat._threadScrollEl();
+      if (scroll && typeof scroll.scrollTo === 'function') {
+        scroll.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+    if (!chip.getAttribute('href') || sameApp) {
+      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+        AppView.revealInDrawer(type, num);
+      }
+      return;
+    }
+    const href = chip.getAttribute('href');
+    if (href) location.hash = href;
   },
 
   _clearPressTimer() {
@@ -2375,7 +2726,7 @@ const GroupChat = {
       if (msg) msg.bookmarked = !next;
       GroupChat._paintBookmark(messageId, !next);
       if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
-        PlatformUI.toast(next ? "Couldn't save that message" : "Couldn't unsave that message");
+        PlatformUI.toast(next ? PlatformI18n.t('chat:group.bookmark.saveFailed') : PlatformI18n.t('chat:group.bookmark.unsaveFailed'));
       }
       console.warn('[group-chat] bookmark toggle failed', err);
     }
@@ -2408,7 +2759,8 @@ const GroupChat = {
       participants: people.map((p) => (p && typeof p === 'object' ? p.username : p)).filter(Boolean).slice(0, 3),
       // #2387 follow-up: the newest reply, which the card under the message shows.
       lastReply: last && typeof last === 'object'
-        ? { name: String(last.username || 'someone'), text: String(last.content || '') }
+        // `unnamed`: nobody to name, and `name` is the stand-in shown where a name would be.
+        ? { name: String(last.username || PlatformI18n.t('chat:group.thread.unknownAuthor')), unnamed: !last.username, text: String(last.content || '') }
         : null,
     };
   },
@@ -2450,10 +2802,10 @@ const GroupChat = {
     const kind = msg.msgType || msg.msg_type || 'message';
     let snippet = GroupChat._collapseSnippet(msg.content || '');
     if (!snippet && Array.isArray(meta.attachments) && meta.attachments[0]) {
-      snippet = `\u{1F4CE} ${meta.attachments[0].filename || meta.attachments[0].name || 'file'}`;
+      snippet = `\u{1F4CE} ${meta.attachments[0].filename || meta.attachments[0].name || PlatformI18n.t('chat:group.quote.file')}`;
     }
     const quote = kind === 'spec_share'
-      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || 'Plan' }
+      ? { source: 'spec', refMsgId: n, author: msg.username || null, snippet: (meta.specShare && meta.specShare.title) || PlatformI18n.t('chat:group.quote.spec') }
       : { source: 'message', refMsgId: n, author: msg.username || null, snippet };
     GroupChat.setQuote(quote, surface === 'thread' ? 'thread' : 'main');
   },
@@ -2464,14 +2816,48 @@ const GroupChat = {
   // Only for the general stream and its reply threads, which is what the
   // address can find: a message in an issue's or a proposal's discussion is
   // not in the channel, and its link would open the channel at the bottom.
+  //
+  // #4417 follow-up: a message of a topic's channel, or a reply in one of
+  // its reply threads, is that channel's: `#messages/app/<slug>/c/<topic>/m/<id>`,
+  // the address its notification has, which opens the channel on it.
   messageAddress(id) {
     const slug = GroupChat.appSlug;
     if (!slug) return null;
     let msg = null;
     GroupChat._eachCopy(id, (m) => { if (!msg) msg = m; });
     const type = msg && (msg.thread_type || (msg.thread && msg.thread.type) || null);
-    if (!msg || (type && type !== 'message')) return null;
+    if (!msg || (type && type !== 'message' && type !== 'category')) return null;
+    const topic = GroupChat._topicOf(msg);
+    if (topic) return `#messages/app/${encodeURIComponent(slug)}/c/${topic}/m/${Number(id)}`;
+    if (type === 'category') return null;
     return `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}`;
+  },
+
+  // #4417 follow-up: the topic channel `msg` is in (its own, or its reply
+  // thread's first message's), or null for the general stream. A reply's
+  // root says where it is on a live frame (`threadRoot`) and in its open
+  // thread (`root`); a root held in the pane's stream is the pane's.
+  _topicOf(msg) {
+    if (!msg) return null;
+    const type = msg.thread_type || (msg.thread && msg.thread.type) || null;
+    const ref = Number(msg.thread_type ? msg.thread_ref : (msg.thread && msg.thread.ref));
+    if (type === 'category') return Number.isSafeInteger(ref) && ref > 0 ? ref : null;
+    if (type !== 'message' || !Number.isSafeInteger(ref) || ref <= 0) return null;
+    const open = GroupChat.threads.get(GroupChat.threadKey('message', ref));
+    for (const root of [msg.threadRoot, open && open.root]) {
+      if (root && root.thread_type !== undefined) {
+        return root.thread_type === 'category' ? (Number(root.thread_ref) || null) : null;
+      }
+    }
+    const held = GroupChat.messages.some((m) => Number(m && m.id) === ref && GroupChat._ownRow(m));
+    return held ? GroupChat._channelRef() : null;
+  },
+
+  // The address of a reply thread under `rootId`, beside the channel the
+  // pane shows (#4417 follow-up: a topic's, or the app's general stream).
+  _threadAddress(slug, rootId) {
+    const topic = GroupChat._channelRef();
+    return `#messages/app/${encodeURIComponent(slug)}${topic ? `/c/${topic}` : ''}/thread/${Number(rootId)}`;
   },
 
   // Open the reply thread under a general-chat message, beside the channel.
@@ -2480,22 +2866,26 @@ const GroupChat = {
   // that page, and leaving for Messages to read a thread was leaving the
   // community for a page apart from it. Anywhere else (Homeroom's archived
   // app chat, in Messages) it is the thread's Messages address.
+  // #4417 follow-up: a topic's channel, in the general pane on its project's
+  // page, opens its reply threads beside it the same way.
   openReplyThread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
     if (GroupChat._openThreadInPage(slug, id)) return;
-    location.hash = `#messages/app/${encodeURIComponent(slug)}/thread/${Number(id)}`;
+    location.hash = `#messages/app/${encodeURIComponent(slug)}${GroupChat._channel ? `/c/${GroupChat._channel.ref}` : ''}/thread/${Number(id)}`;
   },
 
   // Is `slug`'s channel on screen in its project page's Discussion tab
   // (features/dev-board/workshop/project-discussion.tsx)? Then open the
-  // reply thread under `rootId` there and say so.
+  // reply thread under `rootId` there and say so. The target names the
+  // topic whose channel it is (#4417 follow-up), so only that channel's
+  // place takes it.
   _openThreadInPage(slug, rootId) {
     const container = document.getElementById('gc-messages');
     const tab = container && container.closest && container.closest('[data-ws-discussion]');
     if (!tab || tab.getAttribute('data-discussion-app') !== slug) return false;
     if (typeof AppView === 'undefined' || !AppView._stashDiscussionTarget) return false;
-    AppView._stashDiscussionTarget(slug, { threadRootId: Number(rootId) });
+    AppView._stashDiscussionTarget(slug, { threadRootId: Number(rootId), topicRef: GroupChat._channelRef() });
     return true;
   },
 
@@ -2604,21 +2994,49 @@ const GroupChat = {
     if (document.visibilityState === 'hidden' || !document.getElementById('gc-messages')) return;
     // The general stream's own newest message: its thread replies drawn in
     // it (#2387 follow-up) are no position for the channel's read cursor.
+    // #4417 follow-up: nor, in a topic's channel, are they for its own.
     const newest = GroupChat.messages.reduce((top, m) => (
-      m && !m.thread_type && !(m.thread && m.thread.type) ? Math.max(top, Number(m.id) || 0) : top
+      m && GroupChat._ownRow(m) ? Math.max(top, Number(m.id) || 0) : top
     ), 0);
     if (!newest || newest <= (GroupChat._readUpTo || 0) || GroupChat._unreadHold === slug) return;
     GroupChat._readUpTo = newest;
+    const channel = GroupChat._channel;
     try {
       // `?demo=1`: a staging demo stream's newest rows are mock ones, which
       // only the demo branch of the route knows (src/routes/chat.js).
-      await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${GroupChat._specDemoQS()}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ message_id: newest }),
+        body: JSON.stringify({ message_id: newest, ...GroupChat._cursorScope(channel) }),
       });
-      window.UsernodeReact?.messages?.refresh?.();
+      // A channel's unread count lives in the project's places list
+      // (dev-board/workshop/place-store.ts): a topic's by its ref, #general
+      // by `ref` null. Messages' list re-reads #general's count besides.
+      if (channel) {
+        if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref);
+      } else {
+        window.UsernodeReact?.messages?.refresh?.();
+        if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, null);
+      }
+      // Drained, so the request ends: an answer nobody reads stays open in
+      // the browser, and a page that reads its channel never went idle.
+      if (res && typeof res.text === 'function') void res.text().catch(() => {});
     } catch (_) { /* the next open reads it again */ }
+  },
+
+  // #4417 follow-up: is `m` one of the pane's own messages (not a reply
+  // drawn in it)? A loaded row says where it is in `thread_type`, a live
+  // frame in `thread` (a loaded row's `thread` is its reply summary).
+  _ownRow(m) {
+    const type = m.thread_type || (m.thread && m.thread.type) || null;
+    const ref = m.thread_type ? m.thread_ref : (m.thread && m.thread.ref);
+    return type ? type === 'category' && GroupChat._isChannel({ type, ref }) : GroupChat._isChannel(null);
+  },
+
+  // The read routes' scope for a topic's channel (src/routes/chat.js
+  // moveReadCursor), or nothing for the general stream.
+  _cursorScope(channel) {
+    return channel ? { thread_type: channel.type, thread_ref: channel.ref } : {};
   },
 
   // The channel's pane closed (#2387). "Mark unread" holds only while the
@@ -2637,17 +3055,23 @@ const GroupChat = {
   async markUnread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
+    // #4417 follow-up: in a topic's channel, its own cursor.
+    const channel = GroupChat._channel;
     const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/unread${GroupChat._specDemoQS()}`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ message_id: Number(id) }),
+      body: JSON.stringify({ message_id: Number(id), ...GroupChat._cursorScope(channel) }),
     });
     if (!res.ok) throw new Error(`Mark unread failed (${res.status})`);
     // Stays unread while it is still the open channel: reading it again the
     // moment it was marked would undo the act.
     GroupChat._unreadHold = slug;
     GroupChat._readUpTo = 0;
-    window.UsernodeReact?.messages?.refresh?.();
+    if (channel) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref, true);
+    else {
+      window.UsernodeReact?.messages?.refresh?.();
+      window.UsernodeReact?.places?.channelRead?.(slug, null, true);
+    }
   },
 
   _paintBookmark(messageId, on) {
@@ -2771,9 +3195,9 @@ const GroupChat = {
       });
       const data = await res.json().catch(() => ({}));
       if (data && data.card) GroupChat.applyBotRequestCard({ appSlug: slug, card: data.card });
-      else if (!res.ok && window.PlatformUI) PlatformUI.toast(data.error || 'Couldn’t ask Homeroom bot just now.');
+      else if (!res.ok && window.PlatformUI) PlatformUI.toast(data.error || PlatformI18n.t('chat:group.bot.askFailed'));
     } catch {
-      if (window.PlatformUI) PlatformUI.toast('Couldn’t ask Homeroom bot just now.');
+      if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.bot.askFailed'));
     }
   },
 
@@ -2911,7 +3335,7 @@ const GroupChat = {
   // "edited Jun 16, 2026, 02:41 PM".
   _editedTitle(ts) {
     const { title } = GroupChat._stamp(ts);
-    return title ? `edited ${title}` : 'edited';
+    return title ? PlatformI18n.t('chat:group.row.editedAt', { when: title }) : PlatformI18n.t('chat:group.row.editedTooltip');
   },
 
   // `_renderEditBtn` lived here — the desktop hover pencil for your own
@@ -2968,8 +3392,8 @@ const GroupChat = {
     editor.innerHTML =
       `<textarea class="gc-edit-textarea gc-composer-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1"></textarea>` +
       `<div class="gc-edit-actions">` +
-        `<button type="button" class="gc-edit-save">Save</button>` +
-        `<button type="button" class="gc-edit-cancel">Cancel</button>` +
+        `<button type="button" class="gc-edit-save">${PlatformI18n.htmlText('core:common.save')}</button>` +
+        `<button type="button" class="gc-edit-cancel">${PlatformI18n.htmlText('core:common.cancel')}</button>` +
         `<span class="gc-edit-notice" hidden></span>` +
       `</div>`;
     const ta = editor.querySelector('.gc-edit-textarea');
@@ -3017,7 +3441,7 @@ const GroupChat = {
       const notice = row.querySelector('.gc-edit-notice');
       if (notice) {
         notice.hidden = false;
-        notice.textContent = 'Not connected. Your edit wasn’t sent, so try again in a moment.';
+        notice.textContent = PlatformI18n.t('chat:group.edit.notConnected');
       }
       return;
     }
@@ -3086,7 +3510,7 @@ const GroupChat = {
       if (e.target.closest('.gc-react-bar-report')) {
         const id = parseInt(bar.dataset.msgId || '', 10);
         GroupChat._closeReactionBar();
-        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: 'Selected message' });
+        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: PlatformI18n.t('chat:group.report.selected') });
         return;
       }
       if (e.target.closest('.gc-react-bar-more')) {
@@ -3433,24 +3857,24 @@ const GroupChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { error: PlatformI18n.t('chat:group.attach.tooBig.image', { file: file.name, megabytes: Math.round(L.maxImageBytes / 1024 / 1024) }) };
       }
       return { kind: 'image' };
     }
     if (ext === 'md' || ext === 'markdown') {
       if (file.size > L.maxMarkdownBytes) {
-        return { error: `"${file.name}" is too big. Markdown files max ${Math.round(L.maxMarkdownBytes / 1024)} KB.` };
+        return { error: PlatformI18n.t('chat:group.attach.tooBig.markdown', { file: file.name, kilobytes: Math.round(L.maxMarkdownBytes / 1024) }) };
       }
       return { kind: 'markdown' };
     }
     if (ext === 'html' || ext === 'htm') {
       if (file.size > L.maxHtmlBytes) {
-        return { error: `"${file.name}" is too big. HTML files max ${Math.round(L.maxHtmlBytes / 1024 / 1024)} MB.` };
+        return { error: PlatformI18n.t('chat:group.attach.tooBig.html', { file: file.name, megabytes: Math.round(L.maxHtmlBytes / 1024 / 1024) }) };
       }
       return { kind: 'html' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { error: PlatformI18n.t('chat:group.attach.tooBig.other', { file: file.name, megabytes: Math.round(L.maxBinaryBytes / 1024 / 1024) }) };
     }
     if (file.size <= L.maxTextBytes) {
       try {
@@ -3484,7 +3908,7 @@ const GroupChat = {
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
       if (GroupChat.pendingAttachments.filter((a) => a.scope === key).length >= L.maxPerMessage) {
-        refuse(`Up to ${L.maxPerMessage} files per message.`, files.length - i);
+        refuse(PlatformI18n.t('chat:group.attach.maxPerMessage', { count: L.maxPerMessage }), files.length - i);
         break;
       }
       const classified = await GroupChat._classifyChatFile(file);
@@ -3515,7 +3939,7 @@ const GroupChat = {
           body: file,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error(data?.error || PlatformI18n.t('chat:group.attach.uploadFailedStatus', { status: res.status }));
         entry.id = data.id;
         entry.kind = data.kind;
         entry.meta = data.meta || null;
@@ -3523,13 +3947,13 @@ const GroupChat = {
         // #2938: a send tapped mid-upload left the wait notice up; once the
         // last upload in this composer lands there is nothing to wait for.
         if (!GroupChat.attachmentsUploading(thread)
-            && GroupChat._attachErrors[GroupChat._composerScope(thread)] === GroupChat.UPLOAD_WAIT_NOTICE) {
+            && GroupChat._attachWaiting[GroupChat._composerScope(thread)]) {
           GroupChat._setAttachError(null, thread);
         }
       } catch (err) {
         GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
         if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
-        GroupChat._setAttachError(err.message || 'Upload failed', thread);
+        GroupChat._setAttachError(err.message || PlatformI18n.t('chat:group.attach.uploadFailed'), thread);
       }
       GroupChat._renderAttachStrip(thread);
     }
@@ -3572,6 +3996,9 @@ const GroupChat = {
   _setAttachError(msg, thread) {
     const scope = GroupChat._composerScope(thread);
     GroupChat._attachErrors[scope] = msg || null;
+    // Whether the line is the wait notice is state, taken as it is set: the
+    // notice's words follow the language on screen and are not compared later.
+    GroupChat._attachWaiting[scope] = !!msg && msg === GroupChat.UPLOAD_WAIT_NOTICE;
     GroupChat._publishComposer(scope, { attachError: msg || null });
   },
 
@@ -3580,7 +4007,11 @@ const GroupChat = {
   _attachErrors: { general: null, thread: null },
 
   // Shown when Send is tapped while an attachment is still uploading.
-  UPLOAD_WAIT_NOTICE: 'Still uploading, one moment…',
+  // A getter: read in the language on screen each time it is shown.
+  get UPLOAD_WAIT_NOTICE() { return PlatformI18n.t('chat:group.attach.stillUploading'); },
+
+  // Whether each composer's error line is that wait notice (see _setAttachError).
+  _attachWaiting: { general: false, thread: false },
 
   _humanAttSize(bytes) {
     const n = Number(bytes) || 0;
@@ -3611,7 +4042,8 @@ const GroupChat = {
     GroupChat._publishComposer(GroupChat._composerScope(thread), {
       attachments: GroupChat._pendingFor(thread).map((a) => ({
         key: a.key || `p${a.id || a.filename}`,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('chat:group.attachment.unnamed'),
+        unnamed: !a.filename,
         kind: a.kind,
         badge: GroupChat._attachKindBadge(a),
         size: GroupChat._humanAttSize(a.sizeBytes),
@@ -3658,7 +4090,9 @@ const GroupChat = {
       .map((a) => ({
         id: a.id,
         kind: a.kind,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('chat:group.attachment.unnamed'),
+        // No file name: the tooltips have their own wording, and `name` is only a label.
+        unnamed: !a.filename,
         url: `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`,
         size: GroupChat._humanAttSize(a.sizeBytes),
         badge: GroupChat._attachKindBadge(a),
@@ -3679,7 +4113,9 @@ const GroupChat = {
       e.stopPropagation();
       GroupChat._openMarkdownAttachment(
         btn.getAttribute('data-att-md'),
-        btn.getAttribute('data-att-name') || 'file.md'
+        btn.getAttribute('data-att-name') || 'file.md',
+        // The chip's name is a stand-in: the failure line has its own wording.
+        btn.hasAttribute('data-att-unnamed')
       );
     }, true);
   },
@@ -3687,7 +4123,7 @@ const GroupChat = {
   // Fetch a markdown attachment (served text/plain) and render it in the
   // spec side panel (same panel as "View full spec"). Falls back to a
   // plain download when the panel slot isn't in the current tab's DOM.
-  async _openMarkdownAttachment(url, filename) {
+  async _openMarkdownAttachment(url, filename, unnamed) {
     if (!url) return;
     if (!document.getElementById('gc-spec-side-panel')) {
       window.open(url, '_blank', 'noopener');
@@ -3695,11 +4131,15 @@ const GroupChat = {
     }
     try {
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`Couldn't load ${filename} (HTTP ${res.status})`);
+      if (!res.ok) {
+        throw new Error(unnamed
+          ? PlatformI18n.t('chat:group.file.loadFailedStatusUnnamed', { status: res.status })
+          : PlatformI18n.t('chat:group.file.loadFailedStatus', { file: filename, status: res.status }));
+      }
       const text = await res.text();
       GroupChat._showSpecPanel({ title: filename, content: text });
     } catch (err) {
-      GroupChat._showSpecPanel({ title: filename, content: err.message || 'Failed to load file', isError: true });
+      GroupChat._showSpecPanel({ title: filename, content: err.message || PlatformI18n.t('chat:group.file.loadFailed'), isError: true });
     }
   },
 
@@ -4138,13 +4578,16 @@ const GroupChat = {
     // 02:41 PM", exactly like one built this June.
     const built = GroupChat._stamp(meta.builtAt).text || null;
     return {
-      title: meta.title || `Plan v${meta.version}`,
+      title: meta.title || PlatformI18n.t('chat:group.spec.title', { version: meta.version }),
       // The preview title the panel header shows while the fetch is in
       // flight. It was a `data-spec-title` attribute the click delegate read
       // back off the card; it is a field now, so nothing has to round-trip
       // through the DOM to find it.
-      previewTitle: meta.title || `plan v${meta.version}`,
-      sharedBy: meta.sharedBy?.username || msg.username || 'Someone',
+      previewTitle: meta.title || PlatformI18n.t('chat:group.spec.previewTitle', { version: meta.version }),
+      sharedBy: meta.sharedBy?.username || msg.username || PlatformI18n.t('chat:group.spec.someone'),
+      // Nobody to name: the lines that say who shared it have an unnamed
+      // wording, and never take the stand-in above as a username.
+      sharedByUnknown: !(meta.sharedBy?.username || msg.username),
       version: meta.version,
       built,
       prNumber: meta.prNumber || null,
@@ -4172,7 +4615,7 @@ const GroupChat = {
   // older share that predates `metadata.specShare.title`.
   async openSharedSpec(sessionId, version, previewTitle) {
     if (!sessionId || !version) return;
-    const title = previewTitle || `Plan v${version}`;
+    const title = previewTitle || PlatformI18n.t('chat:group.spec.title', { version });
     // Persist the open state so a refresh re-opens this same spec
     // automatically. Per-app keying ensures switching apps doesn't drag this
     // open state along with you.
@@ -4193,8 +4636,8 @@ const GroupChat = {
           title,
           version,
           content: resp.status === 404
-            ? 'This plan is no longer available. The sharer may have deleted the session.'
-            : `Failed to load plan (HTTP ${resp.status}).`,
+            ? PlatformI18n.t('chat:group.spec.gone')
+            : PlatformI18n.t('chat:group.spec.loadFailed', { status: resp.status }),
           isError: true,
         });
         return;
@@ -4203,7 +4646,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title,
         version,
-        content: data.spec.content || '(empty plan)',
+        content: data.spec.content || PlatformI18n.t('chat:group.spec.empty'),
         html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
@@ -4212,7 +4655,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title,
         version,
-        content: `Error: ${err.message}`,
+        content: PlatformI18n.t('chat:group.spec.error', { message: err.message }),
         isError: true,
       });
     }
@@ -4266,7 +4709,7 @@ const GroupChat = {
     const subtitleParts = [];
     if (version != null) subtitleParts.push(`v${version}`);
     if (builtStr) subtitleParts.push(builtStr);
-    if (prNumber) subtitleParts.push(`PR #${prNumber}`);
+    if (prNumber) subtitleParts.push(PlatformI18n.t('chat:group.quote.pr', { number: prNumber }));
     const subtitle = subtitleParts.join(' · ');
 
     // Render markdown for normal content; error / 404 messages are
@@ -4495,14 +4938,14 @@ const GroupChat = {
     if (!saved) return;
 
     const { sessionId, version, title } = saved;
-    const previewTitle = title || `Plan v${version}`;
+    const previewTitle = title || PlatformI18n.t('chat:group.spec.title', { version });
 
     // Show the panel header right away (skeleton body) so the user
     // sees something immediately while the spec content loads.
     GroupChat._showSpecPanel({
       title: previewTitle,
       version,
-      content: 'Loading…',
+      content: PlatformI18n.t('chat:group.spec.loading'),
       // (#1012) The placeholder is not a document — no copy button until
       // the real content lands and replaces this render.
       canCopy: false,
@@ -4518,8 +4961,8 @@ const GroupChat = {
           title: previewTitle,
           version,
           content: resp.status === 404
-            ? 'This plan is no longer available. The sharer may have deleted the session.'
-            : `Failed to load plan (HTTP ${resp.status}).`,
+            ? PlatformI18n.t('chat:group.spec.gone')
+            : PlatformI18n.t('chat:group.spec.loadFailed', { status: resp.status }),
           isError: true,
         });
         return;
@@ -4529,7 +4972,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title: previewTitle,
         version,
-        content: data.spec.content || '(empty plan)',
+        content: data.spec.content || PlatformI18n.t('chat:group.spec.empty'),
         html: data.spec.content_html || null,
         builtAt: data.spec.built_at,
         prNumber: data.spec.pr_number,
@@ -4539,7 +4982,7 @@ const GroupChat = {
       GroupChat._showSpecPanel({
         title: previewTitle,
         version,
-        content: `Error: ${err.message}`,
+        content: PlatformI18n.t('chat:group.spec.error', { message: err.message }),
         isError: true,
       });
     }
@@ -4561,7 +5004,7 @@ const GroupChat = {
     if (!wsOpen && GroupChat.appSlug) {
       const queued = GroupChat._pendingOutgoing.length;
       GroupChat._publishComposer('general', {
-        status: queued > 0 ? `Reconnecting… (${queued} queued)` : 'Reconnecting…',
+        status: queued > 0 ? PlatformI18n.t('chat:group.status.reconnectingQueued', { count: queued }) : PlatformI18n.t('chat:group.status.reconnecting'),
       });
       return;
     }
@@ -4569,8 +5012,8 @@ const GroupChat = {
     const names = [...GroupChat.typingUsers.values()].filter((n) => n !== App.user?.username);
     GroupChat._publishComposer('general', {
       status: names.length === 0 ? ''
-        : names.length === 1 ? `${names[0]} is typing...`
-          : `${names.join(', ')} are typing...`,
+        : names.length === 1 ? PlatformI18n.t('chat:group.typing.one', { name: names[0] })
+          : PlatformI18n.t('chat:group.typing.several', { names: PlatformI18n.listText(names) }),
     });
   },
 
@@ -4664,10 +5107,15 @@ const GroupChat = {
   _pendingReveal: null,
   REVEAL_TTL_MS: 20000,
 
-  revealMessage(appSlug, messageId) {
+  // #4417 follow-up: `topicRef` names one of the project's topic channels,
+  // whose pane must be the one showing (a notification for a message in it,
+  // project-discussion.tsx TopicChannel); none is the app's general stream.
+  revealMessage(appSlug, messageId, topicRef = null) {
     const id = Number(messageId);
     if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
-    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now() };
+    const ref = Number(topicRef);
+    const channel = Number.isSafeInteger(ref) && ref > 0 ? ref : null;
+    GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now(), ...(channel ? { channel } : {}) };
     // Now, only when the stream on screen is that discussion's pane — in
     // Messages, or its project page's Discussion tab, which carries the same
     // attribute: anywhere else the click is about to move the reader there,
@@ -4687,6 +5135,8 @@ const GroupChat = {
       return false;
     }
     if (GroupChat.appSlug !== want.slug || !GroupChat._didInitialScroll) return false;
+    // #4417 follow-up: a topic channel's message, for that channel's pane.
+    if ((want.channel || null) !== GroupChat._channelRef()) return false;
     const container = document.getElementById('gc-messages');
     if (!container) return false;
     // A reply in a reply thread (#2387 follow-up): the general stream holds
@@ -4699,7 +5149,7 @@ const GroupChat = {
       GroupChat._pendingReveal = null;
       if (Number.isSafeInteger(root) && root > 0
           && !GroupChat._openThreadInPage(want.slug, root)) {
-        const address = `#messages/app/${encodeURIComponent(want.slug)}/thread/${root}`;
+        const address = GroupChat._threadAddress(want.slug, root);
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);
         else window.location.hash = address;
@@ -4734,9 +5184,19 @@ const GroupChat = {
     const at = row.getBoundingClientRect();
     container.scrollTop += (at.top - box.top) - (box.height - at.height) / 2;
     GroupChat._savedScrollTop = container.scrollTop;
+    GroupChat._revealFlash = { id: want.id, until: Date.now() + 1500 };
     GroupChat._react()?.patchTranscriptMessage(want.id, { flash: true });
     setTimeout(() => GroupChat._react()?.patchTranscriptMessage(want.id, { flash: false }), 1500);
     return true;
+  },
+
+  // The message a reveal is marking, and until when (#4417 follow-up: a
+  // notification's message, in #general or a topic's channel). Its row is
+  // built flashed while the mark lasts.
+  _revealFlash: null,
+  _revealFlashing(id) {
+    const f = GroupChat._revealFlash;
+    return !!f && id != null && Number(id) === f.id && Date.now() < f.until;
   },
 
   // Where a message link's message is (#2387), when the first page did not
@@ -4750,8 +5210,12 @@ const GroupChat = {
     const slug = want.slug;
     const live = () => GroupChat._pendingReveal === want && GroupChat.appSlug === slug;
     try {
+      // #4417 follow-up: looked for in the channel the pane shows.
+      const channel = GroupChat._channel;
+      const scope = channel
+        ? `&thread_type=${encodeURIComponent(channel.type)}&thread_ref=${encodeURIComponent(channel.ref)}` : '';
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${GroupChat._demoParam()}`
+        `/api/apps/${encodeURIComponent(slug)}/messages?around=${want.id}&limit=1${scope}${GroupChat._demoParam()}`
       );
       if (!live()) return;
       if (!res.ok) { GroupChat._pendingReveal = null; return; }
@@ -4761,7 +5225,7 @@ const GroupChat = {
         GroupChat._pendingReveal = null;
         // On the project page, beside the channel there (#3653).
         if (GroupChat._openThreadInPage(slug, root)) return;
-        const address = `#messages/app/${encodeURIComponent(slug)}/thread/${root}`;
+        const address = GroupChat._threadAddress(slug, root);
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);
         else window.location.hash = address;
@@ -4817,12 +5281,38 @@ function escapeHtml(str) {
 // is what decides whether a `#name` is a channel reference or just text.
 // Empty until that store has loaded its lists, when a `#name` stays text.
 function knownChannelHandles() {
+  const handles = new Set();
   try {
     const list = window.UsernodeReact?.messages?.channels?.() || [];
-    return new Set(list.map((item) => item.handle));
+    for (const item of list) handles.add(item.handle);
+  } catch {}
+  // #4417: and, inside a project, its topics' handles and the ones they had
+  // before a rename (features/dev-board/workshop/place-store.ts).
+  for (const handle of Object.keys(knownTopicHandles())) handles.add(handle);
+  return handles;
+}
+
+// #4417: the topic handles a `#name` can mean in the project whose chat is
+// on screen, each to the handle the topic has now. Inside the project they
+// come before the platform's own channels of the same name.
+function knownTopicHandles() {
+  try {
+    const slug = typeof App !== 'undefined' ? App.currentApp : null;
+    return (slug && window.UsernodeReact?.places?.topicHandles?.(slug)) || {};
   } catch {
-    return new Set();
+    return {};
   }
+}
+
+// Where a `#name` link goes: a topic's channel on its project's page, or the
+// platform channel in Messages.
+function channelRefLink(handle) {
+  const topic = knownTopicHandles()[handle];
+  const slug = typeof App !== 'undefined' ? App.currentApp : null;
+  if (topic && slug) {
+    return { href: `#app/${encodeURIComponent(slug)}/dev/c/${topic}`, handle: topic, topic: true };
+  }
+  return { href: `#messages/channel/${handle}`, handle, topic: false };
 }
 
 // #4029: a mention is a link to that person's page, the address a project's
@@ -4858,8 +5348,21 @@ function renderChannelChips(html) {
   return html.replace(/(^|[^\w&;"=\/])#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-])/g, (m, pre, name) => {
     const handle = name.toLowerCase();
     if (!handles.has(handle)) return m;
-    return `${pre}<a class="gc-channel-ref" href="#messages/channel/${handle}" data-channel-ref="${handle}">#${handle}</a>`;
+    const link = channelRefLink(handle);
+    const topicAttr = link.topic ? ` data-topic-ref="${link.handle}"` : '';
+    return `${pre}<a class="gc-channel-ref" href="${link.href}" data-channel-ref="${link.handle}"${topicAttr}>#${handle}</a>`;
   });
+}
+
+// #4668: a chip's address. Real links when the chat names a project (the
+// #N one opens that project's request, the PR#N one the change's page, the
+// #4367 address the topic route resolves from a pull request number — same
+// shape as frontend/src/lib/change-href.ts); null when it does not (a DM
+// has no project to open), which leaves today's plain span.
+function refChipHref(isPr, num) {
+  const slug = GroupChat._appSlug();
+  if (!slug) return null;
+  return `#app/${encodeURIComponent(slug)}/dev/${isPr ? 'changes' : 'issues'}/${num}`;
 }
 
 // #130: second replacement pass over the (already escaped, mention-marked)
@@ -4867,15 +5370,23 @@ function renderChannelChips(html) {
 // emerald issue chips. One combined regex so `PR#12` is never double-matched
 // by the issue pattern. The `&` exclusion in the boundary keeps escaped
 // entities from chipping; the trailing lookahead keeps `#12abc` plain.
-// Clicking / Enter / Space on a chip routes to AppView.revealInDrawer (see
-// _attachQuoteHandlers) — refs are a pure display convention, so message
-// content stays plain text on the wire and in the DB.
+// Clicking / Enter / Space on a chip routes through GroupChat._openRef (see
+// _attachQuoteHandlers): a plain span goes to AppView.revealInDrawer and an
+// anchor carries its own address. Refs are a pure display convention, so
+// message content stays plain text on the wire and in the DB. The href holds
+// no `#<digit>` or `#<letter>` after a permitted boundary (`"#app/…` sits
+// after `"`, which renderChannelChips excludes), so the later passes never
+// match inside it.
 function renderRefChips(html) {
   return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
     const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
     const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
     const type = isPr ? 'pr' : 'issue';
     const label = isPr ? `PR#${num}` : `#${num}`;
+    const href = refChipHref(isPr, num);
+    if (href) {
+      return `${pre}<a class="${cls}" href="${href}" data-ref-type="${type}" data-ref-number="${num}">${label}</a>`;
+    }
     return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
   });
 }
@@ -4974,20 +5485,31 @@ function replaceTextWithSegments(textNode, segs) {
       // #2783: a real link — see .gc-channel-ref in app.css for why it is
       // not a `.gc-ref`.
       const link = document.createElement('a');
+      const to = channelRefLink(seg.handle);
       link.className = 'gc-channel-ref';
-      link.setAttribute('href', `#messages/channel/${seg.handle}`);
-      link.setAttribute('data-channel-ref', seg.handle);
+      link.setAttribute('href', to.href);
+      link.setAttribute('data-channel-ref', to.handle);
+      // #4417: a topic's channel, on its project's page.
+      if (to.topic) link.setAttribute('data-topic-ref', to.handle);
       link.textContent = `#${seg.handle}`;
       frag.appendChild(link);
     } else { // ref
-      const span = document.createElement('span');
-      span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
-      span.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
-      span.setAttribute('data-ref-number', seg.num);
-      span.setAttribute('role', 'link');
-      span.setAttribute('tabindex', '0');
-      span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
-      frag.appendChild(span);
+      // #4668: an anchor when the chat names a project — a link one can open
+      // in a new tab. No role or tabindex: an anchor is focusable and a link
+      // already. No slug (a DM, the test sandbox): today's span.
+      const href = refChipHref(seg.isPr, seg.num);
+      const el = document.createElement(href ? 'a' : 'span');
+      el.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+      el.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
+      el.setAttribute('data-ref-number', seg.num);
+      if (href) {
+        el.setAttribute('href', href);
+      } else {
+        el.setAttribute('role', 'link');
+        el.setAttribute('tabindex', '0');
+      }
+      el.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      frag.appendChild(el);
     }
   }
   parent.replaceChild(frag, textNode);
@@ -5639,7 +6161,7 @@ const RefAutocomplete = {
       // still clickable once rendered as chips.
       const prs = (Array.isArray(prData.promoted) ? prData.promoted : [])
         .filter((pr) => pr.pr_number != null)
-        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || `by ${pr.username || ''}`, kind: 'pr' }));
+        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || PlatformI18n.t('chat:group.ref.byUser', { username: pr.username || '' }), kind: 'pr' }));
       const issues = (Array.isArray(issueData.issues) ? issueData.issues : [])
         .map((i) => ({ number: i.number, title: i.title || '', kind: 'issue' }));
       RefAutocomplete._cacheBySlug.set(slug, { prs, issues, fetchedAt: Date.now() });
@@ -6151,6 +6673,20 @@ const EmojiAutocomplete = {
 // global accessible by bare name within the realm, but is NOT a property
 // of `window` — mirror the `window.Notifications` pattern explicitly.)
 window.GroupChat = GroupChat;
+
+// The words this module publishes (the transcripts' placeholder and error
+// lines, the reply strip, the status line) are read as they are published:
+// publish them again, from the state already held, when the language on
+// screen changes or this module's text arrives.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!GroupChat.appSlug) return;
+    GroupChat.render();
+    GroupChat.renderThread({ keepScroll: true });
+    GroupChat._renderQuotePreview();
+    GroupChat._renderStatusLine();
+  });
+}
 window.MentionAutocomplete = MentionAutocomplete;
 window.RefAutocomplete = RefAutocomplete;
 window.EmojiAutocomplete = EmojiAutocomplete;

@@ -78,8 +78,9 @@ function graceMs() {
 
 // The release workflow's RELEASE_MIN_GAP_MINUTES: the longest a run at
 // main's tip waits for the previous release to age before it publishes.
-// tests/release-watch.test.js holds the two equal.
-const RELEASE_MIN_GAP_MS = 10 * 60 * 1000;
+// tests/release-watch.test.js holds the two equal. Ten minutes until 10 Oct
+// 2026, four since (see the workflow's note on the gap).
+const RELEASE_MIN_GAP_MS = 4 * 60 * 1000;
 
 const WORKFLOW_PATH = '.github/workflows/build-kubernetes-images.yml';
 const WORKFLOW_FILE = 'build-kubernetes-images.yml';
@@ -662,7 +663,7 @@ async function releasesFor(pool, sessionIds, opts = {}) {
  * written from.
  */
 function demoRelease(now = Date.now()) {
-  return estimate({ releasedAt: now - 3 * 60 * 1000, newestMergedAt: now - 60 * 1000 });
+  return estimate({ releasedAt: now - 60 * 1000, newestMergedAt: now - 3 * 60 * 1000 });
 }
 
 module.exports = {

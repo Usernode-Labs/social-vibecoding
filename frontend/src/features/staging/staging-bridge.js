@@ -111,7 +111,7 @@ export const stagingBridge = {
     const next = {
       loaderVisible: !!visible,
       loaderRetry: !!visible && !!patch.retry,
-      loaderRetryLabel: patch.retryLabel || 'Retry sign-in',
+      loaderRetryLabel: patch.retryLabel || null,
     };
     if (patch.title !== undefined) next.loaderTitle = patch.title;
     if (patch.sub !== undefined) next.loaderSub = patch.sub;

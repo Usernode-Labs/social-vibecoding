@@ -476,7 +476,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       const { rows: [queued] } = await pool.query(
         `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 2, 1, 'new') RETURNING id`, [app.id],
       );
-      const filed = await activity.startCard(pool, {
+      const filed = await activity.startCard(pool, { inDm: true,
         app, issueNumber: 2, bot, jobKey: Number(queued.id), filed: true, settings,
         requester: {
           userId: priya.id, username: priya.username, hasPlatformAccess: true, issueTitle: 'Books we have read', firstVersion: false, askedText: 'Keep a list',

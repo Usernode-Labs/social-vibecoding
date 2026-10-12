@@ -246,15 +246,15 @@ async function resetUserPassword(user: User) {
 }
 
 /**
- * "Reset first run": the account's next load shows the join screen, the tour
- * and the Getting started card again, as for a new account (communities,
- * stage 5; POST /api/admin/users/:id/reset-first-run). For trying
- * onboarding on a test account, or on yourself. Nothing it owns changes.
+ * "Reset first run": the account's next load shows the join screen again,
+ * with the tour not done, as for a new account (communities, stage 5; POST
+ * /api/admin/users/:id/reset-first-run). For trying onboarding on a test
+ * account, or on yourself. Nothing it owns changes.
  */
 async function resetFirstRun(user: User) {
   const ok = await console_()._confirm({
     title: `Reset ${user.username}'s first run?`,
-    message: 'Next time they open Homeroom they see the join screen, the welcome tour and the Getting started card again, as if they had just signed up. Their communities, Home tiles, username and terms answer stay as they are.',
+    message: 'Next time they open Homeroom they see the join screen again, and the welcome tour is not done, as if they had just signed up. Their communities, Home tiles, username, terms answer and challenge points stay as they are.',
     confirmLabel: 'Reset',
   });
   if (!ok) return;

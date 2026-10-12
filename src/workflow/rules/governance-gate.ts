@@ -34,6 +34,11 @@
 //      (yes >= M) or a Contested proposal (No fraction >= 1/3) collapses the
 //      window to 0.
 
+import {
+  BUILT_IN_GROUPS, PRESET_KEYS, WHO_DECIDES, evaluateRules, groupKey, matchPreset,
+} from './governance-rules.ts';
+import type { PresetKey, Rule, RulesFacts } from './governance-rules.ts';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Dynamic-threshold knobs: a quarter-of-active discount when unopposed
@@ -317,16 +322,57 @@ export function mergeGate(active: Count, yesCount: Count, noCount: Count, opened
 //      swapped for the approver members.
 //   3. approvals_required=N ("at least N", either policy): mergeable as soon
 //      as it has N qualifying yes votes (atLeastGate).
+//   4. #4666: a project whose dapp.json names a `preset` or `rules`
+//      (governance-rules.ts) is decided by those rules instead of the two
+//      columns (computeRulesGate). Stored in apps.governance_rules; null
+//      keeps regimes 1-3.
 
-export interface Governance { approverPolicy: 'anyone' | 'invited'; approvalsRequired: number | null }
+export interface StoredGroup { name: string; key: string; people: string[]; ids: number[] }
+export interface StoredRules { preset: PresetKey | null; groups: StoredGroup[]; rules: Rule[] }
 
-// The governance columns of an apps row.
-export function governanceFromRow(row: { approver_policy?: string | null; approvals_required?: Count } | null | undefined): Governance {
+export interface Governance {
+  approverPolicy: 'anyone' | 'invited';
+  approvalsRequired: number | null;
+  rules?: StoredRules | null;
+}
+
+// apps.governance_rules as the gate reads it: `{ preset, groups, rules }`,
+// each group `{ name, key, people, ids }`, or null for anything unusable.
+export function rulesFromColumn(raw: unknown): StoredRules | null {
+  let v: any = raw;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  if (!v || typeof v !== 'object' || !Array.isArray(v.rules) || !v.rules.length) return null;
+  const groups: StoredGroup[] = Array.isArray(v.groups) ? v.groups.filter((g: any) => g && typeof g.name === 'string').map((g: any) => ({
+    name: g.name,
+    key: groupKey(g.name),
+    people: Array.isArray(g.people) ? g.people.filter((p: unknown) => typeof p === 'string') : [],
+    ids: Array.isArray(g.ids) ? g.ids.map((id: unknown) => parseInt(String(id), 10)).filter(Number.isFinite) : [],
+  })) : [];
+  const keys = new Set(groups.map((g) => g.key));
+  const rules: Rule[] = v.rules.filter((r: any) => r && typeof r.group === 'string'
+    && ['atLeast', 'percentOfActive', 'percentOfEveryone', 'majority'].includes(r.kind)
+    && (BUILT_IN_GROUPS.includes(r.group) || keys.has(r.group)))
+    .map((r: any) => ({ group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : parseInt(r.n, 10) || 1 }));
+  if (!rules.length) return null;
+  const preset = typeof v.preset === 'string' && (PRESET_KEYS as readonly string[]).includes(v.preset) ? v.preset as PresetKey : null;
+  return { preset, groups, rules };
+}
+
+// The governance columns of an apps row, as readGovernance returns them.
+// A row that carries governance_rules (the workflow machine's facts read)
+// brings its rules too.
+export function governanceFromRow(
+  row: { approver_policy?: string | null; approvals_required?: Count; governance_rules?: unknown } | null | undefined,
+): Governance {
   return {
     approverPolicy: row?.approver_policy === 'invited' ? 'invited' : 'anyone',
     approvalsRequired: row?.approvals_required != null
       ? int(row.approvals_required)
       : null,
+    rules: row && Object.prototype.hasOwnProperty.call(row, 'governance_rules')
+      ? rulesFromColumn(row.governance_rules) : null,
   };
 }
 
@@ -467,13 +513,20 @@ export function memberFloor({ memberCount, otherYes }: { memberCount?: Count; ot
 
 export interface GovernedGate extends Gate {
   policy: Governance['approverPolicy'];
-  mode: 'at_least' | 'default';
+  mode: 'at_least' | 'default' | 'rules';
   approvalsRequired: number | null;
   explicitApproval: boolean;
   memberFloor: Floor | null;
   qualifiedYes: number;
   qualifiedNo: number;
   activeCount: number;
+  // A rules project's gate (computeRulesGate) adds these.
+  preset?: PresetKey | null;
+  whoDecides?: boolean;
+  creatorYes?: boolean;
+  partial?: boolean;
+  passedBy?: { group: string; kind: string; n: number | null } | null;
+  rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean }>;
 }
 
 // The two rules computeGate dispatches to. services/governance.js passes
@@ -484,6 +537,18 @@ export interface GateRules {
   oppositionWindowMs: typeof oppositionWindowMs;
 }
 const RULES: GateRules = { mergeGate, oppositionWindowMs };
+
+export interface GateOpts {
+  explicitApproval?: boolean;
+  memberCount?: Count;
+  otherYes?: Count;
+  // #4666, a rules project: why it was flagged, the counted voters, the
+  // author, and the app facts its rules read (governance.js rulesFacts).
+  explicitReason?: string | null;
+  voters?: { yes: Iterable<number> | Set<number>; no: Iterable<number> | Set<number> } | null;
+  authorId?: Count;
+  rulesFacts?: RulesFacts | null;
+}
 
 // Pure mode dispatch given already-resolved governance + counts.
 //
@@ -497,9 +562,10 @@ const RULES: GateRules = { mergeGate, oppositionWindowMs };
 // is null when the proposal is not flagged or the floor was not evaluated.
 export function computeGate(
   gov: Governance, active: Count, yesCount: Count, noCount: Count, openedAt: Instant, now: Instant,
-  opts: { explicitApproval?: boolean; memberCount?: Count; otherYes?: Count } = {},
+  opts: GateOpts = {},
   rules: GateRules = RULES,
 ): GovernedGate {
+  if (gov && gov.rules) return computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts, rules);
   const explicitApproval = !!opts.explicitApproval;
   const floor = explicitApproval ? memberFloor(opts) : null;
   const base = gov.approvalsRequired != null
@@ -517,5 +583,95 @@ export function computeGate(
     qualifiedYes: Math.max(int(yesCount) || 0, 0),
     qualifiedNo: Math.max(int(noCount) || 0, 0),
     activeCount: Math.max(int(active) || 0, 1),
+  };
+}
+
+// #4666: whether a flagged proposal is a change to WHO DECIDES (who can see
+// the project, its admins, its groups, its rule, the platform's settings) as
+// opposed to a change to its keys. Who decides goes by WHO_DECIDES whatever
+// the project picked; keys follow the project's own rule. A flag with no
+// reason (a row stamped before reasons existed) is treated as who decides,
+// the stricter reading.
+export function isWhoDecidesReason(reason: string | null | undefined): boolean {
+  return reason !== 'secrets';
+}
+
+// computeGate for a project with rules of its own (governance-rules.ts). The
+// counts stand in for the members group when the caller has no voter sets
+// (`opts.voters`) or app facts (`opts.rulesFacts`); a rule they cannot answer
+// does not pass, and `partial` says so. Every path that decides goes through
+// governance.js governedGate or the governance machine, which read both.
+//
+// Returns the mergeGate shape every consumer reads, plus `mode: 'rules'`,
+// `preset`, `whoDecides`, `rules` (each rule's status), `passedBy` (the rule
+// that let it in, or null) and `creatorYes`.
+export function computeRulesGate(
+  gov: Governance, active: Count, yesCount: Count, noCount: Count, openedAt: Instant, now: Instant,
+  opts: GateOpts = {},
+  rules: GateRules = RULES,
+): GovernedGate {
+  const stored = gov.rules!;
+  const explicitApproval = !!opts.explicitApproval;
+  const whoDecides = explicitApproval && isWhoDecidesReason(opts.explicitReason ?? null);
+  const value = whoDecides ? { rules: WHO_DECIDES } : stored;
+  const facts: RulesFacts = opts.rulesFacts || {
+    creatorId: null, memberCount: (opts.memberCount ?? 0) as number, membersActive: active as number,
+    adminIds: [], groups: new Map(), activeIds: null,
+  };
+  const membersActive = Math.max(int(active) || 0, 1);
+  const voters = opts.voters ? {
+    yes: opts.voters.yes instanceof Set ? opts.voters.yes : new Set<number>(opts.voters.yes || []),
+    no: opts.voters.no instanceof Set ? opts.voters.no : new Set<number>(opts.voters.no || []),
+  } : null;
+  const authorId = opts.authorId != null && Number.isFinite(int(opts.authorId))
+    ? int(opts.authorId) : null;
+  // The member floor on the majority rules of a flagged proposal: a yes from
+  // someone other than its author, once the community has more than one member.
+  let floor: Floor | null = null;
+  if (explicitApproval) {
+    const otherYes = voters
+      ? [...voters.yes].filter((id) => id !== authorId).length
+      : opts.otherYes;
+    floor = memberFloor({ memberCount: opts.memberCount ?? facts.memberCount, otherYes });
+  }
+  const evaluated = evaluateRules({
+    value,
+    facts: { ...facts, membersActive },
+    voters,
+    counts: { yes: Math.max(int(yesCount) || 0, 0), no: Math.max(int(noCount) || 0, 0) },
+    authorId,
+    openedAt,
+    now,
+    noTimers: explicitApproval,
+    memberFloor: floor,
+    mergeGate: rules.mergeGate,
+    applyNoTimerMerge,
+    atLeastGate: (n, yes, no, opened, at) => atLeastGate(n, yes, no, opened, at, {}, rules.oppositionWindowMs),
+  });
+  const { gate, owner, shown, results, passedBy } = evaluated;
+  const creatorYes = !!(facts.creatorId && voters
+    && (voters.yes.has(facts.creatorId)
+      || (authorId === facts.creatorId && !voters.no.has(facts.creatorId))));
+  return {
+    ...gate,
+    policy: 'anyone',
+    mode: 'rules',
+    approvalsRequired: null,
+    explicitApproval,
+    // The floor is the group's side of a flagged change only: reported while
+    // it is what holds the proposal, never once a rule has let it in.
+    memberFloor: floor && !gate.mergeable ? floor : (floor ? { ...floor, applies: false, met: true } : null),
+    qualifiedYes: shown.yes,
+    qualifiedNo: owner.no,
+    activeCount: membersActive,
+    preset: whoDecides ? null : (stored.preset || matchPreset(stored.rules)),
+    whoDecides,
+    creatorYes,
+    partial: evaluated.partial,
+    passedBy: passedBy ? { group: passedBy.group, kind: passedBy.kind, n: passedBy.n } : null,
+    rules: results.map((r) => ({
+      group: r.group, kind: r.kind, n: r.n, size: r.size, yes: r.yes, need: r.need,
+      passed: r.passed, empty: r.empty,
+    })),
   };
 }

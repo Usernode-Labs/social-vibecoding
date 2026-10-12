@@ -38,6 +38,7 @@ const {
 } = require('./helpers/home-grid-store');
 const { installAppCard } = require('./helpers/app-card');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const STRIP = 'frontend/src/features/home/widget-strip.tsx';
 const MORE = 'frontend/src/features/home/apps-more.tsx';
@@ -74,6 +75,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   installGridStore(sandbox);
@@ -191,18 +193,32 @@ test('the initial chrome renders exactly what the prerendered shell ships', () =
  * have done before dropping the handlers this searches for.
  */
 function find(node, pred) {
+  return inRender(() => findIn(node, pred));
+}
+
+// The bodies and WidgetTile read their text through a hook, so calling one is
+// only valid while something renders. This evaluates `fn` inside a render and
+// hands back what it returned, handlers and all.
+function inRender(fn) {
+  let out;
+  const Probe = () => { out = fn(); return null; };
+  renderToHtml(createElement(Probe));
+  return out;
+}
+
+function findIn(node, pred) {
   if (!node || typeof node !== 'object') return null;
   if (Array.isArray(node)) {
     for (const child of node) {
-      const hit = find(child, pred);
+      const hit = findIn(child, pred);
       if (hit) return hit;
     }
     return null;
   }
   if (pred(node)) return node;
-  const inner = find(node.props && node.props.children, pred);
+  const inner = findIn(node.props && node.props.children, pred);
   if (inner) return inner;
-  return typeof node.type === 'function' ? find(node.type(node.props), pred) : null;
+  return typeof node.type === 'function' ? findIn(node.type(node.props), pred) : null;
 }
 
 const byId = (id) => (n) => n.props && n.props.id === id;
@@ -215,7 +231,7 @@ const ACTIVE = {
 
 function stripTree(strip) {
   const { WidgetStripBody } = loadTsx(STRIP);
-  return WidgetStripBody({ strip });
+  return inRender(() => WidgetStripBody({ strip }));
 }
 
 function withHome(fn) {
@@ -255,7 +271,7 @@ test('the ⓘ button toggles the help panel both ways', () => {
     assert.equal(home._widgetHelpVisible, true);
     // …and the next render draws it, which is the half a source grep misses.
     const shown = { ...ACTIVE, helpVisible: true };
-    assert.match(renderToHtml(createElement(() => stripTree(shown))), /id="widget-help-panel"/);
+    assert.match(renderToHtml(createElement(loadTsx(STRIP).WidgetStripBody, { strip: shown })), /id="widget-help-panel"/);
     find(stripTree(shown), byId('widget-section-help')).props.onClick(fakeEvent());
     assert.equal(home._widgetHelpVisible, false, 'the same button closes it again');
   });
@@ -292,7 +308,7 @@ test('"Show all N apps" expands the grid and repaints', () => {
     assert.match(html, /Show all 9 apps/);
     assert.doesNotMatch(html, /class="hidden/);
 
-    const btn = find(AppsMoreBody({ moreCount: 9 }), byId('home-apps-more-btn'));
+    const btn = find(inRender(() => AppsMoreBody({ moreCount: 9 })), byId('home-apps-more-btn'));
     assert.ok(btn, 'the expander button is in the tree');
     btn.props.onClick();
     assert.equal(home._appsExpanded, true, 'the click lifts the two-row cap');

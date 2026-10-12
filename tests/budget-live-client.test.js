@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 const importOnce = require('./lib/import-once');
 
@@ -59,6 +60,7 @@ function devChat({ search = '' } = {}) {
   sandbox.window = sandbox;
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   const file = path.join(root, 'frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);
@@ -146,9 +148,11 @@ const CREDIT_OPTIONS_SRC = fs.readFileSync(path.join(root, 'public/js/credit-opt
 async function loadCredit() {
   const g = globalThis;
   if (!g.window) g.window = g;
+  if (!g.PlatformI18n) g.PlatformI18n = englishPlatformI18n();
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
+    sandbox.PlatformI18n = englishPlatformI18n();
     vm.createContext(sandbox);
     vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
     g.CreditOptions = sandbox.module.exports;

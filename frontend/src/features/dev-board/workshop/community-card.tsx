@@ -13,17 +13,18 @@
  * link met "18 open items" before they met the thing's name. So the page
  * leads with identity, the way a profile does, and the dashboard follows:
  *
- *   WHAT IT IS. The app's tile and name (the header chip's, from the page's
- *   own store) and dapp.json's one-line description when it has one.
+ *   WHAT IT IS. The app's tile and name, the page's one large heading (the
+ *   header chip's, from the page's own store), over who it is for, and
+ *   dapp.json's one-line description when it has one (HeroIdentity).
  *
  *   WHO IT IS FOR. The audience, in the words people see (Public community,
- *   Private community, Just you), and for a public or a private community
- *   WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block under what it is:
- *   faces, the member count over a line of this week's activity, and the
- *   last fourteen days as a small bar chart across from both (#3268; it was
- *   the hub's Members & activity card, fourth down the page). The chart
- *   names a day when it is pointed at, or dragged across with a finger
- *   (Spark, below), so it needs no caption of its own.
+ *   Private community, Just you), with how many are in it, "Public community
+ *   · 266 members", under the name; and for a public or a private community
+ *   WHO IS AROUND: this week's faces, "40 active this week" and their names
+ *   (HeroActive). That is all the hub says about activity: it is who is
+ *   here, not a dashboard of how they performed. The fortnight's small
+ *   chart that sat beside the faces (#3268) is gone, and the hub draws no
+ *   charts.
  *
  *   JOIN, JOINED, INVITE, ⋯. Membership sits across from the name, because
  *   it is a fact about you and this project, the way a profile's Follow
@@ -39,20 +40,20 @@
  *   MAKE IT PUBLIC. Who a project is for can grow after it exists: Invite
  *   makes a Just-you project a private community, and "Make it public" (it
  *   was "Open it up") makes it a public one. Taking a public community back
- *   is "Make it private", a row of the ⋯ rather than a button here
- *   (confirmMakePrivate): narrowing who a project is for is a setting, not
- *   an invitation, and the hero's row is for asking people in. That is the
- *   visibility change the settings dialog proposes, POST
- *   /api/apps/:slug/visibility-pr, offered to the same people the route
- *   lets open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
+ *   is the Who can see & change it sheet's (#4666,
+ *   ../../dialogs/who-decides.tsx, from the ⋯ and the rule line's Rules):
+ *   narrowing who a project is for is a setting, not an invitation, and the
+ *   hero's row is for asking people in. That is a visibility change, POST
+ *   /api/apps/:slug/visibility-pr here and /who-decides-pr in the sheet,
+ *   offered to the same people the routes let open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
  *   says who a project is for, so the change is voted in like any other
  *   line of it and applies once it merges. While one is up, the hero says
  *   so and links to it instead of offering a second.
  *
  *   HOW A CHANGE GETS IN is not on the hero any more. The approval rule is
- *   the Workshop page's Approval rules card (ApprovalRules, below), beside
- *   the work it governs: on the hero it was a line about process between
- *   who is here and the channel.
+ *   the last line of the Workshop's Overview card (ApprovalLine, below),
+ *   beside the work it governs: on the hero it was a line about process
+ *   between who is here and the channel.
  *
  *   WHERE THEY TALK is no longer a row here. The channel has a card of its
  *   own on the hub (./hub-cards.tsx), with its last messages, because it
@@ -74,13 +75,17 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
 import { changeHref } from '../../../lib/change-href';
+import type { ApprovalPayload } from '../../who-decides/model';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -117,6 +122,39 @@ export type HubFirstVersion = {
   } | null;
 };
 
+/** One channel of a project (#4417): #general, or one of its topics. */
+export interface PlaceChannel {
+  /** The topic's registry row (its channel's thread ref); null for #general. */
+  id: number | null;
+  kind: 'general' | 'topic';
+  /** The topic's category key (dapp.json `id`); null for #general. */
+  key: string | null;
+  handle: string;
+  /** Handles it had before a rename, which still find it. */
+  aliases: string[];
+  name: string;
+  about: string;
+  icon: string;
+  state: 'live' | 'archived' | 'merged';
+  /** A merged topic: the key of the topic it joined, and when. */
+  merged_into: string | null;
+  merged_at: string | null;
+  /** Open requests filed under it; null for #general and retired topics. */
+  requests: number | null;
+  unread: number;
+  /** The figures its channel shows above the room (topic-figures.tsx);
+      empty for #general and for a topic that names none. */
+  figures?: string[];
+}
+
+export interface PlacesPayload {
+  /** Votes waiting on the viewer here, or null when not counted. */
+  owed: number | null;
+  channels: PlaceChannel[];
+  /** Topic proposals waiting for a vote (the Topics dialog lists them). */
+  proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
+}
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
@@ -151,39 +189,82 @@ export type CommunityPayload = {
     /** Where the hub's composer sends: the room's own write route. */
     post_url?: string | null;
   } | null;
-  /** Who has been around lately, for Members & activity: two counts and
-      the last fourteen days, oldest first, as people-per-day. */
+  /** Who has been around lately (communities.js activitySummary): the
+      hub's people row reads the week's count and up to five of its people
+      by name, most recent first. `daily` is the last fourteen days, oldest
+      first, as people per day; the hub draws no chart of it. */
   activity?: {
     active_week: number;
     shipped_month: number;
     daily?: Array<{ day: string; n: number }>;
+    active_people?: Array<{ id: number; username: string; display_name?: string | null }>;
   } | null;
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;
   /** An audience change already up for a vote, if one is. */
   audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
-  approval: {
-    policy: 'anyone' | 'invited';
-    approvals_required: number | null;
-    electorate: number;
-    required: number;
-  };
+  /**
+   * #4417: THE PLACES — what the project's list says beside each of its
+   * places: the votes owed here, and every channel, #general first, then
+   * each topic in dapp.json's order, retired ones included and marked so
+   * (the list draws the live ones). Null when it could not be read.
+   */
+  places?: PlacesPayload | null;
+  approval: ApprovalPayload;
+  /** #4666: who can see and build it, as the two columns say. */
+  visibility?: { build: 'public' | 'private'; view: 'public' | 'private' } | null;
+  /** #4666: a change to who can see and change it already up for a vote. */
+  who_decides_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
 };
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
 /**
- * Who has to say yes, out of how many: "2 of the 12 active members", "both
- * active members", "the only approver". A count dapp.json set can name more
- * people than there are, and then says how many there are.
+ * The rule's sentences for one kind of voter, as message ids. Each is the
+ * whole sentence, because who has to say yes is worded by how many that is
+ * out of how many: "2 of the 12 active members", "both active members", "the
+ * only approver". A count dapp.json set can name more people than there are
+ * (`short`), and then says how many there are. The `Quiet` ones add the
+ * path that needs one Yes and no objection.
  */
-function whoApproves(required: number, of: number, one: string, many: string): string {
-  if (required < of) return `${required} of the ${of} ${many}`;
-  if (required > of) return `${plural(required, one, many)} (there ${of === 1 ? 'is' : 'are'} ${of})`;
-  if (of === 1) return `the only ${one}`;
-  if (of === 2) return `both ${many}`;
-  return `all ${of} ${many}`;
+type RuleIds = {
+  some: string; someQuiet: string;
+  short: string; shortQuiet: string;
+  only: string;
+  both: string; bothQuiet: string;
+  all: string; allQuiet: string;
+};
+
+const APPROVER_RULE: RuleIds = {
+  some: 'project:communityCard.rule.approvers.some',
+  someQuiet: 'project:communityCard.rule.approvers.someQuiet',
+  short: 'project:communityCard.rule.approvers.short',
+  shortQuiet: 'project:communityCard.rule.approvers.shortQuiet',
+  only: 'project:communityCard.rule.approvers.only',
+  both: 'project:communityCard.rule.approvers.both',
+  bothQuiet: 'project:communityCard.rule.approvers.bothQuiet',
+  all: 'project:communityCard.rule.approvers.all',
+  allQuiet: 'project:communityCard.rule.approvers.allQuiet',
+};
+
+const MEMBER_RULE: RuleIds = {
+  some: 'project:communityCard.rule.members.some',
+  someQuiet: 'project:communityCard.rule.members.someQuiet',
+  short: 'project:communityCard.rule.members.short',
+  shortQuiet: 'project:communityCard.rule.members.shortQuiet',
+  only: 'project:communityCard.rule.members.only',
+  both: 'project:communityCard.rule.members.both',
+  bothQuiet: 'project:communityCard.rule.members.bothQuiet',
+  all: 'project:communityCard.rule.members.all',
+  allQuiet: 'project:communityCard.rule.members.allQuiet',
+};
+
+function ruleLine(ids: RuleIds, required: number, of: number, quiet: boolean): string {
+  if (required < of) return translate(quiet ? ids.someQuiet : ids.some, { count: required, total: of });
+  // Counted by how many there are: that is the number English words differently.
+  if (required > of) return translate(quiet ? ids.shortQuiet : ids.short, { count: of, required });
+  if (of === 1) return translate(ids.only);
+  if (of === 2) return translate(quiet ? ids.bothQuiet : ids.both);
+  return translate(quiet ? ids.allQuiet : ids.all, { count: of });
 }
 
 /**
@@ -205,33 +286,34 @@ function whoApproves(required: number, of: number, one: string, many: string): s
  */
 export function approvalLine(
   approval: CommunityPayload['approval'] | null | undefined,
-  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> | null,
+  viewer?: Pick<CommunityPayload, 'audience' | 'is_member'> & { is_creator?: boolean } | null,
 ): string {
   if (!approval) return '';
+  // #4666: a preset's line, as plain text (its face and bold are the card's).
+  const preset = presetSentence(approval, viewer ? { ...viewer, is_creator: !!viewer.is_creator } : viewer);
+  if (preset) return translate(preset.long, preset.values).replace(/<\/?\d+>/g, '');
   const required = Math.max(1, Number(approval.required) || 1);
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   // A Just you project's one approver is the person reading it (#4246).
   if (viewer?.audience === 'solo' && viewer.is_member
     && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
-    return 'A change goes live when you approve it.';
+    return translate('project:communityCard.rule.you');
   }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
   if (approval.policy === 'invited') {
-    const who = whoApproves(required, electorate, 'approver', 'approvers');
-    return `A change goes live when ${who} ${required === 1 ? 'says' : 'say'} yes${quiet ? ', or after a wait if one says yes and nobody says no' : ''}.`;
+    return ruleLine(APPROVER_RULE, required, electorate, quiet);
   }
   if (fixed) {
-    return `A change goes live once ${plural(required, 'member approves', 'members approve')} it.`;
+    return translate('project:communityCard.rule.fixed', { count: required });
   }
-  const who = whoApproves(required, electorate, 'active member', 'active members');
-  return `A change goes live when ${who} ${required === 1 ? 'approves' : 'approve'} it${quiet ? ', or after a wait if one approves and nobody objects' : ''}.`;
+  return ruleLine(MEMBER_RULE, required, electorate, quiet);
 }
 
 /** "Public community · 12 members"; "Just you" alone, because there is one. */
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
-  if (p.audience === 'solo') return p.audience_label || 'Just you';
-  return `${p.audience_label} · ${plural(Number(p.member_count) || 0, 'member', 'members')}`;
+  if (p.audience === 'solo') return p.audience_label || translate('project:communityCard.audience.justYou');
+  return translate('project:communityCard.audience.withMembers', { audience: p.audience_label, count: Number(p.member_count) || 0 });
 }
 
 /**
@@ -241,9 +323,9 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
  */
 export function audienceChangeLine(title: string | null | undefined): string {
   const t = String(title || '');
-  if (/ public$/.test(t)) return 'Making it a public community is waiting for approval';
-  if (/private \(collaborators only\)$/.test(t)) return 'Making it a private community is waiting for approval';
-  return 'A change to who it is for is waiting for approval';
+  if (/ public$/.test(t)) return translate('project:communityCard.audienceChange.toPublic');
+  if (/private \(collaborators only\)$/.test(t)) return translate('project:communityCard.audienceChange.toPrivate');
+  return translate('project:communityCard.audienceChange.other');
 }
 
 function AudienceGlyph({ audience }: { audience: Audience }) {
@@ -307,6 +389,19 @@ export function reloadCommunity(slug: string): Promise<void> {
   });
   inflight.set(slug, pending);
   return pending;
+}
+
+/**
+ * The record already read for `slug`, or null, without asking for one: for a
+ * caller outside React (the chat's `#name` links, ./place-store.ts).
+ */
+export function cachedCommunity(slug: string): CommunityPayload | null {
+  return (slug && communities.get(slug)) || null;
+}
+
+/** Whether a read of `slug`'s record is on its way. */
+export function communityInflight(slug: string): boolean {
+  return !!slug && inflight.has(slug);
 }
 
 export function useCommunity(slug: string): CommunityPayload | null {
@@ -382,12 +477,13 @@ export function WeekPeople({ members, count, audience, audienceLabel, seats }: {
   audienceLabel?: string;
   seats?: boolean;
 }) {
+  const t = useMessages('project');
   const solo = audience === 'solo';
   const shown: Audience | undefined = seats ? 'invited' : audience;
-  const label = seats ? 'Private community' : audienceLabel;
+  const label = seats ? t('project:communityCard.week.privateCommunity') : audienceLabel;
   const you = (members || [])[0];
   const faces = seats ? [] : solo ? [] : (members || []).slice(0, WEEK_FACES);
-  const countLine = seats || solo ? '' : plural(count, 'person', 'people');
+  const countLine = seats || solo ? '' : t('project:communityCard.week.people', { count });
   return (
     <div className="dev-ws-hero-week-people" data-ws-members="" data-ws-seats={seats ? '' : undefined}>
       {seats && you ? (
@@ -445,170 +541,113 @@ export function HeroPeople({ members, count, audience, audienceLabel, children }
 
 /** "Public community · 23 members", the audience's glyph leading it. */
 function HeroCount({ count, audience, audienceLabel }: { count: number; audience?: Audience; audienceLabel?: string }) {
+  const t = useMessages('project');
   const solo = audience === 'solo';
   return (
     <span className="dev-ws-hero-count" data-ws-members-cell="members">
-      {audienceLabel ? (
-        <span className="dev-ws-hero-audience" data-ws-community-audience="">
-          {audience ? <AudienceGlyph audience={audience} /> : null}
-          <b>{audienceLabel}</b>
-        </span>
-      ) : null}
-      {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
-    </span>
-  );
-}
-
-/** "Sat, Sep 26", the day a bar stands for, in the viewer's own words. */
-export function sparkDay(day: string): string {
-  const when = new Date(`${day}T12:00:00`);
-  return Number.isNaN(when.getTime()) ? day
-    : when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-/** The tip's first line: "Sat, Sep 26 · 21 people". */
-export function sparkTip(d: { day: string; n: number }): string {
-  return `${sparkDay(d.day)} · ${plural(Number(d.n) || 0, 'person', 'people')}`;
-}
-
-/** How long a tip stays up after a finger lifts off the chart. */
-const TIP_LINGER_MS = 2500;
-
-/**
- * The fourteen days as bars, and the day under the pointer as a tip.
- *
- * NO CAPTION, AND NO `title` ON THE BARS. The chart carried "Who took part,
- * last 14 days" under the activity line, and each bar a native tooltip that
- * a phone never shows. The caption is the tip's second line now, where it
- * explains the number it sits under, and the tip is the chart's own:
- *
- *   - with a mouse it follows the pointer across the bars and leaves with
- *     it;
- *   - with a finger it shows on touch and follows the drag sideways (the
- *     chart takes the pointer, so the drag does not scroll the page; a
- *     vertical drag still does, `touch-action: pan-y` in app.css), and
- *     lingers a moment after the finger lifts, so a tap can be read.
- *
- * The tip is placed against the chart's right edge, not over the bar: the
- * chart ends the row at the screen's edge, and a tip centred on the last
- * bar would run off it. The bar it is about is lit instead.
- *
- * For a screen reader nothing changes: the chart is one image whose name
- * lists every day's count, and the tip is hidden from it.
- */
-function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: number }) {
-  const [at, setAt] = useState<number | null>(null);
-  const boxRef = useRef<HTMLSpanElement | null>(null);
-  const linger = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopLinger = () => {
-    if (linger.current) clearTimeout(linger.current);
-    linger.current = null;
-  };
-  useEffect(() => stopLinger, []);
-  const pick = (clientX: number) => {
-    const box = boxRef.current;
-    if (!box) return;
-    const r = box.getBoundingClientRect();
-    if (!r.width) return;
-    const i = Math.floor(((clientX - r.left) / r.width) * days.length);
-    setAt(Math.min(days.length - 1, Math.max(0, i)));
-  };
-  const active = at == null ? null : days[at] || null;
-  return (
-    <span className="dev-ws-hero-spark-wrap">
-      <span
-        ref={boxRef}
-        className="dev-ws-hero-spark"
-        data-ws-members-trend=""
-        {...(active ? { 'data-ws-spark-active': '' } : {})}
-        role="img"
-        aria-label={`People taking part each day, last ${days.length} days: ${days.map((d) => Number(d.n) || 0).join(', ')}`}
-        onPointerDown={(e) => {
-          stopLinger();
-          if (e.pointerType !== 'mouse') {
-            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
-          }
-          pick(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (e.pointerType === 'mouse' || at != null) pick(e.clientX);
-        }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') setAt(null); }}
-        onPointerUp={(e) => {
-          if (e.pointerType === 'mouse') return;
-          stopLinger();
-          linger.current = setTimeout(() => setAt(null), TIP_LINGER_MS);
-        }}
-        onPointerCancel={() => { stopLinger(); setAt(null); }}
-      >
-        {days.map((d, i) => {
-          const n = Number(d.n) || 0;
-          return (
-            <span
-              key={d.day}
-              className={(n ? 'dev-ws-hero-spark-bar' : 'dev-ws-hero-spark-bar dev-ws-hero-spark-bar-quiet')
-                + (i === at ? ' dev-ws-hero-spark-bar-on' : '')}
-              style={{ height: `${n && peak ? Math.max(12, Math.round((n / peak) * 100)) : 8}%` }}
+      {!audienceLabel ? (solo ? null : t('project:communityCard.people.members', { count }))
+        : solo ? <AudienceLabel audience={audience}>{audienceLabel}</AudienceLabel>
+          : (
+            // One message: the audience, drawn with its glyph, then the count.
+            <RichMessage
+              id="project:communityCard.people.audienceMembers"
+              values={{ audience: audienceLabel, count }}
+              components={[<AudienceLabel audience={audience} />]}
             />
-          );
-        })}
-      </span>
-      {active ? (
-        <span className="dev-ws-hero-spark-tip" aria-hidden="true" data-ws-spark-tip="">
-          <span className="dev-ws-hero-spark-tip-day">{sparkTip(active)}</span>
-          <span className="dev-ws-hero-spark-tip-cap">Who took part, last 14 days</span>
-        </span>
-      ) : null}
+          )}
+    </span>
+  );
+}
+
+/** The audience's words in bold, its glyph leading them. */
+function AudienceLabel({ audience, children }: { audience?: Audience; children?: ReactNode }) {
+  return (
+    <span className="dev-ws-hero-audience" data-ws-community-audience="">
+      {audience ? <AudienceGlyph audience={audience} /> : null}
+      <b>{children}</b>
     </span>
   );
 }
 
 /**
- * WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block (#3268 put both on
- * the hero, as two rows with the actions between them): the faces, then
- * "Public community · 23 members" over who was around this week and how
- * many changes shipped this month, and the last fourteen days as a small
- * bar chart across from both. On a phone the chart moves up across from the
- * faces and the words take the full width under them (app.css): faces,
- * words and chart in one row left the words a column a few words wide.
+ * WHO IS AROUND, BY NAME (the hub's people row): up to HERO_FACES faces of
+ * the people active this week (GET .../community `activity.active_people`,
+ * most recently active first), "+N" for the rest of them, then "40 active
+ * this week" over their names, "evan, talha, zura, scraido2, kempis and 35
+ * more". The count is the week's (`active_week`), so the names are some of
+ * the people it counts. On a phone the names give way first.
  *
- * "Changes shipped", not "shipped": a bare number shipped said nothing
- * about what it counted. The separator is a no-break space and a dot, so a
- * line too long for a narrow phone breaks after the dot, never before it.
- * A zero says nothing; a fortnight in which nobody did anything is one
- * quiet line instead of fourteen slivers.
+ * That is all the hub says about activity: it is who is here, not a
+ * dashboard of how they performed, so it draws no chart. A zero says
+ * nothing: with nobody around this week there is no row.
  */
-export function HeroPulse({ members, count, audience, audienceLabel, activity }: {
-  members: CommunityPayload['members'] | null | undefined;
-  count: number;
-  audience?: Audience;
-  audienceLabel?: string;
-  activity: CommunityPayload['activity'] | null | undefined;
-}) {
-  const days = activity?.daily || [];
-  const active = Number(activity?.active_week) || 0;
-  const shipped = Number(activity?.shipped_month) || 0;
-  const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  const quiet = !active && !shipped && !peak;
+export function HeroActive({ activity }: { activity: CommunityPayload['activity'] | null | undefined }) {
+  const t = useMessages('project');
+  const count = Number(activity?.active_week) || 0;
+  if (!count) return null;
+  const people = (activity?.active_people || []).filter((p) => p && p.username).slice(0, HERO_FACES);
+  const rest = Math.max(0, count - people.length);
+  const names = listText(people.map((p) => p.username));
   return (
-    <div className="dev-ws-hero-pulse" data-ws-members="">
-      <HeroFaces members={members} />
-      <span className="dev-ws-hero-pulse-words">
-        <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
-        {quiet ? (
-          <span className="dev-ws-hero-activity-line" data-ws-members-trend="" data-ws-trend-empty="">
-            Nobody has been around in the last 14 days.
+    <div className="dev-ws-hero-active" data-ws-members="" data-ws-active-people={String(count)}>
+      {people.length ? (
+        <span className="dev-ws-hero-faces" aria-hidden="true">
+          {people.map((p) => (
+            <span key={p.id} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
+              {(p.username || '?').charAt(0).toUpperCase()}
+            </span>
+          ))}
+          {rest ? <span className="dev-ws-hero-face dev-ws-hero-face-more">{t('project:hub.people.moreFaces', { count: rest })}</span> : null}
+        </span>
+      ) : null}
+      <span className="dev-ws-hero-active-words">
+        <span className="dev-ws-hero-active-n" data-ws-members-cell="active">{t('project:hub.people.active', { count })}</span>
+        {people.length ? (
+          <span className="dev-ws-hero-active-names" data-ws-active-names="">
+            {rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names}
           </span>
-        ) : (
-          <span className="dev-ws-hero-activity-line" data-ws-members-stats="">
-            {active ? <span data-ws-members-cell="active"><b>{active}</b> active this week</span> : null}
-            {active && shipped ? '\u00a0· ' : null}
-            {shipped ? <span data-ws-members-cell="shipped"><b>{shipped}</b> changes shipped this month</span> : null}
-            {!active && !shipped ? 'Quiet this week' : null}
-          </span>
-        )}
+        ) : null}
       </span>
-      {!quiet && days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
+    </div>
+  );
+}
+
+/**
+ * WHAT IT IS, AND WHO IT IS FOR (the hub's head): the project's tile and
+ * name, the page's one large heading, over "Public community · 266 members"
+ * (Just you alone, for a project that is just yours). The tile and name are
+ * the page's own record of the app (improveStore, the header chip's), else
+ * the community record's name and a letter.
+ */
+function HeroIdentity({ slug, name, iconUrl, iconEmoji, data }: {
+  slug: string;
+  name: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+  data: CommunityPayload;
+}) {
+  const app = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
+  const solo = data.audience === 'solo';
+  const count = Number(data.member_count) || 0;
+  return (
+    <div className="dev-ws-hero-id" data-ws-community-id="">
+      <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
+        <AppIconContent app={app} />
+      </span>
+      <span className="dev-ws-hero-id-text">
+        <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
+        <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
+          {solo || !data.audience_label ? (
+            <span className="dev-ws-hero-audience" data-ws-community-audience="">{audienceLine(data)}</span>
+          ) : (
+            <RichMessage
+              id="project:communityCard.people.audienceMembers"
+              values={{ audience: data.audience_label, count }}
+              components={[<span className="dev-ws-hero-audience" data-ws-community-audience="" />]}
+            />
+          )}
+        </span>
+      </span>
     </div>
   );
 }
@@ -642,7 +681,7 @@ export async function proposeAudience(slug: string, to: 'public' | 'private'): P
       if (res.ok || res.status === 409) return true;
       body = await res.json().catch(() => ({}));
     }
-    throw new Error((body && body.error) || 'That did not go through. Try again.');
+    throw new Error((body && body.error) || translate('project:communityCard.audienceChange.failed'));
   }
   return true;
 }
@@ -657,82 +696,8 @@ export async function verifiedToGoPublic(): Promise<boolean> {
   return askToVerifyForPublic();
 }
 
-/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm). */
-export const MAKE_PUBLIC_LINE = 'Anyone can find it on Discover, join, and propose changes. '
-  + 'Members vote on this first, and it applies once it merges.';
-
-/**
- * What making it private means, said before it is proposed. Who can OPEN
- * it: the repository stays public on GitHub (services/github.js createRepo)
- * whatever this setting says.
- */
-export const MAKE_PRIVATE_LINE = 'Only people who are invited can open it and build it. '
-  + 'Its code stays public on GitHub. '
-  + 'Members vote on this first, and it applies once it merges.';
-
-/**
- * "Make it private", from the hub's ⋯ (../actions-row.tsx DevPlusMenu's
- * `onMakePrivate`). It was a button in the hero beside Invite; it is a
- * setting, so it lives with the settings. The same question the hero's
- * popup asked, as the platform's confirm (the kit's alert, which a row of
- * the touch action sheet can present, as App display name's prompt does),
- * then the same proposal, then the hero re-reads and shows it up for a vote.
- */
-export async function confirmMakePrivate(slug: string, name: string): Promise<void> {
-  const ui = (window as any).PlatformUI;
-  if (!ui || typeof ui.confirm !== 'function') return;
-  const ok = await ui.confirm({
-    title: `Make ${name} a private community?`,
-    message: MAKE_PRIVATE_LINE,
-    confirmLabel: 'Propose making it private',
-    cancelLabel: 'Not now',
-  });
-  if (!ok) return;
-  try {
-    await proposeAudience(slug, 'private');
-  } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
-    return;
-  }
-  await reloadCommunity(slug);
-}
-
-/**
- * "Make it public", from the hub's ⋯ (#4045, decision D). It was a button in
- * the hero's row; it is a setting, so it lives beside "Make it private" in
- * the ⋯ (../actions-row.tsx DevPlusMenu's `onMakePublic`), and the row keeps
- * what you do with people: Invite. The same question as the popup, as the
- * platform's confirm, then the same proposal.
- */
-export async function confirmMakePublic(slug: string, name: string): Promise<void> {
-  const ui = (window as any).PlatformUI;
-  if (!ui || typeof ui.confirm !== 'function') return;
-  if (!(await verifiedToGoPublic())) return;
-  const ok = await ui.confirm({
-    title: `Make ${name} a public community?`,
-    message: MAKE_PUBLIC_LINE,
-    confirmLabel: 'Propose making it public',
-    cancelLabel: 'Not now',
-  });
-  if (!ok) return;
-  try {
-    if (!(await proposeAudience(slug, 'public'))) return;
-  } catch (err) {
-    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
-    return;
-  }
-  await reloadCommunity(slug);
-}
-
-/**
- * Whether the hub's ⋯ offers "Make it public": a private community, to
- * whoever may open the visibility proposal, while no change to who it is
- * for is already up for a vote. A project that is just yours keeps it on
- * its Share it card.
- */
-export function canMakePublic(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
-  return !!data && data.audience === 'invited' && !!data.can_manage && !data.audience_change;
-}
+/** What making it public means, said before it is proposed (the Share it popup and ⋯'s confirm): a message id. */
+export const MAKE_PUBLIC_LINE = 'project:communityCard.makePublic.explain';
 
 /**
  * Leave, from the hub's ⋯ (#4045): it was the hero's Joined pill. Whether
@@ -758,13 +723,15 @@ export async function leaveCommunity(slug: string): Promise<void> {
  * "Make it public" on a project that is just yours (ShareItCard): the
  * audience change as a question under its button, the Join popup's shape. The answer opens the visibility
  * PR; the hero then re-reads and shows it as up for a vote. Only this way
- * round: "Make it private" is the ⋯'s (confirmMakePrivate, above).
+ * round: who can see a project is the Who can see & change it sheet's
+ * (../../dialogs/who-decides.tsx), from the ⋯ and the rule line's Rules.
  */
 function MakePublic({ slug, name, onOpened }: {
   slug: string;
   name: string;
   onOpened: () => void;
 }) {
+  const t = useMessages('project');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -796,7 +763,7 @@ function MakePublic({ slug, name, onOpened }: {
       setOpen(false);
       if (proposed) onOpened();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
+      setError(err instanceof Error ? err.message : t('project:communityCard.audienceChange.failed'));
     } finally {
       setBusy(false);
     }
@@ -820,18 +787,18 @@ function MakePublic({ slug, name, onOpened }: {
           void verifiedToGoPublic().then((go) => { if (go) setOpen(true); });
         }}
       >
-        Make it public
+        {t('project:communityCard.share.makePublic')}
       </Button>
       {open ? (
         <div
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={`Make ${name} a public community?`}
+          aria-label={t('project:communityCard.makePublic.question', { project: name })}
           data-ws-audience-pop=""
         >
-          <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
-          <p className="dev-ws-vote-sub">{MAKE_PUBLIC_LINE}</p>
+          <p className="dev-ws-ask-q">{t('project:communityCard.makePublic.question', { project: name })}</p>
+          <p className="dev-ws-vote-sub">{t(MAKE_PUBLIC_LINE)}</p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
             <button
@@ -842,25 +809,16 @@ function MakePublic({ slug, name, onOpened }: {
               disabled={busy}
               onClick={() => { void propose(); }}
             >
-              Propose making it public
+              {t('project:communityCard.makePublic.propose')}
             </button>
           </div>
           <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
-            Not now
+            {t('project:communityCard.makePublic.notNow')}
           </button>
         </div>
       ) : null}
     </span>
   );
-}
-
-/**
- * Whether the hub's ⋯ offers "Make it private": a public community, to
- * whoever may open the visibility proposal (`can_manage`, the route's own
- * rule), while no change to who it is for is already up for a vote.
- */
-export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
-  return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
 /**
@@ -871,18 +829,22 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
  * community's invite preview (../../invite-preview). `children` hang under
  * the button: the hero's Join question.
  */
-export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
+export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef, children }: {
   offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building' | 'note'>;
   name: string;
+  /** `name` is a stand-in for a community whose name did not come with the link. */
+  unnamed?: boolean;
   busy: boolean;
   onJoin: () => void;
   joinRef?: Ref<HTMLButtonElement>;
   children?: ReactNode;
 }) {
+  // Subscribed: who invited them is read by invitedByLine.
+  const t = useMessages('project');
   return (
     <div className="dev-ws-invite" data-ws-invite="">
       <p className="dev-ws-invite-from" data-ws-invite-from="">{invitedByLine(offer)}</p>
-      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{`“${offer.note}”`}</p> : null}
+      {offer.note ? <p className="dev-ws-invite-note" data-ws-invite-note="">{t('project:communityCard.inviteCard.note', { note: offer.note })}</p> : null}
       <div className="dev-ws-join-anchor">
         <Button
           ref={joinRef}
@@ -896,7 +858,7 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
           disabled={busy}
           onClick={onJoin}
         >
-          {`Join ${name}`}
+          {unnamed ? t('project:communityCard.inviteCard.joinUnnamed') : t('project:communityCard.inviteCard.join', { project: name })}
         </Button>
         {children}
       </div>
@@ -904,11 +866,13 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
   );
 }
 
-export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedByInvite }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
   name?: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
   /** The ⋯ and its menu (../actions-row.tsx DevPlusMenu), last on the
       members row. The page renders it so its props stay the page's. */
   menu?: ReactNode;
@@ -919,6 +883,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       (./invite-offer.ts): the page's own choice, Needs you or the hub. */
   onJoinedByInvite?: () => void;
 }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
@@ -983,7 +948,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
 
   // BEFORE THE READ: the actions that depend on nothing the read says (Open
   // app and the ⋯), so a read that fails cannot take the project's settings
-  // off the page. The name and tile are the coloured header's now.
+  // off the page. The name and tile come with the read (HeroIdentity).
   const openApp = canOpenApp ? (
     <button
       type="button"
@@ -992,7 +957,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >
       <PlayIcon className="w-3 h-3" aria-hidden="true" />
-      Open app
+      {t('project:communityCard.openApp')}
     </button>
   ) : null;
   if (!data) {
@@ -1057,11 +1022,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       ref={popRef}
       className="dev-ws-join-pop"
       role="dialog"
-      aria-label={`Join ${displayName}?`}
+      aria-label={t('project:communityCard.join.question', { project: displayName })}
       data-ws-join-pop=""
     >
-      <p className="dev-ws-ask-q">Join {displayName}?</p>
-      <p className="dev-ws-vote-sub">Members start changes, file requests, vote and chat here.</p>
+      <p className="dev-ws-ask-q">{t('project:communityCard.join.question', { project: displayName })}</p>
+      <p className="dev-ws-vote-sub">{t('project:communityCard.join.explain')}</p>
       <div className="dev-ws-answer-row">
         <button
           type="button"
@@ -1073,17 +1038,17 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
           disabled={invited && busy}
           onClick={() => { if (invited) answerThroughLink(asking.answer); else asking.answer(true); }}
         >
-          Join
+          {t('project:communityCard.join.answer')}
         </button>
       </div>
       <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}>
-        Not now
+        {t('project:communityCard.join.notNow')}
       </button>
     </div>
   ) : null;
   // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
   // on a phone, above everything the page shows them to decide by (what it
-  // is, who is here and the fortnight, Open app, and below the hero what is
+  // is, who is here, Open app, and below the hero what is
   // being decided).
   const inviteHead = invited && offer ? (
     <InviteCard
@@ -1116,7 +1081,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
         disabled={busy && !asking}
         onClick={() => { void join(); }}
       >
-        Join
+        {t('project:communityCard.join.button')}
       </Button>
       {popup}
     </span>
@@ -1140,7 +1105,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
   return (
     <section
       ref={cardRef}
-      className="dev-ws-hero"
+      // THE HUB'S HEAD (the hub as the project's summary): out of its first
+      // week, the hero leads with what it is, then who is around, and on a
+      // wide window what you can do sits across from the name (app.css
+      // `.dev-ws-hero-summary`). The first week keeps its own row.
+      className={week ? 'dev-ws-hero' : 'dev-ws-hero dev-ws-hero-summary'}
       data-ws-community=""
       data-audience={data.audience}
       // Lifted while the popup is open: the popup hangs below the hero, over
@@ -1148,33 +1117,23 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHAT IT IS first, under the coloured header's tile and name. In a
-          project's first week it sits under the people row instead. */}
-      {data.description && !week ? descLine : null}
-      {/* WHO IS HERE, WHO IT IS FOR AND HOW LIVELY IT HAS BEEN, one block:
-          the faces, "Public community · 23 members" over this week in words,
-          and the fortnight's chart across from both. Just you is the label
-          alone: nobody to show and nothing to count. In its first week the
-          people are the action row's first part instead (WeekPeople, below),
-          and there is no fortnight yet. */}
-      {week ? null : solo ? (
-        <HeroPeople members={[]} count={Number(data.member_count) || 0} audience={data.audience} audienceLabel={data.audience_label} />
-      ) : (
-        <HeroPulse
-          members={data.members}
-          count={Number(data.member_count) || 0}
-          audience={data.audience}
-          audienceLabel={data.audience_label}
-          activity={data.activity}
-        />
+      {/* WHAT IT IS AND WHO IT IS FOR: the tile and the name, the page's one
+          large heading, over "Public community · 266 members". In its first
+          week the First version card draws the tile and the name, and the
+          people row says who it is for (WeekPeople, below). */}
+      {week ? null : (
+        <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} />
       )}
+      {data.description && !week ? descLine : null}
+      {/* WHO IS AROUND: this week's faces, how many, and their names. Not on
+          a project that is just yours, which has nobody else to name. */}
+      {week || solo ? null : <HeroActive activity={data.activity} />}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. "Make it public" and
           "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
           project that is just yours grows from its Share it card instead
           (ShareItCard), so its row keeps Open app and the ⋯. The ⋯ stays
-          LAST among the actions (its menu hangs off its right edge); Join is
-          the row's, pushed to the far end. */}
+          LAST among the actions; Join is the row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
       {week ? (
         <WeekPeople
@@ -1194,10 +1153,10 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
             size="sm"
             ink="neutral"
             data-ws-community-invite=""
-            title="Invite people with a link"
+            title={t('project:communityCard.invite.title')}
             onClick={openInviteLinks}
           >
-            Invite
+            {t('project:communityCard.invite.button')}
           </Button>
         ) : null}
         {menu}
@@ -1235,11 +1194,12 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
  */
 export function shareItLine(building: boolean): string {
   return building
-    ? 'Invite people to follow along while it’s being built, or make it public so anyone can join.'
-    : 'Invite people to make it a private community, or make it public so anyone can join.';
+    ? translate('project:communityCard.share.lineBuilding')
+    : translate('project:communityCard.share.line');
 }
 
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   if (!data || data.audience !== 'solo') return null;
   const canInvite = !!data.is_member;
@@ -1248,7 +1208,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Share it</span>
+        <span className="dev-ws-head-title">{t('project:communityCard.share.title')}</span>
       </div>
       <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
       <div className="dev-ws-share-actions">
@@ -1261,7 +1221,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
             data-ws-share-invite=""
             onClick={openInviteLinks}
           >
-            Invite people
+            {t('project:communityCard.share.invite')}
           </Button>
         ) : null}
         {canOpenUp ? (
@@ -1304,12 +1264,22 @@ function useApprovers(slug: string, wanted: boolean): string[] | null {
   return approverNames.get(slug) || null;
 }
 
-/** "evan or snait", "evan, snait or maya", "evan and snait"; past three, the first three and "+N". */
+/**
+ * "evan or snait", "evan, snait or maya", "evan and snait"; past three, the
+ * first three and "+N". At most three names are ever written out, so each
+ * shape is a whole message with the names as its parameters.
+ */
 function nameList(names: string[], joiner: 'or' | 'and'): string {
   if (!names.length) return '';
-  if (names.length > 3) return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
-  if (names.length === 1) return names[0];
-  return `${names.slice(0, -1).join(', ')} ${joiner} ${names[names.length - 1]}`;
+  const [first, second, third] = names;
+  if (names.length > 3) {
+    return translate('project:communityCard.step.names.more', { first, second, third, count: names.length - 3 });
+  }
+  if (names.length === 1) return first;
+  if (names.length === 2) {
+    return translate(joiner === 'or' ? 'project:communityCard.step.names.eitherOfTwo' : 'project:communityCard.step.names.bothOfTwo', { first, second });
+  }
+  return translate(joiner === 'or' ? 'project:communityCard.step.names.anyOfThree' : 'project:communityCard.step.names.allOfThree', { first, second, third });
 }
 
 /** How many faces the middle step shows before "+N" says the rest. */
@@ -1329,119 +1299,250 @@ export function approvalStep(
   const electorate = Math.max(1, Number(approval.electorate) || 1);
   if (viewer?.audience === 'solo' && viewer.is_member
     && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
-    return { who: 'You approve it', names: 'It is just you', wait: '', solo: true };
+    return {
+      who: translate('project:communityCard.step.you'),
+      names: translate('project:communityCard.step.justYou'),
+      wait: '',
+      solo: true,
+    };
   }
   const fixed = approval.approvals_required != null;
   const quiet = !fixed && required > 1;
-  const says = required === 1 ? 'says' : 'say';
   if (approval.policy === 'invited') {
+    // The order is the sentence's: one approver says it whatever was asked for.
     const who = required < electorate
-      ? `${required} of ${electorate} approvers ${says} yes`
-      : electorate === 1 ? 'The approver says yes'
-        : electorate === 2 && required === 2 ? 'Both approvers say yes'
-          : required === electorate ? `All ${electorate} approvers say yes`
-            : `${required} approvers say yes (there ${electorate === 1 ? 'is' : 'are'} ${electorate})`;
+      ? translate('project:communityCard.step.approvers.some', { count: required, total: electorate })
+      : electorate === 1 ? translate('project:communityCard.step.approvers.only')
+        : electorate === 2 && required === 2 ? translate('project:communityCard.step.approvers.both')
+          : required === electorate ? translate('project:communityCard.step.approvers.all', { count: electorate })
+            : translate('project:communityCard.step.approvers.short', { count: electorate, required });
     return {
       who,
       names: approvers ? nameList(approvers, required === 1 ? 'or' : 'and') : '',
-      wait: quiet ? 'Or after a wait, if one says yes and nobody says no' : '',
+      wait: quiet ? translate('project:communityCard.step.approvers.wait') : '',
       solo: false,
     };
   }
   if (fixed) {
-    return { who: `${plural(required, 'member approves', 'members approve')}`, names: '', wait: '', solo: false };
+    return { who: translate('project:communityCard.step.fixed', { count: required }), names: '', wait: '', solo: false };
   }
+  const who = required < electorate
+    ? translate('project:communityCard.step.members.some', { count: required, total: electorate })
+    // Counted by how many there are: that is the number English words differently.
+    : required > electorate ? translate('project:communityCard.step.members.short', { count: electorate, required })
+      : electorate === 1 ? translate('project:communityCard.step.members.only')
+        : electorate === 2 ? translate('project:communityCard.step.members.both')
+          : translate('project:communityCard.step.members.all', { count: electorate });
   return {
-    who: `${whoApproves(required, electorate, 'active member', 'active members').replace(/^./, (c) => c.toUpperCase())} ${says} yes`,
+    who,
     names: '',
-    wait: quiet ? 'Or after a wait, if one approves and nobody objects' : '',
+    wait: quiet ? translate('project:communityCard.step.members.wait') : '',
     solo: false,
   };
 }
 
+/** One regime's sentence on the Workshop's Overview, in its two wordings. */
+type LineIds = { long: string; short: string };
+
 /**
- * HOW A CHANGE GETS IN, on the Workshop page (#4457): the approval rule
- * DRAWN, as the three things that happen to a change — its checks pass, the
- * people the rule names say yes, it goes live — read from the server rather
- * than restated here (GET /api/apps/:slug/community, `approval`). It was one
- * sentence with nothing to look at; that sentence is the drawing's
- * accessible name now (`approvalLine`), so a screen reader still hears the
- * rule whole.
- *
- * The middle step wears faces: the approvers' on an invited-approvers
- * project, with their names ("evan or snait"); otherwise a few members'
- * and "+N" for the rest of the electorate; on a project that is just you,
- * yours. The wait rule adds a line under it. The steps run across a wide
- * card and stack on a phone and beside the Workshop's side panel (app.css);
- * the middle step takes the wider share, because the faces crowd its words
- * otherwise.
- *
- * WHO CAN CHANGE THE RULE also reaches in from here (#4527): the heading's
- * Edit button, drawn like the dashboard's "See all", shows for exactly whom
- * the card's data says can manage (`can_manage`, the same rule the
- * governance proposal enforces) and opens the Members & approvals dialog on
- * its Proposal approvals section — where the change is proposed and voted
- * on. Nothing here edits the rule itself.
+ * The approval rule as the Overview card's last line says it, wide and
+ * narrow: "A change goes live when its checks pass and …" on a wide card,
+ * "Goes live when …" on a phone. A table of ids, read when the line renders.
  */
-export function ApprovalRules({ slug }: { slug: string }) {
+const RULE_LINE: Record<string, LineIds> = {
+  you: { long: 'project:communityCard.line.you', short: 'project:communityCard.lineShort.you' },
+  anyOf: { long: 'project:communityCard.line.anyOf', short: 'project:communityCard.lineShort.anyOf' },
+  allOf: { long: 'project:communityCard.line.allOf', short: 'project:communityCard.lineShort.allOf' },
+  approversSome: { long: 'project:communityCard.line.approvers.some', short: 'project:communityCard.lineShort.approvers.some' },
+  approversOnly: { long: 'project:communityCard.line.approvers.only', short: 'project:communityCard.lineShort.approvers.only' },
+  approversBoth: { long: 'project:communityCard.line.approvers.both', short: 'project:communityCard.lineShort.approvers.both' },
+  approversAll: { long: 'project:communityCard.line.approvers.all', short: 'project:communityCard.lineShort.approvers.all' },
+  approversShort: { long: 'project:communityCard.line.approvers.short', short: 'project:communityCard.lineShort.approvers.short' },
+  fixed: { long: 'project:communityCard.line.fixed', short: 'project:communityCard.lineShort.fixed' },
+  membersSome: { long: 'project:communityCard.line.members.some', short: 'project:communityCard.lineShort.members.some' },
+  membersShort: { long: 'project:communityCard.line.members.short', short: 'project:communityCard.lineShort.members.short' },
+  membersOnly: { long: 'project:communityCard.line.members.only', short: 'project:communityCard.lineShort.members.only' },
+  membersBoth: { long: 'project:communityCard.line.members.both', short: 'project:communityCard.lineShort.members.both' },
+  membersAll: { long: 'project:communityCard.line.members.all', short: 'project:communityCard.lineShort.members.all' },
+  // #4666: the presets, said from the reader's side. You or the group reads
+  // "you say yes" to its creator and names the creator, face first, to
+  // everyone else; its group half is the members' count, as above.
+  youSome: { long: 'project:communityCard.line.youOrGroup.you.some', short: 'project:communityCard.lineShort.youOrGroup.you.some' },
+  youShort: { long: 'project:communityCard.line.youOrGroup.you.short', short: 'project:communityCard.lineShort.youOrGroup.you.short' },
+  youOnly: { long: 'project:communityCard.line.youOrGroup.you.only', short: 'project:communityCard.lineShort.youOrGroup.you.only' },
+  youBoth: { long: 'project:communityCard.line.youOrGroup.you.both', short: 'project:communityCard.lineShort.youOrGroup.you.both' },
+  youAll: { long: 'project:communityCard.line.youOrGroup.you.all', short: 'project:communityCard.lineShort.youOrGroup.you.all' },
+  creatorSome: { long: 'project:communityCard.line.youOrGroup.creator.some', short: 'project:communityCard.lineShort.youOrGroup.creator.some' },
+  creatorShort: { long: 'project:communityCard.line.youOrGroup.creator.short', short: 'project:communityCard.lineShort.youOrGroup.creator.short' },
+  creatorOnly: { long: 'project:communityCard.line.youOrGroup.creator.only', short: 'project:communityCard.lineShort.youOrGroup.creator.only' },
+  creatorBoth: { long: 'project:communityCard.line.youOrGroup.creator.both', short: 'project:communityCard.lineShort.youOrGroup.creator.both' },
+  creatorAll: { long: 'project:communityCard.line.youOrGroup.creator.all', short: 'project:communityCard.lineShort.youOrGroup.creator.all' },
+  twoYeses: { long: 'project:communityCard.line.twoYeses', short: 'project:communityCard.lineShort.twoYeses' },
+  openFloor: { long: 'project:communityCard.line.openFloor', short: 'project:communityCard.lineShort.openFloor' },
+  own: { long: 'project:communityCard.line.own', short: 'project:communityCard.lineShort.own' },
+};
+
+/**
+ * #4666: the line for a project on a preset or rules of its own, or null for
+ * one on the old two settings (and for Group vote, whose words are the
+ * members' own). Pure, for the tests.
+ */
+export function presetSentence(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member' | 'is_creator'> | null | undefined,
+): RuleSentence | null {
+  if (!approval || approval.mode !== 'rules') return null;
+  const preset = approval.preset || null;
+  if (preset === 'group_vote') return null;
+  const say = (ids: LineIds, values: Record<string, string | number> = {}, names: string[] | null = null): RuleSentence => (
+    { ...ids, values, names }
+  );
+  const solo = viewer?.audience === 'solo' && viewer.is_member;
+  if (!preset) return say(RULE_LINE.own);
+  if (preset === 'two_yeses') return solo ? say(RULE_LINE.you) : say(RULE_LINE.twoYeses);
+  if (preset === 'open_floor') return solo ? say(RULE_LINE.you) : say(RULE_LINE.openFloor);
+  // You or the group.
+  if (solo) return say(RULE_LINE.you);
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const creator = approval.creator?.username || null;
+  const mine = !!viewer?.is_creator || !creator;
+  const pick = (you: LineIds, them: LineIds) => (mine ? you : them);
+  const names = mine ? null : [creator as string];
+  const values = (extra: Record<string, string | number> = {}) => (mine ? extra : { ...extra, creator: creator as string });
+  if (required < electorate) return say(pick(RULE_LINE.youSome, RULE_LINE.creatorSome), values({ count: required, total: electorate }), names);
+  // Counted by how many there are: that is the number English words differently.
+  if (required > electorate) return say(pick(RULE_LINE.youShort, RULE_LINE.creatorShort), values({ count: electorate, required }), names);
+  if (electorate === 1) return say(pick(RULE_LINE.youOnly, RULE_LINE.creatorOnly), values(), names);
+  if (electorate === 2) return say(pick(RULE_LINE.youBoth, RULE_LINE.creatorBoth), values(), names);
+  return say(pick(RULE_LINE.youAll, RULE_LINE.creatorAll), values({ count: electorate }), names);
+}
+
+/** Whether the rule has the quiet path a wait clause describes (approvalStep's `wait`). */
+export function ruleHasWait(approval: CommunityPayload['approval'] | null | undefined): boolean {
+  if (!approval) return false;
+  if (approval.mode !== 'rules') return true;
+  return approval.preset === 'group_vote' || approval.preset === 'you_or_the_group';
+}
+
+export interface RuleSentence extends LineIds {
+  values: Record<string, string | number>;
+  /** The approvers the sentence names, whose faces lead their names. */
+  names: string[] | null;
+}
+
+/**
+ * Which sentence the Overview's rule line is, and what goes in it. Pure, for
+ * the tests; the branches are approvalStep's, so the line and the three
+ * steps it replaced cannot disagree about a regime. An invited-approvers
+ * project NAMES its approvers ("evan or snait says yes") when the names
+ * are in hand, there are at most RULE_FACES of them, they are the whole
+ * electorate, and either one of them or all of them is what it takes; any
+ * other count is said as a count.
+ */
+export function ruleSentence(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> & { is_creator?: boolean } | null | undefined,
+  approvers: string[] | null,
+): RuleSentence {
+  const preset = presetSentence(approval, viewer ? { ...viewer, is_creator: !!viewer.is_creator } : viewer);
+  if (preset) return preset;
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const say = (ids: LineIds, values: Record<string, string | number> = {}, names: string[] | null = null): RuleSentence => (
+    { ...ids, values, names }
+  );
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return say(RULE_LINE.you);
+  }
+  if (approval.policy === 'invited') {
+    const named = !!approvers && approvers.length > 0 && approvers.length <= RULE_FACES && approvers.length === electorate;
+    if (named && required === 1) return say(RULE_LINE.anyOf, { names: nameList(approvers!, 'or') }, approvers);
+    if (named && required === electorate) return say(RULE_LINE.allOf, { names: nameList(approvers!, 'and') }, approvers);
+    if (required < electorate) return say(RULE_LINE.approversSome, { count: required, total: electorate });
+    if (electorate === 1) return say(RULE_LINE.approversOnly);
+    if (electorate === 2 && required === 2) return say(RULE_LINE.approversBoth);
+    if (required === electorate) return say(RULE_LINE.approversAll, { count: electorate });
+    return say(RULE_LINE.approversShort, { count: electorate, required });
+  }
+  if (approval.approvals_required != null) return say(RULE_LINE.fixed, { count: required });
+  if (required < electorate) return say(RULE_LINE.membersSome, { count: required, total: electorate });
+  // Counted by how many there are: that is the number English words differently.
+  if (required > electorate) return say(RULE_LINE.membersShort, { count: electorate, required });
+  if (electorate === 1) return say(RULE_LINE.membersOnly);
+  if (electorate === 2) return say(RULE_LINE.membersBoth);
+  return say(RULE_LINE.membersAll, { count: electorate });
+}
+
+/**
+ * The rule's sentence in both its wordings, the wide card's and the narrow
+ * card's (app.css shows one): the named approvers' faces, then their names
+ * in bold, where the sentence names them.
+ */
+export function RuleWords({ line }: { line: RuleSentence }) {
+  useMessages('project');
+  const parts = [
+    line.names ? (
+      <span className="dev-ws-ov-faces" aria-hidden="true">
+        {line.names.map((name) => (
+          <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
+            {(name || '?').charAt(0).toUpperCase()}
+          </span>
+        ))}
+      </span>
+    ) : <span />,
+    <b className="dev-ws-ov-names" />,
+  ];
+  return (
+    <>
+      <span className="dev-ws-ov-wide"><RichMessage id={line.long} values={line.values} components={parts} /></span>
+      <span className="dev-ws-ov-narrow"><RichMessage id={line.short} values={line.values} components={parts} /></span>
+    </>
+  );
+}
+
+/**
+ * HOW A CHANGE GETS IN, as the last line of the Workshop's Overview card
+ * (After-Workshop-B, Oct 2026): "A change goes live when its checks pass
+ * and [faces] evan or snait says yes", and "Goes live when …" where the
+ * card is narrow (app.css `.dev-ws-ov-wide` / `.dev-ws-ov-narrow`, a
+ * container query on the card). It folds the three-step Approval rules card
+ * (#4457) into the sentence those steps spelled out, read from the server
+ * (GET /api/apps/:slug/community, `approval`). The wait rule, where there
+ * is one, follows it in a muted clause (approvalStep's `wait`), and the
+ * whole rule in one sentence is its tooltip (approvalLine).
+ *
+ * WHO CAN CHANGE THE RULE reaches in from here (#4527): "Rules", for
+ * exactly whom the card's data says can manage (`can_manage`), opens the
+ * Members & approvals dialog on its Proposal approvals section, where the
+ * change is proposed and voted on. Everyone else gets the line alone.
+ */
+export function ApprovalLine({ slug }: { slug: string }) {
+  const t = useMessages('project');
   const data = useCommunity(slug);
   const invited = !!(data && data.approval && data.approval.policy === 'invited');
   const approvers = useApprovers(slug, invited);
   if (!data || !data.approval) return null;
-  const step = approvalStep(data.approval, data, approvers);
-  const electorate = Math.max(1, Number(data.approval.electorate) || 1);
-  const people = step.solo
-    ? (data.members || []).slice(0, 1).map((m) => m.username)
-    : invited && approvers
-      ? approvers.slice(0, RULE_FACES)
-      : (data.members || []).slice(0, RULE_FACES).map((m) => m.username);
-  const rest = step.solo ? 0 : Math.max(0, (invited && approvers ? approvers.length : electorate) - people.length);
+  const { wait } = ruleHasWait(data.approval) ? approvalStep(data.approval, data, approvers) : { wait: '' };
   return (
-    <section className="dev-ws-strip" data-ws-approval-rules="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Approval rules</span>
-        {data.can_manage ? (
-          <button
-            type="button"
-            className="dev-ws-hub-open dev-ws-head-end un-touch-target"
-            data-ws-rules-edit=""
-            aria-label="Edit approval rules"
-            onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
-          >
-            Edit
-          </button>
-        ) : null}
-      </div>
-      <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
-        <li className="dev-ws-rule-step">
-          <span className="dev-ws-rule-tile" aria-hidden="true"><ShieldCheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>Its checks pass</b><span>on a preview of the change</span></span>
-        </li>
-        <li className="dev-ws-rule-join" aria-hidden="true" />
-        <li className="dev-ws-rule-step" data-ws-rule-people="">
-          <span className="dev-ws-rule-faces" aria-hidden="true">
-            {people.map((name) => (
-              <span key={name} className="dev-ws-rule-face" style={{ background: swatchFor(name) }}>
-                {(name || '?').charAt(0).toUpperCase()}
-              </span>
-            ))}
-            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{`+${rest}`}</span> : null}
-            {!people.length && !rest ? (
-              <span className="dev-ws-rule-tile"><UserGroupIcon aria-hidden="true" /></span>
-            ) : null}
-          </span>
-          <span className="dev-ws-rule-text">
-            <b>{step.who}</b>
-            {step.names ? <span>{step.names}</span> : null}
-            {step.wait ? <span className="dev-ws-rule-wait">{step.wait}</span> : null}
-          </span>
-        </li>
-        <li className="dev-ws-rule-join" aria-hidden="true" />
-        <li className="dev-ws-rule-step">
-          <span className="dev-ws-rule-tile" data-tone="ok" aria-hidden="true"><CheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>It goes live</b><span>for everyone, right away</span></span>
-        </li>
-      </ol>
-    </section>
+    <p className="dev-ws-ov-rule" data-ws-approval-rules="" title={approvalLine(data.approval, data)}>
+      <ShieldCheckIcon className="dev-ws-ov-rule-icon" aria-hidden="true" />
+      <span className="dev-ws-ov-rule-text" data-ws-community-rule="">
+        <RuleWords line={ruleSentence(data.approval, data, approvers)} />
+        {wait ? <span className="dev-ws-ov-rule-wait">{wait}</span> : null}
+      </span>
+      {data.can_manage ? (
+        <button
+          type="button"
+          className="dev-ws-hub-open dev-ws-ov-rule-edit un-touch-target"
+          data-ws-rules-edit=""
+          aria-label={t('project:communityCard.rule.editName')}
+          onClick={() => window.UsernodeReact?.dialogs?.whoDecides?.open({ slug })}
+        >
+          {t('project:communityCard.rule.rules')}
+        </button>
+      ) : null}
+    </p>
   );
 }

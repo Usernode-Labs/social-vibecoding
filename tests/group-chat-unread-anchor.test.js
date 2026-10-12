@@ -51,8 +51,11 @@ test('the first page of the stream says where the reader\'s reading stood, and h
   assert.equal(await appChat.readPosition(pool(1), null, 7), null);
 
   const route = read('src/routes/chat.js');
-  assert.match(route, /if \(!thread && before == null && after == null && around == null\) \{\s*const read = await appChat\.readPosition\(pool, appId, viewerId\);\s*if \(read\) body\.read = \{ last_read_message_id: read\.lastReadMessageId, unread_count: read\.unreadCount \};\s*\}\s*res\.json\(body\);/,
+  assert.match(route, /if \(!thread && before == null && after == null && around == null\) \{\s*const read = await appChat\.readPosition\(pool, appId, viewerId\);\s*if \(read\) body\.read = \{ last_read_message_id: read\.lastReadMessageId, unread_count: read\.unreadCount \};\s*\}/,
     'the general stream\'s first page only: an earlier page, a thread or a permalink window is no opening');
+  // #4417: and a topic's channel says the same about its own cursor, on its
+  // own first page.
+  assert.match(route, /if \(topicChannel\) \{[\s\S]*?if \(before == null && after == null && around == null\) \{\s*const read = await appChat\.categoryReadPosition\(pool, appId, thread\.ref, viewerId\);\s*if \(read\) body\.read = \{ last_read_message_id: read\.lastReadMessageId, unread_count: read\.unreadCount \};\s*\}\s*\}\s*res\.json\(body\);/);
 });
 
 // ── 2. The module ───────────────────────────────────────────────────────

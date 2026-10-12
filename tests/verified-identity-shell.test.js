@@ -8,6 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -125,13 +126,27 @@ test('#4378: making a project public needs a verified owner, on the server and t
 
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /if \(body && body\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return false;\s+res = await send\(\);/);
-  const conf = card.slice(card.indexOf('export async function confirmMakePublic('));
-  assert.match(conf, /if \(!\(await verifiedToGoPublic\(\)\)\) return;\s+const ok = await ui\.confirm\(/);
   assert.match(card, /void verifiedToGoPublic\(\)\.then\(\(go\) => \{ if \(go\) setOpen\(true\); \}\);/);
+  // #4666: Who can see & change it proposes Public community through its own
+  // route, refused the same way before any PR is opened, and asks the same
+  // verify sheet before it sends again; Not now leaves it as it was.
+  const who = apps.slice(apps.indexOf("router.post('/api/apps/:slug/who-decides-pr'"));
+  assert.match(who, /if \(diff\.visibility === 'public' && app\.view_visibility !== 'public'\) \{\s+const identityRefusal = await communities\.identityPublicRefusal\(pool, req\.user\?\.id\);\s+if \(identityRefusal\) return res\.status\(403\)\.json\(identityRefusal\);\s+\}/);
+  assert.ok(who.indexOf('identityPublicRefusal') < who.indexOf('createWhoDecidesPR'), 'refused before any PR is opened');
+  const propose = read('frontend/src/features/who-decides/propose.ts');
+  assert.match(propose, /if \(data && data\.code === 'identity_required'\) \{\s+if \(!\(await askToVerifyForPublic\(\)\)\) return \{ state: 'notVerified' \};\s+res = await send\(\);/);
 
   const verify = loadTsx('frontend/src/features/auth/verify-identity.tsx');
   const html = renderToHtml(createElement(verify.VerifyIdentityBody, {
-    phoneOffered: true, copy: verify.MAKE_PUBLIC_COPY, onVerified() {}, onSettings() {}, onNotNow() {},
+    // The sheet's copy is a table of message ids, which the sheet reads before
+    // it hands the words to the body.
+    phoneOffered: true,
+    copy: {
+      title: message(verify.MAKE_PUBLIC_COPY.title),
+      lead: message(verify.MAKE_PUBLIC_COPY.lead),
+      reason: message(verify.MAKE_PUBLIC_COPY.reason),
+    },
+    onVerified() {}, onSettings() {}, onNotNow() {},
   }));
   assert.match(html, />Verify to make it public</);
   assert.match(html, />Public projects need a verified owner, so each person counts once\. Add your phone number and it goes public\. Nobody sees your number\.</);

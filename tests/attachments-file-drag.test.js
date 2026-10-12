@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { composerHtml } = require('./lib/dev-composer-html');
 
@@ -133,7 +134,8 @@ test('the agent session, the improvement form and Messages each wire the shared 
   assert.match(session, /\{drop\.dragging \? <DropOverlay \/> : null\}/);
 
   const feedback = read('frontend/src/features/dialogs/feedback.tsx');
-  assert.match(feedback, /<HostDropOverlay host=\{feedbackForm\} label="Drop images or a clip to attach" isDisabled=\{feedbackLocked\} \/>/);
+  assert.match(feedback, /<HostDropOverlay host=\{feedbackForm\} label=\{t\('dialogs:feedback\.dropLabel'\)\} isDisabled=\{feedbackLocked\} \/>/);
+  assert.equal(message('dialogs:feedback.dropLabel'), 'Drop images or a clip to attach');
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
     /feedbackForm\.addEventListener\('drop'/, 'the controller still does the attaching');
 
@@ -149,6 +151,9 @@ function loadGroupChat() {
   const fileDrag = drag();
   const uploads = [];
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
+    PlatformI18n: englishPlatformI18n(),
     location: { search: '', protocol: 'http:', host: 'localhost' },
     URLSearchParams,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} },
@@ -213,7 +218,8 @@ test('dev chat: the same summary, and the zone only where a drop is taken', asyn
   const src = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(src, /dragging: DevChat\._dragging && !DevChat\._dropDisabled\(\),/);
   assert.match(src, /_dropDisabled\(\) \{\s*return !DevChat\.currentSession \|\| !!DevChat\.isStreaming/);
-  assert.match(src, /refuse\(`Up to \$\{L\.maxPerMessage\} files per message\.`, files\.length - i\);/);
+  assert.match(src, /refuse\(PlatformI18n\.t\('devchat:attach\.tooMany', \{ count: L\.maxPerMessage \}\), files\.length - i\);/);
+  assert.equal(message('devchat:attach.tooMany', { count: 4 }), 'Up to 4 files per message.');
   assert.match(src, /DevChat\._setAttachError\(DevChat\._refusalSummary\(firstRefusal, refused - 1\)\);/);
 });
 

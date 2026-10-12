@@ -93,6 +93,8 @@ import {
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
+import { useMessages } from '../../lib/i18n/react';
+import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -172,15 +174,15 @@ function demoQuery(): string {
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
   if (row.audience !== 'solo') {
     const members = Number(row.member_count) || 0;
-    return members > 0 ? `${members} ${members === 1 ? 'member' : 'members'}` : '';
+    return members > 0 ? translate('communities:row.members', { count: members }) : '';
   }
   const t = row.last_active_at ? Date.parse(row.last_active_at) : NaN;
   if (Number.isNaN(t)) return '';
   const mins = Math.max(0, Math.round((now - t) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 60 * 24) return `${Math.round(mins / 60)}h ago`;
-  return `${Math.round(mins / (60 * 24))}d ago`;
+  if (mins < 1) return translate('communities:row.active.justNow');
+  if (mins < 60) return translate('communities:row.active.minutes', { count: mins });
+  if (mins < 60 * 24) return translate('communities:row.active.hours', { count: Math.round(mins / 60) });
+  return translate('communities:row.active.days', { count: Math.round(mins / (60 * 24)) });
 }
 
 /** Join a counts map onto the app rows. A slug with no entry is two zeroes. */
@@ -231,8 +233,8 @@ export function tabFromQuery(search: string): TabKey | null {
  */
 export function needsApps(rows: WorkshopRow[], seenToo = false): string {
   const names = rows.filter((row) => ((seenToo ? row.owedCount : row.needs) || 0) > 0).map((row) => row.name || row.slug);
-  if (names.length <= 3) return names.join(', ');
-  return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+  if (names.length <= 3) return listText(names);
+  return translate('communities:needsYou.projectsMore', { projects: listText(names.slice(0, 3)), count: names.length - 3 });
 }
 
 /**
@@ -252,20 +254,21 @@ export function needsApps(rows: WorkshopRow[], seenToo = false): string {
  * is the accent colour; everything else stays grey.
  */
 export function StatusLine({ working, needs }: { working: number; needs: number }) {
+  const t = useMessages('communities');
   return (
     <>
       <span
         data-workshop-working={String(working)}
         className={working > 0 ? 'text-zinc-700 dark:text-zinc-300' : 'hidden'}
       >
-        {working} in progress
+        {t('communities:row.inProgress', { count: working })}
       </span>
       <span
         data-workshop-needs={String(needs)}
         className={needs > 0 ? 'font-semibold text-violet-700 dark:text-violet-300' : 'hidden'}
       >
         {working > 0 ? <span className="font-normal text-zinc-500 dark:text-zinc-400" aria-hidden="true"> · </span> : null}
-        {needs} to vote
+        {t('communities:row.toVote', { count: needs })}
       </span>
     </>
   );
@@ -299,6 +302,8 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
  * app.css owns that face, and a call site must not repaint it.
  */
 function AppRow({ row }: { row: WorkshopRow }) {
+  // Subscribed: the row's fact (rowSubtitle) is read in the language on screen.
+  const t = useMessages('communities');
   const fact = rowSubtitle(row);
   const busy = row.working > 0 || row.needs > 0;
   // THE CHANNEL'S UNREAD, on the row that opens it. A project's channel
@@ -335,7 +340,7 @@ function AppRow({ row }: { row: WorkshopRow }) {
       )}
       title={row.name || row.slug}
       trailing={unread > 0 ? (
-        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={`${unread} unread in the channel`}>
+        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={t('communities:row.unread', { count: unread })}>
           {unread > 99 ? '99+' : unread}
         </span>
       ) : null}
@@ -364,8 +369,9 @@ function AppRow({ row }: { row: WorkshopRow }) {
  * discloses nothing yet is the one part of the shape worth NOT reproducing.
  */
 function RowSkeletons(): ReactNode {
+  const t = useMessages('communities');
   return (
-    <SkeletonGroup label="Loading your apps">
+    <SkeletonGroup label={t('communities:list.loading')}>
       {[0, 1, 2, 3].map((i) => (
         <ListRow
           key={i}
@@ -397,7 +403,15 @@ function RowSkeletons(): ReactNode {
  * `button`, not an anchor, because it navigates nowhere — which also keeps it
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
-function Section({ audience, label, rows }: { audience: Audience; label: string; rows: WorkshopRow[] }) {
+function Section({ audience, label, count, rows }: {
+  audience: Audience;
+  /** The section's heading and its count's accessible name, as message ids. */
+  label: string;
+  count: string;
+  rows: WorkshopRow[];
+}) {
+  // Subscribed: the heading and the fold row (sectionFold) follow the language.
+  const t = useMessages('communities');
   // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
   // once every row is out the same row folds the section back to three.
   const [limit, setLimit] = useState(SECTION_LIMIT);
@@ -409,8 +423,8 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
     <section data-workshop-section={audience} aria-labelledby={headingId}>
       <SectionHeader id={headingId} className="flex items-center gap-1.5">
         <SectionGlyph audience={audience} />
-        <span>{label}</span>
-        <span className="ml-auto tabular-nums" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+        <span>{t(label)}</span>
+        <span className="ml-auto tabular-nums" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
       </SectionHeader>
       <GroupedList tone="plane">
         {shown.map((row) => <AppRow key={row.slug} row={row} />)}
@@ -432,6 +446,7 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
 }
 
 export function WorkshopScreen() {
+  const t = useMessages('communities');
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
@@ -520,7 +535,7 @@ export function WorkshopScreen() {
               nothing, so the row is not drawn over a quiet day. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
-              <SectionHeader id="workshop-needs-heading">Needs you</SectionHeader>
+              <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
               <GroupedList tone="plane">
                 <ListRow
                   as="button"
@@ -532,12 +547,12 @@ export function WorkshopScreen() {
                     </span>
                   )}
                   title={totals.needs > 0
-                    ? `${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`
-                    : `${totals.owed} ${totals.owed === 1 ? 'vote' : 'votes'} you skipped`}
+                    ? t('communities:needsYou.waiting', { count: totals.needs })
+                    : t('communities:needsYou.skipped', { count: totals.owed })}
                   subtitle={needsApps(rows || [], !totals.needs)}
                   // "Review" is the row's affordance; a chevron beside it
                   // would say the same thing twice.
-                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
+                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">{t('communities:needsYou.review')}</span>}
                   chevron={false}
                 />
               </GroupedList>
@@ -581,8 +596,8 @@ export function WorkshopScreen() {
                 <ListRow
                   as="a"
                   href="#apps"
-                  title="You haven’t joined anything yet"
-                  subtitle="Browse the directory to find a project to join."
+                  title={t('communities:list.empty.title')}
+                  subtitle={t('communities:list.empty.subtitle')}
                   subtitleClassName="whitespace-normal"
                 />
               </GroupedList>
@@ -591,7 +606,7 @@ export function WorkshopScreen() {
               ? (
                 <GroupedList tone="plane">
                   <AppsLoadError
-                    title="Couldn't load your communities"
+                    title={t('communities:list.loadError')}
                     onRetry={() => { void workshopController.reload(); }}
                   />
                 </GroupedList>
@@ -599,7 +614,7 @@ export function WorkshopScreen() {
               : rows === null
                 ? <GroupedList tone="plane"><RowSkeletons /></GroupedList>
                 : (sections || []).map((section) => (
-                  <Section key={section.key} audience={section.key} label={section.label} rows={section.rows} />
+                  <Section key={section.key} audience={section.key} label={section.label} count={section.count} rows={section.rows} />
                 ))}
           </div>
           {/* #3543: JOIN OR START, under the list, where Your communities has
@@ -615,8 +630,8 @@ export function WorkshopScreen() {
                   href="#apps"
                   data-workshop-join=""
                   leading={<IconTile size="sm" tint="neutral"><SearchIcon aria-hidden="true" /></IconTile>}
-                  title="Join a community"
-                  subtitle="Find one to join in Discover."
+                  title={t('communities:list.join.title')}
+                  subtitle={t('communities:list.join.subtitle')}
                 />
               )}
               <ListRow
@@ -624,8 +639,8 @@ export function WorkshopScreen() {
                 data-workshop-start=""
                 onClick={() => { (window as any).App?.showCreateModal?.(); }}
                 leading={<IconTile size="sm" tint="neutral"><PlusIcon aria-hidden="true" /></IconTile>}
-                title="Start a community"
-                subtitle="Make a project for you, a group or everyone."
+                title={t('communities:list.start.title')}
+                subtitle={t('communities:list.start.subtitle')}
               />
             </GroupedList>
           ) : null}
@@ -640,15 +655,15 @@ export function WorkshopScreen() {
                   type="button"
                   className="dev-ws-page-back un-touch-target"
                   data-workshop-needs-back=""
-                  aria-label="Back to Communities"
-                  title="Back to Communities"
+                  aria-label={t('communities:needsYou.back')}
+                  title={t('communities:needsYou.back')}
                   onClick={() => workshopController.setTab('status')}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
                 </button>
                 <div className="dev-ws-pagehead-text">
-                  <span className="dev-ws-pagehead-over">Communities</span>
-                  <h2 className="dev-ws-pagehead-title">Needs you</h2>
+                  <span className="dev-ws-pagehead-over">{t('communities:needsYou.over')}</span>
+                  <h2 className="dev-ws-pagehead-title">{t('communities:needsYou.title')}</h2>
                 </div>
               </div>
             </div>

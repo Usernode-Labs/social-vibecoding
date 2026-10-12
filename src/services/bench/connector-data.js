@@ -18,11 +18,112 @@ const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v))
 
 const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise', 'budget']);
 const SLUG_RE = /^[a-z0-9-]{1,120}$/;
+const USERNAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+// A person's week lists at most this many runs; its total is always the
+// whole week's.
+const MAX_PERSON_RUNS = 200;
+
+// One person's charged runs this week, newest first: the runs whose cost
+// counts toward their weekly building time (homeroom-bot-dm.js
+// weeklySpentCents reads the same rows): charged, and theirs as the payer,
+// or as the requester when nobody else asked the bot to start it.
+const PERSON_USER_SQL = 'SELECT id, username FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1';
+const PERSON_RUNS_SQL = `
+  SELECT r.id, a.slug AS app_slug, r.issue_number, r.mode, r.verdict, r.read_reason,
+         r.cost_usd::float8 AS cost_usd, r.build_cost_usd::float8 AS build_cost_usd,
+         r.payer_user_id, r.build_ok, r.build_error, r.build_at, r.build_queued_at, r.build_branch, r.created_at
+    FROM homeroom_bot_runs r
+    JOIN apps a ON a.id = r.app_id
+    LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+   WHERE r.charged AND COALESCE(r.payer_user_id, q.user_id) = $1 AND r.created_at >= $2
+   ORDER BY r.id DESC
+   LIMIT $3`;
 const MAX_SHOT_IMAGES = 12;
 const MAX_SHOT_IMAGE_BYTES = 8 * 1024 * 1024;
 // A failed run's reason in full: the gallery stores up to 2000 characters, and
 // the cause is usually past the first 200.
 const MAX_SHOT_FAILURE = 1200;
+
+/**
+ * Whose weekly building time a run counts toward (homeroom-bot-dm.js
+ * weeklySpentCents): none when it is not charged (a shadow run, or one the
+ * bot caused itself); else its payer, 'asked' when somebody asked the bot
+ * to start or change it, 'requester' when it is the request's own. Pure.
+ */
+function billingOf(r) {
+  if (r.charged === false) return { charged: false, payer: null, paidAs: null };
+  if (r.charged == null) return null;
+  return {
+    charged: true,
+    payer: r.payer_username || null,
+    paidAs: r.payer_user_id != null ? 'asked' : 'requester',
+  };
+}
+
+/** The person a request names (`username`), checked, or null. Pure. */
+function personFilter(q = {}) {
+  const name = typeof q.username === 'string' ? q.username.trim().replace(/^@/, '') : '';
+  return USERNAME_RE.test(name) ? name : null;
+}
+
+/**
+ * One person's week of building time: their cap, what they have spent of it
+ * since Monday 00:00 UTC, and the charged runs that spent it, newest first,
+ * with each request's total. `found: false` for a username nobody has.
+ */
+async function personWeek(pool, settings, username, deps = {}) {
+  const dm = deps.dm || require('../homeroom-bot-dm');
+  const weekStart = (deps.weekStartUtc || require('../limits').weekStartUtc)();
+  const { rows: users } = await pool.query(PERSON_USER_SQL, [username]);
+  if (!users[0]) return { username, found: false };
+  const userId = Number(users[0].id);
+  const [capCents, spentCents, { rows }] = await Promise.all([
+    dm.weeklyCapCents(pool, settings, userId),
+    dm.weeklySpentCents(pool, userId),
+    pool.query(PERSON_RUNS_SQL, [userId, weekStart, MAX_PERSON_RUNS + 1]),
+  ]);
+  const runs = rows.slice(0, MAX_PERSON_RUNS).map((r) => {
+    const costUsd = num(r.cost_usd);
+    const buildCostUsd = num(r.build_cost_usd);
+    return {
+      id: Number(r.id),
+      app: r.app_slug || null,
+      issueNumber: num(r.issue_number),
+      verdict: r.verdict || null,
+      readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+      paidAs: r.payer_user_id != null ? 'asked' : 'requester',
+      costUsd,
+      buildCostUsd,
+      totalUsd: Math.round(((costUsd || 0) + (buildCostUsd || 0)) * 1e6) / 1e6,
+      buildState: buildStateOf(r),
+      createdAt: iso(r.created_at),
+    };
+  });
+  const byRequest = new Map();
+  for (const run of runs) {
+    const key = `${run.app}#${run.issueNumber}`;
+    const row = byRequest.get(key) || { app: run.app, issueNumber: run.issueNumber, runs: 0, usd: 0 };
+    row.runs += 1;
+    row.usd += run.totalUsd;
+    byRequest.set(key, row);
+  }
+  const cap = num(capCents);
+  const spent = num(spentCents) || 0;
+  return {
+    username: users[0].username,
+    found: true,
+    weekStart: iso(weekStart),
+    capCents: cap,
+    spentCents: spent,
+    leftCents: cap && cap > 0 ? Math.max(0, cap - spent) : null,
+    usedUp: !!(cap && cap > 0 && spent >= cap),
+    requests: [...byRequest.values()]
+      .map((r) => ({ ...r, usd: Math.round(r.usd * 100) / 100 }))
+      .sort((a, b) => b.usd - a.usd),
+    runs,
+    runsComplete: rows.length <= MAX_PERSON_RUNS,
+  };
+}
 
 /** The run filters the console's verdict ledger takes, checked. Pure. */
 function botFilters(q = {}) {
@@ -84,9 +185,12 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     } : null,
     reviewRounds: num(r.review_rounds),
     reviewStop: r.review_stop || null,
+    // Whose weekly building time it counted toward, if anybody's.
+    billing: billingOf(r),
     issueUrl: r.issueUrl || null,
     createdAt: iso(r.created_at),
   }));
+  const person = personFilter(query);
   return {
     ok: true,
     settings: {
@@ -102,9 +206,14 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       perPerson: num(s.perPerson),
       shadowBuilds: !!s.shadowBuilds,
       dmChat: !!s.dmChat,
+      // Its voice outside the DM, one switch per place (homeroom-bot-voice.js).
+      voiceSession: s.voiceSession !== false,
+      voiceIssue: s.voiceIssue !== false,
+      voiceChat: s.voiceChat !== false,
       continueReads: s.continueReads !== false,
       proposalCeiling: num(s.proposalCeiling),
       userWeeklyCents: num(s.userWeeklyCents),
+      adminWeeklyCents: num(s.adminWeeklyCents),
     },
     spend: p.bot ? {
       weeklyLimitCents: num(p.bot.weeklyLimitCents), weeklySpentCents: num(p.bot.weeklySpentCents), hasIncludedKey: !!p.bot.hasIncludedKey,
@@ -125,6 +234,22 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       turns: num(p.dmChat.turns), failed: num(p.dmChat.failed), recovered: num(p.dmChat.recovered),
       people: num(p.dmChat.people), costUsd: num(p.dmChat.costUsd),
     } : null,
+    // Its voice outside the DM this week (homeroom-bot-voice.js
+    // voiceSummary): codes and counts, never anybody's words.
+    voice: p.voice ? voiceOf(p.voice) : null,
+    // Errors that should not happen, the last week's (platform-incidents.js).
+    incidents: p.incidents ? {
+      days: num(p.incidents.days), total: num(p.incidents.total) || 0,
+      items: (p.incidents.items || []).slice(0, 20).map((i) => ({
+        at: i.at || null,
+        kind: CODE_RE.test(String(i.kind || '')) ? i.kind : 'unknown',
+        app: i.app || null,
+        runId: num(i.runId),
+        issueNumber: num(i.issueNumber),
+        why: i.why ? clipText(i.why, 300) : null,
+        outcome: CODE_RE.test(String(i.outcome || '')) ? i.outcome : null,
+      })),
+    } : null,
     // The build lane: what is queued and building now, and its last pass
     // (why a queued build is waiting: the budget, a platform fault, …).
     buildLane: p.builds ? {
@@ -138,8 +263,46 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       fault: p.builds.fault ? { error: clipText(p.builds.fault.error || '', 200) || null, retryAt: p.builds.fault.retryAt || null } : null,
     } : null,
     runs,
+    // One person's week of building time, when the request names them.
+    person: person ? await personWeek(pool, s, person, deps) : null,
     filters: { app: f.app, verdict: query.verdict && VERDICTS.includes(query.verdict) ? query.verdict : null },
     nextBefore: runs.length === f.limit ? runs[runs.length - 1].id : null,
+  };
+}
+
+/**
+ * The voice's summary as the connector carries it: the same fields, each
+ * read as the type it should be, so nothing else rides along.
+ * Pure.
+ */
+function voiceOf(v) {
+  const counts = (o, keys) => Object.fromEntries(keys.filter((k) => num(o?.[k]) != null).map((k) => [k, num(o[k])]));
+  const OUTCOMES = ['replied', 'quiet', 'fallback', 'failed'];
+  const code = (c) => (CODE_RE.test(String(c || '')) ? String(c) : null);
+  // A failure is a code with its stage and status ("v2:rate_limited:429").
+  const failure = (c) => (/^[A-Za-z0-9_:+.-]{1,80}$/.test(String(c || '')) ? String(c) : null);
+  return {
+    turns: num(v.turns) || 0, replied: num(v.replied) || 0, quiet: num(v.quiet) || 0,
+    fallback: num(v.fallback) || 0, failed: num(v.failed) || 0, people: num(v.people) || 0, costUsd: num(v.costUsd) || 0,
+    byPlace: Object.fromEntries(['session', 'issue', 'chat', 'category', 'message']
+      .filter((place) => v.byPlace && v.byPlace[place])
+      .map((place) => [place, counts(v.byPlace[place], OUTCOMES)])),
+    recentFailures: (v.recentFailures || []).slice(0, 20).map((f) => ({
+      at: f.at || null, app: f.app || null, place: code(f.place), ref: num(f.ref), outcome: code(f.outcome),
+      error: failure(f.error), failures: (f.failures || []).map(failure).filter(Boolean).slice(0, 10), rounds: num(f.rounds) || 0,
+    })),
+    asks: {
+      byStatus: counts(v.asks?.byStatus, ['queued', 'taken', 'done', 'failed', 'dropped']),
+      bySource: Object.fromEntries(Object.entries(v.asks?.bySource || {})
+        .filter(([k, n]) => /^[a-z_]{1,20}$/.test(k) && num(n) != null).map(([k, n]) => [k, num(n)])),
+      waiting: (v.asks?.waiting || []).slice(0, 20).map((w) => ({
+        app: w.app || null, change: num(w.change), issueNumber: num(w.issueNumber), status: code(w.status),
+        asks: num(w.asks) || 0, since: w.since || null, tries: num(w.tries) || 0,
+      })),
+    },
+    offers: Object.fromEntries(['file_request', 'withdraw_change', 'close_request']
+      .filter((kind) => v.offers && v.offers[kind])
+      .map((kind) => [kind, counts(v.offers[kind], ['open', 'deciding', 'done', 'declined', 'failed'])])),
   };
 }
 
@@ -319,9 +482,13 @@ async function shotImages(pool, sessionId) {
 module.exports = {
   VERDICTS,
   MAX_SHOT_IMAGES,
+  MAX_PERSON_RUNS,
+  billingOf,
   botFilters,
   botOverview,
   buildStateOf,
+  personFilter,
+  personWeek,
   rateRun,
   recentShots,
   shotStats,

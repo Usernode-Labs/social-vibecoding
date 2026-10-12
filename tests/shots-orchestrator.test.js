@@ -981,6 +981,13 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.equal('phoneSignIn' in brief, false, 'no phone code for the pair, no phoneSignIn');
     assert.deepEqual(brief.screenBrowsers, { 'invite-suggestions': { desktop: 'browser_member' } });
     assert.ok(Object.values(brief.browsers).every((entry) => !('phoneTool' in entry)), 'no phone screen, no phone browser');
+    // The only files upload_file can choose, named and described, never a path.
+    assert.deepEqual(brief.sampleFiles.map((file) => [file.name, file.type]), [
+      ['landscape.png', 'image/png'], ['portrait.png', 'image/png'],
+      ['table.csv', 'text/csv'], ['document.pdf', 'application/pdf'],
+    ]);
+    assert.ok(brief.sampleFiles.every((file) => Object.keys(file).join() === 'name,type,about'));
+    assert.doesNotMatch(JSON.stringify(brief.sampleFiles), /\/usr\/local|shots-samples/);
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
@@ -2041,6 +2048,19 @@ test('the trace keeps whether a hosted app\'s page load carried the persona iden
   assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
 });
 
+test('the trace keeps that a page load was sent on to its address with the display token, and nothing else of it', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head',
+    identityAttached: false, identityRedirect: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityRedirect: '/?token=x' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityRedirect: true });
+  const [sent, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(sent.identityRedirect, true);
+  assert.equal(sent.identityAttached, false);
+  assert.equal(junk.identityRedirect, undefined, 'only true is kept, never the address');
+  assert.equal(other.identityRedirect, undefined, 'and only a page load carries it');
+});
+
 test('the trace counts the shots proxy\'s refusals of a destination by reason only', () => {
   const metrics = orchestrator.newRunMetrics();
   for (const blockReason of ['private_address', 'port', 'dns']) {
@@ -2171,4 +2191,88 @@ test('the trace counts the proxy\'s refusals by reason and kind of host', () => 
   });
   assert.equal(agentActivity.events.at(-3).hostKind, undefined, 'an unknown kind of host is dropped');
   assert.doesNotMatch(JSON.stringify(agentActivity), /internal\.example|10\.0\.0\.5/);
+});
+
+// #4575: the shots run lost a race with the Homeroom bot's turn on the same
+// session. The run waited for an idle session once, before building its
+// copies, and the bot took the session while they built: the dispatch died
+// with "execInWorker: durable active turn could not be persisted".
+function sessionBusyError() {
+  return Object.assign(new Error('execInWorker: another turn already owns this session'), {
+    code: 'durable_turn_persist_failed', persistCode: 'session_busy', sessionBusy: true,
+  });
+}
+
+test('a dispatch that finds the proposal\'s agent busy waits for it and dispatches again', async () => {
+  const lines = [];
+  let idleWaits = 0;
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) throw sessionBusyError();
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const realWait = orchestrator.waitForSessionIdle;
+  fixture.dependencies.waitForSessionIdle = async (...args) => {
+    idleWaits += 1;
+    return realWait(...args);
+  };
+  const result = await execute(fixture, {
+    maxAgentMs: 120_000, onProgress: (line) => lines.push(line),
+  });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  // Once before the copies, and again right before each dispatch.
+  assert.equal(idleWaits, 3);
+  assert.ok(lines.some((line) => /agent was busy, so the shots didn’t start\. Trying again/.test(line)));
+  const trace = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.traceSummary;
+  assert.equal(trace.agentBusyRetries, 1);
+  assert.deepEqual(trace.agentDispatches.map((entry) => entry.code || entry.outcome),
+    ['durable_turn_persist_failed', 'completed']);
+});
+
+test('the worker\'s in-flight refusal is waited out the same way', async () => {
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) {
+        throw Object.assign(new Error('execInWorker: a turn is already in flight for session 42'),
+          { code: 'TURN_IN_FLIGHT' });
+      }
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const result = await execute(fixture, { maxAgentMs: 120_000 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+});
+
+test('an agent that stays busy fails the run in plain words after two more tries', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  await assert.rejects(execute(fixture, { maxAgentMs: 120_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1 + orchestrator.MAX_AGENT_BUSY_RETRIES);
+  const failed = fixture.transitions.at(-1);
+  assert.equal(failed.next, 'failed');
+  assert.equal(failed.patch.failureCode, 'durable_turn_persist_failed');
+  assert.equal(failed.patch.failureReason,
+    'The proposal’s agent was busy with another turn, so the shots didn’t start. Take the shots again.');
+  assert.doesNotMatch(failed.patch.failureReason, /execInWorker|durable/);
+});
+
+test('a session the agent was busy on is not retried past the agent\'s budget', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  // Less than a minute of agent budget: no time for another dispatch.
+  await assert.rejects(execute(fixture, { maxAgentMs: 30_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1);
+});
+
+test('only a busy agent reads as retryable, never a failed one', () => {
+  assert.equal(orchestrator.agentBusyRetryable(sessionBusyError()), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'TURN_IN_FLIGHT' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'session_busy' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'durable_retry_persist_failed' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_failed' }), false);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_timeout' }), false);
+  assert.equal(orchestrator.agentBusyRetryable(null), false);
 });

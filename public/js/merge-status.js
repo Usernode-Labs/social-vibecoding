@@ -18,6 +18,11 @@
 (function (root) {
   'use strict';
 
+  // The words come from the language catalog (session.json), read when a
+  // state is derived, never when this file is evaluated: the runtime that
+  // defines PlatformI18n loads after it.
+  function t(id, values) { return PlatformI18n.t(id, values); }
+
   function localReset(text) {
     var RT = typeof window !== 'undefined' && window.ResetTime;
     return RT ? RT.localizeResetText(text) : text;
@@ -113,26 +118,31 @@
   // report was actually about.
   function ageOf(iso) {
     if (!iso) return null;
-    var t = Date.parse(iso);
-    if (!Number.isFinite(t)) return null;
-    var secs = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (secs < 45) return 'measured just now';
-    if (secs < 90) return 'measured a minute ago';
-    if (secs < 3600) return 'measured ' + Math.round(secs / 60) + ' minutes ago';
-    if (secs < 7200) return 'measured an hour ago';
-    return 'measured ' + Math.round(secs / 3600) + ' hours ago';
+    var at = Date.parse(iso);
+    if (!Number.isFinite(at)) return null;
+    var secs = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (secs < 45) return t('session:merge.measured.justNow');
+    if (secs < 90) return t('session:merge.measured.minuteAgo');
+    if (secs < 3600) return t('session:merge.measured.minutesAgo', { count: Math.round(secs / 60) });
+    if (secs < 7200) return t('session:merge.measured.hourAgo');
+    return t('session:merge.measured.hoursAgo', { count: Math.round(secs / 3600) });
   }
 
-  // #3232 — how long the checks run in flight has been going, as the pill's
-  // own words ("12 min"). checks_checked_at is stamped when a run starts
+  // A tooltip's sentence followed by how old its measurement is.
+  function withAge(title, age) {
+    return age ? t('session:merge.measured.joined', { statement: title, measured: age }) : title;
+  }
+
+  // #3232 — how long the checks run in flight has been going, in whole
+  // minutes, for the pill's own words ("12 min"). checks_checked_at is stamped when a run starts
   // (the proposal page reads it as "Started 12 minutes ago"), so a pending
   // row's stamp is the run's start. Under a minute, missing, unparseable or
   // in the future (clock skew) says nothing: zero is not worth a word.
   function runningForOf(p) {
-    var t = p && p.checks_checked_at ? Date.parse(p.checks_checked_at) : NaN;
-    if (!Number.isFinite(t)) return '';
-    var mins = Math.floor((Date.now() - t) / 60000);
-    return mins >= 1 ? mins + ' min' : '';
+    var startedAt = p && p.checks_checked_at ? Date.parse(p.checks_checked_at) : NaN;
+    if (!Number.isFinite(startedAt)) return 0;
+    var mins = Math.floor((Date.now() - startedAt) / 60000);
+    return mins >= 1 ? mins : 0;
   }
 
   // #788 / the member floor: why a flagged proposal needs a Yes from a member
@@ -148,17 +158,36 @@
     secrets: 'this app\u2019s keys',
   };
 
+  // The whole sentence and the whole line for each reason, as message ids:
+  // a translator gets each one entire, never a phrase to fit into a frame.
+  // `phrase` stays the English the server also holds; nothing on screen is
+  // built from it (tests/explicit-approval-vote-panel.test.js holds the two
+  // tables equal).
+  var EXPLICIT_SENTENCES = {
+    admins: 'session:explicitApproval.sentence.admins',
+    governance: 'session:explicitApproval.sentence.governance',
+    visibility: 'session:explicitApproval.sentence.visibility',
+    platform_env: 'session:explicitApproval.sentence.platformEnv',
+    secrets: 'session:explicitApproval.sentence.secrets',
+  };
+  var EXPLICIT_LINES = {
+    admins: 'session:explicitApproval.line.admins',
+    governance: 'session:explicitApproval.line.governance',
+    visibility: 'session:explicitApproval.line.visibility',
+    platform_env: 'session:explicitApproval.line.platformEnv',
+    secrets: 'session:explicitApproval.line.secrets',
+  };
+
   // { phrase, sentence, line } for a reason; an unknown or missing reason
   // still reads as a sentence.
   function explicitApprovalCopy(reason) {
-    var phrase = Object.prototype.hasOwnProperty.call(EXPLICIT_PHRASES, reason)
-      ? EXPLICIT_PHRASES[reason] : null;
+    var known = Object.prototype.hasOwnProperty.call(EXPLICIT_PHRASES, reason);
     return {
-      phrase: phrase,
-      sentence: phrase
-        ? 'Changes to ' + phrase + ' need a Yes from another member.'
-        : 'This change needs a Yes from another member.',
-      line: phrase ? 'It changes ' + phrase : 'It changes a protected setting',
+      // Which protected setting, for a caller that picks a whole message by it.
+      reason: known ? reason : null,
+      phrase: known ? EXPLICIT_PHRASES[reason] : null,
+      sentence: t(known ? EXPLICIT_SENTENCES[reason] : 'session:explicitApproval.sentence.other'),
+      line: t(known ? EXPLICIT_LINES[reason] : 'session:explicitApproval.line.other'),
     };
   }
 
@@ -246,22 +275,19 @@
     // to go. Both are in-flight or waiting: neither asks the reader to act.
     var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
     if (status === 'promoted' && served.indexOf('integrating') !== -1) {
-      return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
+      return descriptor('integrating', t('session:merge.status.integrating'), 'amber', true, {
         votes: votes,
         // Only a CONFLICT is ever brought up to date now: a head that merges
         // cleanly merges as it stands, however far behind. So this is the
         // conflict lane at work, and the sentence says what that lane does.
-        title: 'The platform is merging main into this proposal to resolve a conflict. '
-          + 'The result is previewed and checked, and it merges on its own once '
-          + 'the vote passes.' + (ageOf(integ.measuredAt) ? ' \u00b7 ' + ageOf(integ.measuredAt) : ''),
+        title: withAge(t('session:merge.title.integrating'), ageOf(integ.measuredAt)),
       });
     }
     if (status === 'promoted' && served.indexOf('budget') !== -1) {
-      return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
+      return descriptor('integrating', t('session:merge.status.waitingOnBudget'), 'amber', false, {
         votes: votes,
         // #3230: the reset in the viewer's own clock where ResetTime is loaded.
-        title: localReset('This proposal needs merging with main, but the platform\u2019s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
+        title: localReset(t('session:merge.title.waitingOnBudget')),
       });
     }
 
@@ -269,35 +295,35 @@
     // runs it (the merge-followups workflow machine). A row without the
     // field (undefined) reads as it always did.
     if (status === 'merged' && p.live_at === null) {
-      return descriptor('going_live', 'Going live\u2026', 'amber', true, {
+      return descriptor('going_live', t('session:merge.status.goingLive'), 'amber', true, {
         votes: votes,
-        title: 'This change is merged. Production is being updated to run it.',
+        title: t('session:merge.title.goingLive'),
       });
     }
     // 1 — terminal: merged.
     if (status === 'merged') {
-      return descriptor('merged', 'Merged', 'violet', false, { glyph: '✓', votes: votes });
+      return descriptor('merged', t('session:merge.status.merged'), 'violet', false, { glyph: '✓', votes: votes });
     }
     // 2 — actively merging (GitHub merge + prod rebuild in flight).
     if (status === 'merging') {
-      return descriptor('merging', 'Merging…', 'amber', true, {
+      return descriptor('merging', t('session:merge.status.merging'), 'amber', true, {
         votes: votes,
-        title: 'This change is being merged into the app and production is rebuilding.',
+        title: t('session:merge.title.merging'),
       });
     }
     // 3 — auto-resolver reconciling conflicts (persisted snapshot, or the
     // feed's process-local `resolving` flag) then retrying the merge.
     if (mcs === 'resolving' || p.resolving === true) {
-      return descriptor('resolving', 'Resolving conflicts automatically…', 'amber', true, {
+      return descriptor('resolving', t('session:merge.status.resolving'), 'amber', true, {
         votes: votes,
-        title: 'Reconciling conflicts with main automatically, then retrying the merge.',
+        title: t('session:merge.title.resolving'),
       });
     }
     // 4 — auto-resolve gave up; a human must sync/resolve.
     if (mcs === 'failed') {
-      return descriptor('conflict_failed', 'Conflict resolution failed', 'red', false, {
+      return descriptor('conflict_failed', t('session:merge.status.conflictFailed'), 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'The last automatic conflict resolution failed. The owner needs to resolve manually.',
+        title: t('session:merge.title.conflictFailed'),
       });
     }
     // 4b — a real merge attempt hit a GitHub conflict ('conflict' is written
@@ -308,10 +334,9 @@
     // badge forever. Red: the reliable way out is the proposal's creator
     // finishing the merge from their session.
     if (mcs === 'conflict') {
-      return descriptor('merge_conflict', 'Merge failed: conflict', 'red', false, {
+      return descriptor('merge_conflict', t('session:merge.status.mergeConflict'), 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'Going live was attempted but this change conflicts with main. '
-          + 'The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").',
+        title: t('session:merge.title.mergeConflict'),
       });
     }
     // 4c (#1442) — GitHub predicts the NEXT merge will conflict. States 4/4b
@@ -329,17 +354,17 @@
       // holds: the platform resolves a conflict once the vote passes (and
       // once beforehand, unasked), so the creator is never the ONLY way out
       // unless the lane has said so.
-      var who = served.indexOf('unresolvable') !== -1
-        ? 'The platform tried to resolve it and could not. The change\u2019s creator needs to bring it up to date from their agent session ("Sync with main").'
+      var conflictTitle = served.indexOf('unresolvable') !== -1
+        ? t('session:merge.title.conflictUnresolvable')
         : served.indexOf('fork_head') !== -1
-          ? 'Its branch lives on the creator\u2019s own fork, which the platform cannot write to, so only the creator can bring it up to date.'
+          ? t('session:merge.title.conflictForkHead')
           : served.indexOf('awaiting_approval') !== -1
-            ? 'The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session ("Sync with main").'
-            : 'The platform resolves it automatically. The creator can also bring it up to date from their agent session ("Sync with main").';
+            ? t('session:merge.title.conflictAwaitingApproval')
+            : t('session:merge.title.conflictAutomatic');
       return descriptor('mergeability_conflict',
-        nf ? 'Conflicts with main · ' + nf : 'Conflicts with main', 'red', false, {
+        nf ? t('session:merge.status.conflictsWithMainFiles', { count: nf }) : t('session:merge.status.conflictsWithMain'), 'red', false, {
           glyph: '⚠', votes: votes,
-          title: 'Main has moved on and this proposal no longer merges on its own. ' + who,
+          title: conflictTitle,
         });
     }
     // 5a — preview boot failure and checks-run infrastructure failure are
@@ -347,26 +372,28 @@
     // error; check_state='error' by itself only says the runner did not
     // produce a verdict and must not accuse the app of failing to boot.
     if (p.preview_state === 'failed' || p.staging_error) {
-      return descriptor('preview_failed', "Preview won't boot", 'red', false, {
+      return descriptor('preview_failed', t('session:merge.status.previewFailed'), 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.staging_error
-          ? ('The preview failed to start, so it can\u2019t be tested. It can\u2019t go live until it starts. Reason: ' + p.staging_error)
-          : 'The preview failed to start, so it couldn\u2019t be tested. It can\u2019t go live until it starts.',
+          ? t('session:merge.title.previewFailedReason', { reason: p.staging_error })
+          : t('session:merge.title.previewFailed'),
       });
     }
     if (check === 'error' && checksWillRetry(p)) {
       // In flight and nobody need act: the same treatment as a running check.
-      return descriptor('checks_running', 'Checks will run again', 'neutral', true, {
+      return descriptor('checks_running', t('session:merge.status.checksWillRetry'), 'neutral', true, {
         votes: votes,
-        title: (p.check_error_detail ? p.check_error_detail + ' ' : '') + 'Merge is blocked until they pass.',
+        title: p.check_error_detail
+          ? t('session:merge.title.checksWillRetryDetail', { detail: p.check_error_detail })
+          : t('session:merge.title.checksWillRetry'),
       });
     }
     if (check === 'error') {
-      return descriptor('checks_error', "Checks couldn't run", 'red', false, {
+      return descriptor('checks_error', t('session:merge.status.checksError'), 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.check_error_detail
-          ? ('The automated check run ended before it produced a verdict. Merge is blocked. Reason: ' + p.check_error_detail)
-          : 'The automated check run ended before it produced a verdict. The preview may still be available; merge is blocked until checks complete.',
+          ? t('session:merge.title.checksErrorReason', { reason: p.check_error_detail })
+          : t('session:merge.title.checksError'),
       });
     }
     // 5b — checks blocked the merge (a test broke).
@@ -379,10 +406,10 @@
       var n = Array.isArray(p.test_results)
         ? p.test_results.filter(function (r) { return r && r.status !== 'pass' && !r.advisory; }).length
         : 0;
-      var label = n ? 'Checks failing · ' + n : 'Checks failing';
+      var label = n ? t('session:merge.status.checksFailingCount', { count: n }) : t('session:merge.status.checksFailing');
       return descriptor('checks_failing', label, 'amber', false, {
         glyph: '⚠', votes: votes,
-        title: 'Checks are not passing on the preview. It can\u2019t go live until they pass.',
+        title: t('session:merge.title.checksFailing'),
       });
     }
     // 6 — checks still running (not yet a verdict). Grey, not amber: it's
@@ -392,11 +419,9 @@
       // the head conflicts with main and a verdict on a tree that cannot
       // merge is not worth the minutes. They run once it merges cleanly.
       // Not a spinner: nothing is running, and nobody has to act on it.
-      return descriptor('checks_deferred', 'Checks deferred', 'neutral', false, {
+      return descriptor('checks_deferred', t('session:merge.status.checksDeferred'), 'neutral', false, {
         votes: votes,
-        title: 'This proposal conflicts with main, so its preview was built but its tests '
-          + 'were not run: they would judge a tree that cannot merge. They run automatically '
-          + 'once it merges cleanly.',
+        title: t('session:merge.title.checksDeferred'),
       });
     }
     if (check === 'pending' && p.check_phase === 'queued') {
@@ -406,11 +431,11 @@
       var q = p.checks_progress && p.checks_progress.queue;
       var ahead = q && typeof q.ahead === 'number' && q.ahead >= 0 && Math.floor(q.ahead) === q.ahead ? q.ahead : null;
       return descriptor('checks_queued',
-        ahead === null ? 'Checks waiting' : (ahead === 0 ? 'Checks waiting · next' : 'Checks waiting · ' + ahead + ' ahead'),
+        ahead === null ? t('session:merge.status.checksQueued')
+          : (ahead === 0 ? t('session:merge.status.checksQueuedNext') : t('session:merge.status.checksQueuedAhead', { count: ahead })),
         'neutral', true, {
           votes: votes,
-          title: 'The preview is up, and its checks are waiting for a slot: Homeroom runs a few proposals\u2019 '
-            + 'checks at a time. They start on their own. It can\u2019t go live until they pass.',
+          title: t('session:merge.title.checksQueued'),
         });
     }
     if (check === 'pending') {
@@ -418,9 +443,9 @@
       // twenty minutes" reads as a number rather than as a hang (#3232).
       var runningFor = runningForOf(p);
       return descriptor('checks_running',
-        runningFor ? 'Checks running · ' + runningFor : 'Checks running…', 'neutral', true, {
+        runningFor ? t('session:merge.status.checksRunningFor', { count: runningFor }) : t('session:merge.status.checksRunning'), 'neutral', true, {
         votes: votes,
-        title: 'Still testing the preview. It can\u2019t go live until the checks pass.',
+        title: t('session:merge.title.checksRunning'),
       });
     }
     // 6a (#607) — a promoted proposal with NO verdict recorded at all: the
@@ -429,9 +454,9 @@
     // Rows carrying a console snapshot are genuine pre-#47 legacy and keep
     // falling through to the vote states.
     if (!check && status === 'promoted' && !p.console_check_state) {
-      return descriptor('checks_running', 'Checks starting…', 'neutral', true, {
+      return descriptor('checks_running', t('session:merge.status.checksStarting'), 'neutral', true, {
         votes: votes,
-        title: 'The preview is being prepared and testing is about to start. It can\u2019t go live until the checks pass.',
+        title: t('session:merge.title.checksStarting'),
       });
     }
     // 6b — checks explicitly skipped (#461): there was genuinely nothing to
@@ -439,11 +464,11 @@
     // NON-blocking — the gate treats it like 'passing' — so grey, no
     // spinner, with the recorded reason in the tooltip.
     if (check === 'skipped') {
-      return descriptor('checks_skipped', 'Checks skipped', 'neutral', false, {
+      return descriptor('checks_skipped', t('session:merge.status.checksSkipped'), 'neutral', false, {
         votes: votes,
         title: p.check_error_detail
-          ? ('Checks were skipped: ' + p.check_error_detail + '. It can still go live.')
-          : 'Checks were skipped: there was nothing to test. It can still go live.',
+          ? t('session:merge.title.checksSkippedReason', { reason: p.check_error_detail })
+          : t('session:merge.title.checksSkipped'),
       });
     }
     // 7 — behind main. ('conflict' no longer falls through here — it has its
@@ -455,26 +480,24 @@
       // stands, and GitHub's own merge is the last word on whether it still
       // can. (The conflicting case never reaches here: 4c above takes it.)
       var behindAge = integ ? ageOf(integ.measuredAt) : null;
-      return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
+      return descriptor('behind', behind ? t('session:merge.status.behindCount', { count: behind }) : t('session:merge.status.behind'), 'amber', false, {
         votes: votes,
-        title: 'Main has moved on since this was proposed, but this still merges cleanly. '
-          + 'Nothing needs syncing: it merges as it stands once the vote passes.'
-          + (behindAge ? ' \u00b7 ' + behindAge : ''),
+        title: withAge(t('session:merge.title.behind'), behindAge),
       });
     }
     // 8 — locked app: majority reached but still needs an admin yes. (Only
     // fires where the caller supplies `locked`; the admin-yes is verified
     // server-side, so this is the "still needs admin" hint, not a guarantee.)
     if (status === 'promoted' && reached && locked) {
-      return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
+      return descriptor('awaiting_admin', t('session:merge.status.awaitingAdmin'), 'amber', false, {
         votes: votes,
-        title: 'App is locked, so it also needs at least one admin yes before it merges.',
+        title: t('session:merge.title.awaitingAdmin'),
       });
     }
     // 8a — the member floor: the votes are in, but none of them is from a
     // member other than the author. "Merging shortly" would be untrue.
     if (status === 'promoted' && reached && awaitingOtherMember(p)) {
-      return descriptor('awaiting_member', 'Needs another member\u2019s Yes', 'amber', false, {
+      return descriptor('awaiting_member', t('session:merge.status.awaitingMember'), 'amber', false, {
         votes: votes,
         title: explicitApprovalCopy(p.explicit_approval_reason).sentence,
         explicitApproval: true,
@@ -486,18 +509,19 @@
     // row says so, and the tooltip names the test and the way out.
     var mainPause = mainPauseOf(p);
     if (status === 'promoted' && reached && check === 'passing' && mainPause) {
-      return descriptor('main_paused', 'Approved, going live is paused', 'amber', false, {
+      return descriptor('main_paused', t('session:merge.status.mainPaused'), 'amber', false, {
         votes: votes,
-        title: 'Approved and checks passed, but ' + (mainPause.note || 'main\u2019s unit suite is failing and going live is paused for this app')
-          + '. Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.',
+        title: mainPause.note
+          ? t('session:merge.title.mainPausedNote', { reason: mainPause.note })
+          : t('session:merge.title.mainPaused'),
       });
     }
     // 9 — passed the vote, checks green, not behind: eligible and queued to
     // merge (one proposal per app merges at a time). The new explicit state.
     if (status === 'promoted' && reached && check === 'passing') {
-      return descriptor('ready', 'Approved, going live shortly', 'green', false, {
+      return descriptor('ready', t('session:merge.status.ready'), 'green', false, {
         votes: votes,
-        title: 'Approved and checks passed. It goes live shortly.',
+        title: t('session:merge.title.ready'),
       });
     }
     // 10 — proposed, still collecting votes. #788: a flagged proposal
@@ -509,11 +533,10 @@
       // creator's own words on a project that is just them, whose one Yes is
       // the Yes it needs.
       var solo = (opts.audience || p.app_audience) === 'solo' && majority <= 1;
-      return descriptor('in_vote', solo ? 'Waiting for your approval' : 'Waiting for approval', 'violet', false, {
+      return descriptor('in_vote', solo ? t('session:merge.status.waitingForYourApproval') : t('session:merge.status.waitingForApproval'), 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
-          ? explicitApprovalCopy(p.explicit_approval_reason).sentence
-            + ' It won\u2019t merge on a timer: it needs real Yes votes to reach the app\u2019s normal threshold.'
+          ? t('session:merge.title.explicitApprovalNoTimer', { requirement: explicitApprovalCopy(p.explicit_approval_reason).sentence })
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
       });
@@ -525,14 +548,14 @@
     // retain precedence, and promoted rows already resolved through their
     // vote state.
     if (status === 'active' && check === 'passing') {
-      return descriptor('checks_passed', 'Checks passed', 'green', false, {
+      return descriptor('checks_passed', t('session:merge.status.checksPassed'), 'green', false, {
         glyph: '✓',
-        title: 'Checks passed on the preview. It is ready to send for approval.',
+        title: t('session:merge.title.checksPassed'),
       });
     }
     // 11 — building; not yet proposed.
     if (status === 'active') {
-      return descriptor('draft', 'Draft', 'neutral', false, {});
+      return descriptor('draft', t('session:merge.status.draft'), 'neutral', false, {});
     }
     // Unknown / non-merge lifecycle (paused, archived, …): no badge.
     return descriptor('none', '', 'neutral', false, {});
@@ -546,13 +569,13 @@
     var label = life.label;
     var advisory = '';
     if (includeVotes && life.key === 'in_vote' && life.votes) {
-      label += ' · ' + life.votes.yes + '/' + life.votes.majority;
+      label = t('session:merge.pill.statusWithTally', { status: life.label, yes: life.votes.yes, required: life.votes.majority });
       // #695: muted "+N" for advisory (non-approver) votes on
       // invited-approver apps — recorded, but not in the headline tally.
       if (life.votes.advisory > 0) {
         advisory = ' <span class="ms-advisory" title="'
-          + life.votes.advisory + ' advisory vote' + (life.votes.advisory === 1 ? '' : 's')
-          + ' from non-approvers. They don’t count toward merging">+'
+          + PlatformI18n.htmlText('session:merge.pill.advisoryVotes', { count: life.votes.advisory })
+          + '">+'
           + life.votes.advisory + '</span>';
       }
     }

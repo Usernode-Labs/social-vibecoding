@@ -62,6 +62,7 @@
  * guard, so what #1036 bought that anchor is not lost; it is provided once.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { skeletonListHtml } from './card/skeleton';
 
 /**
@@ -80,6 +81,7 @@ import { skeletonListHtml } from './card/skeleton';
 const THREAD_INITIAL = { __html: skeletonListHtml(1) };
 
 export function DevTopicSubView() {
+  const t = useMessages('project');
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
       <div className="gc-tab-body flex-1 flex min-h-0">
@@ -100,7 +102,7 @@ export function DevTopicSubView() {
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize plan panel"
+          aria-label={t('project:topic.frame.resizeSpecPanel')}
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

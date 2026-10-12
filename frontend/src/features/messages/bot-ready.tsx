@@ -5,11 +5,13 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { ProgressRing } from '@/components/ui/progress-ring';
 
 import { changeHref } from '../../lib/change-href';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { releaseSentence } from '../../lib/release-eta';
 import { useReleaseNow } from '../../lib/use-release-now';
 
 import * as api from './api';
-import { afterYesWords, countOf, waitingWords } from './approval-words';
+import { afterYesWords, countOf, waitingWords, type AfterYes } from './approval-words';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { botMeta } from './bot-question';
 import { scopeKey, setReply } from './store';
@@ -78,9 +80,14 @@ export function isReadyMessage(message: ConversationMessage): boolean {
  * "Flat 4B Chores is built, but not everything works yet".
  */
 export function readyTitle(meta: HomeroomBotMeta): string {
-  const app = meta.appName || meta.appSlug || 'Your project';
-  const who = meta.ready?.group && !meta.firstVersion ? `Your change to ${app}` : app;
-  return meta.ready?.broken?.length ? `${who} is built, but not everything works yet` : `${who} is ready to try`;
+  const project = meta.appName || meta.appSlug || '';
+  const broken = !!meta.ready?.broken?.length;
+  if (meta.ready?.group && !meta.firstVersion) {
+    if (!project) return broken ? translate('messages:bot.ready.title.changeUnnamedBroken') : translate('messages:bot.ready.title.changeUnnamed');
+    return broken ? translate('messages:bot.ready.title.changeBroken', { project }) : translate('messages:bot.ready.title.change', { project });
+  }
+  if (!project) return broken ? translate('messages:bot.ready.title.unnamedBroken') : translate('messages:bot.ready.title.unnamed');
+  return broken ? translate('messages:bot.ready.title.projectBroken', { project }) : translate('messages:bot.ready.title.project', { project });
 }
 
 /** Pure: words compared loosely, so a title that only repeats what they asked is said once. */
@@ -99,7 +106,11 @@ export function changeLine(meta: HomeroomBotMeta): string | null {
   const n = Number(meta.issueNumber);
   const numbered = Number.isInteger(n) && n > 0;
   const what = (meta.changeTitle || meta.issueTitle || '').trim();
-  if (numbered) return what && !(meta.askedText && same(what, meta.askedText)) ? `Request #${n}: ${what}` : `Request #${n}`;
+  if (numbered) {
+    return what && !(meta.askedText && same(what, meta.askedText))
+      ? translate('messages:bot.ready.change.request', { number: String(n), title: what })
+      : translate('messages:bot.ready.change.requestUntitled', { number: String(n) });
+  }
   if (!what) return null;
   if (meta.askedText && same(what, meta.askedText)) return null;
   return what;
@@ -125,9 +136,10 @@ export function changeLink(meta: HomeroomBotMeta, actions: HomeroomBotAction[] =
 export function brokenLine(ready: HomeroomBotReady | undefined): string | null {
   const said = (ready?.broken || []).filter((item) => typeof item === 'string' && item.trim());
   if (!said.length) return null;
-  return said.length === 1
-    ? `One thing isn’t working yet: ${said[0]}`
-    : `${said.length} things aren’t working yet: ${said.join('; ')}`;
+  return translate('messages:bot.ready.broken', {
+    count: said.length,
+    problems: said.reduce((first, second) => translate('messages:bot.ready.brokenPair', { first, second })),
+  });
 }
 
 /**
@@ -151,26 +163,76 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Wednesday" within the week, else "on October 12". A day already past
  * (an old card, read later) is its date.
  */
-export function liveDay(at: string, now: Date = new Date(Date.now()), locale?: string): string | null {
+export function liveDay(at: string, now: Date = new Date(Date.now()), locale?: string): LiveDay | null {
   const when = new Date(at);
   if (Number.isNaN(when.getTime())) return null;
   const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   // Rounded: a day across a clock change is 23 or 25 hours long.
   const days = Math.round((midnight(when) - midnight(now)) / DAY_MS);
   if (when.getTime() > now.getTime()) {
-    if (days === 0) return 'later today';
-    if (days === 1) return 'tomorrow';
-    if (days < 7) return `on ${new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when)}`;
+    if (days === 0) return { kind: 'today' };
+    if (days === 1) return { kind: 'tomorrow' };
+    if (days < 7) return { kind: 'weekday', weekday: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
   }
-  return `on ${new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when)}`;
+  return { kind: 'date', date: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
 }
+
+/** Which day it goes live, for the sentence that says so (APPROVED_LINES). */
+export type LiveDay =
+  | { kind: 'today' }
+  | { kind: 'tomorrow' }
+  | { kind: 'weekday'; weekday: string }
+  | { kind: 'date'; date: string };
+
+/**
+ * "You approved it. It goes live …", one whole message per case: whose
+ * approval is still needed (./approval-words.ts afterYesWords) by the day it
+ * goes live anyway.
+ */
+const APPROVED_LINES: Record<AfterYes['who'] | 'none', Record<LiveDay['kind'] | 'none', string>> = {
+  none: {
+    none: 'messages:bot.ready.approved.none.none',
+    today: 'messages:bot.ready.approved.none.today',
+    tomorrow: 'messages:bot.ready.approved.none.tomorrow',
+    weekday: 'messages:bot.ready.approved.none.weekday',
+    date: 'messages:bot.ready.approved.none.date',
+  },
+  person: {
+    none: 'messages:bot.ready.approved.person.none',
+    today: 'messages:bot.ready.approved.person.today',
+    tomorrow: 'messages:bot.ready.approved.person.tomorrow',
+    weekday: 'messages:bot.ready.approved.person.weekday',
+    date: 'messages:bot.ready.approved.person.date',
+  },
+  people: {
+    none: 'messages:bot.ready.approved.people.none',
+    today: 'messages:bot.ready.approved.people.today',
+    tomorrow: 'messages:bot.ready.approved.people.tomorrow',
+    weekday: 'messages:bot.ready.approved.people.weekday',
+    date: 'messages:bot.ready.approved.people.date',
+  },
+  approvals: {
+    none: 'messages:bot.ready.approved.approvals.none',
+    today: 'messages:bot.ready.approved.approvals.today',
+    tomorrow: 'messages:bot.ready.approved.approvals.tomorrow',
+    weekday: 'messages:bot.ready.approved.approvals.weekday',
+    date: 'messages:bot.ready.approved.approvals.date',
+  },
+  anyone: {
+    none: 'messages:bot.ready.approved.anyone.none',
+    today: 'messages:bot.ready.approved.anyone.today',
+    tomorrow: 'messages:bot.ready.approved.anyone.tomorrow',
+    weekday: 'messages:bot.ready.approved.anyone.weekday',
+    date: 'messages:bot.ready.approved.anyone.date',
+  },
+};
 
 /**
  * Pure: whose Yes it still needs, worded to follow "It goes live": "when
  * @ada approves too" when that is everybody it names, "after one more
  * approval from @priya or @mo" when any of them will do.
  */
-function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): string {
+function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): AfterYes {
   return afterYesWords({ missing, names: waitingOn, more });
 }
 
@@ -184,13 +246,10 @@ function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): string {
  * or @mo, or on Wednesday if nobody objects." when either will do.
  */
 export function approvedLine(next: HomeroomBotGoesLive, now: Date = new Date(Date.now()), locale?: string): string {
-  if (next.soon) return 'You approved it. It goes live in a minute or two.';
+  if (next.soon) return translate('messages:bot.ready.approved.soon');
   const day = next.at ? liveDay(next.at, now, locale) : null;
-  if (!next.missing) {
-    return day ? `You approved it. It goes live ${day} if nobody objects.` : 'You approved it. It goes live once it has the approvals it needs.';
-  }
-  const who = whoElse(next);
-  return day ? `You approved it. It goes live ${who}, or ${day} if nobody objects.` : `You approved it. It goes live ${who}.`;
+  const who = next.missing ? whoElse(next) : null;
+  return translate(APPROVED_LINES[who ? who.who : 'none'][day ? day.kind : 'none'], { ...(who ? who.values : {}), ...(day || {}) });
 }
 
 /**
@@ -218,16 +277,16 @@ export function readyLine(
   state: ReadyCardState, goesLive: HomeroomBotGoesLive | null = null, now: Date = new Date(Date.now()), locale?: string,
   release: unknown = null,
 ): string | null {
-  if (state === 'live') return 'It’s live.';
+  if (state === 'live') return translate('messages:bot.ready.line.live');
   if (state === 'going_live') {
     const words = release ? releaseSentence(release, now.getTime()) : null;
-    return words ? `${words}.` : 'It’s approved and going live now.';
+    return words ? translate('messages:bot.ready.line.release', { release: words }) : translate('messages:bot.ready.line.goingLive');
   }
-  if (state === 'withdrawn') return 'This change was closed without going live.';
-  if (state === 'approved') return goesLive ? approvedLine(goesLive, now, locale) : 'You approved it.';
-  if (state === 'stale') return 'This change was updated. Try the new version first.';
-  if (state === 'updated') return 'This change was updated. Its newer version is below.';
-  if (state === 'closed') return 'No longer needed.';
+  if (state === 'withdrawn') return translate('messages:bot.ready.line.withdrawn');
+  if (state === 'approved') return goesLive ? approvedLine(goesLive, now, locale) : translate('messages:bot.ready.line.approved');
+  if (state === 'stale') return translate('messages:bot.ready.line.stale');
+  if (state === 'updated') return translate('messages:bot.ready.line.updated');
+  if (state === 'closed') return translate('messages:bot.ready.line.closed');
   return null;
 }
 
@@ -295,6 +354,7 @@ export function readyMoving(state: ReadyCardState, next: HomeroomBotGoesLive | n
 export function ReadyCardView({
   meta, state, actions, fresh = null, error = null, busy = false, onPress, goesLive = null, now, locale,
 }: ReadyCardViewProps) {
+  const t = useMessages('messages');
   const canApprove = actions.some((action) => action.type === 'vote');
   const waiting = state === 'open' ? waitingLine(readyNow(meta.ready, fresh), canApprove) : null;
   // What happens next: as read now, else as this device's Yes or the
@@ -325,7 +385,7 @@ export function ReadyCardView({
     >
       <div className="flex items-center gap-3">
         {readyMoving(state, next) ? (
-          <ProgressRing pct={0} title="Going live" spinning trackClassName="dark:stroke-zinc-700" />
+          <ProgressRing pct={0} title={t('messages:bot.ready.goingLive')} spinning trackClassName="dark:stroke-zinc-700" />
         ) : (
           <IconTile size="xs" className="h-[38px] w-[38px] rounded-full bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] dark:bg-[color:var(--brand-tint)] dark:text-[color:var(--brand-ink)]">
             <CheckIcon aria-hidden="true" />
@@ -338,14 +398,14 @@ export function ReadyCardView({
               {changeUrl ? <a href={changeUrl} className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-200" data-bot-ready-change-link="">{what}</a> : what}
             </p>
           ) : null}
-          {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{`You asked: ${meta.askedText}`}</p> : null}
+          {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{t('messages:bot.ready.youAsked', { request: meta.askedText })}</p> : null}
           {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
         </div>
       </div>
       {line ? <p className="messages-bot-answered" role="status">{line}</p> : null}
       {actions.length ? (
-        <div className="messages-bot-answers" role="group" aria-label="Choices">
+        <div className="messages-bot-answers" role="group" aria-label={t('messages:bot.ready.choices')}>
           {actions.map((action) => (
             <button
               key={action.id}

@@ -34,8 +34,10 @@ export const quickRepliesStore = createStore<QuickRepliesState>({ replies: [] })
 export interface RunnerState {
   /** 'none' draws nothing — no machine, and none has ever run a turn. */
   kind: 'none' | 'past' | 'live';
-  /** The machine's name. Empty when `kind` is 'none'. */
+  /** The machine's name, or the stand-in shown where it has none. Empty when `kind` is 'none'. */
   label: string;
+  /** `label` is the stand-in, not a name: sentences about the machine use their unnamed wording. */
+  unnamed?: boolean;
 }
 
 export const runnerStore = createStore<RunnerState>({ kind: 'none', label: '' });

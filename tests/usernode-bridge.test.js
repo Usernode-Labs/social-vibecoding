@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const unversionedBridgePath = path.join(root, 'public', 'usernode-bridge.js');
@@ -245,8 +246,10 @@ test('the LLM relay answers every frame the shell owns, and always answers', () 
   // recognised must never be left to time out as "there is no shell here".
   assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('appSlugForFrame'),
     'the ack precedes the slug resolution');
-  assert.match(relay, /reply\(null, 'This app could not be identified[^']*'\)/);
-  assert.match(relay, /Sign in to Homeroom to give an app access to AI/);
+  assert.match(relay, /reply\(null, PlatformI18n\.t\('changes:bridge\.appNotIdentified'\)\)/);
+  assert.equal(message('changes:bridge.appNotIdentified'), 'This app could not be identified. Reopen it and try again.');
+  assert.match(relay, /PlatformI18n\.t\('changes:bridge\.llmSignedOut'\)/);
+  assert.equal(message('changes:bridge.llmSignedOut'), 'Sign in to Homeroom to give an app access to AI.');
   // Session-authenticated, same-origin — the bridge holds no credential.
   assert.match(relay, /credentials: 'same-origin'/);
 });

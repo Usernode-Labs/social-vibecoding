@@ -79,6 +79,7 @@ import {
   ShareIcon,
 } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { navStore } from '../nav/nav-store.js';
@@ -180,14 +181,15 @@ function ActionRow({ id, icon, label, sub = null, onClick }: {
  * original resolves to "<deleted>" and is text, not a link. Pure; the line
  * it feeds is pinned by tests/app-about-pane.test.js.
  */
-function lineageOf(row: AppRow | null | undefined): { name: string; href: string | null } | null {
+function lineageOf(row: AppRow | null | undefined): { name: string; deleted: boolean; href: string | null } | null {
   const ref = row ? row.forked_from : null;
   if (!ref || typeof ref !== 'object') return null;
   const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
   const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
     ? `#app/${encodeURIComponent(ref.slug)}`
     : null;
-  return { name, href };
+  // `deleted`: the original is gone and `name` is only a placeholder; the line says so in its own words.
+  return { name, deleted: !(typeof ref.name === 'string' && ref.name), href };
 }
 
 /**
@@ -273,6 +275,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
   showAll: boolean;
   onToggle: () => void;
 }): ReactNode {
+  const t = useMessages('agent');
   const shown = showAll ? people : people.slice(0, CONTRIB_FOLD);
   return (
     <>
@@ -288,7 +291,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
             >
               <Avatar who={c.who} size="sm" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} live`}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.contributor.live', { count: c.merged })}</span>
             </a>
           ))}
         </div>
@@ -302,14 +305,19 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
           className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
           onClick={onToggle}
         >
-          {showAll ? 'Show fewer' : `Show all ${total} contributors`}
+          {showAll ? t('agent:appContext.about.contributors.showFewer') : t('agent:appContext.about.contributors.showAll', { count: total })}
         </button>
       ) : null}
     </>
   );
 }
 
-export function AboutPane({ label }: { label: string }): ReactNode {
+/**
+ * `label` is the app's name. With `unnamed`, no name has loaded and `label` is
+ * a stand-in: the note uses its unnamed wording, not the stand-in as a name.
+ */
+export function AboutPane({ label, unnamed = false }: { label: string; unnamed?: boolean }): ReactNode {
+  const t = useMessages('agent');
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
@@ -389,7 +397,10 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
   // rather than the default rules for a moment and then the platform's own.
-  const note = platform ? platformNote(label, !!restricted) : appNote(label);
+  const note = platform ? platformNote(label, !!restricted)
+    : unnamed ? t('agent:appContext.about.note.unnamedApp') : appNote(label);
+  // The name the note is about, as appNote and platformNote read it.
+  const named = typeof label === 'string' && label.trim() ? label.trim() : '';
   // Where "How changes work" goes: the app's Workshop, or the platform's for
   // a viewer it is served to.
   const workshopSlug = slug && !restricted ? slug : null;
@@ -450,13 +461,13 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                 <a
                   href={lineage.href}
                   className="hover:underline"
-                  title={`Remixed from ${lineage.name}: open the original`}
+                  title={lineage.deleted ? t('agent:appContext.about.lineage.linkTitleDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.linkTitle', { app: lineage.name })}
                   onClick={() => { void AppContext.dismissForNav(); }}
                 >
-                  {`\u2442 Remixed from ${lineage.name}`}
+                  {lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}
                 </a>
               ) : (
-                <span title="The original app no longer exists">{`\u2442 Remixed from ${lineage.name}`}</span>
+                <span title={t('agent:appContext.about.lineage.goneTitle')}>{lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}</span>
               )}
             </p>
           ) : null}
@@ -540,9 +551,9 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             {yours ? (
               <>
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">Added</span>
+                <span className="truncate">{t('agent:appContext.about.added')}</span>
               </>
-            ) : <span className="truncate">Add to My apps</span>}
+            ) : <span className="truncate">{t('agent:appContext.about.addToMyApps')}</span>}
           </button>
         </div>
       ) : null}
@@ -575,17 +586,23 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
           {/* The space rides inside the note's own string: a bare {' '}
               child is a hydration hazard (tests/shell-build.test.js). */}
-          {workshopSlug ? `${note} ` : note}
           {workshopSlug ? (
-            <a
-              id="app-about-how"
-              href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
-              className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
-              onClick={(e) => openWorkshop(e, workshopSlug)}
-            >
-              How changes work
-            </a>
-          ) : null}
+            <RichMessage
+              id={platform
+                ? 'agent:appContext.about.noteHow.platform'
+                : unnamed ? 'agent:appContext.about.noteHow.unnamedApp'
+                  : named ? 'agent:appContext.about.noteHow.app' : 'agent:appContext.about.noteHow.thisApp'}
+              values={{ name: named || 'Homeroom', app: named }}
+              components={[
+                <a
+                  id="app-about-how"
+                  href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
+                  className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
+                  onClick={(e) => openWorkshop(e, workshopSlug)}
+                />,
+              ]}
+            />
+          ) : note}
         </p>
       ) : null}
 
@@ -596,11 +613,11 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           (Browse.openContributor).
       */}
       {(isApp || platform) && !restricted ? (
-        <section id="app-about-contributors" aria-label="Contributors">
-          <h4 className={SECTION}>Contributors</h4>
-          {contributors.state === 'loading' ? <p className={NOTE}>Loading contributors…</p> : null}
-          {contributors.state === 'error' ? <p className={NOTE}>Couldn’t load contributors.</p> : null}
-          {contributors.state === 'ready' && !people.length ? <p className={NOTE}>No contributors yet.</p> : null}
+        <section id="app-about-contributors" aria-label={t('agent:appContext.about.contributors.heading')}>
+          <h4 className={SECTION}>{t('agent:appContext.about.contributors.heading')}</h4>
+          {contributors.state === 'loading' ? <p className={NOTE}>{t('agent:appContext.about.contributors.loading')}</p> : null}
+          {contributors.state === 'error' ? <p className={NOTE}>{t('agent:appContext.about.contributors.failed')}</p> : null}
+          {contributors.state === 'ready' && !people.length ? <p className={NOTE}>{t('agent:appContext.about.contributors.none')}</p> : null}
           <ContributorsFold
             people={people}
             total={contributors.total || people.length}
@@ -611,13 +628,13 @@ export function AboutPane({ label }: { label: string }): ReactNode {
       ) : null}
 
       {shareRow || showHomeScreen || repo || showFork || versionText ? (
-        <section id="app-about-more" aria-label="More">
-          <h4 className={SECTION}>More</h4>
+        <section id="app-about-more" aria-label={t('agent:appContext.about.more')}>
+          <h4 className={SECTION}>{t('agent:appContext.about.more')}</h4>
           {shareRow ? (
             <ActionRow
               id="improve-row-share"
               icon={<ShareIcon />}
-              label={shareSaid || 'Share'}
+              label={shareSaid || t('agent:appContext.row.share')}
               onClick={() => {
                 if (!platform) {
                   // The app's live address, in the share dialog the Improve
@@ -628,7 +645,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                   return;
                 }
                 void sharePlatform(label).then((how) => {
-                  const said = how === 'copied' ? 'Link copied' : (how === 'failed' ? 'Could not copy the link' : null);
+                  const said = how === 'copied' ? t('agent:appContext.about.share.copied') : (how === 'failed' ? t('agent:appContext.about.share.failed') : null);
                   if (!said) return;
                   setShareSaid(said);
                   window.setTimeout(() => setShareSaid(null), 1800);
@@ -640,7 +657,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <ActionRow
               id="app-about-a2hs"
               icon={<Glyph d={GLYPHS.homeScreen} />}
-              label="Add to home screen"
+              label={t('agent:appContext.about.addToHomeScreen')}
               onClick={() => {
                 if (platform) {
                   setA2hsOpen((v) => !v);
@@ -651,7 +668,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             />
           ) : null}
           {platform && a2hsOpen && os ? (
-            <p id="app-about-a2hs-steps" className={NOTE}>{A2HS_STEPS[os]}</p>
+            <p id="app-about-a2hs-steps" className={NOTE}>{t(A2HS_STEPS[os])}</p>
           ) : null}
           {repo ? (
             <a
@@ -663,16 +680,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               onClick={() => { void AppContext.dismissForNav(); }}
             >
               <Icon><GitHubIcon /></Icon>
-              <span className="flex-1 min-w-0 truncate font-medium">Code</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub</span>
+              <span className="flex-1 min-w-0 truncate font-medium">{t('agent:appContext.about.code')}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
             </a>
           ) : null}
           {showFork && forkItem ? (
             <ActionRow
               id="app-about-fork"
               icon={<Glyph d={GLYPHS.fork} />}
-              label="Remix"
-              sub="Make your own copy"
+              label={t('agent:appContext.about.remix')}
+              sub={t('agent:appContext.about.remixSub')}
               onClick={() => afterDismiss(() => forkItem.run())}
             />
           ) : null}
@@ -682,7 +699,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           {versionText ? (
             <p
               id="app-about-version"
-              title={updated?.title ? `Live since ${updated.title}` : undefined}
+              title={updated?.title ? t('agent:appContext.about.liveSince', { when: updated.title }) : undefined}
               className="px-5 min-h-[44px] flex items-center text-sm text-zinc-500 dark:text-zinc-400"
             >
               {versionText}

@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -115,10 +116,12 @@ test('#1766: the Underway card names the failures, and offers the re-run', () =>
   const meta = src.slice(src.indexOf('_sessionCardMeta(s, subtitle) {'));
   const body = meta.slice(0, meta.indexOf('_sessionStatusTagSpec'));
   assert.match(body, /s\.failing_checks/);
-  assert.match(body, /`Failing: \$\{names\}`/);
+  assert.match(body, /PlatformI18n\.t\('changes:session\.failing\.names', \{ checks: names \}\)/);
+  assert.equal(message('changes:session.failing.names', { checks: 'boots · saves' }), 'Failing: boots · saves');
+  assert.equal(message('changes:session.failing.namesAndMore', { checks: 'boots · saves', count: 3 }), 'Failing: boots · saves · +3 more');
   // A card is a pointer: two names then a count, not the whole ledger.
   assert.match(body, /f\.rows\.slice\(0, 2\)/);
-  assert.match(body, /\+\$\{rest\} more/);
+  assert.match(body, /PlatformI18n\.t\('changes:session\.failing\.namesAndMore', \{ checks: names, count: rest \}\)/);
   // Advisory rows are marked in the detail, for the same reason they are
   // counted apart on the server.
   assert.match(body, /advisory/);
@@ -126,11 +129,12 @@ test('#1766: the Underway card names the failures, and offers the re-run', () =>
   // The re-run, on the card's menu, through the action that already carries
   // every guard: owner-or-admin, never when passing, disabled mid-request.
   const menu = src.slice(src.indexOf("// #1766: the second half of the report"));
-  assert.match(menu.slice(0, 900), /const recheck = AppView\._recheckAction\(s\);/);
-  assert.match(menu.slice(0, 900), /label: 'Re-run checks'/);
-  assert.match(menu.slice(0, 900), /AppView\.castRecheck\(s\.id\)/);
+  assert.match(menu.slice(0, 1100), /const recheck = AppView\._recheckAction\(s\);/);
+  assert.match(menu.slice(0, 1100), /label: PlatformI18n\.t\('changes:session\.menu\.rerunChecks'\)/);
+  assert.equal(message('changes:session.menu.rerunChecks'), 'Re-run checks');
+  assert.match(menu.slice(0, 1100), /AppView\.castRecheck\(s\.id\)/);
   // Not offered when the action itself says it would be inert.
-  assert.match(menu.slice(0, 900), /if \(recheck && !recheck\.disabled\)/);
+  assert.match(menu.slice(0, 1100), /if \(recheck && !recheck\.disabled\)/);
 });
 
 test('#1766: the re-run reuses the existing guards rather than restating them', () => {

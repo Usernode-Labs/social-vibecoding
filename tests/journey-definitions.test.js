@@ -169,11 +169,20 @@ test('first-mile steps: expired mail proof reads unknown, and nothing counts pas
   const started = journey.firstMileSteps({
     released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
     code_asked_at: '2026-11-14T10:00:00Z', user_id: 10, password_set: false, has_platform_access: true,
-    needs_username_choice: false, needs_communities_choice: false,
+    needs_username_choice: true, needs_communities_choice: false,
   }, now);
   assert.equal(started.stuckAt, 'account');
   assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
   assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+  // #4595: the password is optional. An account that skipped it and chose
+  // its username has finished its account step.
+  const skipped = journey.firstMileSteps({
+    released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
+    code_asked_at: null, user_id: 11, password_set: false, account_at: '2026-11-14T10:00:00Z',
+    has_platform_access: true, access_at: '2026-11-14T10:00:00Z', needs_username_choice: false,
+    needs_communities_choice: true,
+  }, now);
+  assert.equal(skipped.steps[3].state, 'done', 'signup counts as finished without a password');
 });
 
 test('a change the Homeroom bot built is credited to the person who asked for it', () => {

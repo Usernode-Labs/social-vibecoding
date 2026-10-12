@@ -46,6 +46,7 @@
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { useResolvedCommunityColor } from '../../lib/community-color';
+import { useMessages } from '../../lib/i18n/react';
 
 import { BuildLine, type BuildLineState } from './build-line';
 import type { Made } from './make';
@@ -312,11 +313,12 @@ export function SketchCard({ made, sketch, line, note = null }: {
   /** A quiet line under the card, or none. */
   note?: string | null;
 }) {
+  const t = useMessages('onboarding');
   const card = sketch.card;
   const sketched = !card && sketching(sketch.state);
   return (
     <div data-first-session-sketch={card ? 'ready' : sketch.state}>
-      {sketched ? <p role="status" className="sr-only">{`Sketching ${made.name} from your description…`}</p> : null}
+      {sketched ? <p role="status" className="sr-only">{t('onboarding:firstSession.made.sketching', { app: made.name })}</p> : null}
       <FeaturedCard
         name={made.name}
         colorKey={made.slug}

@@ -67,6 +67,7 @@ import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 import { IconTile } from '@/components/ui/icon-tile';
 import { CheckIcon } from '@/components/ui/icons';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
+import { useMessages } from '../../lib/i18n/react';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
@@ -158,6 +159,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
   counted?: boolean;
   size?: PartSize;
 }): ReactNode {
+  const t = useMessages('leaderboard');
   const pct = fill == null ? null : Math.round(Math.max(0, Math.min(fill, 1)) * 100);
   const bar = counted && state !== 'done' && pct != null;
   return (
@@ -169,7 +171,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
       // The spoken value is the visible one: a rounded percent says 0% at
       // 1/500 and 100% at 499/500.
       aria-valuetext={label}
-      aria-label={name ? `${name}: ${label}` : label}
+      aria-label={name ? t('leaderboard:challenges.state.named', { challenge: name, state: label }) : label}
       className={`${RAIL} ${RAIL_SIZE[size]} ${RAIL_TONE[state]}`}
     >
       {bar ? <span className={RAIL_FILL} style={{ width: pct ? `max(${RAIL_STUB}, ${pct}%)` : RAIL_STUB }} /> : null}

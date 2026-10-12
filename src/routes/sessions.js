@@ -1948,8 +1948,7 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   const { rows: globalRows } = await pool.query(
     `SELECT COUNT(*) as cnt FROM chat_sessions
       WHERE status IN ('active', 'promoted')
-        AND source IS DISTINCT FROM 'imported'
-        AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+        AND source IS DISTINCT FROM 'imported'`
   );
   if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
     // At the global cap: reclaim a slot from a globally idle session
@@ -3049,11 +3048,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
       // Homeroom worker, so they do not spend this budget.
+      // Synthetic users' sessions (the Homeroom bot's proposals) do: each
+      // holds a preview pod like anyone's, and the cap is sized from the pod
+      // slots the cluster has, so every count of it includes them.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -3279,8 +3280,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3466,8 +3466,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3885,6 +3884,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               otherYes: q.otherYes,
               memberCount: flagged
                 ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+              // #4666: who voted, on a project with rules of its own.
+              ...(gov.rules ? governanceSvc.rulesGateOpts(
+                await governanceSvc.rulesContext(pool, rows[0].app_id, gov, 'pr', [rows[0].id]),
+                rows[0].id, rows[0].user_id ?? null, rows[0].explicit_approval_reason || null
+              ) : {}),
             }
           );
           rows[0].votes_required = gate.required;
@@ -3894,6 +3898,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
           Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
+          if (gate.mode === 'rules') Object.assign(rows[0], governanceSvc.ruleRowFields(gate));
         } catch { /* pill falls back to the raw tallies */ }
         // B10a: a project that is just you reads "Waiting for your approval"
         // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
@@ -13143,8 +13148,9 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           try {
             const pat = process.env.GITHUB_BOT_TOKEN;
             if (pat) {
-              const { Octokit } = await import('@octokit/rest');
-              const ok = new Octokit({ auth: pat });
+              // The bot token's client from services/github.js, so the
+              // request is recorded and counted against the hourly budget.
+              const ok = await github.getOctokit(repoOwner);
               // #127: append the "How to test" section so the guidance is
               // visible right where reviewers find the staging link.
               const testingComment = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);

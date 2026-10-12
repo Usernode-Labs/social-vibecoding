@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -212,9 +213,9 @@ test('the card: one button, which asks nothing until it is tapped, then says wha
   // #4046 (owner, 6 October): tapped, the same button turns grey and says
   // so, with a check; no line is added under it. In the bot's voice, and
   // never a promise when the app's notifications are off.
-  assert.equal(mod.NOTIFY_ME_OFFER, 'Notify me when it’s ready');
-  assert.equal(mod.NOTIFY_ME_DONE, 'I’ll notify you');
-  assert.equal(mod.NOTIFY_ME_OFF, 'Notifications are off');
+  assert.equal(message(mod.NOTIFY_ME_OFFER), 'Notify me when it’s ready');
+  assert.equal(message(mod.NOTIFY_ME_DONE), 'I’ll notify you');
+  assert.equal(message(mod.NOTIFY_ME_OFF), 'Notifications are off');
   const draw = (props) => renderToHtml(createElement(mod.NotifyMeView, props));
   assert.match(draw({ state: 'asking' }), /<button type="button" class="messages-bot-tint" data-bot-notify-me="" disabled="">/, 'asking: pressed once, waiting for the answer');
   for (const state of ['granted', 'here']) {
@@ -229,7 +230,7 @@ test('the card: one button, which asks nothing until it is tapped, then says wha
     'notifications off in the app: the way to turn them on, beside it');
   assert.match(read('public/css/app.css'), /\.messages-bot-answers \.messages-bot-done \{ color: var\(--text-muted\); background: var\(--dc-raised\); cursor: default; filter: none; \}/,
     'grey: the muted ink on the raised fill');
-  for (const line of [mod.NOTIFY_ME_OFFER, mod.NOTIFY_ME_DONE, mod.NOTIFY_ME_OFF]) assert.ok(!/—|!/.test(line));
+  for (const line of [mod.NOTIFY_ME_OFFER, mod.NOTIFY_ME_DONE, mod.NOTIFY_ME_OFF].map((id) => message(id))) assert.ok(!/—|!/.test(line));
 });
 
 test('the tap: the app\'s answer, a browser\'s, and "Your builds" switched back on when it was off', async () => {

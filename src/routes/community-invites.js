@@ -161,7 +161,7 @@ function communityInviteRoutes(config) {
       const [listed, canCreate, joiningRule] = await Promise.all([
         invites.listInvites(pool, { app, user: req.user }),
         invites.canCreate(pool, app, req.user),
-        invites.joiningRule(pool, app),
+        invites.joiningRule(pool, app, req.user.id),
       ]);
       return res.json({
         links: listed.links,

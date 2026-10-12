@@ -271,6 +271,99 @@ test('a TAP line before the setup sentinel still means the suite is running', ()
   assert.equal(t.snapshot().phase, 'running');
 });
 
+// #4701: node:test gives a describe() suite an `ok`/`not ok` line of its own,
+// with `type: 'suite'` in the YAML block right under it, while the final
+// `# tests` leaves suites out. Counting every result line read 23,293 tests
+// against a ~15,009 total. The tracker now takes each suite's own line back
+// off the count, so the running number is the same population as `# tests`.
+test('#4701: describe() suites leave the running count, so it matches the population of # tests', () => {
+  // Two describe() suites, one plain test and one `t.test` parent with a
+  // child: 7 result lines, 2 of them suites, `# tests 5`.
+  const t = unitSuite.makeUnitSuiteTracker(5);
+  for (const l of [
+    'TAP version 13',
+    '# Subtest: suite a',
+    '    ok 1 - a test',
+    '      ---',
+    '      duration_ms: 0.1',
+    "      type: 'test'",
+    '      ...',
+    'ok 1 - suite a',
+    '  ---',
+    '  duration_ms: 0.2',
+    "  type: 'suite'",
+    '  ...',
+    '# Subtest: suite b',
+    '    ok 1 - b test',
+    '      ---',
+    "      type: 'test'",
+    '      ...',
+    'ok 2 - suite b',
+    '  ---',
+    "  type: 'suite'",
+    '  ...',
+    '# Subtest: plain',
+    'ok 3 - plain',
+    '  ---',
+    "  type: 'test'",
+    '  ...',
+    '# Subtest: parent',
+    '    # Subtest: child',
+    '    ok 1 - child',
+    '      ---',
+    "      type: 'test'",
+    '      ...',
+    'ok 4 - parent',
+    '  ---',
+    "  type: 'test'",
+    '  ...',
+    '1..4',
+  ]) t.feed(l);
+  let snap = t.snapshot();
+  assert.deepEqual(
+    { ran: snap.ran, passed: snap.passed, failed: snap.failed, skipped: snap.skipped, expected: snap.expected },
+    { ran: 5, passed: 5, failed: 0, skipped: 0, expected: 5 },
+    'the two suite lines were taken back; the parent test stays counted'
+  );
+  for (const l of ['# tests 5', '# suites 2', '# pass 5', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0']) t.feed(l);
+  snap = t.snapshot();
+  assert.deepEqual({ ran: snap.ran, expected: snap.expected }, { ran: 5, expected: 5 }, 'the summary agrees with the running count');
+
+  // A failing suite takes its own line back off `failed`; its children stay.
+  const red = unitSuite.makeUnitSuiteTracker(null);
+  red.feed('    not ok 1 - child fails');
+  red.feed('not ok 2 - the suite');
+  red.feed("  type: 'suite'");
+  let s = red.snapshot();
+  assert.deepEqual({ ran: s.ran, failed: s.failed }, { ran: 1, failed: 1 });
+
+  // A skipped suite comes off `skipped` the same way.
+  const skip = unitSuite.makeUnitSuiteTracker(null);
+  skip.feed('ok 1 - the suite # SKIP');
+  skip.feed("  type: 'suite'");
+  s = skip.snapshot();
+  assert.deepEqual({ ran: s.ran, skipped: s.skipped }, { ran: 0, skipped: 0 });
+
+  // A `type: 'suite'` with no result line before it has nothing to take back.
+  const lone = unitSuite.makeUnitSuiteTracker(null);
+  assert.equal(lone.feed("type: 'suite'"), false);
+  assert.equal(lone.snapshot().ran, 0);
+});
+
+test('#4701: the expected total is a floor that grows with the running count', () => {
+  const t = unitSuite.makeUnitSuiteTracker(3);
+  for (let i = 0; i < 5; i += 1) t.feed(`ok ${i + 1} - extra test`);
+  let s = t.snapshot();
+  assert.deepEqual({ ran: s.ran, expected: s.expected }, { ran: 5, expected: 5 },
+    'a suite bigger than the last run raises the "~" total instead of reading past 100%');
+  t.feed('# tests 5');
+  s = t.snapshot();
+  assert.deepEqual({ ran: s.ran, expected: s.expected }, { ran: 5, expected: 5 }, 'the summary replaces both');
+  const noTotal = unitSuite.makeUnitSuiteTracker(null);
+  noTotal.feed('ok 1 - something');
+  assert.equal(noTotal.snapshot().expected, null, 'no stored figure stays "unknown"');
+});
+
 test('the suite size is remembered on the apps row and read back as the next denominator', async () => {
   const calls = [];
   const pool = { query: async (sql, params) => { calls.push([sql, params]); return { rows: [{ unit_suite_last_tests: 10863 }] }; } };
@@ -354,6 +447,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -830,6 +924,7 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
@@ -990,32 +1085,88 @@ test('the board card and the running badge carry the live count', () => {
   assert.doesNotMatch(badge, /12\/523/);
   assert.match(badge, />Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="523" aria-valuenow="12" aria-label="12 of 523 checks done"><span class="checks-chip-bar-fill" style="width:2%"><\/span><\/span><\/span>$/);
   assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
+  // #4628: while the run is in flight but does not know its total yet — the
+  // build and prepare phase — the bar is there from the start, pulsing, in
+  // the ARIA indeterminate form: no valuenow, no valuemax, no fill. The
+  // build phase keeps its words ("Checks starting…", which a declared check
+  // reads on the board) beside its bar.
+  const startingBadge = AppView.checksBadgeHtml({ status: 'promoted' });
+  assert.match(startingBadge, />Checks starting…<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the build phase: words and the busy bar');
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
-  assert.match(quiet, /Checks running…</, 'no count before the first frame');
-  assert.doesNotMatch(quiet, /checks-chip-bar/, 'no bar before the total is known');
+  assert.match(quiet, />Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the bar shows from the start');
+  assert.doesNotMatch(quiet, /aria-valuenow/, 'indeterminate: no valuenow');
+  assert.doesNotMatch(quiet, /aria-valuemax/, 'indeterminate: no valuemax');
+  assert.match(quiet, /title="Checks starting\. Automated tests/);
   const noTotal = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
-  assert.match(noTotal, /Checks running…\s7</, 'without a total the words carry the count');
+  assert.match(noTotal, /checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="7 checks done so far"/, 'the words carry the count while there is no total');
+  assert.match(noTotal, /title="7 checks done so far\. Automated tests/);
+  // A deferred run is nothing in flight: today's words, no bar.
+  const deferred = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', check_phase: 'deferred' });
+  assert.match(deferred, /Checks running…</);
+  assert.doesNotMatch(deferred, /checks-chip-bar/, 'no bar over nothing running');
 
   // The status-band chip the cards, the Workshop's rows and All items share.
   const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
   const running = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 619, passed: 619, failed: 0, expected: 732 } });
   assert.equal(running.label, 'Checks');
-  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, text: '619 of 732 checks done' });
+  // #4727: the fill follows the run's real position — with no unit block
+  // running behind, that is the declared checks' own 85%, so this chip
+  // renders exactly as it did before the change.
+  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, pct: 85, text: '619 of 732 checks done' });
   assert.match(running.title, /^619 of 732 checks done\. /);
   assert.equal(running.spinner, true);
   const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
   assert.equal(starting.label, 'Checks starting…');
-  assert.equal(starting.progress, undefined);
+  assert.deepEqual({ ...starting.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
   const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
-  assert.equal(early.label, 'Checks running…');
-  assert.equal(early.progress, undefined);
+  assert.equal(early.label, 'Checks');
+  assert.deepEqual({ ...early.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
+  const earlyRan = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
+  assert.deepEqual({ ...earlyRan.progress }, { done: 0, total: 0, indeterminate: true, text: '7 checks done so far' });
+  // #4727: a unit suite running behind holds the chip's fill at the run's
+  // real position — the slower half — while the count stays the declared
+  // checks' ("840 of 840 checks done"): declared 840/840 with the unit suite
+  // at half fills the bar 50%, not 100%, the same as the Testing card.
+  const lagging = { ran: 840, passed: 840, failed: 0, expected: 840, unit: { ran: 9600, passed: 9600, failed: 0, expected: 19240, done: false } };
+  const behind = tag({ status: 'promoted', check_state: 'pending', checks_progress: lagging });
+  assert.deepEqual({ ...behind.progress }, { done: 840, total: 840, pct: 50, text: '840 of 840 checks done' });
+  const behindBadge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: lagging });
+  assert.match(behindBadge, /aria-valuemax="840" aria-valuenow="840" aria-label="840 of 840 checks done"><span class="checks-chip-bar-fill" style="width:50%"><\/span><\/span><\/span>$/, 'the fill follows the slower half, the aria count the declared checks');
 
-  // Both React renderers draw the bar from the spec.
+  // Both React renderers draw the bar from the spec, the busy one included.
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(card, /\{b\.progress \? <ChecksBar progress=\{b\.progress\} \/> : null\}/);
   assert.match(card, /role="progressbar"[\s\S]*aria-label=\{progress\.text\}/);
+  assert.match(card, /checks-chip-bar checks-chip-bar-busy/);
   const row = read('frontend/src/features/dev-board/workshop/work-row.tsx');
   assert.match(row, /\{t\.progress \? <ChecksBar progress=\{t\.progress\} \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.checks-chip-bar-busy \{[\s\S]*?dev-ledger-progress-pulse/, 'the pulse is the ledger bar\'s own');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.checks-chip-bar-busy \{ animation: none; \}/, 'still under reduced motion');
+  // Every word on the chip and its bar is read from the catalog: the label,
+  // and the count and tooltip, a whole message for each of the bar's cases.
+  const src = APP_VIEW_SRC;
+  assert.match(src, /label: fresh \? PlatformI18n\.t\('changes:badge\.tag\.checksStarting'\) : PlatformI18n\.t\('changes:badge\.tag\.checks'\),/);
+  assert.match(src, /text: PlatformI18n\.t\('changes:chips\.checks\.progress\.of', \{ done, count: bar\.expected \}\)/);
+  assert.match(src, /\? PlatformI18n\.t\('changes:chips\.checks\.progress\.soFar', \{ count: live\.bar\.ran \}\)\s*: PlatformI18n\.t\('changes:chips\.checks\.progress\.starting'\);/);
+  assert.match(src, /title: AppView\._checksChipTitle\(live, progress\),/);
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('changes:badge.tag.checks'), 'Checks');
+  assert.equal(message('changes:badge.tag.checksStarting'), 'Checks starting…');
+  assert.equal(message('changes:chips.checks.label'), 'Checks');
+  assert.equal(message('changes:chips.checks.running'), 'Checks running…');
+  assert.equal(message('changes:chips.checks.runningRan', { ran: 7 }), 'Checks running… 7');
+  assert.equal(message('changes:chips.checks.progress.of', { done: 12, count: 523 }), '12 of 523 checks done');
+  assert.equal(message('changes:chips.checks.progress.soFar', { count: 7 }), '7 checks done so far');
+  assert.equal(message('changes:chips.checks.progress.starting'), 'Checks starting');
+  assert.equal(message('changes:chips.checks.progressTitle.of', { done: 12, count: 523 }),
+    '12 of 523 checks done. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.soFar', { count: 7 }),
+    '7 checks done so far. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.starting'),
+    'Checks starting. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.runningTitle'),
+    'Automated tests are still running on the staging build. Merge is blocked until they pass.');
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

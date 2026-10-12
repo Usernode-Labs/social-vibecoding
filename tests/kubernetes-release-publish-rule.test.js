@@ -171,10 +171,12 @@ const behind = (minutes) => [
 // The run that published the newest release finished `minutes` ago.
 const releasedAgo = (minutes) => `finished ${OLD} ${NOW - minutes * MIN}`;
 
-test('the step reads its batching interval and its release gap from the workflow: 15 and 10 minutes', () => {
+test('the step reads its batching interval and its release gap from the workflow: 15 and 4 minutes', () => {
   assert.ok(step, 'the release job keeps its check step');
   assert.equal(String(step.env.RELEASE_EVERY_MINUTES), '15');
-  assert.equal(String(step.env.RELEASE_MIN_GAP_MINUTES), '10');
+  // Ten until 10 Oct 2026: a merge then read "Going live" for a median 5.6
+  // and up to 16 minutes, mostly this wait, while a restart had become cheap.
+  assert.equal(String(step.env.RELEASE_MIN_GAP_MINUTES), '4');
 });
 
 test('the wait is bounded well inside the step and job timeouts', () => {
@@ -202,16 +204,16 @@ test('the branch tip always publishes, as before', () => {
 
 test('the tip waits until the newest release is RELEASE_MIN_GAP_MINUTES old, then publishes (7 October)', () => {
   // No further merge arrives: the waiting tip still publishes.
-  const r = run({ tip: MINE, gh: [releasedAgo(4)] });
+  const r = run({ tip: MINE, gh: [releasedAgo(1)] });
   assert.equal(r.publish, true);
-  assert.equal(r.waited, 6 * MIN, 'the rest of the gap, and no more');
-  assert.match(r.summary, /^Publishing b{40}, the tip of refs\/heads\/main, after waiting 6 minutes for the newest release \(0\.1\.1545001\) to be 10 minutes old\.$/m);
-  assert.match(r.log, /Waiting up to 6 more minutes.*To release now, run this workflow on refs\/heads\/main by hand/);
+  assert.equal(r.waited, 3 * MIN, 'the rest of the gap, and no more');
+  assert.match(r.summary, /^Publishing b{40}, the tip of refs\/heads\/main, after waiting 3 minutes for the newest release \(0\.1\.1545001\) to be 4 minutes old\.$/m);
+  assert.match(r.log, /Waiting up to 3 more minutes.*To release now, run this workflow on refs\/heads\/main by hand/);
   // It re-reads the branch at the end of the wait: a merge landing in its
   // last seconds is still seen, and this run steps aside for it.
-  const lastMoment = run({ tips: [[0, MINE], [NOW + 6 * MIN, TIP]], gh: [releasedAgo(4)] });
+  const lastMoment = run({ tips: [[0, MINE], [NOW + 3 * MIN, TIP]], gh: [releasedAgo(1)] });
   assert.equal(lastMoment.publish, false);
-  assert.equal(lastMoment.waited, 6 * MIN);
+  assert.equal(lastMoment.waited, 3 * MIN);
   const justReleased = run({ tip: MINE, gh: [releasedAgo(0)] });
   assert.equal(justReleased.publish, true);
   assert.equal(justReleased.waited, GAP);
@@ -227,7 +229,7 @@ test('the release age is read from the run that published the newest release', (
 });
 
 test('a tip whose newest release is already RELEASE_MIN_GAP_MINUTES old publishes at once', () => {
-  for (const minutes of [10, 45]) {
+  for (const minutes of [4, 45]) {
     const r = run({ tip: MINE, gh: [releasedAgo(minutes)] });
     assert.equal(r.publish, true, `${minutes} minutes`);
     assert.equal(r.waited, 0, `${minutes} minutes`);
@@ -236,14 +238,14 @@ test('a tip whose newest release is already RELEASE_MIN_GAP_MINUTES old publishe
 });
 
 test('a merge during the wait ends it: this run skips, and the newer merge\'s run publishes', () => {
-  const r = run({ tips: [[0, MINE], [NOW + 2 * MIN, TIP]], gh: [releasedAgo(4)] });
+  const r = run({ tips: [[0, MINE], [NOW + 2 * MIN, TIP]], gh: [releasedAgo(1)] });
   assert.equal(r.publish, false);
   assert.ok(r.waited >= 2 * MIN && r.waited <= 2 * MIN + 30, `stops within one poll of the merge, not after ${r.waited}s`);
   assert.match(r.summary, /refs\/heads\/main moved to c{40} while this run waited .* That commit's run is queued behind this one and publishes once it has built\./);
 });
 
 test('a dispatched run queued behind a waiting tip ends the wait: it publishes at once instead', () => {
-  const r = run({ tip: MINE, gh: [releasedAgo(2), `@${NOW + 3 * MIN} dispatched 1`] });
+  const r = run({ tip: MINE, gh: [releasedAgo(0), `@${NOW + 3 * MIN} dispatched 1`] });
   assert.equal(r.publish, false);
   assert.ok(r.waited >= 3 * MIN && r.waited <= 3 * MIN + 30, `stops within one poll of the dispatch, not after ${r.waited}s`);
   assert.match(r.summary, /dispatched by hand is queued behind this one, and it publishes refs\/heads\/main without waiting/);
@@ -298,7 +300,7 @@ test('a run behind the tip also skips inside the release gap; the tip\'s run rel
   const r = run({ gh: [...behind(66), releasedAgo(3)] });
   assert.equal(r.publish, false);
   assert.equal(r.waited, 0);
-  assert.match(r.summary, /the newest release \(0\.1\.1545001\) went out 3 minutes ago, under 10; the tip's run releases it/);
+  assert.match(r.summary, /the newest release \(0\.1\.1545001\) went out 3 minutes ago, under 4; the tip's run releases it/);
   // A dispatched run behind the tip keeps #3964's rule alone.
   assert.equal(run({ event: 'workflow_dispatch', gh: [...behind(66), releasedAgo(3)] }).publish, true);
 });

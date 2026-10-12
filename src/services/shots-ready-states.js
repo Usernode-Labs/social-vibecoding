@@ -27,7 +27,26 @@
 // a model answer, so that warning is given whatever hints.setup says and
 // whichever states are ready-made.
 //
+// Where a missing state comes from. The answer used to send every seed to a
+// change merged before this one, because a seed this proposal adds reaches
+// only the after copy. Most states the copies lacked were new in the
+// proposal itself, and the after copy is the only side a new state needs:
+// from 2026-10-09 to 10-12, 22 shot runs failed and 13 more changes were
+// skipped for want of a state, PR 4825's new bell row for a change you voted
+// on and PR 4765's "Did you mean" card from the bot among them. So the answer
+// says to seed a new state in the same proposal, what a seed may hold (rows
+// for the shots' fixture accounts and fake people, never a signal the code
+// reads to decide something; a reply as the stored message), and that only
+// a change to a state that already existed needs its seed merged first.
+//
+// Two needs the shots agent meets itself, on both copies alike: a step that
+// chooses a file (it chooses one of the sample files, shots-samples.js) and
+// a loading or error state behind one API GET (it holds or fails that
+// request). The note names both, so an author says which in hints.setup.
+//
 // Pure: the declare route reads the app once and passes `selfApp`.
+
+const { SAMPLE_NAMES } = require('../../worker/shots-samples');
 
 // Each demo state in a few words, with who it is for (its persona and
 // alsoFor), in shots-demo-states.js's order. tests/shots-ready-states.test.js
@@ -55,6 +74,10 @@ const READY_STATES = Object.freeze([
   ['shots-demo-member-first-version-thanks-v1', 'an answered first-version plan with Homeroom bot\'s thanks under it',
     ['member']],
   ['shots-demo-member-bot-close-offer-v1', 'your chat with Homeroom bot, ending in its offer to close a request',
+    ['member']],
+  ['shots-demo-member-bot-file-offer-v1', 'your chat with Homeroom bot, ending in its drafted request with File it and Not now',
+    ['member']],
+  ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
@@ -121,6 +144,19 @@ const SEEDS = Object.freeze({
   child: 'the app\'s own staging seed (its IS_STAGING seed)',
 });
 
+// What a seed may hold. The platform's seed rule ("seed fake identities
+// only, never rows owned by whoever opened the preview, never a signal your
+// own logic reads", app-conventions.md) still holds: a fixture account is one
+// named account, not whoever opens the preview, and a seed that answers the
+// question the change's own code asks hides that code from every check.
+const SEED_RULE = 'A seed is idempotent and obviously fake: rows for the shots\' fixture accounts (usernode-capture '
+  + 'is the member) and fake people, never a signal the code reads to decide something.';
+
+// Which side a seed reaches, and so which proposal it belongs in.
+const SEED_SIDES = 'A seed this proposal adds reaches only the after copy, which is the side a state new in this '
+  + 'proposal needs: seed such a state in this proposal. A change to a state that already existed needs it on both '
+  + 'copies, so its seed merges first, in its own proposal.';
+
 /** Pure: a declared change's own words, as one line. */
 function wordsOf(story) {
   const intent = story && typeof story.intent === 'object' ? story.intent : {};
@@ -159,25 +195,27 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
   }
   const warnings = [...lacking].map(([need, ids]) => {
     const lead = `${ids.join(', ')} ${ids.length > 1 ? 'seem' : 'seems'} to need ${need.needs}, and `;
-    const seedIt = `seed it in ${seeds} in a change merged before this one: a seed this proposal adds reaches only `
-      + 'the after copy.';
     if (need.live) {
       return `${lead}nothing on these copies answers with a model: they have no model key, so the Homeroom bot `
         + 'only says it cannot reach its model. Never make a step wait for a reply: start from '
         + `${selfApp ? 'a ready-made state that already holds it (see availableStates)' : 'a reply the copies already hold'}, `
-        + `or ${seedIt}`;
+        + `or seed the reply in ${seeds} as the stored message. ${SEED_SIDES}`;
     }
     return `${lead}${selfApp ? 'no ready-made state on these copies holds it (see availableStates)'
       : 'this app\'s copies have no ready-made states'}. Add hints.setup with the steps that make it through `
-      + `the UI, which the shots agent takes on both copies, or ${seedIt}`;
+      + `the UI, which the shots agent takes on both copies, or seed it in ${seeds}. ${SEED_SIDES}`;
   });
   return {
     availableStates: available.map(({ name, personas }) => ({ name, personas: [...personas] })),
     dataNote: `${selfApp ? 'Homeroom\'s before & after copies hold its staging seeds and the ready-made states in '
       + 'availableStates, on both sides' : `This app's before & after copies hold what ${seeds} writes, and no `
       + 'ready-made states'}. Anything else a change needs comes from hints.setup steps the shots agent takes `
-      + `through the UI on both copies, or from ${seeds}; a seed this proposal adds reaches only the after copy. `
-      + `Nothing on them answers with a model${selfApp ? ', the Homeroom bot included' : ''}: they have no model key.`,
+      + `through the UI on both copies, or from ${seeds}. ${SEED_RULE} ${SEED_SIDES} `
+      + 'Where a step chooses a file, the shots agent chooses one of Homeroom\'s sample files '
+      + `(${SAMPLE_NAMES.join(', ')}), and it can hold or fail one API GET on both copies to show a loading or `
+      + 'error state: name the file or the request in hints.setup. '
+      + `Nothing on them answers with a model${selfApp ? ', the Homeroom bot included' : ''}: they have no model key, `
+      + 'so seed a reply as the stored message rather than asking for it.',
     warnings,
   };
 }

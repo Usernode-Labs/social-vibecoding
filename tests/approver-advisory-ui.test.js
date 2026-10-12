@@ -45,6 +45,7 @@ function makeSandbox(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   return sandbox;
 }
@@ -77,7 +78,8 @@ test('voteCountPill: invited at-least row — approver-only pill + advisory chip
   assert.match(pill, /0 of 1 approval/);
   assert.match(pill, /gc-vote-advisory/);
   assert.match(pill, /\+2 advisory/);
-  assert.match(pill, /don't count toward merging/);
+  // The title is an attribute value, escaped whole (PlatformI18n.htmlText).
+  assert.match(pill, /don&#39;t count toward merging/);
 });
 
 test('voteCountPill: invited default-clock row — qualified headline + advisory chip', () => {
@@ -118,7 +120,8 @@ test('voteButtonsHtml: invited rows split the button tallies into Q✓ +A', () =
   assert.match(btns, /Yes \(0✓ \+2\)/);
   // Advisory suffix omitted when the surplus is zero.
   assert.match(btns, /No \(1✓\)/);
-  assert.match(btns, /advisory votes don't count toward merging/);
+  // The tooltip is an attribute, so its apostrophe is escaped.
+  assert.match(btns, /advisory votes don&#39;t count toward merging/);
 });
 
 test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () => {
@@ -182,7 +185,8 @@ test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory
   assert.match(r.yes.label, /Yes \(1✓ \+ 1 advisory\)/);
   assert.match(r.no.label, /No \(0✓\)/);
   assert.match(r.yes.names, /@alice\u00a0✓/);
-  assert.match(r.needs, /only invited approvers/);
+  // The roster no longer carries a `needs` clause: nothing drew it.
+  assert.equal('needs' in r, false);
 });
 
 test('_loadVoteRoster: default policy keeps the plain totals', async () => {
@@ -215,3 +219,60 @@ test('_votingHelpText: invited default-clock branch names the rule + advisory ta
 // retired that drawer (its session list is the Improve panel's, its pinned rows
 // are ordinary notifications in the merged hamburger), so the pill has one
 // renderer again and AppView.voteCountPill above is the whole contract.
+
+// ── #4747: the advisory vote line on the legacy vote rows ─────────────
+
+test('voteButtonsHtml: an advisory row carries the advisory line; one without the flag does not', () => {
+  const AppView = makeAppView();
+  const advisory = AppView.voteButtonsHtml({
+    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
+    approval_policy: 'invited', my_vote_advisory: true,
+  });
+  assert.match(advisory, /gc-vote-uncounted/);
+  assert.match(advisory, /Your vote is advisory: it’s recorded, but it doesn’t decide this change\./);
+  assert.doesNotMatch(advisory, /Test account/);
+  // The collapsed "You voted" box carries the line too.
+  const collapsed = AppView.voteButtonsHtml({
+    id: 5, status: 'promoted', my_vote: 'yes', yes_count: 3, no_count: 0,
+    approval_policy: 'invited', my_vote_advisory: true,
+  }, { collapseVoted: true });
+  assert.match(collapsed, /gc-vote-voted-box-yes/);
+  assert.match(collapsed, /Your vote is advisory: it’s recorded, but it doesn’t decide this change\./);
+  // A row without the flag keeps its buttons bare.
+  const plain = AppView.voteButtonsHtml({
+    id: 5, status: 'promoted', my_vote: null, yes_count: 2, no_count: 0,
+    approval_policy: 'invited',
+  });
+  assert.doesNotMatch(plain, /gc-vote-uncounted/);
+});
+
+test('#4747: an advisory row gets no one-tap Approve and no "your yes puts it live"', () => {
+  const AppView = makeAppView();
+  AppView.appData = { audience: 'solo' };
+  AppView.readOnly = false;
+  const row = {
+    id: 5, status: 'promoted', my_vote: null, yes_count: 0, no_count: 0,
+    votes_required: 1, my_vote_advisory: true,
+  };
+  assert.equal(AppView._approveSolo(row), false);
+  assert.equal(AppView._yesPutsItLive(row), false);
+  // The test-account behaviour the advisory case joins is unchanged.
+  assert.equal(AppView._approveSolo({ ...row, my_vote_advisory: false, my_vote_uncounted: true }), false);
+  assert.equal(AppView._yesPutsItLive({ ...row, my_vote_advisory: false, my_vote_uncounted: true }), false);
+  // Without either flag a one-Yes solo project still offers its Approve.
+  assert.equal(AppView._approveSolo({ ...row, my_vote_advisory: false }), true);
+  assert.equal(AppView._yesPutsItLive({ ...row, my_vote_advisory: false }), true);
+});
+
+test('#4747: both live route paths stamp my_vote_advisory through governance.viewerDecides', () => {
+  const votes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
+  // The /promoted gate loop and the /proposals/:id enrichment are the two
+  // places a live row's fields are attached; each stamps the flag off the
+  // same deciding set the gate read (the roster or the rules facts).
+  const promotedLoop = votes.slice(votes.indexOf('for (const row of rows) {\n        if (row.votes_required != null) continue;'));
+  assert.match(promotedLoop, /row\.my_vote_advisory = !!userId[\s\S]*?governance\.viewerDecides\(gov, \{[\s\S]*?approverIds: electorate\.approverIds/,
+    'the /promoted gate loop stamps my_vote_advisory through viewerDecides');
+  const byId = votes.slice(votes.indexOf("router.get('/api/apps/:slug/proposals/:id'"));
+  assert.match(byId, /proposal\.my_vote_advisory = !!userId[\s\S]*?governance\.viewerDecides\(gov, \{[\s\S]*?approverIds: electorate\.approverIds/,
+    'the /proposals/:id enrichment stamps it the same way');
+});

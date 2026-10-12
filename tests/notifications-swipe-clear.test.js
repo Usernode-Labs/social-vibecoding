@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -86,6 +87,7 @@ function load({ respond } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(CONTROLLER_SRC, sandbox);
   const N = sandbox.Notifications;
   N._store = createStore({ screenList: null, sessionUnreadIds: [] });
@@ -300,8 +302,9 @@ test('only an unread row offers a clear', () => {
 
 test('the swipe is the kit\'s, neutral, and a full swipe only where the row leaves', () => {
   const effect = SHEET_SRC.slice(SHEET_SRC.indexOf('const swipe = ui.swipeActions(el, {'),
-    SHEET_SRC.indexOf('}, [clearable, touch, removes, shape, view.id]);'));
-  assert.match(effect, /label: 'Clear'/);
+    SHEET_SRC.indexOf('}, [clearable, touch, removes, shape, view.id, t]);'));
+  assert.match(effect, /label: t\('notifications:row\.clear'\)/);
+  assert.equal(message('notifications:row.clear'), 'Clear');
   // The kit's full swipe belongs to its destructive action and takes the row
   // out of the document. On Unread that is what happens to a cleared row; on
   // Messages and All the row stays, so the swipe only reveals the button.
@@ -310,7 +313,7 @@ test('the swipe is the kit\'s, neutral, and a full swipe only where the row leav
   // Grey, not the kit's destructive red: clearing deletes nothing.
   assert.match(effect, /color: 'var\(--un-action-neutral\)'/);
   assert.match(effect, /handler: \(\) => \{ void controller\(\)\?\.clearNotification\(view\.id\); \}/);
-  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id\]\);/,
+  assert.match(SHEET_SRC, /return \(\) => swipe\.detach\(\);\n {2}\}, \[clearable, touch, removes, shape, view\.id, t\]\);/,
     'detached when the row stops being clearable, changes tab or changes shape');
 });
 

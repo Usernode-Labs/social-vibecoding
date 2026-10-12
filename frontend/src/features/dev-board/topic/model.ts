@@ -320,7 +320,6 @@ export interface RosterView {
   approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
-  needs?: string;
   /** #1688: the line each counted vote carries, one entry per voter who left one. */
   reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
   /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
@@ -372,8 +371,8 @@ export interface IssueClosedBand {
   /** Short stamp: "Oct 5", or "3d ago" inside a week. */
   when: string | null;
   whenTitle: string | null;
-  /** "by vote" / "by an admin"; null on a merged close (the pill says it). */
-  how: string | null;
+  /** Which way it was closed; null on a merged close (the pill says it). */
+  how: 'vote' | 'admin' | null;
   ref: IssueProposalRef | null;
 }
 

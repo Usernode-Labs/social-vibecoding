@@ -41,6 +41,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -114,7 +115,11 @@ test('checksBadgeHtml: failing carries the blocked tone (it gates the merge)', (
 test('card: check_state="pending" renders the running pill', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ check_state: 'pending', test_results: [] }));
-  assert.match(html, /Checks running/);
+  // #4628: the run's early phase has no total yet, so the chip reads
+  // "Checks" — one word for the whole run — with the bar pulsing from the
+  // start, and the full words in its title.
+  assert.match(html, /<span class="dev-badge [^"]*" title="Checks starting\. Automated tests[^"]*" data-status-tag="checks-running">/);
+  assert.match(html, /dc-status-spinner-arc[^<]*<\/span>Checks<span class="checks-chip-bar checks-chip-bar-busy"/, 'spinner, then the pulsing bar');
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 

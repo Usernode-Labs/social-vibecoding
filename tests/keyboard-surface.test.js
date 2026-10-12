@@ -342,7 +342,20 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
   assert.doesNotMatch(rules, /\b(44|48|50)px/);
   // The story's foot: Safari's toolbar is the large viewport less the small.
   assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-landing-scroll"\] \[data-landing-story\] \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
-  assert.match(read('frontend/src/features/auth/story.tsx'), /<div data-landing-story="" className=/);
+  const story = read('frontend/src/features/auth/story.tsx');
+  assert.match(story, /<div ref=\{storyRef\} data-landing-story="" className=/);
+  // Evan, 10 Oct 2026: a foot pinned over the story looked wrong. The story
+  // shrinks to fit its screen instead (tests/story-fit.test.js), so the foot
+  // is in the flow again, with no ground of its own.
+  assert.doesNotMatch(story, /\bsticky\b/);
+  assert.doesNotMatch(APP_CSS, /data-landing-story-foot/);
+  // #4593: with the keys down, the sheet's foot stands on the small viewport's
+  // foot, clear of Safari's toolbar, and its height is capped to that
+  // viewport; the keyboard rule above is more specific, so it still wins.
+  const svh = APP_CSS.slice(APP_CSS.indexOf('/* THE SHEET\'S BUTTON CLEARS SAFARI\'S TOOLBAR WITH THE KEYS DOWN (#4593).'));
+  assert.match(svh, /@media \(max-width: 767px\) \{\s*@supports \(height: 100svh\) \{\s*html \.platform-kb-sheet \{\s*bottom: max\(0px, calc\(100% - 100svh\)\);\s*max-height: 92svh;\s*\}/);
+  // And the sign-in screen's foot, with the story switched off.
+  assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-login-screen"\] #auth-login-screen > \.min-h-full \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
 });
 
 // ── 5. The two screens ──────────────────────────────────────────────────
@@ -376,7 +389,8 @@ test('on a touch screen the sheet opens without a caret; it moves one only while
   assert.equal(mayFocusByCode({ touch: true, keysUp: false }), false, 'the tap raises the keys, after the sheet has arrived');
   assert.equal(mayFocusByCode({ touch: true, keysUp: true }), true, 'a hop with the keys up keeps them up');
   assert.equal(mayFocusByCode({ touch: false, keysUp: false }), true, 'a desktop gets its caret');
-  assert.match(SHEET, /const focus = mayFocusByCode\(\{ touch: touchScreen\(\), keysUp: keyboardUp\(\) \}\);/);
+  assert.match(SHEET, /export function mayFocusByCodeNow\(\): boolean \{\s*return mayFocusByCode\(\{ touch: touchScreen\(\), keysUp: keyboardUp\(\) \}\);\s*\}/);
+  assert.match(SHEET, /const focus = mayFocusByCodeNow\(\);/);
   assert.match(SHEET, /if \(focus\) field\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(SHEET, /if \(focus\) currentPasswordField\.current\?\.focus\(\{ preventScroll: true \}\);/);
   assert.match(SHEET, /root\.contains\(KB_OPEN_CLASS\) \|\| root\.contains\('un-kb'\)/);
@@ -422,8 +436,9 @@ test('the password and account steps walk on Return, and each field says what it
   const field = (value) => ({ value, focused: null, focus(opts) { this.focused = opts; } });
   const user = field('');
   const pass = field('');
-  const confirm = field('');
-  const refs = [{ current: user }, { current: pass }, { current: confirm }];
+  // The account step: the username, then the password, asked once (Evan,
+  // 10 Oct 2026: no "Password again"; a mistyped one is reset by email).
+  const refs = [{ current: user }, { current: pass }];
   const press = (target, extra = {}) => {
     const e = { key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, currentTarget: target, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
     returnWalks(refs, refs.findIndex((r) => r.current === target))(e);
@@ -432,29 +447,21 @@ test('the password and account steps walk on Return, and each field says what it
   const first = press(user);
   assert.equal(first.prevented, true, 'no submit from the username');
   assert.deepEqual(pass.focused, { preventScroll: true }, 'on to the password, without a scroll');
-  pass.value = 'secret-1';
-  press(pass);
-  assert.deepEqual(confirm.focused, { preventScroll: true });
-  assert.equal(press(confirm).prevented, false, 'the last field\'s Return submits the form');
+  user.value = 'ada';
+  assert.equal(press(user).prevented, true, 'a filled username still goes on to the password');
   assert.equal(press(user, { shiftKey: true }).prevented, false, 'Shift+Return is left alone');
   assert.equal(press(user, { nativeEvent: { isComposing: true } }).prevented, false, 'so is an IME\'s Return');
-  // No username asked for: the step's fields are the two passwords.
-  const two = [{ current: null }, { current: pass }, { current: confirm }];
-  pass.value = '';
-  confirm.focused = null;
-  const e = { key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, currentTarget: pass, preventDefault() { this.prevented = true; } };
-  returnWalks(two, 1)(e);
-  assert.deepEqual(confirm.focused, { preventScroll: true });
 
-  // Wired: "next" on every field but each step's last, which says "go".
+  // Wired: "next" on every field but each step's last, which says "go" and
+  // submits the form with no handler of its own.
   assert.match(SHEET, /id="sign-in-sheet-identifier"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(passwordStepFields, 0\)\}/);
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
   assert.match(SHEET, /id="sign-in-sheet-username"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 0\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 1\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-confirm"[^>]*enterKeyHint="go"/);
+  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="go"/);
+  assert.doesNotMatch(SHEET, /sign-in-sheet-confirm|Password again/);
   for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
-  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField, confirmField\];/);
+  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField\];/);
 });

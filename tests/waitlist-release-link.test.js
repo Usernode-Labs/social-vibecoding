@@ -117,3 +117,30 @@ test('the whole thing stays inside a try/catch', () => {
   assert.ok(body.indexOf('try {') < body.indexOf('URLSearchParams'));
   assert.match(body, /\} catch \(_\) \{\}/);
 });
+
+test('the release mail\'s one-time sign-in link is its own credential, kept off the GET (#4594)', () => {
+  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /signInToken \? `&\$\{CREDENTIAL_PARAM\}=/, 'a separate parameter, not more_token');
+  // Arrival keeps it for the sheet, which spends it with a POST.
+  assert.match(AUTH_SCREENS, /signIn: route === 'signup' && key && \/\^\[A-Za-z0-9_-\]\{43\}\$\/\.test\(key\) \? key : null/);
+  assert.doesNotMatch(AUTH_SCREENS, /release-link/, 'nothing spends it on arrival');
+  const sheet = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8');
+  assert.match(sheet, /fetchSessionMint\('\/api\/auth\/release-link', \{\s*method: 'POST'/);
+});
+
+test('a new account\'s link waits for Get started, and only the sheet spends it (Evan, 10 Oct 2026)', () => {
+  const landing = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/landing.tsx'), 'utf8');
+  const onShow = landing.slice(landing.indexOf('  const landingOnShow = useCallback(() => {'));
+  const body = onShow.slice(0, onShow.indexOf('\n  }, ['));
+  // Kept for the sheet, with the sign-in noted as begun, but no sheet opened
+  // for a new account: the story shows, and Get started opens it.
+  assert.match(body, /if \(link\) \{\s+noteSignInBegun\(\);\s+setRelease\(link\);\s+setResume\(null\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);\s+\}/);
+  assert.doesNotMatch(body, /setSheet\('start'\)/);
+  assert.match(landing, /onStart=\{\(\) => setSheet\('start'\)\}/, 'Get started opens the story\'s sheet');
+  // That sheet carries the link while `release` holds it, and spends it on open.
+  assert.match(landing, /releaseToken=\{sheet === 'start' \? release\?\.token \?\? null : null\}/);
+  assert.match(landing, /releaseSignIn=\{sheet === 'start' \? release\?\.signIn \?\? null : null\}/);
+  const sheet = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8');
+  assert.match(sheet, /if \(!open \|\| !seen \|\| releaseSeen\.current === seen\) return undefined;/, 'spent only once the sheet is open');
+});

@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import * as api from '../../global-chat/api';
 import { initializeGlobalChat } from '../../global-chat/store';
 import type {
@@ -33,16 +35,32 @@ function money(value: string | number | null | undefined) {
 
 function price(model: GlobalChatModel) {
   const average = Number(model.averagePricePerMillion);
-  if (Number.isFinite(average)) return money(average) + '/M avg';
+  if (Number.isFinite(average)) return translate('settings:globalChat.model.priceAverage', { price: money(average) });
   const input = Number(model.inputPricePerMillion);
   const output = Number(model.outputPricePerMillion);
   if (Number.isFinite(input) && Number.isFinite(output)) {
-    return money(input) + ' in · ' + money(output) + ' out /M';
+    return translate('settings:globalChat.model.priceInOut', { input: money(input), output: money(output) });
   }
   return '';
 }
 
+/** A model's line in the list: its name, whether it is the recommended one,
+ *  and its price when one is known. Each combination is a whole message. */
+function optionLabel(item: GlobalChatModel) {
+  const model = item.name || item.id;
+  const cost = price(item);
+  if (item.isGlobalChatRecommended) {
+    return cost
+      ? translate('settings:globalChat.model.optionRecommendedPriced', { model, price: cost })
+      : translate('settings:globalChat.model.optionRecommended', { model });
+  }
+  return cost ? translate('settings:globalChat.model.optionPriced', { model, price: cost }) : model;
+}
+
 export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: boolean } = {}) {
+  // Subscribed: the helpers above read the runtime's text, and this is the
+  // component that shows it.
+  const t = useMessages('settings');
   const instanceId = useId();
   const [profile, setProfile] = useState<GlobalChatProfile | null>(null);
   const [usage, setUsage] = useState<GlobalChatUsage | null>(null);
@@ -89,7 +107,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
         setModel(nextCatalog.recommendedModelId || nextCatalog.models[0]?.id || '');
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Global Chat settings could not be loaded.');
+      setError(reason instanceof Error ? reason.message : t('settings:globalChat.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -109,14 +127,14 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
     try {
       await loadModels(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Compatible models could not be loaded.');
+      setError(reason instanceof Error ? reason.message : t('settings:globalChat.modelsLoadFailed'));
     }
   }
 
   async function save() {
-    if (!model) { setError('Choose a compatible model first.'); return; }
+    if (!model) { setError(t('settings:globalChat.chooseModelFirst')); return; }
     setSaving(true);
-    setStatus('Saving…');
+    setStatus(t('settings:globalChat.saving'));
     setError('');
     try {
       const next = await api.saveProfile({
@@ -129,10 +147,10 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
       setEnabled(next.profile.enabled === true);
       setCap(next.profile.spendCapUsd || '');
       await initializeGlobalChat({ force: true });
-      setStatus('Global Chat settings saved.');
+      setStatus(t('settings:globalChat.saved'));
     } catch (reason) {
       setStatus('');
-      setError(reason instanceof Error ? reason.message : 'Global Chat settings could not be saved.');
+      setError(reason instanceof Error ? reason.message : t('settings:globalChat.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -142,7 +160,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
     const previous = enabled;
     setEnabled(nextEnabled);
     setSavingEnabled(true);
-    setStatus('Saving…');
+    setStatus(t('settings:globalChat.saving'));
     setError('');
     try {
       const next = await api.saveProfile({ enabled: nextEnabled });
@@ -151,12 +169,12 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
       setEnabled(next.profile.enabled === true);
       await initializeGlobalChat({ force: true });
       setStatus(next.profile.enabled
-        ? 'Experimental Global Chat enabled.'
-        : 'Experimental Global Chat disabled.');
+        ? t('settings:globalChat.enabledNotice')
+        : t('settings:globalChat.disabledNotice'));
     } catch (reason) {
       setEnabled(previous);
       setStatus('');
-      setError(reason instanceof Error ? reason.message : 'Global Chat could not be updated.');
+      setError(reason instanceof Error ? reason.message : t('settings:globalChat.toggleFailed'));
     } finally {
       setSavingEnabled(false);
     }
@@ -170,12 +188,12 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
       className={embedded ? 'global-chat-settings-editor' : 'hidden'}
     >
       {!embedded ? (
-        <SectionHeading title={<>Global Chat <span className="text-sm font-normal text-zinc-500">(experimental)</span></>}>
-          Fast, low-cost AI for navigating and using Homeroom. Development work keeps its own model and reasoning setting.
+        <SectionHeading title={<RichMessage id="settings:globalChat.title" components={[<span className="text-sm font-normal text-zinc-500" />]} />}>
+          {t('settings:globalChat.intro')}
         </SectionHeading>
       ) : null}
 
-      {loading ? <p className="text-sm text-zinc-500 dark:text-zinc-400 py-2">Loading…</p> : null}
+      {loading ? <p className="text-sm text-zinc-500 dark:text-zinc-400 py-2">{t('core:common.loading')}</p> : null}
       {error ? <p role="alert" className="mb-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
 
       {!loading && profile ? (
@@ -183,10 +201,10 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
           <label className="flex items-start justify-between gap-4 cursor-pointer select-none" htmlFor={`${idPrefix}-enabled`}>
             <span>
               <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                Enable experimental Global Chat
+                {t('settings:globalChat.enable.label')}
               </span>
               <span id={`${idPrefix}-enabled-description`} className="mt-1 block text-sm text-zinc-600 dark:text-zinc-400">
-                Show your Global Chat conversations in Messages. Classic remains the default experience.
+                {t('settings:globalChat.enable.description')}
               </span>
             </span>
             <Switch
@@ -203,7 +221,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
 
       {!loading && catalog && !catalog.configured ? (
         <div className="rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3">
-          <p className="text-sm text-zinc-700 dark:text-zinc-300">Add or claim an OpenRouter key before choosing a Global Chat model.</p>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">{t('settings:globalChat.needsKey.text')}</p>
           <Button
             className="mt-3"
             variant="pillNeutral"
@@ -211,7 +229,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
             ink="muted"
             onClick={() => { window.location.hash = '#settings/openrouter'; }}
           >
-            Open OpenRouter settings
+            {t('settings:globalChat.needsKey.open')}
           </Button>
         </div>
       ) : null}
@@ -219,7 +237,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
       {!loading && catalog?.configured ? (
         <div className="space-y-4">
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>Global Chat model</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-model`}>{t('settings:globalChat.model.label')}</Label>
             <div className="flex items-stretch gap-2">
               <Select
                 id={`${idPrefix}-model`}
@@ -229,7 +247,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
               >
                 {catalog.models.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name || item.id}{item.isGlobalChatRecommended ? ' · Recommended' : ''}{price(item) ? ' · ' + price(item) : ''}
+                    {optionLabel(item)}
                   </option>
                 ))}
               </Select>
@@ -239,33 +257,33 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
                 disabled={loading}
                 onClick={() => void load(true)}
               >
-                Refresh
+                {t('settings:globalChat.model.refresh')}
               </button>
             </div>
-            {selected ? <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{selected.id}{price(selected) ? ' · ' + price(selected) : ''}</p> : null}
+            {selected ? <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{price(selected) ? t('settings:globalChat.model.selectedPriced', { modelId: selected.id, price: price(selected) }) : selected.id}</p> : null}
           </div>
 
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>Reasoning effort</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-reasoning`}>{t('settings:globalChat.effort.label')}</Label>
             <Select
               id={`${idPrefix}-reasoning`}
               value={effort}
               onChange={(event) => void changeEffort(event.target.value)}
             >
-              <option value="low">Low · recommended for GLM Flash</option>
-              <option value="minimal">Minimal · only for supported models</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="xhigh">Extra high</option>
+              <option value="low">{t('settings:globalChat.effort.low')}</option>
+              <option value="minimal">{t('settings:globalChat.effort.minimal')}</option>
+              <option value="medium">{t('settings:globalChat.effort.medium')}</option>
+              <option value="high">{t('settings:globalChat.effort.high')}</option>
+              <option value="xhigh">{t('settings:globalChat.effort.xhigh')}</option>
             </Select>
           </div>
 
           <div>
-            <Label className="mb-1" htmlFor={`${idPrefix}-cap`}>Monthly Chat cap in USD · optional</Label>
+            <Label className="mb-1" htmlFor={`${idPrefix}-cap`}>{t('settings:globalChat.cap.label')}</Label>
             <Input
               id={`${idPrefix}-cap`}
               inputMode="decimal"
-              placeholder="No separate cap"
+              placeholder={t('settings:globalChat.cap.placeholder')}
               value={cap}
               onChange={(event) => setCap(event.target.value)}
             />
@@ -273,18 +291,18 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
 
           <div className="rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 text-sm">
             <div className="flex items-center justify-between gap-4">
-              <span>Global Chat this month</span>
-              <strong>{money(usage?.spentUsd)}{usage?.capUsd ? ' / ' + money(usage.capUsd) : ''}</strong>
+              <span>{t('settings:globalChat.usage.thisMonth')}</span>
+              <strong>{usage?.capUsd ? t('settings:globalChat.usage.spentOfCap', { spent: money(usage.spentUsd), cap: money(usage.capUsd) }) : money(usage?.spentUsd)}</strong>
             </div>
             <div className="mt-2 flex items-center justify-between gap-4 text-zinc-500 dark:text-zinc-400">
-              <span>Overall OpenRouter remaining</span>
-              <span>{overall?.configured ? money(overall.remainingUsd) : 'Unavailable'}</span>
+              <span>{t('settings:globalChat.usage.overallRemaining')}</span>
+              <span>{overall?.configured ? money(overall.remainingUsd) : t('settings:globalChat.usage.unavailable')}</span>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <Button variant="pillAccent" size="pill" disabled={saving || savingEnabled} onClick={() => void save()}>
-              {saving ? 'Saving…' : 'Save Global Chat settings'}
+              {saving ? t('settings:globalChat.saveBusy') : t('settings:globalChat.save')}
             </Button>
             <Button
               variant="pillNeutral"
@@ -292,7 +310,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
               ink="muted"
               onClick={() => { window.location.hash = '#settings/openrouter'; }}
             >
-              Development AI settings
+              {t('settings:globalChat.developmentSettings')}
             </Button>
           </div>
         </div>
@@ -302,7 +320,7 @@ export function GlobalChatSettingsEditor({ embedded = false }: { embedded?: bool
 
       {profile ? (
         <p className="mt-4 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Classic is always the startup mode. This profile only controls Global Chat; development sessions keep their separate defaults.
+          {t('settings:globalChat.footnote')}
         </p>
       ) : null}
     </div>

@@ -3,6 +3,9 @@ const crypto = require('node:crypto');
 const events = require('./events');
 const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const ID_RE = /^[a-f0-9]{48}$/;
+// The query parameter a mailed sign-in credential travels in. decorate()
+// never rewrites a link that carries one.
+const CREDENTIAL_PARAM = 'key';
 function secret() { return process.env.PLATFORM_MAIL_TRACKING_SECRET || ''; }
 function sign(purpose, id, key = secret()) {
   return key ? crypto.createHmac('sha256', key).update(`mail:${purpose}:${id}`).digest('base64url') : null;
@@ -40,6 +43,10 @@ function decorate(kind, message, payload) {
     // RFC 8058 must POST to the original endpoint, and a GET still only
     // asks for confirmation. Neither clients nor scanners unsubscribe by click.
     if (new URL(url).pathname === '/mail/unsubscribe') return match;
+    // A link that carries a sign-in credential (#4594, the release mail's
+    // one-time link) is left as it is: tracking would store its URL,
+    // credential and all, in mail_deliveries and mail_events.
+    if (new URL(url).searchParams.has(CREDENTIAL_PARAM)) return match;
     let index = links.indexOf(url);
     if (index < 0) { index = links.length; links.push(url); }
     return `${start}${PRODUCTION_ORIGIN}/mail/c/${id}/${index}?s=${sign(`click:${index}`, id)}${end}`;
@@ -65,4 +72,4 @@ async function recordUnsubscribe(pool, { userId, messageId, signature }) {
      ON CONFLICT (event_key) DO NOTHING`, [messageId, userId, events.trackedKinds()]
   );
 }
-module.exports = { secret, sign, matches, destination, attributedPayload, decorate, classify, recordUnsubscribe };
+module.exports = { CREDENTIAL_PARAM, secret, sign, matches, destination, attributedPayload, decorate, classify, recordUnsubscribe };

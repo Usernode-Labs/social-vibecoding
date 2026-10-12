@@ -23,6 +23,7 @@ import { Chip, ChipRail } from '@/components/ui/chip';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import type { SharedObjectReference, SharedObjectType } from './types';
@@ -39,18 +40,18 @@ export type AppGroup = 'all' | 'mine' | 'others';
  * each one opens still names exactly which number it wants.
  */
 export const SHARE_TYPES: ReadonlyArray<{ value: SharedObjectType; label: string }> = [
-  { value: 'app', label: 'App' },
-  { value: 'issue', label: 'GitHub issue' },
-  { value: 'proposal', label: 'Code proposal' },
-  { value: 'governance', label: 'Governance proposal' },
-  { value: 'spec', label: 'Plan version' },
+  { value: 'app', label: 'messages:shareItem.type.app' },
+  { value: 'issue', label: 'messages:shareItem.type.issue' },
+  { value: 'proposal', label: 'messages:shareItem.type.proposal' },
+  { value: 'governance', label: 'messages:shareItem.type.governance' },
+  { value: 'spec', label: 'messages:shareItem.type.spec' },
 ];
 
 /** The app list's filter chips: "All" first, then the dropdown's two option groups. */
 export const APP_GROUPS: ReadonlyArray<{ value: AppGroup; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'mine', label: 'Your projects' },
-  { value: 'others', label: 'Other projects' },
+  { value: 'all', label: 'messages:shareItem.group.all' },
+  { value: 'mine', label: 'messages:shareItem.group.mine' },
+  { value: 'others', label: 'messages:shareItem.group.others' },
 ];
 
 /**
@@ -132,10 +133,11 @@ export function AppChoiceRows({ rows, appId, open, loading, failed, searching, o
   searching: boolean;
   onChoose: (id: number) => void;
 }) {
-  if (loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">Loading apps…</p>;
+  const t = useMessages('messages');
+  if (loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{t('messages:shareItem.loadingApps')}</p>;
   if (!open || failed) return null;
   if (!rows.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{searching ? 'No apps match your search.' : 'No apps to share from yet.'}</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-3">{searching ? t('messages:shareItem.noSearchMatch') : t('messages:shareItem.noApps')}</p>;
   }
   return (
     <>
@@ -152,7 +154,7 @@ export function AppChoiceRows({ rows, appId, open, loading, failed, searching, o
             className={`w-full min-h-[44px] sm:min-h-[36px] flex items-center gap-3 rounded-lg px-2 py-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500 ${selected ? 'bg-violet-100 dark:bg-violet-950' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800'}`}
           >
             <span className="min-w-0 flex-1 text-sm font-medium truncate">{item.name}</span>
-            {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">Selected</span> : null}
+            {selected ? <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">{t('messages:shareItem.selected')}</span> : null}
           </button>
         );
       })}
@@ -161,6 +163,7 @@ export function AppChoiceRows({ rows, appId, open, loading, failed, searching, o
 }
 
 export function ShareItemDialog() {
+  const t = useMessages('messages');
   const [type, setType] = useState<SharedObjectType>('app');
   const [apps, setApps] = useState<AppChoice[]>([]);
   const [appId, setAppId] = useState<number | null>(null);
@@ -186,7 +189,7 @@ export function ShareItemDialog() {
   useEffect(() => {
     if (!dialog.isOpen || apps.length) return;
     let alive = true; setLoading(true);
-    void api.listApps().then((rows) => { if (alive) setApps(rows); }).catch(() => { if (alive) setError('Couldn’t load your apps.'); }).finally(() => { if (alive) setLoading(false); });
+    void api.listApps().then((rows) => { if (alive) setApps(rows); }).catch(() => { if (alive) setError(t('messages:shareItem.loadFailed')); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [apps.length, dialog.isOpen]);
 
@@ -235,44 +238,44 @@ export function ShareItemDialog() {
   return (
     <DialogRoot id="messages-share-dialog" layout="scroll" ref={dialog.rootRef} {...dialog.backdropProps}>
       <DialogCard size="md">
-        <div className="flex items-center justify-between mb-4"><div><h2 className="text-lg font-bold">Share item</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">Access is checked separately for every recipient.</p></div><button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><XIcon className="w-5 h-5" /></button></div>
+        <div className="flex items-center justify-between mb-4"><div><h2 className="text-lg font-bold">{t('messages:shareItem.title')}</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">{t('messages:shareItem.subtitle')}</p></div><button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label={t('core:common.close')}><XIcon className="w-5 h-5" /></button></div>
         <Input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}
-          placeholder="Search apps"
-          aria-label="Search apps"
+          placeholder={t('messages:shareItem.searchApps')}
+          aria-label={t('messages:shareItem.searchApps')}
           autoComplete="off"
           enterKeyHint="search"
           className="mb-3"
         />
         <fieldset className="mb-3 min-w-0">
-          <legend className={LEGEND}>Item type</legend>
+          <legend className={LEGEND}>{t('messages:shareItem.itemType')}</legend>
           <ChipRail className={RAIL}>
             {SHARE_TYPES.map((option) => (
-              <Chip key={option.value} size="bar" data-share-type={option.value} selected={type === option.value} className={chipClass(type === option.value)} onClick={() => { if (option.value !== type) { setType(option.value); setItemId(''); setVersion(''); } }}>{option.label}</Chip>
+              <Chip key={option.value} size="bar" data-share-type={option.value} selected={type === option.value} className={chipClass(type === option.value)} onClick={() => { if (option.value !== type) { setType(option.value); setItemId(''); setVersion(''); } }}>{t(option.label)}</Chip>
             ))}
           </ChipRail>
         </fieldset>
         <fieldset className="mb-3 min-w-0">
-          <legend className={LEGEND}>App</legend>
+          <legend className={LEGEND}>{t('messages:shareItem.appLegend')}</legend>
           {grouped ? (
-            <ChipRail role="group" aria-label="Filter apps" className={`${RAIL} mb-1`}>
+            <ChipRail role="group" aria-label={t('messages:shareItem.filterApps')} className={`${RAIL} mb-1`}>
               {APP_GROUPS.map((option) => (
-                <Chip key={option.value} size="bar" data-share-group={option.value} selected={group === option.value} className={chipClass(group === option.value)} onClick={() => setGroup(option.value)}>{option.label}</Chip>
+                <Chip key={option.value} size="bar" data-share-group={option.value} selected={group === option.value} className={chipClass(group === option.value)} onClick={() => setGroup(option.value)}>{t(option.label)}</Chip>
               ))}
             </ChipRail>
           ) : null}
-          <div ref={listRef} role="listbox" aria-label="Apps" data-share-apps="" className="min-h-12 max-h-60 overflow-y-auto">
+          <div ref={listRef} role="listbox" aria-label={t('messages:shareItem.appsList')} data-share-apps="" className="min-h-12 max-h-60 overflow-y-auto">
             <AppChoiceRows rows={shown} appId={appId} open={dialog.isOpen} loading={loading} failed={!!error} searching={!!query.trim()} onChoose={setAppId} />
           </div>
         </fieldset>
-        {type !== 'app' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{type === 'issue' ? 'Issue number' : type === 'governance' ? 'Governance proposal ID' : 'Proposal / session ID'}</span><Input inputMode="numeric" pattern="[0-9]*" value={itemId} onChange={(event) => setItemId(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="123" /></label> : null}
-        {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Plan version</span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">The server resolves the live title and state. If access is later removed, the card becomes metadata-free and unavailable.</p>
+        {type !== 'app' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{type === 'issue' ? t('messages:shareItem.issueNumber') : type === 'governance' ? t('messages:shareItem.governanceId') : t('messages:shareItem.proposalId')}</span><Input inputMode="numeric" pattern="[0-9]*" value={itemId} onChange={(event) => setItemId(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="123" /></label> : null}
+        {type === 'spec' ? <label className="block mb-3"><span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:shareItem.specVersion')}</span><Input inputMode="numeric" pattern="[0-9]*" value={version} onChange={(event) => setVersion(event.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="1" /></label> : null}
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('messages:shareItem.note')}</p>
         {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-        <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Cancel</Button><Button type="button" disabled={!canAttach} onClick={attach}>Attach item</Button></div>
+        <div className="mt-5 flex justify-end gap-2"><Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>{t('core:common.cancel')}</Button><Button type="button" disabled={!canAttach} onClick={attach}>{t('messages:shareItem.attach')}</Button></div>
       </DialogCard>
     </DialogRoot>
   );

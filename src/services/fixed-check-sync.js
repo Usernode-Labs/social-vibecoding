@@ -28,10 +28,23 @@
 //     change's). The unit-suite row is one row for thousands of tests, so it
 //     says nothing about which; a failure in it neither counts as fixed nor
 //     stops the sync, whose new run re-tests it on a head containing main;
+//   - or the unit-suite row is all that blocks it, and main watch (the same
+//     suite on main itself) has passed SINCE that proposal's run: main moved
+//     on and is green, so a failure the proposal's older branch carried may
+//     well be main's (10 Oct 2026: five challenge tests failed every weekend
+//     until #4648; two approved Homeroom bot proposals cut before it stayed
+//     red on them, with nobody able to sync them), or has passed on main's
+//     tip as it stands, which the proposal is behind (mainGreenAtTip). Once
+//     per main tip, and at most MAX_UNIT_SYNCS times: a suite that still
+//     fails on a head containing main fails on the proposal's own code AS
+//     OF THAT MAIN, and a later main may fix the very test (11 Oct 2026: the
+//     translation proposal #4764 was synced onto a main without #4767, the
+//     fix of the one test it failed, and stayed red with two yes votes after
+//     #4767 merged, its one sync spent and nobody able to press Sync);
 //   - it is behind main and merges with it cleanly (services/integration.js);
-//   - at most once per head, and at most once per check: a check it was
-//     synced for that still fails once it contains main is its own failure
-//     (fixed_check_sync_keys), and waits for a person.
+//   - at most once per head, and at most once per named check: a check it
+//     was synced for that still fails once it contains main is its own
+//     failure (fixed_check_sync_keys), and waits for a person.
 //
 // A clean sync is a mechanical merge, so the approval epoch does not move
 // and the votes the proposal has keep counting (services/pr-vote-revision.js).
@@ -41,7 +54,7 @@
 // found on its first pass.
 
 const appManifest = require('./app-manifest');
-const { isUnitSuiteRow } = require('./unit-suite-row');
+const { isUnitSuiteRow, UNIT_CHECK_NAME, UNIT_CHECK_PATH } = require('./unit-suite-row');
 const log = require('./logger');
 
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -57,6 +70,10 @@ const MIN_FAILING = 2;
 // A sync dispatches a worker and its new head takes a checks slot, so one
 // pass starts no more than the checks queue runs at once.
 const MAX_SYNCS_PER_PASS = 4;
+// A proposal failing only the unit suite is synced at most this many times
+// in all, each with a main that moved on and is green: one whose own change
+// breaks a test costs at most two runs more than it did when it was once.
+const MAX_UNIT_SYNCS = 3;
 
 function isEnabled() {
   const v = String(process.env.FIXED_CHECK_SYNC_ENABLED ?? '1').trim().toLowerCase();
@@ -112,7 +129,7 @@ async function mainPasses(pool, appId) {
 async function openVerdicts(pool, appId) {
   const { rows } = await pool.query(
     `SELECT cs.id, cs.source, cs.check_state, cs.checks_commit_sha, cs.reviewed_head_sha,
-            cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
+            cs.checks_checked_at, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             COALESCE((
               SELECT jsonb_agg(jsonb_build_object(
                        'name', t->>'name', 'path', t->>'path', 'index', t->'index',
@@ -129,14 +146,71 @@ async function openVerdicts(pool, appId) {
   return rows;
 }
 
+// Main watch's latest verdict for the app (services/main-watch.js): whether
+// the unit suite last passed on main, when, on which commit, and main's tip
+// now. { passing, at, sha, tip } or null.
+async function mainWatchVerdict(pool, appId) {
+  const { rows } = await pool.query(
+    'SELECT main_check_state, main_check_at, main_check_sha, main_sha FROM apps WHERE id = $1',
+    [appId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const at = row.main_check_at ? Date.parse(row.main_check_at) : NaN;
+  return {
+    passing: row.main_check_state === 'passing',
+    at: Number.isFinite(at) ? at : null,
+    sha: row.main_check_sha || null,
+    tip: row.main_sha || null,
+  };
+}
+
+// The unit suite's own key, as fixed_check_sync_keys records it.
+const UNIT_KEY = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
+
+// A sync for the unit suite is recorded with main's tip as main watch knew it
+// when the sync was chosen, `<UNIT_KEY>@<tip>`, so one main is never a reason
+// twice and the syncs can be counted. A bare UNIT_KEY was recorded before
+// this (or with no tip known): it counts, and names no main.
+function unitSyncKey(tip) {
+  return tip ? `${UNIT_KEY}@${String(tip).toLowerCase()}` : UNIT_KEY;
+}
+
+function unitSyncCount(tried) {
+  let n = 0;
+  for (const k of tried) if (k === UNIT_KEY || String(k).startsWith(`${UNIT_KEY}@`)) n += 1;
+  return n;
+}
+
+// Main watch passed after this proposal's checks ran: main has moved on since
+// the run and is green.
+function mainGreenSince(row, mainWatch) {
+  if (!mainWatch || !mainWatch.passing || !mainWatch.at) return false;
+  const ran = row.checks_checked_at ? Date.parse(row.checks_checked_at) : NaN;
+  return Number.isFinite(ran) && mainWatch.at > ran;
+}
+
+// Main watch passed on main's tip as it stands. A proposal behind that tip
+// (syncOne measures it, and leaves one level with main alone) lacks commits
+// of a main that is green, whenever its own run was: the other way a
+// failure its older branch carried may be main's. On 10 Oct 2026 five
+// approved proposals failed one unit test that #4720 had fixed on main. Main
+// watch passed on the fix's release at 21:32 and their re-runs ended at
+// 21:43, with nothing ready to merge after them, so the rule above alone
+// left them red until somebody synced each by hand.
+function mainGreenAtTip(mainWatch) {
+  return !!mainWatch && mainWatch.passing && sameSha(mainWatch.sha, mainWatch.tip);
+}
+
 /**
  * Which of an app's promoted proposals are stuck on checks main has fixed.
- * Pure: `rows` from openVerdicts, `passes` from mainPasses.
+ * Pure: `rows` from openVerdicts, `passes` from mainPasses, `mainWatch`
+ * from mainWatchVerdict.
  *
  * @returns {{ candidates: Array<{ id: number, head: string, keys: string[] }>,
  *             skipped: Record<number, string> }}
  */
-function select(rows, passes) {
+function select(rows, passes, mainWatch = null) {
   const failingOn = new Map();
   for (const row of rows || []) {
     for (const f of row.failing || []) {
@@ -161,8 +235,22 @@ function select(rows, passes) {
     })();
     if (why) { skipped[id] = why; continue; }
     const blocking = (row.failing || []).filter((f) => !f.advisory && !isUnitSuiteRow(f));
-    if (!blocking.length) { skipped[id] = 'nothing_fixed'; continue; }
     const tried = new Set(row.fixed_check_sync_keys || []);
+    if (!blocking.length) {
+      const unitBlocks = (row.failing || []).some((f) => !f.advisory && isUnitSuiteRow(f));
+      if (!unitBlocks) { skipped[id] = 'nothing_fixed'; continue; }
+      // Synced as often as it gets, with this main already, or before with a
+      // main nobody can tell this one from: it waits for main to move on.
+      const synced = unitSyncCount(tried);
+      const tip = mainWatch && mainWatch.tip ? String(mainWatch.tip).toLowerCase() : null;
+      if (synced >= MAX_UNIT_SYNCS || tried.has(unitSyncKey(tip)) || (synced && !tip)) {
+        skipped[id] = 'already_tried';
+        continue;
+      }
+      if (!mainGreenSince(row, mainWatch) && !mainGreenAtTip(mainWatch)) { skipped[id] = 'unit_suite_only'; continue; }
+      candidates.push({ id, head, keys: [unitSyncKey(tip)] });
+      continue;
+    }
     const keys = [];
     let reason = null;
     for (const f of blocking) {
@@ -292,7 +380,8 @@ async function sweep({ config, pool, shouldStop = () => false }, deps = defaultD
     result.apps += 1;
     let picked;
     try {
-      picked = select(await openVerdicts(pool, appId), await mainPasses(pool, appId));
+      picked = select(await openVerdicts(pool, appId), await mainPasses(pool, appId),
+        await mainWatchVerdict(pool, appId));
     } catch (err) {
       log.warn('fixed-check-sync', 'Could not read an app\'s verdicts', { appId, err: err.message });
       continue;
@@ -344,6 +433,9 @@ module.exports = {
   syncOne,
   mainPasses,
   openVerdicts,
+  mainWatchVerdict,
+  UNIT_KEY,
+  unitSyncKey,
   start,
   stop,
   isEnabled,
@@ -351,4 +443,5 @@ module.exports = {
   RECENT_MERGES,
   MIN_FAILING,
   MAX_SYNCS_PER_PASS,
+  MAX_UNIT_SYNCS,
 };

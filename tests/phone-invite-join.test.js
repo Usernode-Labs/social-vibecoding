@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -122,13 +123,17 @@ test('the sheet\'s phone steps: the code, then the username on the phone\'s own 
   const verify = src.slice(src.indexOf('const verifyPhone = useCallback'), src.indexOf('const finishAccount = useCallback'));
   assert.match(verify, /fetchSessionMint\('\/api\/auth\/phone\/verify'/);
   assert.match(verify, /sessionInfo: phoneSession\.current,\s+code,\s+\.\.\.\(phoneName\.current \? \{ name: phoneName\.current \} : \{\}\),\s+\.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\),/);
-  assert.match(src, /if \(!name\) \{ setError\('Enter your name\.'\);/);
+  assert.match(src, /if \(!name\) \{ setError\(translate\('auth:signInSheet\.phone\.nameMissing'\)\);/);
+  assert.equal(message('auth:signInSheet.phone.nameMissing'), 'Enter your name.');
   assert.match(verify, /if \(data\.next === 'signed-in'\) \{\s+await finish\(data\.created === true \? 'new' : 'existing'\);/);
   assert.match(verify, /setUsernameVia\('phone'\);\s+setStep\('username'\);/);
   assert.match(src, /fetchSessionMint\(usernameVia === 'phone' \? '\/api\/auth\/phone\/finish' : '\/api\/auth\/oauth\/finish'/);
-  assert.match(src, /'Check your texts'/);
-  assert.match(src, /`We sent a 6-digit code to the number ending \$\{phoneNumber\.slice\(-4\)\}\.`/);
-  assert.match(src, /The code fills itself in on most phones\./);
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.title'\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.title'), 'Check your texts');
+  assert.match(src, /t\('auth:signInSheet\.phoneCode\.lead', \{ lastDigits: phoneNumber\.slice\(-4\) \}\)/);
+  assert.equal(message('auth:signInSheet.phoneCode.lead', { lastDigits: '0123' }), 'We sent a 6-digit code to the number ending 0123.');
+  assert.match(src, /\{t\('auth:signInSheet\.phoneCode\.autofill'\)\}/);
+  assert.equal(message('auth:signInSheet.phoneCode.autofill'), 'The code fills itself in on most phones.');
   // The landing hands the offer to the invite's sheet only.
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /const phoneSignIn = waitlistPayload\?\.phone_sign_in === true;/);
@@ -304,9 +309,13 @@ test('a provisional handle: private groups see it, public places ask for a usern
   assert.match(read('frontend/src/features/home/home.js'), /const res = desired && retry \? await retry\(write\) : await write\(\);/);
   assert.match(read('frontend/src/features/dev-board/workshop/invite-offer.ts'), /if \(result\.reason === 'username_required'\) \{/);
   const gate = read('frontend/src/features/auth/username-first-run.js');
-  assert.match(gate, /forPublic \? 'Pick a username' : 'Choose your username'/);
-  assert.match(gate, /'Public apps show this, not your name\. Letters, numbers and '/);
-  assert.match(gate, /'Not now'\);/);
+  const { message } = require('./lib/platform-i18n');
+  assert.match(gate, /forPublic \? PlatformI18n\.t\('onboarding:username\.titleForPublic'\) : PlatformI18n\.t\('onboarding:username\.title'\)/);
+  assert.deepEqual([message('onboarding:username.titleForPublic'), message('onboarding:username.title')], ['Pick a username', 'Choose your username']);
+  assert.match(gate, /\? PlatformI18n\.t\('onboarding:username\.introForPublic'\)/);
+  assert.equal(message('onboarding:username.introForPublic'), 'Public apps show this, not your name. Letters, numbers and underscores, 3 to 32 characters.');
+  assert.match(gate, /PlatformI18n\.t\('onboarding:username\.notNow'\)\);/);
+  assert.equal(message('onboarding:username.notNow'), 'Not now');
   assert.match(gate, /sheet = PlatformUI\.modal\(\{ contentEl: panel, dismissible: forPublic, onDismiss \}\);/);
   assert.match(gate, /if \(body\.code !== 'username_required'\) return res;/);
 });

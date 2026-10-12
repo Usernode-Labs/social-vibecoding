@@ -258,6 +258,33 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = $1', [started]);
   });
 
+  // #4662: the plan a build carries on from after a restart keeps its HTML
+  // document, so the version people open draws with its tabs and screens.
+  // A later markdown-only resume of the same run clears it on purpose:
+  // markdown and HTML never come from different plans.
+  await t.test('a resumed build keeps its plan\'s HTML; a markdown resume of the same run clears it', async () => {
+    const lanes = await app('lanehtml', 'https://github.com/usernode-bot/lanehtml');
+    const runId = (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at)
+       VALUES ($1, 60, 'live', 'ready', 'build it', NOW()) RETURNING id`,
+      [lanes.id],
+    )).rows[0].id;
+    const doc = '<article data-spec><h1>Kept</h1><section data-spec-tab="user"><p>x</p></section></article>';
+    assert.equal(await bot.resumeLiveBuildFromSpec(pool, { runId, appId: lanes.id, specMd: '# Kept', specHtml: doc, costUsd: 0.4 }), true);
+    const kept = (await pool.query(
+      'SELECT build_spec_md, build_spec_html, build_cost_usd::float8 AS cost FROM homeroom_bot_runs WHERE id = $1', [runId],
+    )).rows[0];
+    assert.equal(kept.build_spec_md, '# Kept');
+    assert.equal(kept.build_spec_html, doc, 'the document beside it');
+    assert.equal(kept.cost, 0.4);
+    assert.equal(await bot.resumeLiveBuildFromSpec(pool, { runId, appId: lanes.id, specMd: '# Again' }), true);
+    const after = (await pool.query(
+      'SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = $1', [runId],
+    )).rows[0];
+    assert.equal(after.build_spec_md, '# Again');
+    assert.equal(after.build_spec_html, null, 'a markdown plan never pairs with an older document');
+  });
+
   await t.test('"Triage this app again" queues every open issue of a live app, oldest first, as the loop takes new ones (#3480)', async () => {
     const shop = await app('shop', 'https://github.com/usernode-bot/shop');
     const issues = [

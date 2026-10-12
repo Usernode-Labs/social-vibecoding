@@ -1,5 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Select } from '@/components/ui/select';
+import { useMessages } from '../../../lib/i18n/react';
 import { shippedLanguages } from '../../../lib/i18n/runtime';
 
 /**
@@ -27,16 +28,19 @@ import { shippedLanguages } from '../../../lib/i18n/runtime';
  * adds away from under it.
  */
 export function LanguageSection() {
+  // Subscribed, although settings.js adds an option here for a saved language
+  // that no longer ships: a new language changes only this pane's own text
+  // nodes, and React leaves a node it did not create where it is.
+  const t = useMessages('settings');
   return (
     <div data-settings-section="language" className="hidden">
       <div id="settings-language-section">
-        <SectionHeading title="Language">
-          Homeroom's own screens are in English for now. Apps on Homeroom use this as their
-          default language, and may offer their own override.
+        <SectionHeading title={t('settings:language.title')}>
+          {t('settings:language.intro')}
         </SectionHeading>
         <Select id="settings-locale" variant="plain">
           <option value="">
-            Auto: use device language
+            {t('settings:language.auto')}
           </option>
           {shippedLanguages.map(({ tag, name }) => (
             <option key={tag} value={tag}>

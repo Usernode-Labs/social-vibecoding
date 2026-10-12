@@ -99,12 +99,13 @@ test('one failure of its own beside main\'s keeps a proposal for its author', ()
   assert.equal(skipped[1], 'own_failure', 'the picker check fails on it alone');
 });
 
-test('only the unit suite failing, an imported head, a moved head or a head already synced: no sync', () => {
+test('only the unit suite failing (main not green since), an imported head, a moved head or a head already synced: no sync', () => {
   const passes = new Set([key(DOMAIN)]);
   // Two others failing it, so the check is main's whatever row 1 says.
   const others = [verdict(9, [DOMAIN]), verdict(10, [DOMAIN])];
   for (const [row, why] of [
-    [verdict(1, [UNIT]), 'nothing_fixed'],
+    [verdict(1, [UNIT]), 'unit_suite_only'],
+    [verdict(1, [{ ...UNIT, advisory: true }]), 'nothing_fixed'],
     [verdict(1, [DOMAIN], { source: 'imported' }), 'imported'],
     [verdict(1, [DOMAIN], { reviewed_head_sha: NEW_HEAD }), 'head_moved'],
     [verdict(1, [DOMAIN], { fixed_check_sync_head: HEAD.toUpperCase() }), 'already_tried'],
@@ -114,6 +115,135 @@ test('only the unit suite failing, an imported head, a moved head or a head alre
     assert.deepEqual(candidates.map((c) => c.id), [9, 10], why);
     assert.equal(skipped[1], why);
   }
+});
+
+// 10 Oct 2026: five challenge tests failed every weekend until #4648 fixed
+// them on main. Two approved Homeroom bot proposals cut before it failed only
+// the unit suite on them and stayed red: the rule above needs a named check
+// that fails across proposals, and the unit-suite row names none. Main watch
+// runs the same suite on main itself, so main green AFTER a proposal's run is
+// the evidence instead.
+test('a proposal failing only the unit suite is synced once main watch has passed since its run', () => {
+  const ran = '2026-10-10T08:46:04.000Z';
+  const row = verdict(7629, [UNIT], { checks_checked_at: ran });
+  const greenAfter = { passing: true, at: Date.parse('2026-10-10T11:01:15Z') };
+
+  const { candidates } = subject.select([row], new Set(), greenAfter);
+  assert.deepEqual(candidates, [{ id: 7629, head: HEAD, keys: [subject.UNIT_KEY] }],
+    'synced once, recorded under the unit suite\'s own key');
+
+  for (const [watch, why] of [
+    [{ passing: true, at: Date.parse('2026-10-10T08:00:00Z') }, 'green before its run: main has not moved since'],
+    [{ passing: false, at: Date.parse('2026-10-10T11:01:15Z') }, 'main is red itself'],
+    [null, 'no main watch on this app'],
+  ]) {
+    const out = subject.select([row], new Set(), watch);
+    assert.deepEqual(out.candidates, [], why);
+    assert.equal(out.skipped[7629], 'unit_suite_only', why);
+  }
+
+  const synced = verdict(7629, [UNIT], {
+    checks_checked_at: ran, fixed_check_sync_head: NEW_HEAD, fixed_check_sync_keys: [subject.UNIT_KEY],
+  });
+  assert.equal(subject.select([synced], new Set(), greenAfter).skipped[7629], 'already_tried',
+    'still failing on a head that contains main: the proposal\'s own');
+
+  // A named check of its own beside it is still the author's.
+  const mixed = verdict(7630, [UNIT, PICKER], { checks_checked_at: ran });
+  assert.equal(subject.select([mixed], new Set([key(PICKER)]), greenAfter).skipped[7630], 'own_failure');
+});
+
+// 10 Oct 2026, the same evening: #4720 fixed a unit test (TEST_SHARD leaking
+// into a nested run) and shipped at 21:26; main watch passed on that release
+// at 21:32. Six approved proposals cut before it were re-run after an outage
+// and five ended red on that one test at 21:40-21:45. Main had not moved
+// since, and nothing was ready to merge, so "green since its run" never came.
+// Main green on the tip they are behind is the same evidence: syncOne still
+// measures that the proposal is behind main and leaves one level with it.
+test('a proposal failing only the unit suite is synced when main watch passed on main\'s tip, whenever its run was', () => {
+  const TIP = 'c'.repeat(40);
+  const row = verdict(7732, [UNIT], { checks_checked_at: '2026-10-10T21:40:48.000Z' });
+  const greenTip = { passing: true, at: Date.parse('2026-10-10T21:32:20Z'), sha: TIP, tip: TIP };
+
+  assert.deepEqual(subject.select([row], new Set(), greenTip).candidates,
+    [{ id: 7732, head: HEAD, keys: [`${subject.UNIT_KEY}@${TIP}`] }],
+    'recorded with the main it was synced against');
+  assert.deepEqual(subject.select([row], new Set(), { ...greenTip, tip: TIP.toUpperCase() }).candidates.map((c) => c.id), [7732],
+    'shas compare whatever their case');
+
+  for (const [watch, why] of [
+    [{ ...greenTip, tip: 'd'.repeat(40) }, 'main moved past the green commit and is not judged yet'],
+    [{ ...greenTip, passing: false }, 'main is red itself'],
+    [{ ...greenTip, sha: null }, 'no commit recorded'],
+  ]) {
+    const out = subject.select([row], new Set(), watch);
+    assert.deepEqual(out.candidates, [], why);
+    assert.equal(out.skipped[7732], 'unit_suite_only', why);
+  }
+  const synced = verdict(7732, [UNIT], { fixed_check_sync_head: NEW_HEAD, fixed_check_sync_keys: [subject.unitSyncKey(TIP)] });
+  assert.equal(subject.select([synced], new Set(), greenTip).skipped[7732], 'already_tried',
+    'once per main: still failing on a head that contains this one, the failure is the proposal\'s own');
+  assert.equal(subject.select([synced], new Set(), { ...greenTip, tip: TIP.toUpperCase() }).skipped[7732], 'already_tried',
+    'the recorded tip compares whatever its case');
+});
+
+// 11 Oct 2026: the translation proposal #4764 failed one unit test that
+// pinned the shell to English alone. The sweep synced it onto main as it
+// was, before #4767 fixed that test, so its synced head still failed, and
+// once-per-proposal skipped it from then on: red with two yes votes and a
+// fixed main, and nobody able to press Sync on Homeroom's own proposal. One
+// row stands for every test, so failing on a head containing one main says
+// nothing about a later main.
+test('a proposal failing only the unit suite is synced again once main moves on and is green, at most MAX_UNIT_SYNCS times', () => {
+  const OLD_TIP = 'c'.repeat(40);
+  const TIP = 'd'.repeat(40);
+  const ran = '2026-10-11T14:05:00.000Z';
+  const greenTip = { passing: true, at: Date.parse('2026-10-11T19:40:00Z'), sha: TIP, tip: TIP };
+  const after = (keys, over = {}) => verdict(7825, [UNIT], {
+    checks_checked_at: ran, fixed_check_sync_head: NEW_HEAD, fixed_check_sync_keys: keys, ...over,
+  });
+
+  // Synced once before the tip was recorded (a bare key), or with an older main.
+  for (const keys of [[subject.UNIT_KEY], [subject.unitSyncKey(OLD_TIP)]]) {
+    assert.deepEqual(subject.select([after(keys)], new Set(), greenTip).candidates,
+      [{ id: 7825, head: HEAD, keys: [subject.unitSyncKey(TIP)] }], keys[0]);
+    assert.deepEqual(subject.select([after(keys)], new Set(), { ...greenTip, sha: OLD_TIP }).candidates.map((c) => c.id), [7825],
+      'main watch green since its run is enough, as for the first');
+  }
+
+  for (const [watch, why] of [
+    [{ ...greenTip, passing: false }, 'main is red itself'],
+    [{ ...greenTip, sha: OLD_TIP, at: Date.parse('2026-10-11T13:00:00Z') }, 'green only before its run, on a main it already has'],
+  ]) {
+    const out = subject.select([after([subject.UNIT_KEY])], new Set(), watch);
+    assert.deepEqual(out.candidates, [], why);
+    assert.equal(out.skipped[7825], 'unit_suite_only', why);
+  }
+
+  assert.equal(subject.select([after([subject.UNIT_KEY])], new Set(), { ...greenTip, tip: null }).skipped[7825], 'already_tried',
+    'with no tip, a later main cannot be told from the one it was synced with');
+
+  const used = [subject.UNIT_KEY, subject.unitSyncKey(OLD_TIP), subject.unitSyncKey('e'.repeat(40))];
+  assert.equal(used.length, subject.MAX_UNIT_SYNCS);
+  assert.equal(subject.select([after(used)], new Set(), greenTip).skipped[7825], 'already_tried',
+    'a proposal whose own change breaks a test stops costing runs');
+  assert.deepEqual(subject.select([after(used.slice(1))], new Set(), greenTip).candidates.map((c) => c.id), [7825]);
+
+  // A named check's key beside them is not a unit-suite sync.
+  const mixed = after([subject.UNIT_KEY, key(DOMAIN), key(PICKER)]);
+  assert.deepEqual(subject.select([mixed], new Set(), greenTip).candidates.map((c) => c.id), [7825]);
+});
+
+test('main watch\'s verdict carries the commit it judged and main\'s tip', async () => {
+  const TIP = 'c'.repeat(40);
+  let sql = null;
+  const pool = { query: async (q) => {
+    sql = q;
+    return { rows: [{ main_check_state: 'passing', main_check_at: '2026-10-10T21:32:20Z', main_check_sha: TIP, main_sha: TIP }] };
+  } };
+  assert.deepEqual(await subject.mainWatchVerdict(pool, 5),
+    { passing: true, at: Date.parse('2026-10-10T21:32:20Z'), sha: TIP, tip: TIP });
+  assert.match(sql, /SELECT main_check_state, main_check_at, main_check_sha, main_sha FROM apps WHERE id = \$1/);
 });
 
 test('a check a proposal was already synced for is never a reason to sync it again', () => {

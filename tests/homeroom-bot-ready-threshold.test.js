@@ -110,7 +110,7 @@ test('plain words, and the count travels with the card to every device', () => {
   const said = [
     words.waitingWords({ you: true, names: ['priya_t1006', 'mo_t1006'], missing: 2, needed: 2 }),
     words.waitingWords({ names: ['priya_t1006', 'mo_t1006'], missing: 1, needed: 2 }),
-    words.afterYesWords({ missing: 1, names: ['priya_t1006', 'mo_t1006'] }),
+    readyCard.approvedLine({ soon: false, at: null, missing: 1, waitingOn: ['priya_t1006', 'mo_t1006'], more: 0 }),
     chatCard.approvalWords({ stage: 'proposed', missing: 0 }),
   ];
   for (const s of said) assert.doesNotMatch(s, /propos|merg|vote|\bPR\b|staging|—/i, s);
@@ -123,7 +123,7 @@ test('plain words, and the count travels with the card to every device', () => {
     assert.equal('missing' in ready({ group: true, waitingOn: ['ada'], missing: bad }), false, String(bad));
   }
   // Both cards word it in one place.
-  assert.match(read('frontend/src/features/messages/bot-ready.tsx'), /import \{ afterYesWords, countOf, waitingWords \} from '\.\/approval-words';/);
+  assert.match(read('frontend/src/features/messages/bot-ready.tsx'), /import \{ afterYesWords, countOf, waitingWords, type AfterYes \} from '\.\/approval-words';/);
   assert.match(read('frontend/src/features/group-chat/bot-request.tsx'), /import \{ waitingWords \} from '\.\.\/messages\/approval-words';/);
 });
 

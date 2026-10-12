@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const { LandingTile } = loadTsx('frontend/src/features/auth/landing.tsx');
 const esbuild = require(require.resolve('esbuild', { paths: [path.join(__dirname, '../frontend')] }));
@@ -35,6 +36,8 @@ function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
   const sandbox = {
     URL,
     FRAME_THEME_PARAM,
+    // The runtime's `t`, as landing.tsx imports it.
+    translate: englishPlatformI18n().t,
     location,
     hasSession: () => signedIn,
     legacy: () => ({

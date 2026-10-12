@@ -239,11 +239,16 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
     assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
     // #4487: and a later change is asked to declare its visible changes.
-    const declare = live.BUILD_VISIBLE_CHANGES_LINES.join('\n');
+    const declare = live.buildVisibleChangesLines(null).join('\n');
     assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
     // The copies have no model key, so no declared step waits for the bot (PR 4536).
     assert.match(declare.replace(/\n/g, ' '), /The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says it cannot reach its model there/);
     assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
+    // A state new in the change is seeded in it: the after copy is the side
+    // that needs it (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12).
+    assert.match(declare.replace(/\n/g, ' '), /add an idempotent, obviously fake staging seed for it in this same change: it reaches the after copy, which is the side a new state needs\./);
+    assert.match(declare.replace(/\n/g, ' '), /fake people, never a signal your code reads to decide something, and a reply as the stored message, never asked for\./);
+    assert.match(declare.replace(/\n/g, ' '), /A change to a state that already existed needs it on both copies, which a seed in this change cannot give/);
     assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
       'the record, the progress phrases, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.

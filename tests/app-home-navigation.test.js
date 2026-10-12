@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
 function harness() {
@@ -57,6 +58,7 @@ function harness() {
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
     Home: { load() {}, publishImproveTarget() {}, _apps: [] },
     AppView,
+    PlatformI18n: englishPlatformI18n(),
   });
   context.window = context;
   vm.runInContext(read('public/js/app.js'), context);

@@ -533,6 +533,7 @@ function claudeTurnModel(mode, model) {
 // contain private app data or credentials and must never enter a run trace.
 const SHOTS_DIAGNOSTIC_TOOLS = new Set([
   'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -2083,6 +2084,30 @@ const TURN_SYSTEM_PROMPT_PATH = '/home/node/.claude/turn-system-prompt.txt';
 // context saving on resume and the old fully-specified fresh-run behavior.
 const TURN_RESUME_FALLBACK_PROMPT_PATH = '/home/node/.claude/turn-resume-fallback-prompt.txt';
 
+// #4575: each turn writes its prompt files under its own id. The fixed paths
+// above were shared by every turn on the session, and a dispatch writes its
+// prompt BEFORE it claims chat_sessions.active_turn: a second dispatch that
+// then lost that claim (the shots agent racing the Homeroom bot) had already
+// overwritten the winner's prompt, so the winner could run with the loser's
+// task. The fixed paths remain the fallback for an id that is not
+// path-safe, and finishTurn still removes them for a turn an older release
+// dispatched.
+function turnPromptPaths(turnId) {
+  const id = String(turnId || '');
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(id)) {
+    return {
+      prompt: TURN_PROMPT_PATH,
+      system: TURN_SYSTEM_PROMPT_PATH,
+      resumeFallback: TURN_RESUME_FALLBACK_PROMPT_PATH,
+    };
+  }
+  return {
+    prompt: `/home/node/.claude/turn-prompt-${id}.txt`,
+    system: `/home/node/.claude/turn-system-prompt-${id}.txt`,
+    resumeFallback: `/home/node/.claude/turn-resume-fallback-prompt-${id}.txt`,
+  };
+}
+
 // Shell script that writes arbitrary turn context to a fixed private path.
 // The base64
 // payload is split into bounded chunks appended by `printf` (a shell
@@ -2105,31 +2130,31 @@ function buildTurnContextFileScript(content, targetPath) {
   return lines.join('\n') + '\n';
 }
 
-function buildTurnPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_PROMPT_PATH);
+function buildTurnPromptScript(prompt, targetPath = TURN_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
-function buildTurnSystemPromptScript(systemPrompt) {
-  return buildTurnContextFileScript(systemPrompt, TURN_SYSTEM_PROMPT_PATH);
+function buildTurnSystemPromptScript(systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
+  return buildTurnContextFileScript(systemPrompt, targetPath);
 }
 
-function buildTurnResumeFallbackPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_RESUME_FALLBACK_PROMPT_PATH);
+function buildTurnResumeFallbackPromptScript(prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
 // of the detached exec. Unlike syncUserAgentFiles this file is required:
 // a failure here fails the turn (before active_turn is persisted, so
 // there is nothing to clean up).
-async function writeTurnPrompt(sessionId, prompt) {
+async function writeTurnPrompt(sessionId, prompt, targetPath = TURN_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnPrompt: no warm worker registered for session ${sessionId}`);
   }
   if (usesKubernetesWorkers()) {
-    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt));
+    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt, targetPath));
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnPrompt',
     });
   }
@@ -2139,7 +2164,7 @@ async function writeTurnPrompt(sessionId, prompt) {
 // aborts before active_turn is persisted or the provider is dispatched; the
 // platform must never silently run a shortened task prompt without its
 // authoritative conventions.
-async function writeTurnSystemPrompt(sessionId, systemPrompt) {
+async function writeTurnSystemPrompt(sessionId, systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
@@ -2148,10 +2173,10 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnSystemPromptScript(systemPrompt),
+      buildTurnSystemPromptScript(systemPrompt, targetPath),
     );
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnSystemPrompt',
     });
   }
@@ -2161,7 +2186,7 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
 // fails and run-cc.sh retries fresh. It is required whenever supplied: failing
 // to materialize it aborts before dispatch rather than running without the
 // session's authoritative spec.
-async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
+async function writeTurnResumeFallbackPrompt(sessionId, prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnResumeFallbackPrompt: no warm worker registered for session ${sessionId}`);
@@ -2170,12 +2195,12 @@ async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
     );
   } else {
     await docker.execShellStdin(
       meta.containerName,
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
       { timeoutMs: 20000, label: 'writeTurnResumeFallbackPrompt' },
     );
   }
@@ -2200,9 +2225,13 @@ function _getPoolSafe() {
   }
 }
 
+// Resolves { ok: true } or { ok: false, code }: the code says why the record
+// could not be written (#4575), so execInWorker can tell a session another
+// turn already owns (session_busy, which a caller may wait out) from a
+// database failure.
 async function _persistActiveTurn(sessionId, turn) {
   const pool = _getPoolSafe();
-  if (!pool) return false;
+  if (!pool) return { ok: false, code: 'db_unavailable' };
   try {
     const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (current) {
@@ -2219,15 +2248,43 @@ async function _persistActiveTurn(sessionId, turn) {
         && current.phase === turnLifecycle.PHASE_DISPATCH_PENDING
         && String(current.journal || '') === String(turn.journal || '')
       );
-      if (isRegisteredAttempt) return true;
+      if (isRegisteredAttempt) return { ok: true };
       const err = new Error('turn-lifecycle: session already owns a different turn');
       err.code = 'session_busy';
       throw err;
     }
     await turnLifecycle.persistNewTurn(pool, sessionId, turn);
+    return { ok: true };
+  } catch (err) {
+    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message, code: err.code });
+    const code = typeof err?.code === 'string' && /^[A-Za-z0-9_]{1,48}$/.test(err.code)
+      ? err.code
+      : 'persist_error';
+    return { ok: false, code };
+  }
+}
+
+// A dispatch that a pending stop skipped before it began (execInWorker's
+// #937 gate). Only the exact record registered for it is touched, and only
+// while it is still dispatch_pending: a turn that replaced it, or one that
+// somehow moved on, is never someone this may clear. A tail-holding caller
+// gets the record handed to its tail, as a finished exec's would be; any
+// other caller gets it cleared. A later finishTurn by the caller finds it
+// gone and returns true. Never throws.
+async function releaseSkippedDispatch(sessionId, turnId, { holdTurnRecord = false } = {}) {
+  if (!turnId) return false;
+  const pool = _getPoolSafe();
+  if (!pool) return false;
+  try {
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (!current
+      || String(turnLifecycle.turnIdentity(current) || '') !== String(turnId)
+      || turnLifecycle.phaseOf(current) !== turnLifecycle.PHASE_DISPATCH_PENDING) return false;
+    if (holdTurnRecord) await markTurnTail(sessionId, {}, { turnId });
+    else if (!(await finishTurn(sessionId, { turnId }))) return false;
     return true;
   } catch (err) {
-    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message });
+    log.warn('worker', 'Could not release a skipped dispatch\'s turn record', { sessionId, turnId, err: err.message });
     return false;
   }
 }
@@ -2424,11 +2481,20 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   // An idempotent call after the row is already gone may remove only UUID-
   // unique journals; it never owns the shared prompt path.
   const filesToRemove = [...journalPaths];
-  if (ownsCleanup) filesToRemove.push(
-    TURN_PROMPT_PATH,
-    TURN_SYSTEM_PROMPT_PATH,
-    TURN_RESUME_FALLBACK_PROMPT_PATH,
-  );
+  if (ownsCleanup) {
+    filesToRemove.push(
+      TURN_PROMPT_PATH,
+      TURN_SYSTEM_PROMPT_PATH,
+      TURN_RESUME_FALLBACK_PROMPT_PATH,
+    );
+    // The turn's own prompt files (#4575), named by the identity it carried.
+    if (cleanupTurnId) {
+      const own = turnPromptPaths(cleanupTurnId);
+      for (const path of [own.prompt, own.system, own.resumeFallback]) {
+        if (!filesToRemove.includes(path)) filesToRemove.push(path);
+      }
+    }
+  }
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerRuntimeName(sessionId);
@@ -3290,6 +3356,14 @@ async function execInWorker(sessionId, {
     stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
+    // The record that attempt registration already wrote for this very turn
+    // is released here, the way this function's `finally` releases a turn
+    // that ran: returning before that `try` left it in dispatch_pending with
+    // nothing to clear it. A caller that does not finish turns itself (the
+    // Homeroom bot's follow-ups) left its proposal "running" for good, and
+    // every later turn on it waited behind a turn that had never started
+    // (change 7490, 9 Oct 2026).
+    await releaseSkippedDispatch(sessionId, preRegisteredTurnId, { holdTurnRecord });
     return stopped;
   }
 
@@ -3401,16 +3475,19 @@ async function execInWorker(sessionId, {
   // (conventions block + spec doc) legitimately exceed it. See
   // TURN_PROMPT_PATH. Written before active_turn is persisted so a
   // failure here surfaces as a plain turn error with nothing to reap.
+  // #4575: under this turn's own id, so a dispatch that loses the race for
+  // active_turn below never overwrites the prompt of the turn that won it.
+  const promptPaths = turnPromptPaths(durableTurnId);
   if (!reusePromptFile) {
-    await writeTurnPrompt(sessionId, prompt);
+    await writeTurnPrompt(sessionId, prompt, promptPaths.prompt);
   }
   if (resumeFallbackPrompt) {
-    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt);
+    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt, promptPaths.resumeFallback);
   }
   // A reused task prompt is a Codex recovery concern today, but keep this
   // write independent so any future Claude recovery cannot point the runner
   // at an absent or stale system-context file.
-  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt);
+  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system);
 
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
@@ -3452,8 +3529,8 @@ async function execInWorker(sessionId, {
     throw err;
   }
   const safeEnv = {
-    PROMPT_FILE: TURN_PROMPT_PATH,
-    SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
+    PROMPT_FILE: promptPaths.prompt,
+    SYSTEM_PROMPT_FILE: systemPrompt ? promptPaths.system : '',
     MODE: mode,
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
@@ -3474,7 +3551,7 @@ async function execInWorker(sessionId, {
       MODEL: claudeModel,
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
       RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
-        ? TURN_RESUME_FALLBACK_PROMPT_PATH
+        ? promptPaths.resumeFallback
         : '',
       // Retarget the Anthropic SDK through the proxy only for Claude when
       // not BYOK. Never set for Codex.
@@ -3520,7 +3597,7 @@ async function execInWorker(sessionId, {
     // The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner): the
     // whole build prompt, for the fresh run run-cc.sh makes when the build's
     // conversation cannot be resumed. Empty for every other turn.
-    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? TURN_RESUME_FALLBACK_PROMPT_PATH : '';
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? promptPaths.resumeFallback : '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
@@ -3604,6 +3681,17 @@ async function execInWorker(sessionId, {
   // `journal` is recorded so stopTurn() can append the exit marker to the
   // turn's own journal (#889) instead of leaving the consumer to discover
   // the kill via its 10s liveness watchdog.
+  // What this call is about to overwrite, so a dispatch that loses the race
+  // for active_turn puts it back rather than wiping it (#4575).
+  const registryBefore = _registryGet(sessionId);
+  const replacedRegistryFields = registryBefore ? {
+    activeTurnMode: registryBefore.activeTurnMode ?? null,
+    journal: registryBefore.journal ?? null,
+    activeTurnId: registryBefore.activeTurnId ?? null,
+    turnByokCents: registryBefore.turnByokCents,
+    turnByokSwitched: registryBefore.turnByokSwitched,
+    unpushed: registryBefore.unpushed ?? null,
+  } : null;
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
@@ -3612,7 +3700,7 @@ async function execInWorker(sessionId, {
     // worker's to rescue.
     unpushed: null,
   });
-  const activeTurnPersisted = await _persistActiveTurn(sessionId, {
+  const activeTurnPersist = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
     phase: turnLifecycle.PHASE_DISPATCH_PENDING,
     mode,
@@ -3645,16 +3733,33 @@ async function execInWorker(sessionId, {
     // even if the user adds/removes their key while the turn is detached.
     byok: !!anthropicApiKey,
   });
-  if (!activeTurnPersisted) {
+  if (!activeTurnPersist.ok) {
+    // Put back what this call replaced: this dispatch never ran, so the
+    // turn that owns the session (or the last one's remembered state) keeps
+    // its in-memory record.
     _registryUpsert(sessionId, {
-      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null, activeTurnId: null,
+      ...(replacedRegistryFields || {
+        activeTurnMode: null, journal: null, activeTurnId: null,
+      }),
+      inFlight: false, lastUsedMs: Date.now(),
     });
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
-    const err = new Error('execInWorker: durable active turn could not be persisted');
+    // This turn's own prompt files are not used by anyone else (#4575).
+    if (promptPaths.prompt !== TURN_PROMPT_PATH) {
+      await execWorkerCommand(containerName, [
+        'rm', '-f', promptPaths.prompt, promptPaths.system, promptPaths.resumeFallback,
+      ], null, { timeoutMs: 5000 }).catch(() => {});
+    }
+    const err = new Error(activeTurnPersist.code === 'session_busy'
+      ? 'execInWorker: another turn already owns this session'
+      : 'execInWorker: durable active turn could not be persisted');
     err.code = requireActiveTurnPersistence
       ? 'durable_retry_persist_failed'
       : 'durable_turn_persist_failed';
+    // Why (#4575): session_busy means another turn holds the session and a
+    // caller may wait for it to finish and dispatch again.
+    err.persistCode = activeTurnPersist.code;
+    err.sessionBusy = activeTurnPersist.code === 'session_busy';
     throw err;
   }
 
@@ -5152,6 +5257,7 @@ module.exports = {
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
+  releaseSkippedDispatch,
   // post-agent tail lifecycle (holdTurnRecord callers)
   TURN_PHASE_TAIL,
   markTurnTail,
@@ -5222,6 +5328,7 @@ module.exports = {
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,
   TURN_RESUME_FALLBACK_PROMPT_PATH,
+  turnPromptPaths,
   buildTurnPromptScript,
   buildTurnSystemPromptScript,
   buildTurnResumeFallbackPromptScript,

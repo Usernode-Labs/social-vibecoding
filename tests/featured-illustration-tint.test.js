@@ -43,6 +43,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const {
@@ -136,7 +137,8 @@ test('the editor offers the twelve tones, staged, and no arbitrary colour', () =
   assert.ok(!/#[0-9a-fA-F]{6}|type="color"/.test(editor), 'no hex field and no arbitrary colour input');
   // A radiogroup, so the swatches are one control to a screen reader, and each
   // is labelled by the colour's own name rather than its position.
-  assert.match(editor, /role="radiogroup" aria-label="Card colour"/);
+  assert.match(editor, /role="radiogroup" aria-label=\{t\('discover:illustration\.cardColour'\)\}/);
+  assert.equal(message('discover:illustration.cardColour'), 'Card colour');
   assert.match(editor, /TONES\.map\(tone => \{/);
   assert.match(editor, /aria-label=\{toneLabel\(tone\)\}/);
   // Selection is the stored value itself, so an illustration carrying a legacy

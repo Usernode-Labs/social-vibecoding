@@ -27,15 +27,17 @@ var CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
 
 function formatElapsed(ms) {
   var totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
-  if (totalSec < 60) return totalSec + 's';
+  if (totalSec < 60) return PlatformI18n.t('session:progress.elapsed.seconds', { seconds: totalSec });
   var totalMin = Math.floor(totalSec / 60);
   if (totalMin < 60) {
     var sec = totalSec % 60;
-    return totalMin + 'm ' + String(sec).padStart(2, '0') + 's';
+    return PlatformI18n.t('session:progress.elapsed.minutesSeconds',
+      { minutes: totalMin, seconds: String(sec).padStart(2, '0') });
   }
   var hours = Math.floor(totalMin / 60);
   var min = totalMin % 60;
-  return hours + 'h ' + String(min).padStart(2, '0') + 'm';
+  return PlatformI18n.t('session:progress.elapsed.hoursMinutes',
+    { hours: hours, minutes: String(min).padStart(2, '0') });
 }
 
 // The countdown's display floor, in ms (#892). Mirrors
@@ -69,12 +71,16 @@ function roundCountdownMs(remainingMs) {
 //
 // Never negative, never a count-up (the elapsed ticker beside it already
 // conveys how far a run has gone).
+//
+// The readout follows the estimate it qualifies, in a span of its own; the
+// space that separates the two is layout and stays here, and the message
+// begins at its middle dot.
 function formatCountdown(targetMs, nowMs) {
   var remaining = (Number(targetMs) || 0) - (Number(nowMs) || 0);
-  if (!(remaining > COUNTDOWN_FLOOR_MS)) return ' · under a minute left';
+  if (!(remaining > COUNTDOWN_FLOOR_MS)) return ' ' + PlatformI18n.t('session:progress.countdown.underMinute');
   var rounded = roundCountdownMs(remaining);
-  if (rounded < 60000) return ' · under a minute left';
-  return ' · ~' + formatElapsed(rounded) + ' left';
+  if (rounded < 60000) return ' ' + PlatformI18n.t('session:progress.countdown.underMinute');
+  return ' ' + PlatformI18n.t('session:progress.countdown.about', { time: formatElapsed(rounded) });
 }
 
 // Long-run context for a running turn (#892), derived from the measured
@@ -99,8 +105,8 @@ function formatCountdown(targetMs, nowMs) {
 function runCohortHint(elapsedMs) {
   var ms = Number(elapsedMs) || 0;
   if (ms < 600000) return '';
-  if (ms < 1800000) return 'running longer than most, about 1 in 5 runs do';
-  return 'this is a long one, some runs go 30 min+';
+  if (ms < 1800000) return PlatformI18n.t('session:progress.cohort.longerThanMost');
+  return PlatformI18n.t('session:progress.cohort.longOne');
 }
 
 // Friendly names for the __USERNODE_PHASE__ markers run-cc.sh emits.
@@ -108,23 +114,23 @@ function runCohortHint(elapsedMs) {
 // phase text so they're still informative rather than hidden.
 function ccPhaseLabel(phase) {
   var p = String(phase || '').trim();
-  if (/^claude\b/.test(p)) return 'Claude is working';
+  if (/^claude\b/.test(p)) return PlatformI18n.t('session:progress.phase.claudeWorking');
   // Backend-neutral phase markers for codex_openrouter sessions (plan.md
   // PR5). Kept generic so the progress card renders a friendly label for
   // the second coding-agent backend without a Claude-specific branch.
-  if (/^codex\b/.test(p)) return 'Coding agent is working';
-  if (/^agent\b/.test(p)) return 'Coding agent is working';
-  if (/^sync/.test(p)) return 'Syncing with main';
-  if (p === 'refresh') return 'Syncing branch';
-  if (p === 'commit') return 'Committing';
-  if (p === 'push') return 'Pushing';
+  if (/^codex\b/.test(p)) return PlatformI18n.t('session:progress.phase.agentWorking');
+  if (/^agent\b/.test(p)) return PlatformI18n.t('session:progress.phase.agentWorking');
+  if (/^sync/.test(p)) return PlatformI18n.t('session:progress.phase.syncingWithMain');
+  if (p === 'refresh') return PlatformI18n.t('session:progress.phase.syncingBranch');
+  if (p === 'commit') return PlatformI18n.t('session:progress.phase.committing');
+  if (p === 'push') return PlatformI18n.t('session:progress.phase.pushing');
   // Terminal markers: run-cc.sh emits done/push_failed at the end of a
   // turn, and the server appends done/push_failed/interrupted on the
   // recovery/error paths — so the collapsed progress card always ends
   // on a terminal label instead of freezing on "Pushing".
-  if (p === 'done') return 'Finished';
-  if (p === 'push_failed') return 'Push failed';
-  if (p === 'interrupted') return 'Interrupted';
+  if (p === 'done') return PlatformI18n.t('session:progress.phase.finished');
+  if (p === 'push_failed') return PlatformI18n.t('session:progress.phase.pushFailed');
+  if (p === 'interrupted') return PlatformI18n.t('session:progress.phase.interrupted');
   return p;
 }
 

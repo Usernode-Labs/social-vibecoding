@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -196,6 +197,7 @@ test('the feedback challenge\'s page links to Your feedback, and no other page d
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const pane = sandbox.window.TopochainChallenges;
   const pageOf = (illustration) => {

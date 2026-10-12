@@ -30,6 +30,7 @@ import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
 import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Avatar } from '@/components/ui/feed';
@@ -39,7 +40,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
-import { RequestWords, SpecCard } from './request-head';
+import { RequestWords, SpecCard, sentences } from './request-head';
 import { TopicBack } from './topic-back';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
 
@@ -49,10 +50,11 @@ function host(id: string): Element | null {
 
 /** The sheet's header: what this is, its category, and everything else behind ⋯. */
 function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): ReactNode {
+  const t = useMessages('project');
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-name">{v.number ? `Change #${v.number}` : 'Change'}</div>
+        <div className="messages-thread-name">{v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title')}</div>
         {v.category ? <div className="messages-thread-sub" data-change-category="">{v.category}</div> : null}
       </div>
       {menuKey ? (
@@ -61,8 +63,8 @@ function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): Re
           className="messages-thread-action dev-card-menu-btn"
           data-card-menu={menuKey}
           aria-haspopup="true"
-          aria-label="More actions"
-          title="More actions"
+          aria-label={t('project:topic.change.bar.more')}
+          title={t('project:topic.change.bar.more')}
         >
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
@@ -78,12 +80,16 @@ function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): Re
  * finished progress bar may be green).
  */
 function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; id: number | null }): ReactNode {
+  const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
   // A merge of Homeroom itself: when its release comes, counted down here
   // rather than frozen when the page was read.
   const now = useReleaseNow(g.release);
   const release = g.release ? releaseSentence(g.release, now) : null;
-  const note = release ? [...g.note, `${release}.`] : g.note;
+  // The note's sentences arrive worded (AppView._changeThreadView); the door
+  // into Details rides at the paragraph's end, in one message with them.
+  const note = sentences(release ? [...g.note, t('project:topic.change.gate.release', { release })] : g.note);
+  const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
   return (
     <div className="dev-change-gate" data-change-gate={which} data-done={g.done ? 'true' : 'false'} data-tone={g.tone} role="group" aria-label={g.name}>
       <div className="dev-change-gate-main">
@@ -106,14 +112,17 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
       {g.noteDetail ? (
         <details className="dev-change-gate-note" data-change-gate-explanation="">
           <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={g.noteDetail}>
-            {note.join(' ')}
+            {note}
           </summary>
           <p className="mt-2">{g.noteDetail}</p>
         </details>
-      ) : note.length || (g.details && id) ? (
+      ) : note || (g.details && id) ? (
         <p className="dev-change-gate-note" data-change-release={release ? '' : undefined}>
-          {note.join(' ')}
-          {g.details && id ? <>{note.length ? ' ' : ''}<button type="button" className="dev-change-gate-link" onClick={open}>See what failed</button></> : null}
+          {g.details && id
+            ? (note
+              ? <RichMessage id="project:topic.change.gate.noteSeeFailed" values={{ note }} components={[door]} />
+              : <button type="button" className="dev-change-gate-link" onClick={open}>{t('project:topic.change.gate.seeFailed')}</button>)
+            : note}
         </p>
       ) : null}
     </div>
@@ -122,6 +131,7 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
 
 /** The Before and after card: the shots, or the line that says where they are. */
 function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
+  const t = useMessages('project');
   if (s.state === 'verified') {
     return (
       <section className="dev-change-shots" data-change-shots="verified">
@@ -131,8 +141,8 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
     );
   }
   return (
-    <section className="dev-change-shots dev-change-shots-plain" data-change-shots={s.state} aria-label="Before and after">
-      <div className="dev-change-card-name">Before and after</div>
+    <section className="dev-change-shots dev-change-shots-plain" data-change-shots={s.state} aria-label={t('project:topic.change.shots.title')}>
+      <div className="dev-change-card-name">{t('project:topic.change.shots.title')}</div>
       {s.html ? <Html className="dev-change-shots-tiles usn-visuals-body" data-visuals-scope="1" html={s.html} /> : null}
       {s.line ? (
         <p className="dev-change-shots-line">
@@ -152,6 +162,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   linkedIssues: number[];
   onIssuesSaved: (issues: number[]) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const images = useInlineImageViewer();
   const all: ActionSpec[] = card.actions || [];
   const yes = all.find((a) => isVoteSpec(a, 'yes'));
@@ -194,10 +205,10 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
           {body.descriptionFold && body.proposalBody
-            ? <ProposalBody b={body.proposalBody} label="Description" part="description" />
+            ? <ProposalBody b={body.proposalBody} named="description" part="description" />
             : null}
           {body.summaryStale && body.summaryHtml
-            ? <p className="dev-change-stale" role="note">Written for an earlier version of this change.</p>
+            ? <p className="dev-change-stale" role="note">{t('project:topic.change.summaryStale')}</p>
             : null}
           {body.plan ? (
             <div className="messages-object-list dev-request-specs" data-change-plan={id ?? ''}>
@@ -234,6 +245,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
  * author's source one tap down, rather than leaving a hole.
  */
 function ChangeDiagram({ value }: { value: unknown }): ReactNode {
+  const t = useMessages('project');
   const d = useMemo(() => readDiagram(value), [value]);
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [d]);
@@ -241,9 +253,9 @@ function ChangeDiagram({ value }: { value: unknown }): ReactNode {
   if (failed && d.kind === 'mermaid') {
     return (
       <div className="dev-change-diagram-failed" data-change-diagram-failed="">
-        <p>The author’s diagram could not be drawn.</p>
+        <p>{t('project:topic.change.diagram.failed')}</p>
         <details>
-          <summary>Show its text</summary>
+          <summary>{t('project:topic.change.diagram.showSource')}</summary>
           <pre>{d.source}</pre>
         </details>
       </div>

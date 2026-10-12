@@ -998,6 +998,8 @@ module.exports = {
   takeLease,
   underLease,
   openCampaignProposal,
+  // A platform-opened proposal's preview and checks (services/language-sync-runner.js).
+  kickChecks,
   campaignSystemPrompt,
   CAMPAIGN_TOOLS,
   parseRepo,

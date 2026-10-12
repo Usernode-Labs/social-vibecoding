@@ -23,6 +23,12 @@
 //     chat_bot_requests (GET /api/apps/:slug/my-bot-requests), never from
 //     chat_messages, so no reader of the room can see it.
 //
+// 10 October: with the bot's voice on in chats (homeroom-bot.js voiceChat,
+// on unless an admin turns it off), a mention is answered by the voice
+// instead (homeroom-bot-voice.js): a reply in a thread under the message,
+// with File it under it when it asks for a change. What is below is the path
+// with that switch off, and the newcomer's offer, which needs no mention.
+//
 // Only a message a person typed, in the room's main stream, and never an
 // edit or a message a connector posted (E7). Membership is the room's own
 // gate (communities.chatNeedsJoin). The socket has no rate limit, so filings
@@ -706,6 +712,10 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
     messageId, appId: app.id, userId: user.id, kind: here.builds ? 'filed' : 'group',
     issueNumber: filed.issueNumber, title, replace: true,
   });
+  // #4417: asked in a topic's channel, so filed under that topic: the
+  // asker's category vote is cast for it, the seed a member can move like
+  // any category vote. Best-effort: the request is filed either way.
+  await seedTopicVote(pool, { appId: app.id, user, messageId, issueNumber: filed.issueNumber });
   // Where it stands as it is filed: held for the project's first version
   // (stageOf), its card and its chip say so from the start, never Reading.
   const [card] = await cardsOf(pool, { appId: app.id, user, rows: [row], builds: here.builds, typical: here.builds, deps });
@@ -731,6 +741,35 @@ async function fileMessage(pool, config, { app, user, messageId, words, title, h
     ...(card?.state?.stage === 'waiting_first_version' ? { waitsForFirstVersion: true } : {}),
   });
   return card;
+}
+
+/**
+ * #4417: a request filed from a message in one of the project's topic
+ * channels gets the topic as its category: the filer's vote is cast for the
+ * topic's key, as typing it on the card would. Only a LIVE topic; never
+ * throws.
+ */
+async function seedTopicVote(pool, { appId, user, messageId, issueNumber }) {
+  if (!appId || !user || !user.id || !issueNumber) return false;
+  try {
+    const { rows: [topic] } = await pool.query(
+      `SELECT r.category_key
+         FROM chat_messages m
+         JOIN app_category_registry r
+           ON r.id = m.thread_ref AND r.app_id = m.app_id AND r.origin = 'topic'
+        WHERE m.id = $1 AND m.app_id = $2 AND m.thread_type = 'category'
+          AND r.topic_state = 'live'`,
+      [messageId, appId],
+    );
+    if (!topic) return false;
+    await require('./topic-attributes').castVote(
+      pool, appId, 'issue', Number(issueNumber), 'category', topic.category_key, user.id,
+    );
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot-chat', 'Could not file a request under its topic', { appId, issueNumber, err: err.message });
+    return false;
+  }
 }
 
 // ── Fix in place: a mention asking to fix one of the bot's pending changes ──
@@ -1008,11 +1047,16 @@ async function noteChatMessage(pool, config, { appId, userId, messageId, content
   // Outside the try, so the catch can name the app: it never throws.
   let app = null;
   try {
-    if (thread || postedVia === 'agent' || !appId || !userId) return null;
+    // The main stream, or (#4417) a topic's channel, which is a channel like
+    // it: a request asked for there is filed under that topic.
+    if ((thread && thread.type !== 'category') || postedVia === 'agent' || !appId || !userId) return null;
     const mentioned = mentionsBot(content);
     // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
     if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
+    // A mention is the bot's voice's to answer, in a reply thread under the
+    // message (homeroom-bot-voice.js), unless an admin turned that off.
+    if (mentioned && await (deps.voice || require('./homeroom-bot-voice')).enabledFor(pool, 'chat', deps)) return null;
     let user;
     [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
@@ -1073,7 +1117,9 @@ async function requestFromMessage(pool, config, { app, user, messageId, dismiss 
     [id, app.id],
   );
   if (!message || message.deleted_at) return { ok: false, status: 404, error: 'Message not found' };
-  if (Number(message.user_id) !== Number(user.id) || message.msg_type !== 'message' || message.thread_type) {
+  // The main stream, or (#4417) one of the project's topic channels.
+  if (Number(message.user_id) !== Number(user.id) || message.msg_type !== 'message'
+      || (message.thread_type && message.thread_type !== 'category')) {
     return { ok: false, status: 403, error: 'Only a message of your own in the chat can be made a request.' };
   }
   if (dismiss) {
@@ -1112,6 +1158,7 @@ async function myRequests(pool, { app, user, deps = {} }) {
 }
 
 module.exports = {
+  seedTopicVote,
   appRow,
   personRow,
   BOT_MENTION_RE,
@@ -1145,6 +1192,9 @@ module.exports = {
   noteRequestStatus,
   noteChatMessage,
   askFromMessage,
+  fileMessage,
+  filedLately,
+  pushCard,
   requestFromMessage,
   myRequests,
   record,

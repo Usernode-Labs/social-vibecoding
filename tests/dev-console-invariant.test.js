@@ -16,6 +16,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
+// The store reads its one message through the global the language runtime
+// publishes, as a classic script does; here that is the real English runtime.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+
 const { DevConsoleStore } = require(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-console', 'store.ts'),
 );

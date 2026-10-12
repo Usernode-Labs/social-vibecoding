@@ -73,6 +73,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -111,8 +112,10 @@ test('issueChipSpecs sanitizes, dedupes, sorts, and navigates in-app', () => {
   assert.equal(AppView.issueChipSpecs([]).length, 0);
   assert.equal(AppView.issueChipSpecs(null).length, 0);
   assert.equal(AppView.issueChipSpecs(['x', -3]).length, 0);
-  // Optional label prefix (the proposal card's "Closes #N" wording).
-  assert.match(badgeHtml(AppView.issueChipSpecs([5], { label: 'Closes' })[0]), /Closes #5/);
+  // What the change does to the request (the proposal card's "Closes #N"),
+  // named by key: the chip's words are one catalog message.
+  assert.match(badgeHtml(AppView.issueChipSpecs([5], { says: 'closes' })[0]), /Closes #5/);
+  assert.match(badgeHtml(AppView.issueChipSpecs([5], { says: 'closed' })[0]), /Closed #5/);
 });
 
 // ── 2. the work-state chip ───────────────────────────────────────────────

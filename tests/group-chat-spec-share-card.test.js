@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -38,6 +39,7 @@ const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
  */
 function loadGroupChat(over = {}) {
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console,
     App: { user: { id: 1, username: 'admin' } },
     document: {
@@ -165,7 +167,9 @@ test('View full plan owns its in-flight state, and the module owns the fetch', (
   // own state now, bracketing the module's promise.
   assert.match(row, /const \[loading, setLoading\] = useState\(false\)/);
   assert.match(row, /disabled=\{loading\}/);
-  assert.match(row, /\{loading \? 'Loading…' : 'View full plan'\}/);
+  assert.match(row, /\{loading \? t\('chat:group\.specCard\.loading'\) : t\('chat:group\.specCard\.view'\)\}/);
+  assert.equal(message('chat:group.specCard.loading'), 'Loading…');
+  assert.equal(message('chat:group.specCard.view'), 'View full plan');
   assert.match(row, /openSharedSpec\?\.\(spec\.sessionId, spec\.version, spec\.previewTitle\)/);
 
   // …and everything that is not markup stayed put: the per-app open state,
@@ -174,9 +178,12 @@ test('View full plan owns its in-flight state, and the module owns the fetch', (
   const open = gc.slice(gc.indexOf('  async openSharedSpec('), gc.indexOf('  _specPanelRaw:'));
   assert.match(open, /_writeSpecPanelOpen\(GroupChat\.appSlug/);
   assert.match(open, /\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}/);
-  assert.match(open, /This plan is no longer available/);
-  assert.match(open, /Failed to load plan \(HTTP \$\{resp\.status\}\)/);
-  assert.match(open, /Error: \$\{err\.message\}/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.gone'\)/);
+  assert.match(message('chat:group.spec.gone'), /This plan is no longer available/);
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.loadFailed', \{ status: resp\.status \}\)/);
+  assert.equal(message('chat:group.spec.loadFailed', { status: 500 }), 'Failed to load plan (HTTP 500).');
+  assert.match(open, /PlatformI18n\.t\('chat:group\.spec\.error', \{ message: err\.message \}\)/);
+  assert.equal(message('chat:group.spec.error', { message: 'x' }), 'Error: x');
   // The delegate that used to do all this is gone, along with the DOM
   // round-trip it needed to find the card's title.
   assert.doesNotMatch(gc, /_attachSpecCardHandlers\(/);

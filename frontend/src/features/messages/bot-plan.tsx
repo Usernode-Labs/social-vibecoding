@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 
 import { InfoCircleIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import * as api from './api';
 import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { changeKey } from './bot-shared';
-import { botMeta, requestPlace } from './bot-question';
+import { botMeta, postedNote } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
 import { BotHeadWords, botHead } from './bot-head-card';
 import { MessageMarkdown } from './format';
@@ -91,10 +93,18 @@ function capitalized(text: string): string {
  * 375px (owner, 7 October); the activity card keeps its own words
  * (./bot-activity.tsx typicalText).
  */
-export function planTime(range?: { from: number; to: number } | null): string | null {
+export function planTime(range?: { from: number; to: number } | null): { kind: 'about' | 'range'; from: number; count: number } | null {
   if (!range || !(range.to > 0)) return null;
-  return range.from >= range.to ? `about ${range.to} min` : `${range.from} to ${range.to} min`;
+  return { kind: range.from >= range.to ? 'about' : 'range', from: range.from, count: range.to };
 }
+
+/** The built plan's progress line, one whole message per what it leads with and how the time is said. */
+const PROGRESS_LINES = {
+  stepNamed: { about: 'messages:bot.plan.progress.stepNamedAbout', range: 'messages:bot.plan.progress.stepNamedRange' },
+  step: { about: 'messages:bot.plan.progress.stepAbout', range: 'messages:bot.plan.progress.stepRange' },
+  working: { about: 'messages:bot.plan.progress.workingAbout', range: 'messages:bot.plan.progress.workingRange' },
+  doing: { about: 'messages:bot.plan.progress.doingAbout', range: 'messages:bot.plan.progress.doingRange' },
+} as const;
 
 /**
  * Pure (#4046): the line at the top of a plan in `state`, from its request's
@@ -107,15 +117,19 @@ export function planTime(range?: { from: number; to: number } | null): string | 
 export function planProgress(card: HomeroomBotActivity | null | undefined, state: PlanCardState): PlanProgress | null {
   if (!card || (state !== 'open' && state !== 'built')) return null;
   if (card.state === 'done') {
-    return state === 'built' && card.outcome ? { line: ACTIVITY_OUTCOME_LABELS[card.outcome], step: null, of: null } : null;
+    return state === 'built' && card.outcome ? { line: translate(ACTIVITY_OUTCOME_LABELS[card.outcome]), step: null, of: null } : null;
   }
   const stepped = card.step && card.of ? { step: card.step, of: card.of } : null;
-  if (state === 'open') return stepped ? { line: `Step ${stepped.step} of ${stepped.of}`, ...stepped } : null;
-  const what = stepped
-    ? `Step ${stepped.step} of ${stepped.of}${card.stepName ? ` · ${card.stepName}` : ''}`
-    : capitalized(card.doing || 'working on it');
+  if (state === 'open') return stepped ? { line: translate('messages:bot.plan.step', { step: stepped.step, total: stepped.of }), ...stepped } : null;
+  const lead: keyof typeof PROGRESS_LINES = stepped ? (card.stepName ? 'stepNamed' : 'step') : card.doing ? 'doing' : 'working';
+  const values = {
+    step: stepped?.step ?? 0, total: stepped?.of ?? 0, name: card.stepName || '', doing: card.doing ? capitalized(card.doing) : '',
+  };
   const time = planTime(card.typicalMinutes);
-  return { line: time ? `${what} · ${time}` : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
+  const what = lead === 'stepNamed' ? translate('messages:bot.plan.stepNamed', values)
+    : lead === 'step' ? translate('messages:bot.plan.step', values)
+      : lead === 'doing' ? values.doing : translate('messages:bot.plan.working');
+  return { line: time ? translate(PROGRESS_LINES[lead][time.kind], { ...values, from: time.from, count: time.count }) : what, step: stepped?.step ?? null, of: stepped?.of ?? null };
 }
 
 /**
@@ -238,6 +252,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   /** #4046: its request's activity card, whose step it carries (planLayout). */
   cardId?: number | null;
 }) {
+  // Subscribed: the progress line is read from the catalog as this renders.
+  useMessages('messages');
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
   const activity = useBotActivity();
@@ -261,7 +277,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
 
   return (
     <PlanCardView
-      appName={meta.appName || meta.appSlug || 'your project'}
+      appName={meta.appName || meta.appSlug || ''}
       plan={meta.plan}
       state={planState(meta)}
       choices={meta.choices}
@@ -276,6 +292,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
 }
 
 export function BotTwoQuestions({ message, conversationId }: { message: ConversationMessage; conversationId: number }) {
+  const t = useMessages('messages');
   const meta = botMeta(message);
   const questions = meta?.questions || [];
   const [picked, setPicked] = useState<Array<string | null>>(() => questions.map(() => null));
@@ -310,7 +327,7 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
                 onClick={() => setPicked((current) => current.map((value, i) => (i === index ? answer : value)))}
               >
                 <span>{answer}</span>
-                {j === 0 ? <span className="messages-bot-default">suggested</span> : null}
+                {j === 0 ? <span className="messages-bot-default">{t('messages:bot.questions.suggested')}</span> : null}
               </button>
             ))}
           </div>
@@ -321,17 +338,17 @@ export function BotTwoQuestions({ message, conversationId }: { message: Conversa
         </ol>
       )}
       {open ? (
-        <div className="mt-2.5 messages-bot-answers" role="group" aria-label="Actions">
-          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>Build it</button>
-          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>Something else</button>
+        <div className="mt-2.5 messages-bot-answers" role="group" aria-label={t('messages:bot.questions.actions')}>
+          <button type="button" className="messages-bot-primary" data-bot-answer="build" onClick={build}>{t('messages:bot.questions.build')}</button>
+          <button type="button" className="messages-bot-other" onClick={() => quote(message, conversationId)}>{t('messages:bot.questions.somethingElse')}</button>
         </div>
       ) : null}
-      {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{`You answered:\n${answered}`}</p> : null}
-      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">No longer needed.</p> : null}
+      {answered && !pairs ? <p className="messages-bot-answered whitespace-pre-line">{t('messages:bot.questions.youAnswered', { answers: answered })}</p> : null}
+      {meta.status === 'closed' && !answered ? <p className="messages-bot-answered">{t('messages:bot.questions.closed')}</p> : null}
       {open || sent ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{`Your answers are posted on ${requestPlace(meta)}’s public discussion, where the group can see them.`}</span>
+          <span>{postedNote(meta, 'answers')}</span>
         </p>
       ) : null}
     </div>

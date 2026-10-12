@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
 
@@ -91,6 +92,7 @@ function makeDevChat() {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.UsernodeReact = { devChat: t.bridge };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8') + '\n;globalThis.AppView = AppView;', sandbox);
   sandbox.AppView._renderTopicHead = () => {};
@@ -731,5 +733,8 @@ test('a merged card says Closed for its refs (#3605)', () => {
   h.render([
     { role: 'system', content: 'Staging deployed!', changesReady: true, _slug: 'refs002' },
   ], activeSession({ id: 34, status: 'merged', linked_issues: [5] }));
-  assert.deepEqual(h.changesRow().closes, [{ n: 5, verb: 'Closed' }]);
+  // The model says which wording; the card reads it from the catalog.
+  assert.deepEqual(h.changesRow().closes, [{ n: 5, closed: true }]);
+  assert.equal(message('devchat:card.changes.closed', { number: 5 }), 'Closed #5');
+  assert.equal(message('devchat:card.changes.closes', { number: 5 }), 'Closes #5');
 });

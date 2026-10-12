@@ -81,6 +81,7 @@ function makeCtx(over) {
   if (o.search !== undefined) sandbox.location = { search: o.search };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -643,5 +644,48 @@ test('wide is untouched, which is the contract the checks runner asserts under',
   for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
     const start = plain.indexOf(`id="dev-kanban-col-${key}"`);
     assert.notEqual(start, -1);
+  }
+});
+
+// ── By stage counts in the interface's language, not always en-US ─────
+//
+// The strip's counts and the column foot's "Show all 2,748" grouped digits
+// with a fixed 'en-US', so a French interface read "Montrer les 2,748"
+// instead of "2 748". Both format with getLanguage() now, as weekDate does
+// (#4818).
+
+function captureNumberLocales(fn) {
+  const seen = [];
+  const original = Number.prototype.toLocaleString;
+  Number.prototype.toLocaleString = function (locales, options) {
+    seen.push(locales);
+    return original.call(this, locales, options);
+  };
+  try {
+    return { out: fn(), seen };
+  } finally {
+    Number.prototype.toLocaleString = original;
+  }
+}
+
+test('By stage counts and the column foot group digits in the interface language, never a fixed en-US', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { countWords } = loadTsx('frontend/src/features/dev-board/card/dev-kanban.tsx');
+  const strip = captureNumberLocales(() => countWords(2760));
+  assert.equal(strip.out, '2,760', 'English while the interface is English, whatever the device says');
+  assert.deepEqual(strip.seen, ['en'], 'the strip count uses the interface language (getLanguage)');
+
+  const { FooterView } = loadTsx('frontend/src/features/dev-board/card/footer.tsx');
+  const showAll = captureNumberLocales(() => renderToHtml(createElement(FooterView, { f: { kind: 'showAll', n: 2748 } })));
+  assert.match(showAll.out, /Show all 2,748/);
+  assert.ok(showAll.seen.length > 0 && showAll.seen.every((l) => l === 'en'), 'Show all N in the interface language');
+  const more = captureNumberLocales(() => renderToHtml(createElement(FooterView, { f: { kind: 'loadMerged', n: 1200, loading: false } })));
+  assert.match(more.out, /Show 1,200 more/);
+  assert.ok(more.seen.length > 0 && more.seen.every((l) => l === 'en'), 'Show N more in the interface language');
+
+  assert.equal((2748).toLocaleString('fr').replace(/\s/g, ' '), '2 748', 'so a French interface reads "2 748"');
+  for (const f of ['dev-kanban.tsx', 'footer.tsx']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'card', f), 'utf8');
+    assert.doesNotMatch(src, /'en-US'/, `${f} names no fixed locale`);
   }
 });

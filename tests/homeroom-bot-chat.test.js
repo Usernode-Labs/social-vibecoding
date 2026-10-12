@@ -21,6 +21,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -50,9 +51,11 @@ test('B9 (E8): names starting with homeroom are taken; the bot is never notified
   assert.match(read('src/services/notifications.js'), /'SELECT id FROM users WHERE id = ANY\(\$1::int\[\]\) AND is_synthetic = FALSE'/);
 });
 
-test('B9: the room hands a mention over after it is stored, and only from the main stream', () => {
+test('B9: the room hands a mention over after it is stored, and only from the main stream or (#4417) a topic\'s channel', () => {
   const ws = read('src/services/ws.js');
-  assert.match(ws, /if \(!thread\) \{\s*void require\('\.\/homeroom-bot-chat'\)\.noteChatMessage\(pool, null, \{\s*appId: client\.appId, userId: client\.user\.id, messageId: rows\[0\]\.id, content, thread, postedVia,/);
+  assert.match(ws, /if \(!thread \|\| thread\.type === appChat\.CATEGORY_THREAD\) \{\s*void require\('\.\/homeroom-bot-chat'\)\.noteChatMessage\(pool, null, \{\s*appId: client\.appId, userId: client\.user\.id, messageId: rows\[0\]\.id, content, thread, postedVia,/);
+  assert.match(read('src/services/homeroom-bot-chat.js'), /if \(\(thread && thread\.type !== 'category'\) \|\| postedVia === 'agent' \|\| !appId \|\| !userId\) return null;/,
+    'a reply thread, an issue\'s or a proposal\'s discussion is not a place to ask the bot');
   assert.ok(ws.indexOf("noteChatMessage(pool, null") > ws.indexOf('await broadcastFromSender(pool, client.appId, outMsg, client.user.id);'), 'after the room has it');
   const chat = read('src/routes/chat.js');
   assert.match(chat, /router\.post\('\/api\/apps\/:slug\/messages\/:id\/request', groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\),/);
@@ -98,7 +101,8 @@ test('B9: the chip and the card', () => {
   assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: 'Make this a request'/);
+  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: translate\('chat:group\.menu\.makeRequest'\)/);
+  assert.equal(message('chat:group.menu.makeRequest'), 'Make this a request');
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
   assert.match(gc, /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');
@@ -155,6 +159,9 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
   const pushed = [];
   const deps = (read) => ({
     readAsk: async () => read,
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,

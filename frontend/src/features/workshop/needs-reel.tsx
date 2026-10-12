@@ -7,8 +7,8 @@
  * src/routes/workshop-overview.js), each item naming the project it belongs
  * to. It used to draw its own cards (a Yes and a No at the foot of each, a
  * link to read the rest), so the two Needs you screens looked and answered
- * differently: the project's had the rail (Vote, Description, Comments, Ask,
- * Try it, More), the vote sheet, the swipe, the keys and the end card, and
+ * differently: the project's had the rail (Vote, Comments, Ask, Try it,
+ * More), the vote sheet, the swipe, the keys and the end card, and
  * this one had none of them. Now the rows are adapted here and drawn by the
  * project's own `NeedsFeed` (dev-board/workshop/workshop.tsx), so the two
  * cannot drift apart again.
@@ -18,8 +18,9 @@
  * A CHANGE is voted from the vote sheet with the platform's own vote
  * (AppView.castVote), carrying the approval epoch the server checks (#2038),
  * asking for a line on a No the way every vote does, and turning a
- * membership refusal into Join through the fetch wrapper. Description,
- * Comments and Ask are the project's own, addressed to the row's project.
+ * membership refusal into Join through the fetch wrapper. The caption's
+ * "more", Comments and Ask are the project's own, addressed to the row's
+ * project.
  * A GROUP DECISION (a rename, a secret, closing a request) is decided on its
  * own page, where its options and consequences are shown: those votes can
  * apply the decision on the spot, and that belongs on the screen that
@@ -39,6 +40,8 @@ import type { DevWorkshopView } from '../dev-board/card/model';
 import { callAppView } from '../dev-board/card/fold';
 import { NeedsFeed } from '../dev-board/workshop/workshop';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 
 export type NeedsFeedItem = {
@@ -89,7 +92,7 @@ type FeedRow = DevWorkshopView['queue'][number];
 /**
  * A proposal's summary is Markdown written for its own page. On the item it
  * is a paragraph: headings, emphasis, code ticks and list markers go, a link
- * keeps its words, and the whitespace collapses. The Description sheet has
+ * keeps its words, and the whitespace collapses. The caption's "more" has
  * it rendered.
  */
 export function plainSummary(md: string | null | undefined): string {
@@ -111,7 +114,7 @@ export function plainSummary(md: string | null | undefined): string {
  * the epoch, and on a project that is just yours the Yes marked `approve`, so
  * the item says Approve and Don't approve as its card does, #4270); a group
  * decision has none, and the vote sheet opens its page.
- * `html` renders a summary for the Description sheet (DevChat's renderer,
+ * `html` renders a summary for the caption's "more" (DevChat's renderer,
  * through AppView, where it is loaded).
  */
 export function reelRows(
@@ -132,7 +135,7 @@ export function reelRows(
         cls: '',
         attrs,
         icon: null,
-        title: { text: item.title || (change ? 'A change' : 'A group decision'), title: '' },
+        title: { text: item.title || (change ? translate('communities:reel.fallbackTitle.change') : translate('communities:reel.fallbackTitle.decision')), title: '' },
         meta: [],
         pill: null,
         linked: [],
@@ -148,13 +151,12 @@ export function reelRows(
         uncapped: false,
       },
       kind: 'vote',
-      ask: change ? 'Should this change go in?' : 'Should this go ahead?',
-      yes: change ? { label: 'Yes', act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
-      no: change ? { label: 'No', act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
+      ask: change ? translate('communities:reel.ask.change') : translate('communities:reel.ask.decision'),
+      yes: change ? { label: translate('communities:reel.yes'), act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
+      no: change ? { label: translate('communities:reel.no'), act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,
-      body: null,
       summary,
       descriptionHtml: item.summary ? html(item.summary) : '',
       visuals: feedVisuals(item),
@@ -204,10 +206,13 @@ export function NeedsReel({ items, error, capped, onDone }: {
   /** The end card's way on: back to the list of communities. */
   onDone: () => void;
 }) {
+  // `t` changes with the language on screen, so the rows' words (reelRows)
+  // are read again when it does.
+  const t = useMessages('communities');
   const rows = useMemo(() => (items ? reelRows(items, (md) => {
     const out = callAppView('_proposalSummaryHtml', { pr_summary_md: md });
     return typeof out === 'string' ? out : '';
-  }) : []), [items]);
+  }) : []), [items, t]);
   // The ask box's models: the dev session's own list, as on a project page.
   const models = useMemo(() => {
     const m = callAppView('_workshopModels') as DevWorkshopView['models'] | undefined;
@@ -221,31 +226,30 @@ export function NeedsReel({ items, error, capped, onDone }: {
   }, []);
 
   if (error) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">Couldn't load what is waiting on you. Each project's own Needs you page still has it.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-error="">{t('communities:reel.error')}</p>;
   }
   if (!items) {
-    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label="Loading what needs you" />;
+    return <div className="workshop-needs-feed workshop-reel-loading" data-needs-reel="" aria-busy="true" aria-label={t('communities:reel.loading')} />;
   }
   if (!items.length) {
-    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">Nothing is waiting on your vote in any of your projects.</p>;
+    return <p className="px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="">{t('communities:reel.empty')}</p>;
   }
   return (
     <>
       <div className="workshop-needs-feed" data-needs-reel="">
         <NeedsFeed
           rows={rows}
-          total={rows.length}
           models={models}
           slug=""
           canPost
           onDone={onDone}
-          doneLabel="Back to your communities"
+          doneLabel={t('communities:reel.done')}
           renderApp={ReelApp}
         />
       </div>
       {capped ? (
         <p className="px-4 pt-2 text-xs text-zinc-500 dark:text-zinc-400" data-needs-capped="">
-          Showing the newest {items.length}. Each project's own Needs you page has the rest.
+          {t('communities:reel.capped', { count: items.length })}
         </p>
       ) : null}
     </>

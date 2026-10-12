@@ -23,6 +23,7 @@ const waitlist = require('../../../services/waitlist');
 const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
+const releaseLinks = require('../../../services/release-links');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -102,11 +103,16 @@ const SEARCH_MAX = 320;
 // anywhere in either, case-insensitively. The username half is an EXISTS
 // rather than a join so the count query, which has no join to users, can
 // share the clause unchanged.
+//
+// An admin's test release (services/test-accounts.js sendRelease) is a row
+// nobody is waiting in, so no listing, count or export includes it.
+const NOT_TEST_RELEASE = 'NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)';
+
 function waitlistWhere(query, firstParam = 1) {
   const status = typeof query.status === 'string' ? query.status : '';
   const only = typeof query.only === 'string' ? query.only : '';
   const q = typeof query.q === 'string' ? query.q.trim().slice(0, SEARCH_MAX) : '';
-  const clauses = [];
+  const clauses = [NOT_TEST_RELEASE];
   const params = [];
   if (status === 'pending') clauses.push('w.released_at IS NULL');
   else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
@@ -122,7 +128,7 @@ function waitlistWhere(query, firstParam = 1) {
                                WHERE su.id = w.linked_user_id
                                  AND su.username ILIKE ${p} ESCAPE '\\'))`);
   }
-  return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+  return { sql: `WHERE ${clauses.join(' AND ')}`, params };
 }
 
 function plainObject(v) {
@@ -300,9 +306,22 @@ function waitlistAdminRoutes(config) {
       await waitlist.sendReleaseText(pool, released);
       return;
     }
+    const hasAccount = released.linked_user_id != null;
+    // #4594: a new account's one-time sign-in link. A failure to mint drops
+    // the link, not the mail: the mail's link still prefills the address
+    // and sends a code, as it did before.
+    let signInToken = null;
+    if (!hasAccount) {
+      try {
+        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: released.email });
+      } catch (err) {
+        log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
+      }
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
-      hasAccount: released.linked_user_id != null,
+      hasAccount,
+      signInToken,
       // #1548: lets the signup screen prefill the address and send the
       // code without a second step. An unguessable capability already
       // delivered to this address, so it carries nothing the recipient
@@ -417,7 +436,8 @@ function waitlistAdminRoutes(config) {
                 COUNT(*) FILTER (WHERE released_at IS NOT NULL)::int AS admitted,
                 COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL)::int AS confirmed,
                 COUNT(*) FILTER (WHERE linked_user_id IS NOT NULL)::int AS linked
-           FROM waitlist_signups`
+           FROM waitlist_signups w
+          WHERE ${NOT_TEST_RELEASE}`
       );
       const totals = totalsRows[0];
 
@@ -427,8 +447,8 @@ function waitlistAdminRoutes(config) {
       const { rows: dailyRows } = await pool.query(
         `SELECT to_char(date_trunc('day', submitted_at), 'YYYY-MM-DD') AS day,
                 COUNT(*)::int AS count
-           FROM waitlist_signups
-          WHERE submitted_at >= NOW() - $1::interval
+           FROM waitlist_signups w
+          WHERE submitted_at >= NOW() - $1::interval AND ${NOT_TEST_RELEASE}
           GROUP BY 1`,
         [`${days} days`]
       );

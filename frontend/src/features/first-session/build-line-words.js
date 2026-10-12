@@ -4,6 +4,11 @@
 // stores, and the tests that run home.js as a classic script
 // (tests/helpers/home-modules.js) run it too.
 //
+// The table holds message ids (frontend/locales/en/onboarding.json), read
+// when a line is drawn so the words follow the language on screen:
+// `PlatformI18n.t(BUILD_LINE_WORDS[state])` in a classic script, the
+// component's `t` in React. In English they read:
+//
 //   planning     Homeroom bot is planning it          steps 1 to 3, everyone
 //   plan         Your plan is ready to review         its plan waits, for the person who started it
 //   plan-member  Planning it                          the same, for everyone else
@@ -14,14 +19,14 @@
 //   live         Live                                 step 7
 
 export const BUILD_LINE_WORDS = Object.freeze({
-  planning: 'Homeroom bot is planning it',
-  plan: 'Your plan is ready to review',
-  'plan-member': 'Planning it',
-  question: 'Homeroom bot has a question for you',
-  building: 'Building it',
-  testing: 'Testing it',
-  ready: 'Ready to try',
-  live: 'Live',
+  planning: 'onboarding:buildLine.planning',
+  plan: 'onboarding:buildLine.plan',
+  'plan-member': 'onboarding:buildLine.planMember',
+  question: 'onboarding:buildLine.question',
+  building: 'onboarding:buildLine.building',
+  testing: 'onboarding:buildLine.testing',
+  ready: 'onboarding:buildLine.ready',
+  live: 'onboarding:buildLine.live',
 });
 
 /** The line in an answer (`first_version_line`), or null for none or one this shell does not know. */

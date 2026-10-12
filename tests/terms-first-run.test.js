@@ -29,6 +29,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('fs');
 const path = require('path');
 
@@ -146,7 +147,8 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
   assert.doesNotMatch(triggerJs, /showTermsSheet\(/, 'the first run no longer presents the sheet');
   // Only somebody who accepted an earlier version hears about it, once.
   assert.match(triggerJs, /payload\.consent\.earlier_accepted === true/);
-  assert.match(triggerJs, /We updated our terms\. By continuing to use Homeroom, you agree to them\./);
+  assert.match(triggerJs, /window\.PlatformUI\.toast\(PlatformI18n\.t\('onboarding:terms\.updatedToast'\)\);/);
+  assert.equal(require('./lib/platform-i18n').message('onboarding:terms.updatedToast'), 'We updated our terms. By continuing to use Homeroom, you agree to them.');
   // A failed write is not an answer: the next check records it then.
   assert.match(triggerJs, /if \(res\.ok && body\.success\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
   assert.match(triggerJs, /console\.warn\('\[terms-first-run\] terms acceptance not recorded:', err\);\s*\n\s*\}\s*\n\s*TermsFirstRun\._resolve\(\);/);
@@ -155,11 +157,14 @@ test('the trigger accepts by continuing, and never presents the sheet', () => {
 test('the sign-in screens say continuing is agreeing, linking the current terms', () => {
   const shared = read('frontend', 'src', 'features', 'auth', 'waitlist-shared.tsx');
   assert.match(shared, /export function TermsNotice\(/);
-  assert.match(shared, /\{`By \$\{verb\}, you agree to Homeroom's `\}/);
+  assert.match(shared, /<RichMessage id=\{verb === 'signing in' \? 'auth:terms\.signingIn' : 'auth:terms\.continuing'\}/);
+  assert.equal(message('auth:terms.continuing'), "By continuing, you agree to Homeroom's <0>terms</0>.");
+  assert.equal(message('auth:terms.signingIn'), "By signing in, you agree to Homeroom's <0>terms</0>.");
   assert.match(shared, /const link = useWaitlistOptions\(\)\?\.terms_link \|\| null;/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'sign-in-sheet.tsx'), /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
   assert.match(read('frontend', 'src', 'features', 'auth', 'login.tsx'),
-    /Sign in\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
+    /\{t\('auth:login\.submit'\)\}\s*\n\s*<\/Button>\s*\n\s*<TermsNotice verb="signing in" \/>/);
+  assert.equal(message('auth:login.submit'), 'Sign in');
   assert.match(read('src', 'routes', 'public-api.js'), /terms_link: await currentTermsLink\(\),/);
 });
 
@@ -201,12 +206,15 @@ test('every dead end is silent — console.warn at most, never console.error', (
 
 test('first-run mode adds the intro line and a Decline that records refusal', () => {
   assert.match(settingsJs,
+    /if \(firstRun\) \{\s*\n\s*panel\.appendChild\(el\('p',[\s\S]{0,120}tr\('settings:terms\.firstRunIntro'\)\)\);/);
+  assert.match(message('settings:terms.firstRunIntro'),
     /Reviewing the terms is part of joining the platform\./);
   assert.match(settingsJs, /postConsent\('refused',/);
   // Decline exists only in first-run framing; the settings/profile entry
   // points keep their current Accept + Close shape.
-  const declineAt = settingsJs.indexOf("'Decline'");
+  const declineAt = settingsJs.indexOf("tr('settings:terms.decline')");
   assert.ok(declineAt > 0, 'the Decline button label must exist');
+  assert.equal(message('settings:terms.decline'), 'Decline');
   const guard = settingsJs.lastIndexOf('if (firstRun) {', declineAt);
   assert.ok(guard > 0 && declineAt - guard < 900,
     'the Decline button must be gated on firstRun');
@@ -248,10 +256,13 @@ test('the first-run copy carries no token language (issue #1550)', () => {
   // paused. ...") are gone; the first sentence stays verbatim, and the
   // consent intent — read the published terms, then accept or decline, and
   // a decline is reversible — is carried by the replacements.
+  assert.match(sheetBody, /tr\('settings:terms\.firstRunIntro'\)/);
+  assert.equal(message('settings:terms.firstRunIntro'),
+    'Reviewing the terms is part of joining the platform. Please ' +
+    'read the full terms, then choose whether to accept.');
   assert.match(settingsJs,
-    /'Reviewing the terms is part of joining the platform\. Please ' \+\s*\n\s*'read the full terms, then choose whether to accept\.'/);
-  assert.match(settingsJs,
-    /PlatformUI\.toast\(\s*\n\s*'You can accept the terms later from your profile'\)/);
+    /PlatformUI\.toast\(\s*\n\s*tr\('settings:terms\.declinedToast'\)\)/);
+  assert.equal(message('settings:terms.declinedToast'), 'You can accept the terms later from your profile');
   // The whole dialog, not just the two strings: nothing it renders may
   // mention tokens again. Scoped to the sheet — settings.js elsewhere is
   // full of CLI and iframe auth tokens, which this must not trip on.
@@ -259,6 +270,12 @@ test('the first-run copy carries no token language (issue #1550)', () => {
     'the sheet-body slice must be bounded by anchors that both exist');
   assert.ok(!/token/i.test(sheetBody),
     'the terms dialog must not mention tokens');
+  // Its words are catalog messages now, so the same ban reads their English.
+  const sheetIds = [...new Set([...sheetBody.matchAll(/'((?:settings|core):[\w.]+)'/g)].map((m) => m[1]))];
+  assert.ok(sheetIds.length >= 10, 'the sheet wires its text from the catalog');
+  for (const id of sheetIds) {
+    assert.ok(!/token/i.test(message(id, { version: '1', date: 'd', count: 1 })), `${id} must not mention tokens`);
+  }
   // The backend gate is unchanged — only the copy stopped narrating it.
   assert.match(settingsJs, /postConsent\('refused',/);
 });

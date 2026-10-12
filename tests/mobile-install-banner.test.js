@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -357,21 +358,22 @@ test('storeLabel: a TestFlight invite is not called the App Store', () => {
   // live case, not a hypothetical: saying "the App Store" while opening a
   // beta invite tells the visitor something untrue about what they join.
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('ios', 'https://testflight.apple.com/join/H9puE1gu'), 'TestFlight');
+  // storeLabel answers with the strip's whole line, as a message id.
+  assert.equal(message(storeLabel('ios', 'https://testflight.apple.com/join/H9puE1gu')), 'Get the app on TestFlight');
 });
 
 test('storeLabel: real store listings get their store name', () => {
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('ios', IOS_URL), 'the App Store');
-  assert.equal(storeLabel('android', PLAY_URL), 'Google Play');
+  assert.equal(message(storeLabel('ios', IOS_URL)), 'Get the app on the App Store');
+  assert.equal(message(storeLabel('android', PLAY_URL)), 'Get the app on Google Play');
 });
 
 test('storeLabel: an unrecognised or unparseable URL falls back to the platform store', () => {
   // update_url is one free-text field and nobody is asked what kind of link
   // it is, so an enterprise or self-hosted destination must still read sanely.
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('android', 'https://downloads.example.com/usernode.apk'), 'Google Play');
-  assert.equal(storeLabel('ios', 'not a url'), 'the App Store');
+  assert.equal(message(storeLabel('android', 'https://downloads.example.com/usernode.apk')), 'Get the app on Google Play');
+  assert.equal(message(storeLabel('ios', 'not a url')), 'Get the app on the App Store');
 });
 
 // ── The island's first render ───────────────────────────────────────
@@ -400,10 +402,13 @@ test('#1513: the a2hs steps are instructions, one per OS, and name no store', ()
   assert.deepEqual(Object.keys(A2HS_STEPS).sort(), ['android', 'ios']);
   // iOS Safari exposes no install API and Android's beforeinstallprompt is
   // not guaranteed to fire, so both are directions to a menu item.
-  assert.match(A2HS_STEPS.ios, /Share.*Add to Home Screen/i);
-  assert.match(A2HS_STEPS.android, /menu.*Add to Home screen/i);
+  assert.match(message(A2HS_STEPS.ios), /Share.*Add to Home Screen/i);
+  assert.match(message(A2HS_STEPS.android), /menu.*Add to Home screen/i);
   for (const os of ['ios', 'android']) {
-    assert.ok(!A2HS_STEPS[os].includes(STORE_LABEL[os]),
+    // STORE_LABEL is the strip's whole line now ("Get the app on Google
+    // Play"), so the store's name is what follows "on".
+    const store = message(STORE_LABEL[os]).replace(/^Get the app on (the )?/, '');
+    assert.ok(store && !message(A2HS_STEPS[os]).includes(store),
       'the home-screen path must not name a store');
   }
 });
@@ -441,7 +446,8 @@ test('#4400: How opens a sheet; the strip keeps its line and its button', () => 
   assert.doesNotMatch(src, /A2HS_STEPS/);
   assert.doesNotMatch(src, /showSteps/);
   assert.doesNotMatch(src, /'Got it'/);
-  assert.match(src, /: 'Add it to your home screen'\}/);
+  assert.match(src, /: t\('agent:install\.banner\.addToHomeScreen'\)\}/);
+  assert.equal(message('agent:install.banner.addToHomeScreen'), 'Add it to your home screen');
   assert.match(src, /onClick=\{\(\) => setStepsOpen\(true\)\}/);
   // Closing the sheet only closes the sheet: the banner's dismissal stays the ✕'s.
   assert.match(src, /<InstallStepsSheet os=\{offer\.os\} onClose=\{\(\) => setStepsOpen\(false\)\} \/>/);
@@ -452,7 +458,7 @@ test('#4400: How opens a sheet; the strip keeps its line and its button', () => 
 test('#4400: the steps are numbered lines per OS, the first naming its control', () => {
   const { A2HS_STEP_LIST, STORE_LABEL } = loadTsx('frontend/src/features/mobile-install/detect.ts');
   assert.deepEqual(Object.keys(A2HS_STEP_LIST).sort(), ['android', 'ios']);
-  assert.deepEqual(A2HS_STEP_LIST.ios.map((s) => s.text), [
+  assert.deepEqual(A2HS_STEP_LIST.ios.map((s) => message(s.text)), [
     "Tap Share in Safari's toolbar",
     'Choose Add to Home Screen',
     'Open Homeroom from its icon',
@@ -460,10 +466,11 @@ test('#4400: the steps are numbered lines per OS, the first naming its control',
   assert.equal(A2HS_STEP_LIST.ios[0].glyph, 'share');
   assert.equal(A2HS_STEP_LIST.android.length, 3);
   assert.equal(A2HS_STEP_LIST.android[0].glyph, 'menu');
-  assert.match(A2HS_STEP_LIST.android[1].text, /Add to Home screen/);
+  assert.match(message(A2HS_STEP_LIST.android[1].text), /Add to Home screen/);
   for (const os of ['ios', 'android']) {
     for (const step of A2HS_STEP_LIST[os]) {
-      assert.ok(!step.text.includes(STORE_LABEL[os]), 'the home-screen path must not name a store');
+      const store = message(STORE_LABEL[os]).replace(/^Get the app on (the )?/, '');
+      assert.ok(store && !message(step.text).includes(store), 'the home-screen path must not name a store');
     }
   }
 });

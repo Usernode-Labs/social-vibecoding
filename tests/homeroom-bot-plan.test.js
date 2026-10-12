@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -189,7 +190,7 @@ test('the look reads a live first version\'s people into its prompt and its snap
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const members = liveMode && requester\?\.firstVersion\s+\? await projectMembers\(pool, app\)\.catch\(/);
   assert.match(src, /seed, issueNumber, firstVersion: !!requester\?\.firstVersion, decider,\s+\.\.\.\(members \? \{ members \} : \{\}\),/);
-  assert.match(src, /\.\.\.\(decider\?\.requesterDecides \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
+  assert.match(src, /\.\.\.\(deciderNote\(decider\) \? \{ decider \} : \{\}\),[\s\S]{0,120}\.\.\.\(members \? \{ members \} : \{\}\),\s+(?:\.\.\.\(starter \? \{ starter \} : \{\}\),\s+)?\},/,
     'kept in the snapshot');
   assert.match(read('src/services/bench/runner.js'), /members: snapshot\.extra\?\.members \|\| null,/);
 });
@@ -350,7 +351,8 @@ test('B6: which bot messages draw a plan or two questions, and what state a plan
   assert.match(css, /\.messages-bot-answers button\[aria-pressed="true"\] \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-chosen \{[^}]*color: var\(--accent-ink\);\s*background: var\(--accent\);/, '#4197: an answered chip wears the tapped answer\'s fill');
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /Say what to change, and Homeroom bot sends a new plan\. Only you see this\./);
+  assert.match(composer, /\{t\('messages:composer\.planReplyNote'\)\}/);
+  assert.equal(message('messages:composer.planReplyNote'), 'Say what to change, and Homeroom bot sends a new plan. Only you see this.');
 });
 
 test('B6: the plan is answered in the chat; #4043: the App tab no longer draws it', () => {
@@ -564,6 +566,21 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: nobody tapped Build it within a week']);
     const card = await planMessage(stale);
     assert.deepEqual([card.meta.status, card.meta.stopped], ['closed', true]);
+    // Said once, under the card, without ringing: the card changing a week
+    // up the conversation was the only sign it had gone quiet.
+    const stoppedNotes = async () => (await pool.query(
+      `SELECT m.id, m.content, m.metadata->'homeroomBot' AS meta
+         FROM conversation_messages m
+        WHERE m.conversation_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'plan_stopped'`,
+      [card.conversation_id],
+    )).rows;
+    const [note] = await stoppedNotes();
+    assert.equal(note.content, dm.planStoppedText(app.name));
+    assert.match(note.content, /^Nobody tapped Build it on the plan for .+ for a week, so I put it away and built nothing\. Reply to the plan above to pick it up again\.$/);
+    assert.ok(Number(note.id) > Number(card.id), 'after the plan it is about');
+    assert.equal(note.meta.issueNumber, 1);
+    await dm.closePlanCards(pool, [stale], { stopped: true });
+    assert.equal((await stoppedNotes()).length, 1, 'once');
 
     const go = await readyRun();
     await bot.awaitGo(pool, { runId: go, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot });
@@ -695,7 +712,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
-    await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
+    await activity.startCard(pool, { inDm: true, app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
     const run = await readyRun();
     assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const plan = await planMessage(run);

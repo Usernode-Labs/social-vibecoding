@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -116,14 +117,19 @@ test('app-view.js keeps a kudos spec in the folded list and draws it through the
   const item = APP.slice(APP.indexOf('  _kudosMenuItem(id) {'), APP.indexOf('  _foldedMenuItem(a) {'));
   assert.match(item, /document\.querySelector\(`\[data-kudos-host="\$\{id\}"\]`\)/, 'the slot, by its host');
   assert.match(item, /host\.querySelector\('\[data-kudos-action="give"\]'\)/);
-  assert.match(item, /label: label \? label\.textContent\.trim\(\) : \(retract \? 'Retract kudos' : 'Give kudos'\),/,
+  assert.match(item, /label: label \? label\.textContent\.trim\(\) : \(retract \? PlatformI18n\.t\('changes:card\.menu\.retractKudos'\) : PlatformI18n\.t\('changes:card\.menu\.giveKudos'\)\),/,
     'the slot\'s own line when it has one; the count pill\'s two verbs otherwise');
+  assert.equal(require('./lib/platform-i18n').message('changes:card.menu.retractKudos'), 'Retract kudos');
+  assert.equal(require('./lib/platform-i18n').message('changes:card.menu.giveKudos'), 'Give kudos');
   assert.match(item, /icon: 'kudos',/);
   assert.match(item, /act: \(\) => \{ if \(btn && !btn\.disabled\) btn\.click\(\); \},/, 'Kudos keeps every rule it has: the click is the slot\'s');
 });
 
 test('kudos.js: the line\'s tail is its own span and the whole line is the button\'s name', () => {
-  assert.match(KUDOS, /<span class="dev-thanks-label">Thank \$\{escapeHtml\(thanks\)\}<span class="dev-thanks-tail"> for putting this up<\/span><\/span>/);
+  // One catalog message holds the line; its numbered tag is the tail's span.
+  assert.match(KUDOS, /<span class="dev-thanks-label">\$\{htmlRich\('leaderboard:kudos\.button\.thankFace', \{ username: thanks \}, \[\(tail\) => `<span class="dev-thanks-tail">\$\{tail\}<\/span>`\]\)\}<\/span>/);
+  assert.equal(message('leaderboard:kudos.button.thankFace', { username: 'ada' }), 'Thank ada<0> for putting this up</0>');
+  assert.equal(message('leaderboard:kudos.button.thank', { username: 'ada' }), 'Thank ada for putting this up');
   assert.match(KUDOS, /\$\{thanks \? ` aria-label="\$\{escapeAttr\(line\)\}" title="\$\{escapeAttr\(line\)\}"` : tipAttr\}/);
 });
 

@@ -126,10 +126,20 @@ export type InboxFilter = 'all' | 'people' | 'channels' | 'agents';
 
 /** The filter row, in order. Exported so the view and its test share one list. */
 export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
-  ['all', 'All'],
-  ['people', 'People'],
-  ['agents', 'Agents'],
+  ['all', 'messages:inbox.filter.all'],
+  ['people', 'messages:inbox.filter.people'],
+  ['agents', 'messages:inbox.filter.agents'],
 ];
+
+/**
+ * A saved filter read back for #4783: the value as remembered, or `all` when
+ * it names no chip on the row today. `channels` was once a chip (#2783, since
+ * retired), so an older build's saved value must not select a filter the row
+ * no longer draws — anything unknown falls back to All.
+ */
+export function savedInboxFilter(raw: string | null | undefined): InboxFilter {
+  return INBOX_FILTERS.some(([key]) => key === raw) ? (raw as InboxFilter) : 'all';
+}
 
 /**
  * The shown entries as consecutive runs of one section, each with whether it

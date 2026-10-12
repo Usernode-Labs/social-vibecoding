@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -83,7 +84,7 @@ test('two panes of ONE sheet, not two sheets', () => {
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
   // The invite pane is a third, on the same terms (./invite-pane.tsx).
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} unnamed=\{!appName\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
   // The platform's back disc, at a 44pt hit box (#4218).
@@ -140,7 +141,8 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
     'the badge is the Workshop row\'s trailing figure');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
-  assert.match(sheet, /aria-label=\{`\$\{owed\} to vote`\}/);
+  assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
+  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's

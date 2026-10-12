@@ -1,0 +1,378 @@
+{
+  "confirm.title": {
+    "text": "Are you sure?",
+    "description": "Title of a confirmation dialog when the screen asking gave no title of its own. The dialog has a Cancel and an OK button."
+  },
+  "alerts.notification.fallbackTitle": {
+    "text": "Agent session",
+    "description": "Title of the device notification shown when a coding agent finishes its work while Homeroom is in the background, when the notification has no title of its own. A noun: the session in which an AI agent builds a change."
+  },
+  "alerts.test.queueFailed": {
+    "text": "Could not queue the test push. Please try again.",
+    "description": "Error shown in Settings when the \"test alert\" button could not schedule the test notification and the server gave no message. A push is a push notification."
+  },
+  "alerts.test.title": {
+    "text": "Homeroom test alert",
+    "description": "Title of the test notification a person sends themselves from Settings to check sound and alerts. Homeroom is the product's name."
+  },
+  "alerts.test.body": {
+    "text": "This is a test of your agent session sound and alerts.",
+    "description": "Body of the test notification a person sends themselves from Settings. An agent session is where an AI agent builds a change; the sound is the chime played when it finishes."
+  },
+  "feedbackQueue.error.screenshotUpload": {
+    "text": "screenshot upload failed",
+    "description": "Reason shown after \"could not be sent\" on a piece of feedback that Homeroom kept to send later and then failed to send: a screenshot attached to it could not be uploaded. Lower case, no full stop."
+  },
+  "feedbackQueue.error.network": {
+    "text": "network error",
+    "description": "Reason shown after \"could not be sent\" on a piece of feedback that Homeroom kept to send later and then failed to send: the device could not reach the server. Lower case, no full stop."
+  },
+  "feedbackQueue.error.couldNotSend": {
+    "text": "Could not send",
+    "description": "Reason shown after \"could not be sent\" on a piece of feedback that Homeroom kept to send later and then failed to send, when nothing more specific is known."
+  },
+  "push.error.unsupported": {
+    "text": "Activity notifications are not supported by this app build",
+    "description": "Detail shown under the activity-notifications switch in Settings when turning phone notifications on or off failed: this version of the Homeroom phone app cannot do it. \"app build\" is the installed version of the app. No full stop."
+  },
+  "push.error.signInFinishing": {
+    "text": "Secure app sign-in is still finishing. Try again shortly",
+    "description": "Detail shown under the activity-notifications switch in Settings when turning phone notifications on or off failed: the phone app has not finished signing the person in yet. No full stop at the end."
+  },
+  "push.error.sessionChanged": {
+    "text": "The native session changed while updating notifications",
+    "description": "Detail shown under the activity-notifications switch in Settings when turning phone notifications on or off failed: the account signed in on the phone app changed while the setting was being saved. No full stop."
+  },
+  "push.error.invalidState": {
+    "text": "The app returned an invalid notification state",
+    "description": "Detail shown under the activity-notifications switch in Settings when turning phone notifications on or off failed: the phone app answered with something Homeroom could not read. No full stop."
+  },
+  "permissions.title": {
+    "text": "Set up your device",
+    "description": "Title of the sheet the Homeroom phone app shows on first launch to ask for the device permissions it needs."
+  },
+  "permissions.intro.androidProducer": {
+    "text": "Your phone helps run Homeroom: your node can produce blocks while the app is in the background. For that, Android needs to wake it at exact slot times and leave it free of battery optimization. These settings only schedule wake-ups. They give Homeroom no access to your data.",
+    "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on Android, when the phone takes part in block production. The node is the part of the app that helps run Homeroom's network; a slot is its scheduled turn to produce a block. Android and Homeroom are names."
+  },
+  "permissions.intro.android": {
+    "text": "Allow notifications so Homeroom can tell you about activity on your apps and your node.",
+    "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on Android, when only notifications are asked for. The node is the part of the app that helps run Homeroom's network."
+  },
+  "permissions.intro.ios": {
+    "text": "Allow notifications so Homeroom can alert you about node and account activity.",
+    "description": "Opening paragraph of the \"Set up your device\" sheet of the Homeroom phone app on an iPhone. The node is the part of the app that helps run Homeroom's network."
+  },
+  "permissions.status.granted": {
+    "text": "Granted",
+    "description": "Status at the end of a permission's row in the \"Set up your device\" sheet of the Homeroom phone app: the device has given Homeroom this permission."
+  },
+  "permissions.status.notGranted": {
+    "text": "Not granted",
+    "description": "Status at the end of a permission's row in the \"Set up your device\" sheet of the Homeroom phone app: the device has not given Homeroom this permission yet."
+  },
+  "permissions.row.exactAlarms": {
+    "text": "Exact alarms",
+    "description": "Name of a permission's row in the \"Set up your device\" sheet of the Homeroom phone app: Android's permission to wake the app at an exact time."
+  },
+  "permissions.row.notifications": {
+    "text": "Notifications",
+    "description": "Name of a permission's row in the \"Set up your device\" sheet of the Homeroom phone app: permission to send the person notifications."
+  },
+  "permissions.row.battery": {
+    "text": "Battery optimization",
+    "description": "Name of a permission's row in the \"Set up your device\" sheet of the Homeroom phone app: whether Android's battery optimization has been switched off for Homeroom so it can run in the background."
+  },
+  "permissions.action.grant": {
+    "text": "Grant permissions",
+    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android builds that ask for everything at once: opens the system's permission request. \"Grant\" is a verb."
+  },
+  "permissions.action.allowNotifications": {
+    "text": "Allow notifications",
+    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app: opens the system's question about letting Homeroom send notifications."
+  },
+  "permissions.action.openBatterySettings": {
+    "text": "Open battery settings",
+    "description": "Button in the \"Set up your device\" sheet of the Homeroom phone app on Android: opens the system's battery settings page for Homeroom. \"Open\" is a verb."
+  },
+  "permissions.action.skip": {
+    "text": "Skip for now",
+    "description": "Last button of the \"Set up your device\" sheet of the Homeroom phone app while some permission is still missing: closes the sheet without granting it."
+  },
+  "permissions.action.openNotificationSettings": {
+    "text": "Open notification settings",
+    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android after the system's question was already declined: opens Android's notification settings for Homeroom. \"Open\" is a verb."
+  },
+  "permissions.action.allowExactAlarms": {
+    "text": "Allow exact alarms",
+    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android: opens the system page where Homeroom is allowed to set exact alarms."
+  },
+  "permissions.action.allowBackground": {
+    "text": "Allow background use",
+    "description": "Main button of the \"Set up your device\" sheet of the Homeroom phone app on Android: opens the system's question about letting Homeroom always run in the background."
+  },
+  "permissions.action.delegate": {
+    "text": "Delegate instead",
+    "description": "Button in the \"Set up your device\" sheet of the Homeroom phone app on Android, for a person who does not want to change the device settings: opens the screen where they delegate their stake to Homeroom's server, so their phone need not produce blocks. \"Delegate\" is a verb."
+  },
+  "permissions.hint.notifications": {
+    "text": "Android will ask whether Homeroom may send you notifications. Tap Allow. You can turn them off any time in Settings.",
+    "description": "Note under the \"Allow notifications\" button in the \"Set up your device\" sheet of the Homeroom phone app: says what Android will show next. \"Allow\" is the name of the button in Android's own dialog."
+  },
+  "permissions.hint.notificationsOff": {
+    "text": "Notifications are off for Homeroom. Turn them on in Android settings, then come back here.",
+    "description": "Note under the \"Open notification settings\" button in the \"Set up your device\" sheet of the Homeroom phone app."
+  },
+  "permissions.hint.exactAlarms": {
+    "text": "Android opens the \"Alarms & reminders\" page. Turn on Allow for Homeroom, then come back here. Your node only wakes a few minutes before each of its slots.",
+    "description": "Note under the \"Allow exact alarms\" button in the \"Set up your device\" sheet of the Homeroom phone app: says what Android will show next. \"Alarms & reminders\" is the name of an Android settings page and \"Allow\" a switch on it; a slot is the node's scheduled turn to produce a block."
+  },
+  "permissions.hint.background": {
+    "text": "Android will ask whether Homeroom may always run in the background, and warn that this can use more battery. Tap Allow. Your node still sleeps between slots, so the real impact is small, and you can change it any time in Settings.",
+    "description": "Note under the \"Allow background use\" button in the \"Set up your device\" sheet of the Homeroom phone app: says what Android will show next. \"Allow\" is the name of the button in Android's own dialog; a slot is the node's scheduled turn to produce a block."
+  },
+  "permissions.hint.delegate": {
+    "text": "Prefer not to change these settings? Delegate your stake to the server instead. You still earn half the block-production points, and you can switch back any time.",
+    "description": "Note above the \"Delegate instead\" button in the \"Set up your device\" sheet of the Homeroom phone app. A stake is the person's share that lets their node produce blocks; delegating hands that job to Homeroom's server."
+  },
+  "permissions.hint.productionDeferred": {
+    "text": "Block production settings (exact alarms and battery) come later, when you ask to produce blocks in Settings, Homeroom app.",
+    "description": "Note in the \"Set up your device\" sheet of the Homeroom phone app on Android when only notifications are asked for now. \"Settings, Homeroom app\" is the path to a section of Homeroom's Settings."
+  },
+  "pingAsk.appBuilding.title": {
+    "text": "Get a ping when your app is ready?",
+    "description": "Title of the question asked on an iPhone right after a person starts creating an app: whether Homeroom may notify them when it has been built. A ping is a notification."
+  },
+  "pingAsk.appBuilding.message": {
+    "text": "Homeroom bot will message you when it’s ready to try.",
+    "description": "Text under \"Get a ping when your app is ready?\". \"Homeroom bot\" is the name of the automated account that sends the message; \"it\" is the app being created."
+  },
+  "pingAsk.confirm": {
+    "text": "Notify me",
+    "description": "Accepting button of the \"Get a ping when your app is ready?\" question: goes on to the iPhone's own notification permission prompt."
+  },
+  "pingAsk.notNow": {
+    "text": "Not now",
+    "description": "Declining button of the \"Get a ping when your app is ready?\" question: closes it without asking for the notification permission."
+  },
+  "version.tip.staging": {
+    "text": "Staging preview of the platform, built without a commit SHA, so there is no revision to link",
+    "description": "Tooltip on the platform version shown at the foot of the side menu, on a test (staging) copy of Homeroom that has no version identifier. A commit SHA is the identifier of a version of the code. No full stop."
+  },
+  "version.tip.dev": {
+    "text": "Running outside of a deploy (no GIT_SHA set)",
+    "description": "Tooltip on the platform version shown at the foot of the side menu, on a developer's local copy of Homeroom. GIT_SHA is the name of a setting and stays as it is. No full stop."
+  },
+  "version.tip.deployingElapsed_one": {
+    "text": "Deploying {{newSha}} · from {{oldSha}} · {{count}}s elapsed",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom is being rolled out. {{newSha}} and {{oldSha}} are the short identifiers of the new and the running version; {{count}} is how many seconds the rollout has taken, \"s\" abbreviates seconds."
+  },
+  "version.tip.deployingElapsed_other": {
+    "text": "Deploying {{newSha}} · from {{oldSha}} · {{count}}s elapsed",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom is being rolled out. {{newSha}} and {{oldSha}} are the short identifiers of the new and the running version; {{count}} is how many seconds the rollout has taken, \"s\" abbreviates seconds."
+  },
+  "version.tip.deploying": {
+    "text": "Deploying {{newSha}} · from {{oldSha}}",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom is being rolled out. {{newSha}} and {{oldSha}} are the short identifiers of the new and the running version."
+  },
+  "version.tip.deployingNewBuildElapsed_one": {
+    "text": "Deploying new build · from {{oldSha}} · {{count}}s elapsed",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom, whose identifier is not known yet, is being rolled out. \"build\" is a noun. {{oldSha}} is the short identifier of the running version; {{count}} is how many seconds the rollout has taken."
+  },
+  "version.tip.deployingNewBuildElapsed_other": {
+    "text": "Deploying new build · from {{oldSha}} · {{count}}s elapsed",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom, whose identifier is not known yet, is being rolled out. \"build\" is a noun. {{oldSha}} is the short identifier of the running version; {{count}} is how many seconds the rollout has taken."
+  },
+  "version.tip.deployingNewBuild": {
+    "text": "Deploying new build · from {{oldSha}}",
+    "description": "Tooltip on the platform version shown at the foot of the side menu while a new version of Homeroom, whose identifier is not known yet, is being rolled out. \"build\" is a noun. {{oldSha}} is the short identifier of the running version."
+  },
+  "version.label.deploying": {
+    "text": "deploying",
+    "description": "Shown in place of the platform version at the foot of the side menu, beside a spinner, while a new version of Homeroom is being rolled out and its identifier is not known. Lower case."
+  },
+  "version.tip.downloading": {
+    "text": "Platform updated from {{oldSha}} to {{newSha}}. Downloading it now; the reload appears once there is something to switch to.",
+    "description": "Tooltip on the platform version shown at the foot of the side menu when Homeroom has a newer version than this tab runs and the tab is still downloading it. {{oldSha}} and {{newSha}} are the short identifiers of the two versions; \"the reload\" is the reload button."
+  },
+  "version.label.updating": {
+    "text": "{{sha}} · updating…",
+    "description": "Platform version at the foot of the side menu, beside a spinner, while this tab downloads a newer version of Homeroom. {{sha}} is the new version's short identifier."
+  },
+  "version.tip.reloadFailedPrefetch": {
+    "text": "Platform updated from {{oldSha}} to {{newSha}}. Click to reload (the update could not be pre-downloaded, so this may take two tries).",
+    "description": "Tooltip on the platform version shown at the foot of the side menu, where it is a button, when Homeroom has a newer version but this tab could not download it ahead of time. {{oldSha}} and {{newSha}} are the short identifiers of the two versions."
+  },
+  "version.tip.reloadReady": {
+    "text": "Platform updated from {{oldSha}} to {{newSha}}, and the new build is ready. Click to reload.",
+    "description": "Tooltip on the platform version shown at the foot of the side menu, where it is a button, when a newer version of Homeroom has been downloaded and a reload will switch to it. \"build\" is a noun. {{oldSha}} and {{newSha}} are the short identifiers of the two versions."
+  },
+  "version.label.reload": {
+    "text": "{{sha}} · reload",
+    "description": "Button at the foot of the side menu where the platform version is shown, when a newer version of Homeroom is available: reloads the page onto it. {{sha}} is the new version's short identifier; \"reload\" is a verb, lower case."
+  },
+  "version.tip.commit": {
+    "text": "Platform commit {{sha}}",
+    "description": "Tooltip on the platform version shown at the foot of the side menu, where it links to that version of the code on GitHub. \"commit\" is a noun; {{sha}} is the version's short identifier."
+  },
+  "invite.signedOut": {
+    "text": "You are signed out. Sign in again to join.",
+    "description": "Error toast shown to a person who followed an invite link to a community after their sign-in had ended."
+  },
+  "invite.dead.expired": {
+    "text": "That invite link has expired.",
+    "description": "Error toast shown to a person who followed an invite link to a community that is past its expiry date."
+  },
+  "invite.dead.revoked": {
+    "text": "That invite link was turned off.",
+    "description": "Error toast shown to a person who followed an invite link to a community that its maker has revoked."
+  },
+  "invite.dead.usedUp": {
+    "text": "That invite link has been used as many times as it allows.",
+    "description": "Error toast shown to a person who followed an invite link to a community that has reached its limit of people."
+  },
+  "invite.dead.unknown": {
+    "text": "That invite link does not work.",
+    "description": "Error toast shown to a person who followed an invite link to a community that does not exist or cannot be used, when no more specific reason is known."
+  },
+  "invite.couldNotOpen": {
+    "text": "Could not open that invite link. Try again.",
+    "description": "Error toast shown when Homeroom could not read an invite link to a community just now; the link itself may be fine."
+  },
+  "invite.couldNotJoin": {
+    "text": "Could not join. Try again.",
+    "description": "Error toast shown when joining a community through an invite link failed for an unknown reason."
+  },
+  "invite.from.isMaking": {
+    "text": "{{inviter}} is making it and invited you.",
+    "description": "First sentence of the question \"Join …?\" asked of a person who followed an invite link, when the inviter created the project and it is still being built. {{inviter}} is the inviter's display name; \"it\" is the project."
+  },
+  "invite.from.made": {
+    "text": "{{inviter}} made it and invited you.",
+    "description": "First sentence of the question \"Join …?\" asked of a person who followed an invite link, when the inviter created the project. {{inviter}} is the inviter's display name; \"it\" is the project."
+  },
+  "invite.from.handle": {
+    "text": "@{{handle}} invited you.",
+    "description": "First sentence of the question \"Join …?\" asked of a person who followed an invite link. {{handle}} is the inviter's user name; keep the @ directly before it."
+  },
+  "invite.from.unknown": {
+    "text": "You were invited.",
+    "description": "First sentence of the question \"Join …?\" asked of a person who followed an invite link, when who made the link is not known."
+  },
+  "invite.confirm.title": {
+    "text": "Join {{project}}?",
+    "description": "Title of the question asked of a signed-in person who followed an invite link to a community. \"Join\" is a verb; {{project}} is the name of the community's project."
+  },
+  "invite.confirm.titleUnnamed": {
+    "text": "Join this project?",
+    "description": "Title of the question asked of a signed-in person who followed an invite link, when the project's name is not known. \"Join\" is a verb."
+  },
+  "invite.confirm.note": {
+    "text": "“{{note}}”",
+    "description": "The inviter's own note, quoted, in the body of the question \"Join …?\". {{note}} is the text the inviter wrote; only the quotation marks are translated."
+  },
+  "invite.confirm.members_one": {
+    "text": "{{count}} person is in it.",
+    "description": "Sentence in the body of the question \"Join …?\": how many people already belong to the community. {{count}} is that number; \"it\" is the community."
+  },
+  "invite.confirm.members_other": {
+    "text": "{{count}} people are in it.",
+    "description": "Sentence in the body of the question \"Join …?\": how many people already belong to the community. {{count}} is that number; \"it\" is the community."
+  },
+  "invite.confirm.twoSentences": {
+    "text": "{{first}} {{second}}",
+    "description": "Body of the question \"Join …?\": two complete sentences one after the other, each already translated (who invited the person, then their quoted note or how many people are in the community). Only what separates them is translated here."
+  },
+  "invite.confirm.threeSentences": {
+    "text": "{{first}} {{second}} {{third}}",
+    "description": "Body of the question \"Join …?\": three complete sentences one after the other, each already translated (who invited the person, their quoted note, how many people are in the community). Only what separates them is translated here."
+  },
+  "invite.confirm.join": {
+    "text": "Join",
+    "description": "Accepting button of the question \"Join …?\" asked of a person who followed an invite link: makes them a member of the community. A verb."
+  },
+  "invite.confirm.notNow": {
+    "text": "Not now",
+    "description": "Declining button of the question \"Join …?\" asked of a person who followed an invite link: closes it without joining."
+  },
+  "invitePreview.unnamed": {
+    "text": "this community",
+    "description": "Stands where the community's name would be at the top of the preview of a private community's invite, when no name came with the link. Shown alone, as the heading."
+  },
+  "invitePreview.privateCommunity": {
+    "text": "Private community",
+    "description": "Label under the name on the preview of a private community's invite, used when the link did not say who the community is for."
+  },
+  "invite.joined": {
+    "text": "You're in.",
+    "description": "Toast shown right after a person joined a community through an invite link."
+  },
+  "title.leaderboard.challenges": {
+    "text": "Challenges",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Challenges tab of the leaderboard screen. A noun: the tasks people complete for points."
+  },
+  "title.leaderboard.kudos": {
+    "text": "Kudos",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Kudos tab of the leaderboard screen. Kudos are the thanks members give each other's work."
+  },
+  "title.leaderboard.standings": {
+    "text": "Standings",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Standings tab of the leaderboard screen: the ranking of members by points."
+  },
+  "title.leaderboard.history": {
+    "text": "History",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the History tab of the leaderboard screen: past seasons and their results."
+  },
+  "title.profile": {
+    "text": "Profile",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. A noun."
+  },
+  "title.yourChanges": {
+    "text": "Your changes",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the list of changes the person has proposed. \"changes\" is a noun: proposed changes to apps."
+  },
+  "title.yourRequests": {
+    "text": "Your requests",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the list of requests the person has filed. \"requests\" is a noun: things they asked to have built or fixed."
+  },
+  "title.yourVotes": {
+    "text": "Your votes",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the list of votes the person has cast on proposals."
+  },
+  "title.allApps": {
+    "text": "All apps",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the screen that lists every app on Homeroom."
+  },
+  "title.communities": {
+    "text": "Communities",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Communities screen, which lists the communities the person is in."
+  },
+  "title.platformStatus": {
+    "text": "Platform status",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the public page that shows whether Homeroom's services are working."
+  },
+  "title.admin": {
+    "text": "Admin & moderation",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the admin console, seen only by Homeroom's administrators."
+  },
+  "title.settings": {
+    "text": "Settings",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Settings screen."
+  },
+  "title.messages": {
+    "text": "Messages",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the Messages screen, which lists the person's conversations with people and agents."
+  },
+  "title.chat": {
+    "text": "Chat",
+    "description": "Title shown in the header bar, and as the browser tab's title, on a chat conversation screen. A noun."
+  },
+  "title.agentSession": {
+    "text": "Agent session",
+    "description": "Title shown in the header bar, and as the browser tab's title, on the screen of one agent session, where an AI agent builds a change."
+  },
+  "title.appNotAvailable": {
+    "text": "App not available",
+    "description": "Title shown in the header bar, and as the browser tab's title, on an app's page when the app could not be loaded or does not exist."
+  }
+}

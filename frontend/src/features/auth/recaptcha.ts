@@ -134,10 +134,9 @@ export async function phoneRecaptchaToken(): Promise<string | null> {
  * to Google's pages (RecaptchaLine in ./waitlist-shared.tsx, #4379).
  */
 export const RECAPTCHA_LINE = {
-  lead: 'Protected by reCAPTCHA · Google ',
-  privacy: { label: 'Privacy', href: 'https://policies.google.com/privacy' },
-  sep: ' · ',
-  terms: { label: 'Terms', href: 'https://policies.google.com/terms' },
+  // The words are auth:recaptcha.line; these are its two links, in order.
+  privacy: { href: 'https://policies.google.com/privacy' },
+  terms: { href: 'https://policies.google.com/terms' },
 } as const;
 
 /** Google's own wording for a page that hides the badge (the admin SMS console's test send). */

@@ -31,6 +31,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -77,6 +78,7 @@ function makeHarness(recordAnswers) {
   const answers = [...recordAnswers];
 
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { ...console, warn: () => {}, debug: () => {} },
     Date,
     escapeHtml: (s) => String(s),

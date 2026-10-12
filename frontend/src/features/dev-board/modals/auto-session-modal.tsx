@@ -22,6 +22,7 @@ import { CheckIcon, ChevronLeftIcon, InfoCircleIcon } from '@/components/ui/icon
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { autoSessionModalStore } from './modals-store';
 import type { AutoSessionModalView, ModelOption } from './model';
@@ -77,6 +78,7 @@ export function AutoSessionModelPicker({
   onCancel,
   onUse,
 }: ModelPickerProps): ReactNode {
+  const t = useMessages('project');
   const [query, setQuery] = useState('');
   const [draftId, setDraftId] = useState(selectedId);
   const matches = proposalModelMatches(view.options, query, draftId, view.openRouter === true);
@@ -98,18 +100,18 @@ export function AutoSessionModelPicker({
           variant="unstyled"
           size="icon"
           ink="none"
-          aria-label="Back to proposal summary"
+          aria-label={t('project:modals.generate.picker.back')}
           onClick={onBack}
           className="-ml-2 rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         >
           <ChevronLeftIcon className="h-5 w-5" aria-hidden="true" />
         </Button>
         <h2 id="auto-session-picker-title" className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
-          Choose a model
+          {t('project:modals.generate.picker.title')}
         </h2>
       </div>
       <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-        Recommended models are shown first. Search only if you need another model.
+        {t('project:modals.generate.picker.intro')}
       </p>
 
       {view.personalOpenRouterKey === true ? (
@@ -117,10 +119,10 @@ export function AutoSessionModelPicker({
           <InfoCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-violet-700 dark:text-violet-300" aria-hidden="true" />
           <div>
             <strong className="block font-semibold text-zinc-900 dark:text-zinc-100">
-              Using your own OpenRouter key
+              {t('project:modals.generate.picker.ownKey.title')}
             </strong>
             <p className="mt-0.5">
-              Model availability follows your OpenRouter privacy settings. To exclude providers that may train on your data, review those settings.
+              {t('project:modals.generate.picker.ownKey.body')}
             </p>
             <a
               href="https://openrouter.ai/settings/privacy"
@@ -128,24 +130,24 @@ export function AutoSessionModelPicker({
               rel="noopener noreferrer"
               className="mt-1 inline-block font-semibold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-600 dark:text-violet-300 dark:hover:text-violet-200"
             >
-              Review privacy settings
+              {t('project:modals.generate.picker.ownKey.link')}
             </a>
           </div>
         </div>
       ) : null}
 
-      <Label htmlFor="auto-session-model-search" className="sr-only">Search models</Label>
+      <Label htmlFor="auto-session-model-search" className="sr-only">{t('project:modals.generate.picker.searchLabel')}</Label>
       <Input
         id="auto-session-model-search"
         type="search"
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
         autoComplete="off"
-        placeholder="Search all available models…"
+        placeholder={t('project:modals.generate.picker.searchPlaceholder')}
         width="full"
       />
 
-      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label="Available models">
+      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1" role="radiogroup" aria-label={t('project:modals.generate.picker.listLabel')}>
         {visible.map((option) => {
           const selected = option.id === draftId;
           return (
@@ -184,28 +186,28 @@ export function AutoSessionModelPicker({
         })}
         {!visible.length ? (
           <p className="rounded-lg bg-zinc-50 px-3 py-5 text-center text-sm text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400">
-            {searching ? 'No models match that search.' : 'No recommended models are available.'}
+            {searching ? t('project:modals.generate.picker.noMatches') : t('project:modals.generate.picker.noRecommended')}
           </p>
         ) : null}
       </div>
 
       {matches.length > MAX_VISIBLE_MODELS ? (
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-          {`Showing the first ${MAX_VISIBLE_MODELS} of ${matches.length} matches. Keep typing to narrow the list.`}
+          {t('project:modals.generate.picker.truncated', { shown: MAX_VISIBLE_MODELS, count: matches.length })}
         </p>
       ) : null}
 
       <div className="mt-5 flex justify-end gap-2">
-        <Button type="button" variant="neutral" ink="neutral" onClick={onCancel}>Cancel</Button>
+        <Button type="button" variant="neutral" ink="neutral" onClick={onCancel}>{t('core:common.cancel')}</Button>
         <Button
           type="button"
           disabled={!draft}
-          aria-label={draft ? `Use ${draft.name}` : 'Use this model'}
-          title={draft ? `Use ${draft.name}` : undefined}
+          aria-label={draft ? t('project:modals.generate.picker.useNamed', { model: draft.name }) : t('project:modals.generate.picker.use')}
+          title={draft ? t('project:modals.generate.picker.useNamed', { model: draft.name }) : undefined}
           onClick={() => draft && onUse(draft.id)}
         >
           <span className="block max-w-36 truncate sm:max-w-52">
-            {draft ? `Use ${draft.name}` : 'Use this model'}
+            {draft ? t('project:modals.generate.picker.useNamed', { model: draft.name }) : t('project:modals.generate.picker.use')}
           </span>
         </Button>
       </div>
@@ -214,6 +216,7 @@ export function AutoSessionModelPicker({
 }
 
 export function AutoSessionCard({ view }: { view: AutoSessionModalView }): ReactNode {
+  const t = useMessages('project');
   const [chosen, setChosen] = useState(view.preselect);
   const [choosing, setChoosing] = useState(false);
   const option = view.options.find((item) => item.id === chosen) || null;
@@ -242,14 +245,14 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       aria-labelledby="auto-session-title"
     >
       <h2 id="auto-session-title" className="mb-2 text-lg font-bold text-zinc-900 dark:text-zinc-100">
-        {`Generate proposal for issue #${view.issueNumber}?`}
+        {t('project:modals.generate.title', { number: view.issueNumber })}
       </h2>
       <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{view.intro}</p>
 
       {option ? (
         <div className="mb-3 flex items-center gap-4 rounded-lg bg-zinc-100 p-4 dark:bg-zinc-800">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Model</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{t('project:modals.generate.modelLabel')}</p>
             <p className="mt-0.5 break-words text-sm font-semibold text-zinc-900 dark:text-zinc-100">{option.name}</p>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{option.summary}</p>
           </div>
@@ -262,7 +265,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
               onClick={() => setChoosing(true)}
               className="shrink-0 font-semibold text-violet-700 hover:text-violet-600 dark:text-violet-300 dark:hover:text-violet-200"
             >
-              Change model
+              {t('project:modals.generate.changeModel')}
             </Button>
           ) : null}
         </div>
@@ -283,7 +286,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
           ink="neutral"
           onClick={() => call('_autoSessionCancel')}
         >
-          Cancel
+          {t('core:common.cancel')}
         </Button>
         <Button
           type="button"
@@ -291,7 +294,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
           disabled={!option}
           onClick={() => call('_autoSessionConfirm', option?.id || '')}
         >
-          Generate proposal
+          {t('project:modals.generate.confirm')}
         </Button>
       </div>
     </DialogCard>

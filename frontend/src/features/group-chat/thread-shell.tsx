@@ -58,6 +58,7 @@
 
 import { useRef } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 
@@ -147,18 +148,21 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * `.dev-request` is what app.css tells the two apart by.
  */
 function RequestShell(props: ThreadShellProps) {
+  const t = useMessages('project');
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
   return (
     <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? 'Change' : 'Request'}>
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
           <div id="gc-thread-head" />
           <div id="gc-thread-messages" />
         </div>
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        {/* #4553: the button docks in a strip, so it never covers the change
+            or request cards (their Vote, Re-run checks, Preview) under it. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </section>
@@ -188,8 +192,10 @@ export function ThreadShell(props: ThreadShellProps) {
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />
         </div>
         {/* A topic opens at its card (#363), so the way down is up from the
-            start whenever the discussion runs past the screen. */}
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+            start whenever the discussion runs past the screen. #4553: the
+            button docks in a strip below the scroller, so it never covers
+            the card. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </div>

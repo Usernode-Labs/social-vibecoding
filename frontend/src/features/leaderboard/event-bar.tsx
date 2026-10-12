@@ -59,6 +59,7 @@
  */
 
 import { ChevronDownIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { eventBarStore } from './event-bar-store.js';
 import { useLeaderboardSection } from './section-store';
@@ -80,9 +81,8 @@ type HeroView =
     statusLabel: string;
     statusClass: string;
     description: string | null;
+    /** The whole line: the dates, and how many take part when that is known. */
     dates: string;
-    /** " · 12 taking part", or null when the server sent no count. */
-    participants: string | null;
     /** Whole-season standings — the selection is the season aggregate. */
     seasonNote: boolean;
     /** Nothing is running; this is the most recent event, not a choice. */
@@ -134,8 +134,9 @@ function context(): any {
 }
 
 function Hero({ hero }: { hero: HeroView }) {
+  const t = useMessages('leaderboard');
   if (hero.kind === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   }
   if (hero.kind === 'error') {
     return (
@@ -145,7 +146,7 @@ function Hero({ hero }: { hero: HeroView }) {
     );
   }
   if (hero.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">No event selected.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('leaderboard:eventBar.noneSelected')}</p>;
   }
   return (
     <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
@@ -160,7 +161,6 @@ function Hero({ hero }: { hero: HeroView }) {
       ) : null}
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
         {hero.dates}
-        {hero.participants}
       </p>
       {/*
           A season-type selection is badged and captioned for WHAT IT IS rather
@@ -169,13 +169,12 @@ function Hero({ hero }: { hero: HeroView }) {
       */}
       {hero.seasonNote ? (
         <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          {'Whole-season standings: every public event in this season, combined. '}
-          Pick a single event above to see just its results.
+          {t('leaderboard:eventBar.seasonNote')}
         </p>
       ) : null}
       {hero.fallbackNote ? (
         <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          Nothing is running right now, so this shows the most recent event.
+          {t('leaderboard:eventBar.fallbackNote')}
         </p>
       ) : null}
     </div>
@@ -189,6 +188,7 @@ const PICKER = 'w-full appearance-none rounded-2xl border border-zinc-200 dark:b
 export function EventBarView({
   mounted, options, placeholder, selectedId, hero, history, currentSeasonId, section,
 }: EventBarState & { section?: string }) {
+  const t = useMessages('leaderboard');
   if (!mounted || !history) return null;
   const onChallenges = section === 'challenges';
   const showHero = hero != null && !onChallenges;
@@ -210,7 +210,7 @@ export function EventBarView({
         <div className="relative w-full sm:max-w-xs">
           <select
             id="tc-ev-select"
-            aria-label="Event"
+            aria-label={t('leaderboard:eventBar.label')}
             className={PICKER}
             // A `<select>`'s onChange IS the native `change` event — it fires
             // on commit, not per keystroke — so the paged-query rule that
@@ -222,7 +222,7 @@ export function EventBarView({
               context()?.select?.(id);
             }}
           >
-            {placeholder !== null ? <option value="">{placeholder}</option> : null}
+            {placeholder !== null ? <option value="">{t(placeholder)}</option> : null}
             {choices.map((ev) => (
               <option key={ev.id} value={String(ev.id)}>{ev.label}</option>
             ))}
@@ -240,7 +240,7 @@ export function EventBarView({
           className={showPicker ? `mt-3 ${PAST_LINK}` : PAST_LINK}
           onClick={openHistory}
         >
-          Past seasons →
+          {t('leaderboard:eventBar.pastSeasons')}
         </button>
       ) : null}
       <div id="tc-ev-hero" className={showHero ? 'mt-3' : undefined}>

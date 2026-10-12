@@ -66,6 +66,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
+  ['src/routes/languages.js', 'the shell\'s own language list and packs, read by its language runtime as it boots, never a model-visible control'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
   ['src/routes/topochain/partner.js', 'partner service protocol'],
@@ -643,12 +644,22 @@ function discoverSettings() {
   // One entry per PART (a [data-settings-section] wrapper). `page` groups
   // parts into one nav row; every part's own #settings/<key> still resolves,
   // so each part stays an inspectable settings group of its own.
+  // The registry names each part and its group by message id
+  // (`settings:nav.part.profile`); the inventory records the English.
+  const english = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'frontend', 'locales', 'en', 'settings.json'), 'utf8',
+  ));
+  const said = (id) => {
+    const entry = english[id.replace(/^settings:/, '')];
+    if (!entry) throw new Error(`No English text for ${id}`);
+    return entry.text;
+  };
   return [...sectionBlock[1].matchAll(
     /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
-    label: match[2],
-    group: match[3],
+    label: said(match[2]),
+    group: said(match[3]),
     gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,

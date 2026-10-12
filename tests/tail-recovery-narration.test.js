@@ -131,7 +131,7 @@ test('a successful mid-exec replay stamps tail_pending before the tail writes mi
 
   const resumeAt = fn.indexOf('worker.resumeTurnFromJournal(');
   const stampGuardAt = fn.indexOf(
-    'turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING'
+    'const replayedPhase = turnLifecycle.phaseOf(recoveryActiveTurn);'
   );
   const stampAt = fn.indexOf('worker.markTurnTail(');
   const firstTailWorkAt = fn.indexOf('resumeRecoveredCodexFreshRetry');
@@ -146,8 +146,15 @@ test('a successful mid-exec replay stamps tail_pending before the tail writes mi
   // The guard must stay narrow: an interrupted TAIL is already
   // tail_pending, and re-stamping would clobber its milestone map with the
   // fresh seed (redoing non-idempotent tail steps on the next resume).
-  assert.match(fn, /=== turnLifecycle\.PHASE_EXECUTING\) \{/,
-    'only the executing phase is stamped');
+  //
+  // Change 7490 (9 Oct 2026): a record still in dispatch_pending is the
+  // other phase with no milestone map. Its replay is over too, and without
+  // the stamp recovery retried "milestone attempted from dispatch_pending"
+  // through five restarts while the proposal read as running.
+  const guard = fn.slice(stampGuardAt, stampAt);
+  assert.match(guard, /replayedPhase === turnLifecycle\.PHASE_EXECUTING\s*\n\s*\|\| replayedPhase === turnLifecycle\.PHASE_DISPATCH_PENDING\) \{/,
+    'executing and dispatch_pending are stamped');
+  assert.doesNotMatch(guard, /PHASE_TAIL_PENDING|'tail'/, 'and never an interrupted tail');
 });
 
 test('the warm-idle branch narrates a dangling tail instead of returning silently', () => {

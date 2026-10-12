@@ -2,6 +2,8 @@ import { useState } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /*
  * "Notify me when it's ready", inside a first version's plan card once its
  * maker pressed Build it, while it is being built (./bot-plan.tsx
@@ -32,9 +34,9 @@ import { CheckIcon } from '@/components/ui/icons';
 export type NotifyMeState = 'offer' | 'asking' | 'granted' | 'denied' | 'here';
 
 /** What the button says before it is tapped, once it is, and when notifications are off. */
-export const NOTIFY_ME_OFFER = 'Notify me when it’s ready';
-export const NOTIFY_ME_DONE = 'I’ll notify you';
-export const NOTIFY_ME_OFF = 'Notifications are off';
+export const NOTIFY_ME_OFFER = 'messages:bot.notify.offer';
+export const NOTIFY_ME_DONE = 'messages:bot.notify.done';
+export const NOTIFY_ME_OFF = 'messages:bot.notify.off';
 
 const CHOSEN_KEY = 'usernode:notify-me-chosen';
 
@@ -105,10 +107,11 @@ export function NotifyMeView({ state, settings = false, onTap, onSettings }: {
   onTap?: () => void;
   onSettings?: () => void;
 }) {
+  const t = useMessages('messages');
   const done = state !== 'offer' && state !== 'asking';
   const off = state === 'denied';
   return (
-    <div className="messages-bot-answers" role="group" aria-label="Notifications" aria-live="polite">
+    <div className="messages-bot-answers" role="group" aria-label={t('messages:bot.notify.groupName')} aria-live="polite">
       <button
         type="button"
         className={done ? 'messages-bot-done' : 'messages-bot-tint'}
@@ -117,10 +120,10 @@ export function NotifyMeView({ state, settings = false, onTap, onSettings }: {
         onClick={() => onTap?.()}
       >
         {done && !off ? <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-        <span>{off ? NOTIFY_ME_OFF : done ? NOTIFY_ME_DONE : NOTIFY_ME_OFFER}</span>
+        <span>{off ? t(NOTIFY_ME_OFF) : done ? t(NOTIFY_ME_DONE) : t(NOTIFY_ME_OFFER)}</span>
       </button>
       {off && settings ? (
-        <button type="button" className="messages-bot-secondary" onClick={() => onSettings?.()}>Turn on notifications</button>
+        <button type="button" className="messages-bot-secondary" onClick={() => onSettings?.()}>{t('messages:bot.notify.turnOn')}</button>
       ) : null}
     </div>
   );

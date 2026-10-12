@@ -114,6 +114,19 @@ export interface BotRequestChip {
 }
 
 /**
+ * 10 October: what Homeroom bot offered to do in its reply in a thread
+ * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
+ * open a vote on closing a request. Nothing happens until the person it was
+ * offered to (`forMe`) taps Yes; once decided, `status` is no longer
+ * 'open' and the buttons go, for everybody.
+ */
+export interface BotOfferView {
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
+  forMe: boolean;
+  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+}
+
+/**
  * Where a card's request (or fix) stands now, read from the platform's
  * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
  * `waitingOn` and `youApprove` say who still has to approve a built change,
@@ -260,6 +273,8 @@ export interface Attachment {
   kind: string;
   /** The filename, as a text child — never interpolated into an attribute. */
   name: string;
+  /** The file has no name; `name` is a stand-in label and the tooltips use their unnamed wording. */
+  unnamed?: boolean;
   url: string;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -272,7 +287,8 @@ export interface ThreadSummaryView {
   lastReplyAt: string | null;
   participants: string[];
   /** The newest reply, which the card under the message shows (#2387 follow-up). */
-  lastReply?: { name: string; text: string } | null;
+  /** `unnamed`: nobody to name; `name` is the stand-in shown where a name would be. */
+  lastReply?: { name: string; unnamed?: boolean; text: string } | null;
 }
 
 /**
@@ -291,6 +307,8 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  /** No author came with the row; `username` is a stand-in and sentences use their own wording. */
+  usernameMissing?: boolean;
   senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
@@ -362,6 +380,8 @@ export interface TranscriptMessage {
    * version" message in a project's channel. Absent or null on every other row.
    */
   openApp?: { label: string; target: string } | null;
+  /** 10 October: the buttons under Homeroom bot's offer in a thread. Absent or null on every other row. */
+  botOffer?: BotOfferView | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or
@@ -433,6 +453,8 @@ export interface SpecShareView {
   /** The header the panel shows while the fetch is in flight. */
   previewTitle: string;
   sharedBy: string;
+  /** `sharedBy` is a stand-in word, not an account's name: sentences use their unnamed wording. */
+  sharedByUnknown?: boolean;
   version: number;
   /** Formatted build time, or null when the share carried none. */
   built: string | null;
@@ -497,6 +519,32 @@ export interface TranscriptLead {
    * absent with nothing unread.
    */
   unread?: { lastReadId: number; count: number } | null;
+  /**
+   * #4417: cards the history draws BY TIME, the way a date divider is drawn,
+   * rather than as rows of the stream: in a topic's channel, one for each
+   * topic merged into it, at the moment the merge applied. Drawn from the
+   * merge itself (app_category_registry), never from a message, so nothing
+   * was posted for them. Null or absent on every other transcript.
+   */
+  markers?: TranscriptMarker[] | null;
+  /**
+   * #4417 follow-up: the general pane holds a topic's channel and has older
+   * history it has not loaded yet. It pages back as the reader scrolls up,
+   * with no "Load earlier" control (`earlier`), so this says the same to the
+   * markers: one older than every loaded row waits for that page.
+   */
+  moreBefore?: boolean;
+}
+
+/** #4417: one card drawn in a history at a moment (see TranscriptLead.markers). */
+export interface TranscriptMarker {
+  /** Stable across publishes, for React's key. */
+  key: string;
+  /** ISO: where in the history it is drawn. */
+  at: string;
+  kind: 'merged-topic';
+  /** The topic that was merged in. */
+  from: { handle: string; name: string; icon: string };
 }
 
 export interface TranscriptView {

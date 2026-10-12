@@ -60,6 +60,7 @@
 // constructs nothing but routes, and dispatches the request into it. There
 // stays exactly one implementation of "put a change up for a vote".
 
+const { firstPerson } = require('./homeroom-bot-words');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -184,7 +185,14 @@ function questionText({ question, plan = null }) {
   return lines.join('\n');
 }
 
-function personText({ reason }) {
+function personText({ reason, platform = false }) {
+  // #4239: about Homeroom itself. The requester is offered the move in their
+  // DM; the project's creator and admins, who see only this note, are told
+  // they can move it too (homeroom-bot-move.js moveGate).
+  if (platform) {
+    return `Homeroom bot thinks this is about Homeroom itself, not this project: ${clipText(reason) || 'no reason given.'}\n\n`
+      + 'Whoever asked for it, or this project\'s creator or admins, can move it to Homeroom\'s own board by asking Homeroom bot in a chat.';
+  }
   return `Homeroom bot thinks a person needs to decide this one: ${clipText(reason) || 'no reason given.'}`;
 }
 
@@ -419,6 +427,21 @@ function requestRulesLines() {
   ];
 }
 
+// #4645: the language rule every prompt that writes text people read
+// carries, in the words the change's group asked for: match the user's
+// locale in DMs, default to English otherwise. `locale` is the requester's
+// language preference (users.locale, set in Settings → Language; null or
+// unset means English), read from the request's recorded requester
+// (homeroom-bot-dm.js requesterOf). Homeroom ships English only, so the
+// unset wording is what nearly every turn reads, and it keeps the English
+// the prompts pinned before this rule could name a locale.
+function localeRule(locale) {
+  const tag = String(locale || '').trim().slice(0, 35);
+  return tag
+    ? `Match the user's locale in DMs and default to English otherwise: the requester's locale is \`${tag}\`.`
+    : 'Match the user\'s locale in DMs and default to English otherwise: the requester\'s locale is unset, so write English.';
+}
+
 // A turn's progress lines to its own record (lastActivity) and, for a
 // benchmark trial, to the trial's watch as well (services/bench/progress.js).
 // The caller's listener can never break the turn.
@@ -518,8 +541,10 @@ function specDesignBrief(firstVersion = false, starter = null) {
 
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
+  // #4645: the requester's locale, for the language rule below.
+  locale = null,
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale });
   return [
     seed,
     '',
@@ -544,6 +569,7 @@ function specPrompt({
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    `- ${localeRule(locale)}`,
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -572,7 +598,7 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null }) {
   return [
     seed,
     '',
@@ -596,6 +622,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    `- ${localeRule(locale)}`,
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -959,10 +986,12 @@ function planCommentText({ spec, questions = [] }) {
  * The spec as a thread message: the same spec card a person's "Share"
  * posts (metadata.specShare), opening the version the build worked from.
  */
-function specCard({ sessionId, version, spec, bot, proposed = false, approved = false, asking = false }) {
+function specCard({ sessionId, version, spec, bot, proposed = false, revised = false, approved = false, asking = false }) {
   const title = specTitle(spec);
   const content = proposed
-    ? `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
+    ? revised
+      ? `📋 The plan, updated for this change (version ${Number(version)})${title ? `: "${title}"` : ''}.`
+      : `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
     : asking ? `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}, with its before and after screens. `
       + `It builds nothing until the person who asked says so: ${PLAN_REPLY_HINT}`
       : approved ? `📋 Homeroom bot is building the plan that was approved${title ? `: "${title}"` : ''}.`
@@ -1000,14 +1029,71 @@ async function shareSpecVersion(pool, sessionId, version) {
 }
 
 /** The spec card in the proposal's own discussion, once it is up. */
-async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec }) {
+async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec, revised = false }) {
   if (!spec || !version || !sessionId) return null;
   await shareSpecVersion(pool, sessionId, version);
-  const card = specCard({ sessionId, version, spec, bot, proposed: true });
+  const card = specCard({ sessionId, version, spec, bot, proposed: true, revised });
   return ws.sendBotMessage(pool, app.id, {
     user: bot, content: card.content, metadata: card.metadata,
     thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
   });
+}
+
+/**
+ * #4612: the copy of an updated plan on the GitHub issue, after a revise
+ * turn published a new version: what it is, then the document in the same
+ * collapsed block the first plan was posted in.
+ */
+function revisedSpecCommentText(spec, version) {
+  return [
+    `Homeroom bot updated the plan for this change to match (version ${Number(version)}).`,
+    '',
+    '<details><summary>The plan</summary>',
+    '',
+    clipText(spec, MAX_SPEC_COMMENT_CHARS),
+    '',
+    '</details>',
+  ].join('\n');
+}
+
+/**
+ * #4612: the copy of an updated plan on the GitHub issue, posted through the
+ * same seam every other comment takes (homeroom-bot.js never reaches
+ * createIssueComment itself). Resolves the comment, or null when there was
+ * nothing to post.
+ */
+async function postRevisedSpecComment({ github, repo, issueNumber, spec, version }) {
+  if (!github?.createIssueComment || !repo || !issueNumber || !spec || !version) return null;
+  return github.createIssueComment(repo.owner, repo.repo, Number(issueNumber), revisedSpecCommentText(spec, version));
+}
+
+/**
+ * #4612: how a follow-up that revises what the change does writes its
+ * updated plan: the same two choices the spec turn makes for the app
+ * (draftSpec: HTML when htmlSpecs names it, and whose stylesheet its
+ * screens draw), said briefly. The revised plan is stored and posted like
+ * any other spec version.
+ */
+function followUpPlanFormat({ config, app, locale = null }) {
+  const html = specHtml.htmlSpecsEnabledFor(config, app?.slug);
+  const platformStyles = specHtml.specStylesFor({ slug: app?.slug, self_hosted: app?.self_hosted }) === 'platform';
+  if (html) {
+    return [
+      'Write the updated plan as an HTML document: start with <h1> Title and end with </article>, no preamble.',
+      '- Two sections, "user" (what people will see and do differently, no file paths) then "tech" (the files,',
+      '  data, edge cases and tests). Title it with what the change DOES, at most 72 characters.',
+      `- Written without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)}`,
+      specHtmlContract(platformStyles),
+    ].join('\n');
+  }
+  return [
+    'Write the updated plan as markdown, as raw markdown: no preamble, and not wrapped in a code fence.',
+    '- Start with a "# " title line naming what the change does now, then two halves under these exact H2',
+    '  headings, in this order: "## User-facing changes" then "## Technical implementation". The user half is',
+    '  what people will see and do differently, no file paths; the technical half holds the files, data, edge',
+    '  cases and tests.',
+    `- Written without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)}`,
+  ].join('\n');
 }
 
 // ── Who filed the issue ──────────────────────────────────────────────────
@@ -1263,8 +1349,21 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
+  skipIssueThread = false, skipGithub = false,
 }) {
+  // Answered where it was asked: a reply to people who wrote only in the
+  // change's own discussion is said there alone, with no GitHub comment and
+  // no copy in the request's thread (9 Oct 2026: every answer on PR #4584
+  // was posted twice, the request's copy with "@evan" in front).
+  const proposalOnly = !!(onlyProposal && proposalSessionId);
+  // 10 October: what the bot's voice tells people itself, where they asked
+  // (homeroom-bot-voice.js reportFollowUp), is not said again here: the
+  // request's thread (`skipIssueThread`) and GitHub (`skipGithub`, which
+  // then hears only milestones) are left out, and the post is recorded,
+  // and relayed to the requester's DM when it carries `dm`, as before.
+  const noComment = proposalOnly || !!skipGithub;
+  const noIssueThread = proposalOnly || !!skipIssueThread;
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass. #4488: `untag` is somebody already told in
   // their DM with the bot, as untaggedRequester leaves them out below.
@@ -1288,10 +1387,12 @@ async function post({
   const postId = rows[0].id;
   let comment = null;
   let message = null;
-  try {
-    comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
-  } catch (err) {
-    log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  if (!noComment) {
+    try {
+      comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
+    } catch (err) {
+      log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   // #3624: the same news, in the requester's DM with the bot, when they
   // are somebody it talks to there. A post that carries `dm` is one worth
@@ -1324,19 +1425,24 @@ async function post({
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
-  const threadText = handles ? `${handles} ${text}` : text;
-  try {
-    // A spec is a card in the thread (its full text is on GitHub, and one
-    // click away from the card), not a wall of markdown in a chat bubble.
-    message = threadMessage && sender
-      ? await ws.sendBotMessage(pool, app.id, {
-        user: sender, content: handles ? `${handles} ${threadMessage.content}` : threadMessage.content,
-        metadata: threadMessage.metadata,
-        thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
-      })
-      : await inThread(threadText, { type: 'issue', ref: issueNumber });
-  } catch (err) {
-    log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  // In Homeroom the note is the bot's own bubble, so it says it in the first
+  // person (homeroom-bot-words.js); GitHub keeps it as written.
+  const own = firstPerson(text);
+  const threadText = handles ? `${handles} ${own}` : own;
+  if (!noIssueThread) {
+    try {
+      // A spec is a card in the thread (its full text is on GitHub, and one
+      // click away from the card), not a wall of markdown in a chat bubble.
+      message = threadMessage && sender
+        ? await ws.sendBotMessage(pool, app.id, {
+          user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
+          metadata: threadMessage.metadata,
+          thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
+        })
+        : await inThread(threadText, { type: 'issue', ref: issueNumber });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
@@ -1362,7 +1468,7 @@ async function post({
   let proposalMessage = null;
   if (proposalSessionId) {
     try {
-      proposalMessage = await inThread(text, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
+      proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
@@ -1370,14 +1476,14 @@ async function post({
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3
       WHERE id = $1`,
-    [postId, comment?.id ?? null, message?.id ?? null],
+    [postId, comment?.id ?? null, (message || (proposalOnly ? proposalMessage : null))?.id ?? null],
   ).catch(() => {});
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
-  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage) };
 }
 
 /**
@@ -1398,7 +1504,7 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   let message = null;
   try {
     message = await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+      user: bot, content: firstPerson(text), thread: { type: 'session', ref: Number(sessionId) },
     });
   } catch (err) {
     log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
@@ -1601,21 +1707,25 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 // #3518: the proposal's summary, the text the group reads before it votes.
 // The same block an OpenRouter dev chat turn ends with (#2820), parsed by
 // proposal-description.js; prepareProposal files it where the promote route
-// reads it.
-const BUILD_DESCRIPTION_LINES = Object.freeze([
-  '',
-  'After the summary the rules above ask for, end your final message with a description of the change for the',
-  'people who will vote on it, between these two marker lines:',
-  '',
-  '==== DESCRIPTION ====',
-  'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
-  'now do, or what stops going wrong.',
-  '==== END DESCRIPTION ====',
-  '',
-  'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
-  'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
-  'block only if you changed nothing.',
-]);
+// reads it. The language rule it ends with is the change's one wording rule
+// (localeRule): a description is for the group, so it reads English unless
+// a DM context is carrying the requester's locale.
+function buildDescriptionLines(locale = null) {
+  return [
+    '',
+    'After the summary the rules above ask for, end your final message with a description of the change for the',
+    'people who will vote on it, between these two marker lines:',
+    '',
+    '==== DESCRIPTION ====',
+    'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
+    'now do, or what stops going wrong.',
+    '==== END DESCRIPTION ====',
+    '',
+    'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
+    'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop.',
+    `${localeRule(locale)} Skip the block only if you changed nothing.`,
+  ];
+}
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
 // a person's do, and the group relies on them to check a small change that
@@ -1627,8 +1737,12 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
 // key: a change to the bot's own replies declared as "ask the bot" had its
 // shots end on "I can't reach my model" (PR 4536), so the build is told to
 // start from a reply already there. The tool's answer warns about it too
-// (shots-ready-states.js).
-const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
+// (shots-ready-states.js). Most states the copies lacked were new in the
+// change itself (22 failed runs and 13 skipped changes, 2026-10-09 to 10-12),
+// so the build seeds a new state in the same change: the after copy, where
+// that seed lands, is the side a new state needs.
+function buildVisibleChangesLines(locale = null) {
+  return [
   '',
   'Once the change is built and committed, call the provided declare_visible_changes tool once, with the changes',
   'as you actually built them: one to three, each a claim in plain words a voter would recognise, the real',
@@ -1645,7 +1759,14 @@ const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   'it cannot reach its model there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot',
   '(or any AI feature) for something and wait for its reply. Start from a state that already holds the reply: a',
   'ready-made state the tool\'s answer lists, or a message the app\'s staging seed writes.',
-]);
+  'When a fresh staging copy lacks the state a change shows, add an idempotent, obviously fake staging seed for it in',
+  'this same change: it reaches the after copy, which is the side a new state needs. Seed rows for the shots\' own',
+  'accounts (usernode-capture is the member) and fake people, never a signal your code reads to decide something,',
+  'and a reply as the stored message, never asked for. A change to a state that already existed needs it on both',
+  'copies, which a seed in this change cannot give: make it with hints.setup steps, or say in your summary that its',
+  'seed must merge first, in its own change.',
+  ];
+}
 
 // A build of the platform's own repository runs its tests the way that
 // repository's AGENTS.md asks every agent to: the suites that pin what it
@@ -1866,6 +1987,9 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // #4645: the requester's locale, for the language rule the description and
+  // declared-change lines below carry.
+  locale = null,
 }) {
   const time = clock ? clockLines(clock) : [];
   const specBlock = spec
@@ -1907,8 +2031,8 @@ function buildPrompt({
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
-    ...(firstVersion ? [] : BUILD_VISIBLE_CHANGES_LINES),
-    ...BUILD_DESCRIPTION_LINES,
+    ...(firstVersion ? [] : buildVisibleChangesLines(locale)),
+    ...buildDescriptionLines(locale),
   ].join('\n');
 }
 
@@ -2119,6 +2243,8 @@ async function draftSpec({
   harness = 'auto', reasoningEffort = null,
   // The game starter a first version builds on (services/app-templates.js).
   starter = null,
+  // #4645: the requester's locale, for the spec's language rule.
+  locale = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -2132,7 +2258,7 @@ async function draftSpec({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter,
+    seed, buildNote, firstVersion, guidance, starter, locale,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -2412,6 +2538,32 @@ async function recordNoChange(pool, { noChange, which = 'all', recovered = false
  * fresh thread would get the nudge alone, with no spec to build. Its
  * `telemetry` names the turn on its own ledger row.
  */
+const SHOTS_WAIT_MS = 6 * 60_000;
+
+/**
+ * #4575: wait, at most `deps.shotsWaitMs` (six minutes), for a before &
+ * after shots run in flight on the session to end. Resolves 'idle' when
+ * there was none, 'finished' or 'timeout'; never throws.
+ */
+async function waitOutShotsRun(sessionId, deps = {}) {
+  let run = null;
+  try {
+    run = (deps.shotsRunFor || require('./shots-orchestrator').inFlightRunFor)(Number(sessionId));
+  } catch { run = null; }
+  if (!run) return 'idle';
+  log.info('homeroom-bot', 'Turn waits for the before & after shots running on its session', { sessionId });
+  let timer = null;
+  const finished = await Promise.race([
+    Promise.resolve(run).then(() => true, () => true),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), deps.shotsWaitMs ?? SHOTS_WAIT_MS);
+      if (typeof timer.unref === 'function') timer.unref();
+    }),
+  ]);
+  clearTimeout(timer);
+  return finished ? 'finished' : 'timeout';
+}
+
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
@@ -2424,6 +2576,12 @@ function buildTurnRunner({
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
     const telemetry = turnTelemetry || runnerTelemetry;
+    // #4575: before & after shots on this session hold it from their first
+    // build until their agent finishes, but write no turn record until they
+    // dispatch. Let a run that is under way finish first, as the Mayor's
+    // dispatch does, so this turn does not take the session from under it;
+    // the wait is not charged to the turn's own clock.
+    await waitOutShotsRun(session.id, deps);
     let turnStopped = false;
     let stopping = null;
     const timer = setTimeout(() => {
@@ -2502,10 +2660,10 @@ function buildTurnRunner({
  * session's own transcript. Resolves the version, or null when it could not
  * be stored (the build goes on from the spec either way).
  */
-async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model }) {
+async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model, revised = false }) {
   try {
     const published = await sessions.persistScoutPublication({
-      pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}), hadSpec: false,
+      pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}), hadSpec: !!revised,
       agentBackend: 'codex_openrouter', agentModel: model,
     });
     return published?.specVersion ?? null;
@@ -2569,6 +2727,10 @@ async function buildAndPropose({
   // #4488: the plan was checked with its requester first, which its
   // description says (prepareProposal).
   checkedFirst = false,
+  // #4645: the requester's language preference (users.locale; null unset),
+  // for the language rule the prompts that write to people carry
+  // (localeRule). The caller reads it off the request's recorded requester.
+  locale = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2739,6 +2901,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
+      locale,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -2832,6 +2995,7 @@ async function buildAndPropose({
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -2954,6 +3118,7 @@ async function buildAndPropose({
     reviewed = await reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
+      locale,
       start: {
         sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
@@ -3053,6 +3218,8 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
 async function reviewLanded({
   pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
+  // #4645: the requester's locale, for the review prompts' language rule.
+  locale = null,
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
@@ -3081,7 +3248,7 @@ async function reviewLanded({
     worker.clearPendingStop?.(session.id);
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
-        seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo,
+        seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
       }),
       budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
       resumeThreadId: null,
@@ -3107,7 +3274,8 @@ async function reviewLanded({
       capture,
       review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
         pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
-        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, deps: deps.reviewDeps || {},
+        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, locale,
+        deps: deps.reviewDeps || {},
       }),
       fix,
       rollback: ({ sha }) => rollbackReviewBranch({ github: deps.github, repo, branchName, sha }),
@@ -3125,6 +3293,7 @@ async function reviewLanded({
 }
 
 module.exports = {
+  waitOutShotsRun,
   askerOf,
   creditedDescription,
   checkedDescription,
@@ -3167,7 +3336,9 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
-  BUILD_VISIBLE_CHANGES_LINES,
+  buildVisibleChangesLines,
+  buildDescriptionLines,
+  localeRule,
   clockLines,
   BUILD_SOFT_BUDGET_MS,
   DRAG_TEST_LINES,
@@ -3226,8 +3397,12 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  revisedSpecCommentText,
+  postRevisedSpecComment,
+  followUpPlanFormat,
   SPEC_TURN_MAX_MS,
   readSpec,
+  publishSpec,
   specShaped,
   MAX_SPEC_COMMENT_CHARS,
 };

@@ -47,6 +47,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
 
@@ -150,6 +151,7 @@ function makeHarness(storage = new Map()) {
   sandbox.globalThis = sandbox;
   sandbox.UsernodeReact = { devChat: composer.bridge };
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -367,13 +369,10 @@ test('the circle advertises the shortcut in each of its two live states', () => 
   // The two spellings the retired hint line carried, now the titles of the
   // one control that performs them. Both must name the keystroke — the
   // tooltip is the only place it is written down.
-  const send = /const SEND_TITLE\s*=\s*'([^']+)'/.exec(src);
-  const save = /const SAVE_TITLE\s*\n?\s*=\s*'([^']+)'/.exec(src);
-  assert.ok(send && save, 'both titles are declared');
-  assert.match(send[1], /Ctrl\+Enter/);
-  assert.match(save[1], /Ctrl\+Enter/);
-  assert.match(src, /title=\{SEND_TITLE\}/, 'the send shape wears its title');
-  assert.match(src, /title=\{SAVE_TITLE\}/, 'the save shape wears its title');
+  assert.match(message('devchat:composer.sendTitle'), /Ctrl\+Enter/);
+  assert.match(message('devchat:composer.saveDraftTitle'), /Ctrl\+Enter/);
+  assert.match(src, /title=\{t\('devchat:composer\.sendTitle'\)\}/, 'the send shape wears its title');
+  assert.match(src, /title=\{t\('devchat:composer\.saveDraftTitle'\)\}/, 'the save shape wears its title');
 });
 
 // ── The real keydown wiring ────────────────────────────────────────────

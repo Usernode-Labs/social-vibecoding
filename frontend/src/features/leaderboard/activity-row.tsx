@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 /**
  * One points activity, with when it happened (#3648), for the activity lists in the
  * profile overlay (./challenges-pane.tsx) and the standings drill-down
@@ -69,7 +72,11 @@ export function activityWhen(
   const fullDay = format(date, `full-${z}`, { ...zone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   if (dateOnly) return { text: day, title: fullDay, iso: date.toISOString() };
   const time = format(date, 'time', { hour: '2-digit', minute: '2-digit' });
-  return { text: `${day} · ${time}`, title: `${fullDay}, ${time}`, iso: date.toISOString() };
+  return {
+    text: translate('leaderboard:activity.dayTime', { day, time }),
+    title: translate('leaderboard:activity.dayTimeFull', { day: fullDay, time }),
+    iso: date.toISOString(),
+  };
 }
 
 /**
@@ -78,6 +85,8 @@ export function activityWhen(
  * beside the points rather than pushing them off the row.
  */
 export function ActivityRow({ text, points, at }: { text: string; points: string; at?: string | null }): ReactNode {
+  // Subscribed: the date line's separator is read by activityWhen.
+  useMessages('leaderboard');
   const when = activityWhen(at);
   return (
     <li className="flex items-start justify-between gap-3 text-xs">

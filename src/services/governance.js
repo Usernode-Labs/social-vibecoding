@@ -33,6 +33,16 @@
 // eligibility (app-access collab guards) is deliberately unchanged —
 // approver-ness only changes which votes COUNT.
 //
+// 4. #4666, WHO SAYS YES: a project whose dapp.json names a `preset` or
+//    `rules` (services/governance-rules.js) is decided by those rules
+//    instead of the two columns: the creator's yes, a count from a group,
+//    a share of a group, or the time-&-majority vote over a group, any
+//    one passing. Stored in apps.governance_rules; NULL keeps regimes 1-3
+//    exactly as they were, for every project that never chose. The facts
+//    a rule needs that a count cannot give (who voted, who made the
+//    project, who is in a group) are read by governedGate, and handed to
+//    computeGate by the serializers that batch them (rulesContext).
+//
 // Deadlock escape: when the policy is 'invited' but the app has zero
 // approver members (e.g. the self-app before any invite is accepted,
 // or every approver left), full admins (is_admin AND NOT
@@ -47,6 +57,7 @@ const { countedVotePredicateSql } = require('./pr-vote-revision');
 // machine, which decides with them inside its transaction.
 const gateRules = require('../workflow/rules/governance-gate.ts');
 const electorateRules = require('../workflow/rules/electorate.ts');
+const governanceRules = require('./governance-rules');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -60,10 +71,13 @@ function activeUsers() {
 // visibility caches in services/app-access.js: reads happen on every
 // vote/serialize, changes are rare and always call invalidateGovernance.
 const GOV_CACHE_TTL_MS = 10 * 1000;
-const govCache = new Map(); // appId -> { at, value: { approverPolicy, approvalsRequired } }
+const govCache = new Map(); // appId -> { at, value: { approverPolicy, approvalsRequired, rules } }
+// The app facts a rules project's gate reads (rulesFacts), on the same TTL.
+const factsCache = new Map(); // appId -> { at, value }
 
 function invalidateGovernance(appId) {
   govCache.delete(appId);
+  factsCache.delete(appId);
 }
 
 async function getGovernance(pool, appId) {
@@ -82,10 +96,32 @@ async function readGovernance(pool, appId) {
     'SELECT approver_policy, approvals_required FROM apps WHERE id = $1',
     [appId]
   );
-  return governanceFromRow(rows[0]);
+  const gov = governanceFromRow(rows[0]);
+  gov.rules = await readRules(pool, appId);
+  return gov;
 }
 
-const { governanceFromRow } = gateRules;
+// #4666: the rules a project chose (apps.governance_rules), or null. Its own
+// statement, so the two-column read above is the one every caller and test
+// has always seen. A failed read is the columns' rule, which is never more
+// permissive than a rule a project chose: the creator's yes and the counted
+// rules only ever ADD ways in.
+async function readRules(pool, appId) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT governance_rules FROM apps WHERE id = $1',
+      [appId]
+    );
+    return rulesFromColumn(rows[0]?.governance_rules);
+  } catch (err) {
+    log.warn('governance', 'Could not read the approval rules; using the columns', { appId, err: err.message });
+    return null;
+  }
+}
+
+// The governance columns of an apps row (and its rules, when the row
+// carries governance_rules), and apps.governance_rules as the gate reads it.
+const { governanceFromRow, rulesFromColumn } = gateRules;
 
 // The approver electorate for an 'invited'-policy app: member rows in
 // app_approvers, or (when the roster is empty) the full-admin fallback
@@ -99,7 +135,7 @@ const { getApproverSet } = electorateRules;
 async function isApprover(pool, appId, userId) {
   if (!userId) return false;
   const gov = await getGovernance(pool, appId);
-  if (gov.approverPolicy !== 'invited') return false;
+  if (gov.approverPolicy !== 'invited' || gov.rules) return false;
   const { ids } = await getApproverSet(pool, appId);
   return ids.includes(userId);
 }
@@ -121,6 +157,11 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
   return gateRules.computeGate(gov, active, yesCount, noCount, openedAt, now, opts,
     { mergeGate: au.mergeGate, oppositionWindowMs: au.oppositionWindowMs });
 }
+
+// #4666: whether a flagged proposal is a change to who decides, and the
+// gate for a project with rules of its own (computeGate dispatches to it):
+// src/workflow/rules/governance-gate.ts.
+const { isWhoDecidesReason } = gateRules;
 
 // Qualifying yes/no counts for ONE proposal. `kind` picks the vote
 // table: 'pr' → pr_votes (yes/no keyed by session_id), 'issue' →
@@ -297,6 +338,172 @@ async function getElectorate(pool, appId, gov, appMeta = null) {
     (db, id, meta) => activeUsers().getActiveUserStats(db, id, meta));
 }
 
+// #4747: whether this viewer's vote can affect a proposal's outcome under
+// the project's governance — the deciding set the gate itself reads, as
+// opposed to counts_toward_outcome's identity/app-access question. True for
+// a signed-out viewer (they see no vote controls and are not flagged) and
+// for every project without approvers or rules. A rules project reads the
+// same value the gate does (WHO_DECIDES for a flagged change to who
+// decides), and a viewer inside ANY rule's group decides: the gate passes
+// when any rule passes. Display only; nothing here changes who counts.
+function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReason }, viewerId) {
+  if (viewerId == null) return true;
+  const id = parseInt(viewerId, 10);
+  if (!Number.isFinite(id)) return true;
+  if (gov && gov.rules) {
+    const value = explicitApproval && isWhoDecidesReason(explicitReason ?? null)
+      ? { rules: governanceRules.WHO_DECIDES }
+      : gov.rules;
+    return value.rules.some((rule) => {
+      if (rule.group === 'members') return true;
+      if (rule.group === 'creator') return facts ? facts.creatorId === id : false;
+      if (rule.group === 'admins') return !!facts && (facts.adminIds || []).includes(id);
+      return !!facts && (facts.groups.get(rule.group) || []).includes(id);
+    });
+  }
+  if (gov && gov.approverPolicy === 'invited') {
+    return (approverIds || []).includes(id);
+  }
+  return true;
+}
+
+// ── #4666: what a rules project's gate reads ───────────────────────────
+
+// Who made the project, how many are in its community, its active-member
+// electorate, its admins and its named groups' people: the app facts a rule
+// can need. Cached like the governance columns. The platform's own app has
+// no creator (a rule on `creator` there never passes).
+async function rulesFacts(pool, appId, gov) {
+  const hit = factsCache.get(appId);
+  if (hit && Date.now() - hit.at < GOV_CACHE_TTL_MS) return withGroups(hit.value, gov);
+  const { rows } = await pool.query(
+    `SELECT a.created_by, a.self_hosted, a.collab_visibility,
+            (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
+            COALESCE((SELECT array_agg(ad.user_id) FROM app_admins ad WHERE ad.app_id = a.id), '{}') AS admin_ids
+       FROM apps a WHERE a.id = $1`,
+    [appId]
+  );
+  const r = rows[0] || {};
+  const { active } = await activeUsers().getActiveUserStats(pool, appId, activeUsers().appMetaFromRow(r));
+  const value = {
+    creatorId: !r.self_hosted && r.created_by ? parseInt(r.created_by, 10) : null,
+    memberCount: parseInt(r.member_count, 10) || 0,
+    membersActive: Math.max(parseInt(active, 10) || 0, 1),
+    adminIds: (r.admin_ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite),
+    activeIds: null,
+  };
+  // The active people are a heavier read, wanted only by a share-of-active
+  // rule on a group smaller than the whole community.
+  const wantsActive = !!(gov && gov.rules && gov.rules.rules.some((x) => x.kind === 'percentOfActive' && x.group !== 'members'));
+  if (wantsActive) {
+    const ids = await activeUsers().listActiveUserIds(pool, appId);
+    value.activeIds = new Set(ids.map((id) => parseInt(id, 10)));
+  }
+  factsCache.set(appId, { at: Date.now(), value });
+  return withGroups(value, gov);
+}
+
+function withGroups(value, gov) {
+  const groups = new Map();
+  for (const g of (gov && gov.rules && gov.rules.groups) || []) groups.set(g.key, g.ids || []);
+  return { ...value, groups };
+}
+
+// The counted votes on one proposal, by voter: the same votes qualifiedCounts
+// counts under an unrestricted electorate (the approval epoch, test accounts).
+async function voterSets(pool, kind, id) {
+  if (kind === 'issue') {
+    const { rows } = await pool.query(
+      `SELECT user_id, vote FROM issue_votes
+        WHERE issue_id = $1 AND vote IN ('up', 'down')
+          AND counts_toward_issue_outcome(user_id, $1)`,
+      [id]
+    );
+    return votersFromRows(rows, true);
+  }
+  const { rows } = await pool.query(
+    `SELECT user_id, vote FROM pr_votes
+      WHERE session_id = $1 AND vote IN ('yes', 'no')
+        AND approval_epoch = (SELECT approval_epoch FROM chat_sessions WHERE id = $1)
+        AND counts_toward_session_outcome(user_id, $1)`,
+    [id]
+  );
+  return votersFromRows(rows, false);
+}
+
+function votersFromRows(rows, issue) {
+  const yesVal = issue ? 'up' : 'yes';
+  const yes = new Set();
+  const no = new Set();
+  for (const r of rows) {
+    const uid = parseInt(r.user_id, 10);
+    if (!Number.isFinite(uid)) continue;
+    if (r.vote === yesVal) yes.add(uid); else no.add(uid);
+  }
+  return { yes, no };
+}
+
+// The same for many proposals in one query: Map of id -> { yes, no } (a
+// proposal nobody has voted on is missing; voterSetsFor answers it empty).
+async function voterSetsBatch(pool, kind, ids) {
+  const out = new Map();
+  if (!ids || !ids.length) return out;
+  const issue = kind === 'issue';
+  const sql = issue
+    ? `SELECT iv.issue_id AS id, iv.user_id, iv.vote FROM issue_votes iv
+        WHERE iv.issue_id = ANY($1::int[]) AND iv.vote IN ('up', 'down')
+          AND counts_toward_issue_outcome(iv.user_id, iv.issue_id)`
+    : `SELECT pv.session_id AS id, pv.user_id, pv.vote FROM pr_votes pv
+         JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = ANY($1::int[]) AND pv.vote IN ('yes', 'no')
+          AND ${countedVotePredicateSql('pv', 'cs')}`;
+  const { rows } = await pool.query(sql, [ids]);
+  const byId = new Map();
+  for (const r of rows) {
+    const k = parseInt(r.id, 10);
+    if (!byId.has(k)) byId.set(k, []);
+    byId.get(k).push(r);
+  }
+  for (const [k, list] of byId) out.set(k, votersFromRows(list, issue));
+  return out;
+}
+
+/**
+ * For a serializer that batch-counts many proposals on ONE app: what
+ * computeGate needs to answer a rules project's gate, read once. Null for a
+ * project without rules, so the common path issues no extra query. Use with
+ * rulesGateOpts(ctx, id, authorId, reason).
+ */
+async function rulesContext(pool, appId, gov, kind, ids) {
+  if (!gov || !gov.rules) return null;
+  const [facts, voters] = await Promise.all([
+    rulesFacts(pool, appId, gov),
+    voterSetsBatch(pool, kind, ids),
+  ]);
+  return { facts, voters };
+}
+
+/** The computeGate options for one proposal out of a rulesContext. */
+function rulesGateOpts(ctx, id, authorId, explicitReason) {
+  if (!ctx) return {};
+  return {
+    rulesFacts: ctx.facts,
+    voters: ctx.voters.get(parseInt(id, 10)) || { yes: new Set(), no: new Set() },
+    authorId: authorId ?? null,
+    memberCount: ctx.facts.memberCount,
+    ...(explicitReason !== undefined ? { explicitReason } : {}),
+  };
+}
+
+// The stored reason a PR was flagged for, when the caller did not say.
+async function storedExplicitReason(pool, kind, id) {
+  if (kind === 'issue') return 'secrets';
+  const { rows } = await pool.query(
+    'SELECT explicit_approval_reason FROM chat_sessions WHERE id = $1', [id]
+  );
+  return rows[0]?.explicit_approval_reason || null;
+}
+
 // One-call convenience: the governed merge gate for a single proposal.
 // `kind` = 'pr' (chat_sessions + pr_votes) | 'issue' (issues +
 // issue_votes); `id` is the session/issue id; `openedAt` the clock
@@ -311,9 +518,25 @@ async function getElectorate(pool, appId, gov, appMeta = null) {
 // merge and apply decision takes, so the floor can never be skipped by a
 // caller that forgot to ask for it.
 async function governedGate(pool, appId, {
-  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId,
+  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason,
 } = {}) {
   const gov = await getGovernance(pool, appId);
+  if (gov.rules) {
+    // #4666: a rules project reads who voted and what its groups are; the
+    // author always, because proposing counts as their yes.
+    const [facts, voters, author] = await Promise.all([
+      rulesFacts(pool, appId, gov),
+      voterSets(pool, kind, id),
+      authorId !== undefined ? authorId : proposalAuthorId(pool, kind, id),
+    ]);
+    const reason = explicitApproval
+      ? (explicitReason !== undefined ? explicitReason : await storedExplicitReason(pool, kind, id))
+      : null;
+    return computeGate(gov, facts.membersActive, voters.yes.size, voters.no.size, openedAt, now, {
+      explicitApproval, explicitReason: reason, authorId: author, voters,
+      rulesFacts: facts, memberCount: facts.memberCount,
+    });
+  }
   const electorate = await getElectorate(pool, appId, gov);
   let floorOpts;
   if (explicitApproval) {
@@ -357,6 +580,51 @@ function explicitApprovalRowFields(row, gate) {
   };
 }
 
+// #4666: the rule as the project's page says it (GET /api/apps/:slug/community
+// `approval`): which preset it is, each rule with how many people its group
+// has and what an unopposed change needs from it today, and the named
+// groups. A project on the old two columns reads as Group vote when it has
+// the default rule, and as its own (`preset` null) otherwise.
+async function describeApproval(pool, appId, gov) {
+  if (!gov.rules) {
+    return {
+      mode: 'columns',
+      preset: gov.approverPolicy === 'anyone' && gov.approvalsRequired == null ? 'group_vote' : null,
+      rules: null,
+      groups: [],
+      creatorId: null,
+    };
+  }
+  const facts = await rulesFacts(pool, appId, gov);
+  const gate = computeGate(gov, facts.membersActive, 0, 0, null, null, {
+    rulesFacts: facts, voters: { yes: new Set(), no: new Set() }, authorId: null, memberCount: facts.memberCount,
+  });
+  return {
+    mode: 'rules',
+    preset: gate.preset,
+    rules: gate.rules.map((r) => ({
+      group: r.group, kind: r.kind, n: r.n, size: r.size, need: r.need, empty: r.empty,
+    })),
+    groups: gov.rules.groups.map((g) => ({ name: g.name, key: g.key, people: g.people })),
+    creatorId: facts.creatorId,
+    required: gate.required,
+  };
+}
+
+// #4666: what a serialized proposal row says about a rules project's gate,
+// beside the fields every row carries. Nothing for a project without rules,
+// so those payloads are exactly what they were.
+function ruleRowFields(gate) {
+  if (!gate || gate.mode !== 'rules') return {};
+  return {
+    approval_mode: 'rules',
+    approval_preset: gate.preset || null,
+    approval_who_decides: !!gate.whoDecides,
+    approval_passed_by: gate.passedBy ? gate.passedBy.group : null,
+    creator_yes: !!gate.creatorYes,
+  };
+}
+
 // #3234: the electorate count to stamp on a proposal as it is promoted —
 // the same number computeGate is handed. Display only, so a failed read
 // answers null (no note) rather than holding up the promote.
@@ -377,12 +645,22 @@ async function electorateAtPromote(pool, appId) {
 // row has no stamp, or under "at least N" (a fixed count that cannot move).
 function requiredAtPromote(gov, activeAtPromote, noCount) {
   if (!gov || gov.approvalsRequired != null) return null;
+  // A rules project's threshold moves with the electorate only on a members
+  // majority rule; the counted rules cannot.
+  if (gov.rules && !gov.rules.rules.some((r) => r.group === 'members' && r.kind === 'majority')) return null;
   const a = parseInt(activeAtPromote, 10);
   if (!Number.isFinite(a) || a < 1) return null;
   return activeUsers().requiredVotes(a, noCount);
 }
 
 module.exports = {
+  rulesFacts,
+  voterSets,
+  voterSetsBatch,
+  rulesContext,
+  rulesGateOpts,
+  rulesFromColumn,
+  isWhoDecidesReason,
   electorateAtPromote,
   requiredAtPromote,
   getGovernance,
@@ -400,6 +678,9 @@ module.exports = {
   communityMemberCount,
   proposalAuthorId,
   explicitApprovalRowFields,
+  ruleRowFields,
+  describeApproval,
   getElectorate,
+  viewerDecides,
   governedGate,
 };

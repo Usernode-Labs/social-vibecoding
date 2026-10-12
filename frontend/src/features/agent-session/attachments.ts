@@ -9,6 +9,8 @@
  * checked there only.
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export const MAX_FILES = 4;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_ZIP_BYTES = 20 * 1024 * 1024;
@@ -53,10 +55,10 @@ function megabytes(bytes: number) {
 /** Why a file cannot be attached, in the dev chat's words, or null when it can. */
 export function refusal(name: string, size: number): string | null {
   const kind = pickedKind(name);
-  if (kind === 'image' && size > MAX_IMAGE_BYTES) return `"${name}" is too big. Images max ${megabytes(MAX_IMAGE_BYTES)} MB.`;
-  if (kind === 'zip' && size > MAX_ZIP_BYTES) return `"${name}" is too big. Zip archives max ${megabytes(MAX_ZIP_BYTES)} MB.`;
-  if (kind === 'file' && size > MAX_FILE_BYTES) return `"${name}" is too big. Files max ${megabytes(MAX_FILE_BYTES)} MB.`;
-  if (size <= 0) return `"${name}" is empty.`;
+  if (kind === 'image' && size > MAX_IMAGE_BYTES) return t('agent:session.attach.imageTooBig', { file: name, megabytes: megabytes(MAX_IMAGE_BYTES) });
+  if (kind === 'zip' && size > MAX_ZIP_BYTES) return t('agent:session.attach.zipTooBig', { file: name, megabytes: megabytes(MAX_ZIP_BYTES) });
+  if (kind === 'file' && size > MAX_FILE_BYTES) return t('agent:session.attach.fileTooBig', { file: name, megabytes: megabytes(MAX_FILE_BYTES) });
+  if (size <= 0) return t('agent:session.attach.empty', { file: name });
   return null;
 }
 
@@ -73,7 +75,7 @@ export function acceptFiles<T extends { name: string; size: number }>(already: n
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
     if (already + accepted.length >= MAX_FILES) {
-      error = error || `You can attach up to ${MAX_FILES} files to one message.`;
+      error = error || t('agent:session.attach.tooMany', { count: MAX_FILES });
       refusedCount += files.length - i;
       break;
     }
@@ -95,7 +97,7 @@ export function badgeFor(kind: string, name: string): string | null {
   if (kind === 'image') return null;
   if (kind === 'zip') return 'ZIP';
   const ext = extensionOf(name);
-  return ext ? ext.toUpperCase().slice(0, 4) : 'FILE';
+  return ext ? ext.toUpperCase().slice(0, 4) : t('agent:session.attach.badgeFile');
 }
 
 /**

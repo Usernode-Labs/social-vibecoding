@@ -14,6 +14,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -94,13 +95,15 @@ test('a valid form still reaches the activation-code preflight', async () => {
 test('the register form states both rules and shows a field refusal under its field', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/register.tsx'), 'utf8');
   const shared = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/shared.ts'), 'utf8');
-  assert.match(shared, /export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters\.';/);
-  assert.match(shared, /export const PASSWORD_RULE = 'At least 8 characters\.';/);
-  assert.match(src, /id="reg-username-hint"[\s\S]{0,200}?fieldError\.message : USERNAME_RULE/);
+  // The rules' words are catalog entries, one for each place they are said.
+  assert.equal(message('auth:register.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
+  assert.equal(message('auth:register.passwordRule'), 'At least 8 characters.');
+  assert.match(src, /id="reg-username-hint"[\s\S]{0,200}?fieldError\.message : t\('auth:register\.usernameRule'\)/);
   // #3575: and, directly under the field, ahead of the rule, who will see it.
-  assert.match(src, /<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+  assert.match(src, /<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+  assert.equal(message('auth:register.usernamePublic'), 'Your username will be public to other users on Homeroom.');
   assert.match(src, /aria-describedby="reg-username-public reg-username-hint"/);
-  assert.match(src, /id="reg-password-hint"[\s\S]{0,200}?fieldError\.message : PASSWORD_RULE/);
+  assert.match(src, /id="reg-password-hint"[\s\S]{0,200}?fieldError\.message : t\('auth:register\.passwordRule'\)/);
   assert.match(src, /data\.field === 'username' \|\| data\.field === 'password'/);
   // And the handle field does not let a phone capitalise or correct it.
   assert.match(shared, /HANDLE_FIELD = \{ autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false \}/);

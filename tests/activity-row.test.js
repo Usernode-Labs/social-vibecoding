@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -87,6 +88,7 @@ test('the profile view carries each activity timestamp', () => {
   const src = read('frontend/src/features/leaderboard/topochain-challenges.js');
   const sandbox = { window: {}, console };
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
   const TC = sandbox.window.TopochainChallenges;
   TC._profileUserId = 7;

@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -20,6 +21,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const SCREEN = read('frontend/src/features/messages/index.tsx');
 const SERVICE = read('src/services/conversations.js');
+const APP_CSS = read('public/css/app.css');
 const HEADER = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.indexOf('/** The day a message was sent'));
 
 test('Rename group is offered to whoever the server lets rename: the owner (canManage)', () => {
@@ -28,23 +30,50 @@ test('Rename group is offered to whoever the server lets rename: the owner (canM
   assert.match(SERVICE, /canManage: row\.kind === 'group' && row\.my_role === 'owner' && row\.membership_status === 'member'/);
   // Merged with QA Q18 (the ⋯ is a keyboard menu): the rename row is a menuitem
   // that hands focus back to the ⋯ before the dialog opens.
-  assert.match(HEADER, /active\.kind === 'group' && active\.canManage\s*\? <button type="button" role="menuitem" data-rename-group="" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); void renameGroup\(\); \}\}>Rename group<\/button>\s*: null/);
+  assert.equal(message('messages:header.menu.rename'), 'Rename group');
+  assert.match(HEADER, /active\.kind === 'group' && active\.canManage\s*\? <button type="button" role="menuitem" data-rename-group="" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); void renameGroup\(\); \}\}>\{t\('messages:header\.menu\.rename'\)\}<\/button>\s*: null/);
 });
 
 test('it is the kit’s one-field dialog, pre-filled with the current name and capped at the server’s 80', () => {
-  assert.match(HEADER, /ui\.prompt\(\{ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 \}\)/);
+  assert.equal(message('messages:header.rename.title'), 'Rename group');
+  assert.equal(message('messages:header.rename.placeholder'), 'Group name');
+  assert.equal(message('core:common.save'), 'Save');
+  assert.match(HEADER, /ui\.prompt\(\{ title: t\('messages:header\.rename\.title'\), value: current, placeholder: t\('messages:header\.rename\.placeholder'\), confirmLabel: t\('core:common\.save'\), maxLength: 80 \}\)/);
   assert.match(HEADER, /const current = active\?\.title \|\| '';/);
   assert.match(HEADER, /if \(next == null\) return;/, 'Cancel changes nothing');
-  assert.match(HEADER, /catch \(err\) \{ ui\.toast\?\.\(err instanceof Error \? err\.message : 'Couldn’t rename this group\.'\); \}/);
+  assert.equal(message('messages:header.rename.failed'), 'Couldn’t rename this group.');
+  assert.match(HEADER, /catch \(err\) \{ ui\.toast\?\.\(err instanceof Error \? err\.message : t\('messages:header\.rename\.failed'\)\); \}/);
 });
 
 test('the header counts "1 member" and "N members", and an invitee reads the invitation, not "0 members"', () => {
-  assert.match(HEADER, /const count = \(n: number\) => `\$\{n\} \$\{n === 1 \? 'member' : 'members'\}`;/);
+  assert.equal(message('messages:header.subtitle.invited'), 'Invitation pending');
+  assert.match(HEADER, /t\('messages:header\.subtitle\.group', \{ count: active\.memberCount \}\)/);
+  assert.equal(message('messages:header.subtitle.group', { count: 1 }), '1 member');
+  assert.equal(message('messages:header.subtitle.group', { count: 4 }), '4 members');
   assert.doesNotMatch(HEADER, /\$\{active\.memberCount\} members/, 'no unconditional plural left');
-  assert.match(HEADER, /: invited\s*\? 'Invitation pending'/);
-  assert.match(HEADER, /\? `\$\{count\(active\.memberCount\)\}\$\{active\.myRole === 'owner' \? ' · you own this group' : ''\}`/);
+  assert.match(HEADER, /: invited\s*\? t\('messages:header\.subtitle\.invited'\)/);
+  assert.match(HEADER, /\? \(active\.myRole === 'owner'\s*\? t\('messages:header\.subtitle\.groupOwner', \{ count: active\.memberCount \}\)\s*: t\('messages:header\.subtitle\.group', \{ count: active\.memberCount \}\)\)/);
+  assert.equal(message('messages:header.subtitle.groupOwner', { count: 1 }), '1 member · you own this group');
+  assert.equal(message('messages:header.subtitle.groupOwner', { count: 4 }), '4 members · you own this group');
   // The list row's member-count tag is not drawn for an invitee either.
-  assert.match(SCREEN, /conversation\.kind === 'group' && !invited \? <span className="messages-group-tag">/);
+  assert.match(SCREEN, /conversation\.kind === 'group' && !invited \? <GroupMemberCount count=\{conversation\.memberCount\} \/>/);
+});
+
+test('a group row counts its members with the people glyph, and says the words to a screen reader', () => {
+  // AGENTS.md, "Say it in words or a very obvious glyph": the join screen's
+  // people glyph at its size, the bare figure hidden from a screen reader,
+  // which hears "N members" instead; the hover title says the same.
+  assert.equal(message('messages:inbox.memberCount', { count: 1 }), '1 member');
+  assert.equal(message('messages:inbox.memberCount', { count: 5 }), '5 members');
+  const fn = SCREEN.slice(SCREEN.indexOf('function GroupMemberCount('), SCREEN.indexOf('const ConversationRow = memo('));
+  assert.ok(fn.length > 0, 'GroupMemberCount is defined before the row');
+  assert.match(fn, /if \(!Number\.isFinite\(n\) \|\| n < 1\) return null;/, 'a zero says nothing');
+  assert.match(fn, /const words = t\('messages:inbox\.memberCount', \{ count: n \}\);/);
+  assert.match(fn, /<span className="messages-group-tag" title=\{words\}>/);
+  assert.match(fn, /<UserGroupIcon className="w-3\.5 h-3\.5" aria-hidden="true" \/>/);
+  assert.match(fn, /<span aria-hidden="true">\{n\}<\/span>/);
+  assert.match(fn, /<span className="sr-only">\{words\}<\/span>/);
+  assert.match(APP_CSS, /\.messages-group-tag \{[^}]*display: inline-flex;[^}]*gap: 3px;/);
 });
 
 function harness(updateConversation) {

@@ -194,11 +194,13 @@ export interface Electorate { active: number; approverIds: number[] | null; admi
 // member set (admin fallback when empty). `stats` is how the active count
 // is read: services/governance.js passes services/active-users.js's export,
 // so a test that stubs that module still reaches the count it stubbed.
+// #4666: a rules project's groups are the rules' business; its electorate
+// is the active members, as under 'anyone'.
 export async function electorate(
   db: Queryable, appId: number, gov: Governance, meta: AppMeta,
   stats: (db: Queryable, appId: number, meta: AppMeta) => Promise<ActiveStats> = activeUserStats,
 ): Promise<Electorate> {
-  if (gov.approverPolicy === 'invited') {
+  if (gov.approverPolicy === 'invited' && !gov.rules) {
     const { ids, adminFallback } = await getApproverSet(db, appId);
     return { active: Math.max(ids.length, 1), approverIds: ids, adminFallback };
   }

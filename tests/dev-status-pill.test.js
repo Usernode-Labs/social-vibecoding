@@ -74,6 +74,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -313,7 +314,8 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const pending = PR({ check_state: 'pending' });
   const running = AppView.statusTagSpecs(pending, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(running);
-  assert.equal(running.label, 'Checks running…');
+  assert.equal(running.label, 'Checks', '#4628: one word for the whole run');
+  assert.ok(running.progress && running.progress.indeterminate, 'the bar pulses before the total is known');
   assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
   assert.ok(running.spinner, 'in flight, so it spins');
   assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
@@ -323,6 +325,7 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
+  assert.ok(starting.progress && starting.progress.indeterminate, 'the busy bar covers the build too');
   assert.ok(starting.spinner);
 });
 
@@ -906,6 +909,7 @@ function stagingRows() {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration

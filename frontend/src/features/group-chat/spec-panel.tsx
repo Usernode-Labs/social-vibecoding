@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useSpecFrames } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { specPanelStore, type SpecPanelBody, type SpecPanelState } from './spec-panel-store';
@@ -62,6 +63,7 @@ function HtmlPart({ html, className, role }: { html: string; className?: string;
  * new spec.
  */
 function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> }) {
+  const t = useMessages('chat');
   const [tab, setTab] = useState<'user' | 'tech'>('user');
   useEffect(() => { setTab('user'); }, [body.userHtml, body.html]);
   if (!body.split) return <HtmlPart className="gc-spec-panel-body" html={body.html} />;
@@ -77,29 +79,34 @@ function SpecDocBody({ body }: { body: Extract<SpecPanelBody, { kind: 'spec' }> 
   return (
     <div className="gc-spec-panel-body">
       {body.preambleHtml ? <HtmlPart className="dc-spec-viewer-preamble" html={body.preambleHtml} /> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
-        {tabButton('user', 'User-facing')}
-        {tabButton('tech', 'Technical')}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label={t('chat:group.spec.sections')}>
+        {tabButton('user', t('chat:group.spec.tab.user'))}
+        {tabButton('tech', t('chat:group.spec.tab.tech'))}
       </div>
       {half
         ? <HtmlPart role="tabpanel" html={half} />
-        : <div role="tabpanel"><p className="dc-spec-tab-empty">Nothing in this section.</p></div>}
+        : <div role="tabpanel"><p className="dc-spec-tab-empty">{t('chat:group.spec.tabEmpty')}</p></div>}
     </div>
   );
 }
 
 function CopyButton() {
-  const [label, setLabel] = useState('Copy markdown');
+  const t = useMessages('chat');
+  // What the button says is state, not text: read in the language on screen.
+  const [copied, setCopied] = useState<'copied' | 'failed' | null>(null);
+  const label = copied === 'copied' ? t('chat:group.spec.copy.copied')
+    : copied === 'failed' ? t('chat:group.spec.copy.failed')
+      : t('chat:group.spec.copy.label');
   return (
     <button
       className="gc-spec-panel-copy"
-      aria-label="Copy the whole plan as markdown"
-      title="Copy the whole plan as markdown"
+      aria-label={t('chat:group.spec.copy.title')}
+      title={t('chat:group.spec.copy.title')}
       onClick={async () => {
         const ok = await ui()?.copyText?.(controller()?._specPanelRaw);
-        setLabel(ok ? 'Copied!' : 'Copy failed');
-        if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually');
-        setTimeout(() => setLabel('Copy markdown'), 1500);
+        setCopied(ok ? 'copied' : 'failed');
+        if (!ok) ui()?.toast?.(t('chat:group.spec.copy.failedToast'));
+        setTimeout(() => setCopied(null), 1500);
       }}
     >
       {label}
@@ -108,6 +115,7 @@ function CopyButton() {
 }
 
 export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPanelState) {
+  const t = useMessages('chat');
   if (!open) return null;
   return (
     <>
@@ -119,7 +127,7 @@ export function SpecPanelView({ open, title, subtitle, canCopy, body }: SpecPane
         {canCopy ? <CopyButton /> : null}
         <button
           className="gc-spec-panel-close"
-          aria-label="Close plan panel"
+          aria-label={t('chat:group.spec.close')}
           onClick={() => controller()?._closeSpecPanel?.()}
         >
           ×

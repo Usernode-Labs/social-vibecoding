@@ -8,6 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -68,17 +69,19 @@ test('the card renders inside the grid, with the breakdown behind a disclosure',
 
 test('challenge points the standings have not caught up with keep the card, with when they count (#3187)', () => {
   const { standingView, STANDINGS_UPDATE_NOTE } = loadTsx(STANDING);
-  assert.equal(STANDINGS_UPDATE_NOTE,
-    'Standings update every few hours; points from challenges you just finished appear at the next update.');
+  assert.equal(STANDINGS_UPDATE_NOTE, 'leaderboard:standing.updateNote');
+  assert.equal(message(STANDINGS_UPDATE_NOTE),
+    'Standings update every few hours. Your rank can change at each update as other people earn points, '
+    + 'even if you did nothing; points from challenges you just finished appear then too.');
   const empty = { ...RANKING, rank: null, total_points: 0 };
   const view = standingView({ status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false });
   assert.ok(view, 'someone with 1,500 challenge points still sees the card');
   assert.equal(view.rank, '–');
   assert.equal(view.pending, '1,500 pts earned, not in the standings yet');
-  assert.equal(view.note, STANDINGS_UPDATE_NOTE);
+  assert.equal(view.note, message(STANDINGS_UPDATE_NOTE));
   assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, pending: 1500 }).pending, null,
     'a ranked viewer is not told about a pending figure the ranking already carries');
-  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, STANDINGS_UPDATE_NOTE,
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, message(STANDINGS_UPDATE_NOTE),
     'the card always says how often the standings move');
 
   const real = loadTsx(STANDING);
@@ -88,7 +91,8 @@ test('challenge points the standings have not caught up with keep the card, with
   });
   const html = renderToHtml(createElement(mod.YourStanding, {}));
   assert.match(html, /1,500 pts earned, not in the standings yet/);
-  assert.match(html, /Standings update every few hours; points from challenges you just finished appear at the next update\./);
+  assert.match(html,
+    /Standings update every few hours\. Your rank can change at each update as other people earn points, even if you did nothing; points from challenges you just finished appear then too\./);
 });
 
 test('the ledger is read only when the standings have nothing for the viewer', async () => {

@@ -1,0 +1,129 @@
+{
+  "doNotTranslate": [
+    "Homeroom",
+    "Claude Code",
+    "Claude",
+    "Codex",
+    "OpenCode",
+    "ChatGPT",
+    "GitHub",
+    "Google",
+    "Apple",
+    "Discord",
+    "Telegram",
+    "Usernode"
+  ],
+  "terms": {
+    "project": {
+      "meaning": "Something a community builds together on Homeroom: an app with its own page, chat and history.",
+      "id": "proyek",
+      "es": "proyecto",
+      "fr": "projet",
+      "pt-BR": "projeto",
+      "vi": "dự án"
+    },
+    "community": {
+      "meaning": "The people a project belongs to; what a person joins.",
+      "id": "komunitas",
+      "es": "comunidad",
+      "fr": "communauté",
+      "pt-BR": "comunidade",
+      "vi": "cộng đồng"
+    },
+    "proposal": {
+      "meaning": "A finished change put to the community's vote before it merges.",
+      "id": "usulan",
+      "es": "propuesta",
+      "fr": "proposition",
+      "pt-BR": "proposta",
+      "vi": "đề xuất"
+    },
+    "request": {
+      "meaning": "A feature idea or bug report filed on a project's board.",
+      "id": "permintaan",
+      "es": "solicitud",
+      "fr": "demande",
+      "pt-BR": "solicitação",
+      "vi": "yêu cầu"
+    },
+    "change": {
+      "meaning": "A piece of work on a project's code, from first draft to merge.",
+      "id": "perubahan",
+      "es": "cambio",
+      "fr": "modification",
+      "pt-BR": "alteração",
+      "vi": "thay đổi"
+    },
+    "plan": {
+      "meaning": "What a change will do and how, written before it is built so the community can read it.",
+      "id": "rencana",
+      "es": "plan",
+      "fr": "plan",
+      "pt-BR": "plano",
+      "vi": "kế hoạch"
+    },
+    "vote": {
+      "meaning": "A member's yes or no on a proposal or request (noun).",
+      "id": "suara",
+      "es": "voto",
+      "fr": "vote",
+      "pt-BR": "voto",
+      "vi": "phiếu bầu"
+    },
+    "merge": {
+      "meaning": "Bring an approved change into the live project (verb).",
+      "id": "gabungkan",
+      "es": "fusionar",
+      "fr": "fusionner",
+      "pt-BR": "mesclar",
+      "vi": "hợp nhất"
+    },
+    "preview": {
+      "meaning": "A running test copy of a project with a change applied.",
+      "id": "pratinjau",
+      "es": "vista previa",
+      "fr": "aperçu",
+      "pt-BR": "prévia",
+      "vi": "bản xem trước"
+    },
+    "checks": {
+      "meaning": "The automated tests a proposal must pass before it can merge.",
+      "id": "pemeriksaan",
+      "es": "comprobaciones",
+      "fr": "vérifications",
+      "pt-BR": "verificações",
+      "vi": "kiểm tra"
+    },
+    "member": {
+      "meaning": "A person who has joined a community.",
+      "id": "anggota",
+      "es": "miembro",
+      "fr": "membre",
+      "pt-BR": "membro",
+      "vi": "thành viên"
+    },
+    "Workshop": {
+      "meaning": "Name of the project page's tab where changes are built and reviewed.",
+      "id": "Bengkel",
+      "es": "Taller",
+      "fr": "Atelier",
+      "pt-BR": "Oficina",
+      "vi": "Xưởng"
+    },
+    "Needs you": {
+      "meaning": "Name of the tab and feed listing the decisions waiting on the reader.",
+      "id": "Menunggumu",
+      "es": "Te necesita",
+      "fr": "Vous attend",
+      "pt-BR": "Precisa de você",
+      "vi": "Cần bạn"
+    }
+  },
+  "style": {
+    "id": "Indonesian as popular consumer apps write it: friendly and natural, addressing the reader as \"kamu\". Avoid stiff bureaucratic register and avoid needless English loanwords where a common Indonesian word exists.",
+    "es": "Neutral Spanish that reads naturally across Latin America and Spain, addressing the reader as \"tú\". Avoid region-only vocabulary.",
+    "fr": "French addressing the reader as \"vous\", concise as in a polished mobile app. Follow French typography: a narrow no-break space before ; ! ? and a no-break space before :, and « » for quotations.",
+    "pt-BR": "Brazilian Portuguese addressing the reader as \"você\", friendly and concise as in a polished mobile app.",
+    "vi": "Natural, concise Vietnamese addressing the reader as \"bạn\", as in a polished mobile app."
+  }
+}

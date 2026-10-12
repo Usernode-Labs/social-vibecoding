@@ -422,17 +422,30 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
 // access on the spot — this is the doc's "released off the waitlist,
 // create an account if you haven't already" arrow. Best-effort: a
 // failure here must never fail the signup itself.
-async function linkUserByEmail(pool, { userId, email }) {
+//
+// `newAccount` is true when the sign-up calling this just MADE the account.
+// Only such an account is linked to a test release (services/test-accounts.js
+// sendRelease, an admin's test of the "you're in" mail), and it is let in as
+// a test account, marked before access arrives; an account that already
+// existed is never linked to one, so a test release cannot let it in.
+async function linkUserByEmail(pool, { userId, email, newAccount = false }) {
   const normalized = normalizeEmail(email);
   if (!normalized || !userId) return;
   try {
     const { rows } = await pool.query(
-      `UPDATE waitlist_signups
+      `UPDATE waitlist_signups w
           SET linked_user_id = $1
         WHERE email = $2
-        RETURNING released_at`,
-      [userId, normalized]
+          AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id))
+        RETURNING w.id, w.released_at,
+                  EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id) AS test_release`,
+      [userId, normalized, newAccount === true]
     );
+    if (rows[0] && rows[0].test_release) {
+      const letIn = await require('./test-accounts').adoptReleasedAccount(pool, { userId, signupId: rows[0].id });
+      if (letIn) log.info('waitlist', 'Test release address registered — test account let in', { userId });
+      return;
+    }
     if (rows[0] && rows[0].released_at) {
       await grantPlatformAccess(pool, userId, { manualRelease: true });
       log.info('waitlist', 'Released waitlist email registered — access granted', { userId });

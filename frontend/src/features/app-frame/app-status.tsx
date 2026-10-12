@@ -229,8 +229,8 @@ function actionButton(action: NonNullable<AppStatusView['action']>): ReactNode {
 }
 
 /**
- * While the first-session tour runs, its last card is what names the plan
- * (../first-session/tour-running.ts): a plan waiting on its maker shows no
+ * While the first-session tour runs (../first-session/tour-running.ts),
+ * which asks for nothing but its own cards, a plan waiting on its maker shows no
  * "Review the plan" here, and its line says the bot is working on it. Every
  * other screen, and this one once the tour ends, is as AppView answers it.
  */

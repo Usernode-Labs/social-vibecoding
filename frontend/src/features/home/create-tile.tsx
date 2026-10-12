@@ -49,6 +49,7 @@ import { useRef } from 'react';
 
 import { PlusWideIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import type { CreateTileView } from './grid-store';
 
@@ -86,9 +87,10 @@ const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc
 // "New project" since communities, stage 4: the create dialog it opens is
 // titled "New project" (stage 3), and what it makes is a project for someone
 // (Just you, a private or a public community), not only an app to use.
-export const CREATE_TILE_LABEL = 'New project';
+export const CREATE_TILE_LABEL = 'home:create.label';
 
 export function CreateTile({ view, style }: { view: CreateTileView; style?: string }) {
+  const t = useMessages('home');
   const node = useRef<HTMLButtonElement | null>(null);
 
   // The cell, written as an ATTRIBUTE for the reason app-grid.tsx's header
@@ -105,7 +107,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
   const on = view.enabled;
   // The locked tile's name starts with its visible label (the name a voice
   // user says has to be the one on screen), then says what a tap does.
-  const locked = `${CREATE_TILE_LABEL}. View app quota. ${view.hint}`;
+  const locked = t('home:create.lockedTip', { hint: view.hint });
   return (
     <button
       ref={node}
@@ -118,7 +120,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       // section it replaces. `data-create-enabled` is the quota state.
       data-panel-slot="create"
       data-create-enabled={String(on)}
-      title={on ? 'Start a new project' : locked}
+      title={on ? t('home:create.tip') : locked}
       {...(on ? null : { 'aria-label': locked })}
       onClick={() => {
         // Both states open the same dialog. At the limit its quota row
@@ -130,7 +132,61 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       <span className={`${FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
         <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
       </span>
-      <span className={on ? LABEL_ON : LABEL_OFF}>{CREATE_TILE_LABEL}</span>
+      <span className={on ? LABEL_ON : LABEL_OFF}>{t(CREATE_TILE_LABEL)}</span>
+    </button>
+  );
+}
+
+// ── The compact entry (#4757) ─────────────────────────────────────────
+//
+// When a collapsed grid's last shown row is full the tile is held back
+// (#3047), and before #4757 that was the end of it: a viewer with many apps
+// saw no way to create at all until they expanded the grid and scrolled its
+// end. AppsMore draws this instead, on the "Show all N apps" line — the same
+// label, tooltip, locked treatment and dialog as the tile, at the button's
+// size rather than a tile's.
+//
+// It carries the tile's id and `data-panel-slot="create"` because exactly one
+// of tile and compact entry exists at a time (the grid draws no tile while
+// this is up, and this is up only while moreCount > 0), so the declared
+// checks' and the tour's `#home-create-tile` still land on the one Create
+// control on screen. It deliberately has NO `home-create-tile` class: the
+// drag-time `#app-list > .home-create-tile` rules in app.css are about the
+// grid's canvas, which this does not live in. `.home-create-btn:focus-visible`
+// still applies.
+const COMPACT = 'home-create-btn group inline-flex shrink-0 items-center gap-1.5 rounded-lg '
+  + 'px-3 py-1.5 text-xs font-medium transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
+const COMPACT_INK_ON = 'text-zinc-600 group-hover:text-violet-700 dark:text-zinc-400 '
+  + 'dark:group-hover:text-violet-400';
+const COMPACT_INK_OFF = 'text-zinc-400 dark:text-zinc-500';
+// The tile's dashed face, shrunk to the line: same ring colours (FACE_ON /
+// FACE_OFF), same plus, one size down.
+const COMPACT_FACE = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-dashed';
+
+export function CreateCompact({ view }: { view: CreateTileView }) {
+  const t = useMessages('home');
+  const on = view.enabled;
+  // The locked entry's name starts with its visible label, as the tile's does.
+  const locked = t('home:create.lockedTip', { hint: view.hint });
+  return (
+    <button
+      type="button"
+      id="home-create-tile"
+      className={`${COMPACT} ${on ? COMPACT_INK_ON : COMPACT_INK_OFF}`}
+      data-panel-slot="create"
+      data-create-enabled={String(on)}
+      title={on ? t('home:create.tip') : locked}
+      {...(on ? null : { 'aria-label': locked })}
+      onClick={() => {
+        // The same dialog, in both states — for the same reason the tile's
+        // tap is.
+        win().App?.showCreateModal?.();
+      }}
+    >
+      <span className={`${COMPACT_FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
+        <PlusWideIcon className="h-3 w-3" strokeWidth="2" />
+      </span>
+      {t(CREATE_TILE_LABEL)}
     </button>
   );
 }

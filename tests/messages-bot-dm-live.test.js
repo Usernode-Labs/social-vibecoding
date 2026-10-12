@@ -34,6 +34,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const github = require('../src/services/github');
 const sharedObjects = require('../src/services/shared-objects');
@@ -182,7 +183,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   const typing = (on) => h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: on });
 
   typing(true);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot']);
   // The answer's re-read is slow: hold it until the test lets it go.
   const listMessages = h.api.listMessages;
   let release;
@@ -191,7 +192,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 2 });
   await h.flush();
   typing(false);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot'], 'the stop waits for the message it typed');
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot'], 'the stop waits for the message it typed');
   release();
   await h.flush();
   assert.ok(h.contents().includes('Done: it is up for a vote.'), 'the message is drawn');
@@ -203,7 +204,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 3 });
   await h.flush();
   typing(false);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot']);
   const cap = timers.filter((timer) => timer.live && timer.ms === 5000);
   assert.equal(cap.length, 1, 'one cap of about five seconds');
   cap[0].fn();
@@ -220,6 +221,150 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.equal(h.state().typing[42].length, 1);
   h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
   assert.deepEqual(h.state().typing[42], []);
+});
+
+// The typing line shows what it showed before the text moved (base 1e6c91e33):
+// each shown name once, and a name leaves when anybody typing under it stops
+// or expires. What is new is only whose name it is: `unnamed` follows the
+// people typing under the word now.
+//
+// ['t', id] types, ['s', id] stops, ['x', id] that person's 6 s expiry fires.
+const TYPISTS = { N: 11, R: 12, A: 13, S: 14 };
+function typingSequences() {
+  const { N, R, A, S } = TYPISTS;
+  const collision = (first, second) => [
+    [['t', first], ['t', second]],
+    [['t', first], ['t', second], ['s', N]],
+    [['t', first], ['t', second], ['s', R]],
+    [['t', first], ['t', second], ['s', N], ['t', R]],
+    [['t', first], ['t', second], ['s', R], ['t', N]],
+    [['t', first], ['t', second], ['t', first]],
+    [['t', first], ['t', second], ['x', N]],
+    [['t', first], ['t', second], ['x', R]],
+    [['t', first], ['t', second], ['x', N], ['x', R]],
+    [['t', first], ['t', second], ['s', N], ['s', R], ['t', R]],
+    [['t', first], ['t', second], ['t', A], ['s', N]],
+    [['t', A], ['t', first], ['t', second], ['s', R], ['t', S]],
+  ];
+  return [
+    [['t', A]], [['t', A], ['s', A]], [['t', A], ['x', A]], [['t', A], ['t', A], ['x', A]],
+    [['t', A], ['t', S]], [['t', A], ['t', S], ['s', A]], [['t', S], ['t', A], ['t', S]],
+    [['t', A], ['t', S], ['t', R]], [['t', A], ['t', S], ['t', R], ['s', A]],
+    [['t', N]], [['t', N], ['s', N]], [['t', N], ['s', N], ['t', R]], [['t', R], ['s', R], ['t', N]],
+    ...collision(N, R), ...collision(R, N),
+  ];
+}
+
+// The base's store and line, transcribed: a set of shown names, and the two
+// sentences it wrote. (The real base store was run through these same
+// sequences when this was written; its lines matched at every step.)
+function baseTypingLines(sequence, names) {
+  const shown = new Set();
+  const expiry = new Map();
+  const lines = [];
+  for (const [op, id] of sequence) {
+    const name = names[id];
+    if (op === 't') { shown.add(name); expiry.set(id, true); }
+    if (op === 's') { shown.delete(name); expiry.delete(id); }
+    if (op === 'x' && expiry.get(id)) { shown.delete(name); expiry.delete(id); }
+    const typing = [...shown];
+    lines.push(typing.length === 1 ? `${typing[0]} is typing…`
+      : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : '');
+  }
+  return lines;
+}
+
+async function runTyping(sequence) {
+  const { N, R, A, S } = TYPISTS;
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  const member = (id, username, extra = {}) => ({ id, username, avatarUrl: null, status: 'member', ...extra });
+  // A member whose username did not come with the row (the normalizer's
+  // stand-in and flag), and an account really called "unknown".
+  const group = { ...DM, kind: 'group', title: 'Crew', members: [{ ...ME, status: 'member' },
+    member(N, 'unknown', { unnamed: true }), member(R, 'unknown'), member(A, 'ada'), member(S, 'sam')] };
+  h.api.getConversation = async () => group;
+  await openDm(h);
+  const { typingLine } = loadTsx('frontend/src/features/messages/typing-line.ts');
+  const lastTimer = {};
+  const lines = [];
+  const states = [];
+  for (const [op, id] of sequence) {
+    if (op === 'x') {
+      const timer = lastTimer[id];
+      if (timer && timer.live) { timer.live = false; timer.fn(); }
+    } else {
+      h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: id, typing: op === 't' });
+      if (op === 't') lastTimer[id] = timers.filter((timer) => timer.ms === 6000).at(-1);
+    }
+    const typing = h.state().typing[42] || [];
+    lines.push(typingLine(message, typing));
+    states.push(typing.map((entry) => [entry.name, entry.unnamed]));
+  }
+  return { lines, states };
+}
+
+test('the typing line reads exactly as it did, through every order of typing, stopping and expiry', async () => {
+  const { N, R, A, S } = TYPISTS;
+  const names = { [N]: 'unknown', [R]: 'unknown', [A]: 'ada', [S]: 'sam' };
+  const sequences = typingSequences();
+  assert.equal(sequences.length, 37);
+  for (const sequence of sequences) {
+    const { lines } = await runTyping(sequence);
+    assert.deepEqual(lines, baseTypingLines(sequence, names), JSON.stringify(sequence));
+  }
+  // Two people shown by the same word are still one name, and it leaves when either stops.
+  assert.deepEqual((await runTyping([['t', N], ['t', R]])).lines, ['unknown is typing…', 'unknown is typing…']);
+  assert.deepEqual((await runTyping([['t', N], ['t', R], ['s', N]])).lines.at(-1), '');
+});
+
+test('whether a typing name is a stand-in follows the people typing under it now', async () => {
+  const { N, R } = TYPISTS;
+  const last = async (sequence) => (await runTyping(sequence)).states.at(-1);
+  assert.deepEqual(await last([['t', N]]), [['unknown', true]], 'a nameless member alone: the stand-in');
+  assert.deepEqual(await last([['t', R]]), [['unknown', false]], 'an account really called "unknown": a name');
+  // A nameless member typed and stopped; the real account typing later is named.
+  assert.deepEqual(await last([['t', N], ['s', N], ['t', R]]), [['unknown', false]]);
+  assert.deepEqual(await last([['t', N], ['x', N], ['t', R]]), [['unknown', false]], 'and after an expiry');
+  // Both under the one word: named while a real account is among them, in either order.
+  assert.deepEqual(await last([['t', N], ['t', R]]), [['unknown', false]]);
+  assert.deepEqual(await last([['t', R], ['t', N]]), [['unknown', false]]);
+  // The word left with the real account; the nameless member typing again is the stand-in.
+  assert.deepEqual(await last([['t', N], ['t', R], ['s', R], ['t', N]]), [['unknown', true]]);
+  // The two wordings are the same English, so which is chosen never shows in English.
+  assert.equal(message('messages:thread.typingOneUnknown'), message('messages:thread.typingOne', { name: 'unknown' }));
+  const lineSource = read('frontend/src/features/messages/typing-line.ts');
+  assert.match(lineSource, /if \(typing\.length === 1\) return first\.unnamed \? t\('messages:thread\.typingOneUnknown'\) : t\('messages:thread\.typingOne', \{ name: first\.name \}\);/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /\{typingLine\(t, typing\)\}/);
+  assert.doesNotMatch(read('frontend/src/features/messages/store.ts'), /unnamedTypists/);
+});
+
+test('the waiting line names the same person it named before it read the flag', () => {
+  const { waitingFor } = loadTsx('frontend/src/features/messages/waiting-for.ts');
+  // The base: `active.peer?.username || active.members.find((m) => m.status === 'invited')?.username || ''`.
+  const base = (active) => active.peer?.username || active.members.find((m) => m.status === 'invited')?.username || '';
+  const invited = (username, extra = {}) => ({ username, status: 'invited', ...extra });
+  const cases = [
+    { peer: { username: 'ada' }, members: [invited('sam')] },
+    { peer: null, members: [invited('sam'), invited('lena')] },
+    { peer: { username: '' }, members: [invited('sam')] },
+    // An earlier invited member with an empty username, a later one with a name: nobody is named.
+    { peer: null, members: [invited(''), invited('sam')] },
+    { peer: null, members: [{ username: 'ada', status: 'member' }, invited('sam')] },
+    { peer: null, members: [] },
+    { peer: { username: 'unknown', unnamed: true }, members: [] },
+    { peer: null, members: [invited('unknown', { unnamed: true }), invited('sam')] },
+    { peer: { username: 'unknown' }, members: [] },
+  ];
+  for (const active of cases) assert.equal(waitingFor(active).name, base(active), JSON.stringify(active));
+  assert.deepEqual(waitingFor(cases[3]), { name: '', unknown: false });
+  assert.deepEqual(waitingFor(cases[6]), { name: 'unknown', unknown: true });
+  assert.deepEqual(waitingFor(cases[8]), { name: 'unknown', unknown: false }, 'an account really called "unknown" is named');
+  assert.equal(message('messages:composer.requestSent.waitingUnknown'), message('messages:composer.requestSent.waitingNamed', { username: 'unknown' }));
 });
 
 test('#3706: a page read before the send landed does not take the sender\'s message away', async () => {

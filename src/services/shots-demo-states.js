@@ -56,6 +56,7 @@ const IDS = Object.freeze({
   botRequest: 990868,
   awaitingProposal: 990869,
   firstVersionApp: 990870,
+  accessApp: 990871,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -99,6 +100,12 @@ const STANDINGS_CHALLENGES = Object.freeze([
 ]);
 const FIRST_VERSION_SLUG = 'shots-demo-member-book-club';
 const FIRST_VERSION_NAME = '[shots fixture] Book club';
+// A project of the member's with a GitHub repository, so App settings'
+// Access section is live on it. Its fake repository address: the same
+// staging-demo owner the seeds' own fake URLs use.
+const ACCESS_APP_SLUG = 'shots-demo-member-walking-club';
+const ACCESS_APP_NAME = '[shots fixture] Walking club';
+const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-walking-club';
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
@@ -545,7 +552,9 @@ const STATES = [
   {
     // The season's one-time "First challenges" and an "Always open"
     // challenge counted hourly ("next count"). Every persona has finished the
-    // first challenges: an unfinished one hides the season's other cards.
+    // first challenges, so their group sits at the end (it leads while one is
+    // unfinished). Until #4635 an unfinished one also hid the season's other
+    // cards from a new account.
     id: 'shots-demo-challenge-groups-v1',
     persona: 'member',
     needs: {
@@ -1268,6 +1277,125 @@ const STATES = [
         shows: [{
           state: `Your chat with Homeroom bot, at the bottom: your message saying request #${number} is done, and the bot's offer quoting it to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
           path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
+  {
+    // The member's chat with the Homeroom bot ending in a drafted request
+    // waiting for their answer (#4605): they asked for one, the bot drafted
+    // it (offer_request), and its reply carries it with File it and Not now.
+    // An offer is a reply, and a reply needs the bot's model, which no copy
+    // has, so this seed is how the shots show what the fixed turn sends. The
+    // records are the real flow's (homeroom-bot-mayor.js offer): their
+    // message, the open file_request action the buttons name, and the reply
+    // quoting their message. A tap on File it cannot file on these copies
+    // (a filing is a staging mock GitHub does not have): the bot answers
+    // that it couldn't file it just now. It shares the chat the bot run
+    // card's state opens, after every other state's messages.
+    id: 'shots-demo-member-bot-file-offer-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+        'details', 'status', 'created_at'],
+    },
+    free: botChatFree,
+    async install(client, ctx) {
+      const mayor = require('./homeroom-bot-mayor');
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT slug, name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!app) throw new Error('The Homeroom bot\'s draft lost the platform app.');
+      const name = app.name || app.slug;
+      const title = 'Week by week tracking in insights';
+      const details = 'Show insights week by week, not only as a total.';
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-file-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id, `Can you file a request for ${title.toLowerCase()}?`]
+      );
+      // As offer() writes it: the action, then the message whose buttons name it.
+      const { rows: [action] } = await client.query(
+        `INSERT INTO homeroom_bot_dm_actions
+           (user_id, conversation_id, app_id, kind, title, details, created_at)
+         VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [ctx.member.id, chat.conversationId, ctx.appId, title, details]
+      );
+      const metadata = mayor.confirmMeta('file_request', {
+        app, name, actionId: Number(action.id), question: `File this as a request on ${name}?`,
+      });
+      const content = [
+        `Here is the request I'd file on ${name}.`,
+        '',
+        `**${name}** · new request: ${title}`,
+        '',
+        details,
+      ].join('\n');
+      const { rows: [offer] } = await client.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-file-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
+      );
+      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [chat.conversationId, ctx.member.id, offer.id]
+      );
+      return {
+        shows: [{
+          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
+  {
+    // A project of the member's with a GitHub repository (#4664): App
+    // settings' Access section is live only on an app its viewer manages
+    // that has a repository, and the member's fixture apps have none, so
+    // the shots of a change to that section (e.g. #4660) found only the
+    // read-only line everywhere they looked.
+    id: 'shots-demo-member-app-access-v1',
+    persona: 'member',
+    needs: {
+      apps: ['id', 'name', 'slug', 'status', 'created_by', 'collab_visibility', 'view_visibility',
+        'repo_url', 'self_hosted', 'created_at'],
+      app_collaborators: ['app_id', 'user_id', 'status', 'accepted_at'],
+    },
+    free: async (client) => {
+      const taken = await client.query('SELECT 1 FROM apps WHERE slug = $1', [ACCESS_APP_SLUG]);
+      return taken.rowCount === 0 && await idsFree(client, 'apps', [IDS.accessApp]);
+    },
+    async install(client, ctx) {
+      // As the create route makes a project: Just you, its maker a member.
+      // The repository address is well formed but fake: a copy has no
+      // GitHub, and the settings dialog only checks that a link is there.
+      await client.query(
+        `INSERT INTO apps (id, name, slug, status, created_by, collab_visibility, view_visibility, repo_url, created_at)
+         VALUES ($1, $2, $3, 'running', $4, 'private', 'private', $5, NOW() - INTERVAL '3 days')`,
+        [IDS.accessApp, ACCESS_APP_NAME, ACCESS_APP_SLUG, ctx.member.id, ACCESS_APP_REPO_URL]
+      );
+      await client.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '3 days')`,
+        [IDS.accessApp, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A project of yours (Just you) with a GitHub repository: on its page, ⋯ then App settings shows Access with the levels you can pick, Propose access change and the hint under it (these copies have no GitHub, so do not press Propose access change).',
+          path: `/#app/${ACCESS_APP_SLUG}/dev`,
         }],
       };
     },

@@ -24,6 +24,7 @@
 
 import { type ReactNode } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { faqTiles } from './usernode-faq';
 import { UnBtn, UnP, UnRow, UnSection, UnSwitch } from './usernode-ui';
@@ -51,15 +52,16 @@ const NOTICE_TONE = {
 } as const;
 
 function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const c = s.connection;
   if (!c) return null;
   return (
     <UnSection
       id="settings-usernode-connection"
-      title="Homeroom app: connection"
-      description="What this screen can reach in the app, and what to do when it can’t."
+      title={t('settings:usernode.connection.title')}
+      description={t('settings:usernode.connection.intro')}
     >
-      {c.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
+      {c.demo ? <UnP note={{ text: t('settings:usernode.demoNote'), tone: 'demo' }} /> : null}
       <UnRow row={c.row} />
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">{c.reason}</p>
       <UnP note={{ text: c.build, tone: 'mono' }} />
@@ -69,20 +71,18 @@ function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
       {c.walletRecovery ? (
         <div id="settings-usernode-wallet-recovery" className={NOTICE_TONE.warn}>
           <p>
-            No new mobile wallet is available for this account, so secure app
-            sign-in did not finish. If you previously joined with email, you
-            can connect that account’s wallet instead.
+            {t('settings:usernode.connection.walletRecovery')}
           </p>
           <UnBtn btn={c.walletRecovery} />
         </div>
       ) : null}
       <div>
         <UnBtn btn={{
-          id: 'settings-usernode-connection-retry', label: 'Try again',
+          id: 'settings-usernode-connection-retry', label: t('core:common.tryAgain'),
           action: '_retryUsernodeConnection', disabled: c.retryDisabled,
         }} />
         <UnBtn btn={{
-          id: 'settings-usernode-connection-copy', label: 'Copy diagnostics',
+          id: 'settings-usernode-connection-copy', label: t('settings:usernode.connection.copyDiagnostics'),
           action: '_copyUsernodeDiagnostics', disabled: c.retryDisabled,
         }} />
       </div>
@@ -91,12 +91,13 @@ function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
 }
 
 function Body({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const b = s.body;
   if (!b) return null;
   if (b.kind === 'loading') {
     return (
       <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading Homeroom app settings…</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('settings:usernode.body.loading')}</p>
       </div>
     );
   }
@@ -105,26 +106,26 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
       <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
         {/* Headline unchanged so existing reports stay recognisable. */}
         <p className="text-sm font-bold text-red-700 dark:text-red-400">
-          Could not load Homeroom app settings.
+          {t('settings:usernode.body.loadFailed')}
         </p>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{b.reason}</p>
         {b.message ? (
           <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{b.message}</p>
         ) : null}
-        <UnBtn btn={{ id: 'settings-usernode-retry', label: 'Try again', action: '_retryUsernodeRead' }} />
+        <UnBtn btn={{ id: 'settings-usernode-retry', label: t('core:common.tryAgain'), action: '_retryUsernodeRead' }} />
       </div>
     );
   }
   return (
     <UnSection title={b.heading} description={b.description}>
-      {b.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
+      {b.demo ? <UnP note={{ text: t('settings:usernode.demoNote'), tone: 'demo' }} /> : null}
       <UnRow row={b.row} />
       {b.button ? <UnBtn btn={b.button} /> : null}
       {b.notice ? (
         <>
           <div id="settings-notif-notice" className={NOTICE_TONE[b.notice.tone]}>{b.notice.text}</div>
           {b.notice.settings ? (
-            <UnBtn btn={{ label: 'Open notification settings', action: '_openNotifSettings' }} />
+            <UnBtn btn={{ label: t('settings:usernode.body.openNotificationSettings'), action: '_openNotifSettings' }} />
           ) : null}
         </>
       ) : null}
@@ -142,27 +143,28 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
 }
 
 function SocialPush({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const p = s.socialPush;
   if (p.kind === 'absent') return null;
   return (
     <UnSection
-      title="Homeroom app: activity notifications"
-      description="Get a device notification when an agent session or unattended run finishes. Notification content is loaded only after you open Social."
+      title={t('settings:usernode.socialPush.title')}
+      description={t('settings:usernode.socialPush.intro')}
     >
-      {p.kind === 'checking' ? <UnP note={{ text: 'Checking status…' }} /> : null}
+      {p.kind === 'checking' ? <UnP note={{ text: t('settings:usernode.socialPush.checking') }} /> : null}
       {p.kind === 'unavailable' ? (
         <>
           <UnP note={{ text: p.reason }} />
           {p.failure ? (
             <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{p.failure}</p>
           ) : null}
-          {p.retry ? <UnBtn btn={{ label: 'Try again', action: '_retrySocialPush' }} /> : null}
+          {p.retry ? <UnBtn btn={{ label: t('core:common.tryAgain'), action: '_retrySocialPush' }} /> : null}
         </>
       ) : null}
       {p.kind === 'ready' ? (
         <>
           <UnSwitch toggle={{
-            label: 'Activity notifications', checked: p.enabled,
+            label: t('settings:usernode.socialPush.toggle'), checked: p.enabled,
             action: '_setSocialPushEnabled', includeErrorDetail: true,
           }} />
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{p.status}</p>
@@ -173,17 +175,18 @@ function SocialPush({ s }: { s: UsernodeSectionState }): ReactNode {
 }
 
 function BlockProduction({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const bp = s.blockProduction;
   return (
     <UnSection
-      title="Homeroom app: block production"
-      description="Producing blocks earns points. Access is released manually, so ask below and an admin will release your keys in batches."
+      title={t('settings:usernode.blockProduction.title')}
+      description={t('settings:usernode.blockProduction.intro')}
     >
       <div>
-        {bp.kind === 'checking' ? <UnP note={{ text: 'Checking status…' }} /> : null}
+        {bp.kind === 'checking' ? <UnP note={{ text: t('settings:usernode.blockProduction.checking') }} /> : null}
         {bp.kind === 'note' ? <UnP note={{ text: bp.text }} /> : null}
         {bp.kind === 'ask' ? (
-          <UnBtn btn={{ label: 'Ask to produce blocks', action: '_askForBlockProduction' }} />
+          <UnBtn btn={{ label: t('settings:usernode.blockProduction.ask'), action: '_askForBlockProduction' }} />
         ) : null}
       </div>
     </UnSection>
@@ -191,14 +194,15 @@ function BlockProduction({ s }: { s: UsernodeSectionState }): ReactNode {
 }
 
 function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const w = s.widgetIcons;
   if (!w) return null;
   return (
     <UnSection
-      title="Homeroom app: widget icons"
-      description="What the homescreen widget was told to show, and what it reports back."
+      title={t('settings:usernode.widgetIcons.title')}
+      description={t('settings:usernode.widgetIcons.intro')}
     >
-      {w.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
+      {w.demo ? <UnP note={{ text: t('settings:usernode.demoNote'), tone: 'demo' }} /> : null}
       {w.rows.map((row) => <UnRow key={row.id || row.label} row={row} />)}
       {w.notes.map((n, i) => <UnP key={`${n.tone || 'muted'}-${i}`} note={n} />)}
       {w.entries.length === 1 && w.entries[0].empty ? (
@@ -214,19 +218,20 @@ function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
           ))}
         </div>
       )}
-      {w.recheck ? <UnBtn btn={{ label: 'Re-check icons', action: '_recheckWidgetIcons' }} /> : null}
+      {w.recheck ? <UnBtn btn={{ label: t('settings:usernode.widgetIcons.recheck'), action: '_recheckWidgetIcons' }} /> : null}
     </UnSection>
   );
 }
 
 function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   return (
     <>
       <BlockProduction s={s} />
       {s.privacy ? (
         <UnSection
-          title="Homeroom app: privacy & identity"
-          description="Controls for the ZK passport identity flow."
+          title={t('settings:usernode.privacy.title')}
+          description={t('settings:usernode.privacy.intro')}
         >
           <UnSwitch toggle={s.privacy.facematch} />
           {s.privacy.open ? <UnBtn btn={s.privacy.open} /> : null}
@@ -236,15 +241,15 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
       <WidgetIcons s={s} />
       {s.diagnostics ? (
         <UnSection
-          title="Homeroom app: diagnostics"
-          description="Debugging tools for the app and its embedded node."
+          title={t('settings:usernode.diagnostics.title')}
+          description={t('settings:usernode.diagnostics.intro')}
         >
           {s.diagnostics.debugMode ? <UnSwitch toggle={s.diagnostics.debugMode} /> : null}
           <div>{s.diagnostics.actions.map((a) => <UnBtn key={a.action} btn={a} />)}</div>
         </UnSection>
       ) : null}
       {s.about ? (
-        <UnSection title="Homeroom app: about & legal">
+        <UnSection title={t('settings:usernode.about.title')}>
           {s.about.notes.map((n, i) => (
             <p key={i} className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{n.text}</p>
           ))}
@@ -253,9 +258,9 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
         </UnSection>
       ) : null}
       {s.account ? (
-        <UnSection title="Homeroom app: account">
+        <UnSection title={t('settings:usernode.account.title')}>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            The app signs in automatically with your platform account. If this message persists, try closing and reopening the app.
+            {t('settings:usernode.account.autoSignIn')}
           </p>
         </UnSection>
       ) : null}
@@ -264,12 +269,13 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
 }
 
 function Faq({ s }: { s: UsernodeSectionState }): ReactNode {
+  const t = useMessages('settings');
   const perms = s.body && s.body.kind === 'permissions' ? s.body : null;
   const isAndroid = !!(perms && perms.android);
   const device = perms && perms.android ? perms.android.device : null;
   return (
     <div className="mt-3">
-      <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Help &amp; Info</div>
+      <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">{t('settings:usernode.faq.heading')}</div>
       {faqTiles(isAndroid, device).map((tile) => (
         <details key={tile.title} className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2 mb-2">
           <summary className="text-sm font-medium cursor-pointer select-none">{tile.title}</summary>

@@ -491,7 +491,8 @@ async function sendPasswordResetMail(config, email, token) {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, mobile = null } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null, signInToken = null, mobile = null } = {}) {
+  const { CREDENTIAL_PARAM } = require('./tracking');
   await send(config, {
     kind: 'waitlist_released',
     to: email,
@@ -516,10 +517,20 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
     // (rate-limited, scan-limited) and already returns the email. So this
     // needs no new endpoint and no new secret: the query survives the
     // rewriter, and what travels is a token the recipient already holds.
+    //
+    // #4594: `key` is a SEPARATE one-time sign-in link (services/
+    // release-links.js): random, stored hashed, single use, 7 days, bound to
+    // this row and address. The page spends it with a POST, so opening the
+    // link (a scanner's prefetch included) spends nothing, and the mail
+    // leaves it out of click tracking (./tracking.js). `t` stays alongside
+    // it as the prefill for when the key no longer works.
     url: hasAccount
       ? `${PRODUCTION_ORIGIN}/?login=1`
-      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
+      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`
+        + (signInToken ? `&${CREDENTIAL_PARAM}=${encodeURIComponent(signInToken)}` : ''),
     hasAccount,
+    // Which note goes under the button: the one-time link's, or the code's.
+    signInLink: !hasAccount && !!signInToken,
     // { ios, android } store listings from services/mobile-store-links.js; a
     // platform with no published link gets no install steps.
     mobile,

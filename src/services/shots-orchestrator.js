@@ -26,6 +26,7 @@ const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
+const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
@@ -43,6 +44,20 @@ const MIN_AGENT_RETRY_MS = 60_000;
 function agentDiedRetryable(error) {
   return !!error && error.code === 'shots_agent_failed'
     && RETRYABLE_AGENT_EXITS.has(error.shotsExitCause);
+}
+
+// #4575: the dispatch never started because another turn (the Homeroom
+// bot's, a person's) took the proposal's agent while the copies were
+// building: the worker refused a second turn, or the session's one-turn
+// record was already held. Nothing ran, so the run waits for the agent to
+// be free and dispatches again, at most MAX_AGENT_BUSY_RETRIES times.
+const MAX_AGENT_BUSY_RETRIES = 2;
+const AGENT_BUSY_RETRY_PROGRESS = 'The proposal\u2019s agent was busy, so the shots didn\u2019t start. Trying again\u2026';
+
+function agentBusyRetryable(error) {
+  if (!error) return false;
+  if (error.sessionBusy === true || error.persistCode === 'session_busy') return true;
+  return state.agentBusyCode(error.code);
 }
 
 // Runs a person stopped while this process executes them. The stop already
@@ -518,6 +533,9 @@ function shotsBrief({
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // The only files upload_file can choose where a page asks for one, the
+    // same on both copies (worker/shots-samples.js).
+    sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
     // The app's tile on Homeroom's home screen, which these addresses do not
     // otherwise show: each serves its own side's at homeTile.path.
     ...(homeTile ? { homeTile } : {}),
@@ -688,6 +706,7 @@ function agentFinalResponseSummary(result, authTokens, origins, phoneTestCode = 
 }
 
 function visibleError(error) {
+  if (state.agentBusyCode(error?.code)) return state.AGENT_BUSY_REASON;
   const message = String(error?.message || 'The before/after shots could not be taken.').trim();
   return redactDiagnosticText(message, 2000) || 'The before/after shots could not be taken.';
 }
@@ -728,6 +747,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
+  'sample_upload',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -739,6 +759,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
   'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -776,7 +797,7 @@ function recordAgentDiagnostic(metrics, raw) {
   if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
   if (['ok', 'error', 'tool_error', 'rpc_error', 'unparsed', 'server_exit',
     'loaded', 'invalid', 'request_error', 'invalid_catalog',
-    'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
+    'http_error', 'network_error', 'stream_error', 'cancelled', 'timeout', 'browser_gone'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
@@ -804,6 +825,9 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
     event.identityAttached = raw.identityAttached;
   }
+  // And whether the proxy sent that page load on to the same address with
+  // the persona's display token, as Homeroom's frame opens an app.
+  if (kind === 'document_request' && raw.identityRedirect === true) event.identityRedirect = true;
   // Why the shots proxy refused a destination outside the pair, by reason
   // only (worker/shots-boundary.js): never which destination.
   if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
@@ -815,6 +839,11 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
+  }
+  // Whether the shots proxy failed or held a controlled request.
+  if ((kind === 'controlled_failure_set' || kind === 'controlled_failure_hit')
+      && ['fail', 'hold', 'off'].includes(raw.mode)) {
+    event.mode = raw.mode;
   }
   if (['timeout', 'network', 'browser_closed', 'locator_ambiguous', 'other'].includes(raw.errorClass)) {
     event.errorClass = raw.errorClass;
@@ -954,6 +983,7 @@ function newRunMetrics() {
       cleanup: 0,
     },
     agentAttempts: 0,
+    agentBusyRetries: 0,
     agentDispatches: [],
     agentFinalResponses: [],
     agentActivity: { events: [], counts: {}, toolCounts: {}, firstAtMs: {}, pending: new Map(),
@@ -963,6 +993,7 @@ function newRunMetrics() {
     agentFinalResponse: null,
     artifactBytes: 0,
     idleWait: null,
+    dispatchIdleWait: null,
     tokenUsage: {},
   };
 }
@@ -1012,7 +1043,9 @@ function traceSummary(metrics, extra = {}) {
       total: Math.max(0, Date.now() - metrics.startedAtMs),
     },
     idleWait: metrics.idleWait,
+    ...(metrics.dispatchIdleWait ? { dispatchIdleWait: metrics.dispatchIdleWait } : {}),
     agentAttempts: metrics.agentAttempts,
+    ...(metrics.agentBusyRetries ? { agentBusyRetries: metrics.agentBusyRetries } : {}),
     agentDispatches: metrics.agentDispatches.slice(0, 8),
     ...(metrics.agentFinalResponses.length
       ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 8) } : {}),
@@ -1330,10 +1363,49 @@ async function executeRun(config, options, injected = {}) {
       }
     };
 
+    // The session was idle before the copies were built, minutes ago; a
+    // turn may have taken it since. Wait for it again right before each
+    // dispatch, within what is left of the agent's budget (#4575).
+    const waitIdleBeforeDispatch = async () => {
+      const remainingMs = agentBudgetMs - (Date.now() - agentStartedAt);
+      if (remainingMs <= 0) return;
+      const waitStartedAt = Date.now();
+      try {
+        metrics.dispatchIdleWait = await deps.waitForSessionIdle(pool, session.id, {
+          timeoutMs: Math.min(remainingMs, SESSION_IDLE_WAIT_MS),
+          recoveryTimeoutMs: Math.min(remainingMs, SHOTS_RECOVERY_WAIT_MS),
+          workerService: deps.worker,
+          onObservation: (observation) => { metrics.dispatchIdleWait = observation; },
+        });
+      } catch (error) {
+        if (error?.detail?.idleWait) metrics.dispatchIdleWait = error.detail.idleWait;
+        throw error;
+      } finally {
+        addTiming(metrics, 'idleWait', waitStartedAt);
+      }
+    };
+    const dispatchWhenIdle = async () => {
+      for (let busyRetries = 0; ; busyRetries += 1) {
+        await waitIdleBeforeDispatch();
+        const outcome = await dispatchOnce();
+        if (!agentBusyRetryable(outcome.error) || stopRequested.has(run.id)
+            || busyRetries >= MAX_AGENT_BUSY_RETRIES
+            || agentBudgetMs - (Date.now() - agentStartedAt) < MIN_AGENT_RETRY_MS) {
+          return outcome;
+        }
+        metrics.agentBusyRetries += 1;
+        log.warn('shots', 'The proposal\'s agent was busy at dispatch; waiting to dispatch again', {
+          sessionId: session.id, runId: run.id, code: errorCode(outcome.error),
+          persistCode: outcome.error?.persistCode || null,
+        });
+        progress(AGENT_BUSY_RETRY_PROGRESS);
+      }
+    };
+
     failurePhase = 'agent_exploration';
     stage(failurePhase);
     progress('The shots agent is taking before/after shots…');
-    let agentOutcome = await dispatchOnce();
+    let agentOutcome = await dispatchWhenIdle();
     // A Stop kills the shots agent mid-turn; its error is that stop.
     if (agentOutcome.error && stopRequested.has(run.id)) {
       throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
@@ -1348,7 +1420,7 @@ async function executeRun(config, options, injected = {}) {
         sessionId: session.id, runId: run.id, exitCause: agentOutcome.error.shotsExitCause,
       });
       progress('The shots agent stopped unexpectedly; starting it once more…');
-      agentOutcome = await dispatchOnce();
+      agentOutcome = await dispatchWhenIdle();
       if (agentOutcome.error && stopRequested.has(run.id)) {
         throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
       }
@@ -1476,6 +1548,10 @@ async function executeRun(config, options, injected = {}) {
         ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
         ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
+        // Requests held or failed and sample files uploaded, all changes together.
+        ...(control.conditions?.size ? {
+          notedConditions: [...control.conditions.values()].reduce((sum, list) => sum + list.length, 0),
+        } : {}),
         skippedAll: control.skippedAll ? true : false,
       } } : {}),
     });
@@ -1759,6 +1835,9 @@ module.exports = {
   shotsBrief,
   sameProvenance,
   waitForSessionIdle,
+  agentBusyRetryable,
+  MAX_AGENT_BUSY_RETRIES,
+  visibleError,
   newRunMetrics,
   recordAgentDiagnostic,
   addTiming,

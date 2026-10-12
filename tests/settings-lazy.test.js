@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -224,7 +225,8 @@ test('the chassis gates the panes on the chunk, and init() runs where the panes 
   assert.doesNotMatch(indexTsx, /import '\.\/mount'/, 'nor settings.js (which ./mount imports)');
   assert.match(indexTsx, /\{mounted && Sections \? <Sections \/> : null\}/);
   assert.match(indexTsx, /if \(mounted\) ensureSettings\(\);/, 'a reveal without open() still asks for the module');
-  assert.match(indexTsx, /Settings could not be loaded\./, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(indexTsx, /t\('settings:screen\.loadFailed'\)/, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(message('settings:screen.loadFailed'), /Settings could not be loaded\./);
   assert.match(sectionsTsx, /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/,
     'init() binds by id once the panes exist: a layout effect of the panes component');
   assert.match(chunkTs, /^import '\.\/mount';/m, 'the chunk evaluates settings.js (via ./mount) …');

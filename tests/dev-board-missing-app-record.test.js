@@ -125,6 +125,7 @@ function makeHarness(recordAnswers) {
       unmountAll: () => {},
     },
   };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;

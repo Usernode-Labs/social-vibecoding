@@ -236,6 +236,9 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   const reads = [];
   const deps = (answer) => ({
     readAsk: async (args) => { reads.push(args); return answer; },
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,

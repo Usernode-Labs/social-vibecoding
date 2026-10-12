@@ -123,7 +123,7 @@ function turn(extra = {}) {
 /** A pool that answers the session read, the run lookup and the cost sum. */
 function makePool({
   session, run = RUN, cost = 0.42, liveRun = null, earlierBuilds = [], firstVersion = false,
-  sessionSpec = '# Spec', runSpec = null, resumedBefore = 0, restarts = null,
+  sessionSpec = '# Spec', sessionHtml = null, runSpec = null, runHtml = null, resumedBefore = 0, restarts = null,
 }) {
   const calls = [];
   return {
@@ -148,11 +148,13 @@ function makePool({
       if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1/.test(s)) return { rows: run ? [run] : [] };
       // What completeRecoveredLive reads once the session is free.
       if (/spec_version/.test(s) && /FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) {
-        return { rows: [{ id: session.id, user_id: BOT_ID, status: 'active', branch_name: session.branch_name, spec_md: sessionSpec, spec_version: 2 }] };
+        return { rows: [{ id: session.id, user_id: BOT_ID, status: 'active', branch_name: session.branch_name, spec_md: sessionSpec, spec_html: sessionHtml, spec_version: 2 }] };
       }
       // #4210: the plan a run kept from an earlier build (keptRunSpec), and
       // how many of its builds already carried on from it (resumesOfRun).
-      if (/SELECT build_spec_md FROM homeroom_bot_runs WHERE id = \$1/.test(s)) return { rows: [{ build_spec_md: runSpec }] };
+      if (/SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = \$1/.test(s)) {
+        return { rows: [{ build_spec_md: runSpec, build_spec_html: runHtml }] };
+      }
       if (/SELECT COUNT\(\*\)::int AS n FROM events/.test(s)) return { rows: [{ n: resumedBefore }] };
       if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [{ id: 5, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' }] };
       if (/FROM users WHERE username = \$1/.test(s)) return { rows: [{ id: BOT_ID, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
@@ -506,6 +508,10 @@ test('#4553: what a build finished after a restart says is recorded as seen, so 
 });
 
 const SPEC_TEXT = '# Spec\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny';
+// An HTML plan a spec turn wrote: the document rides along its markdown
+// projection (readSpec), and a build that carries on from it keeps both.
+const SPEC_HTML = '<article data-spec><h1>Spec</h1><section data-spec-tab="user"><p>x</p></section><section data-spec-tab="tech"><p>y</p></section></article>';
+const SPEC_HTML_MD = require('../src/services/spec-html').normalizeSpecOutput(SPEC_HTML).markdown.trim();
 const resumes = (pool) => pool.calls.filter((c) => /SET build_spec_md = \$2, build_cost_usd = \$3, build_session_id = NULL/.test(c.sql));
 
 test('a live spec turn that wrote a plan keeps it, and the build goes on from it', async () => {
@@ -517,7 +523,7 @@ test('a live spec turn that wrote a plan keeps it, and the build goes on from it
   assert.deepEqual(requeues(pool), [], 'not sent back to be triaged and planned again');
   const [resume] = resumes(pool);
   assert.ok(resume, 'its run is back in line for its build');
-  assert.deepEqual(resume.params, [950, SPEC_TEXT, 0.42], 'with the plan, and what writing it cost');
+  assert.deepEqual(resume.params, [950, SPEC_TEXT, 0.42, null], 'with the plan, and what writing it cost');
   assert.match(resume.sql, /live_build_waiting_at = NOW\(\)/);
   assert.match(resume.sql, /WHERE id = \$1 AND mode = 'live' AND build_ok IS NULL AND proposal_session_id IS NULL/);
   assert.equal(liveOutcome(pool), undefined, 'no outcome recorded: the build is not over');
@@ -572,7 +578,7 @@ test('a live build whose worker did not survive carries on from its plan, saying
   assert.deepEqual(requeues(pool), [], 'not sent back to be triaged, planned and approved again');
   const [resume] = resumes(pool);
   assert.ok(resume, 'its run is back in line for its build');
-  assert.deepEqual(resume.params, [950, '# Spec', 0.42], 'with the plan it was building from');
+  assert.deepEqual(resume.params, [950, '# Spec', 0.42, null], 'with the plan it was building from');
   assert.equal(liveOutcome(pool), undefined, 'the run keeps going: its build note (the creator\'s answers) with it');
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
   assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing on the issue');
@@ -594,6 +600,42 @@ test('a lost build whose session has no plan carries on from the one its run kep
   assert.deepEqual(resumes(pool).map((c) => c.params[1]), ['# Kept']);
   assert.deepEqual(requeues(pool), []);
   assert.deepEqual(dmRestarts, []);
+});
+
+// #4662: a plan the bot wrote as HTML keeps its document through the
+// restart that interrupted the build from it, so the version people open
+// keeps its tabs and its screens instead of falling back to plain markdown.
+test('a live spec turn that wrote an HTML plan keeps it: the build resumes with the document', async () => {
+  stubLive();
+  journalTail = async () => ({ lastResultText: SPEC_HTML, exitCode: 0 });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  const [resume] = resumes(pool);
+  assert.ok(resume, 'its run is back in line for its build');
+  assert.equal(resume.params[3], SPEC_HTML, 'the document, so the plan opens with its tabs and screens');
+  assert.equal(resume.params[1], SPEC_HTML_MD, 'and its markdown projection rides along it');
+});
+
+test('a lost build carries the HTML of the plan its session holds; with none, the run\'s kept HTML', async () => {
+  stubLive();
+  const doc = '<article data-spec><h1>Kept</h1></article>';
+  const withSessionPlan = makePool({
+    session: botSession(), run: null, liveRun: LIVE_RUN, sessionSpec: '# Spec', sessionHtml: doc,
+  });
+  await adopt(withSessionPlan, botSession(), 'exited');
+  assert.deepEqual(resumes(withSessionPlan).map((c) => c.params.slice(1, 2)), [['# Spec']]);
+  assert.deepEqual(resumes(withSessionPlan).map((c) => c.params[3]), [doc], 'the session plan\'s document');
+
+  stubLive();
+  const fromRun = makePool({
+    session: botSession(), run: null, liveRun: LIVE_RUN, sessionSpec: null,
+    runSpec: '# Kept', runHtml: '<article data-spec><h1>Run kept</h1></article>',
+  });
+  await adopt(fromRun, botSession(), 'exited');
+  const [resume] = resumes(fromRun);
+  assert.equal(resume.params[1], '# Kept', 'the run\'s kept plan');
+  assert.equal(resume.params[3], '<article data-spec><h1>Run kept</h1></article>', 'with its document beside it');
 });
 
 test('a lost build with no plan anywhere starts over from the request, and only then is its person told', async () => {
