@@ -87,7 +87,7 @@ const NO_LIMIT = 0;
 const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
 const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
-/** "3 of 25 used · 5 days left", or "3 of 25 used · 1 waiting · 5 days left",
+/** "3 of 25 joined · 5 days left", or "3 of 25 joined · 1 waiting · 5 days left",
  *  for a row of Your links. */
 export function linkDetail(
   link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses' | 'pending' | 'joined' | 'ended'>,
@@ -98,9 +98,14 @@ export function linkDetail(
   // On a link with no limit of people, the joined count is the uses fact, and
   // it counts only people who got in (a queued one has not). Links read from
   // before the counts existed say how many followed, as they always did.
-  const uses = link.maxUses == null
-    ? t('agent:appContext.invite.detail.joined', { count: link.joined ?? link.uses })
-    : t('agent:appContext.invite.detail.used', { used: link.uses, max: link.maxUses });
+  const joined = link.joined ?? link.uses;
+  // #4785: a link nobody has used says so, instead of "0 of 25 used", which
+  // read as if nothing were happening.
+  const uses = joined <= 0
+    ? t('agent:appContext.invite.detail.nobodyYet')
+    : link.maxUses == null
+      ? t('agent:appContext.invite.detail.joined', { count: joined })
+      : t('agent:appContext.invite.detail.joinedOf', { joined, max: link.maxUses });
   // The last fact: why the link no longer works, or how long it still does.
   const expiry = ended
     ? t(`agent:appContext.invite.detail.ended.${ended === 'used_up' ? 'usedUp' : ended}`)

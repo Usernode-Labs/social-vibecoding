@@ -273,7 +273,27 @@ const Profile = {
     return body;
   },
 
-  async _load(token = ++Profile._loadToken) {
+  // The shell's verdict on the session after a ranking 401 (#4808):
+  // 'signedOut' when /api/auth/me answers signed out, 'live' when it
+  // answers ok, 'unknown' when it fails or answers anything else. A shell
+  // without the session read keeps the old reading: signed out.
+  async _recheckSession() {
+    const app = window.App;
+    if (!app || typeof app._fetchSession !== 'function'
+        || typeof app._answeredSignedOut !== 'function') return 'signedOut';
+    let res;
+    try {
+      res = await app._fetchSession();
+    } catch (_) {
+      return 'unknown';
+    }
+    if (app._answeredSignedOut(res)) return 'signedOut';
+    return res && res.ok ? 'live' : 'unknown';
+  },
+
+  // `revalidated` marks the one retry after the shell found the session
+  // live: a 401 on that retry is a load failure, never another round.
+  async _load(token = ++Profile._loadToken, revalidated = false) {
     Profile._loading = true;
     try {
       if (Profile._targetUsername) {
@@ -318,7 +338,7 @@ const Profile = {
       // season by the server (`season_id=active`, #2777). It still decides
       // signed-out-ness: the /challenges-api/me/* reads are session-scoped
       // and answer 401 to a lapsed session, which the catch below turns into
-      // the sign-in prompt.
+      // the sign-in prompt once the shell's own session read agrees.
       //
       // The summary is the three stat cards and Your contributions, and the
       // public-profile state backs the Edit profile sheet's "Public page".
@@ -368,16 +388,39 @@ const Profile = {
       if (token !== Profile._loadToken || Profile._targetUsername) return;
       Profile._data = data;
     } catch (err) {
-      // A 401 means the session is gone whichever load noticed it, so the
-      // cached copy goes even when this load has been overtaken.
-      if (err && err.status === 401) Profile._ownCache = null;
+      // A 401 from the ranking read is not the last word while App.user
+      // still holds someone (the bell, the tab bar and every other surface
+      // signed in, #4808): App.user is the shell's display state, so the
+      // shell's own session read decides. It answering signed out is
+      // signed out; a live session (the mobile app may just have restored
+      // the web cookie) gets this load once more; anything else is a load
+      // failure, not a sign-in prompt. With no App.user, a 401 is signed
+      // out as before.
+      let signedOut = !!(err && err.status === 401);
+      if (signedOut && window.App && App.user) {
+        if (revalidated) {
+          signedOut = false;
+        } else {
+          const session = await Profile._recheckSession();
+          if (session === 'live' && token === Profile._loadToken) {
+            return await Profile._load(token, true);
+          }
+          signedOut = session === 'signedOut';
+        }
+      }
+      // Signed out means the session is gone whichever load noticed it, so
+      // the cached copy goes even when this load has been overtaken.
+      if (signedOut) Profile._ownCache = null;
       if (token !== Profile._loadToken) return;
-      if (err && err.status === 401) {
+      if (signedOut) {
         // Not signed in (or the session lapsed) — a normal state, not a
         // fault. Replace any stale data so we never show one user's
         // profile after their session ends.
         Profile._data = { signedOut: true };
       } else {
+        // A failure keeps whatever is on screen: open() painted the cached
+        // own profile, if there is one, before this load started. Only an
+        // empty screen gets the "could not load" line.
         console.warn('[profile] load failed:', err);
         if (!Profile._data) Profile._data = { error: true };
       }

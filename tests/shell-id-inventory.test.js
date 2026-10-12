@@ -406,7 +406,7 @@ const ADDED_IDS = {
   // a discussion or an agent chat has arrived, so none of them is in the
   // prerendered document, which is what this map is for.
   'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
-  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
+  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. Still presentation, so not in the route; since #4783 the choice is remembered per device, and All is both the fresh-device start and the fallback for an unknown saved value.',
   'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
   // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
   // (#messages-filter-channels, below). It was only ever an ADDED id, so it

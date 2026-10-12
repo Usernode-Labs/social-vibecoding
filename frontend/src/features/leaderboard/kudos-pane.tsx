@@ -202,6 +202,16 @@ const MORE_BTN = 'px-4 py-1.5 text-sm font-medium rounded-lg '
 
 const CLAP = '\u{1F44F}';
 
+/**
+ * The note under a ranked list: ranks move when other people earn kudos, so
+ * yours can move while you have done nothing (#4782). Shown only with a
+ * ranked list on screen — never on loading, empty, error, history or profile.
+ */
+function RankNote(): ReactNode {
+  const t = useMessages('leaderboard');
+  return <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">{t('leaderboard:kudos.rankNote')}</p>;
+}
+
 function StatusBadge({ badge }: { badge: Badge }): ReactNode {
   return <span className={`${BADGE} ${TONES[badge.tone]}`} title={badge.title}>{badge.label}</span>;
 }
@@ -439,7 +449,15 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
 function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
   const t = useMessages('leaderboard');
   return (
-    <div className="space-y-2">
+    <>
+      {/* The rank note only makes sense above rows: empty, loading and error
+          states explain themselves, and #4786 asked for it over the ranked
+          list exactly. The row-detail size, not the HINT block, so it reads
+          as a footnote to the list rather than an empty state. */}
+      <p data-lb-rank-note="" className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+        {t('leaderboard:kudos.rankNote')}
+      </p>
+      <div className="space-y-2">
       {rows.map((row) => (
         <button
           key={row.key}
@@ -476,7 +494,8 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           </div>
         </button>
       ))}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -678,8 +697,8 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
   if (!view || view.kind === 'loading') return <Loading />;
   if (view.kind === 'error') return <div className={ERROR_HINT}>{view.message}</div>;
   if (view.kind === 'empty') return <div className={HINT}>{view.message}</div>;
-  if (view.kind === 'prs') return <PrRows rows={view.rows} />;
-  if (view.kind === 'users') return <UserRows rows={view.rows} />;
+  if (view.kind === 'prs') return <><PrRows rows={view.rows} /><RankNote /></>;
+  if (view.kind === 'users') return <><UserRows rows={view.rows} /><RankNote /></>;
   if (view.kind === 'profile') return <ProfileBody view={view} />;
   return <HistoryBody view={view} />;
 }

@@ -2229,7 +2229,7 @@
   },
   "commentPin.view.chip": {
     "text": "Screenshot",
-    "description": "Small label on the picture of the page shown while comment mode is on: says the page behind is a picture of the page, not the live page."
+    "description": "Small label at the start of the comment-mode bar, above the picture of the page shown while comment mode is on: says the page below is a picture of the page, not the live page."
   },
   "commentPin.marker.numbered": {
     "text": "Comment {{number}}",

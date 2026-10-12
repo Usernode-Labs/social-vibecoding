@@ -132,6 +132,16 @@ export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
 ];
 
 /**
+ * A saved filter read back for #4783: the value as remembered, or `all` when
+ * it names no chip on the row today. `channels` was once a chip (#2783, since
+ * retired), so an older build's saved value must not select a filter the row
+ * no longer draws — anything unknown falls back to All.
+ */
+export function savedInboxFilter(raw: string | null | undefined): InboxFilter {
+  return INBOX_FILTERS.some(([key]) => key === raw) ? (raw as InboxFilter) : 'all';
+}
+
+/**
  * The shown entries as consecutive runs of one section, each with whether it
  * is headed. Exported and pure so the grouping is tested without a render.
  * Under a filter nothing is headed and the runs still split by section, so a

@@ -1526,7 +1526,15 @@ function topochainMobileRoutes(config) {
   // (mobileTokenAuth's own "never trust a client-supplied id" rule,
   // Constraint #12, now holds on the web surface too).
   const webSessionAuth = optionalSessionAuth(config);
+  // A session lookup that threw (a DB error or pool timeout, which
+  // optionalSessionAuth swallows for the public reads) is a server fault,
+  // not "signed out": answer 500 as authMiddleware does, so the Profile
+  // screen never tells a signed-in person to sign in (#4808).
   const requireSessionUser = (req, res, next) => {
+    if (req.sessionLookupError) {
+      log.warn('topochain-mobile', 'web session lookup failed', { message: req.sessionLookupError.message });
+      return fail(res, 500, 'Internal server error.');
+    }
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };
