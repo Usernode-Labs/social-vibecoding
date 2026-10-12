@@ -631,6 +631,35 @@ async function getElectorate(pool, appId, gov, appMeta = null) {
   return { active, approverIds: null, adminFallback: false };
 }
 
+// #4747: whether this viewer's vote can affect a proposal's outcome under
+// the project's governance — the deciding set the gate itself reads, as
+// opposed to counts_toward_outcome's identity/app-access question. True for
+// a signed-out viewer (they see no vote controls and are not flagged) and
+// for every project without approvers or rules. A rules project reads the
+// same value the gate does (WHO_DECIDES for a flagged change to who
+// decides), and a viewer inside ANY rule's group decides: the gate passes
+// when any rule passes. Display only; nothing here changes who counts.
+function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReason }, viewerId) {
+  if (viewerId == null) return true;
+  const id = parseInt(viewerId, 10);
+  if (!Number.isFinite(id)) return true;
+  if (gov && gov.rules) {
+    const value = explicitApproval && isWhoDecidesReason(explicitReason ?? null)
+      ? { rules: governanceRules.WHO_DECIDES }
+      : gov.rules;
+    return value.rules.some((rule) => {
+      if (rule.group === 'members') return true;
+      if (rule.group === 'creator') return facts ? facts.creatorId === id : false;
+      if (rule.group === 'admins') return !!facts && (facts.adminIds || []).includes(id);
+      return !!facts && (facts.groups.get(rule.group) || []).includes(id);
+    });
+  }
+  if (gov && gov.approverPolicy === 'invited') {
+    return (approverIds || []).includes(id);
+  }
+  return true;
+}
+
 // ── #4666: what a rules project's gate reads ───────────────────────────
 
 // Who made the project, how many are in its community, its active-member
@@ -945,5 +974,6 @@ module.exports = {
   ruleRowFields,
   describeApproval,
   getElectorate,
+  viewerDecides,
   governedGate,
 };

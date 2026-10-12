@@ -386,6 +386,11 @@ app.get('/api/version', async (_req, res) => {
   });
 });
 
+// The languages the shell is offered in, and their packs, from the
+// translation cache (src/routes/languages.js). Before authMiddleware: the
+// sign-in screens are translated too.
+app.use(require('./src/routes/languages').languageRoutes(config));
+
 // Public conventions endpoint. Apps' own CLAUDE.md files point here so
 // a developer (or Claude Code) running locally against a repo can
 // fetch the current platform rules without cloning the harness.
@@ -1228,6 +1233,13 @@ async function becomeLeader() {
         if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
       })
       .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
+      // A run a platform step failed (the copies' database, a clone, GitHub's
+      // hourly limit, the shots agent's exit) is taken again once, the same way.
+      .then(() => shotsGc.retryPlatformFaults(config, getPool(config)))
+      .then((result) => {
+        if (result?.scheduled) log.info('shots', 'Retried before & after shots runs a platform fault ended', result);
+      })
+      .catch((err) => log.warn('shots', 'Platform-fault shots retry failed', { err: err.message }))
       .finally(() => { shotsRetryRunning = false; });
   };
   retryInterruptedShots();

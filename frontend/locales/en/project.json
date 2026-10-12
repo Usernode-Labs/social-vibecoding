@@ -2943,6 +2943,10 @@
     "text": "Test account: this vote won’t count.",
     "description": "Note inside the vote picker shown to a test account voting on a project a real person made: the vote is recorded and shown but not counted."
   },
+  "card.vote.picker.advisory": {
+    "text": "Your vote is advisory: it’s recorded, but it doesn’t decide this change.",
+    "description": "Note inside the vote picker shown to someone outside the people who decide on this project — not an approver where only approvers decide, or outside every group the project’s rules name. Their vote is recorded and shown, but does not affect the outcome."
+  },
   "card.vote.picker.approve": {
     "text": "Approve",
     "description": "First of the two choices in the picker on a project that is just the person's: approve the change. A verb."

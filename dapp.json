@@ -28,7 +28,7 @@
       "name": "Proposal pipeline",
       "icon": "🚦",
       "about": "From request to merge: proposals, checks, votes and merging",
-      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged"]
+      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged", "pipeline.main-paused"]
     },
     {
       "id": "infra",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled", "infra.turned-away"]
     },
     {
       "id": "project-workflows",
@@ -1450,7 +1450,7 @@
       "name": "Adding from Discover lands in My apps with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "My apps"
+      "expectText": "Discover Communities"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -1461,8 +1461,8 @@
     {
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "My apps"
+      "expectSelector": "#home-body #home-discover-section > h2.home-area-label",
+      "expectText": "Discover Communities"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -2185,7 +2185,7 @@
       "name": "Invited-approver proposal: the Votes card says how many yeses are advisory (#695, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000025",
       "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note",
-      "expectText": "2 more yeses are advisory"
+      "expectText": "2 yeses so far are from people who aren’t approvers, so they don’t count"
     },
     {
       "name": "Explicit-approval proposal: the Votes card says it needs another member’s Yes, and shows no merge countdown (#788, #3826, #4455)",

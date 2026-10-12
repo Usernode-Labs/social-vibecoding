@@ -406,17 +406,41 @@ const Home = {
     return list;
   },
 
+  // The one form both matchers compare in: NFC, so a typed "Café" (é as one
+  // code point) meets a stored one written as e + combining accent, then
+  // trimmed and lower-cased. No locale-specific folding.
+  searchKey(value) {
+    return String(value || '').normalize('NFC').trim().toLowerCase();
+  },
+
   // Case-insensitive substring match on name and slug. An empty /
   // whitespace-only query matches everything (the default view).
   matchesQuery(app, query) {
-    const q = String(query || '').trim().toLowerCase();
+    const q = Home.searchKey(query);
     if (!q) return true;
-    return String(app?.name || '').toLowerCase().includes(q)
-      || String(app?.slug || '').toLowerCase().includes(q);
+    return Home.searchKey(app?.name).includes(q)
+      || Home.searchKey(app?.slug).includes(q);
   },
 
+  // True when the query IS the app's name or slug (trimmed, any case), not
+  // merely inside it. An empty query is nobody's exact match.
+  isExactMatch(app, query) {
+    const q = Home.searchKey(query);
+    if (!q) return false;
+    return Home.searchKey(app?.name) === q || Home.searchKey(app?.slug) === q;
+  },
+
+  // The matches, in input order, except that an exact match leads (#4793):
+  // typing an app's full name should find it first, not below three apps
+  // that merely contain it. The split is stable, so several exact matches
+  // keep their order among themselves and the rest keep theirs. Discover's
+  // search (Browse.visibleApps) runs through here too, so both fields rank
+  // the same way.
   filterApps(apps, query) {
-    return (apps || []).filter((a) => Home.matchesQuery(a, query));
+    const matches = (apps || []).filter((a) => Home.matchesQuery(a, query));
+    const exact = matches.filter((a) => Home.isExactMatch(a, query));
+    if (!exact.length) return matches;
+    return exact.concat(matches.filter((a) => !Home.isExactMatch(a, query)));
   },
 
   // How many admin-featured tiles the "Featured apps" row shows.

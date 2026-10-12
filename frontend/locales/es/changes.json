@@ -6947,6 +6947,78 @@
     "text": "{{release}}.",
     "source": "9f8e3da4697beb42277c50aeaaf7a94245facaa86d455509d0e1d1aa8199baac"
   },
+  "firstVersion.wait.more_many": {
+    "text": "Esperando a que {{count}} de personas más aprueben.",
+    "source": "a0c1d93838c55a070596662072890c7d1d72fcd88dacb1f89a6d940482c8a0e5"
+  },
+  "firstVersion.wait.more_one": {
+    "text": "Esperando a que una persona más apruebe.",
+    "source": "7b4ca482e28c448d606bf903bb8600952262e6dca20e277f1816079a3369e253"
+  },
+  "firstVersion.wait.more_other": {
+    "text": "Esperando a que {{count}} personas más aprueben.",
+    "source": "a0c1d93838c55a070596662072890c7d1d72fcd88dacb1f89a6d940482c8a0e5"
+  },
+  "firstVersion.wait.moreOrToday_many": {
+    "text": "Esperando a que {{count}} de personas más aprueben, o se publica hoy más tarde si nadie se opone.",
+    "source": "23972a1611080d76a5ed463303ad83f2e8c6d21b96975b20af30b12c697c064f"
+  },
+  "firstVersion.wait.moreOrToday_one": {
+    "text": "Esperando a que una persona más apruebe, o se publica hoy más tarde si nadie se opone.",
+    "source": "bc9e9356c27b37b39b765dd5d942477719d4f81e25d0c1c77cf2b4d211763767"
+  },
+  "firstVersion.wait.moreOrToday_other": {
+    "text": "Esperando a que {{count}} personas más aprueben, o se publica hoy más tarde si nadie se opone.",
+    "source": "23972a1611080d76a5ed463303ad83f2e8c6d21b96975b20af30b12c697c064f"
+  },
+  "firstVersion.wait.moreOrTomorrow_many": {
+    "text": "Esperando a que {{count}} de personas más aprueben, o se publica mañana si nadie se opone.",
+    "source": "e05094d7325fd36701d3a36d5f2261ca03842bccdc9c2565d67fab6d79c16a4b"
+  },
+  "firstVersion.wait.moreOrTomorrow_one": {
+    "text": "Esperando a que una persona más apruebe, o se publica mañana si nadie se opone.",
+    "source": "d5533e2e7c6723505187073135c81e6d6faf15641fdb3ccd02807845df1e0707"
+  },
+  "firstVersion.wait.moreOrTomorrow_other": {
+    "text": "Esperando a que {{count}} personas más aprueben, o se publica mañana si nadie se opone.",
+    "source": "e05094d7325fd36701d3a36d5f2261ca03842bccdc9c2565d67fab6d79c16a4b"
+  },
+  "firstVersion.wait.moreOrWeekday_many": {
+    "text": "Esperando a que {{count}} de personas más aprueben, o se publica el {{weekday}} si nadie se opone.",
+    "source": "beda5bcc0774a62424ed4dd648e44cc87b2ee98aa8579e2588d6ccda1cb25ee3"
+  },
+  "firstVersion.wait.moreOrWeekday_one": {
+    "text": "Esperando a que una persona más apruebe, o se publica el {{weekday}} si nadie se opone.",
+    "source": "1e5c6f28837ce17431fcd0dab80fef32e3be96631bb9fa551ea9eadee4204a49"
+  },
+  "firstVersion.wait.moreOrWeekday_other": {
+    "text": "Esperando a que {{count}} personas más aprueben, o se publica el {{weekday}} si nadie se opone.",
+    "source": "beda5bcc0774a62424ed4dd648e44cc87b2ee98aa8579e2588d6ccda1cb25ee3"
+  },
+  "firstVersion.wait.moreOrDate_many": {
+    "text": "Esperando a que {{count}} de personas más aprueben, o se publica el {{date}} si nadie se opone.",
+    "source": "6b267901a6dc7397c96ba2a832c9d788ef0394088318aaeeb1a6c4191a5c4511"
+  },
+  "firstVersion.wait.moreOrDate_one": {
+    "text": "Esperando a que una persona más apruebe, o se publica el {{date}} si nadie se opone.",
+    "source": "0f17ed15d422e501546ceae627c21cb782afde40b94151f6bc2be190032d1c33"
+  },
+  "firstVersion.wait.moreOrDate_other": {
+    "text": "Esperando a que {{count}} personas más aprueben, o se publica el {{date}} si nadie se opone.",
+    "source": "6b267901a6dc7397c96ba2a832c9d788ef0394088318aaeeb1a6c4191a5c4511"
+  },
+  "firstVersion.people.andMore_many": {
+    "text": "{{people}} y {{count}} más",
+    "source": "d54e801a63f42625c1a09c5c3fc017865431057d097747d177422964731a486d"
+  },
+  "firstVersion.people.andMore_one": {
+    "text": "{{people}} y {{count}} más",
+    "source": "d54e801a63f42625c1a09c5c3fc017865431057d097747d177422964731a486d"
+  },
+  "firstVersion.people.andMore_other": {
+    "text": "{{people}} y {{count}} más",
+    "source": "d54e801a63f42625c1a09c5c3fc017865431057d097747d177422964731a486d"
+  },
   "versionPill.redeployingElapsed_many": {
     "text": "Reimplementando · {{count}} s transcurridos",
     "source": "9e7b204afc8063b38be626fc6150fb7a0cb9e4b150370a52f8af62a02c968bba"

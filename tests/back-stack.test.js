@@ -530,3 +530,21 @@ test('Q16: without the Navigation API, a record with its state replaced is left,
   b.flush();
   assert.equal(b.at, 1);
 });
+
+// #3623: the header switches the native back-swipe off while a surface is
+// open, so it has to hear every change to `size`, however the surface closed.
+test('subscribers hear every open and close, by back press or by release', () => {
+  const { stack, pressBack } = fixture();
+  const sizes = [];
+  const unsubscribe = stack.subscribe(() => sizes.push(stack.size));
+
+  stack.push(() => {});
+  pressBack();
+  const release = stack.push(() => {});
+  release();
+  assert.deepEqual(sizes, [1, 0, 1, 0]);
+
+  unsubscribe();
+  stack.push(() => {});
+  assert.deepEqual(sizes, [1, 0, 1, 0], 'nothing after unsubscribing');
+});

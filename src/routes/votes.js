@@ -331,6 +331,17 @@ function stagingMockProposals(viewer) {
         8, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(64) }),
       my_vote_uncounted: true,
     },
+    // #4747: an advisory vote — the viewer is not one of the people who
+    // decide here (an invited project's approvers are), so their vote is
+    // recorded and shown but does not decide this one, and the vote picker
+    // says so. Reviewable on staging via ?demo=1.
+    {
+      ...mk(9000047, 900147,
+        '[Mock] Advisory vote: only approvers decide this one',
+        6, 0, 0, 1, { required: 2, windowEndsAt: hoursAhead(66) }),
+      approval_policy: 'invited',
+      my_vote_advisory: true,
+    },
     // One No vote: eased threshold restored, window pushed back out.
     {
       ...mk(9000002, 900102,
@@ -3218,6 +3229,18 @@ function voteRoutes(config) {
     return { fromFork, headRepo: fromFork ? headFull : null };
   }
 
+  // A failed getPR on the import paths (#4817). Only GitHub's own 404 means
+  // the pull request does not exist; a rate limit, a timeout or a bad token
+  // is GitHub being unreachable, and saying "not found" for those sent people
+  // looking for a typo in a PR number that was right.
+  function sendGetPrFailure(res, err, prNumber, slug) {
+    if (err && err.status === 404) {
+      return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+    }
+    log.warn('votes', 'PR-import getPR failed', { slug, prNumber, status: err?.status, err: err?.message });
+    return res.status(502).json({ error: `Could not reach GitHub to read PR #${prNumber}. Please try again.` });
+  }
+
   // GET candidate PRs to import (open PRs on the app's repo not already
   // imported). Collab access.
   router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
@@ -3226,7 +3249,10 @@ function voteRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
       const gh = importGithubClient();
-      if (!gh.isEnabled() || !repo) return res.json({ candidates: [] });
+      // #4817: "nothing to import because GitHub is off" and "GitHub could
+      // not be read" are different answers from "no open pull requests", so
+      // each gets its own shape: `configured: false` here, a 502 below.
+      if (!gh.isEnabled() || !repo) return res.json({ candidates: [], configured: false });
 
       const imported = await importedPrNumbers(app.id);
       let pulls = [];
@@ -3234,7 +3260,7 @@ function voteRoutes(config) {
         pulls = await gh.listOpenPulls(repo.owner, repo.repo);
       } catch (err) {
         log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
-        return res.json({ candidates: [] });
+        return res.status(502).json({ error: 'Could not load open pull requests from GitHub. Please try again.' });
       }
       const candidates = pulls
         .filter((p) => !imported.has(p.number))
@@ -3249,7 +3275,7 @@ function voteRoutes(config) {
           // #866: fork provenance for the picker's "from a fork — …" label.
           ...prForkInfo(p, repo),
         }));
-      res.json({ candidates });
+      res.json({ candidates, configured: true });
     } catch (err) {
       log.error('votes', 'PR-import candidates failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3275,7 +3301,7 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        return sendGetPrFailure(res, err, prNumber, req.params.slug);
       }
       const headSha = pr.head?.sha || null;
       const baseRef = pr.base?.ref || 'main';
@@ -3344,7 +3370,7 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        return sendGetPrFailure(res, err, prNumber, req.params.slug);
       }
       if (pr.state !== 'open') {
         return res.status(409).json({ error: `PR #${prNumber} is not open.` });
@@ -4652,6 +4678,17 @@ function voteRoutes(config) {
         row.rejection_armed = gate.rejectionArmed;
         row.approval_policy = gate.policy;
         row.approvals_required = gate.approvalsRequired;
+        // #4747: whether this viewer's vote decides, or is advisory — an
+        // invited project's non-approver, or someone outside every group a
+        // rules project's rule names. The picker and the vote rows say so.
+        row.my_vote_advisory = !!userId
+          && row.my_vote_uncounted !== true
+          && !governance.viewerDecides(gov, {
+            approverIds: electorate.approverIds,
+            facts: rulesCtx ? rulesCtx.facts : null,
+            explicitApproval: !!row.requires_explicit_approval,
+            explicitReason: row.explicit_approval_reason || null,
+          }, userId);
         Object.assign(row, governance.explicitApprovalRowFields(row, gate));
         if (gate.mode === 'rules') Object.assign(row, governance.ruleRowFields(gate));
         delete row.other_yes_count;
@@ -5243,6 +5280,9 @@ function voteRoutes(config) {
         const gov = await governance.getGovernance(pool, gatedApp.id);
         const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
         const flagged = !!proposal.requires_explicit_approval;
+        const rulesCtx = gov.rules
+          ? await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id])
+          : null;
         const q = electorate.approverIds
           ? await governance.qualifiedCounts(
             pool, 'pr', proposal.id, electorate.approverIds,
@@ -5258,8 +5298,8 @@ function voteRoutes(config) {
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
             // #4666: who voted, on a project with rules of its own.
-            ...(gov.rules ? governance.rulesGateOpts(
-              await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id]),
+            ...(rulesCtx ? governance.rulesGateOpts(
+              rulesCtx,
               proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
             ) : {}),
           }
@@ -5271,6 +5311,17 @@ function voteRoutes(config) {
         proposal.rejection_armed = gate.rejectionArmed;
         proposal.approval_policy = gate.policy;
         proposal.approvals_required = gate.approvalsRequired;
+        // #4747, same field the /promoted rows carry. Always written: the
+        // board merges this response into its held row key by key, so a
+        // missing key would leave a stale advisory value behind.
+        proposal.my_vote_advisory = !!userId
+          && proposal.my_vote_uncounted !== true
+          && !governance.viewerDecides(gov, {
+            approverIds: electorate.approverIds,
+            facts: rulesCtx ? rulesCtx.facts : null,
+            explicitApproval: flagged,
+            explicitReason: proposal.explicit_approval_reason || null,
+          }, userId);
         Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
         if (gate.mode === 'rules') Object.assign(proposal, governance.ruleRowFields(gate));
         proposal.qualified_yes_count = gate.qualifiedYes;
@@ -6013,6 +6064,22 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         'Merged notification failed', { sessionId: session.id, err: err.message }));
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
+    }
+    // #4787: the people who voted on it, yes or no, hear that it went live
+    // too — the author's row above stays the only one they (the author) get.
+    // Wrapped, and optional-called, for the same reason as above: never able
+    // to fail a MERGE.
+    try {
+      notifications.createVotedChangeMergedNotifications?.(pool, {
+        appId: session.app_id,
+        sessionId: session.id,
+        authorId: session.user_id,
+      })?.then((created) => Promise.all(
+        created.map((row) => notifications.hydrateAndPush(pool, row))
+      ))?.catch((err) => log.error('votes',
+        'Voted-change merged notification failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.error('votes', 'Voted-change merged notification threw', { sessionId: session.id, err: err.message });
     }
     // 5 October (Page Turners): the bell stops asking about it. Its "ready
     // to try" rows say it is live (unread again for whoever had not said

@@ -647,6 +647,94 @@ test('the controller loads both reads and survives losing the counts', async () 
 
 // ── 3. The route in, and the way back out ──────────────────────────────
 
+test('#4794: re-entering Needs you reloads the feed, and a vote cast in it stays cast', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const item = (id, epoch) => ({
+    kind: 'proposal', id, epoch, title: `Change ${id}`, summary: null, author: null,
+    number: null, at: null, yes: 0, no: 0,
+    app: { slug: 'a', name: 'A', icon_url: null, icon_emoji: null },
+  });
+  const countsFor = (ids) => ({ a: { working: 0, needs: ids.length, owed: ids.map((id) => `proposal:${id}@2`) } });
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const answers = new Map();
+    const reads = [];
+    global.fetch = async (url) => {
+      reads.push(url);
+      return answers.get(url) || { ok: false, json: async () => ({}) };
+    };
+    const feedAnswer = (items) => answers.set('/api/workshop/needs-feed', { ok: true, json: async () => ({ items, max: 0 }) });
+    const countsAnswer = (counts) => answers.set('/api/workshop/counts', { ok: true, json: async () => ({ counts }) });
+    answers.set('/api/apps', { ok: true, json: async () => ({ apps }) });
+    feedAnswer([item(7, 2), item(8, 2)]);
+    countsAnswer(countsFor([7, 8]));
+    // A microtask flush: refreshNeeds() is fired, not awaited, by setTab.
+    const settle = async () => {
+      for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await workshopController.open();
+    assert.equal(workshopStore.get().feed.length, 2);
+
+    // OPENING THE FEED AGAIN READS AGAIN. setTab is the tab switch and the
+    // quiet reload behind it: the counts and the feed, not the app list.
+    reads.length = 0;
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(reads, ['/api/workshop/counts', '/api/workshop/needs-feed']);
+    feedAnswer([item(8, 2)]);
+    countsAnswer(countsFor([8]));
+    workshopController.setTab('status');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the feed takes the fresh answer, without a skeleton or a flash');
+    assert.equal(workshopStore.get().rows[0].needs, 1, 'and so does the Needs you row');
+    assert.equal(workshopStore.get().error, false);
+
+    // A READ THAT FAILS LEAVES ITS HALF AS IT WAS. Offline is a state, not
+    // an error card over the feed that was showing.
+    answers.set('/api/workshop/needs-feed', { ok: false, json: async () => ({}) });
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8], 'the feed is untouched');
+    assert.equal(workshopStore.get().feedError, false);
+    assert.equal(workshopStore.get().error, false);
+
+    // A VOTE CAST IN THE FEED TAKES ITS CARD OUT AT ONCE, and every later
+    // read keeps it out at the epoch it was voted at.
+    feedAnswer([item(7, 2), item(8, 2)]);
+    await workshopController.reload();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+    workshopController.answered(7, 2);
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the answered card leaves the store while the viewer is still in the feed');
+    workshopController.setTab('status');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'a read issued before the vote and landing after it cannot bring it back');
+    // A NEWER EPOCH PASSES: the card changed under the vote and asks again.
+    feedAnswer([item(7, 3), item(8, 2)]);
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+
+    // LEFT THE SCREEN: setTab fetches nothing, and the answered set is
+    // dropped with the visit — a fresh visit starts from the server's word.
+    workshopController.close();
+    reads.length = 0;
+    workshopController.setTab('needs');
+    await settle();
+    assert.deepEqual(reads, [], 'a closed screen fetches nothing');
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
 test('coming back from an app re-reveals the screen', () => {
   // `_inWorkshop` and workshopController.isOpen() both stay true while the
   // viewer is inside an app they opened from here — navigateToApp reveals

@@ -204,6 +204,21 @@ test('Home has no Getting started card, and the server no longer draws one', () 
     'no declared check on the retired card');
 });
 
+// ── no "My apps" heading on Home (#4759) ───────────────────────────────
+
+// The app tiles start right under the search bar: the area label above
+// them is gone, its catalog entry with it. The set keeps its name
+// everywhere else ("Add to My apps", the browse badge, the tour card).
+test('the Home apps section draws no heading, and its catalog entry is gone', () => {
+  const section = HOME_SRC.slice(
+    HOME_SRC.indexOf('<section id="home-apps-section"'),
+    HOME_SRC.indexOf('<AppsMore />'));
+  assert.doesNotMatch(section, /SectionHeading/, 'no heading over the tiles');
+  assert.doesNotMatch(HOME_SRC, /home:grid\.heading/, 'and no ask for its text anywhere on Home');
+  assert.equal('grid.heading' in JSON.parse(read('frontend/locales/en/home.json')), false,
+    'the catalog entry went with the heading');
+});
+
 // ── the tile mark (stage 4) ────────────────────────────────────────────
 
 test('a Home tile says where it lives: people for a private community, a lock for just you, nothing for a public one', () => {

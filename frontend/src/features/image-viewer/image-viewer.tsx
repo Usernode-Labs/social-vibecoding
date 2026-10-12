@@ -25,9 +25,9 @@
  * (#4055) through ./save-image.ts: the app's own save, the phone's share
  * sheet ("Save Image" puts it in Photos), or a browser download. A bare
  * download link went to Files on a phone and, in the installed app, opened
- * the file with no way back. A picture on another site keeps "Open
- * original", and where the app build has no road at all the button is not
- * drawn.
+ * the file with no way back. Download sits beside ✕ on every picture
+ * (#4654), one on another site included: it is fetched as a blob, and opens
+ * as its original only where that site refuses.
  *
  * Portalled to <body>, as the message sheet is
  * (features/message-actions/action-sheet.tsx): a chat's transcript sits under
@@ -279,30 +279,22 @@ export function ImageViewer({ src, alt, onClose }: {
         // keeps the browser's "Save image as…".
         onContextMenu={(event) => { if (touching.current) event.preventDefault(); }}
       />
-      <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
-        {remote ? (
-          <a
-            href={src}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={pill}
-            data-image-viewer-download=""
-          >
-            {t('messages:imageViewer.openOriginal')}
-          </a>
-        ) : canSave ? (
-          <button
-            type="button"
-            className={`${pill} disabled:opacity-70`}
-            disabled={busy}
-            aria-busy={busy || undefined}
-            data-image-viewer-download=""
-            onClick={download}
-          >
-            <DownloadIcon className="w-4 h-4" aria-hidden="true" />
-            {busy ? t('messages:imageViewer.downloading') : tapAgain ? t('messages:imageViewer.tapToSave') : t('messages:imageViewer.download')}
-          </button>
-        ) : <span aria-hidden="true" />}
+      <div className="absolute inset-x-0 top-0 flex items-center justify-end gap-3 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
+        {/* #4654: Download for every picture, beside ✕. A picture on another
+            site is fetched as a blob too, and opens as its original where
+            that site will not allow it; an app build that cannot save says
+            to update rather than hiding the button. */}
+        <button
+          type="button"
+          className={`${pill} disabled:opacity-70`}
+          disabled={busy}
+          aria-busy={busy || undefined}
+          data-image-viewer-download=""
+          onClick={download}
+        >
+          <DownloadIcon className="w-4 h-4" aria-hidden="true" />
+          {busy ? t('messages:imageViewer.downloading') : tapAgain ? t('messages:imageViewer.tapToSave') : t('messages:imageViewer.download')}
+        </button>
         <button
           ref={closeRef}
           type="button"

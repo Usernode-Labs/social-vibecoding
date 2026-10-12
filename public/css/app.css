@@ -656,6 +656,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-group-tag {
   display: inline-flex;
   align-items: center;
+  gap: 3px;
   height: 22px;
   margin-left: 6px;
   padding: 0 8px;
@@ -5532,6 +5533,22 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     /* #app-list's sm:p-3 sm:pt-2 */
     inset: 0.5rem 0.75rem 0.75rem;
     gap: 0.5rem;      /* sm:gap-2 */
+  }
+  /* THE MY APPS BLOCK'S WIDTH (#4738): four columns across a 1024px
+     .home-column put a 56px icon in a ~250px cell, so a few apps read as a
+     sparse scatter. Softened in review of the first cut (evan found 36rem
+     too tight and left-hugging): the whole area — heading, grid and Show
+     all — is capped at 48rem, a quarter off the column, and centred, so a
+     few apps group a little closer without hugging one edge. The tiles'
+     own padding and gaps are untouched, so the overlay's inset below still
+     mirrors them. The cap is on the AREA box, so the absolutely positioned
+     drag overlay (inside #app-list) and Home's cell measurements still
+     line up with zero arithmetic. A search hands the column back: while
+     data-view="search" the area keeps the full width the results list
+     always had. */
+  #home-apps-section:not(:has(#app-list[data-view="search"])) {
+    max-width: 48rem;
+    margin-inline: auto;
   }
 }
 
@@ -11021,10 +11038,11 @@ html .un-backdrop.platform-backdrop-dim {
 
 /* THE VIEW PICTURE'S ENTRANCE (#4665): while the first view picture is
    drawn, comment mode leaves the live page on show, and when the picture
-   lands it mounts together with the grey ground and the chip that names it.
-   The picture starts exactly over the viewport (--comment-shot-from, the
-   inverse of its inset frame) and shrinks into its frame, the ground fading
-   in behind it and the chip after. Mount-only keyframes: the classes stay
+   lands it mounts together with the grey ground and the word that names it,
+   "Screenshot", which leads the bar above the picture (#4774). The picture
+   starts exactly over the viewport (--comment-shot-from, the inverse of its
+   inset frame) and shrinks into its frame, the ground fading in behind it
+   and the word after. Mount-only keyframes: the classes stay
    on the elements, so a retake's new src replays nothing. */
 .comment-shot-in { animation: comment-shot-in 320ms ease-out; transform-origin: 0 0; }
 @keyframes comment-shot-in {
@@ -11034,14 +11052,14 @@ html .un-backdrop.platform-backdrop-dim {
 @keyframes comment-shot-ground-in {
   from { opacity: 0; }
 }
-.comment-shot-chip-in { animation: comment-shot-chip-in 160ms ease-out 200ms both; }
-@keyframes comment-shot-chip-in {
+.comment-shot-label-in { animation: comment-shot-label-in 160ms ease-out 200ms both; }
+@keyframes comment-shot-label-in {
   from { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .comment-shot-in,
   .comment-shot-ground-in,
-  .comment-shot-chip-in { animation: none; }
+  .comment-shot-label-in { animation: none; }
 }
 /* The sheet's grabber, the same handle the feedback sheet's carries — the
    component renders it only on a phone, so no media query here. */
@@ -14483,9 +14501,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-weight: 500;
   color: var(--text-muted);
 }
-/* A test account's vote on an app a real person made is recorded but not
-   counted: one line under "Your vote" says so (VotePicker). The legacy vote
-   rows carry the same line (AppView._uncountedVoteNoteHtml). */
+/* One line under "Your vote" (VotePicker) and beside the legacy vote rows
+   (AppView._uncountedVoteNoteHtml): a test account's vote on an app a real
+   person made is recorded but not counted, and — #4747 — a viewer outside
+   the people who decide on a project that only some decide has an advisory
+   vote: recorded and shown, but it does not decide the change. */
 .dev-vote-uncounted {
   margin: 0;
   padding: 0 6px 6px;
@@ -22026,8 +22046,9 @@ html.un-kb #platform-parked {
      Under the sections, after a line: each app's own tile over its name,
      newest first, the green dot on the ones still open, the one on screen
      lit as a tab is. They replace Recents (#2802), whose conversations are
-     Messages' own list. Never squeezed: five rows of 58px fit any window
-     the strip is drawn in, and the rule above Me keeps them off the foot. */
+     Messages' own list. Rows are at least 58px and never squeezed; when the
+     window is too short for them all the list scrolls under the rule above
+     Me, and the fade below is the cue — the scrollbar stays hidden. */
   .platform-strip-apps:not(.hidden) {
     display: flex;
     flex-direction: column;
@@ -22040,6 +22061,15 @@ html.un-kb #platform-parked {
     border-top: 1px solid var(--app-sheet-line);
     scrollbar-width: none;
   }
+  /* The scroll cue (#4738): while apps sit below the fold the list's bottom
+     edge fades out instead of ending in a hard cut against the settings
+     cog. Bottom edge only, so the border-top line above stays solid; gone
+     once the list is scrolled to its end (strip-apps.tsx clears
+     `data-more`). */
+  .platform-strip-apps[data-more] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  }
   .platform-strip-app {
     display: flex;
     flex: none;
@@ -22048,8 +22078,8 @@ html.un-kb #platform-parked {
     justify-content: center;
     gap: 3px;
     min-width: 0;
-    height: 58px;
-    padding: 0 2px;
+    min-height: 58px;
+    padding: 6px 2px;
     border-radius: 12px;
     color: var(--text-muted);
     font-size: 11px;
@@ -22080,12 +22110,20 @@ html.un-kb #platform-parked {
   }
   .platform-strip-tile > img { border-radius: 0; }
   .platform-strip-tile > span { font-size: 16px; }
+  /* THE NAME (#4738): two lines before it truncates, so "Game Corner" reads
+     in full in the 68px strip. A longer name still ends in "..." — the
+     clamp — and the row's `title` carries the whole name on hover. */
   .platform-strip-label {
     max-width: 100%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.35;
+    overflow-wrap: anywhere;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2;
   }
 
   /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────

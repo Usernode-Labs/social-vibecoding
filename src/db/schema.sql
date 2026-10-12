@@ -5506,6 +5506,11 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('weekly_digest', 'proposal_alerts', TRUE),
   -- B7: a change you can approve is ready to try. Proposal lifecycle.
   ('change_ready', 'proposal_alerts', TRUE),
+  -- #4787: a change the person voted on (yes or no) went live. Proposal
+  -- lifecycle, so proposal_alerts and on by default here — the per-app
+  -- switch in services/notification-preferences.js (voted_changes_live) is
+  -- the first gate.
+  ('voted_change_merged', 'proposal_alerts', TRUE),
   ('issue_opened', 'app_alerts', TRUE),
   ('app_health', 'app_alerts', TRUE),
   -- A server-wide cap nearing its ceiling, for full admins only
@@ -5562,6 +5567,8 @@ DELETE FROM mobile_push_kind_categories
    'revision_recheck', 'weekly_digest',
    -- B7.
    'change_ready',
+   -- #4787.
+   'voted_change_merged',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction',
    -- #2386's two.
@@ -9392,6 +9399,33 @@ UPDATE apps
    AND main_check_paused_sha IS NULL
    AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
    AND (main_check_detail -> 'flakesOnly') IS NULL;
+
+-- Every verdict main watch reached on a merge commit (services/main-red-fix.js),
+-- kept even when a newer merge took the app's row before it could be stored
+-- there: a superseded green is still the newest merge known to pass, and is
+-- where a red's suspects are read from. `confirmed` is null for a green.
+CREATE TABLE IF NOT EXISTS main_watch_verdicts (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  sha         VARCHAR(40) NOT NULL,
+  state       VARCHAR(16) NOT NULL,
+  superseded  BOOLEAN NOT NULL DEFAULT FALSE,
+  confirmed   BOOLEAN,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_main_watch_verdicts_app ON main_watch_verdicts(app_id, state, created_at DESC);
+
+-- The requests main watch filed to fix a red main (services/main-red-fix.js),
+-- one per red commit and one open per app at a time. `issue_number` is null
+-- while one is being filed.
+CREATE TABLE IF NOT EXISTS main_red_requests (
+  id            BIGSERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  red_sha       VARCHAR(40) NOT NULL,
+  issue_number  INTEGER,
+  filed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (app_id, red_sha)
+);
 
 -- Tests main-watch saw fail and then pass on the same merge commit
 -- (services/main-watch.js). A red whose failures are all tests seen here in
@@ -13659,3 +13693,22 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_voice_offers (
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_voice_offers_app
   ON homeroom_bot_voice_offers(app_id, status, id);
 COMMENT ON TABLE homeroom_bot_voice_offers IS 'staging:private';
+
+-- The translation cache (src/services/language-cache.js): every translation
+-- the translation step accepted, kept by the English it was translated from.
+-- `source` is the sha256 of that English message, as a committed catalog
+-- entry's `source` is, so a message is translated once per wording: a deploy
+-- reads what is here, and only a message whose English is new or changed is
+-- translated again. Committed catalog entries (frontend/locales) still win:
+-- a person correcting a translation commits it with "locked": true. Public:
+-- it is the shell's own text, the same in every environment.
+CREATE TABLE IF NOT EXISTS language_translations (
+  language    VARCHAR(35) NOT NULL,
+  namespace   TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  source      CHAR(64) NOT NULL,
+  text        TEXT NOT NULL,
+  model       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (language, namespace, key, source)
+);

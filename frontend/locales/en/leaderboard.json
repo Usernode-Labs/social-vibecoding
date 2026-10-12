@@ -636,8 +636,8 @@
     "description": "On the \"Your standing\" card when the viewer has earned points that the ranking does not show yet. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
   },
   "standing.updateNote": {
-    "text": "Standings update every few hours; points from challenges you just finished appear at the next update.",
-    "description": "Note on the \"Your standing\" card and on the Standings tab: the ranking is recalculated periodically."
+    "text": "Standings update every few hours. Your rank can change at each update as other people earn points, even if you did nothing; points from challenges you just finished appear then too.",
+    "description": "Note on the \"Your standing\" card and on the Standings tab: the ranking is recalculated periodically, and a rank moves with other people's points, not only the viewer's own activity."
   },
   "standing.byEvent": {
     "text": "Points by event",
@@ -990,6 +990,10 @@
   "kudos.loadFailed": {
     "text": "Couldn’t load leaderboard. Try again later.",
     "description": "Error shown on the Kudos tab when a ranking could not be fetched."
+  },
+  "kudos.rankNote": {
+    "text": "Ranks update live as people give kudos and changes go live, so yours can move even when you did nothing.",
+    "description": "Small note under the ranked list on the Kudos tab's \"Top changes\" and \"Top users\" sub-tabs: why a rank can move without the viewer doing anything. \"Changes\" is a noun; \"live\" is an adjective, as in the lists' status labels."
   },
   "kudos.empty.changes": {
     "text": "No kudos yet. When someone gives a change kudos, it shows up here.",

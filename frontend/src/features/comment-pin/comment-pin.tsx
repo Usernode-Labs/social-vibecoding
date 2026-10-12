@@ -495,6 +495,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // bare grey ground, and the picture shrinks into its frame once it lands
   // (#4665). `intro` below is the note about the mode; this is the shot's.
   const shotIntro = viewShot?.state === 'drawing' && !viewShot.url;
+  // The word that names the picture, "Screenshot", leads the bar in the band
+  // above it whenever the picture is on show: in the bar, never over the
+  // picture, where it covered the page's own header (#4774).
+  const shotLabel = !!inset && !shotIntro;
 
   // Images the person added are object URLs until the mode closes.
   const urls = useRef(new Set<string>());
@@ -1111,11 +1115,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       />
       {/* The page as the person sees it. Over the inset picture: a grey
           ground, the picture drawn at the inset frame with the cards'
-          rounded corners, one hairline and a lift, and the chip that names
-          it. Clearly a picture, not the live page, so the blue edge goes.
+          rounded corners, one hairline and a lift; the word that names it
+          leads the bar above it, outside the picture (#4774). Clearly a
+          picture, not the live page, so the blue edge goes.
           While the first picture draws there is none of that: the live page
           shows through and the layer above it keeps every press off, and the
-          picture, ground and chip mount together once it lands, shrinking
+          picture, ground and that word mount together once it lands, shrinking
           from the full page into the frame (#4665). When the picture could
           not be taken, the mode renders as it always did, over the live
           page with the blue edge (#4554). */}
@@ -1136,13 +1141,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 }}
               />
             ) : null}
-            <span
-              aria-hidden="true"
-              className="comment-shot-chip-in pointer-events-none absolute rounded-full bg-zinc-900/80 px-2.5 py-[3px] text-xs font-semibold text-white"
-              style={{ left: inset.x + 10, top: inset.y + 10 }}
-            >
-              {t('devchat:commentPin.view.chip')}
-            </span>
           </>
         )
       ) : (
@@ -1647,6 +1645,21 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <ArrowsMoveIcon className="h-4 w-4" />
           </button>
         ) : null}
+        {shotLabel ? (
+          <>
+            {/* Names the picture below the bar for as long as the picture
+                shows, the bar's question included. It gives way first: it
+                truncates before the controls do. On a phone the switch drops
+                its two glyphs while it shows, so the whole word fits 390px. */}
+            <span
+              aria-hidden="true"
+              className="comment-shot-label-in min-w-0 truncate pl-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400"
+            >
+              {t('devchat:commentPin.view.chip')}
+            </span>
+            <span aria-hidden="true" className="comment-shot-label-in hidden h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700 sm:block" />
+          </>
+        ) : null}
         {confirm ? (
           <>
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
@@ -1670,7 +1683,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </>
         ) : (
           <>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300">
+            <span className={`${shotLabel ? 'hidden sm:inline-flex' : 'inline-flex'} shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300`}>
               <ChatIcon className="h-[18px] w-[18px]" />
             </span>
             <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
@@ -1689,7 +1702,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
-                <DescriptionIcon className="h-4 w-4" />
+                <DescriptionIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.form')}
               </button>
               <button
@@ -1699,7 +1712,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 title={t('devchat:commentPin.bar.commentTitle')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
-                <ChatIcon className="h-4 w-4" />
+                <ChatIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.comment')}
               </button>
             </span>

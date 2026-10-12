@@ -153,7 +153,7 @@ export function ImportPrDialog() {
     const slug = window.AppView?.appData?.slug as string | undefined;
     if (!slug) return;
     setSelected(null);
-    let data: { candidates?: Candidate[] } = {};
+    let data: { candidates?: Candidate[]; configured?: boolean } = {};
     let ok = false;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import/candidates`);
@@ -164,8 +164,13 @@ export function ImportPrDialog() {
       return;
     }
     if (!ok) {
-      // 404 = GitHub not configured for this app. Treat as the GitHub-off
-      // state rather than an error the user can't act on.
+      // A failed answer (GitHub unreachable, rate-limited, a server error) is
+      // a load failure, never "nothing to import" (#4817). The GitHub-off
+      // state arrives as a 200 with `configured: false`, below.
+      setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
+      return;
+    }
+    if (data.configured === false) {
       setList({
         kind: 'note',
         text: 'dialogs:importPr.list.notConfigured',

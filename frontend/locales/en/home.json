@@ -19,10 +19,6 @@
     "text": "{{count}} results",
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
-  "grid.heading": {
-    "text": "My apps",
-    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Add to My apps\"."
-  },
   "grid.loading": {
     "text": "Loading your apps",
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."

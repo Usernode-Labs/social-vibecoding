@@ -18,10 +18,14 @@
  *      a browser, never the app's webview.
  *
  * In the app with neither 1 nor 2 there is no road, and `canSaveImage`
- * says so, so the controls are hidden rather than dead. A picture on
- * another site (a request's screenshot uploaded to GitHub) cannot be
- * fetched here without CORS; the viewer keeps its "Open original" link for
- * those and nothing here is offered.
+ * says so, so the message menu leaves its line out. The viewer's Download is
+ * drawn for every picture all the same (#4654): there it says the app needs
+ * updating rather than vanishing.
+ *
+ * A picture on another site (a request's screenshot uploaded to GitHub) is
+ * fetched without credentials, as a blob, and saved the same way (#4654).
+ * Where that site refuses (no CORS), the original opens in a new tab or, in
+ * the app, the system browser, as the viewer's "Open original" did.
  */
 
 import { useEffect, useState } from 'react';
@@ -56,7 +60,7 @@ export interface SaveableImage {
  * the tap had expired by the time the picture arrived (the next tap opens
  * it), or failed (already said in a toast).
  */
-export type SaveOutcome = 'saved' | 'shared' | 'downloaded' | 'dismissed' | 'tap-again' | 'failed';
+export type SaveOutcome = 'saved' | 'shared' | 'downloaded' | 'opened' | 'dismissed' | 'tap-again' | 'failed';
 
 /** The most image data handed across the bridge; base64 doubles it in flight. */
 export const NATIVE_SAVE_MAX_BYTES = 15 * 1024 * 1024;
@@ -197,7 +201,11 @@ let pending: { key: string; files: File[] } | null = null;
 const keyOf = (images: SaveableImage[]) => images.map((i) => i.src).join('\n');
 
 async function fetchFile(image: SaveableImage): Promise<File> {
-  const res = await fetch(image.src, { credentials: 'same-origin' });
+  // A file on another site is fetched as a blob, without this site's cookie
+  // (#4654): `download` is ignored on a cross-origin link, a blob's is not.
+  const res = await fetch(image.src, isRemoteFile(image.src)
+    ? { mode: 'cors', credentials: 'omit' }
+    : { credentials: 'same-origin' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const blob = await res.blob();
   const type = blob.type || res.headers.get('content-type') || 'image/png';
@@ -226,6 +234,25 @@ function downloadFile(file: File): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/**
+ * The original of a picture on another site, in a new tab (in the app,
+ * nav-link.js hands the link to the system browser): where its site will not
+ * let the page fetch it.
+ */
+function openOriginal(src: string): void {
+  const link = document.createElement('a');
+  link.href = src;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+/** The app build has neither its own save nor a share sheet. */
+class NoSaveRoad extends Error {}
+
 async function share(key: string, files: File[]): Promise<SaveOutcome> {
   try {
     await navigator.share({ files });
@@ -241,8 +268,8 @@ async function share(key: string, files: File[]): Promise<SaveOutcome> {
 
 /**
  * Download every picture in `images` onto the device, by the first road
- * open, and say so when it went wrong. Same-origin pictures only: a file on
- * another site fails here (see `canSaveImage`).
+ * open, and say so when it went wrong. A single picture on another site that
+ * cannot be fetched opens as its original instead.
  */
 export async function saveImages(images: SaveableImage[]): Promise<SaveOutcome> {
   const list = images.filter((i) => i && i.src);
@@ -250,8 +277,18 @@ export async function saveImages(images: SaveableImage[]): Promise<SaveOutcome> 
   const key = keyOf(list);
   try {
     if (pending && pending.key === key) return await share(key, pending.files);
-    if (list.some((i) => isRemoteFile(i.src))) throw new Error('cross-origin');
-    const files = await Promise.all(list.map(fetchFile));
+    let files: File[];
+    try {
+      files = await Promise.all(list.map(fetchFile));
+    } catch (err) {
+      // A picture on another site that will not be fetched: its original.
+      if (list.length === 1 && isRemoteFile(list[0].src)) {
+        pending = null;
+        openOriginal(list[0].src);
+        return 'opened';
+      }
+      throw err;
+    }
     const native = inNativeApp();
     if (native) {
       const total = files.reduce((sum, f) => sum + f.size, 0);
@@ -265,12 +302,12 @@ export async function saveImages(images: SaveableImage[]): Promise<SaveOutcome> 
     }
     if (shareFilesSupported(files)) return await share(key, files);
     // A download link goes nowhere in the app's webview.
-    if (native) throw new Error('no way to save in this app build');
+    if (native) throw new NoSaveRoad();
     files.forEach(downloadFile);
     return 'downloaded';
-  } catch {
+  } catch (err) {
     pending = null;
-    toast(t('messages:imageSave.failed'));
+    toast(t(err instanceof NoSaveRoad ? 'messages:imageSave.updateApp' : 'messages:imageSave.failed'));
     return 'failed';
   }
 }
