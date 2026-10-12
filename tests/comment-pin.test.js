@@ -196,6 +196,10 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   // On a phone the label takes the place of the mode's chat glyph, so the
   // bar still fits a 390px screen.
   assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
+  // And the Form / Comment switch drops its two glyphs on a phone while the
+  // word shows, so "Screenshot" is whole at 390px rather than "Screen…".
+  assert.match(bar, /<DescriptionIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>/);
+  assert.match(bar, /<ChatIcon className=\{`\$\{shotLabel \? 'hidden sm:block' : ''\} h-4 w-4`\} \/>\s*\{t\('devchat:commentPin\.bar\.comment'\)\}/);
 });
 
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {

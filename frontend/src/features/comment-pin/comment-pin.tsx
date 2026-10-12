@@ -1649,7 +1649,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           <>
             {/* Names the picture below the bar for as long as the picture
                 shows, the bar's question included. It gives way first: it
-                truncates before the controls do. */}
+                truncates before the controls do. On a phone the switch drops
+                its two glyphs while it shows, so the whole word fits 390px. */}
             <span
               aria-hidden="true"
               className="comment-shot-label-in min-w-0 truncate pl-1.5 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400"
@@ -1701,7 +1702,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
-                <DescriptionIcon className="h-4 w-4" />
+                <DescriptionIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.form')}
               </button>
               <button
@@ -1711,7 +1712,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 title={t('devchat:commentPin.bar.commentTitle')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
-                <ChatIcon className="h-4 w-4" />
+                <ChatIcon className={`${shotLabel ? 'hidden sm:block' : ''} h-4 w-4`} />
                 {t('devchat:commentPin.bar.comment')}
               </button>
             </span>
