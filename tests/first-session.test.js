@@ -28,7 +28,7 @@ test('the invited tour: nine steps, each screen whole or the tap that leads on, 
   const steps = invitedSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'discussion']);
   assert.deepEqual(steps.map((s) => (s.tap ? 'tap' : 'look')), ['tap', 'look', 'tap', 'look', 'tap', 'tap', 'look', 'tap', 'look']);
-  assert.equal(steps[0].target, '.app-card[data-slug="sunday-run-club"]');
+  assert.equal(steps[0].target, '#app-list .app-card[data-slug="sunday-run-club"]');
   assert.equal(steps.filter((s) => s.last).length, 1);
   assert.equal(steps[steps.length - 1].last, true);
   assert.deepEqual(steps[steps.length - 1].place, { above: '#gc-form' });
@@ -121,24 +121,28 @@ const SELECTOR_FIELDS = ['target', 'alongside', 'endsAbove', 'press'];
 const idsNamed = (steps) => [...new Set(steps
   .flatMap((s) => SELECTOR_FIELDS.flatMap((f) => (s[f] ? s[f].split(',') : [])))
   .map((t) => t.trim())
-  .filter((t) => t.startsWith('#'))
-  .map((t) => t.slice(1)))].sort();
+  .map((t) => /^#([\w-]+)/.exec(t))
+  .filter(Boolean)
+  .map((m) => m[1]))].sort();
 
 test('every id the tour points at is one the shell ships', () => {
   const { invitedSteps, makerSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const baseline = JSON.parse(read('tests/baselines/shell-markup.json'));
   const ids = new Set(baseline.ids || []);
   assert.deepEqual(idsNamed(invitedSteps({ slug: 'x', name: 'X' })), [
-    'app-content', 'app-view', 'back-btn', 'gc-form', 'gc-messages', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-workshop', 'platform-tabs',
+    'app-content', 'app-list', 'app-view', 'back-btn', 'gc-form', 'gc-messages', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-workshop', 'platform-tabs',
   ]);
   assert.deepEqual(idsNamed(makerSteps({ slug: 'x', name: 'X', conversationId: 5 })), [
-    'app-content', 'app-view', 'back-btn', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-messages', 'platform-tab-workshop', 'platform-tabs',
+    'app-content', 'app-list', 'app-view', 'back-btn', 'improve-row-feedback', 'platform-header', 'platform-mark-btn', 'platform-parked', 'platform-tab-messages', 'platform-tab-workshop', 'platform-tabs',
   ]);
   assert.deepEqual(idsNamed(lookAroundSteps()), ['home-create-tile', 'platform-tab-discover', 'platform-tab-messages', 'platform-tab-workshop']);
   // Home's New project tile is React's, one element, and dapp.json's checks
   // select it by this id.
   assert.match(read('frontend/src/features/home/create-tile.tsx'), /id="home-create-tile"/);
   assert.ok(read('dapp.json').includes('#home-create-tile'));
+  // Home's own grid, the tile's home (React's; the Discover rail's cards are
+  // `.app-card`s too, outside it).
+  assert.equal((read('frontend/src/features/home/app-grid.tsx').match(/^\s+id="app-list"$/gm) || []).length, 1);
   // The shell's own ids, from its pinned inventory.
   for (const id of ['app-content', 'app-view', 'back-btn', 'platform-header']) assert.ok(ids.has(id), `#${id} is in the shell's id inventory`);
   // The Homeroom mark, the header's menu button, is React's (#4225's step).
@@ -238,7 +242,7 @@ test('a new user\'s tour, numbered as its card numbers it, with what each step c
     screen: s.screen, target: s.target, alongside: s.alongside, endsAbove: s.endsAbove, press: s.press, tap: s.tap, title: s.title,
   });
   assert.deepEqual(steps.map(shape), [
-    { screen: 'home', target: '.app-card[data-slug="film"]', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap it', title: 'Friday Film Crew is on your Home' },
+    { screen: 'home', target: '#app-list .app-card[data-slug="film"]', alongside: undefined, endsAbove: undefined, press: undefined, tap: 'Tap it', title: 'Friday Film Crew is on your Home' },
     // 2: the app screen whole, its header included, nothing ringed.
     { screen: 'app', target: '#app-view', alongside: SCREEN_HEADER, endsAbove: undefined, press: undefined, tap: undefined, title: 'Friday Film Crew opens here' },
     // 3: the Homeroom mark, tapped: Suggest an improvement is behind it (#4225).
@@ -351,7 +355,7 @@ test('the blue hint on a tap step presses the step\'s own control, and still loo
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
   // The control it presses is the one the step's watcher waits for.
   assert.deepEqual(steps.filter((s) => s.tap).map(pressOf), [
-    '.app-card[data-slug="film"]', '#platform-mark-btn', '#back-btn', '#platform-tab-workshop', '[data-ws-community-open-app]',
+    '#app-list .app-card[data-slug="film"]', '#platform-mark-btn', '#back-btn', '#platform-tab-workshop', '[data-ws-community-open-app]',
   ]);
 
   // It presses the first one on screen, as a finger would, and nothing else.
@@ -1179,7 +1183,7 @@ test('#4900: the steps that point at the app wait for it, on every path that has
     // And the hub's, until it is drawn whole (onboarding run two).
     const hub = steps.findIndex((s) => s.screen === 'hub');
     assert.deepEqual(steps.map((s) => s.waitsFor || null), steps.map((s, i) => (i === 0 ? 'running' : i === 1 ? 'open' : i === hub ? 'hub' : null)));
-    assert.equal(steps[0].target, '.app-card[data-slug="film"]', 'the tile on Home');
+    assert.equal(steps[0].target, '#app-list .app-card[data-slug="film"]', 'the tile in Home\'s own grid, not a Discover card');
     assert.equal(steps[1].target, '#app-view', 'the app on its screen');
   }
   assert.ok(lookAroundSteps().every((s) => !s.waitsFor), '"Look around first" points at no app');
@@ -1198,10 +1202,15 @@ test('onboarding run two: the tour dims as one rounded shape, waits for the hub 
   assert.equal(dimStyle(hole, false).borderRadius, 0);
   assert.equal(HOLE_RADIUS, 16);
   assert.match(src, /const SHADE = 'pointer-events-auto fixed';\n/);
-  assert.match(src, /<div aria-hidden="true" data-first-session-dim="" className=\{DIM\} style=\{dimStyle\(hole, pointed\)\} \/>/);
-  assert.match(src, /const DIM = 'pointer-events-none fixed motion-safe:transition-\[left,top,width,height\] motion-safe:duration-200 motion-safe:ease-out';/);
+  assert.match(src, /<div aria-hidden="true" data-first-session-dim="" className=\{gliding \|\| moving \? DIM_GLIDE : DIM\} style=\{dimStyle\(hole, pointed\)\} \/>/);
+  assert.match(src, /const DIM_GLIDE = 'pointer-events-none fixed motion-safe:transition-\[left,top,width,height\] motion-safe:duration-200 motion-safe:ease-out';/);
+  // It eases only for a step's own move (onboarding run three): within a
+  // step it follows its target at once, so it never chases one.
+  assert.match(src, /const DIM = 'pointer-events-none fixed';/);
+  assert.match(src, /setGliding\(true\);\s+const t = window\.setTimeout\(\(\) => setGliding\(false\), GLIDE_MS\);[\s\S]*?\}, \[index\]\);/);
   // The hub's card waits for the hub drawn whole, with all of the page dimmed meanwhile.
-  assert.match(src, /const dimAll = waiting && step\.waitsFor === 'hub';/);
+  // Leaving the menu the page is dimmed whole: its target slides away with the sheet.
+  assert.match(src, /const dimAll = \(waiting && step\.waitsFor === 'hub'\) \|\| leavingMenu;/);
   const { appReady } = loadTsx(`${DIR}/tour-wait.ts`);
   const page = (found) => ({ querySelectorAll: (sel) => {
     assert.equal(sel, '#app-content [data-ws-community], #app-content [data-ws-community-pending]');
@@ -1215,7 +1224,7 @@ test('onboarding run two: the tour dims as one rounded shape, waits for the hub 
   assert.match(src, /noteFirstSessionVisit\(\);\n  \}, \[mode\]\);/);
 });
 
-test('onboarding run two: under the tour a page swaps in place, so no View Transition draws over its card', () => {
+test('onboarding runs two and three: under the tour a page swaps in place, so nothing draws over its card', () => {
   const ui = read('public/js/platform-ui.js');
   assert.match(ui, /un\.transition\(fn, PlatformUI\.underTour\(PlatformUI\.phoneMotion\(opts \|\| \{ type: 'none' \}\)\)\);/);
   const body = ui.slice(ui.indexOf('    underTour(opts) {'));
@@ -1223,7 +1232,9 @@ test('onboarding run two: under the tour a page swaps in place, so no View Trans
   const run = (running, type) => underTour.call({ __usernodeFirstSessionTourRunning: running == null ? undefined : { running } })({ type });
   assert.equal(run(true, 'fade').type, 'none');
   assert.equal(run(true, 'push').type, 'none');
-  assert.equal(run(true, 'zoom-in').type, 'zoom-in', 'a zoom is no View Transition');
+  assert.equal(run(true, 'zoom-in').type, 'zoom-in', 'the tile the tour asks for, opening, keeps its motion');
+  assert.equal(run(true, 'zoom-out').type, 'none', 'closing pins the app over the tour: it cuts to Home instead (onboarding run three)');
+  assert.equal(run(false, 'zoom-out').type, 'zoom-out', 'with no tour up, closing zooms as it always did');
   assert.equal(run(false, 'fade').type, 'fade');
   assert.equal(run(null, 'pop').type, 'pop');
   const { TOUR_RUNNING_KEY } = loadTsx(`${DIR}/tour-running.ts`);
@@ -1250,7 +1261,7 @@ test('#4900: what a waiting step waits for: a tile a tap opens, and an app past 
     [false, true, true, true, false, false, false]);
   const tiles = (...statuses) => ({
     querySelectorAll: (sel) => {
-      assert.equal(sel, '.app-card[data-slug="film"]', 'the step\'s own tile');
+      assert.equal(sel, '#app-list .app-card[data-slug="film"]', 'the step\'s own tile');
       return statuses.map((status) => ({ getAttribute: (name) => (name === 'data-status' ? status : null) }));
     },
   });

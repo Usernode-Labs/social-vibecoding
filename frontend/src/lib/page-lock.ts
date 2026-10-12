@@ -29,11 +29,21 @@
  * released, and a child stays inert until the last lock that made it so is,
  * so one screen handing over to the next never lets the page go in between,
  * whichever of the two lets go first.
+ *
+ * AND OUT OF SIGHT (onboarding run three, 12 Oct 2026, iPhone 17 Safari):
+ * the make and made screens run on 200px under Safari's toolbar (app.css),
+ * but Safari draws a fixed box only to the foot of its layout viewport, so
+ * the band behind the translucent toolbar showed Home: its cards, "Try an
+ * app". What a lock makes inert also takes PAGE_HIDDEN, which app.css draws
+ * at no opacity, so that band is the page's own ground. Only with `inert`:
+ * from Create the header and what stands above the screen stay in sight.
  */
 
 import { type RefObject, useLayoutEffect } from 'react';
 
 export const PAGE_LOCKED = 'platform-page-locked';
+/** On each child a lock made inert: drawn at no opacity while the lock holds (app.css). */
+export const PAGE_HIDDEN = 'data-page-locked';
 
 type Lockable = {
   ownerDocument: Document | null;
@@ -58,7 +68,10 @@ export function lockPage(over: Lockable | null, { inert = true }: { inert?: bool
       if (SKIP.has(el.tagName)) continue;
       const n = ours.get(el) || 0;
       if (!n && el.hasAttribute('inert')) continue;
-      if (!n) el.setAttribute('inert', '');
+      if (!n) {
+        el.setAttribute('inert', '');
+        el.setAttribute(PAGE_HIDDEN, '');
+      }
       ours.set(el, n + 1);
       made.push(el);
     }
@@ -75,6 +88,7 @@ export function lockPage(over: Lockable | null, { inert = true }: { inert?: bool
       }
       ours.delete(el);
       el.removeAttribute('inert');
+      el.removeAttribute(PAGE_HIDDEN);
     }
     const left = (held.get(doc) || 1) - 1;
     if (left > 0) {

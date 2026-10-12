@@ -3185,6 +3185,13 @@ form.agent-session-composer:focus-within {
    kit adoption at once, so without this the kit's sheet could present an
    invisible panel. It is not merely theoretical insurance for the open state
    either: the kit measures the content at present time. */
+/* HANDED BACK BY THE KIT, OUT OF SIGHT until its next presentation
+   (lib/kit-surface.ts REHOMED_CLASS): the menu's bottom sheet stood again
+   at its open place for 190ms after the kit's exit had taken it away. */
+.platform-surface-rehomed {
+  visibility: hidden !important;
+  transition: none !important;
+}
 .platform-sheet-adopted#apps-switcher-sheet {
   max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
   opacity: 1 !important;
@@ -3666,6 +3673,16 @@ html[data-browser-scroller] body {
 html.platform-page-locked,
 html.platform-page-locked[data-browser-scroller] {
   overflow: hidden;
+}
+/* AND WHAT IT HOLDS IS OUT OF SIGHT (onboarding run three, 12 Oct 2026,
+   iPhone 17 Safari). The band behind Safari's translucent toolbar is not
+   the screen's (Safari draws a fixed box only to its layout viewport's
+   foot), so it showed Home under the make and made screens. What the lock
+   makes inert (lib/page-lock.ts PAGE_HIDDEN) is drawn at no opacity, which a
+   descendant cannot undo as it could `visibility`, so that band shows the
+   body's own ground. The screens cover it all anyway everywhere else. */
+html.platform-page-locked [data-page-locked] {
+  opacity: 0 !important;
 }
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
@@ -4294,6 +4311,23 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
   clip-path: inset(0 round 0 0 1.25rem 1.25rem);
+}
+/* THE STRIP OVER THE BAR FOLLOWS IT HOME (onboarding run three, 12 Oct
+   2026, iPhone 17 Safari 26). In a browser tab Safari colours the strip
+   behind the status bar from the fixed bar's own `background-color`, and
+   only an opaque one: the project's green bar turned it green, and back on
+   Home, whose bar is transparent with its glass drawn by the layer below,
+   it stayed green (measured on a copy: green, then transparent, held the
+   green; an opaque colour took it back at once). So the bar here has an
+   opaque ground under its glass, the glass's own solid plane colour. The
+   layer covers it whole (its washes end on the ground colour), so nothing
+   on the bar changes; only the strip does. */
+html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header,
+html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: var(--dc-sheet-solid);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell

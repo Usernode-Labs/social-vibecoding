@@ -213,11 +213,19 @@ export function hubTitle(name: string): string {
  * (`waitsFor`): its tile until it can be opened, the app until it has. The
  * hub's waits for the hub to be drawn whole.
  */
+/** The project's tile in Home's own grid (#app-list), never a card of the same app elsewhere on Home. */
+export function tileOf(slug: string): string {
+  return `#app-list .app-card[data-slug="${slug}"]`;
+}
+
 function sharedSteps(slug: string, name: string): TourStep[] {
   return [
     {
       screen: 'home',
-      target: `.app-card[data-slug="${slug}"]`,
+      // Home's own grid only: the Discover rail's cards are `.app-card`s
+      // with a slug too (onboarding run three, 12 Oct 2026: the cut-out
+      // glided off the tile and back as Home drew).
+      target: tileOf(slug),
       waitsFor: 'running',
       title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
       text: translate('onboarding:firstSession.tour.onHome.text'),

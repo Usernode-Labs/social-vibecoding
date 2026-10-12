@@ -286,6 +286,11 @@
     //     (features/first-session, MAKE_FLAG) before it finishes a new
     //     account's sign-in, and that sign-in can reload the page onto the
     //     live build (App._moveToLiveShell, from AuthScreens.finishLogin).
+    //   - A saved session that still owes "What do you want to make?" (a
+    //     reload on it, or the tab reopened): the shell draws it from the
+    //     snapshot as it starts (CommunitiesFirstRun._showFromSnapshot).
+    //     Onboarding run three, 12 Oct 2026: a reload of that screen
+    //     painted Home's skeleton for a frame before it.
     //
     // The shell lifts the hold once it has drawn its first screen:
     // App._liftFirstSessionBoot in public/js/app.js, called once enterAuthed
@@ -295,7 +300,20 @@
     (function () {
       var hold = false;
       try { hold = sessionStorage.getItem('usernode:first-session:make') === '1'; } catch (_) {}
-      try { if (!hold) hold = !localStorage.getItem('usernode.session.v1'); } catch (_) {}
+      try {
+        if (!hold) {
+          var saved = localStorage.getItem('usernode.session.v1');
+          if (!saved) hold = true;
+          else {
+            // Still owes "What do you want to make?" (the join step's
+            // firstSessionNow, features/auth/communities-first-run.js): the
+            // reload draws it from this snapshot, so Home is not shown first.
+            var owed = (JSON.parse(saved) || {}).user || {};
+            hold = owed.needsCommunitiesChoice === true && owed.storyFirstSession === true
+              && owed.needsUsernameChoice !== true && owed.hasPlatformAccess !== false;
+          }
+        }
+      } catch (_) {}
       try {
         if (!hold && !location.hash) {
           var query = new URLSearchParams(location.search);
