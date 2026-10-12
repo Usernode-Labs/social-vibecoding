@@ -981,6 +981,13 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.equal('phoneSignIn' in brief, false, 'no phone code for the pair, no phoneSignIn');
     assert.deepEqual(brief.screenBrowsers, { 'invite-suggestions': { desktop: 'browser_member' } });
     assert.ok(Object.values(brief.browsers).every((entry) => !('phoneTool' in entry)), 'no phone screen, no phone browser');
+    // The only files upload_file can choose, named and described, never a path.
+    assert.deepEqual(brief.sampleFiles.map((file) => [file.name, file.type]), [
+      ['landscape.png', 'image/png'], ['portrait.png', 'image/png'],
+      ['table.csv', 'text/csv'], ['document.pdf', 'application/pdf'],
+    ]);
+    assert.ok(brief.sampleFiles.every((file) => Object.keys(file).join() === 'name,type,about'));
+    assert.doesNotMatch(JSON.stringify(brief.sampleFiles), /\/usr\/local|shots-samples/);
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
