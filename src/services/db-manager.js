@@ -183,16 +183,29 @@ function primaryAdminUrl() {
 // query parameter accepted is `sslmode`, which both clients read alike, and
 // anything else fails the URL as a whole. Only the parameter's name is ever
 // reported.
-const PREVIEW_URL_SSLMODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify']);
+//
+// The same rule shapes the rest of the address. ONE host, a DNS name or an
+// IPv4 address: libpq reads `a,b` as two hosts to try and node-postgres as
+// one name that does not resolve. A user name this module can write into SQL
+// unquoted (SAFE_IDENT): restored objects are owned by that user and are
+// handed to each preview's role by name. And an sslmode both clients know:
+// the six libpq values, not node-postgres's own `no-verify`.
+const PREVIEW_URL_SSLMODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']);
+const PREVIEW_URL_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
 function previewAdminUrl() {
   const value = String(process.env[PREVIEW_ADMIN_URL_ENV] || '').trim();
   if (!value) throw new Error(`${PREVIEW_ADMIN_URL_ENV} is not set`);
   const parsed = parseAdminUrl(value, PREVIEW_ADMIN_URL_ENV);
-  if (!parsed.hostname || /[%/]/.test(parsed.hostname)) {
-    throw new Error(`${PREVIEW_ADMIN_URL_ENV} must name the server's host in its address`);
+  if (!PREVIEW_URL_HOST.test(parsed.hostname)) {
+    throw new Error(`${PREVIEW_ADMIN_URL_ENV} must name one host in its address, as a DNS name or an IPv4 address`);
   }
-  if (!parsed.username) throw new Error(`${PREVIEW_ADMIN_URL_ENV} must carry the user in its address`);
+  let user = '';
+  try { user = decodeURIComponent(parsed.username); } catch { user = ''; }
+  if (!SAFE_IDENT.test(user)) {
+    throw new Error(`${PREVIEW_ADMIN_URL_ENV} must carry a user of letters, digits and underscores in its address`);
+  }
+  if (parsed.port && !/^[0-9]{1,5}$/.test(parsed.port)) throw new Error(`${PREVIEW_ADMIN_URL_ENV} has an unusable port`);
   for (const [key, setting] of parsed.searchParams) {
     if (key !== 'sslmode') {
       throw new Error(`${PREVIEW_ADMIN_URL_ENV} has an unsupported parameter ${JSON.stringify(key.slice(0, 40))}: `
@@ -289,8 +302,19 @@ function targetExecutor(server = PRIMARY_SERVER) {
 
 function postgresEnv(dbName, server = PRIMARY_SERVER) {
   const admin = adminConnection(server);
+  // For the preview server the URL is the whole connection. libpq also reads
+  // its own environment, and some of it outranks what is set below: a
+  // PGSERVICE entry replaces the host and port, PGHOSTADDR replaces the
+  // address the host name resolves to. Left in place, psql, pg_dump and
+  // pg_restore could reach another server than the one node-postgres reaches
+  // with the same URL. So a preview-side child process gets no PG* variable
+  // from the platform's environment, only the ones written here. The main
+  // server's processes inherit the environment exactly as they always did.
+  const inherited = serverKey(server) === PRIMARY_SERVER
+    ? process.env
+    : Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^PG/i.test(key)));
   return {
-    ...process.env,
+    ...inherited,
     PGHOST: admin.hostname,
     PGPORT: admin.port || '5432',
     PGUSER: decodeURIComponent(admin.username || DB_USER),
@@ -644,17 +668,23 @@ async function mainServerIdentifier() {
   return value;
 }
 
-// May this copy ask for shared blocks? Decided on `execute`, the runner that
-// is about to send the copy, so the server that is asked its version and
-// identity is the server the copy runs on: never a cached answer about the
-// setting, and never a second connection that could have been routed
-// elsewhere. It must be the preview server, PostgreSQL 18 or later, and NOT
+// May this copy ask for shared blocks? Decided on `execute`, which must be
+// a single connection (withDatabaseConnection): the version, the identity,
+// the SET and the copy are four statements of one session on one server,
+// so the server that says who it is IS the server the copy runs on. Never a
+// cached answer about the setting, and never a second connection that could
+// have been routed elsewhere. It must be the preview server, PostgreSQL 18 or later, and NOT
 // the main server (compared by the identifier each cluster is given when it
 // is initialised). Anything unreadable is a no.
+function fileCloneWanted(server) {
+  return serverKey(server) === PREVIEW_SERVER && fileCloneEnabled() && !_fileCloneNotes.has('refused');
+}
+
 async function fileCloneUsable(server, execute) {
-  if (serverKey(server) !== PREVIEW_SERVER) return false;
-  if (!fileCloneEnabled()) return false;
-  if (_fileCloneNotes.has('refused')) return false;
+  if (!fileCloneWanted(server)) return false;
+  // One connection or none: a runner that opens a connection per statement
+  // (psql) could ask one server who it is and send the copy to another.
+  if (!isSingleConnection(execute)) return false;
   let version = 0;
   let here = '';
   let main = '';
@@ -717,6 +747,16 @@ async function createFromTemplate(templateDb, targetDb, ownerRole, {
 } = {}) {
   if (![templateDb, targetDb, ownerRole].every((name) => SAFE_IDENT.test(String(name || '')))) {
     throw new Error(`createFromTemplate: unsafe identifiers ${templateDb}/${targetDb}/${ownerRole}`);
+  }
+  // No runner given, on the preview server: hold one connection for the
+  // whole copy, retries included, so a shared-block copy can be asked for
+  // (the frozen shots source comes this way). Everywhere else the default is
+  // a psql process per statement, as it always was, and the copy is plain.
+  if (!given && fileCloneWanted(server)) {
+    const maintenanceDb = adminDatabase(server);
+    return withDatabaseConnection(maintenanceDb, (run) => createFromTemplate(templateDb, targetDb, ownerRole, {
+      execute: singleConnection((sql, opts) => run(maintenanceDb, sql, opts)), attempts, wait, server,
+    }), { queryTimeoutMs: timeoutMs || 30_000, server });
   }
   const execute = given || adminExecutor(server);
   const plain = `CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${ownerRole}`;
@@ -984,6 +1024,10 @@ async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER
     });
   }
   await reassignUserObjectsTo(targetDb, adminUser(server), targetRole, inTarget).catch((err) => {
+    // On the preview server every restored object belongs to the restoring
+    // administrator until this pass: a clone whose pass failed is one its
+    // own role cannot read, and it is not handed out.
+    if (serverKey(server) !== PRIMARY_SERVER) throw err;
     log.warn('db-manager', 'reassignUserObjectsTo from superuser failed', {
       targetDb, err: err.message,
     });
@@ -1143,6 +1187,7 @@ async function buildRedactedCopy(sourceDb, targetDb, ownerRole, { server = PRIMA
     });
   }
   await reassignUserObjectsTo(targetDb, adminUser(server), ownerRole, inTarget).catch((err) => {
+    if (serverKey(server) !== PRIMARY_SERVER) throw err;   // see cloneDatabaseDirect
     log.warn('db-manager', 'template reassign from superuser failed', { targetDb, err: err.message });
   });
   await truncatePrivateTables(targetDb, inTarget);
@@ -1303,7 +1348,7 @@ async function cloneFromTemplate(templateDb, targetDb, {
   // connection: the session below belongs to this clone's server.
   await dropOldTarget(targetDb, server, { ownServer: false });
   await withDatabaseConnection(maintenanceDb, async (execute) => {
-    const admin = (sql, opts) => execute(maintenanceDb, sql, opts);
+    const admin = singleConnection((sql, opts) => execute(maintenanceDb, sql, opts));
     onProgress?.('drop_target');
     await dropDatabase(targetDb, { strict: true, execute: admin });
     onProgress?.('create_role');
@@ -1769,13 +1814,13 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
   client.on('error', (err) => { lost = err; });
   try {
     await client.connect();
-    return await fn(async (targetDb, sql, opts = {}) => {
+    return await fn(singleConnection(async (targetDb, sql, opts = {}) => {
       if (targetDb !== dbName) throw new Error('Clone connection database mismatch');
       if (lost) throw lost;
       let result;
       try {
         // Settings for this session, sent before the statement that needs
-        // them (execInTarget's `sessionSetup`, here on the one connection).
+        // them, on this one connection (a shared-block copy's SET).
         for (const setup of opts.sessionSetup || []) {
           await client.query({ text: setup, rowMode: 'array' });
         }
@@ -1791,7 +1836,7 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
       if (!opts.tuplesOnly) return '';
       return result.rows.map((row) => row.map((value) => value === true ? 't'
         : value === false ? 'f' : value == null ? '' : String(value)).join('|')).join('\n');
-    });
+    }));
   } catch (err) {
     failed = true;
     throw fromPreviewServer(err, server);
@@ -1804,6 +1849,17 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
     }
   }
 }
+
+// A statement runner that is ONE database connection for its whole life:
+// every statement it is given runs on the same server, in the same session.
+// Only withDatabaseConnection makes one, and a wrapper that merely fixes the
+// database argument keeps the mark (cloneFromTemplate's `admin`).
+const SINGLE_CONNECTION = Symbol('single database connection');
+function singleConnection(run) {
+  run[SINGLE_CONNECTION] = true;
+  return run;
+}
+const isSingleConnection = (run) => typeof run === 'function' && run[SINGLE_CONNECTION] === true;
 
 async function execInDb(sql, opts = {}) {
   let maintenanceDb;
@@ -1822,10 +1878,9 @@ function fromPreviewServer(err, server) {
 
 // `timeoutMs` lets a statement known to run long (a CREATE DATABASE … TEMPLATE
 // copy under load) take longer than the 30-second default, up to two minutes.
-// `server` picks the server (the main one unless said). `sessionSetup` is a
-// list of SET statements for the same session: each is its own `-c`, which
-// psql sends separately and in order, because a CREATE DATABASE that shared
-// one `-c` with a SET would be inside a transaction block and be refused.
+// `server` picks the server (the main one unless said). Each call is its own
+// psql process and so its own connection: nothing that must share a session
+// with another statement goes through here (see withDatabaseConnection).
 async function execInTarget(dbName, sql, opts = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`execInTarget: unsafe dbName ${JSON.stringify(dbName)}`);
   const args = ['-X', '-v', 'ON_ERROR_STOP=1'];
@@ -1834,7 +1889,6 @@ async function execInTarget(dbName, sql, opts = {}) {
     // values with no header/footer, suitable for parsing.
     args.push('-At');
   }
-  for (const setup of opts.sessionSetup || []) args.push('-c', setup);
   args.push('-c', sql);
 
   const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
@@ -2453,48 +2507,21 @@ async function previewServerDatabaseHasSessions(dbName) {
   return rows.length > 0;
 }
 
-// The sessions whose preview database is on `server`, read off the names,
-// for the connection-pressure pass (which previews hold connections there).
-// Only the name's FINAL `_staging_s<id>_<tag>` counts: a project's slug can
-// itself contain `_staging_s7_…`, and reading the first one would credit
-// the database to session 7. `exclude` is the set of database names that
-// are known to be something else (every app's production database), since a
-// production name may end the same way. Throws when the server cannot be
-// read.
-const STAGING_CLONE_TAIL_RE = /_staging_s(\d+)_(?:[0-9a-f]{6}|latest)$/;
+// Every `app_…` database name on a server, kept for a minute: the heal pass
+// asks about each preview in turn.
+const PREVIEW_NAMES_TTL_MS = 60 * 1000;
+const _serverDbNames = new Map();
 
-function stagingCloneSessionId(dbName, { exclude = null } = {}) {
-  const name = String(dbName || '');
-  if (exclude && exclude.has(name)) return null;
-  if (!isStagingCloneDb(name)) return null;
-  const m = STAGING_CLONE_TAIL_RE.exec(name);
-  return m ? Number(m[1]) : null;
-}
-
-async function stagingCloneSessionIds(server, { exclude = null } = {}) {
-  const ids = new Set();
-  for (const name of await stagingDatabaseNames(server, { fresh: true })) {
-    const id = stagingCloneSessionId(name, { exclude });
-    if (id !== null) ids.add(id);
-  }
-  return ids;
-}
-
-// Every `%_staging_%` database name on a server, kept for a minute: the heal
-// pass asks about each preview in turn.
-const STAGING_NAMES_TTL_MS = 60 * 1000;
-const _stagingNames = new Map();
-
-async function stagingDatabaseNames(server, { fresh = false } = {}) {
+async function appDatabaseNames(server, { fresh = false } = {}) {
   const key = serverKey(server);
-  const cached = _stagingNames.get(key);
-  if (!fresh && cached && (Date.now() - cached.at) < STAGING_NAMES_TTL_MS) return cached.names;
+  const cached = _serverDbNames.get(key);
+  if (!fresh && cached && (Date.now() - cached.at) < PREVIEW_NAMES_TTL_MS) return cached.ids;
   const out = await adminExecutor(key)(
-    "SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'", { tuplesOnly: true }
+    "SELECT datname FROM pg_database WHERE datname LIKE 'app\\_%'", { tuplesOnly: true }
   );
-  const names = new Set(String(out || '').split('\n').map((line) => line.trim()).filter(Boolean));
-  _stagingNames.set(key, { at: Date.now(), names });
-  return names;
+  const ids = new Set(String(out || '').split('\n').map((line) => line.trim()).filter(Boolean).map(databaseIdentity));
+  _serverDbNames.set(key, { at: Date.now(), ids });
+  return ids;
 }
 
 // ─── Which database a running preview uses ──────────────────────────────
@@ -2507,17 +2534,42 @@ async function stagingDatabaseNames(server, { fresh = false } = {}) {
 // server would vouch for a current one that was wiped.
 //
 // The preview's runtime therefore carries two labels, written when it is
-// deployed: the exact database it was given and the server that database
-// was made on. They are written only while a preview server is configured,
-// so a one-server install deploys exactly what it always did, and a preview
-// built before the setting existed has none (it is on the main server, and
-// nothing is asked about it).
-const LABEL_PREVIEW_DB = 'usernode.db.name';
+// deployed: an identity of the database it was given and the server that
+// database was made on. They are written only while a preview server is
+// configured, so a one-server install deploys exactly what it always did,
+// and a preview built before the setting existed has none (it is on the
+// main server, and nothing is asked about it).
+//
+// The identity is not the name. Postgres keeps 63 bytes of an identifier
+// (NAMEDATALEN) and quietly drops the rest, at CREATE, at connect and at
+// DROP alike, on 17 and on 18: a 50-character slug asks for a 75-character
+// clone name and gets its first 63. A label holds 63 characters at most on
+// Kubernetes and must end in a letter or digit, which a cut-off name need
+// not. So the label is a short digest of the name AS POSTGRES STORES IT,
+// and the check digests each name in `pg_database` the same way.
+const LABEL_PREVIEW_DB = 'usernode.db.id';
 const LABEL_PREVIEW_DB_SERVER = 'usernode.db.server';
+const POSTGRES_NAME_BYTES = 63;
+
+function storedDatabaseName(dbName) {
+  return Buffer.from(String(dbName || ''), 'utf8').subarray(0, POSTGRES_NAME_BYTES).toString('utf8');
+}
+
+function databaseIdentity(dbName) {
+  return crypto.createHash('sha256').update(storedDatabaseName(dbName)).digest('hex').slice(0, 32);
+}
 
 function previewDatabaseLabels(dbName, server) {
   if (!previewServerConfigured() || !isStagingCloneDb(dbName)) return {};
-  return { [LABEL_PREVIEW_DB]: dbName, [LABEL_PREVIEW_DB_SERVER]: serverKey(server) };
+  return { [LABEL_PREVIEW_DB]: databaseIdentity(dbName), [LABEL_PREVIEW_DB_SERVER]: serverKey(server) };
+}
+
+// The server a runtime's labels say its database is on, or null when it
+// carries none this module wrote.
+function previewDatabaseServerOf(labels) {
+  const labelled = labels?.[LABEL_PREVIEW_DB_SERVER];
+  if (labelled !== PRIMARY_SERVER && labelled !== PREVIEW_SERVER) return null;
+  return /^[0-9a-f]{32}$/.test(String(labels?.[LABEL_PREVIEW_DB] || '')) ? labelled : null;
 }
 
 // Does this running preview need rebuilding because of WHERE its database
@@ -2539,20 +2591,20 @@ function previewDatabaseLabels(dbName, server) {
 // and rebuild, which rebuilds the template where previews are now made and
 // copies again. Null means no: also without a preview server (nothing is
 // asked and nothing changes), for a runtime without the labels, and whenever
-// the server could not be read. "There" is believed for up to a minute;
-// "gone" is always read again first.
+// the server could not be read. "There" is believed for up to a minute, so a
+// wipe is noticed at once or up to a minute late; "gone" is always read
+// again first.
 async function previewDatabaseVerdict(labels) {
   if (!previewServerConfigured()) return null;
-  const dbName = labels?.[LABEL_PREVIEW_DB];
-  const labelled = labels?.[LABEL_PREVIEW_DB_SERVER];
-  if (!isStagingCloneDb(dbName)) return null;
-  if (labelled !== PRIMARY_SERVER && labelled !== PREVIEW_SERVER) return null;
+  const labelled = previewDatabaseServerOf(labels);
+  if (!labelled) return null;
+  const id = labels[LABEL_PREVIEW_DB];
   try {
-    if (!(await stagingDatabaseNames(labelled)).has(dbName)
-      && !(await stagingDatabaseNames(labelled, { fresh: true })).has(dbName)) return 'gone';
+    if (!(await appDatabaseNames(labelled)).has(id)
+      && !(await appDatabaseNames(labelled, { fresh: true })).has(id)) return 'gone';
   } catch (err) {
     log.warn('db-manager', 'Could not tell whether a preview database is still there', {
-      dbName, server: labelled, err: err.message,
+      server: labelled, err: err.message,
     });
     return null;
   }
@@ -2676,10 +2728,10 @@ module.exports = {
   previewServerQueryable,
   listPreviewServerStagingDatabases,
   previewServerDatabaseHasSessions,
-  stagingCloneSessionId,
-  stagingCloneSessionIds,
   previewDatabaseVerdict,
   previewDatabaseLabels,
+  previewDatabaseServerOf,
+  databaseIdentity,
   previewServerShotsDatabases,
   LABEL_PREVIEW_DB,
   LABEL_PREVIEW_DB_SERVER,
@@ -2688,7 +2740,7 @@ module.exports = {
     _mainIdentifier.at = 0;
     _mainIdentifier.value = '';
     _fileCloneNotes.clear();
-    _stagingNames.clear();
+    _serverDbNames.clear();
     _sameServerWarned = false;
     _instanceCheck.at = 0;
     _instanceCheck.same = true;

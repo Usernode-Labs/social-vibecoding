@@ -1068,12 +1068,26 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
 // server is removed, and "may it be removed yet" needs a real answer. Open
 // connections are not one: a preview holds none between requests or once its
 // pool's idle timeout passes, and it still breaks when its server goes. So
-// this counts what depends on the server: running previews whose runtime
-// was given a database there (their labels, which staging.js writes at
-// deploy), builds in flight, and the databases of before & after shots runs
-// still on it. Logged every pass while draining, so the line that says
-// nothing depends on it is the one to wait for. Null when not draining or
-// when something could not be read. Never throws.
+// this counts what depends on the server, erring towards "still in use":
+//
+//   - every preview runtime that EXISTS, in any state (running, starting,
+//     restarting, stopped), whose labels say its database is there. A
+//     runtime that is restarting today is serving again tomorrow;
+//   - every session row that names a runtime it could not read;
+//   - every build under way, from the database (a pending check in its
+//     build phase), so builds run by other platform replicas count too, and
+//     from this process's own map;
+//   - every before & after shots run that has not finished, and every shots
+//     database still on the server.
+//
+// What it CANNOT see: a platform replica that has not yet been restarted
+// with the drain setting keeps making previews on the preview server, and a
+// build it starts a moment after this count is not in it. So the line this
+// logs is "none found", not "safe to remove": the procedure in
+// docs/kubernetes-operations.md also requires the rollout that set the
+// drain to have finished, and the line to hold for two passes. Logged every
+// ten minutes while draining. Null when not draining or when something could
+// not be read. Never throws.
 const DRAIN_STATUS_INTERVAL_MS = 10 * 60 * 1000;
 let _lastDrainStatusAt = 0;
 
@@ -1087,24 +1101,36 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
     const staging = require('./staging');
     const stagingRecovery = require('./staging-recovery');
     const { rows } = await pool.query(
-      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id
-         FROM chat_sessions WHERE staging_url IS NOT NULL ORDER BY id`
+      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id,
+              (check_state = 'pending' AND check_phase = 'building') AS building
+         FROM chat_sessions
+        WHERE staging_url IS NOT NULL OR staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL
+           OR (check_state = 'pending' AND check_phase = 'building')
+        ORDER BY id`
     );
-    const status = { previews: [], unread: 0, buildsInFlight: 0, shotsDatabases: 0 };
+    const status = { previews: [], unread: 0, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0 };
     for (const session of rows) {
-      if (staging.hasInFlightBuild(Number(session.id))) status.buildsInFlight += 1;
+      if (session.building || staging.hasInFlightBuild(Number(session.id))) status.buildsInFlight += 1;
+      if (!session.staging_runtime_name && !session.staging_container_id) continue;
       const state = await stagingRecovery.inspectPreviewRuntime(session, config);
       if (!state) { status.unread += 1; continue; }
-      if (state.status !== 'running') continue;
-      if (state.labels?.[dbManager.LABEL_PREVIEW_DB_SERVER] === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
+      if (state.status === 'not_found') continue;
+      if (dbManager.previewDatabaseServerOf(state.labels) === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
     }
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM shot_runs
+        WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')`
+    );
+    status.shotsRuns = Number(runs.rows[0]?.n) || 0;
     status.shotsDatabases = (await dbManager.previewServerShotsDatabases()).length;
-    const clear = !status.previews.length && !status.unread && !status.buildsInFlight && !status.shotsDatabases;
+    const clear = !status.previews.length && !status.unread && !status.buildsInFlight
+      && !status.shotsRuns && !status.shotsDatabases;
     log.info('staging-reap', clear
-      ? 'Preview database server drain: nothing depends on it any more'
+      ? 'Preview database server drain: no dependent preview, build or shots run found'
       : 'Preview database server drain: still in use', {
       previews: status.previews.length, sessionIds: status.previews.slice(0, 50),
-      previewsNotRead: status.unread, buildsInFlight: status.buildsInFlight, shotsDatabases: status.shotsDatabases,
+      previewsNotRead: status.unread, buildsInFlight: status.buildsInFlight,
+      shotsRuns: status.shotsRuns, shotsDatabases: status.shotsDatabases,
     });
     return { ...status, clear };
   } catch (err) {
@@ -1227,22 +1253,33 @@ async function sweepConnectionPressure(config, { limit = null, server = null } =
         ORDER BY last_activity_at ASC
         LIMIT 50`
     );
-    // Which previews hold connections on THIS server. Not knowing is a
-    // reason to do nothing: the other passes still run.
-    let here = null;
-    if (twoServers) {
-      // A production database may be named like a clone; it is not one.
-      const apps = await pool.query('SELECT slug FROM apps');
-      const exclude = new Set(apps.rows.map((row) => dbManager.appDbName(String(row.slug || ''))));
-      here = await dbManager.stagingCloneSessionIds(
-        onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER, { exclude });
-    }
     const where = twoServers ? { server: onPreviewServer ? 'preview' : 'main' } : {};
-    const victims = selectPressureVictims({
-      rows: here ? rows.filter((r) => here.has(Number(r.id))) : rows,
+    // With two servers a preview only holds connections where its CURRENT
+    // runtime's database is, which its labels say (staging.js writes them at
+    // deploy). Not the session's number in some database name: a session can
+    // keep an old clone on one server while its preview runs on the other.
+    // A runtime without labels was built before the setting and is on the
+    // main server. One that cannot be read is left alone.
+    const holdsConnectionsHere = async (row) => {
+      if (!twoServers) return true;
+      const session = await pool.query(
+        `SELECT id, staging_runtime_kind, staging_runtime_name, staging_container_id
+           FROM chat_sessions WHERE id = $1`, [row.id]);
+      const state = session.rows[0]
+        ? await require('./staging-recovery').inspectPreviewRuntime(session.rows[0], config) : null;
+      if (!state || state.status === 'not_found') return false;
+      const labelled = dbManager.previewDatabaseServerOf(state.labels) || dbManager.PRIMARY_SERVER;
+      return labelled === (onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER);
+    };
+    const eligible = selectPressureVictims({
+      rows,
       isBusy: activeWorkers.isSessionBusy,
       hasInFlightBuild: staging.hasInFlightBuild,
     });
+    const victims = [];
+    for (const row of eligible) {
+      if (await holdsConnectionsHere(row)) victims.push(row);
+    }
     summary.candidates = victims.length;
     if (!victims.length) {
       log.warn('staging-reap', 'Postgres near its connection limit, no reclaimable preview', {
@@ -1259,6 +1296,8 @@ async function sweepConnectionPressure(config, { limit = null, server = null } =
 
     for (const victim of victims.slice(0, cap)) {
       try {
+        // Looked at again: a rebuild since the selection may have moved it.
+        if (twoServers && !(await holdsConnectionsHere(victim))) continue;
         const res = await sessionLifecycle.teardownStagingForSession({
           pool, sessionId: Number(victim.id), reason: 'connection-pressure',
         });

@@ -279,10 +279,11 @@ What moves and what stays (`src/services/db-manager.js`, "Two servers"):
   preview built before the switch keeps working and is cleaned up on the main
   server. A preview connects with the address its container was given when it
   was built, and its runtime carries two labels written at deploy
-  (`usernode.db.name`, `usernode.db.server`): the exact database it was given
-  and the server it was made on. Those labels, not the session's number, are
-  what the heal pass judges by, because one proposal can have older copies on
-  the other server.
+  (`usernode.db.id`, `usernode.db.server`): a digest of the database it was
+  given, as Postgres stores the name (its first 63 bytes), and the server it
+  was made on. Those labels, not the session's number, are what the heal
+  pass, the connection-pressure pass and the drain status judge by, because
+  one proposal can have older copies on the other server.
 - There is no fallback to the main server. If the preview server is down,
   preview builds fail as a platform fault and retry on the checks' own
   schedule; they do not move their full copies onto production.
@@ -351,11 +352,20 @@ known cost of the shared-block copy.
    (`postgres://<user>:<password>@<host>:<port>/<maintenance database>`). It
    carries a password: keep it in the Secret, never in plaintext values.
    The host, port, user, password and database go in the address. The only
-   query parameter accepted is `sslmode`; a URL with any other (`?host=`,
-   `?port=`, `?user=`, `?password=`, `?options=` and so on) is refused as a
-   whole and preview builds fail until it is corrected, because the
-   platform's two database clients would read such a URL as two different
-   servers.
+   query parameter accepted is `sslmode`, with one of libpq's six values; a
+   URL with any other parameter (`?host=`, `?port=`, `?user=`, `?password=`,
+   `?options=` and so on) is refused as a whole and preview builds fail until
+   it is corrected, because the platform's two database clients would read
+   such a URL as two different servers. For the same reason the address names
+   exactly one host, as a DNS name or an IPv4 address (no host list, no IPv6
+   literal, no socket path), and the user is made of letters, digits and
+   underscores: restored objects are handed from that user to each preview's
+   role by name. The platform's own `PG*` environment variables (`PGSERVICE`,
+   `PGHOSTADDR` and the rest) are not passed to the `psql`, `pg_dump` and
+   `pg_restore` processes that talk to the preview server; the URL is their
+   whole connection. Point it at the server itself, not at a pooler that
+   hands each statement to a different backend: the shared-block copy relies
+   on one session staying on one server.
    With `secrets.create=true` the chart writes it from `previewPostgresql.*`
    and `secrets.previewDatabasePassword`.
 3. Set `previewPostgresql.enabled: true` with `namespace`, `podSelector` and
@@ -385,16 +395,26 @@ turns the shared-block attempt off without moving anything.
    Until then such a preview is reported as needing a rebuild. Builds on the
    main server do not need the preview server to answer: an old database of
    the same name there is left for the sweep if it cannot be dropped.
-2. Wait until nothing depends on the preview server. Every ten minutes while
-   draining the platform logs `Preview database server drain: still in use`
-   with what it counted: running previews whose runtime was given a database
-   there (from their labels), previews it could not read, builds in flight,
-   and databases of before & after shots runs still on the server. The line
-   to wait for is `Preview database server drain: nothing depends on it any
-   more`. Open connections are not the test: a preview holds none between
-   requests or after its pool's idle timeout and still breaks when the server
-   goes, and shots databases are not named like preview databases. Use
-   `pg_stat_activity` on the server as a second look, not as the answer.
+2. Wait until nothing depends on the preview server. This takes three
+   things, and the log line is only one of them:
+   - **The rollout that set the drain has finished**: every platform Pod now
+     running was started with it. A Pod from before still makes previews on
+     the preview server, and nothing in the line below can see what it is
+     about to start.
+   - **The platform's own count is empty, twice in a row.** Every ten minutes
+     while draining it logs `Preview database server drain: still in use`
+     with what it counted, or `Preview database server drain: no dependent
+     preview, build or shots run found`. It counts every preview runtime
+     that exists, in any state (running, starting, restarting, stopped),
+     whose labels say its database is there; every runtime it could not
+     read; every build under way on any platform Pod (a pending check in its
+     build phase); every unfinished before & after shots run; and every
+     shots database still on the server. Wait for the second line on two
+     consecutive passes after the rollout finished.
+   - **A look at the server itself**: `pg_stat_activity` there shows no
+     client on an `app_…` database. This is supporting evidence only. A
+     preview holds no connection between requests or after its pool's idle
+     timeout and still breaks when the server goes.
 3. Then set `previewPostgresql.enabled: false` and sync, and remove the key
    from the Secret and the server. Do it in that order and without a long
    gap: once the setting is off the platform no longer looks at that server
@@ -412,16 +432,19 @@ answers errors until its next rebuild.
 Nothing has to be done by hand. The next build of each app finds no template
 and rebuilds it. A preview whose database is gone is detected by looking for
 the exact database its runtime was given, on the server it was made on
-(about a minute after the wipe at the earliest, and only when that server
-answers); the heal pass rebuilds the ones backing a live vote,
+(at the next look, or up to a minute later while an earlier "it is there"
+is still believed, and only when that server answers); the heal pass
+rebuilds the ones backing a live vote,
 a re-run of the checks rebuilds first, and any other is rebuilt when it is
 opened. A preview built before the setting was turned on carries no labels; it
 is on the main server and is not checked. If the server comes back on another version, the next copy sees it:
 the version is read on the connection that makes each copy.
 
 A failed build on the preview server is stored as a platform fault, so it
-is retried on the checks' platform-fault schedule and is not counted against
-the proposal.
+keeps being retried on the checks' platform-fault schedule (for up to a day,
+two to thirty minutes apart). What people see has not changed with that: the
+proposal's checks read "Couldn't finish" and the step is shown as the
+author's, as for any checks error, although nothing is asked of them.
 
 ## Harvesting check runs across platform rollouts
 

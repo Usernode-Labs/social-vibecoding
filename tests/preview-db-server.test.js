@@ -94,7 +94,7 @@ function load({
     const db = (opts.env || {}).PGDATABASE;
     const statements = args.flatMap((arg, i) => (args[i - 1] === '-c' ? [arg] : []));
     let stdout = '';
-    for (const sql of statements) stdout = answer(host, db, sql, 'psql');
+    for (const sql of statements) { stdout = answer(host, db, sql, 'psql'); calls[calls.length - 1].env = opts.env; }
     return { stdout: stdout ? `${stdout}\n` : '', stderr: '' };
   };
   fakeExecFile[require('util').promisify.custom] = fakeExecFile;
@@ -102,7 +102,7 @@ function load({
     const child = new EventEmitter();
     child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
     child.kill = () => {};
-    calls.push({ via: cmd, host: (opts.env || {}).PGHOST, db: (opts.env || {}).PGDATABASE, sql: '', args });
+    calls.push({ via: cmd, host: (opts.env || {}).PGHOST, db: (opts.env || {}).PGDATABASE, sql: '', args, env: opts.env });
     setImmediate(() => child.emit('close', 0, null));
     return child;
   };
@@ -120,8 +120,8 @@ function load({
     }
     async query(config) {
       const text = typeof config === 'string' ? config : config.text;
-      const out = answer(this.host, this.db, text, 'pg');
-      calls[calls.length - 1].session = this.session;
+      let out;
+      try { out = answer(this.host, this.db, text, 'pg'); } finally { calls[calls.length - 1].session = this.session; }
       return { rows: out ? out.split('\n').map((line) => (config.rowMode === 'array' ? line.split('|') : { datname: line })) : [] };
     }
     async end() {}
@@ -225,16 +225,57 @@ test('with the setting, a preview is built on the preview server from a dump rea
   } finally { h.restore(); }
 });
 
-test('through psql too, the SET and the copy are separate statements of one session', async () => {
+test('a copy with no runner of its own holds one connection for the probes, the SET and the copy', async () => {
+  // The frozen shots source is copied this way.
   const h = load();
   try {
-    await h.dbManager.createFromTemplate(`${SOURCE}_stgtmpl`, 'app_demo_shots_0123456789ab_b', 'app_demo_shots_0123456789ab_b_owner', {
-      server: 'preview', timeoutMs: 90_000,
+    await h.dbManager.createFromTemplate(`${SOURCE}_stgtmpl`, 'app_demo_evsrc_0123456789ab', 'app_demo_evsrc_0123456789ab_owner', {
+      server: 'preview', timeoutMs: 90_000, attempts: 3,
     });
     const copy = h.calls.find((c) => /STRATEGY = FILE_COPY$/.test(c.sql));
-    assert.equal(copy.via, 'psql');
-    assert.equal(h.calls[h.calls.indexOf(copy) - 1].sql, 'SET file_copy_method = clone');
-    assert.doesNotMatch(copy.sql, /;/, 'a CREATE DATABASE sharing one -c with a SET would be inside a transaction block');
+    assert.equal(copy.via, 'pg');
+    assert.equal(copy.host, PREVIEW_HOST);
+    const onIt = h.calls.filter((c) => c.session === copy.session).map((c) => c.sql);
+    assert.deepEqual(onIt, [
+      'SHOW server_version_num',
+      'SELECT system_identifier FROM pg_control_system()',
+      'SET file_copy_method = clone',
+      copy.sql,
+    ], 'who the server is, and the copy, are one session');
+    assert.equal(h.calls.filter((c) => c.via === 'psql' && c.host === PREVIEW_HOST).length, 0,
+      'no psql process, each of which would be a connection of its own, takes part');
+  } finally { h.restore(); }
+});
+
+test('a runner that is a connection per statement never gets a shared-block copy', async () => {
+  const h = load();
+  try {
+    // What psql is: every call a new process. Who it reached last time says
+    // nothing about where the next statement goes.
+    const perStatement = (sql, opts) => h.dbManager.terminateDisposableSessions && Promise.resolve(h.calls.push({ via: 'own', host: PREVIEW_HOST, sql })).then(() => (/server_version_num/.test(sql) ? '180006' : '7002'));
+    await h.dbManager.createFromTemplate(`${SOURCE}_stgtmpl`, 'app_demo_evsrc_0123456789ab', 'app_demo_evsrc_0123456789ab_owner', {
+      server: 'preview', execute: perStatement,
+    });
+    const own = h.calls.filter((c) => c.via === 'own').map((c) => c.sql);
+    assert.deepEqual(own, [`CREATE DATABASE app_demo_evsrc_0123456789ab TEMPLATE ${SOURCE}_stgtmpl OWNER app_demo_evsrc_0123456789ab_owner`],
+      'not asked who it is, and sent the plain copy');
+  } finally { h.restore(); }
+});
+
+test('with a retry, the copy stays on the connection that proved the server', async () => {
+  const inUse = () => Object.assign(new Error('source database "app_demo_stgtmpl" is being accessed by other users'), { code: '55006' });
+  const h = load({ failures: [{ host: PREVIEW_HOST, match: /STRATEGY = FILE_COPY/, times: 1, error: inUse }] });
+  try {
+    await h.dbManager.createFromTemplate(`${SOURCE}_stgtmpl`, 'app_demo_evsrc_0123456789ab', 'app_demo_evsrc_0123456789ab_owner', {
+      server: 'preview', attempts: 3,
+    });
+    const copies = h.calls.filter((c) => /STRATEGY = FILE_COPY$/.test(c.sql));
+    assert.equal(copies.length, 2);
+    assert.equal(copies[0].session, copies[1].session);
+    assert.ok(h.on(PREVIEW_HOST).every((c) => c.via === 'pg' && c.session === copies[0].session),
+      'the probes, both attempts and the clean-up between them');
+    assert.deepEqual(h.sqlOn(MAIN_HOST), ['SELECT system_identifier FROM pg_control_system()'],
+      'the main server is only asked who it is, for the comparison');
   } finally { h.restore(); }
 });
 
@@ -411,10 +452,29 @@ test('the preview URL is one connection for every client: routing and credential
       assert.doesNotMatch(JSON.stringify(h.logs), new RegExp(PREVIEW_PASSWORD));
     } finally { h.restore(); }
   }
-  for (const bad of [`${base}?sslmode=whatever`, `${base}?sslmode=require&sslmode=disable`, `postgres://:${PREVIEW_PASSWORD}@${PREVIEW_HOST}/postgres`]) {
+  for (const bad of [
+    `${base}?sslmode=whatever`,
+    `${base}?sslmode=require&sslmode=disable`,
+    // node-postgres knows this one; libpq answers `invalid sslmode value`.
+    `${base}?sslmode=no-verify`,
+    `postgres://:${PREVIEW_PASSWORD}@${PREVIEW_HOST}/postgres`,
+    // Two hosts to libpq, one unresolvable name to node-postgres.
+    `postgres://previewadmin:${PREVIEW_PASSWORD}@10.0.0.1,10.0.0.2:5432/postgres`,
+    `postgres://previewadmin:${PREVIEW_PASSWORD}@[::1]:5432/postgres`,
+    `postgres://previewadmin:${PREVIEW_PASSWORD}@%2Fvar%2Frun%2Fpostgresql/postgres`,
+    // A user this module could not write into SQL unquoted: restored objects
+    // could not be handed to the preview's role.
+    `postgres://preview-admin:${PREVIEW_PASSWORD}@${PREVIEW_HOST}:5432/postgres`,
+    `postgres://preview%20admin:${PREVIEW_PASSWORD}@${PREVIEW_HOST}:5432/postgres`,
+  ]) {
     const h = load({ preview: bad });
     try {
-      await assert.rejects(h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), /STAGING_DB_ADMIN_URL/);
+      await assert.rejects(h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), (err) => {
+        assert.match(err.message, /STAGING_DB_ADMIN_URL/, bad.replace(PREVIEW_PASSWORD, '…'));
+        assert.doesNotMatch(`${err.message}${err.stack}`, new RegExp(PREVIEW_PASSWORD));
+        return true;
+      });
+      assert.equal(h.calls.filter((c) => /^CREATE /.test(c.sql)).length, 0, 'refused before anything is created');
     } finally { h.restore(); }
   }
   // sslmode is the one parameter both clients read alike. It is kept, for
@@ -426,6 +486,49 @@ test('the preview URL is one connection for every client: routing and credential
     assert.equal(url.search, '?sslmode=require');
     assert.equal(url.hostname, PREVIEW_HOST);
   } finally { ssl.restore(); }
+});
+
+test('a preview-side child process takes its connection from the URL alone, whatever libpq variables are around', async () => {
+  // Each of these outranks or replaces what PGHOST and PGPORT say.
+  const ambient = {
+    PGSERVICE: 'primary', PGSERVICEFILE: '/etc/pg_service.conf', PGHOSTADDR: '10.9.9.9',
+    PGOPTIONS: '-c search_path=x', PGSSLMODE: 'verify-full', PGTARGETSESSIONATTRS: 'read-write', PGPASSFILE: '/x',
+  };
+  const saved = {};
+  for (const [key, value] of Object.entries(ambient)) { saved[key] = process.env[key]; process.env[key] = value; }
+  const h = load();
+  try {
+    await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
+    const preview = h.on(PREVIEW_HOST).filter((c) => c.env);
+    const main = h.on(MAIN_HOST).filter((c) => c.env);
+    assert.ok(preview.some((c) => c.via === 'pg_restore') && preview.some((c) => c.via === 'psql'));
+    for (const call of preview) {
+      const pg = Object.keys(call.env).filter((key) => /^PG/i.test(key)).sort();
+      assert.deepEqual(pg, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGUSER'], `${call.via}: only what the URL says`);
+      assert.equal(call.env.PGHOST, PREVIEW_HOST);
+      assert.equal(call.env.PGUSER, 'previewadmin');
+      assert.equal(call.env.PATH, process.env.PATH, 'the rest of the environment is kept');
+    }
+    // The main server's processes inherit the environment as they always did.
+    assert.ok(main.some((c) => c.via === 'pg_dump'));
+    for (const call of main) assert.equal(call.env.PGSERVICE, 'primary', call.via);
+  } finally {
+    h.restore();
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('a clone whose ownership could not be handed over on the preview server is not returned', async () => {
+  const h = load({ failures: [{ host: PREVIEW_HOST, match: /ALTER %s %I\.%I OWNER TO %I/, error: () => new Error('must be owner of table notes') }] });
+  try {
+    await assert.rejects(h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), /must be owner of table notes/);
+  } finally { h.restore(); }
+  // On the main server the same failure is the warning it always was.
+  const one = load({ preview: null, failures: [{ host: MAIN_HOST, match: /ALTER %s %I\.%I OWNER TO %I/, times: 2, error: () => new Error('must be owner of table notes') }] });
+  try {
+    const cloned = await one.dbManager.cloneDatabase(SOURCE, TARGET);
+    assert.equal(cloned.via, 'direct');
+  } finally { one.restore(); }
 });
 
 test('a clone URL never carries administrative credentials in its query', () => {
@@ -549,7 +652,8 @@ test('a bad or self-referring setting is said without its value', async () => {
   } finally { same.restore(); }
 });
 
-const labelsFor = (name, server) => ({ 'usernode.db.name': name, 'usernode.db.server': server });
+const idOf = (name) => require('node:crypto').createHash('sha256').update(name.slice(0, 63)).digest('hex').slice(0, 32);
+const labelsFor = (name, server) => ({ 'usernode.db.id': idOf(name), 'usernode.db.server': server });
 
 test('a preview is judged by the database its runtime was given, on the server it was made on', async () => {
   const current = 'app_demo_staging_s7_abc123';
@@ -567,7 +671,7 @@ test('a preview is judged by the database its runtime was given, on the server i
     // No labels (a preview from before the setting), or labels this module
     // did not write: nothing is asked.
     h.calls.length = 0;
-    for (const labels of [null, {}, { 'usernode.db.name': current }, labelsFor('app_demo', 'preview'), labelsFor(current, 'elsewhere')]) {
+    for (const labels of [null, {}, { 'usernode.db.id': idOf(current) }, { 'usernode.db.id': current, 'usernode.db.server': 'preview' }, labelsFor(current, 'elsewhere')]) {
       assert.equal(await h.dbManager.previewDatabaseVerdict(labels), null);
     }
     assert.equal(h.calls.length, 0);
@@ -595,22 +699,32 @@ test('a preview is judged by the database its runtime was given, on the server i
   } finally { one.restore(); }
 });
 
-test('a session id is read from the end of a clone name, never from inside a project slug', async () => {
-  const tricky = 'app_review8016_demo_staging_s7_6cb80a_staging_s98017_abcdef';
-  const h = load({ databases: { [PREVIEW_HOST]: [
-    tricky,
-    'app_demo_staging_s12_latest',
-    'app_demo_staging_s13_Main-1',          // not a name this module builds
-    'app_prod_staging_s55_abcdef',          // a production database that ends like a clone
-    'app_demo_stgtmpl',
-  ] } });
+test('the label is a bounded identity of the name as Postgres stores it, at the longest legal names', async () => {
+  // A 50-character slug and a seven-digit session id ask for a 78-character
+  // database name. Postgres keeps the first 63 bytes, at CREATE, at connect
+  // and at DROP.
+  const long = `app_${'a'.repeat(50)}_staging_s8016000_abcdef`;
+  assert.equal(long.length, 78);
+  const stored = long.slice(0, 63);
+  const h = load({ databases: { [PREVIEW_HOST]: [stored, 'app_demo_staging_s7_abc123'] } });
   try {
-    assert.equal(h.dbManager.stagingCloneSessionId(tricky), 98017);
-    assert.equal(h.dbManager.stagingCloneSessionId('app_demo_staging_s7_6cb80a_extra'), null);
-    assert.equal(h.dbManager.stagingCloneSessionId('app_demo'), null);
-    const ids = await h.dbManager.stagingCloneSessionIds('preview', { exclude: new Set(['app_prod_staging_s55_abcdef']) });
-    assert.deepEqual([...ids].sort((x, y) => x - y), [12, 98017]);
+    const labels = h.dbManager.previewDatabaseLabels(long, 'preview');
+    assert.deepEqual(Object.keys(labels), ['usernode.db.id', 'usernode.db.server']);
+    for (const value of Object.values(labels)) {
+      // A Kubernetes label value: 63 characters at most, alphanumeric at
+      // both ends. A Docker label takes anything.
+      assert.match(value, /^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/, value);
+    }
+    assert.equal(labels['usernode.db.id'], h.dbManager.databaseIdentity(stored), 'the stored name and the requested name are one identity');
+    assert.equal(await h.dbManager.previewDatabaseVerdict(labels), null, 'a healthy preview with a long name is not "gone"');
+    assert.equal(h.dbManager.previewDatabaseServerOf(labels), 'preview');
+    assert.equal(h.dbManager.previewDatabaseServerOf({ 'usernode.db.server': 'preview' }), null);
+    assert.equal(h.dbManager.previewDatabaseServerOf({}), null);
   } finally { h.restore(); }
+  const wiped = load({ databases: { [PREVIEW_HOST]: [] } });
+  try {
+    assert.equal(await wiped.dbManager.previewDatabaseVerdict(wiped.dbManager.previewDatabaseLabels(long, 'preview')), 'gone');
+  } finally { wiped.restore(); }
 });
 
 test('stagingNeedsRebuild rebuilds a running preview whose database is gone or on a draining server', async () => {
@@ -624,8 +738,8 @@ test('stagingNeedsRebuild rebuilds a running preview whose database is gone or o
   for (const [key, id] of Object.entries(ids)) orig[key] = require.cache[id];
   let verdict = null;
   let asked = 0;
-  stub(ids.dbManager, { previewDatabaseVerdict: async (labels) => { asked += 1; assert.deepEqual(labels, { 'usernode.db.name': 'x' }); return verdict; } });
-  stub(ids.docker, { inspectContainer: async () => ({ status: 'running', labels: { 'usernode.db.name': 'x' } }) });
+  stub(ids.dbManager, { previewDatabaseVerdict: async (labels) => { asked += 1; assert.deepEqual(labels, { 'usernode.db.id': 'x' }); return verdict; } });
+  stub(ids.docker, { inspectContainer: async () => ({ status: 'running', labels: { 'usernode.db.id': 'x' } }) });
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   delete require.cache[ids.subject];
   try {
@@ -663,11 +777,15 @@ function loadReapForPressure(fx) {
     census: require.resolve('../src/db/connection-census'),
     activeWorkers: require.resolve('../src/services/active-workers'),
     sessionLifecycle: require.resolve('../src/services/session-lifecycle'),
+    recovery: require.resolve('../src/services/staging-recovery'),
     reap: require.resolve('../src/services/staging-reap'),
   };
   const orig = {};
   for (const [key, id] of Object.entries(ids)) { orig[key] = require.cache[id]; delete require.cache[id]; }
-  const mainPool = { name: 'main', query: async (sql) => ({ rows: /FROM apps/.test(sql) ? [{ slug: 'prod-staging-s3-abcdef' }] : fx.rows }) };
+  const mainPool = {
+    name: 'main',
+    query: async (sql, params) => ({ rows: /WHERE id = \$1/.test(sql) ? [{ id: params[0], staging_container_id: `c${params[0]}` }] : fx.rows }),
+  };
   const previewReader = { name: 'preview' };
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.docker, {});
@@ -677,6 +795,15 @@ function loadReapForPressure(fx) {
   stub(ids.staging, { hasInFlightBuild: () => false });
   stub(ids.pool, { getPool: () => mainPool });
   stub(ids.activeWorkers, { isSessionBusy: () => false });
+  stub(ids.recovery, {
+    inspectPreviewRuntime: async (session) => {
+      fx.inspected.push(Number(session.id));
+      const id = Number(session.id);
+      if (fx.unreadable?.has(id)) return null;
+      const server = fx.holds.preview.has(id) ? 'preview' : fx.unlabelled?.has(id) ? null : 'primary';
+      return { status: 'running', labels: server ? { server } : {} };
+    },
+  });
   stub(ids.census, {
     connectionCensus: async (reader) => {
       fx.read.push(reader.name);
@@ -699,11 +826,8 @@ function loadReapForPressure(fx) {
     PREVIEW_SERVER: 'preview',
     previewServerConfigured: () => true,
     previewServerQueryable: () => previewReader,
-    appDbName: (slug) => `app_${slug.replace(/[^a-z0-9_]/g, '_')}`,
-    stagingCloneSessionIds: async (server, { exclude }) => {
-      assert.ok(exclude.has('app_prod_staging_s3_abcdef'), 'production database names are excluded from the reading');
-      return fx.holds[server === 'preview' ? 'preview' : 'main'];
-    },
+    // What the runtime's labels say; null for a runtime built before the setting.
+    previewDatabaseServerOf: (labels) => labels?.server || null,
   } : { dropDatabase: async () => {} });
   const reap = require(ids.reap);
   const restore = () => {
@@ -724,6 +848,7 @@ const pressureFixture = (overrides = {}) => ({
   holds: { main: new Set([1]), preview: new Set([2, 3]) },
   read: [],
   tornDown: [],
+  inspected: [],
   ...overrides,
 });
 
@@ -742,12 +867,22 @@ test('connection pressure on the preview server reclaims only previews whose dat
 });
 
 test('connection pressure on the main server leaves previews on the preview server alone', async () => {
-  const fx = pressureFixture({ saturated: { main: 5, preview: 0 } });
+  // Session 2's runtime is on the preview server. That the session also has
+  // an old clone on the main server is not something this pass looks at.
+  // Session 4 was built before the setting: no labels, so it is on main.
+  // Session 5 cannot be read and is left alone.
+  const fx = pressureFixture({
+    saturated: { main: 5, preview: 0 },
+    rows: [1, 2, 3, 4, 5].map((id) => ({ id, status: 'active', last_activity_at: `2026-09-0${id}T00:00:00Z` })),
+    holds: { main: new Set([1, 4]), preview: new Set([2, 3]) },
+    unlabelled: new Set([4]),
+    unreadable: new Set([5]),
+  });
   const { reap, restore } = loadReapForPressure(fx);
   try {
     const main = await reap.sweepConnectionPressure({});
-    assert.equal(main.candidates, 1);
-    assert.deepEqual(fx.tornDown, [1], 'tearing down a preview on the other server would free nothing here');
+    assert.equal(main.candidates, 2);
+    assert.deepEqual(fx.tornDown, [1, 4], 'tearing down a preview on the other server would free nothing here');
   } finally { restore(); }
 });
 
@@ -761,12 +896,13 @@ test('with one server the pressure pass is what it was, and the preview pass doe
     const main = await reap.sweepConnectionPressure({});
     assert.equal(main.candidates, 3);
     assert.deepEqual(fx.tornDown, [1]);
+    assert.deepEqual(fx.inspected, [], 'with one server no runtime is inspected: the pass is what it was');
   } finally { restore(); }
 });
 
 // ─── Is a draining preview server still in use? ─────────────────────────
 
-test('drain status counts what depends on the preview server, not connections', async () => {
+test('drain status counts what depends on the preview server, in every state and across replicas', async () => {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
@@ -781,49 +917,71 @@ test('drain status counts what depends on the preview server, not connections', 
   };
   const orig = {};
   for (const [key, id] of Object.entries(ids)) { orig[key] = require.cache[id]; delete require.cache[id]; }
+  const there = { server: 'preview' };
+  const runtime = (status, labels = there) => ({ status, labels });
   const fx = {
     draining: true,
-    shots: ['app_demo_shots_0123456789ab_b', 'app_demo_evsrc_0123456789ab'],
-    // session id → the runtime's state, or null when it could not be read
-    runtimes: {
-      1: { status: 'running', labels: { 'usernode.db.server': 'preview' } },   // idle, zero connections, still depends on it
-      2: { status: 'running', labels: { 'usernode.db.server': 'primary' } },
-      3: { status: 'running', labels: {} },                                    // from before the setting
-      4: { status: 'exited', labels: { 'usernode.db.server': 'preview' } },
-      5: null,
-    },
-    inFlight: new Set([2]),
+    shots: [],
+    shotsRuns: 0,
+    localBuilds: new Set(),
+    // session id → the row and the runtime's state (null: could not be read)
+    sessions: {},
   };
   const logs = [];
+  const sqls = [];
   stub(ids.logger, { info: (scope, message, meta) => logs.push({ message, meta }), warn() {}, error() {}, debug() {} });
   stub(ids.docker, {});
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
   stub(ids.ws, { broadcastToAdmins() {} });
   stub(ids.stagingEnv, { expectedStagingFingerprint: () => 'fp' });
-  stub(ids.staging, { hasInFlightBuild: (id) => fx.inFlight.has(id) });
-  stub(ids.recovery, { inspectPreviewRuntime: async (session) => fx.runtimes[session.id] });
-  stub(ids.pool, { getPool: () => ({ query: async () => ({ rows: Object.keys(fx.runtimes).map((id) => ({ id: Number(id), staging_url: 'https://x' })) }) }) });
+  stub(ids.staging, { hasInFlightBuild: (id) => fx.localBuilds.has(id) });
+  stub(ids.recovery, { inspectPreviewRuntime: async (session) => fx.sessions[session.id].state });
+  stub(ids.pool, { getPool: () => ({ query: async (sql) => {
+    sqls.push(sql);
+    if (/FROM shot_runs/.test(sql)) return { rows: [{ n: fx.shotsRuns }] };
+    return { rows: Object.entries(fx.sessions).map(([id, v]) => ({ id: Number(id), ...v.row })) };
+  } }) });
   stub(ids.dbManager, {
     PREVIEW_SERVER: 'preview',
-    LABEL_PREVIEW_DB_SERVER: 'usernode.db.server',
     previewServerConfigured: () => true,
     previewServerDraining: () => fx.draining,
     previewServerShotsDatabases: async () => fx.shots,
+    previewDatabaseServerOf: (labels) => labels?.server || null,
   });
+  const named = { staging_url: 'https://x', staging_container_id: 'c' };
   try {
     const reap = require(ids.reap);
-    const busy = await reap.previewServerDrainStatus({}, { force: true });
-    assert.deepEqual(busy, { previews: [1], unread: 1, buildsInFlight: 1, shotsDatabases: 2, clear: false });
+    const one = async (sessions, extra = {}) => {
+      Object.assign(fx, { sessions, shots: [], shotsRuns: 0, localBuilds: new Set() }, extra);
+      return reap.previewServerDrainStatus({}, { force: true });
+    };
+    // A dependent runtime counts in EVERY state it can exist in: one that is
+    // restarting or stopped today serves again tomorrow.
+    for (const status of ['running', 'restarting', 'created', 'paused', 'exited', 'dead', 'unknown']) {
+      const result = await one({ 1: { row: named, state: runtime(status) } });
+      assert.equal(result.clear, false, status);
+      assert.deepEqual(result.previews, [1], status);
+    }
+    // Gone, on the main server, or from before the setting: not dependent.
+    for (const state of [runtime('not_found'), runtime('running', { server: 'primary' }), runtime('running', {})]) {
+      assert.equal((await one({ 1: { row: named, state } })).clear, true);
+    }
+    assert.equal(logs.at(-1).message, 'Preview database server drain: no dependent preview, build or shots run found');
+    // A runtime that could not be read is not "none".
+    assert.deepEqual(await one({ 1: { row: named, state: null } }),
+      { previews: [], unread: 1, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0, clear: false });
+    // A first build has no runtime and no staging_url yet. It is counted
+    // from its row, so a build another platform replica is running counts.
+    const firstBuild = await one({ 9: { row: { staging_url: null, building: true }, state: null } });
+    assert.deepEqual(firstBuild, { previews: [], unread: 0, buildsInFlight: 1, shotsRuns: 0, shotsDatabases: 0, clear: false });
+    assert.match(sqls.find((sql) => /FROM chat_sessions/.test(sql)), /check_state = 'pending' AND check_phase = 'building'/);
+    // This process's own builds, shots runs anywhere, shots databases there.
+    assert.equal((await one({ 1: { row: named, state: runtime('not_found') } }, { localBuilds: new Set([1]) })).clear, false);
+    assert.equal((await one({}, { shotsRuns: 1 })).clear, false);
+    assert.equal((await one({}, { shots: ['app_demo_evsrc_0123456789ab'] })).clear, false);
     assert.equal(logs.at(-1).message, 'Preview database server drain: still in use');
+
     assert.equal(await reap.previewServerDrainStatus({}), null, 'at most once every ten minutes');
-
-    fx.runtimes = { 2: fx.runtimes[2], 3: fx.runtimes[3], 4: fx.runtimes[4] };
-    fx.inFlight = new Set();
-    fx.shots = [];
-    const clear = await reap.previewServerDrainStatus({}, { force: true });
-    assert.equal(clear.clear, true);
-    assert.equal(logs.at(-1).message, 'Preview database server drain: nothing depends on it any more');
-
     fx.draining = false;
     assert.equal(await reap.previewServerDrainStatus({}, { force: true }), null, 'only while draining');
   } finally {

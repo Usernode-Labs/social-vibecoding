@@ -53,7 +53,7 @@ const sent = [];
 const realQuery = pg.Client.prototype.query;
 pg.Client.prototype.query = function recordingQuery(config, ...rest) {
   const text = typeof config === 'string' ? config : config?.text;
-  if (typeof text === 'string') sent.push({ port: String(this.port), host: this.host, text });
+  if (typeof text === 'string') sent.push({ port: String(this.port), host: this.host, text, client: this });
   return realQuery.call(this, config, ...rest);
 };
 test.after(() => { pg.Client.prototype.query = realQuery; });
@@ -222,6 +222,9 @@ test('preview databases live on the preview server, redacted, and the main serve
     const index = sent.indexOf(copies[0]);
     assert.equal(sent[index - 1].text, 'SET file_copy_method = clone');
     assert.equal(sent[index - 1].port, ctx.previewPort);
+    const sameSession = sent.filter((q) => q.client === copies[0].client).map((q) => q.text);
+    assert.ok(sameSession.includes('SHOW server_version_num') && sameSession.includes('SELECT system_identifier FROM pg_control_system()'),
+      'the server said who it is on the connection the copy ran on');
   } else {
     assert.doesNotMatch(copies[0].text, /STRATEGY/, 'an older preview server gets the plain copy');
   }
@@ -237,13 +240,10 @@ test('preview databases live on the preview server, redacted, and the main serve
   // The sweeps' view of the preview server.
   const listed = await dbManager.listPreviewServerStagingDatabases();
   assert.ok(listed.dbNames.includes(target));
-  const sessions = await dbManager.stagingCloneSessionIds('preview');
-  assert.ok(sessions.has(901) && sessions.has(902));
-  assert.equal((await dbManager.stagingCloneSessionIds('primary')).has(901), false);
   const census = await require('../src/db/connection-census').connectionCensus(dbManager.previewServerQueryable());
   assert.ok(census && census.max > 0 && census.used >= 0, 'the connection census reads the preview server');
   const labels = dbManager.previewDatabaseLabels(target, cloned.server);
-  assert.deepEqual(labels, { 'usernode.db.name': target, 'usernode.db.server': 'preview' });
+  assert.deepEqual(labels, { 'usernode.db.id': dbManager.databaseIdentity(target), 'usernode.db.server': 'preview' });
   assert.equal(await dbManager.previewDatabaseVerdict(labels), null);
   assert.equal(await dbManager.databaseExists(target, { strict: true }), true);
 
@@ -351,12 +351,8 @@ test('an old clone of the same session on the other server does not vouch for th
   assert.ok((await names(main, `%${tok}%`)).includes(oldClone), 'a different commit\'s clone is not dropped by the new build');
   const labels = dbManager.previewDatabaseLabels(current, now.server);
 
-  // The session id is read from the end of the name, not from the slug.
-  assert.equal((await dbManager.stagingCloneSessionIds('preview')).has(98017), true);
-  assert.equal((await dbManager.stagingCloneSessionIds('preview')).has(7), false);
-  assert.equal((await dbManager.stagingCloneSessionIds('primary', { exclude: new Set([tricky]) })).has(7), false,
-    'a production database that ends like a clone is not one');
   assert.equal(await dbManager.previewDatabaseVerdict(labels), null);
+  assert.equal(await dbManager.previewDatabaseVerdict(dbManager.previewDatabaseLabels(oldClone, before.server || 'primary')), null);
 
   // Drain: the current clone is on the preview server, whatever is on main.
   process.env.STAGING_DB_SERVER_DRAIN = '1';
@@ -390,13 +386,131 @@ test('a URL whose query points somewhere else is refused before anything runs', 
   assert.deepEqual(await names(preview, `%${tok}%`), []);
 });
 
+test('ambient libpq settings cannot send preview work to the main server', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, source, names } = ctx;
+  // A service file whose entry is the MAIN server. libpq lets a service
+  // override the host and port it is otherwise given.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pvdb-service-'));
+  const mainUrl = new URL(MAIN);
+  fs.writeFileSync(path.join(dir, 'pg_service.conf'),
+    `[elsewhere]\nhost=${mainUrl.hostname}\nport=${mainUrl.port || 5432}\nuser=${decodeURIComponent(mainUrl.username)}\npassword=${decodeURIComponent(mainUrl.password)}\n`);
+  const saved = { PGSERVICE: process.env.PGSERVICE, PGSERVICEFILE: process.env.PGSERVICEFILE, PGHOSTADDR: process.env.PGHOSTADDR };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  // The service names the main server, so the main server's own processes
+  // (the dump, which inherits the environment as before) still reach it.
+  // The direct copy is the path that is psql and pg_restore throughout.
+  process.env.PGSERVICE = 'elsewhere';
+  process.env.PGSERVICEFILE = path.join(dir, 'pg_service.conf');
+  process.env.PGHOSTADDR = mainUrl.hostname;
+  const target = `${source}_staging_s961_abc123`;
+  const cloned = await dbManager.cloneDatabase(source, target);
+  for (const key of Object.keys(saved)) delete process.env[key];
+  assert.equal(cloned.server, 'preview');
+  assert.equal(cloned.via, 'direct');
+  assert.deepEqual(await names(preview, `%${tok}%`), [target], 'made where the function says it was made');
+  assert.deepEqual(await names(main, `%${tok}%`), [source], 'nothing reached the main server');
+  assertRedacted(await readClone(dbManager, target, cloned));
+});
+
+test('the longest legal names: the clone works and its runtime is not judged "gone"', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, seed, names } = ctx;
+  // A 50-character slug: `app_` + 50 = 54 characters, and a preview name of
+  // 54 + `_staging_s8016000_abcdef` = 78. Postgres stores 63.
+  const longSource = `app_long${tok}${'x'.repeat(50 - 4 - tok.length)}`;
+  assert.equal(longSource.length, 54);
+  await seed(longSource);
+  const target = `${longSource}_staging_s8016000_abcdef`;
+  assert.equal(target.length, 78);
+  const cloned = await dbManager.cloneDatabase(longSource, target, { viaTemplate: true });
+  assert.equal(cloned.server, 'preview');
+  const stored = (await names(preview, `%long${tok}%`)).filter((name) => name.includes('_staging_'));
+  assert.deepEqual(stored, [target.slice(0, 63)], 'Postgres kept the first 63 bytes');
+  assertRedacted(await readClone(dbManager, target, cloned));
+
+  const labels = dbManager.previewDatabaseLabels(target, cloned.server);
+  for (const value of Object.values(labels)) assert.match(value, /^[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/);
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), null, 'there, under its stored name');
+  await dbManager.dropDatabase(target, { strict: true });
+  dbManager._resetPreviewServerStateForTest();
+  assert.equal(await dbManager.previewDatabaseVerdict(labels), 'gone');
+});
+
+test('an administrator this module cannot name in SQL is refused before anything is made', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const { main, preview, dbManager, tok, source, names } = ctx;
+  const admin = `pv-admin-${tok}`;
+  await preview.query(`CREATE ROLE "${admin}" SUPERUSER LOGIN PASSWORD 'pw'`);
+  t.after(() => preview.query(`DROP ROLE IF EXISTS "${admin}"`).catch(() => {}));
+  const url = new URL(PREVIEW);
+  url.username = admin;
+  url.password = 'pw';
+  process.env.STAGING_DB_ADMIN_URL = String(url);
+  dbManager._resetPreviewServerStateForTest();
+  await assert.rejects(
+    dbManager.cloneDatabase(source, `${source}_staging_s971_abc123`, { viaTemplate: true }),
+    /STAGING_DB_ADMIN_URL must carry a user of letters, digits and underscores/,
+  );
+  assert.deepEqual(await names(preview, `%${tok}%`), [], 'no clone its own role could not read was made');
+  assert.deepEqual(await names(main, `%${tok}%`), [source]);
+});
+
+test('every sslmode the setting accepts is one the real PostgreSQL client knows', async (t) => {
+  const { execFile } = require('node:child_process');
+  const run = (mode) => new Promise((resolve) => {
+    const url = new URL(PREVIEW);
+    execFile('psql', ['-X', '-Atc', 'select 1'], {
+      env: { PATH: process.env.PATH, PGHOST: url.hostname, PGPORT: url.port || '5432', PGUSER: 'postgres', PGPASSWORD: 'x', PGDATABASE: 'postgres', PGSSLMODE: mode, PGCONNECT_TIMEOUT: '3' },
+    }, (err, stdout, stderr) => resolve(`${stderr}`));
+  });
+  if (/ENOENT/.test(await run('disable').catch((err) => String(err)))) { t.skip('psql is not on PATH'); return; }
+  const saved = { url: process.env.STAGING_DB_ADMIN_URL, admin: process.env.DB_ADMIN_URL };
+  process.env.DB_ADMIN_URL = 'postgres://usernode:x@main.example.test:5432/usernode';
+  const dbManager = require('../src/services/db-manager');
+  try {
+    for (const mode of ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']) {
+      process.env.STAGING_DB_ADMIN_URL = `postgres://previewadmin:x@preview.example.test:5432/postgres?sslmode=${mode}`;
+      assert.equal(new URL(dbManager.connectionUrl('app_x_staging_s1_abc123', 'pw', { server: 'preview' })).searchParams.get('sslmode'), mode);
+      assert.doesNotMatch(await run(mode), /invalid sslmode value/, mode);
+    }
+    process.env.STAGING_DB_ADMIN_URL = 'postgres://previewadmin:x@preview.example.test:5432/postgres?sslmode=no-verify';
+    assert.throws(() => dbManager.connectionUrl('app_x_staging_s1_abc123', 'pw', { server: 'preview' }), /unknown sslmode/);
+    assert.match(await run('no-verify'), /invalid sslmode value/, 'which is why it is refused');
+  } finally {
+    for (const [key, env] of [['url', 'STAGING_DB_ADMIN_URL'], ['admin', 'DB_ADMIN_URL']]) {
+      if (saved[key] === undefined) delete process.env[env]; else process.env[env] = saved[key];
+    }
+  }
+});
+
 test('a shots run keeps its frozen source and both clones together on the preview server', async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
   const { main, preview, dbManager, tok, source, names } = ctx;
   const runId = `run-${tok}`;
+  sent.length = 0;
   const prepared = await dbManager.prepareStagingCloneSource(source, { sourceId: runId });
   assert.equal(prepared.server, 'preview');
+  // The frozen source is copied with no runner of its own. It still holds
+  // one connection for the probes, the SET and the copy.
+  const frozen = sent.find((q) => /^CREATE DATABASE \S+_evsrc_\S+ TEMPLATE /.test(q.text));
+  assert.equal(frozen.port, ctx.previewPort);
+  if (ctx.previewVersion >= 180000) {
+    assert.match(frozen.text, /STRATEGY = FILE_COPY$/);
+    assert.deepEqual(sent.filter((q) => q.client === frozen.client).map((q) => q.text).slice(0, 4), [
+      'SHOW server_version_num', 'SELECT system_identifier FROM pg_control_system()', 'SET file_copy_method = clone', frozen.text,
+    ]);
+  }
   const slug = source.replace(/^app_/, '');
   const sides = { base: dbManager.shotsDbName(slug, runId, 'base'), head: dbManager.shotsDbName(slug, runId, 'head') };
   for (const side of ['base', 'head']) {
@@ -463,7 +577,7 @@ test('an unreachable preview server fails the clone and makes nothing on the mai
     },
   );
   assert.deepEqual(await names(main, `%${tok}%`), [source], 'no fallback copy lands on the main server');
-  assert.equal(await dbManager.previewDatabaseVerdict({ 'usernode.db.name': target, 'usernode.db.server': 'preview' }), null,
+  assert.equal(await dbManager.previewDatabaseVerdict(dbManager.previewDatabaseLabels(target, 'preview')), null,
     'a server that cannot be read is "cannot tell"');
   await assert.rejects(dbManager.databaseExists(target, { strict: true }), 'a failed lookup is not absence');
 });
