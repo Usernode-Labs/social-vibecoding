@@ -37,7 +37,7 @@ import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useS
 
 import { alertVariants } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
-import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, LockIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 import { cn } from '@/lib/utils';
 
@@ -602,6 +602,43 @@ export async function startedFromStory(kind: 'existing' | 'new'): Promise<boolea
   return true;
 }
 
+/**
+ * How long "Signing you in…" may stand. A spend answers in about a second;
+ * one that has not after this gives way to the sheet as it is ("Signing you
+ * in from your email…" and its ✕), so a stalled request never leaves a
+ * spinner with no way out.
+ */
+export const SIGNING_IN_MAX_MS = 20_000;
+
+/**
+ * "SIGNING YOU IN…": while Get started spends a "You're in" mail's one-time
+ * sign-in (the sheet's `link` step, ./sign-in-sheet.tsx), a plain screen
+ * over the story and the sheet: the logotype, a spinner and the one line, on
+ * the landing's own ground. The onboarding run of 12 Oct 2026 saw the story,
+ * with the address under "Welcome to Homeroom", stay up while the link
+ * signed in, and then the Welcome sheet over it. The address is not said
+ * here: the Welcome sheet that follows says it.
+ *
+ * It takes the taps while it is up (the dim under it would close the sheet),
+ * and it is up only for that moment: rendered nothing otherwise, so the
+ * interior's first commit is unchanged.
+ */
+export function SigningIn() {
+  const t = useMessages('auth');
+  return (
+    <div
+      data-landing-signing-in=""
+      role="status"
+      className="fixed inset-0 z-[60] flex touch-none flex-col items-center justify-center px-4 text-center"
+      style={{ background: 'var(--home-wallpaper)' }}
+    >
+      <Wordmark className="h-8 w-auto text-zinc-950 dark:text-white" />
+      <SpinnerArcIcon className="mt-8 h-6 w-6 animate-spin motion-reduce:animate-none text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+      <p className="mt-3 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('auth:landing.signingIn')}</p>
+    </div>
+  );
+}
+
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
@@ -647,6 +684,19 @@ export function LandingScreen() {
     void inviteEmailFromToken(releaseToken).then((email) => { if (live) setReleaseEmail(email); });
     return () => { live = false; };
   }, [releaseToken]);
+  // The sheet spending that link's one-time sign-in (its `onSigningIn`):
+  // "Signing you in…" over everything (SigningIn), for that moment. Every
+  // way it ends takes the screen down with it: Welcome, the code a refused
+  // or failed spend falls back to, an error, a closed sheet. Past
+  // SIGNING_IN_MAX_MS it gives way to the sheet as it stands.
+  const [signingIn, setSigningIn] = useState(false);
+  const [signingInOverdue, setSigningInOverdue] = useState(false);
+  useEffect(() => {
+    setSigningInOverdue(false);
+    if (!signingIn) return undefined;
+    const timer = window.setTimeout(() => setSigningInOverdue(true), SIGNING_IN_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [signingIn]);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -711,6 +761,8 @@ export function LandingScreen() {
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn || invitePending;
+  // Only over Get started's sheet, the one that carries the link.
+  const signingInShown = signingIn && !signingInOverdue && storyOn && sheet === 'start';
   const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
@@ -1101,7 +1153,7 @@ export function LandingScreen() {
     //
     // A new account's link waits for Get started (Evan, 10 Oct 2026): the
     // story first, then the sheet, which only then spends the one-time
-    // sign-in (./sign-in-sheet.tsx, "Signing you in…" and the username). A
+    // sign-in (SigningIn over it while that runs, then the username). A
     // link spent on load was used up by whatever loaded it: the phone app's
     // own browser before it handed the link to Safari, or a mail scanner
     // that runs the page. Nothing else changes: Get started passes the link
@@ -1788,8 +1840,11 @@ export function LandingScreen() {
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
+          onSigningIn={setSigningIn}
+          held={signingInShown}
         />
       ) : null}
+      {signingInShown ? <SigningIn /> : null}
         </>
       ) : null}
     </main>
