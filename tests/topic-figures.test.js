@@ -45,7 +45,7 @@ const TOPIC_IDS = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
   'homeroom-bot': ['bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal'],
   'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged'],
-  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled'],
+  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away'],
 };
 
 const byId = (payload) => Object.fromEntries(payload.figures.map((f) => [f.id, f]));
@@ -112,6 +112,10 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   assert.deepEqual([limits.state, limits.value, limits.sub], ['ok', 'None', 'across the platform']);
   const full = figures.present('infra.limits-filled', { n: 2 });
   assert.deepEqual([full.state, full.value, full.sub], ['warn', '2 times', 'across the platform · target none']);
+  // A refusal is counted when it happens; the alert above only samples.
+  const away = figures.present('infra.turned-away', { n: 3 });
+  assert.deepEqual([away.state, away.value, away.sub], ['warn', '3 times', 'across the platform · target none']);
+  assert.deepEqual(figures.present('infra.turned-away', { n: 0 }).value, 'None');
   const none = figures.present('infra.apps-up', { hits: 0, total: 0 });
   assert.deepEqual([none.state, none.value, none.sub], ['empty', 'None yet', 'No opens yet'], 'nothing to count is never a 0%');
   const unread = figures.present('infra.deploys-failed', null);
@@ -513,6 +517,11 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     await pool.query(`INSERT INTO notifications (user_id, kind, detail, created_at) VALUES ($1, 'platform_limit', 'sessions_full:25:25', date_trunc('minute', NOW()) - interval '2 hours')`, [id]);
   }
   await pool.query(`INSERT INTO notifications (user_id, kind, detail, created_at) VALUES ($1, 'platform_limit', 'apps_warn:40:50', NOW() - interval '3 hours')`, [admins[0]]);
+  // Two people turned away at a session cap this week, one a fortnight ago.
+  for (const [cap, when] of [['global', '1 hour'], ['user', '30 minutes'], ['global', '14 days']]) {
+    await pool.query(`INSERT INTO events (user_id, event_type, metadata, created_at)
+      VALUES ($1, 'session_capacity_refused', $2::jsonb, NOW() - $3::interval)`, [person, JSON.stringify({ cap, path: 'start' }), when]);
+  }
 
   // The bot's answers in the project's chat: three replied 12 seconds after
   // the message, one failed, one stayed quiet; and one DM answer.
@@ -633,6 +642,8 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
       ['67%', `2 of 3 opens since ${day} · below 99% target`, 'warn'], 'an open from before the records began is not counted');
     assert.deepEqual([got['infra.restarts'].value, got['infra.restarts'].sub], ['3 times', 'in 1 project']);
     assert.deepEqual([got['infra.limits-filled'].value, got['infra.limits-filled'].state], ['1 time', 'warn']);
+    assert.deepEqual([got['infra.turned-away'].value, got['infra.turned-away'].state], ['2 times', 'warn'],
+      'each refusal in the week, whichever cap; not the one a fortnight ago');
   });
 
   await t.test('the bot: quality for everyone, cost and speed for Homeroom beside the other projects; a DM is Homeroom\'s', async () => {

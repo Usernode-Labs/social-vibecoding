@@ -383,6 +383,15 @@ const LIMITS_SQL = `
    WHERE n.kind = 'platform_limit' AND n.detail ~ '^[a-z_]+_full:'
      AND n.created_at >= $1::timestamptz AND n.created_at < $2::timestamptz`;
 
+// Each time somebody asked for a session and a session cap turned them away
+// (session-lifecycle.recordCapacityRefusal). LIMITS_SQL above counts the
+// admins' alerts, which sample the count every few minutes: how often a cap
+// was full, not how many people met it.
+const TURNED_AWAY_SQL = `
+  SELECT COUNT(*)::int AS n FROM events
+   WHERE event_type = 'session_capacity_refused'
+     AND created_at >= $1::timestamptz AND created_at < $2::timestamptz`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -415,6 +424,7 @@ const SOURCES = Object.freeze({
   appOpens: { days: 7, read: (pool, w) => pool.query(APP_OPENS_SQL, [w.from, w.until]) },
   restarts: { days: 7, read: (pool, w) => pool.query(RESTARTS_SQL, [w.from, w.until]) },
   limits: { days: 7, read: (pool, w) => pool.query(LIMITS_SQL, [w.from, w.until]) },
+  turnedAway: { days: 7, read: (pool, w) => pool.query(TURNED_AWAY_SQL, [w.from, w.until]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -641,6 +651,12 @@ const FIGURES = Object.freeze({
   'infra.limits-filled': {
     source: 'limits', kind: 'count', label: 'Limits that filled up',
     tip: 'How many times a platform limit filled up, such as the cap on sessions running at once. While one is full, people are turned away.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.turned-away': {
+    source: 'turnedAway', kind: 'count', label: 'Turned away at a session cap',
+    tip: 'How many times somebody asked to start or reopen a session and was refused because a cap was full: the platform’s cap on sessions running at once, or their own.',
     target: { atMost: 0 },
     measure: (r) => ({ n: r.n }),
   },
@@ -1015,6 +1031,7 @@ const DEMO_MEASURES = Object.freeze({
   'infra.apps-up': { hits: 1204, total: 1213 },
   'infra.restarts': { n: 4, apps: 3 },
   'infra.limits-filled': { n: 2 },
+  'infra.turned-away': { n: 3 },
 });
 
 /** The demo strip for `ids`. Pure. */

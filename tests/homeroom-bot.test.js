@@ -1604,11 +1604,14 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   const issues = read('src/routes/issues.js');
   assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
     'headless and in_progress derivations both skip synthetic authors');
-  const sessions = read('src/routes/sessions.js');
+  // The global cap's one count leaves synthetic sessions out, and every
+  // route that starts a session passes the gate that asks it (#2779; the
+  // native proposal start once had a copy without the clause, 12 Oct 2026).
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  // Four: the fork's count went with the fork (#2779).
-  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 4,
-    'every global-cap count leaves synthetic sessions out');
+  assert.ok(require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
+    'the global-cap count leaves synthetic sessions out');
+  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 4);
+  assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });
 
 test('the loop is leader-only, locked, ships off, and its spend joins the shared weekly pool', () => {
