@@ -604,9 +604,8 @@ test('after Make it: the build line, then one invite, and the second button says
   // The first session's second button: on to the tour (continueLabel).
   assert.equal(made.continueLabel('first-session', false, 'Page Turners'), 'Invite people later');
   assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Start the tour');
-  assert.match(src, /continueLabel\(entry, sent, made\.name\)/);
-  assert.match(src, /\{onLabel\(true\)\}/);
-  assert.match(src, /\{onLabel\(false\)\}/);
+  assert.match(src, /\{continueLabel\(entry, true, made\.name\)\}/);
+  assert.match(src, /\{continueLabel\(entry, false, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // Every link's default, the first one's too: a link lets somebody new

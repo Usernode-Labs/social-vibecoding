@@ -77,34 +77,108 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   assert.match(html, /role="dialog" aria-labelledby="first-session-made-title" data-first-session-made=""/);
   // Nothing else: no note under the card, no plan, no old invite heading.
   assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour/);
-  // Invite people later starts the tour with nothing sent.
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} className=\{SECONDARY\} aria-busy=\{waiting !== null \|\| undefined\}>\s*\{onLabel\(false\)\}/);
-  assert.match(CODE, /const onLabel = \(sent: boolean\) => \(waiting !== null \? t\(GETTING_READY\) : continueLabel\(entry, sent, made\.name\)\);/);
+  // Invite people later starts the tour with nothing sent, once the app runs.
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} disabled=\{holds\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
 });
 
 // Evan, 10 Oct 2026, iPhone: a ready-made app was still being set up when
 // the made screen let him on, so Home showed a grey letter the tour's first
-// card asked him to tap. A press of the way on now waits for it to run.
-test('on a ready-made app still being set up, the way on waits for it to run', () => {
-  const { holdsContinue, READY_POLL_MS, READY_WAIT_MS, GETTING_READY } = made;
-  assert.equal(holdsContinue(true, 'creating', false), true, 'being set up: it waits');
-  assert.equal(holdsContinue(true, null, false), true, 'nothing read yet: it waits');
-  assert.equal(holdsContinue(true, 'running', false), false, 'running, and its icon is on the record: on at once');
+// card asked him to tap. A press of the way on then waited for it, saying
+// only "Getting it ready…", and let them on after 45 seconds however far it
+// had got (onboarding run, 12 Oct 2026, #4900). Now the way on is off until
+// the app runs, and a card under the project says how far it has got.
+test('#4900: the way on is off until the app runs, for every first-session project and a ready-made one from Create', () => {
+  const { holdsContinue, waitsToRun, READY_POLL_MS, SETUP_USUAL_MS, READY_WAIT_MS } = made;
+  assert.equal(waitsToRun('first-session', false), true, 'the tour opens it next, whoever builds it');
+  assert.equal(waitsToRun('first-session', true), true);
+  assert.equal(waitsToRun('create', true), true, 'a ready-made app from Create, as before');
+  assert.equal(waitsToRun('create', false), false, 'Create\'s way on is the hub, which shows a setup as it goes');
+  assert.equal(holdsContinue(true, 'creating', false), true, 'being set up: off');
+  assert.equal(holdsContinue(true, null, false), true, 'nothing read yet: off');
+  assert.equal(holdsContinue(true, 'running', false), false, 'running, and its tile can be tapped: on');
   assert.equal(holdsContinue(true, 'error', false), false, 'a setup that failed: on, its card says so');
   assert.equal(holdsContinue(true, 'awaiting_secrets', false), false, 'one that waits on secrets: on');
-  assert.equal(holdsContinue(true, 'creating', true), false, 'the wait is up: on, and the tile catches up');
-  assert.equal(holdsContinue(false, 'creating', false), false, 'one the bot builds never waits');
+  assert.equal(holdsContinue(true, 'creating', true), false, 'the wait is up: on, never a wall');
+  assert.equal(holdsContinue(false, 'creating', false), false, 'one that does not wait is never off');
   assert.equal(READY_POLL_MS, 2000);
-  assert.equal(READY_WAIT_MS, 45000);
-  assert.equal(message(GETTING_READY), 'Getting it ready…');
+  assert.equal(SETUP_USUAL_MS, 60000);
+  assert.equal(READY_WAIT_MS, 120000);
   // Read every two seconds while it is set up, every ten after.
-  assert.match(CODE, /const settingUp = holdsContinue\(readyMade, appStatus, false\);/);
+  assert.match(CODE, /const waits = waitsToRun\(entry, readyMade\);\s+const settingUp = holdsContinue\(waits, appStatus, false\);/);
   assert.match(CODE, /const t = window\.setInterval\(read, settingUp \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp\]\);/);
-  // A press held goes on by itself once it no longer holds.
-  assert.match(CODE, /const onContinue = \(skipped: boolean\) => \{\s+if \(holds\) setWaiting\(skipped\);\s+else goOn\(skipped\);\s+\};/);
-  assert.match(CODE, /if \(waiting === null \|\| holds\) return;\s+setWaiting\(null\);\s+goOn\(waiting\);/);
-  // The first render presses nothing: the way on says where it goes.
-  assert.match(draw(), /<button type="button" data-first-session-continue="" class="[^"]*">Invite people later<\/button>/);
+  // The furthest step read, never back to the start on a read without one.
+  assert.match(CODE, /setSetupStep\(\(was\) => Math\.max\(was, setupStepOf\(app\.phase\)\)\);/);
+  // Slow after a minute, let go after two, counted again after Try again.
+  assert.match(CODE, /const s = window\.setTimeout\(\(\) => setSlow\(true\), SETUP_USUAL_MS\);\s+const w = window\.setTimeout\(\(\) => setWaitedOut\(true\), READY_WAIT_MS\);[\s\S]*?\}, \[round\]\);/);
+  assert.match(CODE, /if \(res\.ok\) \{\s+setAppStatus\('creating'\);\s+setSetupStep\(0\);\s+setRound\(\(r\) => r \+ 1\);\s+\}/);
+  assert.match(CODE, /const holds = holdsContinue\(waits, appStatus, waitedOut\);/);
+  // Both ways on are off while it holds; Share invite and Share again never are.
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(false\)\} layout="full"[^>]*className="flex items-center justify-center disabled:opacity-60" disabled=\{holds\}>/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} disabled=\{holds\}/);
+  assert.doesNotMatch(CODE, /setWaiting|onLabel|aria-busy/, 'no press held any more');
+  // Once it runs Home is read again, so the tour's tile can be tapped.
+  assert.match(CODE, /if \(waits && appStatus === 'running'\) \(window as \{ Home\?: \{ load\?: \(\) => void \} \}\)\.Home\?\.load\?\.\(\);/);
+
+  // Drawn as it opens, nothing read yet: on the first session the way on is
+  // off and says where it goes; Share invite is on.
+  const first = draw();
+  assert.match(first, /<button type="button" data-first-session-continue="" disabled="" class="[^"]*disabled:opacity-60[^"]*">Invite people later<\/button>/);
+  assert.doesNotMatch(first, /<button[^>]*disabled=""[^>]*>Share invite<\/button>/);
+  assert.match(first, />Share invite<\/button>/);
+  // From Create, a project the bot builds goes to its hub at once, with no card.
+  const create = draw({ entry: 'create' });
+  assert.match(create, /<button type="button" data-first-session-continue="" class="[^"]*">Invite people later<\/button>/);
+  assert.doesNotMatch(create, /data-made-setup/);
+  // A ready-made app from Create waits, as it did.
+  const readyMade = draw({ entry: 'create', made: { ...MADE, conversationId: null, readyMade: true } });
+  assert.match(readyMade, /data-first-session-continue="" disabled="" class="[^"]*">Invite people later<\/button>/);
+  assert.match(readyMade, /data-made-setup="started"/);
+});
+
+test('#4900: a card under the project says how far its setup has got, in words, and how long it usually takes', () => {
+  const { SETUP_STEPS, SETUP_WORDS, GETTING_READY, setupStepOf, setupEstimate, SetupProgress, madeAppOf } = made;
+  // The server's own steps, in its order (services/app-creation-phase.js).
+  assert.deepEqual([...SETUP_STEPS], require('../src/services/app-creation-phase').PHASES);
+  assert.match(read('src/routes/apps.js'), /creationPhase: phaseEntry \? phaseEntry\.phase : null,/);
+  assert.deepEqual(madeAppOf({ app: { status: 'creating', creationPhase: 'build' } }), { firstVersion: null, status: 'creating', phase: 'build' });
+  assert.equal(madeAppOf({ app: { status: 'running' } }).phase, null);
+  assert.deepEqual(['database', 'repository', 'build', 'deploy', null, 'nope'].map(setupStepOf), [1, 2, 3, 4, 0, 0]);
+  // Each step in words, the way the made screen speaks: never "repository" or "deploy".
+  assert.deepEqual(SETUP_STEPS.map((step) => message(SETUP_WORDS[step])),
+    ['Setting up its storage…', 'Saving its code…', 'Preparing it to run…', 'Starting it up…']);
+  assert.equal(message(GETTING_READY), 'Getting it ready…');
+  // How long: the create dialog's "usually under a minute", then honest about a slow one.
+  assert.equal(setupEstimate(false, false), 'This usually takes about a minute.');
+  assert.equal(setupEstimate(true, false), 'It’s taking longer than usual.');
+  assert.equal(setupEstimate(true, true), 'It’s taking longer than usual. You can go on, and open it once it’s ready.');
+  for (const words of [...SETUP_STEPS.map((step) => message(SETUP_WORDS[step])), setupEstimate(false, false), setupEstimate(true, true)]) {
+    assert.doesNotMatch(words, /!|—|\d/, words);
+  }
+
+  // Before any step is read: "Getting it ready…", the ring turning with no number.
+  const started = renderToHtml(createElement(SetupProgress, { step: 0, slow: false, waitedOut: false }));
+  assert.match(started, /data-made-setup="started"/);
+  assert.match(started, /aria-label="Getting it ready…"[^>]*data-progress-ring-spinning=""/);
+  assert.doesNotMatch(started, /<text/);
+  assert.match(started, /<div role="status" class="min-w-0 flex-1"><p class="text-\[15px\] font-\[650\] leading-snug">Getting it ready…<\/p><p class="text-\[13px\] text-zinc-500 dark:text-zinc-400">This usually takes about a minute\.<\/p><\/div>/);
+  // On the third step: its words, and 3/4 on the ring, said in words to a screen reader.
+  const third = renderToHtml(createElement(SetupProgress, { step: 3, slow: true, waitedOut: false }));
+  assert.match(third, /data-made-setup="build"/);
+  assert.match(third, /aria-label="Step 3 of 4"/);
+  assert.match(third, />3\/4<\/text>/);
+  assert.match(third, />Preparing it to run…<\/p>/);
+  assert.match(third, />It’s taking longer than usual\.<\/p>/);
+  // The plane's card, 20px, one hairline, as the other cards under the project.
+  assert.match(third, /class="flex items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
+
+  // On the made screen: under the project, over the line and the buttons.
+  const html = draw();
+  const at = (needle) => { const i = html.indexOf(needle); assert.ok(i >= 0, needle); return i; };
+  assert.ok(at('data-featured-card=') < at('data-made-setup="started"'));
+  assert.ok(at('data-made-setup="started"') < at('>Invite people to use it and help improve it together.</p>'));
+  assert.match(CODE, /\{settingUp \? <SetupProgress step=\{setupStep\} slow=\{slow\} waitedOut=\{waitedOut\} \/> : null\}/);
+  // A plain card's own "Setting it up…" gives way to it while it shows.
+  assert.match(CODE, /\{settingUp \? null : \(\s+<div className="mt-4 flex items-center gap-2 text-\[14px\] text-zinc-600 dark:text-zinc-300">/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {

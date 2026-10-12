@@ -30,6 +30,14 @@ import { t as translate } from '../../lib/i18n/runtime';
 
 export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
 
+/**
+ * What a step that points at the project's app waits for (#4900,
+ * ./tour-wait.ts): `running`, its tile on Home, until a tap on it opens it
+ * (the tile's status is no longer "Spinning up..."); `open`, the app on its
+ * own screen, until it has opened (its "Opening..." cover gone).
+ */
+export type AppWait = 'running' | 'open';
+
 export type TourStep = {
   screen: TourScreen;
   /** Selector(s); several are drawn as one cut-out around all of them. */
@@ -85,6 +93,14 @@ export type TourStep = {
    * reads (features/app-frame/app-status.tsx).
    */
   saysWhereItOpens?: boolean;
+  /**
+   * A step that points at the app itself waits for it to be ready (AppWait),
+   * so no card stands over a tile that cannot be opened yet or over the app's
+   * loading screen (onboarding run, 12 Oct 2026, #4900). Meanwhile its card
+   * says the app is getting ready, with Skip and Back; it waits at most
+   * ./tour-wait.ts TOUR_WAIT_MAX_MS, then shows as it always did.
+   */
+  waitsFor?: AppWait;
   /**
    * A step inside the Homeroom menu (APP_MENU): the tour opens the menu
    * while the step is up, Back to it included, and closes it once the reader
@@ -189,13 +205,15 @@ export function hubTitle(name: string): string {
  * project instead of "its hub and its group chat"; and the hub, by what is
  * on it (#4045). The Communities tab is ONE element, the phone's bottom bar
  * below 768px and the rail above it (features/nav/tab-bar.tsx; its key is
- * still `workshop`).
+ * still `workshop`). The first two point at the app, and wait for it
+ * (`waitsFor`): its tile until it can be opened, the app until it has.
  */
 function sharedSteps(slug: string, name: string): TourStep[] {
   return [
     {
       screen: 'home',
       target: `.app-card[data-slug="${slug}"]`,
+      waitsFor: 'running',
       title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
       text: translate('onboarding:firstSession.tour.onHome.text'),
       tap: translate('onboarding:firstSession.tour.onHome.tap'),
@@ -207,6 +225,7 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       screen: 'app',
       target: '#app-view',
       alongside: SCREEN_HEADER,
+      waitsFor: 'open',
       title: translate('onboarding:firstSession.tour.opens.title', { app: name }),
       text: translate('onboarding:firstSession.tour.opens.text'),
       saysWhereItOpens: true,
@@ -318,11 +337,12 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
  * Oct 2026: a ready-made tier list's tour ended without it). The tour ends on
  * the hub, its last card asking them to tap Open app, which opens their new
  * app and ends the tour: "that's probably where they want to go anyway"
- * (Evan, 10 Oct 2026). A ready-made app runs by then (the made screen waits
- * for it); one Homeroom bot is building opens on its build, which takes the
- * maker to the bot's chat when a plan or a question waits for them
- * (AppView._firstVersionView). That chat used to be the tour's last two
- * cards, Messages and then the plan, for a project the bot builds.
+ * (Evan, 10 Oct 2026). The app runs by then (the made screen waits for it,
+ * and the steps on the app wait too); one Homeroom bot is building opens on
+ * its build, which takes the maker to the bot's chat when a plan or a
+ * question waits for them (AppView._firstVersionView). That chat used to be
+ * the tour's last two cards, Messages and then the plan, for a project the
+ * bot builds.
  */
 export function makerSteps({ slug, name }: TourProject): TourStep[] {
   const steps = sharedSteps(slug, name);
