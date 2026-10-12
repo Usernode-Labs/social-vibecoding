@@ -378,14 +378,19 @@ export function pinTarget(pin: Point, host: Element): Rect | null {
  * #feedback-modal is display:none whenever the form is not mid-exit itself,
  * and a hidden element is skipped outright. The Homeroom menu on a computer
  * (`#apps-switcher-sheet`, over `#apps-switcher-overlay`) is a CSS dropdown
- * and not a kit shell, so it is named by id. Every one of them is out of the
- * page's flow (fixed, or display:none when not showing), which is why the
- * capture cuts them out rather than holding their place (`drawShell`).
+ * and not a kit shell, so it is named by id. `.overlay-scrim` is the dim the
+ * shell paints around an open sheet or dialog (lib/overlay-scrim.js), the
+ * menu's included: a picture drawn while the menu is open, as the mode's
+ * picture now is (comment-pin.tsx `prepareCommentView`), would otherwise
+ * come out dimmed. Every one of them is out of the page's flow (fixed, or
+ * display:none when not showing), which is why the capture cuts them out
+ * rather than holding their place (`drawShell`).
  */
 export const PAGE_EXCLUDES = [
   '#feedback-modal',
   '#apps-switcher-sheet',
   '#apps-switcher-overlay',
+  '.overlay-scrim',
   '.un-modal',
   '.un-sheet',
   '.un-panel',
@@ -430,6 +435,62 @@ export function overlaysGone(maxMs = 600): Promise<void> {
     };
     check();
   });
+}
+
+// ── Whether the page has changed since a picture of it was drawn ─────
+//
+// comment-pin.tsx draws the mode's picture ahead, while the Homeroom menu or
+// the form is open (`prepareCommentView`), and uses it only if the page has
+// not changed since. These decide what counts as a change.
+
+const OVERLAY_SELECTOR = PAGE_EXCLUDES.join(',');
+/** The flow's own overlays, and the drawing library's own short-lived nodes (its sandbox, a frame, an image). */
+const UNSEEN_SELECTOR = `${OVERLAY_SELECTOR},[data-snapdom-internal]`;
+
+/** Whether a node is somewhere the picture does not show: in an overlay or the library's own nodes, or not laid out at all. */
+export function outOfPicture(node: Node | null): boolean {
+  const el = node && (node.nodeType === 1 ? node as Element : node.parentElement);
+  if (!el) return false;
+  if (el.closest?.(UNSEEN_SELECTOR)) return true;
+  return typeof el.getClientRects === 'function' && el.isConnected && !el.getClientRects().length;
+}
+
+/** A node the picture does not show either way: an overlay, a shell holding one, the library's own, a comment, blank text. */
+export function unseenNode(n: Node): boolean {
+  if (n.nodeType === 8) return true;
+  if (n.nodeType === 3) return !(n.textContent || '').trim();
+  if (n.nodeType !== 1) return false;
+  const el = n as Element;
+  return !!(el.matches?.(UNSEEN_SELECTOR) || el.querySelector?.(OVERLAY_SELECTOR));
+}
+
+/**
+ * Whether a change of nodes shows in the picture. Not inside an overlay,
+ * and not an overlay coming or going: on a phone the native kit lifts the
+ * menu sheet out of the page into a sheet of its own as it opens, and puts
+ * it back as it closes, which is just before the mode opens on the picture.
+ * Text is judged apart (`textsUnchanged`).
+ */
+export function changesPicture(r: Pick<MutationRecord, 'type' | 'target' | 'addedNodes' | 'removedNodes'>): boolean {
+  if (outOfPicture(r.target)) return false;
+  if (r.type === 'childList') {
+    const nodes = [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)];
+    if (nodes.length && nodes.every(unseenNode)) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether every text node changed since the drawing started still says what
+ * it said first. The drawing library changes some text as it draws and puts
+ * it back, in two changes the second of which starts from the temporary
+ * text, so a change is judged by the first value against the current one.
+ */
+export function textsUnchanged(texts: Map<Node, string | null>): boolean {
+  for (const [node, first] of texts) {
+    if (node.isConnected && node.textContent !== first) return false;
+  }
+  return true;
 }
 
 /** Whether an element is one of the flow's own overlays the picture leaves out. */

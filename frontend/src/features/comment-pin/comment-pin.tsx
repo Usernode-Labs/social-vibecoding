@@ -81,6 +81,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
+  changesPicture, outOfPicture, textsUnchanged,
   closeUpView, coverCrop, describeElement, encodeUnder, inRect, insetFrame, overlaysGone, pictureScale, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type ElementInfo, type Point, type Rect, type Size,
@@ -565,9 +566,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   useEffect(() => {
     if (tick === 0) {
       // The first picture waits for the menu sheet or the form the mode was
-      // opened from to finish leaving (`overlaysGone`).
+      // opened from to finish leaving (`overlaysGone`). When one was drawn
+      // ahead while that sheet was open (`prepareCommentView`) and the page
+      // has not changed since, it goes up the moment the sheet is gone.
       let live = true;
-      void overlaysGone().then(() => { if (live) takeViewShot(); });
+      const ahead = takeAhead(sizeRef.current);
+      void Promise.all([ahead, overlaysGone()]).then(([got]) => {
+        if (!live) return;
+        if (!got) { takeViewShot(); return; }
+        if (got.size.height !== sizeRef.current.height) { sizeRef.current = got.size; setSize(got.size); }
+        viewShotUrl.current = got.url;
+        setViewShot({ url: got.url, view: view.current, state: 'ready' });
+      });
       return () => { live = false; };
     }
     const timer = setTimeout(takeViewShot, 250);
@@ -1899,6 +1909,138 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       </div>
     </div>
   );
+}
+
+// ── The picture drawn ahead ─────────────────────────────────────────
+//
+// Between a tap on "Suggest an improvement" and the picture shrinking in,
+// the page used to stand still for 0.3s, and 1.3s on the first open after
+// the app launched (iPhone 17 simulator, production, 12 Oct 2026): the
+// menu slid away, then the mode loaded its code and the drawing library,
+// copied the page, fetched and inlined its images, drew it and encoded it,
+// and only then could anything move. None of that can be animated before
+// it is done, since the picture does not exist yet. But the page it draws
+// sits still under the Homeroom menu, or under the form, for as long as
+// either is open, and both are cut out of the picture anyway. So the menu
+// and the form call `prepareCommentView` as they open, the picture is drawn
+// then, and the mode puts it up the moment the sheet has gone.
+//
+// It is used only if nothing on the page has changed since it was drawn:
+// any added or removed node or changed text outside the flow's own
+// overlays, any scroll of the page, or a new width throws it away, and the
+// mode draws a fresh one as before. It keeps for AHEAD_TTL_MS.
+
+/** How long a picture drawn ahead stays usable (ms). */
+const AHEAD_TTL_MS = 20000;
+/** How long after the sheet opens the drawing starts, so its own slide-in runs undisturbed (ms). */
+const AHEAD_SETTLE_MS = 350;
+
+interface Ahead {
+  size: Size;
+  result: Promise<{ url: string; size: Size } | null>;
+  dirty: boolean;
+  /** Every text node changed since the drawing started, with what it said first. */
+  texts: Map<Node, string | null>;
+  stop: () => void;
+}
+
+/** Whether the picture still shows the page: no node change counted, and every changed text says what it said. */
+function stillFresh(a: Ahead): boolean {
+  return !a.dirty && textsUnchanged(a.texts);
+}
+let ahead: Ahead | null = null;
+
+function dropAhead(): void {
+  const a = ahead;
+  if (!a) return;
+  ahead = null;
+  a.stop();
+  void a.result.then((r) => { if (r) URL.revokeObjectURL(r.url); });
+}
+
+/**
+ * Draw the page now, for the next comment mode to open on. A no-op while the
+ * mode is open or a usable picture is already waiting.
+ */
+export function prepareCommentView(): void {
+  if (openHost || typeof document === 'undefined' || !document.body) return;
+  if (ahead && stillFresh(ahead)) return;
+  dropAhead();
+  const size = windowSize();
+  const entry: Ahead = { size, result: Promise.resolve(null), dirty: false, texts: new Map(), stop: () => {} };
+  const spoil = () => { if (!entry.dirty) { entry.dirty = true; entry.stop(); } };
+  // Watched from the moment the drawing starts: what changed before it is
+  // in the picture already.
+  const observer = new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === 'characterData') {
+        if (!outOfPicture(r.target) && !entry.texts.has(r.target)) entry.texts.set(r.target, r.oldValue);
+      } else if (changesPicture(r)) {
+        spoil();
+        return;
+      }
+    }
+  });
+  const onScroll = (e: Event) => { if (!outOfPicture(e.target instanceof Node ? e.target : null)) spoil(); };
+  const onResize = () => { if (window.innerWidth !== size.width) spoil(); };
+  const expiry = setTimeout(() => { if (ahead === entry) dropAhead(); }, AHEAD_TTL_MS);
+  let watching = false;
+  entry.stop = () => {
+    clearTimeout(expiry);
+    if (!watching) return;
+    watching = false;
+    observer.disconnect();
+    document.removeEventListener('scroll', onScroll, true);
+    window.removeEventListener('resize', onResize);
+  };
+  entry.result = new Promise<{ url: string; size: Size } | null>((resolve) => {
+    setTimeout(() => {
+      if (entry.dirty || ahead !== entry || window.innerWidth !== size.width) { resolve(null); return; }
+      watching = true;
+      observer.observe(document.body, { subtree: true, childList: true, characterData: true, characterDataOldValue: true });
+      document.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', onResize);
+      const shown = visibleAppFrame();
+      takeBase({
+        host: document.createElement('div'),
+        scale: pictureScale(window.devicePixelRatio, size),
+        frame: shown?.frame ?? null,
+        frameRect: shown?.rect ?? null,
+        pin: { x: size.width / 2, y: size.height / 2 },
+        viewport: size,
+      }).then((b) => {
+        if (!b || !stillFresh(entry)) { resolve(null); return; }
+        b.canvas.toBlob((blob) => {
+          if (!blob || !stillFresh(entry)) { resolve(null); return; }
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.src = url;
+          const done = () => resolve({ url, size });
+          (typeof img.decode === 'function' ? img.decode() : Promise.resolve()).then(done, done);
+        }, 'image/png');
+      }, () => resolve(null));
+    }, AHEAD_SETTLE_MS);
+  });
+  ahead = entry;
+}
+
+/**
+ * The picture drawn ahead, for the mode opening now: its promise, or null
+ * when there is none, the page has changed since, or it was drawn at
+ * another width. Taken once; the mode owns its URL from here.
+ */
+function takeAhead(size: Size): Promise<{ url: string; size: Size } | null> | null {
+  const a = ahead;
+  if (!a) return null;
+  ahead = null;
+  a.stop();
+  if (!stillFresh(a) || a.size.width !== size.width) {
+    void a.result.then((r) => { if (r) URL.revokeObjectURL(r.url); });
+    return null;
+  }
+  // Still drawing: the result is waited for. The page may change meanwhile;
+  // it was still when the drawing started, which is what the picture shows.
+  return a.result;
 }
 
 let openHost: HTMLElement | null = null;

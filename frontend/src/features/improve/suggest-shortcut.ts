@@ -305,6 +305,19 @@ function toggleComment(_point: Point | null): void {
 }
 
 /**
+ * The Homeroom menu or the form has opened, and comment mode is one tap
+ * away: load its code and draw the page now, while it sits still under the
+ * sheet, so the mode opens on it at once (comment-pin.tsx
+ * `prepareCommentView`). Nothing at all where the switch is off.
+ */
+export function prepareComment(): void {
+  if (!suggestOpensComment()) return;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.prepareCommentView())
+    .catch(() => { /* the mode loads when it opens, as before */ });
+}
+
+/**
  * Comment mode, from "Suggest an improvement" or the form's switch, with the
  * form's draft when there is one. The form itself if the mode cannot load.
  */
