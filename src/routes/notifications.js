@@ -561,8 +561,9 @@ function notificationsRoutes(config) {
     }
   });
 
-  // Full dropdown payload: recent notifications (read and unread) + an
-  // unread count so the badge and list stay in sync on initial page load.
+  // Full dropdown payload: recent notifications (read and unread; asks about
+  // a merged change are left out — #4795) + an unread count so the badge and
+  // list stay in sync on initial page load.
   //
   // Pagination (#84 scroll-to-load-more): the client passes
   // `?before=<createdAt>&before_id=<id>&limit=<n>` to fetch the page

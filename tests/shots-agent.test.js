@@ -159,6 +159,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   // strip itself opens its start path with the brief's flag (4420, 4321).
   assert.match(prompt, /If the brief has installStrip, Homeroom's "Add it to your home screen" strip\s+is dismissed on every page these browsers open/);
   assert.match(prompt, /open the start path with\s+installStrip\.param added to its query \(before any #\), on both addresses and\s+in the phone browser/);
+  // A project made on Homeroom's copies never finishes setting up there
+  // (shots-orchestrator.js MAKE_PROJECT): a change that needs one running is
+  // skipped at once, not tried in every browser (PR 4777, 2026-10-12).
+  assert.match(prompt, /If the brief has makeProject, a project made on these copies never finishes\s+setting up/);
+  assert.match(prompt, /Read makeProject\.note before a change whose\s+steps make, remix or import a project/);
+  assert.match(prompt, /a\s+change that needs a made project to run is skipped at once/);
   assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
     'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
@@ -190,6 +196,10 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // A step another account takes is taken in another persona's browser
+  // (PR 4626's reply in a topic's thread went unshot without it).
+  assert.match(prompt, /The member, read_only_admin and full_admin browsers are three different\s+accounts/);
+  assert.match(prompt, /take that\s+step in another of those browsers as the brief's secondAccount says, on both\s+addresses alike/);
   // A time-dependent change (a Thursday-evening reminder) is shot at the
   // moment its author declared, on both copies (services/preview-clock.js).
   assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);
@@ -230,6 +240,32 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   }
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder, and every before shot of proposals 7608, 7871 and 7610 was
+// that placeholder, at the cost of half the agent's turn.
+test('the shots agent takes only the after side when the brief has afterOnly', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has afterOnly, the proposal builds the app's first real\s+screens/);
+  assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
+  assert.match(prompt, /create hints\.setup data on the after address only/);
+  assert.match(prompt, /A change is ready with its after shots\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+});
+
+// reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to
+// 10-12): a loading or error state no change declared, and a file to choose.
+test('the shots agent holds or fails an undeclared request, and chooses only sample files, both sides alike', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /declares no controlledFailurePath, call\s+control_request with the change, the exact API GET path and query the page\s+sends/);
+  assert.match(prompt, /mode "hold" for the loading\s+state or "fail" for the error/);
+  assert.match(prompt, /Shoot\s+both sides that way, then call it again with mode "off"/);
+  assert.match(prompt, /when the browser says a file chooser is open,\s+call upload_file with that browser, the change and the files from the\s+brief's sampleFiles/);
+  assert.match(prompt, /the same ones on both sides\. They are the only\s+files you can give a page/);
+  assert.match(prompt, /People see a line\s+beside the shots saying which request you held or made fail/);
+  // The declared failure keeps its own tool.
+  assert.match(prompt, /If a change declares intent\.controlledFailurePath, call fail_request/);
+});
+
 // Published shots showed defects nobody remarked on: a result table cut off
 // at the right edge on both screen sizes, a sort control over a column
 // heading. The agent notes those (note_problem), and only those.
@@ -237,11 +273,16 @@ test('the shots agent notes clear problems on the after build, a handful, never 
   const prompt = agent.SYSTEM_PROMPT;
   assert.match(prompt, /Call note_problem with the change and screen where you saw it/);
   assert.match(prompt, /content cut off or\s+running off the screen, text or controls overlapping each other, an error\s+message or a broken image on screen, a layout that falls apart at the phone\s+size/);
-  assert.match(prompt, /alsoBefore: true when the before address shows the same thing, false\s+when it does not, "unknown" when you did not look/);
-  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a handful per run/);
+  // Whether the before build has it too, from the before shot it takes
+  // anyway: every problem noted in the proposals merged 2026-10-09 to 10-12
+  // said "unknown".
+  assert.match(prompt, /You shoot the before side of that screen anyway: look at\s+that before shot, or the same place on the before address, and say\s+alsoBefore true when it shows the same thing, false when it does not/);
+  assert.match(prompt, /Say "unknown" only when you\s+could not look/);
+  assert.match(prompt, /If you noticed it before you shot the before side, note it\s+again once you have/);
+  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a\s+handful per run/);
   assert.match(prompt, /never a matter of\s+taste, style or wording/);
-  assert.match(prompt, /never whether the declared change is shown or\s+works \(that is note_change and skip_change\)/);
-  assert.match(prompt, /under\s+"Also noticed"; they change nothing about the shots/);
+  assert.match(prompt, /never\s+whether the declared change is shown or works \(that is note_change and\s+skip_change\)/);
+  assert.match(prompt, /under\s+"Also noticed"; they change nothing about\s+the shots/);
   assert.match(prompt, /Do not go looking for problems\s+on other screens/);
 });
 

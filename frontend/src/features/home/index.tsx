@@ -88,6 +88,7 @@ import { useRef } from 'react';
 import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
+import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { VerifyCard } from './verify-card';
@@ -95,7 +96,9 @@ import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
 
 import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { gridStore } from './grid-store';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -109,6 +112,11 @@ export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
+  // EDIT MODE's (#4669) one read here: the "Done" that ends it, beside the
+  // heading. The store's initial value is false, so the prerender and the
+  // first client render render no action at all — the markup is unchanged
+  // until a hold actually starts edit mode.
+  const grid = useStoreState(gridStore);
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
@@ -250,6 +258,33 @@ export function HomeScreen() {
               everywhere else (the tile menus' "Add to My apps", the browse
               screen's badge).
           */}
+          {grid.editing ? (
+            /* The screen's one job while the tiles wiggle is arranging them,
+               and "Done" is its primary action. The treatment is BrowseLink's
+               own: 14px semibold in the accent. With the heading gone (#4759)
+               the actions sit alone at the row's right end. "Add apps" rides
+               beside it (#4669): the mode's second entry, opening the same
+               sheet the tile menu's "Add to My apps" opens, so growing the
+               shelf does not cost the trailing tile its place. */
+            <div className="flex items-center justify-end gap-4 px-1 pb-1">
+              <button
+                type="button"
+                className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                aria-label={t('home:edit.addTile')}
+                onClick={() => { openAddAppsSheet(); }}
+              >
+                <span className="whitespace-nowrap">{t('home:edit.addTile')}</span>
+              </button>
+              <button
+                type="button"
+                className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                aria-label={t('home:edit.done')}
+                onClick={() => { (window as any).Home?.setEditing?.(false); }}
+              >
+                <span className="whitespace-nowrap">{t('home:edit.done')}</span>
+              </button>
+            </div>
+          ) : null}
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
