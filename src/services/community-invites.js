@@ -7,8 +7,10 @@
  *   createInvite  any member makes one for a project they are in. It lasts
  *                 DEFAULT_DAYS and works for DEFAULT_USES people unless they
  *                 choose otherwise, within the LIMITS.
- *   listInvites   the viewer's own live links (every live link, for someone
- *                 who manages the project).
+ *   listInvites   the viewer's live links plus, for the last 30 days, the
+ *                 ones that ended (every such link, for someone who manages
+ *                 the project), each with how it ended and what became of
+ *                 the people who followed it.
  *   revokeInvite  its maker, a project admin or a platform admin turns it
  *                 off. People it queued who were not let in yet are cancelled
  *                 with it; people who already joined stay.
@@ -159,6 +161,11 @@ function serializeLink(row, viewerId) {
     createdBy: row.created_by_username || null,
     mine: row.created_by != null && row.created_by === viewerId,
     note: row.note || null,
+    // What became of it: live, or how it ended. A new link's RETURNING row
+    // has none of these, so it serializes live with nothing to show.
+    status: row.status || 'live',
+    joined: row.joined ?? 0,
+    waiting: row.waiting ?? 0,
   };
 }
 
@@ -208,23 +215,62 @@ async function createInvite(pool, { app, user, days, maxUses, note }) {
 }
 
 /**
- * The live links for `app` the viewer may see: their own, or every live
- * link when they manage the project. Newest first.
+ * The invite links for `app` the viewer may see: their own, or every link
+ * when they manage the project. The live ones first, newest first, then
+ * those that ended in the last ENDED_KEEP_DAYS days, each carrying how it
+ * ended (`status`, the same names and order of precedence as deadReason)
+ * and what became of the people who followed it (`joined`, `waiting`).
  */
+const ENDED_KEEP_DAYS = 30;
 async function listInvites(pool, { app, user }) {
   const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
   const { rows } = await pool.query(
     `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at, i.note,
-            u.username AS created_by_username
+            u.username AS created_by_username,
+            CASE
+              WHEN i.revoked_at IS NOT NULL OR NOT community_invite_maker_holds(i.id) THEN 'revoked'
+              WHEN i.expires_at IS NOT NULL AND i.expires_at <= NOW()                THEN 'expired'
+              WHEN i.max_uses IS NOT NULL AND i.uses >= i.max_uses                   THEN 'used_up'
+              ELSE 'live'
+            END AS status,
+            r.joined, r.waiting
        FROM community_invites i
        LEFT JOIN users u ON u.id = i.created_by
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE x.status = 'joined')::int AS joined,
+                COUNT(*) FILTER (WHERE x.status = 'queued' AND x.applied_at IS NULL)::int AS waiting
+           FROM community_invite_redemptions x
+          WHERE x.invite_id = i.id
+       ) r ON TRUE
       WHERE i.app_id = $1
-        AND i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
-        AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+        AND (
+          -- Live: not turned off, not past its end, not used up, and its
+          -- maker can still grant what it grants.
+          (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+            AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+            AND community_invite_maker_holds(i.id))
+          -- Ended within the keep window, each by its own clock:
+          OR i.revoked_at > NOW() - make_interval(days => $4::int)
+          OR (i.expires_at IS NOT NULL AND i.expires_at <= NOW()
+            AND i.expires_at > NOW() - make_interval(days => $4::int))
+          OR (i.max_uses IS NOT NULL AND i.uses >= i.max_uses
+            AND EXISTS (
+              SELECT 1 FROM community_invite_redemptions x
+               WHERE x.invite_id = i.id AND x.created_at > NOW() - make_interval(days => $4::int)))
+          -- A maker who lost standing leaves no end time: kept from when the
+          -- link was made.
+          OR (NOT community_invite_maker_holds(i.id)
+            AND i.created_at > NOW() - make_interval(days => $4::int))
+        )
         AND ($3::boolean OR i.created_by = $2)
-      ORDER BY i.created_at DESC, i.id DESC
+      ORDER BY (CASE
+        WHEN i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > NOW())
+          AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+          AND community_invite_maker_holds(i.id) THEN 0
+        ELSE 1 END) ASC,
+        i.created_at DESC, i.id DESC
       LIMIT 50`,
-    [app.id, user?.id || null, manages]
+    [app.id, user?.id || null, manages, ENDED_KEEP_DAYS]
   );
   return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
 }
