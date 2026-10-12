@@ -181,7 +181,7 @@ test('the request\'s words are a viewer scope, and so are its replies, GitHub\'s
   assert.match(stream, /const images = useInlineImageViewer\(\);[\s\S]*\{images\.viewer\}\n\s*<div className="dev-request-stream" \{\.\.\.images\.scope\}>/);
 });
 
-test('a screenshot hosted elsewhere opens in a new tab from the viewer rather than replacing the page', () => {
+test('a screenshot hosted elsewhere is never followed in place: Download fetches it, or opens it in a new tab', () => {
   const { isRemoteFile } = loadTsx(VIEWER);
   assert.equal(isRemoteFile('/issue-images/abc'), false, 'no window: nothing is remote');
   const before = global.window;
@@ -193,11 +193,12 @@ test('a screenshot hosted elsewhere opens in a new tab from the viewer rather th
   } finally {
     if (before === undefined) delete global.window; else global.window = before;
   }
+  // #4654: every picture's Download is the same button that saves it; one
+  // hosted elsewhere is fetched as a blob, and save-image.ts opens it in a
+  // new tab only where its site refuses (tests/image-save.test.js).
   const src = read(VIEWER);
-  // #4055: a same-origin picture's Download became a button that saves it;
-  // one hosted elsewhere keeps its link, in a new tab.
-  assert.match(src, /\{remote \? \(\n\s*<a\n\s*href=\{src\}\n\s*target="_blank"\n\s*rel="noopener noreferrer"[\s\S]*?data-image-viewer-download=""\n\s*>\n\s*\{t\('messages:imageViewer\.openOriginal'\)\}\n\s*<\/a>/);
-  assert.equal(message('messages:imageViewer.openOriginal'), 'Open original');
+  assert.doesNotMatch(src, /\{remote \? \(/, 'no separate link for a picture elsewhere');
+  assert.match(src, /data-image-viewer-download=""\n\s*onClick=\{download\}/);
 });
 
 test('the installed app leaves a scope\'s picture links to the viewer', () => {
