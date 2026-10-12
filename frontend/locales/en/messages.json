@@ -2659,6 +2659,14 @@
     "text": "{{count}} unread",
     "description": "Accessible name of the number badge on a row of the conversation list: how many unread messages that conversation or channel has. {{count}} is that number."
   },
+  "inbox.memberCount_one": {
+    "text": "{{count}} member",
+    "description": "Spoken name and hover text of the people glyph and number on a group conversation's row in the conversation list: how many people are in the group. {{count}} is that number."
+  },
+  "inbox.memberCount_other": {
+    "text": "{{count}} members",
+    "description": "Spoken name and hover text of the people glyph and number on a group conversation's row in the conversation list: how many people are in the group. {{count}} is that number."
+  },
   "inbox.agentPill": {
     "text": "Agent",
     "description": "Small tag on a row of the conversation list: the conversation is with an AI agent."

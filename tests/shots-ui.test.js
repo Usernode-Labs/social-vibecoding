@@ -402,19 +402,52 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
 });
 
 // An unchanged change (its before and after came out the same) is shown as
-// a ready one was before it had its own status: its shots, then its note.
+// a ready one was before it had its own status: its shots, then its note,
+// then what the shots agent did to both builds to reach it.
 test('an unchanged change shows its shots and the note that they came out the same, as a ready one', () => {
   const note = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
+  const conditions = [{ kind: 'request_failed', request: '/api/items' }];
   const unchanged = AppView.shotsHtml(shots({
-    shotResults: [{ id: 'dialog', status: 'unchanged', reason: null, note }],
+    shotResults: [{ id: 'dialog', status: 'unchanged', reason: null, note, conditions }],
   }), { sessionId: 42 });
   const ready = AppView.shotsHtml(shots({
-    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note }],
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note, conditions }],
   }), { sessionId: 42 });
   assert.equal(unchanged, ready, 'the card reads it exactly as a ready change with that note');
   assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> any visible difference\. The before and after screens came out the same/);
+  assert.match(unchanged, /<p data-shots-condition="request_failed"[^>]*>.*Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds/);
   assert.match(unchanged, new RegExp(`<img src="${url('3')}"`));
   assert.doesNotMatch(unchanged, /data-shots-shot-status="skipped"|>Skipped</);
+});
+
+// control_request and upload_file: a loading or error state the shots agent
+// caused, or a file it chose, is said beside the shots, so nobody takes it
+// for the app's own.
+test('a ready change says what the shots agent did to both builds to reach it, as text', () => {
+  const html = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note: 'The fold needs a hidden app.', conditions: [
+      { kind: 'request_held', request: '/api/items?q=<b>' },
+      { kind: 'request_failed', request: '/api/items' },
+      { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+      { kind: 'evaluate', request: '/api/items' },
+      { kind: 'sample_file', files: [] },
+    ] }],
+  }), { sessionId: 42 });
+  const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(html)[0];
+  assert.deepEqual([...change.matchAll(/data-shots-condition="([a-z_]+)"/g)].map((match) => match[1]),
+    ['request_held', 'request_failed', 'sample_file']);
+  assert.match(change, /Controlled test:<\/span> the shots agent kept GET \/api\/items\?q=&lt;b&gt; waiting on both builds, to show it loading\./);
+  assert.match(change, /Controlled test:<\/span> the shots agent made GET \/api\/items fail on both builds, to show what happens when it does\./);
+  assert.match(change, /Sample file:<\/span> the shots agent uploaded landscape\.png(?:, | and )table\.csv on both builds, from Homeroom&#39;s own sample files\./);
+  assert.ok(change.indexOf('data-shots-shot-note') < change.indexOf('data-shots-condition'), 'after what the shots leave out');
+  // None recorded, or a change that is not ready: nothing is said.
+  assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /data-shots-condition/);
+  const skipped = AppView.shotsHtml(shots({
+    claims: [...shots().claims, { ...shots().claims[0], id: 'other', claim: 'Another change.' }],
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null },
+      { id: 'other', status: 'skipped', reason: 'Not reached.', conditions: [{ kind: 'request_held', request: '/api/items' }] }],
+  }), { sessionId: 42 });
+  assert.doesNotMatch(skipped, /data-shots-condition/);
 });
 
 // The shots agent's notes on clear problems it saw on the after build

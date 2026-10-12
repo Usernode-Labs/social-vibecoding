@@ -23276,6 +23276,14 @@ const AppView = {
     phone: 'changes:shots.viewer.pickPhone',
   },
 
+  // What the shots agent did to both builds to reach a change, by kind
+  // (services/shots-files.js condition).
+  SHOTS_CONDITION_IDS: {
+    request_held: 'changes:shots.claim.requestHeld',
+    request_failed: 'changes:shots.claim.requestFailed',
+    sample_file: 'changes:shots.claim.sampleFile',
+  },
+
   // "seen as …" under a shot, whole, by the people the screen's changes were
   // viewed as, in the order they come up (persona keys joined with '+').
   SHOTS_SEEN_AS_IDS: {
@@ -23581,14 +23589,29 @@ const AppView = {
     // The declared change's own words, how to reach it, what the shots
     // leave out, and any clips of it at the given sizes.
     const flowOf = (claim) => (Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((step) => esc(step)).join(' <span aria-hidden="true">→</span> ') : '');
+    const leadIn = (inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`;
+    // What the shots agent did to both builds to reach the change: an API GET
+    // it held unanswered or made fail, or sample files it uploaded. Said
+    // beside the shots, so a loading or error state it caused is never taken
+    // for the app's own.
+    const conditionsOf = (result) => (Array.isArray(result.conditions) ? result.conditions : []).slice(0, 4).map((entry) => {
+      const id = entry && AppView.SHOTS_CONDITION_IDS[entry.kind];
+      if (!id) return '';
+      const files = entry.kind === 'sample_file' && Array.isArray(entry.files)
+        ? entry.files.filter((name) => typeof name === 'string' && name) : [];
+      const request = entry.kind !== 'sample_file' && typeof entry.request === 'string' ? entry.request : '';
+      if (!files.length && !request) return '';
+      const values = files.length ? { files: PlatformI18n.listText(files) } : { request: `GET ${request}` };
+      return `<p data-shots-condition="${attr(entry.kind)}" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich(id, values, [leadIn])}</p>`;
+    }).join('');
     const noteOf = (claim) => {
       const result = resultOf(claim);
-      // What the shots agent said its shots leave out of the claim. An
-      // unchanged change (its before and after came out the same) is shown
-      // as a ready one, and its note says so.
-      const shotNote = result && (result.status === 'ready' || result.status === 'unchanged')
-        && typeof result.note === 'string' ? result.note : '';
-      return shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [(inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`])}</p>` : '';
+      // An unchanged change (its before and after came out the same) is
+      // shown as a ready one, and its note says so.
+      if (!result || (result.status !== 'ready' && result.status !== 'unchanged')) return '';
+      // What the shots agent said its shots leave out of the claim.
+      const shotNote = typeof result.note === 'string' ? result.note : '';
+      return `${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [leadIn])}</p>` : ''}${conditionsOf(result)}`;
     };
     const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
     const clipsOf = (claim, viewports) => viewports.map((viewport) => {

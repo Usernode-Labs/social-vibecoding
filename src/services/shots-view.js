@@ -5,6 +5,7 @@
 // view model.
 
 const state = require('./shots-state');
+const shotsFiles = require('./shots-files');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 const PUBLIC_STATES = new Set([
@@ -43,12 +44,16 @@ function cleanClaims(value) {
 const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
 const SHOWN_RESULTS = new Set(['ready', 'unchanged']);
 
+// A result carries `conditions` only when the shots agent did something to
+// both builds to reach the change: an API GET it held or made fail, or
+// sample files it uploaded, each from a fixed shape (shots-files.condition).
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
     .map((result) => {
       const status = SHOWN_RESULTS.has(result.status) || result.status === 'failed' ? result.status : 'skipped';
       const shown = SHOWN_RESULTS.has(status);
+      const conditions = shotsFiles.cleanConditions(result.conditions);
       return {
         id: String(result.id),
         status,
@@ -56,6 +61,7 @@ function cleanShotResults(value) {
           ? null : unescapeQuotes(result.reason).slice(0, 1000),
         note: !shown || typeof result.note !== 'string'
           ? null : unescapeQuotes(result.note).slice(0, 500),
+        ...(conditions.length ? { conditions } : {}),
       };
     });
 }

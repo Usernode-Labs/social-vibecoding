@@ -441,6 +441,10 @@ function runSummary(row, artifactSummary = []) {
           status,
           reason: shown ? null : (story?.reason || null),
           note: shown ? (story?.note || null) : null,
+          // What the shots agent did to both builds to reach it, when it did
+          // anything (shots-files.condition).
+          ...(Array.isArray(story?.conditions) && story.conditions.length
+            ? { conditions: shots.cleanConditions(story.conditions) } : {}),
         };
       })
       : [],

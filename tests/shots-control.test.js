@@ -334,6 +334,61 @@ test('a problem noted without saying whether the before build has it asks the ag
   assert.deepEqual(run.notices.map((entry) => entry.alsoBefore), [false], 'noting it again updated the one notice');
 });
 
+// control_request and upload_file record what they are about to do to both
+// builds before they do it; it goes on the change's result, whatever its
+// status, so the card can say so beside the shots.
+test('what the agent did to both builds is kept with its change, once each, and only in a fixed shape', () => {
+  const run = control({ intent: threeChanges() });
+  shootBothSides(run, 'invite-suggestions');
+  const before = run.summary();
+  assert.deepEqual(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }),
+    { recorded: 'invite-suggestions', conditions: 1 });
+  // The same again is recorded once.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }).conditions, 1);
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['landscape.png', 'table.csv'] });
+  run.noteCondition({ change: 'member-count', kind: 'request_failed', request: '/api/members' });
+
+  const summary = run.summary();
+  const ready = summary.stories.find((story) => story.id === 'invite-suggestions');
+  assert.equal(ready.status, 'ready');
+  assert.deepEqual(ready.conditions, [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+  ]);
+  // A change that is not ready keeps its conditions too; one with none has no key.
+  assert.deepEqual(summary.stories.find((story) => story.id === 'member-count').conditions,
+    [{ kind: 'request_failed', request: '/api/members' }]);
+  assert.equal('conditions' in summary.stories.find((story) => story.id === 'saved-toast'), false);
+  assert.equal(summary.manifestHash, before.manifestHash, 'the published files are the same files');
+  assert.deepEqual(summary.verdict.stories, summary.stories);
+
+  for (const [raw, code] of [
+    [{ change: 'nobody', kind: 'request_held', request: '/api/items' }, 'unknown_change'],
+    [{ change: 'invite-suggestions', kind: 'evaluate', request: '/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/lists' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/api/items/*' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: 'https://evil.example/api/items' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?token=abc' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: [] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['/etc/passwd'] }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['table.csv', 'table.csv'] }, 'invalid_condition'],
+  ]) {
+    assert.throws(() => run.noteCondition(raw), { code, status: 400 }, JSON.stringify(raw));
+  }
+  assert.equal(run.lastToolFailure.operation, 'note-condition');
+  // Four a change at most.
+  run.noteCondition({ change: 'invite-suggestions', kind: 'request_failed', request: '/api/items?page=1' });
+  run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] });
+  assert.throws(() => run.noteCondition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/other' }),
+    { code: 'too_many_conditions', status: 409 });
+  // What it already holds is still recorded once, at the cap.
+  assert.equal(run.noteCondition({ change: 'invite-suggestions', kind: 'sample_file', files: ['portrait.png'] }).conditions, 4);
+
+  run.skipChange({ reason: 'Nothing else loads.' });
+  assert.throws(() => run.noteCondition({ change: 'member-count', kind: 'request_held', request: '/api/members' }),
+    { code: 'shots_turn_finished', status: 409 });
+});
+
 test('the last refused tool call is kept for the owner\'s diagnostics', () => {
   const run = control();
   assert.equal(run.lastToolFailure, null);

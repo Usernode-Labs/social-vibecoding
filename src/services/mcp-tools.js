@@ -2064,10 +2064,17 @@ function registerTools(server, ctx) {
     // but the before and after came out the same, so they cannot show the
     // change, and the note says so), or it skipped the change and says why,
     // or the change failed: the agent did the steps and the after build
-    // broke.
+    // broke. `conditions`: what the shots agent did to both builds alike to
+    // reach it, beyond the author's steps (an API GET held or made to fail,
+    // sample files uploaded); people see it beside the shots.
     shotResults: z.array(z.object({
       id: z.string(), status: z.enum(['ready', 'unchanged', 'skipped', 'failed']), reason: z.string().nullable(),
       note: z.string().nullable().optional(),
+      conditions: z.array(z.object({
+        kind: z.enum(['request_held', 'request_failed', 'sample_file']),
+        request: z.string().optional(),
+        files: z.array(z.string()).optional(),
+      })).optional(),
     })).optional().describe('One result per declared change: ready; unchanged (its shots are published, but the before '
       + 'and after came out the same, so they cannot show the change: check that the steps and hints reach the changed '
       + 'state); skipped, with the reason; or failed: the after build broke, so fix the code.'),

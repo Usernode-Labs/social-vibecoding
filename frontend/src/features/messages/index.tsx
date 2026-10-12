@@ -170,6 +170,28 @@ function directPerson(conversation: ConversationSummary) {
     || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
 }
 
+/**
+ * How many people a group row holds: the people glyph and the figure, the
+ * same UserGroupIcon at the same size the join screen draws before a
+ * community's member count (AGENTS.md, "Say it in words or a very obvious
+ * glyph"). The glyph and the figure are hidden from a screen reader, which
+ * hears the words instead ("5 members"); the hover title says the same. A
+ * zero says nothing, so a group with no count yet shows no tag.
+ */
+function GroupMemberCount({ count }: { count: number }) {
+  const t = useMessages('messages');
+  const n = Math.floor(Number(count));
+  if (!Number.isFinite(n) || n < 1) return null;
+  const words = t('messages:inbox.memberCount', { count: n });
+  return (
+    <span className="messages-group-tag" title={words}>
+      <UserGroupIcon className="w-3.5 h-3.5" aria-hidden="true" />
+      <span aria-hidden="true">{n}</span>
+      <span className="sr-only">{words}</span>
+    </span>
+  );
+}
+
 const ConversationRow = memo(function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
   const t = useMessages('messages');
   const peer = directPerson(conversation);
@@ -199,7 +221,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <GroupMemberCount count={conversation.memberCount} /> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
