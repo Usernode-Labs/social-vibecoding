@@ -3471,6 +3471,378 @@
     "text": "Privado o público, y cómo se aprueban los cambios",
     "source": "da1a2b235b73efec36469bd6bd9328c58af5975c14e99b859ce314eac6b4c4eb"
   },
+  "allItems.lane.more_many": {
+    "text": "+{{count}} de más en este carril",
+    "source": "999421c6c1798166a53e5f4f3ca9ad99df3c34cf94c0f188a943cb8acb398599"
+  },
+  "allItems.lane.more_one": {
+    "text": "+{{count}} más en este carril",
+    "source": "999421c6c1798166a53e5f4f3ca9ad99df3c34cf94c0f188a943cb8acb398599"
+  },
+  "allItems.lane.more_other": {
+    "text": "+{{count}} más en este carril",
+    "source": "999421c6c1798166a53e5f4f3ca9ad99df3c34cf94c0f188a943cb8acb398599"
+  },
+  "allItems.theme.chip.fresh_many": {
+    "text": "<0>+{{count}}</0> de nuevos",
+    "source": "8d71f0714ef93831151fe0a5ace67f81cf0fd5dd9214ff75c648b6276519b28f"
+  },
+  "allItems.theme.chip.fresh_one": {
+    "text": "<0>+{{count}}</0> nuevo",
+    "source": "8d71f0714ef93831151fe0a5ace67f81cf0fd5dd9214ff75c648b6276519b28f"
+  },
+  "allItems.theme.chip.fresh_other": {
+    "text": "<0>+{{count}}</0> nuevos",
+    "source": "8d71f0714ef93831151fe0a5ace67f81cf0fd5dd9214ff75c648b6276519b28f"
+  },
+  "allItems.theme.chip.review_many": {
+    "text": "<0>{{count}}</0> en revisión",
+    "source": "a7a1b7393a118768d7270435273a4f06a68f361efd0686a024576df977945d8c"
+  },
+  "allItems.theme.chip.review_one": {
+    "text": "<0>{{count}}</0> en revisión",
+    "source": "a7a1b7393a118768d7270435273a4f06a68f361efd0686a024576df977945d8c"
+  },
+  "allItems.theme.chip.review_other": {
+    "text": "<0>{{count}}</0> en revisión",
+    "source": "a7a1b7393a118768d7270435273a4f06a68f361efd0686a024576df977945d8c"
+  },
+  "allItems.theme.chip.underway_many": {
+    "text": "<0>{{count}}</0> en curso",
+    "source": "4d8e85353c74c70d5a9b0beddda61191c4c5f8ba9717e640a6048b131a8cbba1"
+  },
+  "allItems.theme.chip.underway_one": {
+    "text": "<0>{{count}}</0> en curso",
+    "source": "4d8e85353c74c70d5a9b0beddda61191c4c5f8ba9717e640a6048b131a8cbba1"
+  },
+  "allItems.theme.chip.underway_other": {
+    "text": "<0>{{count}}</0> en curso",
+    "source": "4d8e85353c74c70d5a9b0beddda61191c4c5f8ba9717e640a6048b131a8cbba1"
+  },
+  "allItems.theme.chip.open_many": {
+    "text": "<0>{{count}}</0> abiertos",
+    "source": "a2f0953f75a3d1e87c503b2cb3d1a4edbca4b10b87de6edd22507f5a2854e428"
+  },
+  "allItems.theme.chip.open_one": {
+    "text": "<0>{{count}}</0> abierto",
+    "source": "a2f0953f75a3d1e87c503b2cb3d1a4edbca4b10b87de6edd22507f5a2854e428"
+  },
+  "allItems.theme.chip.open_other": {
+    "text": "<0>{{count}}</0> abiertos",
+    "source": "a2f0953f75a3d1e87c503b2cb3d1a4edbca4b10b87de6edd22507f5a2854e428"
+  },
+  "allItems.theme.chip.shipped_many": {
+    "text": "<0>{{count}}</0> publicados esta semana",
+    "source": "e98f6fdd8367bdfced1f9eb87697cfc94ab0e6845482c725538c87208643b70d"
+  },
+  "allItems.theme.chip.shipped_one": {
+    "text": "<0>{{count}}</0> publicado esta semana",
+    "source": "e98f6fdd8367bdfced1f9eb87697cfc94ab0e6845482c725538c87208643b70d"
+  },
+  "allItems.theme.chip.shipped_other": {
+    "text": "<0>{{count}}</0> publicados esta semana",
+    "source": "e98f6fdd8367bdfced1f9eb87697cfc94ab0e6845482c725538c87208643b70d"
+  },
+  "allItems.theme.stat.people_many": {
+    "text": "<0>{{count}}</0>personas",
+    "source": "9f0b7fe55a5baf9c0b206f444255c8804baf45c80b11bc978072609ac9594ba9"
+  },
+  "allItems.theme.stat.people_one": {
+    "text": "<0>{{count}}</0>persona",
+    "source": "556d2fef722f224d4c78bf3e6e6b7db912d5dd1d1a51bc1463eaa30c67a84bc7"
+  },
+  "allItems.theme.stat.people_other": {
+    "text": "<0>{{count}}</0>personas",
+    "source": "9f0b7fe55a5baf9c0b206f444255c8804baf45c80b11bc978072609ac9594ba9"
+  },
+  "allItems.theme.stat.items_many": {
+    "text": "<0>{{count}}</0>elementos",
+    "source": "ecb70d9b67f38a0d51f55953bfb67af331922b2d09a7b90969e047aad6bf9690"
+  },
+  "allItems.theme.stat.items_one": {
+    "text": "<0>{{count}}</0>elemento",
+    "source": "c27a332a9d677abbcf2b2202d166179ffd718caab06f5a13ec1c575105ca58e3"
+  },
+  "allItems.theme.stat.items_other": {
+    "text": "<0>{{count}}</0>elementos",
+    "source": "ecb70d9b67f38a0d51f55953bfb67af331922b2d09a7b90969e047aad6bf9690"
+  },
+  "allItems.theme.foot.involved_many": {
+    "text": "{{count}} participantes",
+    "source": "48bb8c17b0735bd41dd2a8e93436e3eeb422e25aa0970ed4517a8552ac7f7d67"
+  },
+  "allItems.theme.foot.involved_one": {
+    "text": "{{count}} participante",
+    "source": "48bb8c17b0735bd41dd2a8e93436e3eeb422e25aa0970ed4517a8552ac7f7d67"
+  },
+  "allItems.theme.foot.involved_other": {
+    "text": "{{count}} participantes",
+    "source": "48bb8c17b0735bd41dd2a8e93436e3eeb422e25aa0970ed4517a8552ac7f7d67"
+  },
+  "allItems.theme.foot.underway_many": {
+    "text": "{{count}} en curso",
+    "source": "afd7e6007a515c59a81e1fe6686c8ca03920a7dd7ca8b227a9b23a9e29180910"
+  },
+  "allItems.theme.foot.underway_one": {
+    "text": "{{count}} en curso",
+    "source": "afd7e6007a515c59a81e1fe6686c8ca03920a7dd7ca8b227a9b23a9e29180910"
+  },
+  "allItems.theme.foot.underway_other": {
+    "text": "{{count}} en curso",
+    "source": "afd7e6007a515c59a81e1fe6686c8ca03920a7dd7ca8b227a9b23a9e29180910"
+  },
+  "allItems.theme.foot.review_many": {
+    "text": "{{count}} en revisión",
+    "source": "4ce5173297cf4a34791bca8c60143503b7212f0841ffc392d1380b8a45610ce8"
+  },
+  "allItems.theme.foot.review_one": {
+    "text": "{{count}} en revisión",
+    "source": "4ce5173297cf4a34791bca8c60143503b7212f0841ffc392d1380b8a45610ce8"
+  },
+  "allItems.theme.foot.review_other": {
+    "text": "{{count}} en revisión",
+    "source": "4ce5173297cf4a34791bca8c60143503b7212f0841ffc392d1380b8a45610ce8"
+  },
+  "allItems.theme.foot.shippedIdle_many": {
+    "text": "{{count}} publicados esta semana, nada en curso ahora",
+    "source": "ff8f8c9a289e896d8d06462f4647070bfe06fcb059d558f27e42bceb58b80d4a"
+  },
+  "allItems.theme.foot.shippedIdle_one": {
+    "text": "{{count}} publicado esta semana, nada en curso ahora",
+    "source": "ff8f8c9a289e896d8d06462f4647070bfe06fcb059d558f27e42bceb58b80d4a"
+  },
+  "allItems.theme.foot.shippedIdle_other": {
+    "text": "{{count}} publicados esta semana, nada en curso ahora",
+    "source": "ff8f8c9a289e896d8d06462f4647070bfe06fcb059d558f27e42bceb58b80d4a"
+  },
+  "allItems.theme.foot.quiet_many": {
+    "text": "sin actividad desde hace {{count}} días",
+    "source": "379b17e5b5d91e351dce190c8c557b7a1bdb6f6088c2a4c783342793feba3ba7"
+  },
+  "allItems.theme.foot.quiet_one": {
+    "text": "sin actividad desde hace {{count}} día",
+    "source": "379b17e5b5d91e351dce190c8c557b7a1bdb6f6088c2a4c783342793feba3ba7"
+  },
+  "allItems.theme.foot.quiet_other": {
+    "text": "sin actividad desde hace {{count}} días",
+    "source": "379b17e5b5d91e351dce190c8c557b7a1bdb6f6088c2a4c783342793feba3ba7"
+  },
+  "allItems.theme.hiddenThenOpen_many": {
+    "text": "<0>+{{count}} ocultos · </0><1>Abrir en el tablero ›</1>",
+    "source": "05d813044a533328ea2f06637c0a672b2da16e798a2365f1c64db20520293640"
+  },
+  "allItems.theme.hiddenThenOpen_one": {
+    "text": "<0>+{{count}} oculto · </0><1>Abrir en el tablero ›</1>",
+    "source": "05d813044a533328ea2f06637c0a672b2da16e798a2365f1c64db20520293640"
+  },
+  "allItems.theme.hiddenThenOpen_other": {
+    "text": "<0>+{{count}} ocultos · </0><1>Abrir en el tablero ›</1>",
+    "source": "05d813044a533328ea2f06637c0a672b2da16e798a2365f1c64db20520293640"
+  },
+  "allItems.categories.pending_many": {
+    "text": "Se están clasificando {{count}} tarjetas nuevas.",
+    "source": "4222cc1724d5381ca788c4668d2e49d42edfc5103e9d3e34d7d405ecb5a92d09"
+  },
+  "allItems.categories.pending_one": {
+    "text": "Se está clasificando {{count}} tarjeta nueva.",
+    "source": "29da6c2fde74cfc442fd3bd191a372d9c71371c1f7a38890c88ecd15c6058d12"
+  },
+  "allItems.categories.pending_other": {
+    "text": "Se están clasificando {{count}} tarjetas nuevas.",
+    "source": "4222cc1724d5381ca788c4668d2e49d42edfc5103e9d3e34d7d405ecb5a92d09"
+  },
+  "allItems.categories.unplaced_many": {
+    "text": "{{count}} tarjetas no encajaron en ninguna categoría y esperan al próximo borrador.",
+    "source": "4c659c798c1d3c945c84a65b1bd5a518de2f0ad3f00b005b5890ed19d12db34c"
+  },
+  "allItems.categories.unplaced_one": {
+    "text": "{{count}} tarjeta no encajó en ninguna categoría y espera al próximo borrador.",
+    "source": "e33eb27a65e9ad98bc6b14426bf6e589388f9cd1a09408b11adcda751d87f363"
+  },
+  "allItems.categories.unplaced_other": {
+    "text": "{{count}} tarjetas no encajaron en ninguna categoría y esperan al próximo borrador.",
+    "source": "4c659c798c1d3c945c84a65b1bd5a518de2f0ad3f00b005b5890ed19d12db34c"
+  },
+  "allItems.grouping.categories_many": {
+    "text": "{{count}} categorías",
+    "source": "22da031398ad70a76d843d476d4fe05af46d9874d7cb1edf7384ddf0daeaf711"
+  },
+  "allItems.grouping.categories_one": {
+    "text": "{{count}} categoría",
+    "source": "efe08f72dd5ce2ed1f1f00d05b35f5f63e1207d5f2f09896647ba978fae15cbf"
+  },
+  "allItems.grouping.categories_other": {
+    "text": "{{count}} categorías",
+    "source": "22da031398ad70a76d843d476d4fe05af46d9874d7cb1edf7384ddf0daeaf711"
+  },
+  "workshop.dash.open_many": {
+    "text": "elementos abiertos",
+    "source": "fa4e6c390ac92d477531ab921b089d22a60537791badb38b5cf84b529143e344"
+  },
+  "workshop.dash.open_one": {
+    "text": "elemento abierto",
+    "source": "7a1b3b9b4b7535881bb1db9081e8c28637b11df8b76ddd6ebc717d9008cd76ef"
+  },
+  "workshop.dash.open_other": {
+    "text": "elementos abiertos",
+    "source": "fa4e6c390ac92d477531ab921b089d22a60537791badb38b5cf84b529143e344"
+  },
+  "workshop.dash.votes_many": {
+    "text": "esperando votos",
+    "source": "a694af96b5d1b1076ba57d033e61f77ed23bd74f91cebb42ec049aaac3bd9adf"
+  },
+  "workshop.dash.votes_one": {
+    "text": "esperando un voto",
+    "source": "b9f4e5eb8b27d3e82c34cb0036c8f487b12ecc92e2df9472ba47350bae490dca"
+  },
+  "workshop.dash.votes_other": {
+    "text": "esperando votos",
+    "source": "a694af96b5d1b1076ba57d033e61f77ed23bd74f91cebb42ec049aaac3bd9adf"
+  },
+  "workshop.dash.onYou_many": {
+    "text": "{{count}} dependen de ti",
+    "source": "7ea3d44063c9bc803d723fff968ef3295ee4089b1a30c7a25e93a11d2a37f785"
+  },
+  "workshop.dash.onYou_one": {
+    "text": "{{count}} depende de ti",
+    "source": "7ea3d44063c9bc803d723fff968ef3295ee4089b1a30c7a25e93a11d2a37f785"
+  },
+  "workshop.dash.onYou_other": {
+    "text": "{{count}} dependen de ti",
+    "source": "7ea3d44063c9bc803d723fff968ef3295ee4089b1a30c7a25e93a11d2a37f785"
+  },
+  "workshop.dash.fromLastWeek_many": {
+    "text": "desde {{count}}",
+    "source": "60fb24962d2f2995ed545ed957daec44ea78a3bf3fcba840586c72c4f09b93f9"
+  },
+  "workshop.dash.fromLastWeek_one": {
+    "text": "desde {{count}}",
+    "source": "60fb24962d2f2995ed545ed957daec44ea78a3bf3fcba840586c72c4f09b93f9"
+  },
+  "workshop.dash.fromLastWeek_other": {
+    "text": "desde {{count}}",
+    "source": "60fb24962d2f2995ed545ed957daec44ea78a3bf3fcba840586c72c4f09b93f9"
+  },
+  "workshop.pace.atLeast_many": {
+    "text": "Al menos {{count}} cambios se fusionaron esta semana.",
+    "source": "915dfccdc6a3261163816225509d91673dde71f10cdcfec5efcaf8e8308d29ad"
+  },
+  "workshop.pace.atLeast_one": {
+    "text": "Al menos {{count}} cambio se fusionó esta semana.",
+    "source": "06295f13a1f523428c2808eaf7c5987b823b34d42f329f83962ccede153a1f39"
+  },
+  "workshop.pace.atLeast_other": {
+    "text": "Al menos {{count}} cambios se fusionaron esta semana.",
+    "source": "915dfccdc6a3261163816225509d91673dde71f10cdcfec5efcaf8e8308d29ad"
+  },
+  "workshop.pace.firstInFortnight_many": {
+    "text": "{{count}} cambios se fusionaron esta semana, los primeros en dos semanas.",
+    "source": "f97928cb13cce649397b90ed6307c431677c666ae693781ca46144f43665b682"
+  },
+  "workshop.pace.firstInFortnight_one": {
+    "text": "{{count}} cambio se fusionó esta semana, el primero en dos semanas.",
+    "source": "1c1fe073370509557c49b3bad3937e86cee99b2cdc33e9a8af59eb3986fef786"
+  },
+  "workshop.pace.firstInFortnight_other": {
+    "text": "{{count}} cambios se fusionaron esta semana, los primeros en dos semanas.",
+    "source": "f97928cb13cce649397b90ed6307c431677c666ae693781ca46144f43665b682"
+  },
+  "workshop.pace.up_many": {
+    "text": "{{count}} se fusionaron esta semana, frente a {{previous}} la semana anterior.",
+    "source": "9093bf1ce6b33abaf625b2cee10a30a64487b7aafa935bfb7c5334b87d0a1b72"
+  },
+  "workshop.pace.up_one": {
+    "text": "{{count}} se fusionó esta semana, frente a {{previous}} la semana anterior.",
+    "source": "9093bf1ce6b33abaf625b2cee10a30a64487b7aafa935bfb7c5334b87d0a1b72"
+  },
+  "workshop.pace.up_other": {
+    "text": "{{count}} se fusionaron esta semana, frente a {{previous}} la semana anterior.",
+    "source": "9093bf1ce6b33abaf625b2cee10a30a64487b7aafa935bfb7c5334b87d0a1b72"
+  },
+  "workshop.pace.down_many": {
+    "text": "{{count}} se fusionaron esta semana, frente a {{previous}} la semana anterior.",
+    "source": "c90895e38b483a665a4c5e5ad25a0bd3feaba4a9163269820ac354bbf67ba3fb"
+  },
+  "workshop.pace.down_one": {
+    "text": "{{count}} se fusionó esta semana, frente a {{previous}} la semana anterior.",
+    "source": "c90895e38b483a665a4c5e5ad25a0bd3feaba4a9163269820ac354bbf67ba3fb"
+  },
+  "workshop.pace.down_other": {
+    "text": "{{count}} se fusionaron esta semana, frente a {{previous}} la semana anterior.",
+    "source": "c90895e38b483a665a4c5e5ad25a0bd3feaba4a9163269820ac354bbf67ba3fb"
+  },
+  "workshop.pace.same_many": {
+    "text": "{{count}} se fusionaron esta semana, igual que la semana anterior.",
+    "source": "f412765e35cf8375ae3357e5766b8edcd7d8eae85db56fa8c22ba7887633243c"
+  },
+  "workshop.pace.same_one": {
+    "text": "{{count}} se fusionó esta semana, igual que la semana anterior.",
+    "source": "f412765e35cf8375ae3357e5766b8edcd7d8eae85db56fa8c22ba7887633243c"
+  },
+  "workshop.pace.same_other": {
+    "text": "{{count}} se fusionaron esta semana, igual que la semana anterior.",
+    "source": "f412765e35cf8375ae3357e5766b8edcd7d8eae85db56fa8c22ba7887633243c"
+  },
+  "workshop.mine.open_many": {
+    "text": "{{count}} abiertos",
+    "source": "a69dade13b868a0a8ef1e722291294ac7ba2a4ff9007f7af1b653027c562b170"
+  },
+  "workshop.mine.open_one": {
+    "text": "{{count}} abierto",
+    "source": "a69dade13b868a0a8ef1e722291294ac7ba2a4ff9007f7af1b653027c562b170"
+  },
+  "workshop.mine.open_other": {
+    "text": "{{count}} abiertos",
+    "source": "a69dade13b868a0a8ef1e722291294ac7ba2a4ff9007f7af1b653027c562b170"
+  },
+  "workshop.mine.showMore_many": {
+    "text": "Mostrar {{count}} más",
+    "source": "d94a0e3b18cc208ec8b9217a2ecc28facd39ab3f54aa3a9092b5418209124314"
+  },
+  "workshop.mine.showMore_one": {
+    "text": "Mostrar {{count}} más",
+    "source": "d94a0e3b18cc208ec8b9217a2ecc28facd39ab3f54aa3a9092b5418209124314"
+  },
+  "workshop.mine.showMore_other": {
+    "text": "Mostrar {{count}} más",
+    "source": "d94a0e3b18cc208ec8b9217a2ecc28facd39ab3f54aa3a9092b5418209124314"
+  },
+  "workshop.fresh.count_many": {
+    "text": "{{count}} desde tu última visita",
+    "source": "cad790403f19f3184b1c96475297ed9be6457f68c9c52c77d284a11ce37c07d8"
+  },
+  "workshop.fresh.count_one": {
+    "text": "{{count}} desde tu última visita",
+    "source": "cad790403f19f3184b1c96475297ed9be6457f68c9c52c77d284a11ce37c07d8"
+  },
+  "workshop.fresh.count_other": {
+    "text": "{{count}} desde tu última visita",
+    "source": "cad790403f19f3184b1c96475297ed9be6457f68c9c52c77d284a11ce37c07d8"
+  },
+  "weeks.row.fresh_many": {
+    "text": "{{count}} nuevos",
+    "source": "7e563ede9d0428724e9b5aa5f9c182d7f16a7a59d869c01d06244be2027fa166"
+  },
+  "weeks.row.fresh_one": {
+    "text": "{{count}} nuevo",
+    "source": "7e563ede9d0428724e9b5aa5f9c182d7f16a7a59d869c01d06244be2027fa166"
+  },
+  "weeks.row.fresh_other": {
+    "text": "{{count}} nuevos",
+    "source": "7e563ede9d0428724e9b5aa5f9c182d7f16a7a59d869c01d06244be2027fa166"
+  },
+  "weeks.row.live_many": {
+    "text": "<0>{{count}}</0> publicados",
+    "source": "c53cc96d738905aa7acd2b917ca79ee540a9d5187345f0d4624f746bb8a1775e"
+  },
+  "weeks.row.live_one": {
+    "text": "<0>{{count}}</0> publicado",
+    "source": "c53cc96d738905aa7acd2b917ca79ee540a9d5187345f0d4624f746bb8a1775e"
+  },
+  "weeks.row.live_other": {
+    "text": "<0>{{count}}</0> publicados",
+    "source": "c53cc96d738905aa7acd2b917ca79ee540a9d5187345f0d4624f746bb8a1775e"
+  },
   "weeks.row.liveAtLeast_many": {
     "text": "<0>{{count}}+</0> publicados",
     "source": "9f7784e796593274d206c7875001683bddad3442461fb053a35b0461262bb513"
