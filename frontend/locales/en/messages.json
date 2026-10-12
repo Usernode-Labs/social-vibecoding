@@ -131,6 +131,10 @@
     "text": "Couldn’t download this image.",
     "description": "Brief error shown when saving a picture from a message to the device failed."
   },
+  "imageSave.updateApp": {
+    "text": "This version of the Homeroom app can’t save pictures. Update the app to save them.",
+    "description": "Brief message shown when someone taps Download on a picture inside an older Homeroom mobile app that has no way to save pictures to the phone."
+  },
   "imageSave.menuDownload_one": {
     "text": "Download image",
     "description": "Item in a message's actions menu: saves the pictures attached to that message to the device. {{count}} is how many pictures the message has. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
