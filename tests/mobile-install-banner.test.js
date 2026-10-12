@@ -277,8 +277,10 @@ test('#4899: the island reads the tour\'s own flag, and asks again when it chang
   // The flag the first-session Tour sets while it is mounted
   // (tests/first-session.test.js pins that side), read reactively, so the
   // strip comes up as the tour ends without a reload.
-  assert.match(src, /import \{ useTourRunning \} from '\.\.\/first-session\/tour-running';/);
-  assert.match(src, /const touring = useTourRunning\(\);/);
+  assert.match(src, /import \{ useFirstSessionVisit, useTourRunning \} from '\.\.\/first-session\/tour-running';/);
+  // And for the rest of a first visit (onboarding run two): offered as the
+  // tour ended, it pushed the app the tour had just opened down 44pt.
+  assert.match(src, /const touringNow = useTourRunning\(\);\n  const firstVisit = useFirstSessionVisit\(\);\n  const touring = touringNow \|\| firstVisit;/);
   const call = src.slice(src.indexOf('setOffer(installOffer({'));
   assert.match(call.slice(0, call.indexOf('}));')), /\n\s+touring,\n/);
   assert.match(src, /\}, \[urls, dismissed, member, privateMember, tab, touring\]\);/);
@@ -294,6 +296,38 @@ test('#4899: the island reads the tour\'s own flag, and asks again when it chang
   const hook = fs.readFileSync(
     path.join(ROOT, 'frontend/src/features/mobile-install/home-screen-offer.ts'), 'utf8');
   assert.match(hook, /touring: false,/);
+});
+
+test('a first visit holds the strip to its end, and only the first session\'s own screens make one', () => {
+  // Onboarding run two, 12 Oct 2026: the strip came in 15ms after the tour
+  // opened the new app, pushing it down 44pt, and stayed on every screen.
+  const tour = loadTsx('frontend/src/features/first-session/tour-running.ts');
+  const store = {};
+  const prev = global.sessionStorage;
+  global.sessionStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+  try {
+    delete globalThis[tour.TOUR_RUNNING_KEY];
+    assert.equal(tour.firstSessionVisit(), false, 'nobody is held before a first session shows');
+    let heard = 0;
+    const stop = tour.subscribeTourRunning(() => { heard += 1; });
+    tour.noteFirstSessionVisit();
+    tour.noteFirstSessionVisit();
+    stop();
+    assert.equal(heard, 1, 'noted once, heard once');
+    assert.equal(tour.firstSessionVisit(), true);
+    assert.equal(store[tour.FIRST_VISIT_KEY], '1', 'kept for a reload in the same tab');
+    // A new page in that tab reads it back.
+    delete globalThis[tour.TOUR_RUNNING_KEY];
+    assert.equal(tour.firstSessionVisit(), true);
+    // `running` is separate: the hub and the App tab still see the tour end.
+    assert.equal(tour.tourRunning(), false);
+  } finally {
+    delete globalThis[tour.TOUR_RUNNING_KEY];
+    global.sessionStorage = prev;
+  }
+  const first = fs.readFileSync(path.join(ROOT, 'frontend/src/features/first-session/index.tsx'), 'utf8');
+  assert.match(first, /if \(mode\.kind === 'none'\) return;\n    if \(\(mode\.kind === 'make' \|\| mode\.kind === 'made'\) && mode\.entry === 'create'\) return;\n    noteFirstSessionVisit\(\);\n  \}, \[mode\]\);/,
+    'welcome, make, made and the tour note it; Create\'s make and made do not');
 });
 
 test('#4899: the first render is the same hidden strip whether or not a tour runs', () => {

@@ -72,7 +72,7 @@
  * where nothing was asked for.
  */
 
-import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
@@ -398,6 +398,9 @@ export function reloadCommunity(slug: string): Promise<void> {
     if (next && next.slug === slug) {
       communities.set(slug, next);
       for (const listener of [...listeners]) listener();
+    } else if (!communities.has(slug)) {
+      // No record, but a hub that held its skeleton for one draws now.
+      for (const listener of [...listeners]) listener();
     }
   });
   inflight.set(slug, pending);
@@ -417,14 +420,31 @@ export function communityInflight(slug: string): boolean {
   return !!slug && inflight.has(slug);
 }
 
+/**
+ * ONE DRAW, NOT TWO (onboarding run two, 12 Oct 2026, iPhone 17 Safari): the
+ * hub drew once with the board's data, "For you · Nothing more to vote on ·
+ * Your work" and Open app alone at the top, then again 0.22s later when this
+ * record came, as "Just you so far · Open app · Invite" with "Share it". Its
+ * skeleton now holds while the record is on its way and none is known yet:
+ * asked for before the first paint (useCommunity's layout effect), so the
+ * draft never paints, and let go when it is answered, or refused.
+ */
+export function communityPending(slug: string): boolean {
+  return !!slug && !communities.has(slug) && inflight.has(slug);
+}
+
 export function useCommunity(slug: string): CommunityPayload | null {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     listeners.add(bump);
     return () => { listeners.delete(bump); };
   }, []);
-  useEffect(() => {
-    if (slug && !inflight.has(slug)) void reloadCommunity(slug);
+  // Before the first paint, so a hub with no record yet draws its skeleton
+  // rather than a draft of itself (ONE DRAW, NOT TWO, communityPending).
+  useLayoutEffect(() => {
+    if (!slug || inflight.has(slug)) return;
+    void reloadCommunity(slug);
+    if (!communities.has(slug)) bump();
   }, [slug]);
   return slug ? communities.get(slug) || null : null;
 }

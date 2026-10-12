@@ -334,7 +334,7 @@ test('2 and 8 of 8 cut out their screen with its header: the whole app, and the 
 
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /const pointed = !!\(step\.tap \|\| step\.ringed\);/);
-  assert.match(src, /const hole = box && holeFor\(box, viewport, pointed && !step\.press \? RING : 0\);/);
+  assert.match(src, /const hole = box && !dimAll && holeFor\(box, viewport, pointed && !step\.press \? RING : 0\);/);
   assert.match(src, /const ring = hole && pointed && pressBox && !waiting \? holeFor\(pressBox, viewport\) : null;/);
   // Only a tap step leaves its ring pressable; a step that only points at a
   // control ("Look around first") covers it, so a press stays in the tour.
@@ -1176,13 +1176,69 @@ test('#4900: the steps that point at the app wait for it, on every path that has
   const { makerSteps, invitedSteps, lookAroundSteps, privateSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const project = { slug: 'film', name: 'Friday Film Crew', conversationId: 12 };
   for (const steps of [makerSteps(project), invitedSteps(project), privateSteps(project)]) {
-    assert.deepEqual(steps.map((s) => s.waitsFor || null), steps.map((s, i) => (i === 0 ? 'running' : i === 1 ? 'open' : null)));
+    // And the hub's, until it is drawn whole (onboarding run two).
+    const hub = steps.findIndex((s) => s.screen === 'hub');
+    assert.deepEqual(steps.map((s) => s.waitsFor || null), steps.map((s, i) => (i === 0 ? 'running' : i === 1 ? 'open' : i === hub ? 'hub' : null)));
     assert.equal(steps[0].target, '.app-card[data-slug="film"]', 'the tile on Home');
     assert.equal(steps[1].target, '#app-view', 'the app on its screen');
   }
   assert.ok(lookAroundSteps().every((s) => !s.waitsFor), '"Look around first" points at no app');
   assert.equal(message('onboarding:firstSession.tour.wait.title', { app: 'Restaurant Tier List' }), 'Getting Restaurant Tier List ready…');
   assert.equal(message('onboarding:firstSession.tour.wait.text'), 'The tour goes on as soon as it’s ready.');
+});
+
+test('onboarding run two: the tour dims as one rounded shape, waits for the hub drawn whole, and leaves the menu once it has closed', () => {
+  const src = read(`${DIR}/index.tsx`);
+  const { dimStyle, HOLE_RADIUS } = loadTsx(`${DIR}/index.tsx`);
+  // One box the size of the cut-out whose shadow is the dim, rounded as the
+  // ring is round a control, square round a screen; the strips that take
+  // the presses outside it are clear.
+  const hole = { left: 10, top: 20, width: 100, height: 50 };
+  assert.deepEqual(dimStyle(hole, true), { left: 10, top: 20, width: 100, height: 50, borderRadius: 16, boxShadow: '0 0 0 200vmax rgba(9,9,12,0.6)' });
+  assert.equal(dimStyle(hole, false).borderRadius, 0);
+  assert.equal(HOLE_RADIUS, 16);
+  assert.match(src, /const SHADE = 'pointer-events-auto fixed';\n/);
+  assert.match(src, /<div aria-hidden="true" data-first-session-dim="" className=\{DIM\} style=\{dimStyle\(hole, pointed\)\} \/>/);
+  assert.match(src, /const DIM = 'pointer-events-none fixed motion-safe:transition-\[left,top,width,height\] motion-safe:duration-200 motion-safe:ease-out';/);
+  // The hub's card waits for the hub drawn whole, with all of the page dimmed meanwhile.
+  assert.match(src, /const dimAll = waiting && step\.waitsFor === 'hub';/);
+  const { appReady } = loadTsx(`${DIR}/tour-wait.ts`);
+  const page = (found) => ({ querySelectorAll: (sel) => {
+    assert.equal(sel, '#app-content [data-ws-community], #app-content [data-ws-community-pending]');
+    return found ? [{}] : [];
+  } });
+  assert.equal(appReady('hub', 'film', page(false)), false, 'a blank page, or the skeleton');
+  assert.equal(appReady('hub', 'film', page(true)), true, 'the hero, with its community read or refused');
+  // Out of a step in the menu, the menu closes first, the card hidden and the layer over it.
+  assert.match(src, /if \(steps\[index\]\.inMenu && !steps\[to\]\.inMenu && AppContext\.isOpen\(\)\) \{\s+setLeavingMenu\(true\);\s+void Promise\.resolve\(AppContext\.close\(\)\)\.catch\(\(\) => \{\}\)\.then\(\(\) => \{\s+setLeavingMenu\(false\);\s+move\(\);/);
+  // A first visit is noted for the home-screen strip, never from Create.
+  assert.match(src, /noteFirstSessionVisit\(\);\n  \}, \[mode\]\);/);
+});
+
+test('onboarding run two: under the tour a page swaps in place, so no View Transition draws over its card', () => {
+  const ui = read('public/js/platform-ui.js');
+  assert.match(ui, /un\.transition\(fn, PlatformUI\.underTour\(PlatformUI\.phoneMotion\(opts \|\| \{ type: 'none' \}\)\)\);/);
+  const body = ui.slice(ui.indexOf('    underTour(opts) {'));
+  const underTour = new Function(`const globalThis = this; return function ${body.slice(4, body.indexOf('\n    },') + 6)}`);
+  const run = (running, type) => underTour.call({ __usernodeFirstSessionTourRunning: running == null ? undefined : { running } })({ type });
+  assert.equal(run(true, 'fade').type, 'none');
+  assert.equal(run(true, 'push').type, 'none');
+  assert.equal(run(true, 'zoom-in').type, 'zoom-in', 'a zoom is no View Transition');
+  assert.equal(run(false, 'fade').type, 'fade');
+  assert.equal(run(null, 'pop').type, 'pop');
+  const { TOUR_RUNNING_KEY } = loadTsx(`${DIR}/tour-running.ts`);
+  assert.equal(TOUR_RUNNING_KEY, '__usernodeFirstSessionTourRunning');
+});
+
+test('onboarding run two: the hub draws once, holding its skeleton while its community record is on its way', () => {
+  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  assert.match(card, /export function communityPending\(slug: string\): boolean \{\s+return !!slug && !communities\.has\(slug\) && inflight\.has\(slug\);\s+\}/);
+  // Asked for before the first paint, so the draft never paints.
+  assert.match(card, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;\s+void reloadCommunity\(slug\);\s+if \(!communities\.has\(slug\)\) bump\(\);\s+\}, \[slug\]\);/);
+  // A refused read lets the skeleton go too.
+  assert.match(card, /\} else if \(!communities\.has\(slug\)\) \{\s+\/\/ [^\n]*\n\s+for \(const listener of \[\.\.\.listeners\]\) listener\(\);/);
+  const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(workshop, /if \(v\.loading \|\| communityPending\(v\.slug \|\| ''\)\) return <div ref=\{hostRef\}><CardSkeleton n=\{4\} label=\{t\('project:page\.loading'\)\} \/><\/div>;/);
 });
 
 test('#4900: what a waiting step waits for: a tile a tap opens, and an app past its loading screens', () => {
@@ -1261,7 +1317,7 @@ test('#4900: the tour waits for the app before the step is painted, with Skip an
   assert.match(src, /if \(!step\.tap \|\| waiting\) return undefined;/);
   assert.match(src, /const covers = hole \? \(ring && step\.tap \? aroundBox\(hole, ring\) : \[hole\]\) : \[\];/);
   // Hidden for the moment, then the card: getting ready, Skip, and Back.
-  assert.match(src, /data-first-session-tour-wait=\{wait \|\| undefined\}\s+className=\{settling \|\| wait === 'held'\s+\? 'pointer-events-none [^']*opacity-0/);
+  assert.match(src, /data-first-session-tour-wait=\{wait \|\| undefined\}\s+className=\{settling \|\| wait === 'held' \|\| leavingMenu\s+\? 'pointer-events-none [^']*opacity-0/);
   const body = src.slice(src.indexOf('{waiting ? ('), src.indexOf('<p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>'));
   assert.ok(body.length > 200, 'the waiting card is findable');
   assert.match(body, /t\('onboarding:firstSession\.tour\.wait\.title', \{ app: info\.name \}\)/);

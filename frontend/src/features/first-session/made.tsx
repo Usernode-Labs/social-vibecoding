@@ -805,15 +805,49 @@ export function setupEstimate(slow: boolean, waitedOut: boolean): string {
   return slow ? translate('onboarding:firstSession.made.setup.slow') : translate('onboarding:firstSession.made.setup.usual');
 }
 
+/** The progress card's second line once it has run (READY IN PLACE), and its title over a sketch, whose own line says the rest. */
+export const SETUP_DONE = 'onboarding:firstSession.made.setup.done';
+export const SETUP_SET_UP = 'onboarding:firstSession.made.setup.setUp';
+
 /**
  * How far the setup has got, under the project while the way on waits for it
  * (IT RUNS BEFORE THE WAY ON GOES): a ring with the step ("2/4", the bot's
  * activity cards' ring, turning while it is under way), the step in words,
  * and how long it usually takes. A row, 15 over 13, on the plane's card.
+ *
+ * READY IN PLACE (onboarding run two, 12 Oct 2026, iPhone 17): the card went
+ * the moment the app ran, in one frame, and everything over and under it
+ * dropped 33pt, because the block is centred. Once it has shown it stays:
+ * `done` is the line the project's own card would have said ("Ready to
+ * use."), or "It's set up." over a sketch, which says the build itself; the
+ * ring full and quiet (a done state gets no accent), turning on only while
+ * the bot still builds.
  */
-export function SetupProgress({ step, slow, waitedOut }: { step: number; slow: boolean; waitedOut: boolean }) {
+export function SetupProgress({ step, slow, waitedOut, done = null }: {
+  step: number; slow: boolean; waitedOut: boolean; done?: { line: string; busy: boolean } | null;
+}) {
   const t = useMessages('onboarding');
   const total = SETUP_STEPS.length;
+  if (done) {
+    return (
+      <section data-made-setup="done" className="mt-4">
+        <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+          <ProgressRing
+            pct={100}
+            label={`${total}/${total}`}
+            title={done.line}
+            spinning={done.busy}
+            arcClassName="stroke-zinc-400 dark:stroke-zinc-500"
+            trackClassName="dark:stroke-zinc-700"
+          />
+          <div role="status" className="min-w-0 flex-1">
+            <p className="text-[15px] font-[650] leading-snug">{done.line}</p>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t(SETUP_DONE)}</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
   const at = step > 0 && step <= total ? SETUP_STEPS[step - 1] : null;
   return (
     <section data-made-setup={at || 'started'} className="mt-4">
@@ -908,6 +942,10 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const settingUp = holdsContinue(waits, appStatus, false);
   // The furthest step of its setup read so far (setupStepOf).
   const [setupStep, setSetupStep] = useState(0);
+  // Whether its setup's card has shown here: then it stays once the app runs
+  // (READY IN PLACE, SetupProgress).
+  const [setupShown, setSetupShown] = useState(false);
+  useEffect(() => { if (settingUp) setSetupShown(true); }, [settingUp]);
 
   useEffect(() => {
     let live = true;
@@ -999,6 +1037,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // (not while its plan waits on them, nor on a setup that stopped: then
   // nothing is).
   const busy = appStatus === 'creating' || (botBuilds && !(fv && fv.ready) && !plan && !stalled);
+  // Its setup's card, once it has run: in place, saying what the plain card would.
+  const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   return (
     <div
@@ -1033,17 +1073,18 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
               <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
               {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
               {/* While its setup's card is up, that card says where it is. */}
-              {settingUp ? null : (
+              {settingUp || ranInPlace ? null : (
                 <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
                   {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
                   <span data-first-session-build="">{plainLine}</span>
                 </div>
               )}
-              <p className={settingUp ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
+              <p className={settingUp || ranInPlace ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
             </div>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}
           {settingUp ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
+          {ranInPlace ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}

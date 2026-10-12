@@ -19,6 +19,11 @@
  *            version's "Opening..." check. The first version being built is
  *            the screen the card is written for (AppView._firstVersionView,
  *            `tourSays`).
+ *   hub      the project's hub drawn whole: its hero with the community
+ *            read (`data-ws-community`), not the skeleton or a draft of it
+ *            before that read is in (../dev-board/workshop/workshop.tsx
+ *            holds the skeleton until it is). A hub whose read failed draws
+ *            the hero without it (`data-ws-community-pending`): that counts.
  *
  * Only what the shell already says is read here; nothing is written into it
  * (./index.tsx Tour draws the wait). It is never a dead end: Skip and Back
@@ -80,6 +85,9 @@ export function appOpened(slug: string, frame: FrameState, view: StatusView, che
 
 /** Whether what a step waits for is so now, read from the page and the App tab's stores. */
 export function appReady(wait: AppWait, slug: string, doc: Pick<Document, 'querySelectorAll'> = document): boolean {
+  if (wait === 'hub') {
+    return doc.querySelectorAll('#app-content [data-ws-community], #app-content [data-ws-community-pending]').length > 0;
+  }
   if (wait === 'running') {
     return Array.from(doc.querySelectorAll(`.app-card[data-slug="${slug}"]`))
       .some((el) => tileSettled(el.getAttribute('data-status')));
