@@ -230,6 +230,32 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   }
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder, and every before shot of proposals 7608, 7871 and 7610 was
+// that placeholder, at the cost of half the agent's turn.
+test('the shots agent takes only the after side when the brief has afterOnly', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has afterOnly, the proposal builds the app's first real\s+screens/);
+  assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
+  assert.match(prompt, /create hints\.setup data on the after address only/);
+  assert.match(prompt, /A change is ready with its after shots\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+});
+
+// reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to
+// 10-12): a loading or error state no change declared, and a file to choose.
+test('the shots agent holds or fails an undeclared request, and chooses only sample files, both sides alike', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /declares no controlledFailurePath, call\s+control_request with the change, the exact API GET path and query the page\s+sends/);
+  assert.match(prompt, /mode "hold" for the loading\s+state or "fail" for the error/);
+  assert.match(prompt, /Shoot\s+both sides that way, then call it again with mode "off"/);
+  assert.match(prompt, /when the browser says a file chooser is open,\s+call upload_file with that browser, the change and the files from the\s+brief's sampleFiles/);
+  assert.match(prompt, /the same ones on both sides\. They are the only\s+files you can give a page/);
+  assert.match(prompt, /People see a line\s+beside the shots saying which request you held or made fail/);
+  // The declared failure keeps its own tool.
+  assert.match(prompt, /If a change declares intent\.controlledFailurePath, call fail_request/);
+});
+
 // Published shots showed defects nobody remarked on: a result table cut off
 // at the right edge on both screen sizes, a sort control over a column
 // heading. The agent notes those (note_problem), and only those.

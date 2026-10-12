@@ -3008,6 +3008,11 @@ test('the work order explains declared changes for before/after shots, and nothi
     assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
       `${label}: and the direct shape when it is not`);
     assert.match(order, /blocker/, `${label}: a state that cannot be reached is reported, not declared none`);
+    // Most states the copies lacked were new in the proposal itself (22 failed
+    // runs and 13 skipped changes, 2026-10-09 to 10-12): it seeds them.
+    assert.match(order, /seed(?:ed)? (?:it )?in this\s+change[\s\S]{0,120}the seed reaches the after copy, the side a new\s+state\s+needs/,
+      `${label}: a state the copies lack is seeded in the same change`);
+    assert.match(order, /neither reached nor seeded/, `${label}: only then is it a blocker`);
     assert.match(order, /one to three(\s+)declared(\s+)changes/, `${label}: declared changes`);
     assert.match(order, /intent\.controlledFailurePath/, `${label}: the controlled failure stays`);
     assert.match(order, /"Controlled test: deliberately block the declared API GET on\s+both revisions\."/);

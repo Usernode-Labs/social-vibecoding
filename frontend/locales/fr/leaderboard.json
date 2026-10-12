@@ -1003,6 +1003,234 @@
     "text": "{{release}}.",
     "source": "9f8e3da4697beb42277c50aeaaf7a94245facaa86d455509d0e1d1aa8199baac"
   },
+  "eventBar.datesTakingPart_many": {
+    "text": "{{start}} – {{end}} · {{count}} participants",
+    "source": "0fa1bc52b91cf91aa82b7bf85c5fd81806e8e09b2288ac858d8fc920506fbcba"
+  },
+  "eventBar.datesTakingPart_one": {
+    "text": "{{start}} – {{end}} · {{count}} participant",
+    "source": "0fa1bc52b91cf91aa82b7bf85c5fd81806e8e09b2288ac858d8fc920506fbcba"
+  },
+  "eventBar.datesTakingPart_other": {
+    "text": "{{start}} – {{end}} · {{count}} participants",
+    "source": "0fa1bc52b91cf91aa82b7bf85c5fd81806e8e09b2288ac858d8fc920506fbcba"
+  },
+  "challenges.group.meta.allDone_many": {
+    "text": "{{done}}/{{count}} terminés",
+    "source": "3b31b7eb62ee55d8423abf6b46b6ae772eb24dcf308eef9f51e767777575c27c"
+  },
+  "challenges.group.meta.allDone_one": {
+    "text": "{{done}}/{{count}} terminé",
+    "source": "3b31b7eb62ee55d8423abf6b46b6ae772eb24dcf308eef9f51e767777575c27c"
+  },
+  "challenges.group.meta.allDone_other": {
+    "text": "{{done}}/{{count}} terminés",
+    "source": "3b31b7eb62ee55d8423abf6b46b6ae772eb24dcf308eef9f51e767777575c27c"
+  },
+  "challenges.timeLeft.hours_many": {
+    "text": "{{count}}\\u00a0h restantes",
+    "source": "baddc4d8eb0941b5ea118acc6a91b45386a423589bf9081163181e780e112165"
+  },
+  "challenges.timeLeft.hours_one": {
+    "text": "{{count}}\\u00a0h restante",
+    "source": "baddc4d8eb0941b5ea118acc6a91b45386a423589bf9081163181e780e112165"
+  },
+  "challenges.timeLeft.hours_other": {
+    "text": "{{count}}\\u00a0h restantes",
+    "source": "baddc4d8eb0941b5ea118acc6a91b45386a423589bf9081163181e780e112165"
+  },
+  "challenges.timeLeft.days_many": {
+    "text": "{{count}}\\u00a0j restants",
+    "source": "03844c3e95de2b1a76009f66b41ac5127053f28d121ec482397db36d755e17e5"
+  },
+  "challenges.timeLeft.days_one": {
+    "text": "{{count}}\\u00a0j restant",
+    "source": "03844c3e95de2b1a76009f66b41ac5127053f28d121ec482397db36d755e17e5"
+  },
+  "challenges.timeLeft.days_other": {
+    "text": "{{count}}\\u00a0j restants",
+    "source": "03844c3e95de2b1a76009f66b41ac5127053f28d121ec482397db36d755e17e5"
+  },
+  "challenges.points_many": {
+    "text": "{{points}}\\u00a0pts",
+    "source": "229a5329505f8e1b9d4088656355ae666cb74f2139bba6a0fc9ebc126b5c4b38"
+  },
+  "challenges.points_one": {
+    "text": "{{points}}\\u00a0pts",
+    "source": "229a5329505f8e1b9d4088656355ae666cb74f2139bba6a0fc9ebc126b5c4b38"
+  },
+  "challenges.points_other": {
+    "text": "{{points}}\\u00a0pts",
+    "source": "229a5329505f8e1b9d4088656355ae666cb74f2139bba6a0fc9ebc126b5c4b38"
+  },
+  "challenges.earned_many": {
+    "text": "{{points}}\\u00a0pts gagnés",
+    "source": "44dcb08a9fdabbc97ce942839a53bb589d6410996aa5f5741bc509b683bff8cb"
+  },
+  "challenges.earned_one": {
+    "text": "{{points}}\\u00a0pts gagnés",
+    "source": "44dcb08a9fdabbc97ce942839a53bb589d6410996aa5f5741bc509b683bff8cb"
+  },
+  "challenges.earned_other": {
+    "text": "{{points}}\\u00a0pts gagnés",
+    "source": "44dcb08a9fdabbc97ce942839a53bb589d6410996aa5f5741bc509b683bff8cb"
+  },
+  "challenges.soFar_many": {
+    "text": "{{points}}\\u00a0pts jusqu’ici",
+    "source": "6cf89a95a95dc7b58563a46650a81fe1548ad591cdbcad580fdb36135627b352"
+  },
+  "challenges.soFar_one": {
+    "text": "{{points}}\\u00a0pts jusqu’ici",
+    "source": "6cf89a95a95dc7b58563a46650a81fe1548ad591cdbcad580fdb36135627b352"
+  },
+  "challenges.soFar_other": {
+    "text": "{{points}}\\u00a0pts jusqu’ici",
+    "source": "6cf89a95a95dc7b58563a46650a81fe1548ad591cdbcad580fdb36135627b352"
+  },
+  "challenges.locked.title_many": {
+    "text": "{{count}} défis se débloquent après Premiers pas",
+    "source": "b1697d11e0539528a9f84c73201a04e9b1f56ff7f988c7f26805a73eef659f7e"
+  },
+  "challenges.locked.title_one": {
+    "text": "{{count}} défi se débloque après Premiers pas",
+    "source": "31a1bbbb050d61254f796c9efc532e74b36f2ce49769742a8455f5a5594b6fa2"
+  },
+  "challenges.locked.title_other": {
+    "text": "{{count}} défis se débloquent après Premiers pas",
+    "source": "b1697d11e0539528a9f84c73201a04e9b1f56ff7f988c7f26805a73eef659f7e"
+  },
+  "challenges.locked.namesAndMore_many": {
+    "text": "{{names}} et {{count}} autres",
+    "source": "62c152bb12b517f5da08c0a0106f5c6a348fd6c4a47481fde8fed3188c443086"
+  },
+  "challenges.locked.namesAndMore_one": {
+    "text": "{{names}} et {{count}} autre",
+    "source": "62c152bb12b517f5da08c0a0106f5c6a348fd6c4a47481fde8fed3188c443086"
+  },
+  "challenges.locked.namesAndMore_other": {
+    "text": "{{names}} et {{count}} autres",
+    "source": "62c152bb12b517f5da08c0a0106f5c6a348fd6c4a47481fde8fed3188c443086"
+  },
+  "progress.plain_many": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés</1>",
+    "source": "9ab7b605c87734836b3aa1855285798f3b994aa18de68f0c4170c43694de99b3"
+  },
+  "progress.plain_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminé</1>",
+    "source": "9ab7b605c87734836b3aa1855285798f3b994aa18de68f0c4170c43694de99b3"
+  },
+  "progress.plain_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés</1>",
+    "source": "9ab7b605c87734836b3aa1855285798f3b994aa18de68f0c4170c43694de99b3"
+  },
+  "progress.plainLabel_many": {
+    "text": "{{done}} sur {{count}} terminés",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "progress.plainLabel_one": {
+    "text": "{{done}} sur {{count}} terminé",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "progress.plainLabel_other": {
+    "text": "{{done}} sur {{count}} terminés",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "progress.first_many": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans Premiers défis</1>",
+    "source": "a8a7b846a3657e7df9cbdafa5c38bbe41af870cb6e823285bb27846a0b94d6a9"
+  },
+  "progress.first_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminé dans Premiers défis</1>",
+    "source": "a8a7b846a3657e7df9cbdafa5c38bbe41af870cb6e823285bb27846a0b94d6a9"
+  },
+  "progress.first_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans Premiers défis</1>",
+    "source": "a8a7b846a3657e7df9cbdafa5c38bbe41af870cb6e823285bb27846a0b94d6a9"
+  },
+  "progress.firstLabel_many": {
+    "text": "{{done}} sur {{count}} terminés dans Premiers défis",
+    "source": "707b0470673a668b25e37b11671fcd70f6460b77bdfb06824160270b38ac9325"
+  },
+  "progress.firstLabel_one": {
+    "text": "{{done}} sur {{count}} terminé dans Premiers défis",
+    "source": "707b0470673a668b25e37b11671fcd70f6460b77bdfb06824160270b38ac9325"
+  },
+  "progress.firstLabel_other": {
+    "text": "{{done}} sur {{count}} terminés dans Premiers défis",
+    "source": "707b0470673a668b25e37b11671fcd70f6460b77bdfb06824160270b38ac9325"
+  },
+  "progress.season_many": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans {{season}}</1>",
+    "source": "1e2625d163035d17f6a43663e6d09ad4582b8db35b8b410473913b37f3d8777f"
+  },
+  "progress.season_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminé dans {{season}}</1>",
+    "source": "1e2625d163035d17f6a43663e6d09ad4582b8db35b8b410473913b37f3d8777f"
+  },
+  "progress.season_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans {{season}}</1>",
+    "source": "1e2625d163035d17f6a43663e6d09ad4582b8db35b8b410473913b37f3d8777f"
+  },
+  "progress.seasonLabel_many": {
+    "text": "{{done}} sur {{count}} terminés dans {{season}}",
+    "source": "bc203496dee38ed5ce2df945f483c890374e229f6fce2b855459f32eccb3eb7c"
+  },
+  "progress.seasonLabel_one": {
+    "text": "{{done}} sur {{count}} terminé dans {{season}}",
+    "source": "bc203496dee38ed5ce2df945f483c890374e229f6fce2b855459f32eccb3eb7c"
+  },
+  "progress.seasonLabel_other": {
+    "text": "{{done}} sur {{count}} terminés dans {{season}}",
+    "source": "bc203496dee38ed5ce2df945f483c890374e229f6fce2b855459f32eccb3eb7c"
+  },
+  "progress.event_many": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans cet événement</1>",
+    "source": "3f843ebefd8bd07f925a38c11fb29d62c47bd56875f83b44620548ec4ab53f2f"
+  },
+  "progress.event_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminé dans cet événement</1>",
+    "source": "3f843ebefd8bd07f925a38c11fb29d62c47bd56875f83b44620548ec4ab53f2f"
+  },
+  "progress.event_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>terminés dans cet événement</1>",
+    "source": "3f843ebefd8bd07f925a38c11fb29d62c47bd56875f83b44620548ec4ab53f2f"
+  },
+  "progress.eventLabel_many": {
+    "text": "{{done}} sur {{count}} terminés dans cet événement",
+    "source": "4bc066db813172718ba9b4cde16e0adcaae29110fcba451fa616aba1b8257cc9"
+  },
+  "progress.eventLabel_one": {
+    "text": "{{done}} sur {{count}} terminé dans cet événement",
+    "source": "4bc066db813172718ba9b4cde16e0adcaae29110fcba451fa616aba1b8257cc9"
+  },
+  "progress.eventLabel_other": {
+    "text": "{{done}} sur {{count}} terminés dans cet événement",
+    "source": "4bc066db813172718ba9b4cde16e0adcaae29110fcba451fa616aba1b8257cc9"
+  },
+  "challenges.detail.participantsCount_many": {
+    "text": "Participants · {{number}}",
+    "source": "fd07d0545702b3a4988fc53062a13f3fbba81d16d44476c04930f8968efa3e8a"
+  },
+  "challenges.detail.participantsCount_one": {
+    "text": "Participants · {{number}}",
+    "source": "fd07d0545702b3a4988fc53062a13f3fbba81d16d44476c04930f8968efa3e8a"
+  },
+  "challenges.detail.participantsCount_other": {
+    "text": "Participants · {{number}}",
+    "source": "fd07d0545702b3a4988fc53062a13f3fbba81d16d44476c04930f8968efa3e8a"
+  },
+  "challenges.detail.pointsBetween_many": {
+    "text": "{{points}} pts à eux tous",
+    "source": "0754f626b0087be5689f8aa967d294779383b345204f606f85a08c12db7d6aad"
+  },
+  "challenges.detail.pointsBetween_one": {
+    "text": "{{points}} pt à eux tous",
+    "source": "0754f626b0087be5689f8aa967d294779383b345204f606f85a08c12db7d6aad"
+  },
+  "challenges.detail.pointsBetween_other": {
+    "text": "{{points}} pts à eux tous",
+    "source": "0754f626b0087be5689f8aa967d294779383b345204f606f85a08c12db7d6aad"
+  },
   "challenges.detail.showAll_many": {
     "text": "Tout afficher ({{number}}) →",
     "source": "d47ae2ef21cdcc9859ec2036f9168ba1724ef649f911188c2f6f91b2908a4213"

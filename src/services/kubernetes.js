@@ -557,18 +557,22 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-// Previews and apps prefer to run near their database: first in the CNPG
-// primary's zone, then on its host. A page makes many sequential queries, so
-// a pod in another data centre pays that round trip on every one. When the
-// only preference was the primary's HOST, a full host left every other node
-// equally good, and previews landed in Falkenstein while the database ran in
-// Helsinki: those previews took a third longer to check, and 8 of 10 runs
-// there failed 60 to 240 checks on data that arrived too late (2026-10-01,
-// sessions 5588, 5664 and 5674).
+// Previews and apps prefer to run in the CNPG primary's zone. A page makes
+// many sequential queries, so a pod in another data centre pays that round
+// trip on every one: previews that landed in Falkenstein while the database
+// ran in Helsinki took a third longer to check, and 8 of 10 runs there failed
+// 60 to 240 checks on data that arrived too late (2026-10-01, sessions 5588,
+// 5664 and 5674).
 //
-// Both are preferences, so other eligible nodes stay available when the zone
+// The preference stops at the zone. A second term for the primary's own HOST
+// saves nothing a page can measure inside one data centre, and it piled the
+// fleet onto one node: on 2026-10-12 that node ran 100 of 209 app pods at the
+// kubelet's 110-pod limit while its three zone neighbours ran 25 to 43, so
+// losing it would have taken the database primary and half the apps together.
+//
+// It is a preference, so other eligible nodes stay available when the zone
 // is full. A node without `topology.kubernetes.io/zone` matches no zone, so
-// a cluster whose nodes carry no zone labels keeps the host preference alone.
+// a cluster whose nodes carry no zone labels gets normal placement.
 // Select the primary role, not a Pod/node name, so new scheduling follows
 // CNPG failover without moving already-running pods.
 function databaseAffinity(cfg, environment) {
@@ -586,7 +590,6 @@ function databaseAffinity(cfg, environment) {
       podAffinity: {
         preferredDuringSchedulingIgnoredDuringExecution: [
           { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
-          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
         ],
       },
     },

@@ -316,7 +316,8 @@ test('the create route links a Mayor\'s change to its session, and only then', (
   // slot is reclaimed so a choice that cannot run has no side effects.
   assert.match(create, /!explicitAgent && agentSessionId\s*\? await agentSessions\.getAgentChoice\(pool, agentSessionId\)/);
   assert.match(create, /resolveExplicitAgentPreference\(pool, req\.user\.id, config, conversationChoice\)/);
-  assert.ok(create.indexOf('conversationChoice') < create.indexOf('sessionLifecycle.freeGlobalSlot'));
+  assert.ok(create.indexOf('sessionLifecycle.claimGlobalSlot') > 0, 'the platform-wide gate is in the create route');
+  assert.ok(create.indexOf('conversationChoice') < create.indexOf('sessionLifecycle.claimGlobalSlot'));
 });
 
 test('the merge and archive paths tell the parent session', () => {

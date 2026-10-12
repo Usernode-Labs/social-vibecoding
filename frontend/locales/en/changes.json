@@ -5263,6 +5263,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots was interrupted. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
   },
+  "badge.reason.shots.retryingFaultDetail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+  },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after shots of the current proposal commit.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
@@ -5699,6 +5703,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Sentence under \"Trying the shots again\" on a proposal's shots card. Homeroom is the product's name."
   },
+  "shots.state.retryingFault.detail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Sentence under \"Trying the shots again\" on a proposal's shots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+  },
   "shots.state.couldNot.label": {
     "text": "Couldn’t take the shots",
     "description": "Heading of the shots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
@@ -5794,6 +5802,10 @@
   "shots.sentence.retrying": {
     "text": "Trying the shots again. Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots was interrupted and starts again by itself. Homeroom is the product's name."
+  },
+  "shots.sentence.retryingFault": {
+    "text": "Trying the shots again. Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the shots. The shots agent could not take the before & after shots.",
@@ -5970,6 +5982,14 @@
   "shots.card.introClips": {
     "text": "Taken on the exact before and after builds of this proposal. Look at the shots and clips to decide whether they show the change.",
     "description": "Opening line of a proposal's shots card, above the before/after viewer, when it holds short video clips as well as screenshots."
+  },
+  "shots.card.introNewApp": {
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens: before it there was only the starter template's placeholder screen, so only screenshots after the change were taken."
+  },
+  "shots.card.introNewAppClips": {
+    "text": "New app: nothing before. This proposal builds the app’s first real screens, so these are its after shots and clips only. Look at them to decide whether they show the change.",
+    "description": "Opening line of a proposal's shots card, above the viewer, when the proposal builds a new app's first real screens and the card holds short video clips as well as screenshots: before it there was only the starter template's placeholder screen, so only the after side was recorded."
   },
   "shots.card.label": {
     "text": "Before & after",
@@ -6271,6 +6291,18 @@
     "text": "<0>Not in these shots:</0> {{note}}",
     "description": "Note under a declared change on a proposal's shots card. {{note}} is what the shots agent wrote about the part of the change its screenshots do not show. The tags make the lead-in bold."
   },
+  "shots.claim.requestHeld": {
+    "text": "<0>Controlled test:</0> the shots agent kept {{request}} waiting on both builds, to show it loading.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately left unanswered on both the version before and the version after the proposal, so that its loading state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.requestFailed": {
+    "text": "<0>Controlled test:</0> the shots agent made {{request}} fail on both builds, to show what happens when it does.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately made to fail on both the version before and the version after the proposal, so that its error state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.sampleFile": {
+    "text": "<0>Sample file:</0> the shots agent uploaded {{files}} on both builds, from Homeroom's own sample files.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots show the app after a file was uploaded into it, the same on the version before and the version after the proposal. {{files}} is the list of file names, for example \"landscape.png and table.csv\"; the files are made-up pictures, a table and a document that Homeroom provides for this. The tags make the lead-in bold."
+  },
   "shots.clip.beforeCaption": {
     "text": "Before clip · {{size}}",
     "description": "Caption over a short video of a declared change as it was before the proposal. {{size}} is the screen size it was recorded at, for example \"desktop\"."
@@ -6310,6 +6342,10 @@
   "shots.screen.noShot": {
     "text": "No shot",
     "description": "Placeholder in the before/after viewer where one side has no screenshot."
+  },
+  "shots.screen.nothingBefore": {
+    "text": "New app: nothing before",
+    "description": "Shown in the before/after viewer in place of the screenshot before the change, when the change builds a new app's first real screens: before it the app had only the starter template's placeholder screen, so there is no before."
   },
   "shots.screen.altAfter": {
     "text": "After: {{changes}}",

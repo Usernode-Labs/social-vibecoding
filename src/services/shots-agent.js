@@ -122,6 +122,13 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+When the brief has afterOnly, the proposal builds the app's first real
+screens and the before address still shows only the starter template's
+placeholder, which has none of the declared changes. Then there is no
+before to take: leave out step 7 and the before clip, do not open the
+before address at all, create hints.setup data on the after address only,
+and save after shots alone. A change is ready with its after shots.
+
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:
 add the query parameter named by previewAt.param, set to previewAt.at, to
@@ -154,6 +161,21 @@ in the phone browser, so the strip shows as it does on a member's phone.
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.
+
+If a change shows a loading or error state that the steps alone do not
+reach (a skeleton or spinner that shows only while a request is on its way,
+an error only when one fails) and it declares no controlledFailurePath, call
+control_request with the change, the exact API GET path and query the page
+sends (browser_network_requests lists them), and mode "hold" for the loading
+state or "fail" for the error, just before the step that sends it. Shoot
+both sides that way, then call it again with mode "off". People see a line
+beside the shots saying which request you held or made fail.
+
+If a change's steps choose a file (a photo, a spreadsheet, a document), click
+the page's upload control; when the browser says a file chooser is open,
+call upload_file with that browser, the change and the files from the
+brief's sampleFiles that fit, the same ones on both sides. They are the only
+files you can give a page. People see a line beside the shots naming them.
 
 If your shots show the change but not everything the claim says, for example
 part of it needs data these copies do not have, keep them and call
@@ -199,7 +221,8 @@ on other screens; note what you see on the way.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of
-each side for motion changes), or skip a change you cannot reach and say why.`;
+each side for motion changes), or skip a change you cannot reach and say why.
+When the brief has afterOnly, save the after side only.`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;

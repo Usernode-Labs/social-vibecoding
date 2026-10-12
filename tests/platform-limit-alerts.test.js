@@ -150,7 +150,7 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         if (countError) throw countError;
         return { rows: [{ n: apps }] };
       }
-      if (/FROM chat_sessions/.test(sql)) return { rows: [{ n: sessions }] };
+      if (/FROM chat_sessions/.test(sql)) return { rows: [{ cnt: sessions }] };
       // services/app-limit.js: the admin's app limit, when one is stored.
       if (/FROM platform_settings s/.test(sql)) {
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
@@ -232,13 +232,14 @@ test('each cap counts exactly what its enforcing route counts', async () => {
   const pool = fakePool({ sessions: 10 });
   await limits.evaluate(pool, CONFIG, 'sessions', recorder().deps);
   const count = pool.state.queries.find((q) => /FROM chat_sessions/.test(q.sql)).sql;
-  // routes/sessions.js's global-cap probe.
+  // The one count every start, resume and reopen asks (session-caps.js),
+  // not a copy of it.
+  assert.equal(count, collapse(require('../src/services/session-caps').GLOBAL_SESSIONS_SQL));
   assert.match(count, /status IN \('active', 'promoted'\)/);
   assert.match(count, /source IS DISTINCT FROM 'imported'/);
-  assert.match(count, /is_synthetic = TRUE/);
-  const routes = collapse(read('src/routes/sessions.js'));
-  assert.ok(routes.includes("AND source IS DISTINCT FROM 'imported' AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)"),
-    'the sessions route still counts the same way');
+  assert.doesNotMatch(count, /is_synthetic/, 'synthetic users\' sessions count');
+  assert.match(read('src/services/session-lifecycle.js'), /const \{ countGlobalSessions \} = require\('\.\/session-caps'\);/,
+    'the gate the routes pass counts the same way');
   const apps = collapse(read('src/routes/apps.js'));
   assert.ok(apps.includes("SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'"),
     'the apps route still counts the same way');

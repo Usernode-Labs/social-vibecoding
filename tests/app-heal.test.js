@@ -44,6 +44,7 @@ function freshFixtures() {
     respawnCalls: [],
     respawnResult: 'respawned-id',
     deploying: false,
+    appDeleted: false,
     queries: [],
     poolRows: [],
     githubEnabled: true,
@@ -65,6 +66,7 @@ const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
     if (/SELECT \* FROM apps/.test(sql)) return { rows: fx.poolRows };
+    if (/SELECT 1 FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{}] };
     return { rows: [] };
   },
 };
@@ -202,6 +204,46 @@ test('failed Kubernetes recovery retains cooldown and does not persist success',
   assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'heal_failed');
   assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'cooldown');
   assert.equal(fx.queries.some(q => /UPDATE apps SET container_id/.test(q.sql)), false);
+});
+
+// 2026-10-05, flat-4b-chores-e98ecd: a test account was retired, the teardown
+// removed the Deployment and spent 30 seconds dropping the database, and the
+// sweep saw a running app with no runtime and rebuilt it. The row was deleted
+// under the rebuild, and the Deployment crash-looped for a week.
+test('an app being taken down is not healed', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  const teardown = require('../src/services/app-teardown');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+  t.mock.method(teardown, 'isTearingDown', (slug) => slug === 'puzzle-chain');
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  assert.equal(result.status, 'deleting');
+  assert.deepEqual(fx.rebuildCalls, []);
+  assert.deepEqual(fx.respawnCalls, []);
+});
+
+for (const outcome of ['rebuilt', 'heal_failed']) {
+  test(`an app deleted during a recovery keeps no runtime (${outcome})`, async (t) => {
+    const kube = require('../src/services/kubernetes');
+    t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+    const removed = [];
+    t.mock.method(kube, 'deleteApplication', async (cfg, name) => { removed.push(name); });
+    const buildsRemoved = [];
+    t.mock.method(kube, 'deleteBuilds', async (cfg, appId) => { buildsRemoved.push(appId); });
+    fx.appDeleted = true;
+    if (outcome === 'heal_failed') fx.rebuildError = new Error('Timed out waiting for Deployment');
+    const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+    assert.equal(result.status, outcome);
+    assert.deepEqual(removed, ['sv-app-1-puzzle-chain']);
+    assert.deepEqual(buildsRemoved, [1]);
+  });
+}
+
+test('a recovery leaves the runtime of an app that still exists', async (t) => {
+  const kube = require('../src/services/kubernetes');
+  t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
+  t.mock.method(kube, 'deleteApplication', () => assert.fail('runtime removed'));
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  assert.equal(result.status, 'rebuilt');
 });
 
 test('running container is healthy — nothing touched', async () => {
