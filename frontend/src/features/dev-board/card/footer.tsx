@@ -9,6 +9,7 @@
 import type { ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { getLanguage } from '../../../lib/i18n/runtime';
 import type { FooterSpec } from './model';
 
 function callAppView(fn: string): void {
@@ -24,7 +25,7 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
   if (f.kind === 'showAll') {
     return (
       <button type="button" className="dev-ws-reveal dev-kanban-more" onClick={() => callAppView('showAllDone')}>
-        {t('project:kanban.footer.showAll', { count: f.n, number: f.n.toLocaleString('en-US') })}
+        {t('project:kanban.footer.showAll', { count: f.n, number: f.n.toLocaleString(getLanguage()) })}
       </button>
     );
   }
@@ -34,7 +35,7 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
         {f.loading
           ? t('project:kanban.footer.loading')
           : (f.n != null
-            ? t('project:kanban.footer.loadMoreCount', { count: f.n, number: f.n.toLocaleString('en-US') })
+            ? t('project:kanban.footer.loadMoreCount', { count: f.n, number: f.n.toLocaleString(getLanguage()) })
             : t('project:kanban.footer.loadMore'))}
       </button>
     );
