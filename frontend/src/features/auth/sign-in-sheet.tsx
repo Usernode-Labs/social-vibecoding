@@ -72,11 +72,18 @@
  *
  * ── The way out to "What do you want to make?" ─────────────────────────
  *
- * When a sign-in leads to the account's first session, the story hands
- * this sheet `handOff` from its `beforeFinish`. The sheet slides away while
- * the wallpaper the make screen stands on comes up behind it, and only then
- * does the shell sign in, opening that screen in the same tick
+ * When a sign-in leads to the account's first session, the story's
+ * `beforeFinish` answers true and the sheet hands off to that screen
+ * (`handOff`). It stays up first, its button busy with a spinner, until the
+ * make screen is ready to draw: the session confirmed and the page staying
+ * on its build (AuthScreens.finishLogin's `beforeShell`). Only then does it
+ * slide away while the wallpaper the make screen stands on comes up behind
+ * it, and the shell signs in, opening that screen in the same tick
  * (../first-session/index.tsx), so nothing of Home shows between the two.
+ * It used to leave before the session read, and the wallpaper alone stood
+ * there, a blank page, for as long as the read took (iPhone 17 simulator,
+ * iOS 26.5 Safari, 12 Oct 2026, #4892). The invite's "You're in" holds its
+ * frame the same way (App._followInvite, holdWelcome).
  * Transform and opacity only, with no delay, so a busy main thread cannot
  * hold the movement back on iOS; with reduced motion it is a cut.
  *
@@ -135,7 +142,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
+import { AppleIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
@@ -269,6 +276,16 @@ export const HAND_OFF_MS = 240;
 // the panel's slide down and the dim's fade (200ms), and a frame. Dropped at
 // once, it was gone in a frame while it had slid up (iOS app, 5 Oct 2026).
 export const CLOSE_MS = 240;
+
+/**
+ * The spinner on Continue while it finishes a new account: the account is
+ * saved, and a sheet bound for the make screen then waits there, up and
+ * busy, until that screen is ready to draw (#4892). The label beside it
+ * says "Finishing…".
+ */
+function FinishingSpinner() {
+  return <SpinnerArcIcon className="mr-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
+}
 
 /**
  * Whether the sheet may put the caret in a step's field by itself. On a
@@ -495,11 +512,11 @@ export type SignInSheetProps = {
   /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
-   * just set its password (in practice, one the code just made).
-   * `handOff` sends the sheet on its way to the make screen; it resolves
-   * once the sheet has gone.
+   * just set its password (in practice, one the code just made). Answers
+   * whether the sign-in leads to the make screen: the sheet then stays up,
+   * busy, until the shell is ready to draw it, and hands off to it then.
    */
-  beforeFinish?: (kind: 'existing' | 'new', handOff: () => Promise<void>) => void | Promise<void>;
+  beforeFinish?: (kind: 'existing' | 'new') => boolean | Promise<boolean>;
   onClose: () => void;
   primaryClass: string;
 };
@@ -773,7 +790,8 @@ export function SignInSheet({
   }, [open, releaseToken, releaseSignIn, requestCode]);
 
   // Away to the make screen: the panel goes down while the wallpaper comes
-  // up behind it. Resolves once that has had its time.
+  // up behind it. Resolves once that has had its time. Run by the shell's
+  // sign-in once that screen is ready to draw (`finish` below).
   const handOff = useCallback((): Promise<void> => {
     // The keys go down with the sheet (#4597): Continue kept the caret in
     // its field (HOLD_FIELD_FOCUS), and the make screen opens whole, its
@@ -786,12 +804,16 @@ export function SignInSheet({
   }, []);
 
   // Every sign-in ends here: what the screen that opened the sheet does
-  // first (`beforeFinish`), then the shell's own sign-in. A session the
-  // shell cannot confirm brings the sheet back with the notice that says so.
+  // first (`beforeFinish`), then the shell's own sign-in. Bound for the make
+  // screen, the sheet stays up, busy, through the session read and hands off
+  // only once the shell is about to draw it (`beforeShell`): leaving first
+  // left the bare wallpaper up for as long as the read took (#4892). A
+  // session the shell cannot confirm leaves the sheet where it is, with the
+  // notice that says so.
   const finish = useCallback(async (kind: 'existing' | 'new') => {
     clearConfirmation();
-    await beforeFinish?.(kind, handOff);
-    const opened = await confirmSession();
+    const toMake = (await beforeFinish?.(kind)) === true;
+    const opened = await confirmSession(toMake ? handOff : undefined);
     if (!opened) setLeaving(false);
   }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
   finishRef.current = finish;
@@ -1264,7 +1286,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.providerUsernamePlaceholder')} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.username.finishing') : t('auth:signInSheet.username.submit')}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.username.finishing')}</> : t('auth:signInSheet.username.submit')}</button>
           </form>
         ) : null}
 
@@ -1323,7 +1345,7 @@ export function SignInSheet({
                 <PasswordInput ref={passwordField} id="sign-in-sheet-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" placeholder={t('auth:signInSheet.account.passwordPlaceholder')} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.account.finishing') : t('auth:signInSheet.account.submit')}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
 

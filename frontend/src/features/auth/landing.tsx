@@ -587,22 +587,19 @@ const CHIPS: readonly { line: string; dot: string }[] = [
  * yet (one an admin made, say, through the password step, or one that saw
  * it, left without answering and is signing in again); the join step opens
  * its make screen in the same tick the shell starts
- * (./communities-first-run.js). Either way the sheet hands off to that
- * screen (`handOff`) while this runs, so the two read as one movement.
- * Recording the start answers nothing: the question is asked until Make it
- * or "Look around first". Anyone else goes where they always have, with no
- * hand-off.
+ * (./communities-first-run.js). Either way this answers true and the sheet
+ * hands off to that screen, once the shell is ready to draw it (#4892), so
+ * the two read as one movement. The start is recorded before the shell
+ * starts, with the sheet still up, so the join step's own record comes
+ * second. Recording the start answers nothing: the question is asked until
+ * Make it or "Look around first". Anyone else goes where they always have,
+ * with no hand-off.
  */
-export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
-  if (kind !== 'new') {
-    if (await firstSessionNext()) await handOff();
-    return;
-  }
+export async function startedFromStory(kind: 'existing' | 'new'): Promise<boolean> {
+  if (kind !== 'new') return firstSessionNext();
   try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
-  await Promise.all([
-    fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {}),
-    handOff(),
-  ]);
+  await fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  return true;
 }
 
 export function LandingScreen() {
