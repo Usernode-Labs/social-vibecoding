@@ -52,9 +52,14 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
   await admin.query(`CREATE DATABASE ${dbName}`);
   const url = new URL(DSN); url.pathname = '/' + dbName;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // pool.end() resolves before its sockets have closed; a connection cut
+  // while it closes reports to the pool, not to a test.
+  pool.on('error', () => {});
   t.after(async () => {
     await pool.end();
-    await admin.query(`DROP DATABASE ${dbName} WITH (FORCE)`);
+    // A plain DROP waits for the pool's sockets to close; FORCE could cut
+    // one mid-shutdown and surface as an uncaught idle-client error.
+    await admin.query(`DROP DATABASE ${dbName}`);
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));

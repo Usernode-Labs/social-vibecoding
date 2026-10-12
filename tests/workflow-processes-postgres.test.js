@@ -39,6 +39,10 @@ test('workflow machines in a process of their own, and through its crash', { tim
   const url = new URL(DSN); url.pathname = '/' + dbName;
   const databaseUrl = String(url);
   const pool = new Pool({ connectionString: databaseUrl, max: 6 });
+  // pool.end() resolves before its sockets have closed, and the DROP below
+  // forces (the children's connections may outlive them): a connection cut
+  // while it closes reports to the pool, not as an uncaught error.
+  pool.on('error', () => {});
   // Registered first, so a failure from here on still drops the database.
   let workflow = null;
   let listener = null;
