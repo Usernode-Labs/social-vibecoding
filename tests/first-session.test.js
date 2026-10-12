@@ -335,7 +335,7 @@ test('2 and 8 of 8 cut out their screen with its header: the whole app, and the 
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /const pointed = !!\(step\.tap \|\| step\.ringed\);/);
   assert.match(src, /const hole = box && holeFor\(box, viewport, pointed && !step\.press \? RING : 0\);/);
-  assert.match(src, /const ring = hole && pointed && pressBox \? holeFor\(pressBox, viewport\) : null;/);
+  assert.match(src, /const ring = hole && pointed && pressBox && !waiting \? holeFor\(pressBox, viewport\) : null;/);
   // Only a tap step leaves its ring pressable; a step that only points at a
   // control ("Look around first") covers it, so a press stays in the tour.
   assert.match(src, /const covers = hole \? \(ring && step\.tap \? aroundBox\(hole, ring\) : \[hole\]\) : \[\];/);
@@ -1166,4 +1166,124 @@ test('the App tab\'s card says where the app opens, and carries the attribute th
   assert.ok(lookAroundSteps().every((s) => !s.saysWhereItOpens));
   const src = read(`${DIR}/index.tsx`);
   assert.match(src, /role="dialog"\s+aria-labelledby="first-session-tour-title"\s+data-tour-says-where-it-opens=\{step\.saysWhereItOpens \? '' : undefined\}/);
+});
+
+// #4900, onboarding run, 12 Oct 2026 (iPhone 17): the tour's first card asked
+// a newcomer to tap a tile still "Spinning up…", which a tap does nothing on,
+// and its second, "Restaurant Tier List opens here", stood over the app's
+// "Opening…" cover. The two steps that point at the app wait for it.
+test('#4900: the steps that point at the app wait for it, on every path that has them, and no others', () => {
+  const { makerSteps, invitedSteps, lookAroundSteps, privateSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const project = { slug: 'film', name: 'Friday Film Crew', conversationId: 12 };
+  for (const steps of [makerSteps(project), invitedSteps(project), privateSteps(project)]) {
+    assert.deepEqual(steps.map((s) => s.waitsFor || null), steps.map((s, i) => (i === 0 ? 'running' : i === 1 ? 'open' : null)));
+    assert.equal(steps[0].target, '.app-card[data-slug="film"]', 'the tile on Home');
+    assert.equal(steps[1].target, '#app-view', 'the app on its screen');
+  }
+  assert.ok(lookAroundSteps().every((s) => !s.waitsFor), '"Look around first" points at no app');
+  assert.equal(message('onboarding:firstSession.tour.wait.title', { app: 'Restaurant Tier List' }), 'Getting Restaurant Tier List ready…');
+  assert.equal(message('onboarding:firstSession.tour.wait.text'), 'The tour goes on as soon as it’s ready.');
+});
+
+test('#4900: what a waiting step waits for: a tile a tap opens, and an app past its loading screens', () => {
+  const wait = loadTsx(`${DIR}/tour-wait.ts`);
+  const { tileSettled, viewLoading, appOpened, appReady, WAIT_GRACE_MS, TOUR_WAIT_MAX_MS, WAIT_CHECK_MS, WAIT_POLL_MS } = wait;
+  // A tile opens once its app runs (home.js appView `clickable`); a setup
+  // that stopped is not loading either.
+  assert.deepEqual(['creating', 'running', 'error', 'awaiting_secrets', '', null, undefined].map(tileSettled),
+    [false, true, true, true, false, false, false]);
+  const tiles = (...statuses) => ({
+    querySelectorAll: (sel) => {
+      assert.equal(sel, '.app-card[data-slug="film"]', 'the step\'s own tile');
+      return statuses.map((status) => ({ getAttribute: (name) => (name === 'data-status' ? status : null) }));
+    },
+  });
+  assert.equal(appReady('running', 'film', tiles('creating')), false, '"Spinning up…"');
+  assert.equal(appReady('running', 'film', tiles('running')), true);
+  assert.equal(appReady('running', 'film', tiles()), false, 'not on Home yet');
+  const index = read('frontend/src/features/home/home.js');
+  assert.match(index, /clickable: isRunning \|\| isAwaiting,/, 'a tile opens only once its app runs');
+  assert.match(read('frontend/src/features/home/app-grid.tsx'), /data-status=\{app\.status\}/);
+
+  // The app on its screen: its frame, until its launch cover goes ("Opening…").
+  const checking = message('changes:appStatus.checking');
+  assert.equal(checking, 'Opening…');
+  const frame = (over) => ({ slug: 'film', active: true, cover: null, ...over });
+  assert.equal(appOpened('film', frame({ cover: { out: false } }), null, checking), false, 'its launch cover is up');
+  assert.equal(appOpened('film', frame({ cover: { out: true } }), null, checking), true, 'fading out');
+  assert.equal(appOpened('film', frame(), null, checking), true, 'the app itself');
+  // Without its frame, the App tab's own screens: loading ones wait, the rest do not.
+  const parked = frame({ active: false });
+  assert.equal(appOpened('film', parked, null, checking), false, 'nothing drawn yet');
+  assert.equal(appOpened('film', frame({ slug: 'other' }), null, checking), false, 'another app\'s frame');
+  const views = {
+    spinningUp: { dot: 'creating', message: 'App is spinning up...', detail: null, action: null },
+    checking: { dot: null, message: checking, detail: null, action: null },
+    firstVersion: { dot: null, message: 'Friday Film Crew', detail: null, tourSays: true, action: null },
+    secrets: { dot: 'creating', message: 'Awaiting required secrets.', detail: 'KEY', action: { key: 'secrets' } },
+    failed: { dot: 'error', message: 'App failed to start', detail: null, action: null },
+    sample: { dot: null, message: 'Preview sample app.', detail: null, action: null },
+  };
+  assert.deepEqual(Object.fromEntries(Object.entries(views).map(([k, v]) => [k, viewLoading(v, checking)])), {
+    spinningUp: true, checking: true, firstVersion: false, secrets: false, failed: false, sample: false,
+  });
+  assert.equal(appOpened('film', parked, views.firstVersion, checking), true, 'the first version being built is the screen the card is for');
+  assert.equal(appOpened('film', parked, views.checking, checking), false);
+  // Those are the App tab's own words and fields (public/js/app-view.js).
+  const appView = read('public/js/app-view.js');
+  assert.match(appView, /_firstVersionCheckingView\(\) \{\s+return \{ dot: null, message: PlatformI18n\.t\('changes:appStatus\.checking'\), detail: null, action: null \};/);
+  assert.match(appView, /return \{ dot: 'creating', message: PlatformI18n\.t\('changes:appStatus\.spinningUp'\), detail: null, action: null \};/);
+  assert.match(appView, /tourSays: true,/);
+  const src = read(`${DIR}/tour-wait.ts`);
+  assert.match(src, /return appOpened\(slug, appFrameStore\.get\(\), view, translate\('changes:appStatus\.checking'\)\);/);
+
+  // Never a dead end: a moment with no card, then the card that says so, and
+  // at most a minute before the step shows anyway.
+  assert.equal(WAIT_CHECK_MS, 150);
+  assert.equal(WAIT_GRACE_MS, 2500);
+  assert.ok(WAIT_GRACE_MS > 2000, 'longer than the app\'s own reveal cap (AppView.LAUNCH_REVEAL_CAP_MS)');
+  assert.match(appView, /LAUNCH_REVEAL_CAP_MS: 2000,/);
+  assert.equal(TOUR_WAIT_MAX_MS, 60000);
+  assert.equal(WAIT_POLL_MS, 2000);
+});
+
+test('#4900: the tour waits for the app before the step is painted, with Skip and Back, and never moves on from a press meanwhile', () => {
+  const src = read(`${DIR}/index.tsx`);
+  // Decided before paint, from what the step waits for.
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setWait\(step\.waitsFor && !appReady\(step\.waitsFor, info\.slug\) \? 'held' : null\);\s+\}, \[index, step, info\.slug\]\);/);
+  // Looked at again, said after a moment, and given up on after the cap.
+  assert.match(src, /if \(appReady\(kind, slug\)\) setWait\(null\);/);
+  assert.match(src, /const say = window\.setTimeout\(\(\) => setWait\(\(w\) => \(w === 'held' \? 'shown' : w\)\), WAIT_GRACE_MS\);/);
+  assert.match(src, /const cap = window\.setTimeout\(\(\) => setWait\(null\), TOUR_WAIT_MAX_MS\);/);
+  // A tile Home has not caught up on: the server is asked, and Home read again.
+  assert.match(src, /if \(live && tileSettled\(madeAppOf\(body\)\?\.status\) && !appReady\('running', slug\)\) legacy\(\)\.Home\?\.load\?\.\(\);/);
+  // Nothing ringed, the whole cut-out covered, and no tap moves it on.
+  assert.match(src, /if \(!step\.tap \|\| waiting\) return undefined;/);
+  assert.match(src, /const covers = hole \? \(ring && step\.tap \? aroundBox\(hole, ring\) : \[hole\]\) : \[\];/);
+  // Hidden for the moment, then the card: getting ready, Skip, and Back.
+  assert.match(src, /data-first-session-tour-wait=\{wait \|\| undefined\}\s+className=\{settling \|\| wait === 'held'\s+\? 'pointer-events-none [^']*opacity-0/);
+  const body = src.slice(src.indexOf('{waiting ? ('), src.indexOf('<p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>'));
+  assert.ok(body.length > 200, 'the waiting card is findable');
+  assert.match(body, /t\('onboarding:firstSession\.tour\.wait\.title', \{ app: info\.name \}\)/);
+  assert.match(body, /t\('onboarding:firstSession\.tour\.wait\.text'\)/);
+  assert.match(body, /onClick=\{skip\}/);
+  assert.match(body, /onClick=\{\(\) => go\(index - 1\)\}/);
+  assert.doesNotMatch(body, /pressTarget|go\(index \+ 1\)|data-first-session-tap/, 'nothing that leads on while it waits');
+  // At the foot, not beside a tile that cannot be opened yet.
+  assert.match(src, /const card = cardPlacement\(waiting \? null : box, step, viewport\);/);
+  // Drawn before any effect runs (the server render, a test), the step is as it was.
+  const { Tour } = loadTsx(`${DIR}/index.tsx`);
+  const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
+  const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
+  const before = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { innerWidth: 390, innerHeight: 844 };
+  globalThis.document = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] };
+  let html;
+  try {
+    html = renderToHtml(createElement(Tour, { info: { slug: 'film', name: 'Friday Film Crew', conversationId: 12 }, steps: makerSteps({ slug: 'film', name: 'Friday Film Crew' }), onEnd() {} }));
+  } finally {
+    for (const k of ['window', 'document']) { if (had[k]) globalThis[k] = before[k]; else delete globalThis[k]; }
+  }
+  assert.doesNotMatch(html, /data-first-session-tour-wait/);
+  assert.match(html, />Tap it<\/button>/);
 });

@@ -56,9 +56,9 @@ test('the made screen reads the project under `app`, past the service worker\'s 
   // runs it against the real route).
   const { madeAppOf, madeAppUrl, waitingPlan } = loadTsx(`${DIR}/made.tsx`);
   const fv = { step: 3, of: 7, line: 'plan', ready: false, plan: PLAN };
-  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running' });
+  assert.deepEqual(madeAppOf({ app: { status: 'running', first_version: fv } }), { firstVersion: fv, status: 'running', phase: null });
   assert.deepEqual(waitingPlan(madeAppOf({ app: { first_version: fv } }).firstVersion), PLAN);
-  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating' });
+  assert.deepEqual(madeAppOf({ app: { status: 'creating' } }), { firstVersion: null, status: 'creating', phase: null });
   assert.equal(madeAppOf({ first_version: fv, status: 'running' }), null, 'a bare record is not the route\'s answer');
   assert.equal(madeAppOf(null), null);
   assert.equal(madeAppOf({ error: 'App not found' }), null);
@@ -114,7 +114,8 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   // to say, and always in the plain card without one. The sketch's caption
   // calling it the real app is gone.
   assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
-  assert.match(src, /<p className="mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400">\{note\}<\/p>/);
+  // (A little lower while the setup's card stands in for its status line, #4900.)
+  assert.match(src, /<p className=\{settingUp \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);
   // The plain card's busy dot: not while it waits on them, nor on a setup that stopped (stalledOf).
   assert.match(src, /const busy = appStatus === 'creating' \|\| \(botBuilds && !\(fv && fv\.ready\) && !plan && !stalled\);/);

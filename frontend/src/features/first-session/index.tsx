@@ -64,6 +64,7 @@ import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { SpinnerRingIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { Wordmark } from '@/components/ui/wordmark';
 
@@ -80,6 +81,7 @@ import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { APP_MENU, BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
 import { setTourRunning } from './tour-running';
+import { appReady, tileSettled, TOUR_WAIT_MAX_MS, WAIT_CHECK_MS, WAIT_GRACE_MS, WAIT_POLL_MS } from './tour-wait';
 
 export type FirstSessionInfo = {
   slug: string;
@@ -523,6 +525,48 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     setSettling(false);
     setMeasured(measure(index, step));
   }, [index, step]);
+
+  // A step that points at the app waits for it (TourStep.waitsFor,
+  // ./tour-wait.ts), decided before the step is painted, so its card never
+  // stands over a tile that cannot be opened yet or the app's "Opening..."
+  // cover. `held`: no card for a moment (WAIT_GRACE_MS), as an app that
+  // opens as usual is there by then; `shown`: the card says it is getting
+  // ready, with Skip and Back. Nothing in the cut-out takes a press
+  // meanwhile, so a tap on a tile still being set up cannot move the tour on.
+  const [wait, setWait] = useState<'held' | 'shown' | null>(null);
+  const waiting = wait !== null;
+  useLayoutEffect(() => {
+    setWait(step.waitsFor && !appReady(step.waitsFor, info.slug) ? 'held' : null);
+  }, [index, step, info.slug]);
+  // Then look every WAIT_CHECK_MS until it is ready, and at most
+  // TOUR_WAIT_MAX_MS. Waiting on a tile, ask the server too, and read Home
+  // again once it says the setup is over: Home may have missed the news.
+  useEffect(() => {
+    const kind = step.waitsFor;
+    if (!waiting || !kind) return undefined;
+    const { slug } = info;
+    let live = true;
+    const check = window.setInterval(() => {
+      try { if (appReady(kind, slug)) setWait(null); } catch { /* looked at again */ }
+    }, WAIT_CHECK_MS);
+    const say = window.setTimeout(() => setWait((w) => (w === 'held' ? 'shown' : w)), WAIT_GRACE_MS);
+    const cap = window.setTimeout(() => setWait(null), TOUR_WAIT_MAX_MS);
+    const ask = kind === 'running' ? window.setInterval(() => {
+      fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (live && tileSettled(madeAppOf(body)?.status) && !appReady('running', slug)) legacy().Home?.load?.();
+        })
+        .catch(() => {});
+    }, WAIT_POLL_MS) : 0;
+    return () => {
+      live = false;
+      window.clearInterval(check);
+      window.clearTimeout(say);
+      window.clearTimeout(cap);
+      window.clearInterval(ask);
+    };
+  }, [waiting, index, step, info.slug]);
   // The move lasts its 200ms; following after it is frame by frame again.
   useEffect(() => {
     if (!moving) return undefined;
@@ -622,7 +666,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // card's hint (pressTarget). The press is not intercepted: it is the
   // product's own handler that navigates.
   useEffect(() => {
-    if (!step.tap) return undefined;
+    if (!step.tap || waiting) return undefined;
     const onClick = (e: MouseEvent) => {
       const t = e.target as Element | null;
       if (!t) return;
@@ -637,7 +681,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [step, index, steps, info.slug, info.conversationId, onEnd]);
+  }, [step, index, steps, info.slug, info.conversationId, onEnd, waiting]);
 
   const skip = useCallback(() => {
     enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
@@ -650,12 +694,15 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // cut-out runs to the screen's edges.
   const pointed = !!(step.tap || step.ringed);
   const hole = box && holeFor(box, viewport, pointed && !step.press ? RING : 0);
-  const ring = hole && pointed && pressBox ? holeFor(pressBox, viewport) : null;
+  // While a step waits for the app (`waiting`) nothing is ringed, and all of
+  // its cut-out is covered.
+  const ring = hole && pointed && pressBox && !waiting ? holeFor(pressBox, viewport) : null;
   // Presses reach only a tap step's control: a step that only shows its
   // screen, or points at a control, covers all of its cut-out, and a tap
   // step all of it but the ring.
   const covers = hole ? (ring && step.tap ? aroundBox(hole, ring) : [hole]) : [];
-  const card = cardPlacement(box, step, viewport);
+  // A card that says the app is getting ready stands at the foot.
+  const card = cardPlacement(waiting ? null : box, step, viewport);
 
   return (
     // The layer itself lets presses through: only the shades, the card and
@@ -688,41 +735,63 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         role="dialog"
         aria-labelledby="first-session-tour-title"
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
-        className={settling
+        data-first-session-tour-wait={wait || undefined}
+        className={settling || wait === 'held'
           ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
           : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
-        <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
-        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          {step.last ? <span /> : (
-            <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
-          )}
-          <div className="flex items-center gap-2.5">
-            {index > 0 ? (
-              <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
-            ) : null}
-            {step.tap ? (
-              // The hint presses the control it names (pressTarget), so it
-              // does what a finger on the control does. Still the blue words
-              // it was: no fill, no edge, no underline, only a pressed state.
-              <button
-                type="button"
-                data-first-session-tap=""
-                onClick={() => { pressTarget(pressOf(step)); }}
-                className="py-1.5 text-[13px] font-semibold text-violet-700 transition-opacity active:opacity-60 dark:text-violet-400"
-              >
-                {step.tap}
-              </button>
-            ) : (
-              <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                {step.last ? t('onboarding:firstSession.tour.gotIt') : t('onboarding:firstSession.tour.next')}
-              </Button>
-            )}
-          </div>
-        </div>
+        {waiting ? (
+          // The step waits for the app (`wait`): that it is getting ready,
+          // and the ways out, Skip and Back, never a press that leads on.
+          <>
+            <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
+            <p id="first-session-tour-title" role="status" className="mt-0.5 flex items-center gap-2 text-[17px] font-semibold leading-snug">
+              <SpinnerRingIcon className="h-4 w-4 shrink-0 animate-spin text-zinc-500 motion-reduce:animate-none dark:text-zinc-400" aria-hidden="true" />
+              <span className="min-w-0">{t('onboarding:firstSession.tour.wait.title', { app: info.name })}</span>
+            </p>
+            <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{t('onboarding:firstSession.tour.wait.text')}</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
+              {index > 0 ? (
+                <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
+            <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
+            <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              {step.last ? <span /> : (
+                <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
+              )}
+              <div className="flex items-center gap-2.5">
+                {index > 0 ? (
+                  <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
+                ) : null}
+                {step.tap ? (
+                  // The hint presses the control it names (pressTarget), so it
+                  // does what a finger on the control does. Still the blue words
+                  // it was: no fill, no edge, no underline, only a pressed state.
+                  <button
+                    type="button"
+                    data-first-session-tap=""
+                    onClick={() => { pressTarget(pressOf(step)); }}
+                    className="py-1.5 text-[13px] font-semibold text-violet-700 transition-opacity active:opacity-60 dark:text-violet-400"
+                  >
+                    {step.tap}
+                  </button>
+                ) : (
+                  <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
+                    {step.last ? t('onboarding:firstSession.tour.gotIt') : t('onboarding:firstSession.tour.next')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

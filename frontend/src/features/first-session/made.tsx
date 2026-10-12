@@ -89,12 +89,16 @@
  * Homeroom's ready-made apps (services/app-templates.js, `made.readyMade`):
  * nothing is sketched or built, so like an import its lines say it is being
  * set up, then that it is ready to use.
+ *
+ * UNTIL IT RUNS (#4900) the way on is off and a small card under the project
+ * says how far its setup has got (SetupProgress, below).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
+import { ProgressRing } from '@/components/ui/progress-ring';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -128,16 +132,22 @@ type FirstVersion = {
 
 /**
  * The project's record as GET /api/apps/:slug answers it, which is `{ app }`:
- * its first version (null while the bot builds nothing) and its status. Null
- * for an answer without a record. Page Turners, 5 October 2026: the made
- * screen read `first_version` off the answer itself, never found one, and
- * so never drew the plan its maker waited 18 minutes on.
+ * its first version (null while the bot builds nothing), its status, and
+ * while it is set up, the step its setup is on (`creationPhase`, SETUP_STEPS;
+ * null when the server has none to say). Null for an answer without a
+ * record. Page Turners, 5 October 2026: the made screen read `first_version`
+ * off the answer itself, never found one, and so never drew the plan its
+ * maker waited 18 minutes on.
  */
-export function madeAppOf(body: unknown): { firstVersion: FirstVersion; status: string | null } | null {
+export function madeAppOf(body: unknown): { firstVersion: FirstVersion; status: string | null; phase: string | null } | null {
   const app = body && typeof body === 'object' ? (body as { app?: unknown }).app : null;
   if (!app || typeof app !== 'object') return null;
-  const { first_version: firstVersion, status } = app as { first_version?: FirstVersion; status?: unknown };
-  return { firstVersion: firstVersion || null, status: typeof status === 'string' ? status : null };
+  const { first_version: firstVersion, status, creationPhase } = app as { first_version?: FirstVersion; status?: unknown; creationPhase?: unknown };
+  return {
+    firstVersion: firstVersion || null,
+    status: typeof status === 'string' ? status : null,
+    phase: typeof creationPhase === 'string' ? creationPhase : null,
+  };
 }
 
 /**
@@ -714,29 +724,115 @@ export function continueLabel(entry: MakeEntry, sent: boolean, name: string): st
 }
 
 /*
- * A READY-MADE APP IS RUNNING BEFORE THE WAY ON GOES (Evan, 10 Oct 2026,
- * iPhone). Home showed the new project as a grey letter, "Spinning up...",
- * that the tour's first card asked them to tap and that a tap did nothing
- * on: the made screen let them on while the app was still being set up.
- * A ready-made app is set up, not built, so its status is all there is to
- * wait for, and "running" comes after its icon is on the record
- * (app-creator.js reconciles dapp.json's icon before it deploys). So while
- * it is being set up the screen reads it every READY_POLL_MS, and a press
- * of the way on waits for it, saying so on the button, and goes on by
- * itself once it runs. A setup that stopped goes on at once (its card says
- * what happened), and so does any press once READY_WAIT_MS has passed since
- * the screen opened: the tile then catches up on Home.
+ * IT RUNS BEFORE THE WAY ON GOES. Evan, 10 Oct 2026, iPhone: Home showed the
+ * new project as a grey letter, "Spinning up...", that the tour's first card
+ * asked them to tap and that a tap did nothing on. A press of the way on then
+ * waited for a ready-made app to run, its label "Getting it ready...". The
+ * onboarding run of 12 Oct 2026 (#4900, iPhone 17): that label held for about
+ * 30 seconds with nothing but "Setting it up..." to say how far it had got,
+ * then let them on before it ran, and the tour stood over its tile and over
+ * the app's "Opening..." cover.
+ *
+ * So until the app runs, the way on ("Invite people later", or "Start the
+ * tour" once the invite is out) is off: for every project on the first
+ * session, whose tour opens it next, and for a ready-made app from Create
+ * (waitsToRun). A project the bot builds from Create goes to its hub, which
+ * shows a setup as it goes. Share invite stays on: the wait is a good time
+ * for it. A tile is tappable once its status is "running" (Home's appView
+ * `clickable`), so that is the signal, read every READY_POLL_MS while it is
+ * set up, and once it runs Home is read again so the tile has it.
+ *
+ * Under the project a small card says how far it has got (SetupProgress):
+ * the step the server reports (`creationPhase`, SETUP_STEPS), in words and
+ * on a ring, and how long setting up usually takes. That is the estimate the
+ * create dialog gave ("usually takes under a minute"), said as about a
+ * minute; past SETUP_USUAL_MS the card says it is taking longer than usual.
+ * The server does not time its steps (#4895 is to), so there is no countdown
+ * and no time per step.
+ *
+ * It is never a wall. A setup that stopped lets them on at once (its card
+ * says what happened, with Try again), and READY_WAIT_MS after the screen
+ * opened (or after Try again) the way on comes back however far it has got,
+ * and the card says so. The tour's steps on the app wait for it themselves
+ * (./tour-steps.ts `waitsFor`). The server stops a setup after five minutes
+ * (routes/apps.js CREATION_TIMEOUT_MS), which then reads as stopped here.
  */
 export const READY_POLL_MS = 2000;
-export const READY_WAIT_MS = 45000;
+export const SETUP_USUAL_MS = 60000;
+export const READY_WAIT_MS = 120000;
 
-/** Whether a press of the way on waits: a ready-made app still being set up, until the wait is up. */
-export function holdsContinue(readyMade: boolean, appStatus: string | null, waitedOut: boolean): boolean {
-  return readyMade && !waitedOut && appStatus !== 'running' && !stalledOf(appStatus);
+/** Whose way on waits for the app to run: every project on the first session, and a ready-made app from Create. */
+export function waitsToRun(entry: MakeEntry, readyMade: boolean): boolean {
+  return entry !== 'create' || readyMade;
 }
 
-/** The way on's label once pressed, while it waits (holdsContinue). */
+/** Whether the way on is off: an app that waits to run, until it runs, its setup stops, or the wait is up. */
+export function holdsContinue(waits: boolean, appStatus: string | null, waitedOut: boolean): boolean {
+  return waits && !waitedOut && appStatus !== 'running' && !stalledOf(appStatus);
+}
+
+/** The progress card's title until the server has said which step its setup is on. */
 export const GETTING_READY = 'onboarding:firstSession.made.gettingReady';
+
+/**
+ * Setting a project up, in order: services/app-creation-phase.js PHASES, as
+ * GET /api/apps/:slug `creationPhase` names them. Its database, its code (the
+ * repository and its first commit), the build that makes it something that
+ * can run, and starting it. The words are the card's title, message ids.
+ */
+export const SETUP_STEPS = ['database', 'repository', 'build', 'deploy'] as const;
+export type SetupStep = (typeof SETUP_STEPS)[number];
+export const SETUP_WORDS: Readonly<Record<SetupStep, string>> = Object.freeze({
+  database: 'onboarding:firstSession.made.setup.database',
+  repository: 'onboarding:firstSession.made.setup.repository',
+  build: 'onboarding:firstSession.made.setup.build',
+  deploy: 'onboarding:firstSession.made.setup.deploy',
+});
+
+/**
+ * The step a `creationPhase` names, counted from 1, or 0 for none: before the
+ * first read, or a server that has no step to say (one restarted mid-setup).
+ * The screen keeps the furthest step it has read, so a read without one never
+ * sends the card back to the start.
+ */
+export function setupStepOf(phase: unknown): number {
+  return SETUP_STEPS.indexOf(phase as SetupStep) + 1;
+}
+
+/** The card's second line: how long it usually takes, that it is taking longer, then that they can go on. */
+export function setupEstimate(slow: boolean, waitedOut: boolean): string {
+  if (waitedOut) return translate('onboarding:firstSession.made.setup.goOn');
+  return slow ? translate('onboarding:firstSession.made.setup.slow') : translate('onboarding:firstSession.made.setup.usual');
+}
+
+/**
+ * How far the setup has got, under the project while the way on waits for it
+ * (IT RUNS BEFORE THE WAY ON GOES): a ring with the step ("2/4", the bot's
+ * activity cards' ring, turning while it is under way), the step in words,
+ * and how long it usually takes. A row, 15 over 13, on the plane's card.
+ */
+export function SetupProgress({ step, slow, waitedOut }: { step: number; slow: boolean; waitedOut: boolean }) {
+  const t = useMessages('onboarding');
+  const total = SETUP_STEPS.length;
+  const at = step > 0 && step <= total ? SETUP_STEPS[step - 1] : null;
+  return (
+    <section data-made-setup={at || 'started'} className="mt-4">
+      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <ProgressRing
+          pct={at ? Math.round((step / total) * 100) : 0}
+          label={at ? `${step}/${total}` : undefined}
+          title={at ? t('onboarding:firstSession.made.setup.ring', { step, total }) : t(GETTING_READY)}
+          spinning
+          trackClassName="dark:stroke-zinc-700"
+        />
+        <div role="status" className="min-w-0 flex-1">
+          <p className="text-[15px] font-[650] leading-snug">{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
+          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{setupEstimate(slow, waitedOut)}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 type Community = { member_count?: number; members?: (Person & { source?: string })[] } | null;
 
@@ -767,14 +863,14 @@ export function peopleOf(community: Community, me: string): Person[] {
   return members.length ? members : [{ username: me || translate('onboarding:firstSession.made.people.you') }];
 }
 
-/** A quiet button: white, under or beside the blue one. */
-const SECONDARY = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800';
+/** A quiet button: white, under or beside the blue one. Dimmed while it is off (holdsContinue). */
+const SECONDARY = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800';
 
 /** The made screen's root, full screen or under the platform header as make.tsx MAKE_ROOT is. */
 export const MADE_ROOT = 'fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
 export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
 
-export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
+export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Start the tour" / "Go to …" (continueLabel): `skipped` when nothing went out. */
@@ -806,8 +902,12 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
   // without one means it is live (or came to something else), and the
   // project is no longer "being made" (makerLine).
   const [building, setBuilding] = useState(false);
-  // A ready-made app still being set up (READY-MADE, above): read more often.
-  const settingUp = holdsContinue(readyMade, appStatus, false);
+  // Whether the way on waits for it to run (IT RUNS BEFORE THE WAY ON GOES,
+  // above), and whether it is still being set up for it: read more often.
+  const waits = waitsToRun(entry, readyMade);
+  const settingUp = holdsContinue(waits, appStatus, false);
+  // The furthest step of its setup read so far (setupStepOf).
+  const [setupStep, setSetupStep] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -818,6 +918,7 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
         if (live && app) {
           setFv(app.firstVersion);
           setAppStatus(app.status);
+          setSetupStep((was) => Math.max(was, setupStepOf(app.phase)));
           if (app.firstVersion && !app.firstVersion.ready) setBuilding(true);
         }
       })
@@ -827,39 +928,41 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
     return () => { live = false; window.clearInterval(t); };
   }, [made.slug, settingUp]);
 
-  // The way on, pressed: at once, or once a ready-made app runs
-  // (holdsContinue). `waiting` is the press held, as `skipped`.
+  // How long it has waited, from the screen's opening or the last Try again
+  // (`round`): longer than usual (`slow`), then long enough to let them on
+  // however far it has got (`waitedOut`).
+  const [round, setRound] = useState(0);
+  const [slow, setSlow] = useState(false);
   const [waitedOut, setWaitedOut] = useState(false);
   useEffect(() => {
-    const t = window.setTimeout(() => setWaitedOut(true), READY_WAIT_MS);
-    return () => window.clearTimeout(t);
-  }, []);
-  const holds = holdsContinue(readyMade, appStatus, waitedOut);
-  const [waiting, setWaiting] = useState<boolean | null>(null);
-  const onContinue = (skipped: boolean) => {
-    if (holds) setWaiting(skipped);
-    else goOn(skipped);
-  };
+    setSlow(false);
+    setWaitedOut(false);
+    const s = window.setTimeout(() => setSlow(true), SETUP_USUAL_MS);
+    const w = window.setTimeout(() => setWaitedOut(true), READY_WAIT_MS);
+    return () => { window.clearTimeout(s); window.clearTimeout(w); };
+  }, [round]);
+  // The way on is off until it runs (holdsContinue).
+  const holds = holdsContinue(waits, appStatus, waitedOut);
+  // Home is read again once it runs, so the grid the tour opens on has the
+  // tile, tappable and with its icon (Create's own onMade does the same,
+  // ./index.tsx).
   useEffect(() => {
-    if (waiting === null || holds) return;
-    setWaiting(null);
-    goOn(waiting);
-  }, [waiting, holds]);
-  // Home is read again once it runs, so the grid it opens on has the tile
-  // with its icon (Create's own onMade does the same, ./index.tsx).
-  useEffect(() => {
-    if (readyMade && appStatus === 'running') (window as { Home?: { load?: () => void } }).Home?.load?.();
-  }, [readyMade, appStatus]);
-  const onLabel = (sent: boolean) => (waiting !== null ? t(GETTING_READY) : continueLabel(entry, sent, made.name));
+    if (waits && appStatus === 'running') (window as { Home?: { load?: () => void } }).Home?.load?.();
+  }, [waits, appStatus]);
 
   // Try again, on a setup that stopped: creation starts over server-side and
-  // the next read finds it creating; until then it says so here.
+  // the next read finds it creating; until then it says so here, from its
+  // first step, and the way on waits for it again.
   const retry = useCallback(async () => {
     if (retrying) return;
     setRetrying(true);
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/retry`, { method: 'POST', credentials: 'same-origin' });
-      if (res.ok) setAppStatus('creating');
+      if (res.ok) {
+        setAppStatus('creating');
+        setSetupStep(0);
+        setRound((r) => r + 1);
+      }
     } catch { /* still stopped: the card stays, and pressing it again tries again */ }
     setRetrying(false);
   }, [made.slug, retrying]);
@@ -929,14 +1032,18 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
               <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
               <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
               {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
-              <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
-                {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-                <span data-first-session-build="">{plainLine}</span>
-              </div>
-              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{note}</p>
+              {/* While its setup's card is up, that card says where it is. */}
+              {settingUp ? null : (
+                <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
+                  {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
+                  <span data-first-session-build="">{plainLine}</span>
+                </div>
+              )}
+              <p className={settingUp ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
             </div>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}
+          {settingUp ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}
@@ -951,7 +1058,8 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
         <div className="mt-[18px] flex flex-col gap-2.5">
           {/* The buttons keep their places once the link is out: Share again,
               grey, where Share invite was, and the way on, blue, where
-              Invite people later was. */}
+              Invite people later was. The way on is off until the app runs
+              (holdsContinue); sharing is not. */}
           {sent ? (
             <button type="button" data-first-session-share-again="" onClick={() => setInviting(true)} className={SECONDARY}>
               {t('onboarding:firstSession.made.shareAgain')}
@@ -962,12 +1070,12 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
             </Button>
           )}
           {sent ? (
-            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center" aria-busy={waiting !== null || undefined}>
-              {onLabel(true)}
+            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60" disabled={holds}>
+              {continueLabel(entry, true, made.name)}
             </Button>
           ) : (
-            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} className={SECONDARY} aria-busy={waiting !== null || undefined}>
-              {onLabel(false)}
+            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} disabled={holds} className={SECONDARY}>
+              {continueLabel(entry, false, made.name)}
             </button>
           )}
         </div>
