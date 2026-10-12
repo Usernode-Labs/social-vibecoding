@@ -223,6 +223,43 @@ test('shot results are cleaned before they reach any reviewer surface', () => {
   for (const result of cleaned) assert.deepEqual(Object.keys(result).sort(), ['id', 'note', 'reason', 'status']);
 });
 
+// control_request and upload_file: what the shots agent did to both builds
+// to reach a change, in the fixed shapes shots-files.condition records.
+test('what the shots agent did to reach a change reaches the view as recorded, and nothing else', () => {
+  const state = require('../src/services/shots-state');
+  const conditions = [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['landscape.png', 'table.csv'] },
+  ];
+  const row = {
+    state: 'verified', base_sha: BASE, head_sha: HEAD, plan_hash: 'c'.repeat(64),
+    intent: null, trace_summary: { runs: 1 },
+    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories: [
+      { id: 'dialog', status: 'ready', files: 2, conditions },
+      { id: 'empty', status: 'skipped', reason: 'No list exists for this persona.' },
+    ] },
+  };
+  const summary = state.runSummary(row);
+  assert.deepEqual(summary.shotResults[0].conditions, conditions);
+  assert.equal('conditions' in summary.shotResults[1], false);
+  assert.deepEqual(view.serialize(summary, session(), 'demo', HEAD).shotResults, [
+    { id: 'dialog', status: 'ready', reason: null, note: null, conditions },
+    { id: 'empty', status: 'skipped', reason: 'No list exists for this persona.', note: null },
+  ]);
+  const [cleaned] = view.cleanShotResults([{ id: 'dialog', status: 'ready', conditions: [
+    { kind: 'request_failed', request: '/api/items', extra: '<b>x</b>' },
+    { kind: 'request_held', request: 'https://evil.example/api/items' },
+    { kind: 'sample_file', files: ['../state/member.json', 'portrait.png'] },
+    { kind: 'evaluate', request: '/api/items' },
+    { kind: 'sample_file', files: [] },
+  ] }]);
+  assert.deepEqual(cleaned.conditions, [
+    { kind: 'request_failed', request: '/api/items' },
+    { kind: 'sample_file', files: ['portrait.png'] },
+  ]);
+  assert.equal('conditions' in view.cleanShotResults([{ id: 'x', status: 'ready', conditions: 'held' }])[0], false);
+});
+
 test('problems the shots agent noticed reach the view only for the verified run on the current head', () => {
   const state = require('../src/services/shots-state');
   const notices = [

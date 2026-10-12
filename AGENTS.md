@@ -191,10 +191,17 @@ is no replay plan to write and nothing to verify locally.
   first, `expectText` gives short text that shows the state was reached, and
   `focusTarget` locates the element to point at. Hints guide; they are never
   executed.
+- If a fresh staging copy lacks the state a change shows, seed it in the same
+  proposal (`src/db/migrate.js`, idempotent, obviously fake): it reaches the
+  after copy, the side a new state needs. Seed rows for the shots' fixture
+  accounts (`usernode-capture` is the member) and fake people, never a signal
+  the code reads to decide something, and a bot's reply as the stored message,
+  never asked for. A change to a state that already existed needs it on both
+  sides: its seed merges first, in its own proposal.
 - `impact: none` applies only when no user-visible state changes. Changed
   text, counts, loading, error, and status states need a `ui` change even if
-  the code reuses existing markup and styles. If a required fixture or state
-  is missing, report that blocker instead of declaring `none`.
+  the code reuses existing markup and styles. If a required state can be
+  neither reached nor seeded, report that blocker instead of declaring `none`.
 - For an error state caused by a failed API request, declare
   `intent.controlledFailurePath` as one exact same-origin `GET /api/...`
   path, and make the first `intent.steps` entry exactly

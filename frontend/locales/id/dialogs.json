@@ -2656,8 +2656,8 @@
     "source": "b118b9239994d2ce40c7a31d0ead5a84402e81d7869a573e82736a4022bd0fac"
   },
   "whoDecides.plays.two_yeses.other": {
-    "text": "Rilis begitu siapa pun selain {{name}} setuju. Bisa kamu.",
-    "source": "d37efd672b44cc1ebaed6f3247175f7e9c996516207809708283ab1a71199140"
+    "text": "Langsung tayang begitu satu orang lagi setuju. Bisa jadi kamu.",
+    "source": "edf8c3a05d00b2098e566751f7026d35331fdd4d0b9284ab44ddf7c54dd675b3"
   },
   "whoDecides.plays.open_floor.you": {
     "text": "Suaramu sudah cukup. Rilis setelah pemeriksaan lolos.",

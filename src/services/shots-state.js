@@ -470,6 +470,10 @@ function runSummary(row, artifactSummary = []) {
         status: story?.status === 'ready' || story?.status === 'failed' ? story.status : 'skipped',
         reason: story?.status === 'ready' ? null : (story?.reason || null),
         note: story?.status === 'ready' ? (story?.note || null) : null,
+        // What the shots agent did to both builds to reach it, when it did
+        // anything (shots-files.condition).
+        ...(Array.isArray(story?.conditions) && story.conditions.length
+          ? { conditions: shots.cleanConditions(story.conditions) } : {}),
       }))
       : [],
     // What the shots agent noticed broken on the after build besides the

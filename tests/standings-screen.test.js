@@ -1242,6 +1242,8 @@ test('the Kudos ranked lists say ranks move when other people act (#4782)', () =
   assert.ok(body.includes(`>${note}</p>`), 'the note follows the Top users rows');
   assert.ok(body.lastIndexOf('data-lb-user=') < body.indexOf(`>${note}</p>`),
     'the note is under the rows, not before them');
+  // Two fixes for the same request (#4782, #4786) once drew it twice.
+  assert.equal(body.split(note).length - 1, 1, 'the list carries the note once');
   assert.match(body, /class="mt-3 text-xs text-zinc-500 dark:text-zinc-400"/,
     'the standing card\'s small grey note style');
 

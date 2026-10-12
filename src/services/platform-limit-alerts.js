@@ -105,8 +105,7 @@ const LIMITS = Object.freeze([
       const { rows } = await pool.query(
         `SELECT COUNT(*)::int AS n FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       return Number(rows[0] && rows[0].n);
     },

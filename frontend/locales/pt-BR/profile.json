@@ -994,5 +994,17 @@
   "feedback.summary.sent_other": {
     "text": "{{number}} enviados",
     "source": "8b0ef3abd0cce52a9c65d303eb37fa35a5264c04ef2b57fad8f0d0f353b28064"
+  },
+  "feedback.summary.sentCounted_many": {
+    "text": "{{number}} enviados · {{counted}} contabilizados",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
+  },
+  "feedback.summary.sentCounted_one": {
+    "text": "{{number}} enviado · {{counted}} contabilizados",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
+  },
+  "feedback.summary.sentCounted_other": {
+    "text": "{{number}} enviados · {{counted}} contabilizados",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
   }
 }

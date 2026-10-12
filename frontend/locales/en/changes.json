@@ -6283,6 +6283,18 @@
     "text": "<0>Not in these shots:</0> {{note}}",
     "description": "Note under a declared change on a proposal's shots card. {{note}} is what the shots agent wrote about the part of the change its screenshots do not show. The tags make the lead-in bold."
   },
+  "shots.claim.requestHeld": {
+    "text": "<0>Controlled test:</0> the shots agent kept {{request}} waiting on both builds, to show it loading.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately left unanswered on both the version before and the version after the proposal, so that its loading state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.requestFailed": {
+    "text": "<0>Controlled test:</0> the shots agent made {{request}} fail on both builds, to show what happens when it does.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots were taken while the app's request for some data was deliberately made to fail on both the version before and the version after the proposal, so that its error state shows. {{request}} is that request as written in code, for example \"GET /api/items?page=1\"; leave it as it is. The tags make the lead-in bold."
+  },
+  "shots.claim.sampleFile": {
+    "text": "<0>Sample file:</0> the shots agent uploaded {{files}} on both builds, from Homeroom's own sample files.",
+    "description": "Note under a declared change on a proposal's shots card, when the screenshots show the app after a file was uploaded into it, the same on the version before and the version after the proposal. {{files}} is the list of file names, for example \"landscape.png and table.csv\"; the files are made-up pictures, a table and a document that Homeroom provides for this. The tags make the lead-in bold."
+  },
   "shots.clip.beforeCaption": {
     "text": "Before clip · {{size}}",
     "description": "Caption over a short video of a declared change as it was before the proposal. {{size}} is the screen size it was recorded at, for example \"desktop\"."
