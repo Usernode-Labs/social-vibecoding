@@ -67,6 +67,8 @@ const { agentApiFailure } = require('./agent-result-text');
 // link itself, keeping only what the run debited for earlier sessions.
 const CHECKPOINT_START_SQL = `jsonb_build_object('sessionId', $2::int, 'step', 'session', 'at', NOW(),
                   'once', COALESCE(build_checkpoint->'once', '{}'::jsonb))`;
+// A build turn, as restart recovery decides on one a checkpoint says pushed.
+const BUILD_TURN = Object.freeze({ mode: 'build' });
 
 // #3692: the activity tray in a person's DM with the bot. Lazy, as the DM
 // module is: it reads this module's settings.
@@ -5029,7 +5031,7 @@ async function abandonRecoveredTurn({ pool, session, why }) {
     log.info('homeroom-bot', 'A shadow build a restart caught between steps had pushed; recording it built', {
       runId: run.id, sessionId: session.id, why,
     });
-    return finishRecoveredTurn({ pool, session, activeTurn: { mode: 'build' }, result: landed });
+    return finishRecoveredTurn({ pool, session, activeTurn: BUILD_TURN, result: landed });
   }
   if (run) await handBackRun(pool, run.id, why);
   await putAwayRecoveredSession(pool, session, { archive: !!run });
@@ -5551,7 +5553,7 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
       log.info('homeroom-bot', 'A live build a restart caught between steps had pushed; carrying on from there', {
         app: app.slug, issueNumber: plan.issueNumber, sessionId, step: at.step, why: plan.why || null,
       });
-      Object.assign(plan, { lost: false, mode: 'build', timedOut: false, result: at.landed, fromStep: at.step });
+      Object.assign(plan, { lost: false, mode: BUILD_TURN.mode, timedOut: false, result: at.landed, fromStep: at.step });
     }
     // Up for a vote already: the promote route opened it before the restart.
     const adopted = plan.mode !== 'scout' ? await checkpoint.adoptedProposal(pool, sessionId) : null;
