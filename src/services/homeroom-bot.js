@@ -6913,6 +6913,49 @@ async function keepNoChange(pool, runId, noChange) {
 }
 
 /**
+ * Whether a live first version's build that did not become a proposal is
+ * one to try once more on its own: it failed (not stopped as a skip, found
+ * impossible, another build's, or built and only not proposed) and it has
+ * the plan to build from. Pure.
+ */
+function autoRetryable(built) {
+  if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  if (built.partial) return false;
+  return typeof built.specMd === 'string' && built.specMd.trim().length > 0;
+}
+
+/**
+ * Claim a first version's one automatic retry: its run gives up the failed
+ * session's link and waits again, with the plan kept, so a restart before
+ * the retry links its own session builds it from the lane (buildOne's
+ * presetSpec). Only once per first version: no run of the request has been
+ * retried before. Resolves whether it was claimed; never throws.
+ */
+async function claimAutoRetry(pool, { runId, appId, issueNumber, built }) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE homeroom_bot_runs r
+          SET build_retry = jsonb_build_object('at', NOW(), 'error', $4::text, 'session_id', $3::int),
+              build_session_id = NULL, live_build_waiting_at = NOW(),
+              build_spec_md = COALESCE(r.build_spec_md, $5)
+        WHERE r.id = $1 AND r.build_retry IS NULL AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+          AND r.build_session_id IS NOT DISTINCT FROM $3::int
+          AND NOT EXISTS (
+            SELECT 1 FROM homeroom_bot_runs o
+             WHERE o.app_id = $2 AND o.issue_number = r.issue_number AND o.build_retry IS NOT NULL
+          )
+          AND r.issue_number = $6
+        RETURNING r.id`,
+      [runId, appId, built.sessionId || null, clip(built.error || 'unknown', MAX_ERROR_CHARS), built.specMd, issueNumber],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not claim a first version\'s retry; it ends as it is', { runId, err: err.message });
+    return false;
+  }
+}
+
+/**
  * What a live build came to, recorded on its run in the columns a shadow
  * build fills (#3509): before this it was only said on the issue, so an
  * export could not tell a build that failed from one found impossible, nor
@@ -6925,11 +6968,19 @@ async function keepNoChange(pool, runId, noChange) {
  */
 async function recordLiveBuild(pool, runId, built, model = null) {
   if (!runId || !built) return;
+  // A build that finished from a failed turn's work (buildAndPropose's
+  // keepPartial), and a first version tried once more (buildLive), say so
+  // beside what came of it.
+  const notes = [
+    built.partial ? `finished from partial work (${built.partial.reason})` : null,
+    built.retried ? `tried once more after: ${built.retried.error || 'unknown'}` : null,
+    built.specNote,
+  ].filter(Boolean);
   const error = built.ok
-    ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
+    ? (notes.length ? clip(notes.join('; '), MAX_ERROR_CHARS) : null)
     : clip([
       built.blocked ? `blocked: ${built.blocked}` : (built.error || 'unknown'),
-      built.specNote,
+      ...notes,
     ].filter(Boolean).join('; '), MAX_ERROR_CHARS);
   await pool.query(
     `UPDATE homeroom_bot_runs
@@ -7873,7 +7924,7 @@ async function buildLive({
     // rule (localeRule); unset, everything the group reads stays English.
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
       .requesterOf(pool, app.id, issueNumber).catch(() => null);
-    built = await live.buildAndPropose({
+    const buildArgs = {
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
@@ -7932,7 +7983,29 @@ async function buildLive({
       // #4488: a complicated change's review, whatever builds later changes;
       // and its description says it was checked first.
       ...(checkFirst ? { review, checkedFirst: !!presetSpec } : {}),
-    });
+      // A first version's build turn that does not finish keeps its work.
+      ...(firstVersion ? { keepPartial: true } : {}),
+    };
+    built = await live.buildAndPropose(buildArgs);
+    // A first version that did not finish is tried once more on its own,
+    // from the plan it wrote and its creator approved: no new read, plan
+    // card, Build it or spec turn. Once per first version.
+    if (firstVersion && autoRetryable(built)
+        && await claimAutoRetry(pool, { runId, appId: app.id, issueNumber, built })) {
+      const first = built;
+      log.warn('homeroom-bot', 'A first version did not finish; trying once more from its plan', {
+        app: app.slug, issueNumber, runId, sessionId: first.sessionId || null, error: first.error,
+      });
+      await say('spec', live.retryCommentText(), { dm: { building: true, retry: true } })
+        .catch((err) => log.warn('homeroom-bot', 'Could not say the first version is tried once more', { runId, err: err.message }));
+      built = await live.buildAndPropose({
+        ...buildArgs, presetSpec: first.specMd, onSpec: null,
+        // Its first look was drawn by the first try.
+        onFirstLook: null,
+      });
+      built.retried = { error: first.error, sessionId: first.sessionId || null };
+      if (Number(first.costUsd) > 0) built.costUsd = (Number(built.costUsd) || 0) + Number(first.costUsd);
+    }
     buildMs = Date.now() - buildStartedMs;
   } finally {
     liveBuildsInFlight.delete(runId);
@@ -10177,6 +10250,8 @@ module.exports = {
   PLAN_SEND_ATTEMPTS,
   goAhead,
   carryApprovedPlan,
+  autoRetryable,
+  claimAutoRetry,
   retireWaitingPlans,
   settleStalePlans,
   planChangesFor,

@@ -224,6 +224,14 @@ function buildFailedText(reason) {
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
+// A first version whose build did not finish is tried once more on its own,
+// from the plan its creator already said Build it to (homeroom-bot.js
+// buildLive): said on its request as the build's start is.
+function retryCommentText() {
+  return 'Homeroom bot\'s first try at building this didn\'t finish, so it is trying once more from the same plan. '
+    + 'The change will be linked here when it\'s ready to try.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -2079,12 +2087,35 @@ async function buildSeesImages({ pool, config, userId, model }) {
  */
 function failedClaudeTurn(result) {
   if (!result || result.agentHarness !== 'claude') return null;
+  // The notice first: run-cc.sh exits 1 after a turn that ended on it, so
+  // "exited with code 1" was all the run kept of an OpenRouter 429.
+  const api = agentApiFailure(result.lastResultText);
+  if (api) return api.line ? `it ended on an API error: ${clipText(api.line, 200)}` : 'it ended on an API error';
   const exited = (code) => Number.isInteger(code) && code > 0;
   if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
   if (result.ccIsError === true) return 'the agent reported an error';
   if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
-  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
   return null;
+}
+
+/**
+ * Why a build turn failed, beyond its one-line reason: what it was last
+ * doing and its final message (redacted, clipped), for the run's
+ * build_error, which the admin console and the connector's
+ * get_homeroom_bot show. A final message that is the API error notice the
+ * reason already quotes is not repeated. '' when there is nothing. Pure.
+ */
+const FAILED_SAID_CHARS = 240;
+function failureDetail({ progress = null, result = null, reason = '' } = {}) {
+  const parts = [];
+  const activity = progress ? progress.suffix() : '';
+  if (activity) parts.push(activity);
+  const said = agentSaid(result?.lastResultText);
+  const api = said ? agentApiFailure(said) : null;
+  if (said && !(api && api.line && String(reason).includes(clipText(api.line, 200)))) {
+    parts.push(`; it last said: ${clipText(said.replace(/\s+/g, ' '), FAILED_SAID_CHARS)}`);
+  }
+  return parts.join('');
 }
 
 /**
@@ -2731,6 +2762,10 @@ async function buildAndPropose({
   // for the language rule the prompts that write to people carry
   // (localeRule). The caller reads it off the request's recorded requester.
   locale = null,
+  // A live first version: a build turn that ran out of time or failed keeps
+  // the work it pushed, which its review then looks at (worker.keepPartialWork).
+  // Never a bench trial's or a later change's.
+  keepPartial = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -3096,14 +3131,44 @@ async function buildAndPropose({
   // The build turn, and its nudge, are over: so is Live.
   endLive();
 
-  const result = (routed && routed.result) || {};
-  if (stopped) {
-    return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
+  let result = (routed && routed.result) || {};
+  // A turn that ran past its clock or failed, and why, with what it was last
+  // doing and its final message (failureDetail), so the run says more than
+  // "exited with code 1". A failed turn is a failed build, whatever it left
+  // behind (failedClaudeTurn), unless it is a first version's whose work so
+  // far is kept below.
+  const turnFailed = stopped || routed?.error ? null : failedClaudeTurn(result);
+  let faultReason = null;
+  if (stopped) faultReason = 'the build ran past its time limit';
+  else if (routed?.error) faultReason = `the build turn failed (${routed.error})`;
+  else if (turnFailed) faultReason = `the build turn failed (${turnFailed})`;
+  // A dispatch error ran no turn: its reason stays as it is, which
+  // homeroom-bot.js isInfraBuildError reads whole.
+  const faultError = faultReason && !routed?.error
+    ? `${faultReason}${failureDetail({ progress, result, reason: faultReason })}`
+    : faultReason;
+  // A first version's build turn that ran out of time or failed keeps the
+  // work it did: committed and pushed from its worker when it differs from
+  // main, then reviewed as any build is. The review's captures say whether it
+  // boots; a build kept this way that never booted fails as before.
+  let partial = null;
+  if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
+    const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
+    if (kept?.pushed && Number(kept.commits) > 0) {
+      partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
+      result = { ...result, pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null };
+      // A stop aimed at the build would skip the review's fix turns.
+      worker.clearPendingStop?.(session.id);
+      log.warn('homeroom-bot', 'A first version\'s build turn did not finish; reviewing the work it pushed', {
+        app: app.slug, issueNumber, sessionId: session.id, why: faultReason, commits: partial.commits,
+      });
+    } else {
+      log.info('homeroom-bot', 'A first version\'s build turn did not finish and left nothing to keep', {
+        app: app.slug, issueNumber, sessionId: session.id, why: kept?.reason || null,
+      });
+    }
   }
-  if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
-  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
-  const turnFailed = failedClaudeTurn(result);
-  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
+  if (faultError && !partial) return { ...(await fail(faultError)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
@@ -3133,6 +3198,12 @@ async function buildAndPropose({
     if (skippedLate) return { ...(await fail(skippedLate)), skipped: skippedLate, costUsd, review: reviewed };
   }
   const reviewOut = reviewed ? { review: reviewed } : {};
+  // Work kept from a turn that did not finish goes on only if it boots, as
+  // the review's last capture (or the commit it rolled back to) saw it.
+  if (partial && reviewed?.finalCapture?.booted !== true) {
+    return { ...(await fail(`${faultError}; the work it pushed did not boot`)), costUsd, ...reviewOut };
+  }
+  const partialOut = partial ? { partial } : {};
 
   if (!propose) {
     // Built, pushed, and put away: the session is archived exactly as a
@@ -3145,6 +3216,7 @@ async function buildAndPropose({
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
       sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(), ...noChangeOut(),
+      ...partialOut,
     };
   }
 
@@ -3180,12 +3252,12 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
       error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut, ...costsOut(),
-      ...noChangeOut(),
+      ...noChangeOut(), ...partialOut, notProposed: true,
     };
   }
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(), ...noChangeOut(),
+    ...costsOut(), ...noChangeOut(), ...partialOut,
   };
 }
 
@@ -3311,6 +3383,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  retryCommentText,
   heldText,
   heldKind,
   lastPostKind,
@@ -3373,6 +3446,7 @@ module.exports = {
   RECIPE_SPEC_EFFORT,
   browserLines,
   failedClaudeTurn,
+  failureDetail,
   stampSessionModel,
   draftSpec,
   specPrompt,
