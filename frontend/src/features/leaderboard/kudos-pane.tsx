@@ -202,6 +202,16 @@ const MORE_BTN = 'px-4 py-1.5 text-sm font-medium rounded-lg '
 
 const CLAP = '\u{1F44F}';
 
+/**
+ * The note under a ranked list: ranks move when other people earn kudos, so
+ * yours can move while you have done nothing (#4782). Shown only with a
+ * ranked list on screen — never on loading, empty, error, history or profile.
+ */
+function RankNote(): ReactNode {
+  const t = useMessages('leaderboard');
+  return <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">{t('leaderboard:kudos.rankNote')}</p>;
+}
+
 function StatusBadge({ badge }: { badge: Badge }): ReactNode {
   return <span className={`${BADGE} ${TONES[badge.tone]}`} title={badge.title}>{badge.label}</span>;
 }
@@ -678,8 +688,8 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
   if (!view || view.kind === 'loading') return <Loading />;
   if (view.kind === 'error') return <div className={ERROR_HINT}>{view.message}</div>;
   if (view.kind === 'empty') return <div className={HINT}>{view.message}</div>;
-  if (view.kind === 'prs') return <PrRows rows={view.rows} />;
-  if (view.kind === 'users') return <UserRows rows={view.rows} />;
+  if (view.kind === 'prs') return <><PrRows rows={view.rows} /><RankNote /></>;
+  if (view.kind === 'users') return <><UserRows rows={view.rows} /><RankNote /></>;
   if (view.kind === 'profile') return <ProfileBody view={view} />;
   return <HistoryBody view={view} />;
 }

@@ -141,6 +141,17 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     defaultEnabled: true,
     kinds: Object.freeze(['proposal_vote']),
   }),
+  // #4787: the loop closed on the voter's side. Until this, a merge told
+  // only its author; everybody who had a say had to stumble on the news. ON:
+  // it is the answer to a vote they cast, not new activity to interrupt
+  // them, and muting it is how a person says "I don't follow my votes".
+  Object.freeze({
+    key: 'voted_changes_live',
+    label: 'Changes you voted on go live',
+    description: 'A change you voted yes or no on goes live.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['voted_change_merged']),
+  }),
   // #1688: the re-confirm ask. Somebody pushed a new version of a proposal
   // this person had said yes to; their yes was on the old version and one
   // tap carries it onto the new one. ON: it is their own vote being asked

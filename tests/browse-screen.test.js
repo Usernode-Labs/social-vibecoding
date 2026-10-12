@@ -732,7 +732,7 @@ test('the chips prerender with All pressed, from the store\'s initial value', ()
 
 // ── Search covers EVERY visible app (home's is scoped to yours) ────
 
-test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
+test('visibleApps: filters through Home.filterApps over the whole list', () => {
   const { Browse } = makeBrowse();
   Browse._apps = [
     app({ slug: 'chess-1a2b', name: 'Chess Arena' }),
@@ -761,6 +761,34 @@ test('visibleApps: the search narrows, the sort orders, and they compose', () =>
   Browse.setSort('users');
   assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['chess-old', 'chess-new'],
     'the order changed, the filtered SET did not');
+});
+
+test('visibleApps: an exact name or slug match tops the sorted list (#4793)', () => {
+  const { Browse } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'chess-arena', name: 'Chess Arena', active_users: 90 }),
+    app({ slug: 'chess-club', name: 'Chess Club', active_users: 80 }),
+    app({ slug: 'speed-chess', name: 'Speed Chess', active_users: 70 }),
+    app({ slug: 'chess-daily', name: 'Chess', active_users: 2 }),
+    app({ slug: 'chess', name: 'Board Games', active_users: 1 }),
+  ];
+  Browse.setSort('users');
+  const slugs = () => Browse.visibleApps().map((a) => a.slug);
+  Browse._query = 'Chess';
+  assert.deepEqual(slugs(), ['chess-daily', 'chess', 'chess-arena', 'chess-club', 'speed-chess'],
+    'the exact name and the exact slug lead, in sort order; the rest keep the sort');
+  Browse._query = '  cHeSs  ';
+  assert.equal(slugs()[0], 'chess-daily', 'case and whitespace do not matter');
+  Browse._query = 'speed-chess';
+  assert.deepEqual(slugs(), ['speed-chess'], 'an exact slug');
+  Browse._query = 'chess club';
+  assert.deepEqual(slugs(), ['chess-club'], 'an exact name');
+  Browse._query = 'ches';
+  assert.deepEqual(slugs(), ['chess-arena', 'chess-club', 'speed-chess', 'chess-daily', 'chess'],
+    'no exact match: the sort order stands');
+  Browse._query = '';
+  assert.deepEqual(slugs(), ['chess-arena', 'chess-club', 'speed-chess', 'chess-daily', 'chess'],
+    'no query: the sort order stands');
 });
 
 // ── render ───────────────────────────────────────────────────────

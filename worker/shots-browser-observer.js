@@ -8,12 +8,14 @@
 // worker-local file. The runner tails that file into the shots trace.
 
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { Transform } = require('node:stream');
 const { performance } = require('node:perf_hooks');
 const crypto = require('node:crypto');
 const boundary = require('./shots-boundary');
+const samples = require('./shots-samples');
 
 const MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
@@ -222,6 +224,11 @@ function createObserver({
         }
       } catch { /* Provenance that cannot be written is provenance that is missing: the bridge refuses the shot. */ }
     },
+    // The browser's answer to a call the shots tools made (startControl):
+    // the page it reports is the page the browser is on now.
+    noteAnswer(text) {
+      try { notePage(reportedPageUrl(text)); } catch { /* the next answer says */ }
+    },
     pending() {
       for (const call of active.values()) {
         const { startedAt, ...event } = call;
@@ -262,6 +269,9 @@ const PARK_TOMBSTONE_MS = 60_000;
 const PARK_TOMBSTONE_MAX = 32;
 const PARK_HELD_LINE_MAX_BYTES = 8 * 1024 * 1024;
 const PARSED_ANSWER_MAX_BYTES = 1024 * 1024;
+// How long a shots tool's own call in the browser may take (an upload waits
+// for the page to settle after the files are chosen).
+const INJECT_TIMEOUT_MS = 30_000;
 const POINTER_LEFT_ON_PAGE = new Set([
   'browser_click', 'browser_drag', 'browser_mouse_click_xy', 'browser_mouse_drag_xy',
 ]);
@@ -304,6 +314,11 @@ function createPointerParker({
   let parks = 0;
   let waiting = null; // the park move in flight: { id, startedAt, timer }
   const tombstones = new Map(); // timed-out park id -> expiry timer: a late answer is still dropped
+  // Calls the shots tools make in this browser (inject), by request id: their
+  // answers go back to the caller, never to the agent's own stream.
+  const injections = new Map();
+  let injected = 0;
+  let inputEnded = false;
   // The agent's own hovers and moves still in flight, by request id, with
   // the pointer action they followed: one that succeeds leaves the pointer
   // placed, unless a click came after it.
@@ -339,6 +354,7 @@ function createPointerParker({
     flush(callback) {
       const rest = inSplit.rest();
       if (rest.length) enqueue(rest);
+      inputEnded = true;
       flushed = callback;
       drain();
     },
@@ -414,7 +430,7 @@ function createPointerParker({
     if (resume) { const next = resume; resume = null; next(); }
     if (flushed) { const done = flushed; flushed = null; done(); }
   };
-  const watching = () => !!waiting || tombstones.size > 0 || placements.size > 0;
+  const watching = () => !!waiting || tombstones.size > 0 || placements.size > 0 || injections.size > 0;
   // The id of a whole held line that the parker is waiting on, if any. The
   // SDK writes the id after the result, so the last match in the line's
   // tail is read first, then its head; only the ends are copied.
@@ -434,6 +450,7 @@ function createPointerParker({
       for (const match of matches) {
         const key = match[1] !== undefined ? JSON.stringify(match[1]) : match[2];
         const id = match[1] !== undefined ? match[1] : null;
+        if (id !== null && injections.has(id)) return { injected: id };
         if (id !== null && ((waiting && waiting.id === id) || tombstones.has(id))) return { park: id };
         if (placements.has(key)) return { placement: key };
       }
@@ -446,6 +463,26 @@ function createPointerParker({
       const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       return message.error ? 'rpc_error' : message.result?.isError === true ? 'tool_error' : 'ok';
     } catch { return 'unparsed'; }
+  };
+  // An injected call's answer, for its caller: how it ended and its text.
+  const injectedAnswer = (chunks) => {
+    try {
+      const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const blocks = Array.isArray(message.result?.content) ? message.result.content : [];
+      return {
+        outcome: message.error ? 'rpc_error' : message.result?.isError === true ? 'tool_error' : 'ok',
+        text: message.error ? String(message.error.message || '')
+          : blocks.filter((block) => block?.type === 'text' && typeof block.text === 'string')
+            .map((block) => block.text).join('\n'),
+      };
+    } catch { return { outcome: 'unparsed', text: '' }; }
+  };
+  const settleInjection = (id, answer) => {
+    const entry = injections.get(id);
+    if (!entry) return;
+    injections.delete(id);
+    clearTimeout(entry.timer);
+    entry.resolve(answer);
   };
   // While a park move or the agent's own hover is in flight, each answer
   // line is held whole until its id is known; otherwise lines stream
@@ -481,6 +518,10 @@ function createPointerParker({
         const bytes = heldBytes;
         held = []; heldBytes = 0;
         const watched = watchedKeyOf(chunks, bytes);
+        if (watched?.injected) {
+          settleInjection(watched.injected, injectedAnswer(chunks));
+          continue;
+        }
         if (watched?.park) {
           const id = watched.park;
           if (tombstones.has(id)) { clearTimeout(tombstones.get(id)); tombstones.delete(id); }
@@ -504,6 +545,29 @@ function createPointerParker({
   });
   return {
     input, output,
+    // One tool call of the shots tools' own (an upload of a sample file),
+    // queued behind the agent's calls already waiting. Its answer goes to the
+    // returned promise and never to the agent's stream; one that does not
+    // come within `limitMs` is dropped when it does.
+    inject(name, args = {}, { limitMs = INJECT_TIMEOUT_MS } = {}) {
+      if (closed || inputEnded) return Promise.resolve({ outcome: 'browser_gone', text: '' });
+      const id = `usernode-shots-control-${nonce}-${++injected}`;
+      return new Promise((resolve) => {
+        // Kept referenced: its caller waits on it. close() clears it.
+        const timer = setTimeout(() => {
+          injections.delete(id);
+          bury(id);
+          resolve({ outcome: 'timeout', text: '' });
+        }, limitMs);
+        injections.set(id, { resolve, timer });
+        queue.push({
+          line: Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
+            params: { name, arguments: args } })}\n`),
+          tool: name, key: JSON.stringify(id), parked: false,
+        });
+        drain();
+      });
+    },
     // The browser is gone: stop waiting, and send nothing more.
     close() {
       closed = true;
@@ -514,6 +578,77 @@ function createPointerParker({
       queue.length = 0;
       for (const timer of tombstones.values()) clearTimeout(timer);
       tombstones.clear();
+      for (const id of [...injections.keys()]) settleInjection(id, { outcome: 'browser_gone', text: '' });
+    },
+  };
+}
+
+// ── The shots tools' way into this browser ─────────────────────────────
+//
+// The agent's own file tool stays blocked (run-cc.sh): it would hand a page
+// any file on the worker, the browsers' signed-in storage state among them.
+// A page that asks for a file is answered through the shots bridge's
+// upload_file instead, which asks this observer over a socket of its own in
+// SHOTS_BROWSER_CONTROL_DIR (a directory only the worker's own user can
+// open), with the turn's control token. The observer chooses the files
+// itself, by name from the sample set (shots-samples.js), and sends the
+// browser the upload the agent cannot: the page gets a sample or nothing.
+const CONTROL_LINE_MAX_BYTES = 4096;
+const CONTROL_ANSWER_MAX_CHARS = 200_000;
+
+function sameToken(value, expected) {
+  if (typeof value !== 'string' || value.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+}
+
+function startControl({ dir, name, token, samplesDir, parker, emit = () => {}, browser = {}, onAnswer = null }) {
+  if (!dir || !/^[0-9a-f]{64}$/.test(String(token || ''))
+      || !/^(member|admin|full_admin|guest)(_phone)?$/.test(String(name || ''))) return null;
+  const socketPath = path.join(dir, `${name}.sock`);
+  try { fs.unlinkSync(socketPath); } catch { /* none left over */ }
+  const handle = async (line) => {
+    let message;
+    try { message = JSON.parse(line); } catch { return { ok: false, code: 'invalid_request' }; }
+    if (!sameToken(message?.token, token)) return { ok: false, code: 'forbidden' };
+    if (message.action !== 'upload') return { ok: false, code: 'unknown_action' };
+    let paths;
+    try { paths = samples.samplePaths(message.files, samplesDir); }
+    catch (error) { return { ok: false, code: error.code || 'invalid_sample_files', message: error.message }; }
+    // No files closes the chooser without choosing.
+    const answer = await parker.inject('browser_file_upload', paths.length ? { paths } : {});
+    emit({ kind: 'sample_upload', ...browser, outcome: answer.outcome, count: paths.length });
+    try { onAnswer?.(answer); } catch { /* the answer still goes back */ }
+    return { ok: answer.outcome === 'ok', outcome: answer.outcome, text: answer.text.slice(0, CONTROL_ANSWER_MAX_CHARS) };
+  };
+  const server = net.createServer((socket) => {
+    socket.on('error', () => { /* the caller went away */ });
+    socket.setTimeout(INJECT_TIMEOUT_MS + 15_000, () => socket.destroy());
+    let data = Buffer.alloc(0);
+    const onData = (chunk) => {
+      data = Buffer.concat([data, chunk]);
+      const end = data.indexOf(10);
+      if (end < 0 || end > CONTROL_LINE_MAX_BYTES) {
+        if (end > CONTROL_LINE_MAX_BYTES || data.length > CONTROL_LINE_MAX_BYTES) socket.destroy();
+        return;
+      }
+      socket.off('data', onData);
+      handle(data.subarray(0, end).toString('utf8'))
+        .catch(() => ({ ok: false, code: 'control_failed' }))
+        .then((answer) => { if (!socket.destroyed) socket.end(`${JSON.stringify(answer)}\n`); });
+    };
+    socket.on('data', onData);
+  });
+  server.on('error', () => { /* no control: upload_file says the browser cannot be reached */ });
+  server.listen(socketPath, () => {
+    try { fs.chmodSync(socketPath, 0o600); } catch { /* the directory is private anyway */ }
+  });
+  // The observer still exits with its browser.
+  server.unref();
+  return {
+    socketPath,
+    close() {
+      server.close();
+      try { fs.unlinkSync(socketPath); } catch { /* already gone */ }
     },
   };
 }
@@ -535,6 +670,9 @@ function start({ persona, phone = false, args, binary = null,
   diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
   origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]'),
   hints = JSON.parse(process.env.SHOTS_NAVIGATION_HINTS || '{}'),
+  controlDir = process.env.SHOTS_BROWSER_CONTROL_DIR,
+  controlToken = process.env.SHOTS_BROWSER_CONTROL_TOKEN,
+  samplesDir = process.env.SHOTS_SAMPLES_DIR || samples.SAMPLES_DIR,
 } = {}) {
   const emit = (event) => {
     if (!diagnosticFile) return;
@@ -549,9 +687,15 @@ function start({ persona, phone = false, args, binary = null,
   const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
+  const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
   const parker = createPointerParker({
-    emit, persona: ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member',
+    emit, persona: safePersona,
     parkBeforeClose: list.some((arg) => /^--save-video(=|$)/.test(arg)),
+  });
+  const control = startControl({
+    dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}`, token: controlToken,
+    samplesDir, parker, emit, browser: { persona: safePersona, ...(phone === true ? { phone: true } : {}) },
+    onAnswer: (answer) => observer.noteAnswer(answer.text),
   });
   stdin.pipe(inputTap).pipe(parker.input).pipe(child.stdin);
   child.stdout.pipe(parker.output)
@@ -574,6 +718,7 @@ function start({ persona, phone = false, args, binary = null,
     stdin.unpipe(inputTap);
     inputTap.destroy();
     parker.close();
+    control?.close();
     stdin.pause();
     observer.exit(code, signal);
     process.exitCode = Number.isInteger(code) ? code : 1;
@@ -595,5 +740,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  MARKER, lineTap, createObserver, createPointerParker, start, reportedPageUrl, savedScreenshotPath, browserCommand, browserName,
+  MARKER, lineTap, createObserver, createPointerParker, startControl, start, reportedPageUrl, savedScreenshotPath,
+  browserCommand, browserName,
 };

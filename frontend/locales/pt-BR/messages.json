@@ -3518,5 +3518,17 @@
   "bot.tray.workingOnRelease.minutes_other": {
     "text": "Trabalhando em {{job}} · vai ao ar em cerca de {{count}} minutos",
     "source": "433bb5c2e2b5f9d2f5d8ef64522331b15b072153c8909e4b37b4d0539702233d"
+  },
+  "bot.last.release.minutes_many": {
+    "text": "Último: {{job}} entra no ar em cerca de {{count}} de minutos",
+    "source": "e2a9ff51908d8aebb08eefb4d06845fea8d7223a8671e98737792c1108a5b691"
+  },
+  "bot.last.release.minutes_one": {
+    "text": "Último: {{job}} entra no ar em cerca de um minuto",
+    "source": "d0476c00ebac18aed2fcbf5f8831f7f7e6583cd3fb3673d65c6310cc0337c48c"
+  },
+  "bot.last.release.minutes_other": {
+    "text": "Último: {{job}} entra no ar em cerca de {{count}} minutos",
+    "source": "e2a9ff51908d8aebb08eefb4d06845fea8d7223a8671e98737792c1108a5b691"
   }
 }

@@ -5051,6 +5051,246 @@
     "text": "xem với vai trò quản trị viên toàn quyền, khách chưa đăng nhập và thành viên",
     "source": "3ec060ffb62d1cb8749ad15b506191a1e31405d5ec6a7c5ae3d2272c50bb5f20"
   },
+  "shots.seenAs.fullAdminGuestReadOnlyAdmin": {
+    "text": "xem với tư cách quản trị viên toàn quyền, khách chưa đăng nhập và quản trị viên chỉ xem",
+    "source": "18ed93db6d7a2a7b2842c167ff1cdf66ce2ce1340d90eefa61988cc41f6508c2"
+  },
+  "shots.seenAs.guestMemberReadOnlyAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, thành viên và quản trị viên chỉ xem",
+    "source": "384c948d9547affcc68be1f1d9ac17581cf062ac3281e69092f3532d8c620dae"
+  },
+  "shots.seenAs.guestMemberFullAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, thành viên và quản trị viên toàn quyền",
+    "source": "ffd1435b32cf1a8937192c4c04cf9e817c9ac36700818d8d383612ae337f5250"
+  },
+  "shots.seenAs.guestReadOnlyAdminMember": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên chỉ xem và thành viên",
+    "source": "03f035f9fa2b9a1bd32426cbeddd2bf56280b4d4cabd92f7df8d8c96d3ca61cc"
+  },
+  "shots.seenAs.guestReadOnlyAdminFullAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên chỉ xem và quản trị viên toàn quyền",
+    "source": "3f5afa5e62436cdad8babe88b6d7baeae004e4a41d53a292970baf32b54ef60f"
+  },
+  "shots.seenAs.guestFullAdminMember": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên toàn quyền và thành viên",
+    "source": "9303c8d5713aecdd82bf3e47204a82286c097300bb2c29f80d14eefcd8efb995"
+  },
+  "shots.seenAs.guestFullAdminReadOnlyAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên toàn quyền và quản trị viên chỉ xem",
+    "source": "ba0e2a777511e760a3a6bacd49dfb36c2fd3dcc82346d73f13133052e3cfad8a"
+  },
+  "shots.seenAs.memberReadOnlyAdminFullAdminGuest": {
+    "text": "xem với tư cách thành viên, quản trị viên chỉ xem, quản trị viên toàn quyền và khách chưa đăng nhập",
+    "source": "33e1aa2cda431f2d09df1d188dbb9eb5917d96238764bcb30dcad39811705479"
+  },
+  "shots.seenAs.memberReadOnlyAdminGuestFullAdmin": {
+    "text": "xem với tư cách thành viên, quản trị viên chỉ xem, khách chưa đăng nhập và quản trị viên toàn quyền",
+    "source": "92b0e7a55c8ae468f34b0ffd714aeb11be8b2e0a163ee152ea728eb4e08676c2"
+  },
+  "shots.seenAs.memberFullAdminReadOnlyAdminGuest": {
+    "text": "xem với tư cách thành viên, quản trị viên toàn quyền, quản trị viên chỉ xem và khách chưa đăng nhập",
+    "source": "6ac03c44e4583fc6f72d46222a442856d8a72678610b24d3eecd3e64542ede5b"
+  },
+  "shots.seenAs.memberFullAdminGuestReadOnlyAdmin": {
+    "text": "xem với tư cách thành viên, quản trị viên toàn quyền, khách chưa đăng nhập và quản trị viên chỉ xem",
+    "source": "e4ee259cbb384cf0fd230c714404c40b7dd59cdb599b173c9327cd6d996becf2"
+  },
+  "shots.seenAs.memberGuestReadOnlyAdminFullAdmin": {
+    "text": "xem với tư cách thành viên, khách chưa đăng nhập, quản trị viên chỉ xem và quản trị viên toàn quyền",
+    "source": "2082d5f181aa662c49bc2281be9099ca601721487bb9c5498ebfb63ba9035f6d"
+  },
+  "shots.seenAs.memberGuestFullAdminReadOnlyAdmin": {
+    "text": "xem với tư cách thành viên, khách chưa đăng nhập, quản trị viên toàn quyền và quản trị viên chỉ xem",
+    "source": "2dc4018b8f4f3419c71a146a29f4b6f2ac01509e1327cc7e6bfbf600cf2e337f"
+  },
+  "shots.seenAs.readOnlyAdminMemberFullAdminGuest": {
+    "text": "xem với tư cách quản trị viên chỉ xem, thành viên, quản trị viên toàn quyền và khách chưa đăng nhập",
+    "source": "61386ea521b9d7d8c44bab3b89f6b42d1bfaaf6c3f05404f1b583f7a19028617"
+  },
+  "shots.seenAs.readOnlyAdminMemberGuestFullAdmin": {
+    "text": "xem với tư cách quản trị viên chỉ xem, thành viên, khách chưa đăng nhập và quản trị viên toàn quyền",
+    "source": "2aadb8a038c91322a3d1a1a7efc43a5e68a4a92181929eb3dba57b3c3a4ab0cd"
+  },
+  "shots.seenAs.readOnlyAdminFullAdminMemberGuest": {
+    "text": "xem với tư cách quản trị viên chỉ xem, quản trị viên toàn quyền, thành viên và khách chưa đăng nhập",
+    "source": "50ae6922b91160a99d5096a0e9377e61507bfd40992dd6ae74171d65e3e4858a"
+  },
+  "shots.seenAs.readOnlyAdminFullAdminGuestMember": {
+    "text": "xem với tư cách quản trị viên chỉ xem, quản trị viên toàn quyền, khách chưa đăng nhập và thành viên",
+    "source": "50a7cf7467ea68cac1e73f2ac090f3cb92775adb63e40677c34bb532fcc4a6dc"
+  },
+  "shots.seenAs.readOnlyAdminGuestMemberFullAdmin": {
+    "text": "xem với tư cách quản trị viên chỉ xem, khách chưa đăng nhập, thành viên và quản trị viên toàn quyền",
+    "source": "1093ec72862f5a6aa798415385fb1ed2de58e8d601ad6379e2bada55e417faf5"
+  },
+  "shots.seenAs.readOnlyAdminGuestFullAdminMember": {
+    "text": "xem với tư cách quản trị viên chỉ xem, khách chưa đăng nhập, quản trị viên toàn quyền và thành viên",
+    "source": "db4536868f2c85ddbe6855a08510e8e83c89b156b766207ee09b718f928ded24"
+  },
+  "shots.seenAs.fullAdminMemberReadOnlyAdminGuest": {
+    "text": "xem với tư cách quản trị viên toàn quyền, thành viên, quản trị viên chỉ xem và khách chưa đăng nhập",
+    "source": "0c210edb58c72fd6d601582d4483c2247c02f8b75061bb40d2ec03c1fc664c86"
+  },
+  "shots.seenAs.fullAdminMemberGuestReadOnlyAdmin": {
+    "text": "xem với tư cách quản trị viên toàn quyền, thành viên, khách chưa đăng nhập và quản trị viên chỉ xem",
+    "source": "482b91870c4b4d01bd69ed775d84f8dbaff88472a62b92f4184401f64a4c3332"
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminMemberGuest": {
+    "text": "xem với tư cách quản trị viên toàn quyền, quản trị viên chỉ xem, thành viên và khách chưa đăng nhập",
+    "source": "e2126af22e220a73f3b6cfd3a94880335382e7d18244def0ed52abd6eeba0b1c"
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminGuestMember": {
+    "text": "xem với tư cách quản trị viên toàn quyền, quản trị viên chỉ xem, khách chưa đăng nhập và thành viên",
+    "source": "7adaa4d33641b811dcbb22ffa9e01917f1695480de1b1341256365f63885ec87"
+  },
+  "shots.seenAs.fullAdminGuestMemberReadOnlyAdmin": {
+    "text": "xem với tư cách quản trị viên toàn quyền, khách chưa đăng nhập, thành viên và quản trị viên chỉ xem",
+    "source": "fe3dbd49413e72ef39ed854c5739cd2a88fa7a3deb282b2d61a5a2372ae4d7b7"
+  },
+  "shots.seenAs.fullAdminGuestReadOnlyAdminMember": {
+    "text": "xem với tư cách quản trị viên toàn quyền, khách chưa đăng nhập, quản trị viên chỉ xem và thành viên",
+    "source": "f8b85c1ee5e814284d86b8c99b8c2ce37203889dc0d771b9051ab4f2391e9591"
+  },
+  "shots.seenAs.guestMemberReadOnlyAdminFullAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, thành viên, quản trị viên chỉ xem và quản trị viên toàn quyền",
+    "source": "7f9afa9088bc3a577f36758c494780657b441565358ba621a4ae693ebcff2343"
+  },
+  "shots.seenAs.guestMemberFullAdminReadOnlyAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, thành viên, quản trị viên toàn quyền và quản trị viên chỉ xem",
+    "source": "067eedf6efe5ec33b625d03711bf31b805ff7de65d7d8755579f806fcdcd32a2"
+  },
+  "shots.seenAs.guestReadOnlyAdminMemberFullAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên chỉ xem, thành viên và quản trị viên toàn quyền",
+    "source": "490d66c09b986c8b75dc3a1b06cb83fceea8c1c15a522159772f46cf4c4ccc75"
+  },
+  "shots.seenAs.guestReadOnlyAdminFullAdminMember": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên chỉ xem, quản trị viên toàn quyền và thành viên",
+    "source": "78f527fd7851efb4a9dcf6a9d4bb1edbf51081527f08164b690b0523efbfa141"
+  },
+  "shots.seenAs.guestFullAdminMemberReadOnlyAdmin": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên toàn quyền, thành viên và quản trị viên chỉ xem",
+    "source": "6453869931c7b85074d25b6a639f5329e60438142d4e6ce61d4f9fcd2a25afd3"
+  },
+  "shots.seenAs.guestFullAdminReadOnlyAdminMember": {
+    "text": "xem với tư cách khách chưa đăng nhập, quản trị viên toàn quyền, quản trị viên chỉ xem và thành viên",
+    "source": "a7874167c379f09f307f7029625fda2d19992c331fb9555ad356bb9c5277f619"
+  },
+  "shots.screen.sized": {
+    "text": "{{size}}, {{width}} × {{height}}",
+    "source": "ea9f2790d659652b88b150047bdd8fc26632f22d2a049e4da700027b2ef44fc6"
+  },
+  "shots.claim.notInShots": {
+    "text": "<0>Không có trong ảnh chụp:</0> {{note}}",
+    "source": "997892bf22f704827df6697a8e03a1e7b5936ea426d844c645303f763766078a"
+  },
+  "shots.clip.beforeCaption": {
+    "text": "Clip trước · {{size}}",
+    "source": "719ea93f2881aff56bdcedc6e4ca045d762b2f5983ac553645aaca99183156da"
+  },
+  "shots.clip.afterCaption": {
+    "text": "Clip sau · {{size}}",
+    "source": "4e105c9c7004c25c1cafac4f9d78b93e1ebbccc4bcd54936cb9394e90bb19854"
+  },
+  "shots.clip.beforeLabel": {
+    "text": "Clip trước: {{claim}}",
+    "source": "0beae2cb16874bfd57892222e43fb6b089188af63da2259c09c8ec8a7477c05b"
+  },
+  "shots.clip.afterLabel": {
+    "text": "Clip sau: {{claim}}",
+    "source": "b07a44fcd58c996fe14d5c39dd9f1b127f7874b7846ed04dcc4b4c64d1d76f72"
+  },
+  "shots.clip.none": {
+    "text": "Không có clip",
+    "source": "e40ea2de64e7cbd3a14144948d84d0cc56d00a930171ba4caa237bc0ddb8bb43"
+  },
+  "shots.clip.playAnimation": {
+    "text": "Phát hoạt ảnh",
+    "source": "76bced7d616aad897b3de63ea266168e9c9ad3d624d7efa7bc71b58cefa514ae"
+  },
+  "shots.clip.playInteraction": {
+    "text": "Phát tương tác",
+    "source": "ea3387b1a3c8af6c52be7bc37153efd6ac8cf675d0d77ecf0f0c41a1c3b2ac92"
+  },
+  "shots.clip.animationLabel": {
+    "text": "Hoạt ảnh cho {{claim}}",
+    "source": "cf4abbc729e25fd86dfd040c7b3abe4975e7affd3bb263a225345c12238a5580"
+  },
+  "shots.clip.interactionLabel": {
+    "text": "Tương tác cho {{claim}}",
+    "source": "19b73434b82d1b8a5c892adedab3c9053e57d9c7464c7bf6ced096867ee56c2b"
+  },
+  "shots.screen.noShot": {
+    "text": "Không có ảnh",
+    "source": "de43576c09ee6df9849017ab8a2f863a30cd9b69ed0298a32d98acfb02fae042"
+  },
+  "shots.screen.altAfter": {
+    "text": "Sau: {{changes}}",
+    "source": "3ec51b4b8fb9400299d5d0fdc3e7cb6901757d6dbb68f70e639a9f1206115bd5"
+  },
+  "shots.screen.altBefore": {
+    "text": "Trước: {{changes}}",
+    "source": "30816066d8e31b7d95c3e0cd99de1b466ee200eca063cf992f6f3149a73e4bd9"
+  },
+  "shots.screen.altBeforeAbsent": {
+    "text": "Trước, chưa có: {{changes}}",
+    "source": "c03172ed5177dc0ad272760ace9ba0571991a11ce06361cc03074c3a875f8c52"
+  },
+  "shots.screen.keyOutline": {
+    "text": "Viền nét đứt: cũng thay đổi ở đây, nhưng không có thay đổi nào trong danh sách mô tả nó",
+    "source": "c7413a5c9a78cd0a8956beb330688e23bb62a0570cdb85f24c3f17a11bd05669"
+  },
+  "shots.screen.keyLine": {
+    "text": "Đường nét đứt: nơi thay đổi bắt đầu ở phía không có nó",
+    "source": "056fedc4b848664a5ab85ef39d7266b1710b72850dd32fe403ff5b3be9002773"
+  },
+  "shots.claim.failedBadge": {
+    "text": "Không chạy được",
+    "source": "ddf710fe8175018ae4a542d9d8eaf1ca8acc72320159f4f62ab2dcbff7922a8d"
+  },
+  "shots.claim.failedReason": {
+    "text": "Tác nhân chụp ảnh đã thử mục này trên bản sau và ứng dụng bị lỗi.",
+    "source": "020957b917e2489770850e94d5e588d60c8326bda0f38a32c632e0240d0edb1f"
+  },
+  "shots.claim.skippedBadge": {
+    "text": "Đã bỏ qua",
+    "source": "12698ce1ea5cd4ab13ff4b7e6b1239908c41a4b2dfa0c2661cfb53fc2aa71bd0"
+  },
+  "shots.claim.skippedReason": {
+    "text": "Tác nhân chụp ảnh không thể truy cập thay đổi này.",
+    "source": "5dd00e835e4a674dc755eb37baca95b3e7d35c6fcf3ed9312213751506bcf92f"
+  },
+  "shots.claim.where": {
+    "text": "{{sizes}} · {{persona}}",
+    "source": "fd4113793fb7b77c8e57ba8f10f3333f80c8cd3b4a5f1d7e371d0373df454849"
+  },
+  "shots.compare.fallbackTitle": {
+    "text": "Trước và sau",
+    "source": "3c7206ad11e3a94c54100ca335ed6508915a29a26f20825d6966eb4086230fd9"
+  },
+  "shots.compare.before": {
+    "text": "Trước",
+    "source": "9bb725005055412c75a8e8d1fb5a0780595174ac8bbe5a24f768647bd4e4debe"
+  },
+  "shots.compare.beforeAbsent": {
+    "text": "Trước · Chưa có",
+    "source": "0faa365869694723016055a96e2fad134cd8da29cc964bdc3a9d26654fdf312f"
+  },
+  "shots.compare.after": {
+    "text": "Sau",
+    "source": "7b68fe5510851da3d89100c569d3265e044d8656d95750c376b7a0972dea7330"
+  },
+  "shots.compare.notThereYet": {
+    "text": "Chưa có",
+    "source": "1c72c41be34ddeb8d5f8dc2671c7b4b93ce6c6833105e5cc8d69808943e1f726"
+  },
+  "shots.compare.noShot": {
+    "text": "Không có ảnh",
+    "source": "de43576c09ee6df9849017ab8a2f863a30cd9b69ed0298a32d98acfb02fae042"
+  },
+  "shots.compare.openOriginal": {
+    "text": "Mở ảnh gốc ↗",
+    "source": "b0dd2569a7176b7f3a6b7f2e1536ae73c278cc360813aa1aa08ab1d60409a84a"
+  },
   "shots.compare.altBefore": {
     "text": "Trước: {{claim}}",
     "source": "b340036766f3e9a18f18bab4d9d5e5d0c12c85c481fe7e6e6772e648dd02255c"

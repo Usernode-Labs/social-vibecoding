@@ -146,3 +146,16 @@ test('a shot is published only from its own side\'s address', () => {
   assert.match(boundary.provenanceRefusal('sideways', ['http://head.internal:3000'], pair), /no address/);
   assert.match(boundary.provenanceRefusal('after', ['http://head.internal:3000'], { base: pair.base }), /no address/);
 });
+
+test('the shots tools may hold or fail only one exact API GET path, the declared failure\'s rule', () => {
+  const contract = require('../src/services/visible-changes');
+  for (const value of ['/api/items', '/api/items?page=1&sort=new', '/api/lists/demo']) {
+    assert.equal(boundary.controlledRequestPath(value), true, value);
+    assert.equal(contract.validControlledFailurePath(value), true, value);
+  }
+  for (const value of ['/api', '/apis/items', '/lists/demo', '/api/items#top', '/api/items/*', '/api/a\\b',
+    'http://head.internal/api/items', '//evil.example/api/items', '/api/items\n', '/api/./items', '/api/%2e%2e/x',
+    `/api/${'x'.repeat(520)}`, null, 42]) {
+    assert.equal(boundary.controlledRequestPath(value), false, JSON.stringify(value));
+  }
+});

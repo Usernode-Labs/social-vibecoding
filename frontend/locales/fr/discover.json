@@ -423,6 +423,18 @@
     "text": "Veuillez patienter…",
     "source": "4660a983366f710126b2dbf35dd89c7ea89eb7efdbe55b68dede11aa6aef705b"
   },
+  "pill.missingSecretsTip_many": {
+    "text": "{{count}} secrets requis non définis. Définissez les valeurs dans le panneau Secrets de l’app",
+    "source": "e8cc74acb4c2cdd1ecba2cff47ef933980c2db70f8ddd040b3b57ab76321bfcf"
+  },
+  "pill.missingSecretsTip_one": {
+    "text": "{{count}} secret requis non défini. Définissez les valeurs dans le panneau Secrets de l’app",
+    "source": "10fb018188a793746db6adedf558faf8801a895c6df2d9662234954cff40a759"
+  },
+  "pill.missingSecretsTip_other": {
+    "text": "{{count}} secrets requis non définis. Définissez les valeurs dans le panneau Secrets de l’app",
+    "source": "e8cc74acb4c2cdd1ecba2cff47ef933980c2db70f8ddd040b3b57ab76321bfcf"
+  },
   "pill.toVote_many": {
     "text": "{{count}} à voter",
     "source": "0b933014269d26619a17763cea8bdecc4d6553b79199903184ed764c35f1a1eb"

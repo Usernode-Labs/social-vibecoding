@@ -391,6 +391,14 @@
     "text": "Import Feature from a PR",
     "description": "Button under the own-tools guide in the dev chat: opens the dialog that turns an existing pull request into a proposal. PR is short for pull request."
   },
+  "header.advisoryVotes_one": {
+    "text": "{{count}} advisory vote from a non-approver, so it doesn’t count toward merging",
+    "description": "Tooltip on the small \"+1\" beside a proposal's vote tally in the status pill at the top of a dev chat session. {{count}} is how many Yes votes came from people who are not approvers: they are recorded but do not count toward merging."
+  },
+  "header.advisoryVotes_other": {
+    "text": "{{count}} advisory votes from non-approvers, so they don’t count toward merging",
+    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally in the status pill at the top of a dev chat session. {{count}} is how many Yes votes came from people who are not approvers: they are recorded but do not count toward merging."
+  },
   "header.venue.busyTitle": {
     "text": "Wait for the current response to finish before changing where this session is built.",
     "description": "Tooltip on the disabled venue button at the top of a dev chat session while the coding agent is answering. The venue is where the change is built: on Homeroom, on the person's computer, or in another AI product."
@@ -2229,7 +2237,7 @@
   },
   "commentPin.view.chip": {
     "text": "Screenshot",
-    "description": "Small label on the picture of the page shown while comment mode is on: says the page behind is a picture of the page, not the live page."
+    "description": "Small label at the start of the comment-mode bar, above the picture of the page shown while comment mode is on: says the page below is a picture of the page, not the live page."
   },
   "commentPin.marker.numbered": {
     "text": "Comment {{number}}",

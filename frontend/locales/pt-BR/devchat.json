@@ -2266,5 +2266,293 @@
   "commentPin.closeUp.pinchHint": {
     "text": "Use o gesto de pinça para ampliar",
     "source": "423044040c1049a6eb794769ac4f77e0e6e978b5d6424ac458446336b59243b9"
+  },
+  "banner.sync.behind_many": {
+    "text": "A main está <0>{{count}}</0> de commits à frente desta branch.",
+    "source": "fd68fab5a6612bc83dc03291fe2b645e4e283f488c9b8e6d906cc9f35f247d82"
+  },
+  "banner.sync.behind_one": {
+    "text": "A main está <0>{{count}}</0> commit à frente desta branch.",
+    "source": "a85d1bc71229542ff01bcbc6fcc4df3f0421cd0d510b832a0ab082c444850f26"
+  },
+  "banner.sync.behind_other": {
+    "text": "A main está <0>{{count}}</0> commits à frente desta branch.",
+    "source": "fd68fab5a6612bc83dc03291fe2b645e4e283f488c9b8e6d906cc9f35f247d82"
+  },
+  "drafts.heading_many": {
+    "text": "Rascunhos salvos ({{count}}) <0>· em todos os seus dispositivos</0>",
+    "source": "6e58ac3a5e6d0ebe23f41ad9c78fd695d1d8f2e3201c965fc601cb9a240e9cd2"
+  },
+  "drafts.heading_one": {
+    "text": "Rascunhos salvos ({{count}}) <0>· em todos os seus dispositivos</0>",
+    "source": "6e58ac3a5e6d0ebe23f41ad9c78fd695d1d8f2e3201c965fc601cb9a240e9cd2"
+  },
+  "drafts.heading_other": {
+    "text": "Rascunhos salvos ({{count}}) <0>· em todos os seus dispositivos</0>",
+    "source": "6e58ac3a5e6d0ebe23f41ad9c78fd695d1d8f2e3201c965fc601cb9a240e9cd2"
+  },
+  "sessions.older.show_many": {
+    "text": "Mostrar {{number}} de sessões mais antigas",
+    "source": "a9d7873d773501dad1ecde1a6f8397d28c1e7f65ebd53c0274a05d4e13f14e9a"
+  },
+  "sessions.older.show_one": {
+    "text": "Mostrar {{number}} sessão mais antiga",
+    "source": "656a8395ae73a815328c856169b2d716e4e71cf1c618e1c70dae54485176132f"
+  },
+  "sessions.older.show_other": {
+    "text": "Mostrar {{number}} sessões mais antigas",
+    "source": "a9d7873d773501dad1ecde1a6f8397d28c1e7f65ebd53c0274a05d4e13f14e9a"
+  },
+  "transcript.progress.steps_many": {
+    "text": "{{count}} de etapas",
+    "source": "bfc14f85bd75246714b473a8c30848b967826c1f32c028740a0044f4413e5d75"
+  },
+  "transcript.progress.steps_one": {
+    "text": "{{count}} etapa",
+    "source": "bfc14f85bd75246714b473a8c30848b967826c1f32c028740a0044f4413e5d75"
+  },
+  "transcript.progress.steps_other": {
+    "text": "{{count}} etapas",
+    "source": "bfc14f85bd75246714b473a8c30848b967826c1f32c028740a0044f4413e5d75"
+  },
+  "model.catalog.updatedMinutes_many": {
+    "text": "Atualizado há {{count}}min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "model.catalog.updatedMinutes_one": {
+    "text": "Atualizado há {{count}}min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "model.catalog.updatedMinutes_other": {
+    "text": "Atualizado há {{count}}min",
+    "source": "a9be2bbcb1e48bf59df89e4dbcacf201de49a43fb5387ff31f6ae2a6a36665f2"
+  },
+  "model.catalog.updatedHours_many": {
+    "text": "Atualizado há {{count}}h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "model.catalog.updatedHours_one": {
+    "text": "Atualizado há {{count}}h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "model.catalog.updatedHours_other": {
+    "text": "Atualizado há {{count}}h",
+    "source": "5901a1ad82c92f198071df469d7d5cf04aa31a24149b194d03e1cd00a119dae9"
+  },
+  "agentChoice.catalog.count_many": {
+    "text": "{{shown}} de {{count}} de modelos",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "agentChoice.catalog.count_one": {
+    "text": "{{shown}} de {{count}} modelo",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "agentChoice.catalog.count_other": {
+    "text": "{{shown}} de {{count}} modelos",
+    "source": "3d9dc57b3a54d2f39c5932965c79a70156417a6eb4af397dd34151d52dcf544f"
+  },
+  "flow.update.submittedVotesCleared_many": {
+    "text": "Atualização enviada: {{count}} de votos removidos",
+    "source": "582d4e1db20a68300ebab9032655454e19135f913cf447c383b9a5b6fbad7be0"
+  },
+  "flow.update.submittedVotesCleared_one": {
+    "text": "Atualização enviada: {{count}} voto removido",
+    "source": "84f845b740c0dc6f6ecc95cc0524dafc596db22da53148e9c0bc80dd76107051"
+  },
+  "flow.update.submittedVotesCleared_other": {
+    "text": "Atualização enviada: {{count}} votos removidos",
+    "source": "582d4e1db20a68300ebab9032655454e19135f913cf447c383b9a5b6fbad7be0"
+  },
+  "transcript.spec.versionHeader_many": {
+    "text": "Plano v{{version}} · {{count}} de linhas",
+    "source": "ed6256a6a7e5b5a7d6f6f0ed07b11eada18c52b6220f6c879e047b9e364ac6e0"
+  },
+  "transcript.spec.versionHeader_one": {
+    "text": "Plano v{{version}} · {{count}} linha",
+    "source": "ed6256a6a7e5b5a7d6f6f0ed07b11eada18c52b6220f6c879e047b9e364ac6e0"
+  },
+  "transcript.spec.versionHeader_other": {
+    "text": "Plano v{{version}} · {{count}} linhas",
+    "source": "ed6256a6a7e5b5a7d6f6f0ed07b11eada18c52b6220f6c879e047b9e364ac6e0"
+  },
+  "transcript.spec.draftedHeader_many": {
+    "text": "Plano rascunhado · {{count}} de linhas",
+    "source": "4b9e33b1a0b5c6b484a46ef78898423a19d5086323f4ef88460e8ff879ade3c9"
+  },
+  "transcript.spec.draftedHeader_one": {
+    "text": "Plano rascunhado · {{count}} linha",
+    "source": "4b9e33b1a0b5c6b484a46ef78898423a19d5086323f4ef88460e8ff879ade3c9"
+  },
+  "transcript.spec.draftedHeader_other": {
+    "text": "Plano rascunhado · {{count}} linhas",
+    "source": "4b9e33b1a0b5c6b484a46ef78898423a19d5086323f4ef88460e8ff879ade3c9"
+  },
+  "transcript.stopLanding.countCommitted_many": {
+    "text": "{{count}} de alterações commitadas",
+    "source": "56c0baf19422e7e3f08035e7b1bfd4dbb4b6e308882162ec6b602b346b7f0653"
+  },
+  "transcript.stopLanding.countCommitted_one": {
+    "text": "{{count}} alteração commitada",
+    "source": "cf638b351239cf34f655d2a8cfee3891885a3caa9fbb2ab5f47c1bd17d387ae0"
+  },
+  "transcript.stopLanding.countCommitted_other": {
+    "text": "{{count}} alterações commitadas",
+    "source": "56c0baf19422e7e3f08035e7b1bfd4dbb4b6e308882162ec6b602b346b7f0653"
+  },
+  "attach.tooMany_many": {
+    "text": "Até {{count}} de arquivos por mensagem.",
+    "source": "94798e449d4369cc757a6bfeee38428c7f9c3fb8b484cc0a9c6c4e108cac7170"
+  },
+  "attach.tooMany_one": {
+    "text": "Até {{count}} arquivo por mensagem.",
+    "source": "94798e449d4369cc757a6bfeee38428c7f9c3fb8b484cc0a9c6c4e108cac7170"
+  },
+  "attach.tooMany_other": {
+    "text": "Até {{count}} arquivos por mensagem.",
+    "source": "94798e449d4369cc757a6bfeee38428c7f9c3fb8b484cc0a9c6c4e108cac7170"
+  },
+  "attach.zipBadge_many": {
+    "text": "ZIP · {{files}} de arquivos",
+    "source": "62ec7870e19b83776894d16e06b69c986f94d0bc7268e583d94aec5140f27246"
+  },
+  "attach.zipBadge_one": {
+    "text": "ZIP · {{files}} arquivo",
+    "source": "62ec7870e19b83776894d16e06b69c986f94d0bc7268e583d94aec5140f27246"
+  },
+  "attach.zipBadge_other": {
+    "text": "ZIP · {{files}} arquivos",
+    "source": "62ec7870e19b83776894d16e06b69c986f94d0bc7268e583d94aec5140f27246"
+  },
+  "drafts.toast.dropped_many": {
+    "text": "São {{limit}} rascunhos salvos. {{count}} de rascunhos mais novos foram descartados. Envie ou exclua um antes.",
+    "source": "189f6698b98c47ab30fcd0f8dd20a0bb911a32b1c80f8b1bc773cabd9e3b7268"
+  },
+  "drafts.toast.dropped_one": {
+    "text": "São {{limit}} rascunhos salvos. {{count}} rascunho mais novo foi descartado. Envie ou exclua um antes.",
+    "source": "e4f90141f1053c76e0d0134925ca108e673280f50bb39269ce10888604bb2118"
+  },
+  "drafts.toast.dropped_other": {
+    "text": "São {{limit}} rascunhos salvos. {{count}} rascunhos mais novos foram descartados. Envie ou exclua um antes.",
+    "source": "189f6698b98c47ab30fcd0f8dd20a0bb911a32b1c80f8b1bc773cabd9e3b7268"
+  },
+  "commentPin.error.imageLimit_many": {
+    "text": "Uma solicitação pode ter {{count}} de imagens.",
+    "source": "f0ba74f17e49dfae4092294e7bec7b70af2cd791aded66e122c512ed22a45653"
+  },
+  "commentPin.error.imageLimit_one": {
+    "text": "Uma solicitação pode ter {{count}} imagem.",
+    "source": "fb63454a6496c9dabf3bfa0c9b3a4775eefab1deb73086e807dc7e9fbaaa1144"
+  },
+  "commentPin.error.imageLimit_other": {
+    "text": "Uma solicitação pode ter {{count}} imagens.",
+    "source": "f0ba74f17e49dfae4092294e7bec7b70af2cd791aded66e122c512ed22a45653"
+  },
+  "commentPin.toast.postedMany_many": {
+    "text": "{{count}} de comentários publicados em {{place}}. Obrigado!",
+    "source": "e5a73c95780b6ccc132067b556dd705c594ea29aa8c31b0bbb957a69d4e3dff3"
+  },
+  "commentPin.toast.postedMany_one": {
+    "text": "{{count}} comentário publicado em {{place}}. Obrigado!",
+    "source": "975b97f207b3581d36feebdc39047933072c2cd66630dfd76f68daa606599159"
+  },
+  "commentPin.toast.postedMany_other": {
+    "text": "{{count}} comentários publicados em {{place}}. Obrigado!",
+    "source": "e5a73c95780b6ccc132067b556dd705c594ea29aa8c31b0bbb957a69d4e3dff3"
+  },
+  "commentPin.toast.postedManyBuilding_many": {
+    "text": "{{count}} de comentários publicados em {{place}}. O Homeroom bot está criando.",
+    "source": "162142c104942f511ff83214d8a4c6dda49ffb430144ac6058b2e4698cbe912d"
+  },
+  "commentPin.toast.postedManyBuilding_one": {
+    "text": "{{count}} comentário publicado em {{place}}. O Homeroom bot está criando.",
+    "source": "26fc3d1327ffd079df24cf4e12ef40089e531b4c9fe5a09cc5ed2788d413f2b9"
+  },
+  "commentPin.toast.postedManyBuilding_other": {
+    "text": "{{count}} comentários publicados em {{place}}. O Homeroom bot está criando.",
+    "source": "162142c104942f511ff83214d8a4c6dda49ffb430144ac6058b2e4698cbe912d"
+  },
+  "commentPin.kudos.costRemaining_many": {
+    "text": "Custa 1 kudos. Restam {{count}} de {{limit}} nesta semana.",
+    "source": "aa1619b1e1c037d784e9ce5ad2b2d9cf965366b725cdc15d83573c11379967a1"
+  },
+  "commentPin.kudos.costRemaining_one": {
+    "text": "Custa 1 kudos. Restam {{count}} de {{limit}} nesta semana.",
+    "source": "aa1619b1e1c037d784e9ce5ad2b2d9cf965366b725cdc15d83573c11379967a1"
+  },
+  "commentPin.kudos.costRemaining_other": {
+    "text": "Custa 1 kudos. Restam {{count}} de {{limit}} nesta semana.",
+    "source": "aa1619b1e1c037d784e9ce5ad2b2d9cf965366b725cdc15d83573c11379967a1"
+  },
+  "commentPin.kudos.left_many": {
+    "text": "{{count}} restantes",
+    "source": "656addbee3bde15ef6755ac398f9304a69f3d258b11c7e730966c2f44fb5738f"
+  },
+  "commentPin.kudos.left_one": {
+    "text": "{{count}} restante",
+    "source": "656addbee3bde15ef6755ac398f9304a69f3d258b11c7e730966c2f44fb5738f"
+  },
+  "commentPin.kudos.left_other": {
+    "text": "{{count}} restantes",
+    "source": "656addbee3bde15ef6755ac398f9304a69f3d258b11c7e730966c2f44fb5738f"
+  },
+  "commentPin.shot.full_many": {
+    "text": "{{used}} de {{count}} de imagens",
+    "source": "f0776a83b3628b14362aa4d9abe6c8719e7886dce1f5c7431ffc1c113b542721"
+  },
+  "commentPin.shot.full_one": {
+    "text": "{{used}} de {{count}} imagem",
+    "source": "7d10918d72102f7c1c051f01292d8781ee37eafe5dbde4644ded7a2cd8a6fa0d"
+  },
+  "commentPin.shot.full_other": {
+    "text": "{{used}} de {{count}} imagens",
+    "source": "f0776a83b3628b14362aa4d9abe6c8719e7886dce1f5c7431ffc1c113b542721"
+  },
+  "commentPin.postMany_many": {
+    "text": "Publicar {{count}} de comentários",
+    "source": "71618b9f3188bbc46565f8049881c589aae6a0c410ab9b68076f66ece844e6b1"
+  },
+  "commentPin.postMany_one": {
+    "text": "Publicar {{count}} comentário",
+    "source": "9f52333a72b43c6259071f5123402b4c5d2b97ef6e669fe85a4ac45c73656539"
+  },
+  "commentPin.postMany_other": {
+    "text": "Publicar {{count}} comentários",
+    "source": "71618b9f3188bbc46565f8049881c589aae6a0c410ab9b68076f66ece844e6b1"
+  },
+  "commentPin.card.comments_many": {
+    "text": "{{count}} de comentários",
+    "source": "3313c3ed57add98d84a952640940903b6720d20da0cb0c134cf697c1eba32bf7"
+  },
+  "commentPin.card.comments_one": {
+    "text": "{{count}} comentário",
+    "source": "7f6fbb6d425c5387203e267050f37a180710fdc2a7bffe3f79a8988e0802f296"
+  },
+  "commentPin.card.comments_other": {
+    "text": "{{count}} comentários",
+    "source": "3313c3ed57add98d84a952640940903b6720d20da0cb0c134cf697c1eba32bf7"
+  },
+  "commentPin.card.images_many": {
+    "text": "{{count}} de imagens",
+    "source": "7520b3b85e97ce4da2910bf752bb13b4773e1ddf89db05e8de1e49a70266235f"
+  },
+  "commentPin.card.images_one": {
+    "text": "1 imagem",
+    "source": "9ee7a5815f0d143edb57cf90ff0ca573604460241f5a36383ecf84858520175a"
+  },
+  "commentPin.card.images_other": {
+    "text": "{{count}} imagens",
+    "source": "7520b3b85e97ce4da2910bf752bb13b4773e1ddf89db05e8de1e49a70266235f"
+  },
+  "commentPin.bar.posted_many": {
+    "text": "{{count}} publicados",
+    "source": "7e6b9fd07b1132f7464accfc5cdac41f380be3b829ebc43b17aa203bdde3bccd"
+  },
+  "commentPin.bar.posted_one": {
+    "text": "{{count}} publicado",
+    "source": "7e6b9fd07b1132f7464accfc5cdac41f380be3b829ebc43b17aa203bdde3bccd"
+  },
+  "commentPin.bar.posted_other": {
+    "text": "{{count}} publicados",
+    "source": "7e6b9fd07b1132f7464accfc5cdac41f380be3b829ebc43b17aa203bdde3bccd"
   }
 }
