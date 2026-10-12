@@ -256,6 +256,13 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
     runConclusion: run ? run.conclusion : null,
   };
   await pool.query('UPDATE apps SET release_stall = $1 WHERE id = $2', [JSON.stringify(record), app.id]);
+  // The record above is cleared once the release catches up; this one is
+  // kept, for the infra topic's "Homeroom releases that stalled".
+  const events = require('./events');
+  await events.record(pool, {
+    type: events.EVENT_TYPES.RELEASE_STALLED, appId: app.id,
+    metadata: { sha, kind, prNumber: record.prNumber },
+  });
   log.warn('release-watch', 'A merged self-app commit has not become the release', {
     appId: app.id, slug: app.slug, sha: short(sha), running: short(running), kind,
     prNumber: record.prNumber, ageMs, runUrl: record.runUrl,

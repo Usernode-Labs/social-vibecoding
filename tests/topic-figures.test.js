@@ -47,8 +47,11 @@ const TOPIC_IDS = {
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
     'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend',
   ],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused'],
-  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away'],
+  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused', 'pipeline.reds-rerun'],
+  infra: [
+    'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes',
+  ],
 };
 
 const byId = (payload) => Object.fromEntries(payload.figures.map((f) => [f.id, f]));
@@ -123,6 +126,13 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   const paused = figures.present('pipeline.main-paused', { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } });
   assert.deepEqual([paused.state, paused.value, paused.sub], ['warn', 'Homeroom 2 times · Other projects None', 'target none']);
   assert.deepEqual(sidesOf(paused), [['homeroom', 'warn', '2 times', '2 h 30 min in all'], ['others', 'ok', 'None', '']]);
+  // Reds the same code passed when it ran again: a share of every red, per side.
+  const reruns = figures.present('pipeline.reds-rerun', { homeroom: { hits: 6, total: 41 }, others: { hits: 0, total: 0 } });
+  assert.deepEqual(sidesOf(reruns), [['homeroom', 'warn', '15%', '6 of 41 reds'], ['others', 'empty', 'None yet', '']]);
+  // Homeroom's own releases and processes.
+  const stalls = figures.present('infra.homeroom-stalls', { n: 1 });
+  assert.deepEqual([stalls.state, stalls.value, stalls.sub], ['warn', '1 time', 'across the platform · target none']);
+  assert.deepEqual(figures.present('infra.homeroom-crashes', { n: 0 }).value, 'None');
   const none = figures.present('infra.apps-up', { hits: 0, total: 0 });
   assert.deepEqual([none.state, none.value, none.sub], ['empty', 'None yet', 'No opens yet'], 'nothing to count is never a 0%');
   const unread = figures.present('infra.deploys-failed', null);
@@ -244,7 +254,7 @@ test('which figures split: the bot\'s cost and speed, the whole pipeline, merge 
   assert.deepEqual(split, [
     'bot.reply-cost', 'bot.reply-time', 'bot.merged-cost', 'bot.request-to-proposal',
     'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend', 'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged',
-    'pipeline.main-paused', 'infra.merge-to-live',
+    'pipeline.main-paused', 'pipeline.reds-rerun', 'infra.merge-to-live',
   ]);
   for (const id of figures.FIGURE_IDS) assert.ok(figures.COVERS.includes(figures.FIGURES[id].covers || 'all'), id);
   const reads = (id) => figures.readsFor(figures.FIGURES[id]).map((r) => [r.side, r.name, r.scope]);
@@ -423,8 +433,33 @@ test('a production build stamps the merges it carries; staging and an unknown bu
   assert.deepEqual(calls, [['a'.repeat(40)]]);
   const broken = { query: async () => { throw new Error('down'); } };
   assert.equal(await release.recordRunning(broken, { sha: 'b'.repeat(40), env: 'production' }), 0, 'never throws');
-  // Every process records it once it serves.
-  assert.match(read('server.js'), /app\.listen\(config\.port, \(\) => \{[\s\S]{0,300}require\('\.\/src\/services\/platform-release'\)\.recordRunning\(getPool\(config\)\)/);
+  // Every process records it once it serves, and that it came up.
+  assert.match(read('server.js'), /app\.listen\(config\.port, \(\) => \{[\s\S]{0,400}platformRelease\.recordRunning\(getPool\(config\)\);\s*platformRelease\.recordBoot\(getPool\(config\)\);/);
+});
+
+test('a process on Kubernetes says it came up and in which pod; staging and anything off Kubernetes say nothing', async () => {
+  const release = require('../src/services/platform-release');
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push(params); return { rows: [] }; } };
+  await release.recordBoot(pool, { sha: 'a'.repeat(40), env: 'production', onKubernetes: false, pod: 'web-1' });
+  await release.recordBoot(pool, { sha: 'a'.repeat(40), env: 'staging', onKubernetes: true, pod: 'preview-1' });
+  assert.equal(calls.length, 0);
+  await release.recordBoot(pool, { sha: 'A'.repeat(40), env: 'production', onKubernetes: true, pod: 'social-platform-7d9f-x2' });
+  await release.recordBoot(pool, { sha: 'unknown', env: 'production', onKubernetes: true, pod: 'social-platform-7d9f-x2' });
+  assert.deepEqual(calls.map((p) => [p[3], JSON.parse(p[4])]), [
+    ['platform_booted', { sha: 'a'.repeat(40), pod: 'social-platform-7d9f-x2' }],
+    ['platform_booted', { sha: null, pod: 'social-platform-7d9f-x2' }],
+  ]);
+  const broken = { query: async () => { throw new Error('down'); } };
+  await release.recordBoot(broken, { env: 'production', onKubernetes: true, pod: 'web-1' });
+});
+
+test('the triggers counted as the same code again are check triggers, and none of them moves the code', () => {
+  const declared = [...read('src/services/visuals.js').match(/const CHECK_TRIGGERS = new Set\(\[([\s\S]*?)\]\);/)[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+  for (const trigger of figures.SAME_CODE_TRIGGERS) assert.ok(declared.includes(trigger), trigger);
+  for (const moves of ['proposal-open', 'commit-push', 'sync-main', 'pr-import', 'conflict-resolved', 'fleet-maintenance']) {
+    assert.ok(!figures.SAME_CODE_TRIGGERS.includes(moves), moves);
+  }
 });
 
 test('a down app is kept once per app per minute; only a heal that brought it back is a restart', async () => {
@@ -579,6 +614,22 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
       VALUES ($1, 'session_capacity_refused', $2::jsonb, NOW() - $3::interval)`, [person, JSON.stringify({ cap, path: 'start' }), when]);
   }
 
+  // Homeroom's releases: one commit stalled running then failed (one stall),
+  // one never came up, and one stalled before the week began.
+  for (const [s, kind, when] of [[sha('a'), 'workflow_running', '3 hours'], [sha('a'), 'workflow_failed', '2 hours'],
+    [sha('b'), 'rollout_missing', '1 day'], [sha('c'), 'workflow_failed', '9 days']]) {
+    await pool.query(`INSERT INTO events (app_id, event_type, metadata, created_at) VALUES ($1, 'release_stalled', $2::jsonb, NOW() - $3::interval)`,
+      [platform.id, JSON.stringify({ sha: s, kind }), when]);
+  }
+  // Its processes: one pod came up three times (two crashes), one once (a
+  // rollout's new pod), and one came up again after its first boot had left
+  // the week behind, still within the week's look back.
+  for (const [pod, when] of [['web-a', '3 days'], ['web-a', '2 days'], ['web-a', '1 day'], ['web-b', '5 hours'],
+    ['web-c', '8 days'], ['web-c', '6 days 23 hours']]) {
+    await pool.query(`INSERT INTO events (event_type, metadata, created_at) VALUES ('platform_booted', $1::jsonb, NOW() - $2::interval)`,
+      [JSON.stringify({ sha: sha('d'), pod }), when]);
+  }
+
   // The bot's answers in the project's chat: three replied 12 seconds after
   // the message, one failed, one stayed quiet; and one DM answer.
   for (let i = 0; i < 5; i += 1) {
@@ -706,6 +757,10 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual([got['infra.limits-filled'].value, got['infra.limits-filled'].state], ['1 time', 'warn']);
     assert.deepEqual([got['infra.turned-away'].value, got['infra.turned-away'].state], ['2 times', 'warn'],
       'each refusal in the week, whichever cap; not the one a fortnight ago');
+    assert.deepEqual([got['infra.homeroom-stalls'].value, got['infra.homeroom-stalls'].state], ['2 times', 'warn'],
+      'one commit is one stall, whatever its kinds; not the one before the week');
+    assert.deepEqual([got['infra.homeroom-crashes'].value, got['infra.homeroom-crashes'].state], ['3 times', 'warn'],
+      'a pod coming up again is a crash; a new pod is a rollout');
   });
 
   await t.test('the bot: quality for everyone, cost and speed for Homeroom beside the other projects; a DM is Homeroom\'s', async () => {
@@ -798,5 +853,46 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.equal((await get('/nowhere/figures')).status, 404);
     await reconcile([{ id: 'quiet', handle: 'quiet', name: 'Quiet' }]);
     assert.deepEqual((await get('/infra/figures')).body.figures, [], 'a retired topic shows none');
+  });
+
+  await t.test('reds the same code passed when it ran again, on proposals and on main', async () => {
+    // Nothing yet: the one red above belongs to no proposal.
+    assert.deepEqual(sidesOf(byId(await figures.figuresFor(pool, TOPIC_IDS['proposal-pipeline']))['pipeline.reds-rerun']),
+      [['homeroom', 'empty', 'None yet', ''], ['others', 'empty', 'None yet', '']]);
+    const proposal = async (app) => (await pool.query(
+      'INSERT INTO chat_sessions (app_id, user_id) VALUES ($1, $2) RETURNING id', [app.id, person])).rows[0].id;
+    // A proposal's check runs in order, `mins` ago, each [status, trigger].
+    const runs = async (app, list) => {
+      const id = await proposal(app);
+      for (const [status, trigger, mins] of list) {
+        await pool.query(
+          `INSERT INTO merge_debug_runs (app_id, session_id, kind, trigger, status, started_at, ended_at)
+           VALUES ($1, $2, 'checks', $3, $4, $5, $5)`, [app.id, id, trigger, status, ago(mins)]);
+      }
+    };
+    // Homeroom: green on a person's re-run; green on a sweep after a re-drive
+    // that never reached a verdict; green only after a new commit.
+    await runs(platform, [['failing', 'commit-push', 50], ['passing', 'manual-recheck', 45]]);
+    await runs(platform, [['failing', 'proposal-open', 50], ['error', 'stuck-sweep', 48], ['passing', 'stuck-sweep', 40]]);
+    await runs(platform, [['failing', 'commit-push', 50], ['passing', 'commit-push', 30]]);
+    // The project: a red nobody ran again, and one whose sync with main came
+    // between it and the green (different code).
+    await runs(project, [['failing', 'commit-push', 50]]);
+    await runs(project, [['failing', 'commit-push', 50], ['error', 'sync-main', 45], ['passing', 'manual-recheck', 40]]);
+    // Main: Homeroom's one merge cleared on its confirm run and one red
+    // twice; the project's one cleared, one plain green, one red before the
+    // week.
+    const verdict = (app, c, state, flake, when) => pool.query(
+      `INSERT INTO main_watch_verdicts (app_id, sha, state, confirmed, flake, created_at) VALUES ($1, $2, $3, $4, $5, NOW() - $6::interval)`,
+      [app.id, sha(c), state, state === 'failing' ? true : null, flake, when]);
+    await verdict(platform, '1', 'passing', true, '2 hours');
+    await verdict(platform, '2', 'failing', false, '1 hour');
+    await verdict(project, '3', 'passing', true, '3 hours');
+    await verdict(project, '4', 'passing', false, '2 hours');
+    await verdict(project, '5', 'failing', false, '9 days');
+
+    figures._resetForTests();
+    const got = byId(await figures.figuresFor(pool, TOPIC_IDS['proposal-pipeline']));
+    assert.deepEqual(sidesOf(got['pipeline.reds-rerun']), [['homeroom', 'warn', '60%', '3 of 5 reds'], ['others', 'warn', '33%', '1 of 3 reds']]);
   });
 });

@@ -576,7 +576,9 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     // Kept all the same: a superseded green is still the newest merge known
     // to pass, which is where a later red's suspects are read from.
     log.info('main-watch', 'Discarded a verdict for a superseded merge', { appId: app.id, sha: mergeSha, state: verdict.state });
-    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, superseded: true, confirmed: detail.confirmed });
+    await redFix().recordVerdict(pool, {
+      appId: app.id, sha: mergeSha, state: verdict.state, superseded: true, confirmed: detail.confirmed, flake: flakedRed(detail),
+    });
     return null;
   }
   log.info('main-watch', `main is ${verdict.state}`, {
@@ -584,7 +586,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     confirmed: detail.confirmed, flake: !!detail.flake,
     ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
   });
-  await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, confirmed: detail.confirmed });
+  await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, confirmed: detail.confirmed, flake: flakedRed(detail) });
 
   // A red pauses merges and a green lifts the pause: the stored state is
   // the whole of it, and the board's banner is how it is seen
@@ -631,6 +633,14 @@ function kickQueue(config, appId, why) {
 // re-run cleared, and three more paused merges for hours.
 
 const testKey = (t) => `${t.file || ''}\u0000${t.test}`;
+
+// A red the same commit did not keep when it ran again: green on the
+// confirm run or a recheck (`flake` holds the red it cleared), or red twice
+// on tests that each passed the other time (`disjoint`). Kept on the
+// verdict for the proposal-pipeline topic's "Reds that passed on a re-run".
+function flakedRed(detail) {
+  return !!(detail && (detail.flake || detail.disjoint));
+}
 
 // The failing tests' names when EVERY one of them is a known flake: named
 // in full (the suite's recap counted no failure the list lacks) and each
@@ -932,7 +942,7 @@ async function recheckOne(config, pool, row, max) {
   const stored = await writeState(pool, app, mergeSha, state, detail);
   if (!stored) return null;
   if (again.state === 'passing' || again.state === 'failing') {
-    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state, confirmed: detail.confirmed });
+    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state, confirmed: detail.confirmed, flake: flakedRed(detail) });
   }
   log.info('main-watch', `main is ${state}`, {
     appId: app.id, slug: app.slug, sha: mergeSha, state, recheck: n, flake: !!detail.flake,
@@ -1098,6 +1108,7 @@ module.exports = {
   // Exported for tests.
   knownFlakeNames,
   noteFlakes,
+  flakedRed,
   fileFlakeRequest,
   fileBotIssue,
   disjointReds,

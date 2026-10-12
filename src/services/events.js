@@ -277,6 +277,18 @@ const EVENT_TYPES = Object.freeze({
   // topic's "Merges paused by a red main" figure pairs them.
   MAIN_PAUSED: 'main_paused',
   MAIN_RESUMED: 'main_resumed',
+  // A merged commit of Homeroom itself that did not become the running
+  // release in time (services/release-watch.js, once per commit and kind):
+  // { sha, kind: 'workflow_failed' | 'workflow_running' | 'rollout_missing'
+  // | 'unknown', prNumber }. The infra topic's "Homeroom releases that
+  // stalled" counts the commits.
+  RELEASE_STALLED: 'release_stalled',
+  // A Homeroom server process came up on Kubernetes
+  // (services/platform-release.js recordBoot): { sha, pod }. A second boot
+  // in the same pod is its container started again after the process died
+  // (a crash, the memory limit, a failed liveness probe): the infra topic's
+  // "Homeroom crashes" counts those. A rollout starts new pods instead.
+  PLATFORM_BOOTED: 'platform_booted',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

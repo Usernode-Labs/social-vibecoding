@@ -1730,8 +1730,11 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
-    // The merges into Homeroom this build carries are live now that it serves.
-    require('./src/services/platform-release').recordRunning(getPool(config));
+    // The merges into Homeroom this build carries are live now that it serves,
+    // and this process is up (a second boot in one pod is a crash).
+    const platformRelease = require('./src/services/platform-release');
+    platformRelease.recordRunning(getPool(config));
+    platformRelease.recordBoot(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
