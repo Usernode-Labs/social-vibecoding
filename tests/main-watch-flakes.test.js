@@ -360,9 +360,9 @@ test('recheckPaused: a paused main that comes back green lifts the pause, record
   } finally { suite.restore(); }
 });
 
-test('recheckPaused: red again stands, confirmed, with the count', async () => {
+test('recheckPaused: red again on the same test stands, confirmed, with the count', async () => {
   const pool = flakePool({ pausedRows: [paused({ ...CONFIRMED_RED, rechecks: 1 })] });
-  const suite = scripted(red([REAL]));
+  const suite = scripted(red([FLAKY, REAL]));
   try {
     await (await mainWatch.recheckPaused(config, { pool })).done;
     const claim = pool.calls.find((c) => /jsonb_build_object\('rechecks'/.test(c.sql));
@@ -371,7 +371,7 @@ test('recheckPaused: red again stands, confirmed, with the count', async () => {
     assert.deepEqual([state, clear, set], ['failing', false, true]);
     assert.equal(detail.confirmed, true);
     assert.equal(detail.rechecks, 2);
-    assert.deepEqual(detail.failingTests, [REAL]);
+    assert.deepEqual(detail.failingTests, [FLAKY, REAL]);
     assert.deepEqual(detail.firstRun.failingTests, [FLAKY], 'the red it re-asked about');
     assert.deepEqual(enqueued, []);
     assert.equal(created.length, 0);
@@ -442,3 +442,66 @@ test('the schema keeps the flakes per app, keyed by file and test', () => {
   assert.match(table, /request_issue_number INTEGER/);
   assert.match(table, /PRIMARY KEY \(app_id, file, test\)/);
 });
+
+// ── Two reds, no test in common ──────────────────────────────────────────
+//
+// 12 Oct 2026: a merge failed db-export-service's backpressure test, its
+// confirming run failed social-push-web's tap retries instead, and merges
+// stayed paused for 23 minutes on two flakes. Each test passed when the
+// suite ran again, so each is flaky.
+
+const DB = { file: 'tests/db-export-service.test.js', test: 'backpressure pauses the child instead of buffering the dump' };
+const PUSH = { file: 'tests/social-push-web.test.js', test: 'tap retries are bounded and pagehide cancels a scheduled retry' };
+
+test('two reds on one commit with no test in common are flakes: recorded, a request each, and nothing stays paused', async () => {
+  const pool = flakePool();
+  const suite = scripted(red([DB]), red([PUSH]));
+  try {
+    const out = await run(pool);
+    assert.equal(out.state, 'failing');
+    assert.equal(out.detail.disjoint, true);
+    assert.deepEqual(out.detail.flakesOnly, [DB.test, PUSH.test]);
+    // [state, clearPause, setPause]: the first red holds merges while it is
+    // asked again, and the verdict lifts the hold.
+    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]),
+      [['confirming', false, true], ['failing', true, false]]);
+    assert.ok(pool.flakes.has(`${DB.file}\u0000${DB.test}`) && pool.flakes.has(`${PUSH.file}\u0000${PUSH.test}`), 'both remembered');
+    assert.deepEqual(created.map((c) => c.title), [`Flaky test: ${DB.test}`, `Flaky test: ${PUSH.test}`]);
+    assert.deepEqual(enqueued, [12], 'what waited behind the hold can go');
+  } finally { suite.restore(); }
+});
+
+test('two reds that share a test, or whose lists are long or incomplete, pause as always', async () => {
+  for (const [why, first, second] of [
+    ['one test failed both times', red([DB, REAL]), red([REAL])],
+    ['the second list is incomplete', red([DB]), red([PUSH], { complete: false })],
+    ['too many failures to be each test', red([DB, FLAKY, OTHER, REAL]), red([PUSH])],
+  ]) {
+    created.length = 0;
+    const pool = flakePool();
+    const suite = scripted(first, second);
+    try {
+      const out = await run(pool);
+      assert.equal(out.detail.disjoint, undefined, why);
+      assert.deepEqual(pool.writes().at(-1).slice(2), [false, true], why);
+      assert.equal(pool.flakes.size, 0, why);
+    } finally { suite.restore(); }
+  }
+  assert.equal(mainWatch.disjointReds({ failingTests: [DB], failingTestsComplete: true }, { failingTests: [], failingTestsComplete: true }), null,
+    'a red that named nothing is no evidence');
+});
+
+test('recheckPaused: a paused red whose tests pass when asked again, with others failing instead, is lifted as flakes', async () => {
+  const pool = flakePool({ pausedRows: [paused(CONFIRMED_RED)] });
+  const suite = scripted(red([PUSH]));
+  try {
+    await (await mainWatch.recheckPaused(config, { pool })).done;
+    const [[state, detail, clear, set]] = pool.writes();
+    assert.deepEqual([state, clear, set], ['failing', true, false]);
+    assert.equal(detail.disjoint, true);
+    assert.deepEqual(detail.flakesOnly, [FLAKY.test, PUSH.test]);
+    assert.ok(pool.flakes.has(`${PUSH.file}\u0000${PUSH.test}`));
+    assert.deepEqual(enqueued, [12]);
+  } finally { suite.restore(); }
+});
+
