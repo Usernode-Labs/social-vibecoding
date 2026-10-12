@@ -5263,6 +5263,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots was interrupted. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
   },
+  "badge.reason.shots.retryingFaultDetail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
+  },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after shots of the current proposal commit.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Shots\" are the before and after screenshots Homeroom takes of what a proposal changes."
@@ -5699,6 +5703,10 @@
     "text": "Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Sentence under \"Trying the shots again\" on a proposal's shots card. Homeroom is the product's name."
   },
+  "shots.state.retryingFault.detail": {
+    "text": "Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Sentence under \"Trying the shots again\" on a proposal's shots card, when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+  },
   "shots.state.couldNot.label": {
     "text": "Couldn’t take the shots",
     "description": "Heading of the shots card on a proposal when the before/after screenshots failed for a reason other than the change itself."
@@ -5794,6 +5802,10 @@
   "shots.sentence.retrying": {
     "text": "Trying the shots again. Homeroom restarted while taking these shots, so it starts them again on its own in a moment.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots was interrupted and starts again by itself. Homeroom is the product's name."
+  },
+  "shots.sentence.retryingFault": {
+    "text": "Trying the shots again. Something on Homeroom’s side stopped these shots, so it takes them again on its own.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the shots. The shots agent could not take the before & after shots.",

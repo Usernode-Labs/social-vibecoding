@@ -2758,6 +2758,9 @@ async function _bootstrapWarmContainer(sessionId, {
       `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
     );
     err.code = 'github_rate_limited';
+    // When it resets, for a caller that tries again then (the before &
+    // after shots' recovery sweep).
+    if (privacy.retryAfterSeconds > 0) err.retryAfterMs = privacy.retryAfterSeconds * 1000;
     throw err;
   }
   if (!privacy.ok) {

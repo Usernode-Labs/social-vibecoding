@@ -90,6 +90,40 @@ function interruptedRetryAllowed({ interrupted_retries: retries, unexplained_int
     && Number(unexplained) <= MAX_UNEXPLAINED_RETRIES;
 }
 
+// A run can also fail on a platform step that says nothing about the
+// proposal, and before this a person had to notice and take the shots again.
+// In the 200 proposals merged 2026-10-09 to 10-12, 11 of 166 runs ended that
+// way and none was retried, so each went to its vote with no pictures: a
+// Postgres template copy cut off at psql's 90 seconds (3), the shots agent
+// exiting 1 with no cause recorded (3), the worker's clone refused, GitHub's
+// hourly limit. shots-orchestrator.platformFault tags such a failure in its
+// trace as `platformFault: { kind, retryAt? }`, and the recovery sweep
+// (shots-gc.retryPlatformFaults) takes the same head again ONCE under this
+// trigger: after a pause, or for GitHub's limit once it resets (`retryAt`).
+// A second failure stays failed, whatever it was. Only the kinds below are
+// taken again: a build that fails, a change that broke on the after build
+// or a state the copies cannot reach is the proposal's to fix.
+const PLATFORM_RETRY_TRIGGER = 'platform-retry';
+const MAX_PLATFORM_RETRIES = 1;
+const PLATFORM_FAULT_KINDS = new Set([
+  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit',
+]);
+
+function platformFaultOf(row) {
+  const fault = row?.trace_summary?.platformFault;
+  return fault && typeof fault === 'object' && PLATFORM_FAULT_KINDS.has(fault.kind) ? fault : null;
+}
+
+// Whether a failed run gets its automatic retry for a platform fault, from
+// the `platform_retries` count every loader selects beside the run (the same
+// subquery in getForSession, shots-view.getForSessions and
+// shots-gc.retryPlatformFaults). A loader that did not count cannot promise.
+function platformRetryAllowed(row) {
+  if (row?.platform_retries == null) return false;
+  return row.state === 'failed' && !!platformFaultOf(row)
+    && Number(row.platform_retries) < MAX_PLATFORM_RETRIES;
+}
+
 function currentCode(code) {
   if (typeof code !== 'string' || !code.includes('evidence')) return code;
   return RENAMED_CODES[code] || code.replace(/visual_evidence/g, 'shots').replace(/evidence/g, 'shots');
@@ -417,9 +451,10 @@ function runSummary(row, artifactSummary = []) {
     // view's to add.
     // The code as stored, not read through currentCode: the sweep matches it
     // exactly, so a run interrupted under the old name is not retried.
+    // A platform fault's single retry counts too (platformRetryAllowed).
     automaticRetryPending: row.state === 'failed'
-      && row.failure_code === 'shots_run_interrupted'
-      && interruptedRetryAllowed(row),
+      && ((row.failure_code === 'shots_run_interrupted' && interruptedRetryAllowed(row))
+        || platformRetryAllowed(row)),
     planHash: row.plan_hash || null,
     // One result per declared change: ready (with the shots agent's note
     // on what its shots leave out, if any), or skipped with the reason
@@ -1007,7 +1042,10 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
             (SELECT COUNT(*) FROM shot_runs crash
               WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
                 AND crash.failure_code = 'shots_run_interrupted'
-                AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
+                AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions,
+            (SELECT COUNT(*) FROM shot_runs retry
+              WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                AND retry.trigger = 'platform-retry')::int AS platform_retries
        FROM shot_runs r
       WHERE r.session_id = $1 ${headClause}
         AND r.state NOT IN ('stale','cancelled')
@@ -1132,6 +1170,11 @@ module.exports = {
   SHUTDOWN_INTERRUPTION,
   SHUTDOWN_INTERRUPTED_REASON,
   interruptedRetryAllowed,
+  PLATFORM_RETRY_TRIGGER,
+  MAX_PLATFORM_RETRIES,
+  PLATFORM_FAULT_KINDS,
+  platformFaultOf,
+  platformRetryAllowed,
   STATES,
   TRANSITIONS,
   TERMINAL_STATES,

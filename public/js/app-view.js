@@ -22323,7 +22323,9 @@ const AppView = {
             : notStarted ? PlatformI18n.t('changes:badge.reason.shots.notStarted')
               : shots.state === 'failed' ? PlatformI18n.t('changes:badge.reason.shots.failed') : PlatformI18n.t('changes:badge.reason.shots.needed'),
         detail: (retrying
-          ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
+          ? (shots.failureCode === 'shots_run_interrupted'
+            ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
+            : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
           : notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
@@ -23135,7 +23137,8 @@ const AppView = {
         : e.failureCode === 'shots_stopped'
         ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
         : e.automaticRetryPending === true
-          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retrying.detail')]
+          ? [t('changes:shots.state.retrying.label'), e.failureCode === 'shots_run_interrupted'
+            ? t('changes:shots.state.retrying.detail') : t('changes:shots.state.retryingFault.detail')]
           : [t('changes:shots.state.couldNot.label'), e.failureReason || t('changes:shots.state.couldNot.detail')],
       stale: [t('changes:shots.state.stale.label'), e.failureReason || t('changes:shots.state.stale.detail')],
       cancelled: [t('changes:shots.state.cancelled.label'), e.failureReason || t('changes:shots.state.cancelled.detail')],
@@ -23180,7 +23183,12 @@ const AppView = {
           ? t('changes:shots.sentence.stoppedBecause', { reason: quoted(e.failureReason) })
           : t('changes:shots.sentence.stopped');
       }
-      if (e.automaticRetryPending === true) return t('changes:shots.sentence.retrying');
+      if (e.automaticRetryPending === true) {
+        // A restart, or a platform step that failed (shots-state
+        // PLATFORM_RETRY_TRIGGER): either way the sweep takes them again.
+        return e.failureCode === 'shots_run_interrupted'
+          ? t('changes:shots.sentence.retrying') : t('changes:shots.sentence.retryingFault');
+      }
       return e.failureReason
         ? t('changes:shots.sentence.couldNotBecause', { reason: quoted(e.failureReason) })
         : t('changes:shots.sentence.couldNot');

@@ -340,6 +340,24 @@ the run has been marked interrupted for 30 seconds. Until then the card says
 carries `automaticRetryPending: true`. A person can take the shots again,
 stop a running set, or (as an app manager) waive them.
 
+A run that a platform step failed, past that step's own retries, is taken
+again automatically ONCE on the same commit (`shots-gc.retryPlatformFaults`,
+trigger `platform-retry`). In the 200 proposals merged 2026-10-09 to 10-12,
+11 of 166 runs ended that way and none was retried, so each went to its vote
+with no shots. The run's trace names the kind (`platformFault`, read off the
+error by `shots-orchestrator.platformFault`, never off its wording):
+`database` (preparing the copies' clone source or cloning a side from it,
+such as a template copy cut off at psql's 90 seconds), `clone` (the
+revision's checkout), `worker_bootstrap` (the shots worker's own clone or
+warm start), `github_rate_limited`, and `agent_exit` (the shots agent's
+process ended with an error). The sweep starts it a minute after the
+failure, or for GitHub's hourly limit a minute after the limit resets. The
+card says "Trying the shots again" with the cause in plain words, and the
+admin export has the kind in `platform_fault`. A second failure stays
+failed, whatever it was. A revision that does not build, a change that
+failed and a change the copies cannot reach are the proposal's, and are
+not taken again.
+
 ## The same data on both sides
 
 The viewer outlines every area where a before and an after screen differ,
