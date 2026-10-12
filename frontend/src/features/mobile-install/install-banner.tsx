@@ -6,7 +6,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { offeringGoToHomeroom } from '../app-context/about-data';
-import { useTourRunning } from '../first-session/tour-running';
+import { useFirstSessionVisit, useTourRunning } from '../first-session/tour-running';
 import { navStore } from '../nav/nav-store.js';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
@@ -102,10 +102,14 @@ export function MobileInstallBanner() {
   // it does for everyone. `tab` is read so the offer is recomputed when they
   // get there, which is when the remembered visit changes.
   const { privateMember, tab } = useStoreState(navStore);
-  // #4899: held while a first-session tour is on screen, and offered again
-  // the moment it ends, without a reload. False whenever no tour is up, so
-  // somebody who never takes one is never held.
-  const touring = useTourRunning();
+  // #4899: held while a first-session tour is on screen. And for the rest of
+  // a first visit (../first-session/tour-running.ts A FIRST VISIT STAYS ONE):
+  // offered as the tour ended, it pushed the app the tour had just opened
+  // down under the reader's finger. False whenever neither holds, so
+  // somebody who never has a first session here is never held.
+  const touringNow = useTourRunning();
+  const firstVisit = useFirstSessionVisit();
+  const touring = touringNow || firstVisit;
   const [offer, setOffer] = useState<InstallOffer | null>(null);
   // #1513: the home-screen instructions are one tap away rather than always
   // on. #4400: that tap opens a sheet (./install-steps-sheet.tsx) rather than

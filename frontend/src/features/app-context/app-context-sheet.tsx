@@ -137,6 +137,7 @@ import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { prepareComment } from '../improve/suggest-shortcut';
 import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
@@ -436,6 +437,15 @@ export function AppsSwitcherSheet(): ReactNode {
     })();
     return () => { live = false; };
   }, [open, slug]);
+
+  // The menu's blue "Suggest an improvement" opens comment mode where the
+  // device's switch is on, and the page under the menu is still while it is
+  // open: the mode's picture of it is drawn now, once the sheet has slid in,
+  // so the mode opens on it the moment the menu has gone
+  // (../comment-pin/comment-pin.tsx `prepareCommentView`).
+  useEffect(() => {
+    if (open) prepareComment();
+  }, [open]);
 
 
   return (

@@ -337,7 +337,8 @@ confirmation from the user in the same message:
 - The bootstrap path in \`server.js\` (anything that runs before the
   Express app starts listening).
 - \`src/middleware/auth.js\` and any code that reads or writes
-  \`JWT_SECRET\` or anything in \`src/services/secrets.js\`.
+  \`JWT_SECRET\` or anything in \`src/services/secrets.js\` or
+  \`src/workflow/rules/secrets.ts\` (where the encryption now lives).
 - \`src/db/migrate.js\` for anything beyond append-only DDL
   (\`CREATE TABLE IF NOT EXISTS\`, \`ADD COLUMN IF NOT EXISTS\`,
   forward-only data backfills). Drops, renames, type changes, and

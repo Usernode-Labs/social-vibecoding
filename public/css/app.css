@@ -3156,6 +3156,13 @@ form.agent-session-composer:focus-within {
    kit adoption at once, so without this the kit's sheet could present an
    invisible panel. It is not merely theoretical insurance for the open state
    either: the kit measures the content at present time. */
+/* HANDED BACK BY THE KIT, OUT OF SIGHT until its next presentation
+   (lib/kit-surface.ts REHOMED_CLASS): the menu's bottom sheet stood again
+   at its open place for 190ms after the kit's exit had taken it away. */
+.platform-surface-rehomed {
+  visibility: hidden !important;
+  transition: none !important;
+}
 .platform-sheet-adopted#apps-switcher-sheet {
   max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
   opacity: 1 !important;
@@ -3637,6 +3644,16 @@ html[data-browser-scroller] body {
 html.platform-page-locked,
 html.platform-page-locked[data-browser-scroller] {
   overflow: hidden;
+}
+/* AND WHAT IT HOLDS IS OUT OF SIGHT (onboarding run three, 12 Oct 2026,
+   iPhone 17 Safari). The band behind Safari's translucent toolbar is not
+   the screen's (Safari draws a fixed box only to its layout viewport's
+   foot), so it showed Home under the make and made screens. What the lock
+   makes inert (lib/page-lock.ts PAGE_HIDDEN) is drawn at no opacity, which a
+   descendant cannot undo as it could `visibility`, so that band shows the
+   body's own ground. The screens cover it all anyway everywhere else. */
+html.platform-page-locked [data-page-locked] {
+  opacity: 0 !important;
 }
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
@@ -4265,6 +4282,23 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
   clip-path: inset(0 round 0 0 1.25rem 1.25rem);
+}
+/* THE STRIP OVER THE BAR FOLLOWS IT HOME (onboarding run three, 12 Oct
+   2026, iPhone 17 Safari 26). In a browser tab Safari colours the strip
+   behind the status bar from the fixed bar's own `background-color`, and
+   only an opaque one: the project's green bar turned it green, and back on
+   Home, whose bar is transparent with its glass drawn by the layer below,
+   it stayed green (measured on a copy: green, then transparent, held the
+   green; an opaque colour took it back at once). So the bar here has an
+   opaque ground under its glass, the glass's own solid plane colour. The
+   layer covers it whole (its washes end on the ground colour), so nothing
+   on the bar changes; only the strip does. */
+html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header,
+html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: var(--dc-sheet-solid);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -10970,7 +11004,7 @@ html .un-backdrop.platform-backdrop-dim {
     border-radius: 20px 20px 0 0;
     background-color: var(--dc-sheet-solid);
     box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-    max-height: 92%;
+    max-height: min(92%, calc(100% - var(--platform-safe-top, 0px) - 8px));
     overflow-y: auto;
     overscroll-behavior: contain;
     transform: translateY(100%);
@@ -10979,9 +11013,13 @@ html .un-backdrop.platform-backdrop-dim {
   [data-dialog-sheet][data-dialog-sheet-shown] [data-modal-backdrop] > div {
     transform: translateY(0);
   }
+  /* Its top stays under the status bar, as the comment sheet's does: with the
+     keys up a long form grew past it, and the Form / Comment switch and
+     "See your requests" went under the clock and the Dynamic Island, where a
+     tap never reaches the page (iPhone 17 Pro simulator, 12 Oct 2026). */
   html.platform-kb-open [data-dialog-sheet] [data-modal-backdrop] > div {
     bottom: var(--platform-kb-cover, 0px);
-    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
+    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - max(12px, var(--platform-safe-top, 0px) + 8px));
   }
   [data-dialog-sheet] .feedback-sheet-grabber {
     display: block;
@@ -11044,10 +11082,32 @@ html .un-backdrop.platform-backdrop-dim {
 @keyframes comment-shot-label-in {
   from { opacity: 0; }
 }
+/* The bar comes in with the picture rather than ahead of it: drawn over the
+   live page while the first picture drew, it covered the page's own header
+   for a few frames (iPhone 17 Pro simulator, 12 Oct 2026). */
+.comment-bar-in { animation: comment-shot-ground-in 320ms ease-out; }
+
+/* THE MODE LEAVES THE WAY IT CAME (12 Oct 2026). Done, Esc and Form used to
+   unmount it in a frame: the picture and its grey ground vanished and the
+   form slid up over a page that had just jumped. Now the picture grows back
+   over the page it shows (the entrance played backwards, to the same
+   --comment-shot-from), the ground fades with it, and everything else the
+   mode drew fades a little faster, before the layer goes
+   (comment-pin.tsx `leave`, 200ms). Transform and opacity only. */
+.comment-mode-leaving .comment-shot-in { animation: comment-shot-out 200ms ease-in forwards; }
+.comment-mode-leaving .comment-shot-ground-in { animation: comment-fade-out 200ms ease-in forwards; }
+.comment-mode-leaving > :not(.comment-shot-in):not(.comment-shot-ground-in) { animation: comment-fade-out 120ms ease-in forwards; }
+@keyframes comment-shot-out {
+  to { transform: var(--comment-shot-from, none); border-radius: 0; }
+}
+@keyframes comment-fade-out {
+  to { opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .comment-shot-in,
   .comment-shot-ground-in,
-  .comment-shot-label-in { animation: none; }
+  .comment-shot-label-in,
+  .comment-bar-in { animation: none; }
 }
 /* The sheet's grabber, the same handle the feedback sheet's carries — the
    component renders it only on a phone, so no media query here. */
@@ -11058,6 +11118,41 @@ html .un-backdrop.platform-backdrop-dim {
   border-radius: 2px;
   background: var(--border);
   flex: none;
+}
+/* THE COMMENT SHEET STAYS UNDER THE BAR (iPhone 17 simulator, 12 Oct 2026).
+   With the keyboard up the sheet grew past the top of the screen, over the
+   bar and its Done and Form, under the status bar, and nothing was left to
+   tap to put the keys away: the only ways out were Post or quitting the
+   app. Its height is now capped to what lies between the band the bar sits
+   in (`--comment-band`, the status bar plus the bar's 60px, which the
+   component writes on its root) and its foot, the keys' top with them up
+   (`--platform-kb-cover`, lib/keyboard-open.ts, which `.platform-kb-sheet`
+   already stands it on). The id outranks `.platform-kb-sheet`'s own caps.
+   With the keys down its foot clears the home indicator. */
+#comment-pin-box.comment-sheet {
+  --comment-sheet-pb: calc(0.75rem + var(--platform-safe-bottom, 0px));
+  max-height: min(85%, calc(100% - var(--comment-band, 0px) - 8px));
+  padding-bottom: var(--comment-sheet-pb);
+}
+html.platform-kb-open #comment-pin-box.comment-sheet {
+  /* The home indicator is behind the keys. */
+  --comment-sheet-pb: 1.25rem;
+  max-height: calc(100% - var(--comment-band, 0px) - 8px - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px));
+}
+/* Capped like that, the sheet is shorter than what it holds while the keys
+   are up, and Post was below its fold. The row with Post stays at the
+   sheet's foot while the rest scrolls, the feedback sheet's rule
+   (`[data-dialog-sheet] .feedback-actions`, #4033): its fill runs down over
+   the sheet's bottom padding, so nothing scrolls through under it. A sticky
+   box stops at the scroller's padding, so it is held that far lower, or the
+   row above it showed through the last 20px. */
+#comment-pin-box.comment-sheet .comment-sheet-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--comment-sheet-pb));
+  z-index: 1;
+  margin-bottom: calc(-1 * var(--comment-sheet-pb));
+  padding-bottom: var(--comment-sheet-pb);
+  background-color: var(--dc-sheet-solid);
 }
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
@@ -20946,13 +21041,26 @@ html.un-kb #platform-tabs {
    the box itself, so `100% - 100lvh` extended nothing (#4691's first try).
    200px is more than the toolbar and the home indicator together. In a
    phone browser on iOS, with the keys down: the keyboard surface measures
-   its padding against the box as it was. */
+   its padding against the box as it was.
+
+   THOSE 200PX ARE A SPACER, NOT PADDING (onboarding run two, 12 Oct 2026,
+   iPhone 17 simulator, Safari 26, measured on a copy of the screen): Safari
+   paints a fixed box only down to the foot of its layout viewport (714px
+   tall there, ending above the toolbar), whatever runs on past it, so what
+   lies in the last 200px is never seen. And WebKit leaves a flex
+   scroller's end padding out of what it scrolls: the scroller was 862px
+   with 862px to scroll, so Make it, once a starting idea had grown the
+   form, sat under the toolbar with nothing to scroll it up. The page lock
+   (#4909) also keeps Safari from collapsing its toolbar, which a drag on
+   the page used to. An empty last item is counted: with it the same
+   screen scrolled 962px, and Make it came up clear of the toolbar. */
 @media (max-width: 767px) {
   html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make], [data-first-session-made]) {
     bottom: -200px;
   }
-  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made]) {
-    padding-bottom: 200px;
+  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made])::after {
+    content: '';
+    flex: 0 0 200px;
   }
 }
 /* AND OVER THEIR TOP, UNDER THE STATUS BAR (onboarding run, 12 Oct 2026,

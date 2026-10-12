@@ -344,7 +344,8 @@ export function returnWalks(fields: readonly RefObject<HTMLInputElement | null>[
   };
 }
 
-function touchScreen(): boolean {
+/** A screen worked by touch, whose keyboard comes up over the page (the Welcome page folds for it). */
+export function touchScreen(): boolean {
   try {
     return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
   } catch {

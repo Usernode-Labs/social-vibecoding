@@ -240,8 +240,8 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
     /<input id="welcome-page-username" autoComplete="username" enterKeyHint="go" class="[^"]*" placeholder="[^"]*" autoCapitalize="none" autoCorrect="off" spellCheck="false" value="ada"\/>/,
     /<p data-welcome-page-code-note="" class="mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400">You sign in with a code we email you\. You can add a password later in Settings\.<\/p>/,
     /<div class="grow"><\/div>/,
-    /<button[^>]*type="submit"[^>]*>Continue<\/button>/,
-    /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms\.<\/p><\/form>/,
+    /<div data-welcome-page-continue=""><button[^>]*type="submit"[^>]*>Continue<\/button>/,
+    /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms\.<\/p><\/div><\/form>/,
   ];
   let at = 0;
   for (const re of order) {
@@ -263,6 +263,24 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   });
   assert.doesNotMatch(named, /welcome-page-username|Pick a username/);
   assert.match(named, /data-welcome-page-code-note=""/);
+});
+
+test('with the keys up the page moves once: the picture folds, the spacer goes, Continue rides (onboarding run two)', () => {
+  const html = renderComponent(WELCOME, 'WelcomePage', {
+    account: { email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' },
+    beforeFinish() { return true; },
+  });
+  // First drawn as it always was: the picture shown, the spacer in place.
+  assert.match(html, /<div data-welcome-page-picture="shown" class="max-h-\[180px\] overflow-hidden opacity-100 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none"><img src="\/brand\/people\.png"/);
+  const src = read(WELCOME);
+  // Only on a touch screen, and never while it hands off to the make screen.
+  assert.match(src, /if \(\(next && !touchScreen\(\)\) \|\| handingOff\.current\) return;/);
+  assert.match(src, /onFocus=\{\(\) => fold\(true\)\}\s+onBlur=\{\(\) => fold\(false\)\}/);
+  assert.match(src, /\{typing \? null : <div className="grow" \/>\}/);
+  // Continue rides from where it was, over the keys' own 300ms, transform only.
+  assert.match(src, /const RIDE = \{ duration: 300, easing: 'cubic-bezier\(0\.33, 1, 0\.68, 1\)' \} as const;/);
+  assert.match(src, /el\.animate\(\[\{ transform: `translateY\(\$\{d\}px\)` \}, \{ transform: 'translateY\(0\)' \}\], RIDE\)/);
+  assert.match(src, /handingOff\.current = true;\s+const active = document\.activeElement;/);
 });
 
 test('its frame is the make screen\'s own literals', () => {

@@ -109,7 +109,7 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   // No server render of it, so no hydration to mismatch. The tile and the
   // name come with the read (HeroIdentity), so before it the hero is the
   // actions that depend on nothing it says, or nothing at all; the fetch
-  // runs in an effect.
+  // runs in a (layout) effect.
   const { CommunityCard } = loadTsx(CARD);
   assert.equal(renderToHtml(createElement(CommunityCard, { slug: 'notes' })), '');
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
@@ -122,9 +122,11 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
     'no name before the read says it, and nothing that depends on membership before it is known');
   const src = read(CARD);
   // ONE READ FOR THE HUB: the hero and the hub's cards share the community
-  // record, and each mount asks for a fresh copy unless one is on its way.
+  // record, and each mount asks for a fresh copy unless one is on its way:
+  // before the first paint, so a hub with none yet holds its skeleton
+  // (communityPending, onboarding run two).
   assert.match(src, /const data = useCommunity\(slug\);/);
-  assert.match(src, /if \(slug && !inflight\.has\(slug\)\) void reloadCommunity\(slug\);/);
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;\s+void reloadCommunity\(slug\);/);
 });
 
 test('the channel is a hub card at its old address; Join asks under its button and joins through offerJoin', () => {

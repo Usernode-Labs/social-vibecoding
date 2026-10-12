@@ -27,7 +27,7 @@
  * interior's first render, so the markup the inventory reads is unchanged.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -45,6 +45,7 @@ import {
   mayFocusByCodeNow,
   prefersReducedMotion,
   saveAccount,
+  touchScreen,
 } from './sign-in-sheet';
 import { TermsNotice } from './waitlist-shared';
 
@@ -70,6 +71,21 @@ export const WELCOME_EMAIL = 'mt-2 max-w-full text-[15px] leading-5 font-semibol
 const ARRIVING = 'translate-y-6 opacity-0 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const ARRIVED = 'translate-y-0 opacity-100 transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none';
 const LEAVING = 'pointer-events-none translate-y-0 opacity-0 transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none';
+/*
+ * ONE MOVE FOR THE KEYS (onboarding run two, 12 Oct 2026, iPhone 17 Safari).
+ * A tap on the username moved the page five times in half a second: the
+ * keys' band took Continue up the moment Safari reported it, the scroller
+ * redrew without the field, the picture was scrolled half under the bar,
+ * then away, then the title moved up. Now, on a touch screen, the field's
+ * focus decides the layout at once (`typing`): the picture folds away over
+ * the keys' own 300ms and the spacer above Continue goes, so what is left
+ * fits above the keys and nothing needs scrolling to; Continue rides from
+ * where it was to where it is (RIDE). Its blur puts both back the same way.
+ */
+const PICTURE_SHOWN = 'max-h-[180px] overflow-hidden opacity-100 transition-[max-height,opacity] duration-300 ease-out motion-reduce:transition-none';
+const PICTURE_FOLDED = 'max-h-0 overflow-hidden opacity-0 transition-[max-height,opacity] duration-300 ease-out motion-reduce:transition-none';
+/** Continue's ride to its place: the keys' own curve and time (native.js keyboard notes). */
+const RIDE = { duration: 300, easing: 'cubic-bezier(0.33, 1, 0.68, 1)' } as const;
 
 export function WelcomePage({ account, beforeFinish }: {
   account: AccountStep;
@@ -103,9 +119,31 @@ export function WelcomePage({ account, beforeFinish }: {
   }, []);
   const motion = leaving ? LEAVING : arrived ? ARRIVED : ARRIVING;
 
+  // ONE MOVE FOR THE KEYS (above): folded while the field has the keys.
+  const [typing, setTyping] = useState(false);
+  const continueRef = useRef<HTMLDivElement>(null);
+  const rideFrom = useRef<number | null>(null);
+  // Going to the make screen, the page stays as it is while it fades.
+  const handingOff = useRef(false);
+  const fold = useCallback((next: boolean) => {
+    if ((next && !touchScreen()) || handingOff.current) return;
+    rideFrom.current = continueRef.current ? continueRef.current.getBoundingClientRect().top : null;
+    setTyping(next);
+  }, []);
+  useLayoutEffect(() => {
+    const el = continueRef.current;
+    const from = rideFrom.current;
+    rideFrom.current = null;
+    if (!el || from == null || prefersReducedMotion() || typeof el.animate !== 'function') return;
+    const d = Math.round(from - el.getBoundingClientRect().top);
+    if (Math.abs(d) < 2) return;
+    try { el.animate([{ transform: `translateY(${d}px)` }, { transform: 'translateY(0)' }], RIDE); } catch { /* it is simply there */ }
+  }, [typing]);
+
   // Away to the make screen: what stands on the wallpaper fades, the keys go
   // down with it, and the make screen rises on the same wallpaper.
   const handOff = useCallback((): Promise<void> => {
+    handingOff.current = true;
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
     setLeaving(true);
@@ -160,14 +198,16 @@ export function WelcomePage({ account, beforeFinish }: {
           <div className="text-center">
             {/* Decorative, as on the story: the words below say it. The
                 file's own pixels reserve its box; drawn 200 by 150. */}
-            <img
-              src="/brand/people.png"
-              alt=""
-              width={816}
-              height={612}
-              draggable={false}
-              className="mx-auto mt-4 block h-auto w-[200px] max-w-full"
-            />
+            <div data-welcome-page-picture={typing ? 'folded' : 'shown'} className={typing ? PICTURE_FOLDED : PICTURE_SHOWN}>
+              <img
+                src="/brand/people.png"
+                alt=""
+                width={816}
+                height={612}
+                draggable={false}
+                className="mx-auto mt-4 block h-auto w-[200px] max-w-full"
+              />
+            </div>
             <p className={WELCOME_EYEBROW}>{t('auth:welcomePage.eyebrow')}</p>
             <h1 id="welcome-page-title" className={WELCOME_TITLE}>{t('auth:story.welcome')}</h1>
             <p data-welcome-page-email="" className={WELCOME_EMAIL}>{account.email}</p>
@@ -186,6 +226,8 @@ export function WelcomePage({ account, beforeFinish }: {
                     enterKeyHint="go"
                     className={INPUT}
                     placeholder={t('auth:signInSheet.usernamePlaceholder')}
+                    onFocus={() => fold(true)}
+                    onBlur={() => fold(false)}
                     {...HANDLE_FIELD}
                   />
                 </div>
@@ -196,20 +238,22 @@ export function WelcomePage({ account, beforeFinish }: {
           <p data-welcome-page-code-note="" className="mt-3 text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-700 dark:text-red-400">{error}</p> : null}
           <SessionConfirmationNotice completion={completion} />
-          <div className="grow" />
-          <Button
-            type="submit"
-            disabled={busy}
-            layout="full"
-            variant="pillAccent"
-            size="pillLg"
-            ink="solidLate"
-            className="mt-6 flex items-center justify-center disabled:opacity-50"
-            {...HOLD_FIELD_FOCUS}
-          >
-            {busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}
-          </Button>
-          <TermsNotice className="mt-3" />
+          {typing ? null : <div className="grow" />}
+          <div ref={continueRef} data-welcome-page-continue="">
+            <Button
+              type="submit"
+              disabled={busy}
+              layout="full"
+              variant="pillAccent"
+              size="pillLg"
+              ink="solidLate"
+              className="mt-6 flex items-center justify-center disabled:opacity-50"
+              {...HOLD_FIELD_FOCUS}
+            >
+              {busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}
+            </Button>
+            <TermsNotice className="mt-3" />
+          </div>
         </form>
       </div>
     </div>

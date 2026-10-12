@@ -34,9 +34,13 @@ export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
  * What a step that points at the project's app waits for (#4900,
  * ./tour-wait.ts): `running`, its tile on Home, until a tap on it opens it
  * (the tile's status is no longer "Spinning up..."); `open`, the app on its
- * own screen, until it has opened (its "Opening..." cover gone).
+ * own screen, until it has opened (its "Opening..." cover gone); `hub`, the
+ * project's hub, until it is drawn whole (onboarding run two, 12 Oct 2026:
+ * the hub's card stood over Home, then a blank page, then skeleton rows,
+ * then a first draft of the hub and the hub itself, 2.35s in all, the ring
+ * jumping as it redrew).
  */
-export type AppWait = 'running' | 'open';
+export type AppWait = 'running' | 'open' | 'hub';
 
 export type TourStep = {
   screen: TourScreen;
@@ -206,13 +210,22 @@ export function hubTitle(name: string): string {
  * on it (#4045). The Communities tab is ONE element, the phone's bottom bar
  * below 768px and the rail above it (features/nav/tab-bar.tsx; its key is
  * still `workshop`). The first two point at the app, and wait for it
- * (`waitsFor`): its tile until it can be opened, the app until it has.
+ * (`waitsFor`): its tile until it can be opened, the app until it has. The
+ * hub's waits for the hub to be drawn whole.
  */
+/** The project's tile in Home's own grid (#app-list), never a card of the same app elsewhere on Home. */
+export function tileOf(slug: string): string {
+  return `#app-list .app-card[data-slug="${slug}"]`;
+}
+
 function sharedSteps(slug: string, name: string): TourStep[] {
   return [
     {
       screen: 'home',
-      target: `.app-card[data-slug="${slug}"]`,
+      // Home's own grid only: the Discover rail's cards are `.app-card`s
+      // with a slug too (onboarding run three, 12 Oct 2026: the cut-out
+      // glided off the tile and back as Home drew).
+      target: tileOf(slug),
       waitsFor: 'running',
       title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
       text: translate('onboarding:firstSession.tour.onHome.text'),
@@ -247,11 +260,13 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       tap: translate('onboarding:firstSession.tour.communities.tap'),
     },
     {
-      // The hub whole: its top bar over it, down to the tab bar.
+      // The hub whole: its top bar over it, down to the tab bar. Its card
+      // waits for the hub to be drawn whole (`hub`).
       screen: 'hub',
       target: '#app-content',
       alongside: SCREEN_HEADER,
       endsAbove: BOTTOM_BARS,
+      waitsFor: 'hub',
       title: hubTitle(name),
       text: translate('onboarding:firstSession.tour.hub.text'),
       place: 'bottom',

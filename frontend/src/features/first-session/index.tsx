@@ -59,7 +59,7 @@
  * and kept in state only when it moves.
  */
 
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -80,7 +80,7 @@ import { type Made, type MakeEntry, MakeScreen } from './make';
 import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { APP_MENU, BOTTOM_BARS, type FirstVersionStage, invitedSteps, lookAroundSteps, makerSteps, privateSteps, type TourScreen, type TourStep } from './tour-steps';
-import { setTourRunning } from './tour-running';
+import { noteFirstSessionVisit, setTourRunning } from './tour-running';
 import { appReady, tileSettled, TOUR_WAIT_MAX_MS, WAIT_CHECK_MS, WAIT_GRACE_MS, WAIT_POLL_MS } from './tour-wait';
 
 export type FirstSessionInfo = {
@@ -261,7 +261,44 @@ export function targetBox(selectors: string): Box | null {
 const PAD = 6;
 /** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
 const RING = 3;
-const SHADE = 'pointer-events-auto fixed bg-[rgba(9,9,12,0.6)] transition-all duration-200';
+/*
+ * ONE SHADE, ONE SHAPE (onboarding run two, 12 Oct 2026, iPhone 17 Safari).
+ * The dim was four strips round the cut-out, each easing on its own: as the
+ * ring went from the mark to "Suggest an improvement", light rectangles
+ * flashed across the page for about 150ms, and the cut-out's square corners
+ * stood out round the rounded ring on every step. Now the dim is one box the
+ * size of the cut-out whose shadow is the dim (DIM, `dimStyle`), rounded as
+ * the ring is, moving as one. The four strips stay, clear, to take the
+ * presses outside the cut-out (SHADE); with no cut-out the whole screen is
+ * one dim that takes them (SHADE_ALL).
+ */
+const SHADE = 'pointer-events-auto fixed';
+const SHADE_ALL = 'pointer-events-auto fixed inset-0 bg-[rgba(9,9,12,0.6)]';
+/*
+ * IT GLIDES FROM STEP TO STEP, AND ONLY THEN (onboarding run three, 12 Oct
+ * 2026): eased all the time, the cut-out chased whatever its target did
+ * within a step. Leaving the menu it followed "Suggest an improvement" down
+ * with the sheet, a light bar sliding across the page; on Home it glided
+ * down 40pt and back over 250ms. Now it eases for the move a step makes
+ * (`gliding`, GLIDE_MS) and follows its target at once otherwise.
+ */
+const DIM = 'pointer-events-none fixed';
+const DIM_GLIDE = 'pointer-events-none fixed motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
+const GLIDE_MS = 260;
+/** The cut-out's corners: the ring's (`rounded-2xl`) round a control, square for a screen. */
+export const HOLE_RADIUS = 16;
+
+/** The dim drawn round a cut-out: its shadow, spread past any screen. */
+export function dimStyle(hole: Box, rounded: boolean): CSSProperties {
+  return {
+    left: hole.left,
+    top: hole.top,
+    width: hole.width,
+    height: hole.height,
+    borderRadius: rounded ? HOLE_RADIUS : 0,
+    boxShadow: '0 0 0 200vmax rgba(9,9,12,0.6)',
+  };
+}
 
 /*
  * INTO THE MENU, THE RING WAITS FOR THE MENU (Evan, 10 Oct 2026, iPhone).
@@ -491,6 +528,15 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   const settleRef = useRef<{ at: number; since: number; key: string; still: number } | null>(null);
   const [settling, setSettling] = useState(false);
   const [moving, setMoving] = useState(false);
+  // A step change's move of the cut-out, eased (IT GLIDES FROM STEP TO STEP).
+  const [gliding, setGliding] = useState(false);
+  const firstStepRef = useRef(true);
+  useLayoutEffect(() => {
+    if (firstStepRef.current) { firstStepRef.current = false; return undefined; }
+    setGliding(true);
+    const t = window.setTimeout(() => setGliding(false), GLIDE_MS);
+    return () => window.clearTimeout(t);
+  }, [index]);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
@@ -653,14 +699,32 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     return () => window.clearTimeout(t);
   }, [index, step, info.slug]);
 
+  // OUT OF THE MENU, THE MENU GOES FIRST (onboarding run two, 12 Oct 2026,
+  // iPhone 17 Safari): Next on the step in the menu moved on at once, the
+  // tour's layer dropped under the kit's sheet as it slid away, and the
+  // sheet's top edge, grabber and all, stayed in sight over the next step.
+  // Now the step in the menu stays, card hidden and layer over the sheet,
+  // until the menu has closed (AppContext.close resolves once it is gone).
+  const [leavingMenu, setLeavingMenu] = useState(false);
   const go = useCallback((to: number) => {
-    if (to < 0) return;
+    if (to < 0 || leavingMenu) return;
     if (to >= steps.length) { onEnd(); return; }
-    // Back to a step in the menu stays on its screen: the menu opens over it
-    // (inMenu, above), and re-entering the app could close it again.
-    if (steps[to].screen !== steps[index].screen || (to < index && !steps[to].inMenu)) enterScreen(steps[to].screen, info.slug, info.conversationId);
-    setIndex(to);
-  }, [index, steps, info.slug, onEnd]);
+    const move = () => {
+      // Back to a step in the menu stays on its screen: the menu opens over it
+      // (inMenu, above), and re-entering the app could close it again.
+      if (steps[to].screen !== steps[index].screen || (to < index && !steps[to].inMenu)) enterScreen(steps[to].screen, info.slug, info.conversationId);
+      setIndex(to);
+    };
+    if (steps[index].inMenu && !steps[to].inMenu && AppContext.isOpen()) {
+      setLeavingMenu(true);
+      void Promise.resolve(AppContext.close()).catch(() => {}).then(() => {
+        setLeavingMenu(false);
+        move();
+      });
+      return;
+    }
+    move();
+  }, [index, steps, info.slug, onEnd, leavingMenu]);
 
   // A tap step advances when its control is pressed, by a finger or by the
   // card's hint (pressTarget). The press is not intercepted: it is the
@@ -693,7 +757,12 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // So does a step that only points at a control (`ringed`). Any other
   // cut-out runs to the screen's edges.
   const pointed = !!(step.tap || step.ringed);
-  const hole = box && holeFor(box, viewport, pointed && !step.press ? RING : 0);
+  // Waiting for the hub, nothing of the page under it is shown: it is a
+  // blank page, then skeleton rows, until the hub is drawn whole.
+  // Nor while it leaves the menu: its target slides away with the sheet
+  // (OUT OF THE MENU, THE MENU GOES FIRST).
+  const dimAll = (waiting && step.waitsFor === 'hub') || leavingMenu;
+  const hole = box && !dimAll && holeFor(box, viewport, pointed && !step.press ? RING : 0);
   // While a step waits for the app (`waiting`) nothing is ringed, and all of
   // its cut-out is covered.
   const ring = hole && pointed && pressBox && !waiting ? holeFor(pressBox, viewport) : null;
@@ -713,6 +782,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
     <div data-first-session-tour={index + 1} className={step.inMenu ? 'pointer-events-none fixed inset-0 z-[9995]' : 'pointer-events-none fixed inset-0 z-[9000]'}>
       {hole ? (
         <>
+          <div aria-hidden="true" data-first-session-dim="" className={gliding || moving ? DIM_GLIDE : DIM} style={dimStyle(hole, pointed)} />
           <div className={SHADE} style={{ left: 0, top: 0, right: 0, height: Math.max(0, hole.top) }} />
           <div className={SHADE} style={{ left: 0, top: hole.top + hole.height, right: 0, bottom: 0 }} />
           <div className={SHADE} style={{ left: 0, top: hole.top, width: Math.max(0, hole.left), height: hole.height }} />
@@ -729,14 +799,14 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           {covers.map((cover, i) => <div key={i} className="pointer-events-auto fixed" style={cover} />)}
         </>
       ) : (
-        <div className={`${SHADE} inset-0`} />
+        <div className={SHADE_ALL} />
       )}
       <div
         role="dialog"
         aria-labelledby="first-session-tour-title"
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
         data-first-session-tour-wait={wait || undefined}
-        className={settling || wait === 'held'
+        className={settling || wait === 'held' || leavingMenu
           ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
           : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
@@ -1278,6 +1348,13 @@ export function FirstSession() {
   // The tour's steps are built in the language on screen, and again when it changes.
   const t = useMessages('onboarding');
   const [mode, setMode] = useState<Mode>({ kind: 'none' });
+  // A visit that shows the first session's own screens is a first visit to
+  // its end (./tour-running.ts A FIRST VISIT STAYS ONE). Create's are not.
+  useEffect(() => {
+    if (mode.kind === 'none') return;
+    if ((mode.kind === 'make' || mode.kind === 'made') && mode.entry === 'create') return;
+    noteFirstSessionVisit();
+  }, [mode]);
 
   // An account the story's sheet just made is asked what to make, once,
   // as soon as the shell has signed it in with access (`sv:authed` fires

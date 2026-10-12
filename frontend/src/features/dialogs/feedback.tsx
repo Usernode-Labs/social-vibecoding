@@ -42,7 +42,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
-import { formOffersComment, openCommentMode } from '../improve/suggest-shortcut';
+import { formOffersComment, openCommentMode, prepareComment } from '../improve/suggest-shortcut';
 import { ControllerText } from './controller-text';
 import { Feedback, init as initFeedback } from './feedback-controller';
 import { useDialog } from './use-dialog';
@@ -109,6 +109,9 @@ export function FeedbackDialog() {
     onOpen: (opts) => {
       setOffersComment(formOffersComment());
       Feedback._open(opts || {});
+      // The page under the form is drawn now for its Comment switch, as the
+      // menu does for "Suggest an improvement" (a no-op where the switch is off).
+      prepareComment();
     },
     onClose: () => Feedback._reset(),
   });

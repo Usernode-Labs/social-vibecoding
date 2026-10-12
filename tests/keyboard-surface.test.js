@@ -301,6 +301,26 @@ test('a form that grows under the focused field with the keys up (a hint line) i
   assert.equal(observed.length, 0);
 });
 
+test('the keys coming up resize the content, and that waits for the one settled reveal (onboarding run two)', () => {
+  // A tap on the Welcome page's username scrolled the page once mid-way, a
+  // frame after the keys' band resized its content, and again once they had
+  // settled. A size change while that reveal waits schedules no other.
+  const r = rig();
+  let observe = null;
+  r.win.ResizeObserver = class { constructor(cb) { observe = cb; } observe() {} disconnect() {} };
+  r.scroller.children = [{ nodeType: 1 }];
+  surface.attachKeyboardSurface(r.scroller, r.win, r.doc);
+  r.tap(r.field); // focused without the pan; its reveal waits for the keys
+  r.vv.fire('resize'); // the keys' first report: the band moves
+  r.rootClasses.add('platform-kb-open');
+  observe(); // ...and the content with it
+  r.flush();
+  assert.equal(r.scrolls.length, 0, 'nothing mid-way');
+  r.advance(surface.SETTLE_MS);
+  r.flush();
+  assert.equal(r.scrolls.length, 1, 'one reveal, once they have settled');
+});
+
 test('a sheet rides the keys: one transform from where it was, the keys\' quarter second, none with reduced motion', () => {
   const r = rig();
   const detach = surface.attachKeyboardSurface(r.scroller, r.win, r.doc, { ride: true });

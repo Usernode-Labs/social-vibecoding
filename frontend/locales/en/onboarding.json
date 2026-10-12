@@ -867,6 +867,14 @@
     "text": "It’s taking longer than usual. You can go on, and open it once it’s ready.",
     "description": "Second line of the small progress card under a new project, once setting it up has taken so long that the buttons that go on are turned back on before it is ready. The first \"It\" is the setup; in \"open it once it’s ready\" both are the app."
   },
+  "firstSession.made.setup.done": {
+    "text": "It’s running now.",
+    "description": "Second line of the small progress card under a new project once setting it up has finished: the card stays where it was and says the app is up. \"It\" is the new app."
+  },
+  "firstSession.made.setup.setUp": {
+    "text": "It’s set up.",
+    "description": "Title of the small progress card under a new project once setting it up has finished, shown when the project's picture above already says how Homeroom bot is building it. \"It\" is the new app."
+  },
   "firstSession.made.goTo": {
     "text": "Go to {{community}}",
     "description": "Button on the screen shown right after a project is made once an invite has gone out, when the project was started from the Create button: opens the new project. {{community}} is its name."

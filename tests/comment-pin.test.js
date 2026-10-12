@@ -120,7 +120,7 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   // rides on the page. The old rest-on-the-picture's-bottom-edge default is
   // gone with it.
   assert.match(src, /const HEADER_BAND = 60;/);
-  assert.match(src, /INSET_MARGIN, HEADER_BAND\)/);
+  assert.match(src, /INSET_MARGIN, band\)/);
   assert.doesNotMatch(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
   // The handle that drags the bar belongs to the live-page fallback alone.
   assert.equal(message('devchat:commentPin.bar.move'), 'Move the bar: drag it anywhere, double-click to put it back');
@@ -135,10 +135,12 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /useKeyboardSurface\(boxRef, \{ ride: true \}\);/);
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
-  // The close-up at the top of the sheet draws the pin's area of the view
-  // picture, or the comment's own thumbnail when the page has moved on.
-  assert.match(src, /<CloseUp\s+view=\{viewShot\?\.url \|\| ''\}/);
-  assert.match(src, /own=\{viewDiffers \? activePicture\?\.thumb \|\| null : null\}/);
+  // The close-up at the top of the sheet draws the pin's area of the picture
+  // the pin is on: the comment's own once drawn, the view picture while it
+  // still shows the same view, and nothing (never a stretched thumbnail)
+  // otherwise.
+  assert.match(src, /<CloseUp\s+view=\{closeUpSrc\}/);
+  assert.match(src, /const closeUpSrc = activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
   assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
@@ -146,6 +148,71 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(closeUp, /Math\.min\(MAX_ZOOM, zPrev \* dist \/ g\.dist\)/, 'the pinch sets the zoom from the fingers');
   assert.match(closeUp, /mid\.x - c\.x - \(g\.mid\.x - c\.x - panRef\.current\.x\) \* \(z \/ zPrev\)/,
     'the point under the fingers stays under them as the zoom changes');
+});
+
+test('on a phone the bar sits under the status bar, where a finger can reach it', () => {
+  // iPhone 17 simulator, the Homeroom app, 12 Oct 2026: the bar sat in the
+  // status bar's strip, under the clock and the Dynamic Island, and a tap
+  // there never reaches the page, so Done, Form and the confirm's Discard
+  // could not be pressed. The band starts at the top safe area, read off a
+  // probe sized by the shell's own --platform-safe-top.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /style=\{\{ height: 'var\(--platform-safe-top, 0px\)' \}\}/);
+  assert.match(src, /const band = safeTop \+ HEADER_BAND;/);
+  assert.match(src, /insetFrame\(size, phone \? INSET_MARGIN_PHONE : INSET_MARGIN, band\)/);
+  assert.match(src, /top: safeTop \+ Math\.max\(6, Math\.round\(\(HEADER_BAND - barSize\.height\) \/ 2\)\),/);
+  assert.match(src, /style=\{inset \? \{ top: band \+ 8 \} : \{ bottom: 'calc\(76px \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the first-use note too');
+  assert.match(src, /return inset \? \{ x: at\.x, y: Math\.max\(at\.y, band \+ 8\) \} : at;/, 'and the box and the card');
+  assert.match(src, /: \{ bottom: 'calc\(1rem \+ var\(--platform-safe-bottom, 0px\)\)' \}\}/, 'the live-page bar clears the home indicator');
+  assert.doesNotMatch(src, /top-\[68px\]|'bottom-4 left-1\/2/);
+});
+
+test('on a phone the keyboard is not the page moving, and the sheet stays under the bar', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The page's size is the mode's own: the keys collapse innerHeight (874
+  // to 539 on an iPhone 17), and nothing in the mode reads the window's.
+  assert.match(src, /const \[size, setSize\] = useState<Size>\(windowSize\);/);
+  assert.equal(src.split('window.innerHeight').length - 1, 1, 'read once, in windowSize');
+  assert.match(src, /if \(next\.width === was\.width && keyboardAbout\(\)\) return;/, 'a height-only resize with the keys about is the keys');
+  assert.match(src, /vv\?\.addEventListener\('resize', onResize\);/, 'and the keys leaving re-measures');
+  // Scrolls that are not the page: the mode's own sheet and field, and a
+  // document pan while the keys are about unless the person made it.
+  assert.match(src, /if \(target instanceof Node && host\.contains\(target\)\) return;/);
+  assert.match(src, /if \(isDocumentScroll\(target\) && keyboardAbout\(\) && performance\.now\(\) - ownScrollAt\.current > 300\) return;/);
+  assert.match(src, /const keyboardAbout = \(\) => textFocused\(document\)\s*\|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\s*\|\| performance\.now\(\) < keyboardUntil\.current;/);
+  // A drag on the picture scrolls the page under the finger, and says so.
+  assert.match(src, /t\.scroller\.scrollBy\(\(t\.last\.x - p\.x\) \/ k, \(t\.last\.y - p\.y\) \/ k\);/);
+  // Fields take the keyboard without iOS panning the page (and the bar) away.
+  assert.match(src, /t\.focus\(\{ preventScroll: true \}\);\s*t\.setSelectionRange/);
+  assert.doesNotMatch(src, /\.focus\(\)/, 'no focus that pans');
+  assert.doesNotMatch(src, /^\s+autoFocus$/m, 'autoFocus pans too');
+  assert.match(src, /ref=\{focusWithoutPan\}/);
+  // The sheet: capped below the band, on the keys with them up, Post at its foot.
+  assert.match(src, /'--comment-band' as string\]: `\$\{inset \? band : safeTop\}px`/);
+  assert.match(src, /`comment-sheet comment-sheet-in platform-kb-sheet absolute inset-x-0 bottom-0 flex flex-col/);
+  assert.match(src, /\$\{phone \? ' comment-sheet-actions' : ''\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#comment-pin-box\.comment-sheet \{\s*--comment-sheet-pb: calc\(0\.75rem \+ var\(--platform-safe-bottom, 0px\)\);\s*max-height: min\(85%, calc\(100% - var\(--comment-band, 0px\) - 8px\)\);/);
+  assert.match(css, /html\.platform-kb-open #comment-pin-box\.comment-sheet \{[^}]*max-height: calc\(100% - var\(--comment-band, 0px\) - 8px - var\(--platform-vv-top, 0px\) - var\(--platform-kb-cover, 0px\)\);/);
+  assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
+});
+
+test('the close-up always zooms a full picture about its own pin', () => {
+  const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
+  // The stretched-thumbnail fallback, and its pin placed as a fraction of
+  // the box, are gone.
+  assert.doesNotMatch(closeUp, /\bown\?: |\{own \?/);
+  assert.doesNotMatch(closeUp, /object-cover/);
+  assert.match(closeUp, /export function CloseUp\(\{ view, pin \}: \{ view: string; pin: Point \}\)/);
+  // A picture already in memory can load before an effect runs: its size is
+  // kept with its own source rather than reset by one.
+  assert.match(closeUp, /const picture = loaded && loaded\.src === view \? loaded\.size : null;/);
+  assert.match(closeUp, /key=\{view\}/);
+  assert.doesNotMatch(closeUp, /setPicture\(null\)/);
+  assert.match(closeUp, /\{view \? \(\s*<img/, 'never an empty src');
+  // The comment's own picture is kept whole for it.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /b\?\.canvas\.toBlob\(\(blob\) => \{[\s\S]*?land\(\{ url \}\);/);
 });
 
 test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
@@ -174,7 +241,111 @@ test('the first picture animates out of the live page instead of a bare grey gro
   assert.match(css, /\.comment-shot-ground-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
   assert.match(css, /\.comment-shot-label-in \{ animation: comment-shot-label-in 160ms ease-out 200ms both; \}/);
   assert.match(css, /@keyframes comment-shot-in \{\s*from \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in \{ animation: none; \}\s*\}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-label-in,\s*\.comment-bar-in \{ animation: none; \}\s*\}/);
+});
+
+test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2026)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const css = read('public/css/app.css');
+  // The first picture waits for the sheet the mode was opened from (the menu,
+  // the form) to finish leaving, rather than landing on it mid-slide.
+  assert.match(src, /void Promise\.all\(\[ahead, overlaysGone\(\)\]\)/, 'with or without a picture drawn ahead');
+  // Nothing of the mode is drawn over the live page before the first picture:
+  // the state starts as drawing, and the bar and the first-use note wait.
+  assert.match(src, /useState<ViewShot \| null>\(\{ url: '', view: 0, state: 'drawing' \}\)/);
+  assert.match(src, /shotIntro \? 'pointer-events-none opacity-0' : 'comment-bar-in',/);
+  assert.match(src, /\{intro && !confirm && !shotIntro \? \(/);
+  assert.match(css, /\.comment-bar-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  // The picture is decoded before it goes up, or its first frame is a white box.
+  assert.match(src, /decoded\.src = url;[\s\S]*?decoded\.decode\(\) : Promise\.resolve\(\)\)\.then\(show, show\);/);
+  // Leaving plays the entrance backwards, then closes and opens what follows.
+  assert.match(src, /const LEAVE_MS = 200;/);
+  assert.match(src, /if \(!inset \|\| shotIntro \|\| !viewShot\?\.url \|\| reducedMotion\(\)\) \{ finish\(\); return; \}/);
+  assert.match(src, /setLeaving\(true\);\s*setTimeout\(finish, LEAVE_MS\);/);
+  assert.match(src, /className=\{leaving \? 'comment-mode-leaving fixed inset-0' : 'fixed inset-0'\}/);
+  assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
+  assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
+  assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
+  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 2, 'onClose only inside leave and on the card\'s link, which navigates');
+  assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
+  assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
+  assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
+});
+
+test('the picture is drawn ahead while the menu or the form is open, and opens at once (12 Oct 2026)', () => {
+  // Tap to zoom used to wait for the code, the library and the whole drawing
+  // after the menu had gone: 0.3s of a still screen, 1.3s on the first open
+  // after launch. The menu and the form now ask for the picture as they open.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const shortcut = read('frontend/src/features/improve/suggest-shortcut.ts');
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const form = read('frontend/src/features/dialogs/feedback.tsx');
+  assert.match(shortcut, /export function prepareComment\(\): void \{\s*if \(!suggestOpensComment\(\)\) return;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.prepareCommentView\(\)\)/,
+    'only where the switch is on, and the mode\'s code loads with it');
+  assert.match(menu, /useEffect\(\(\) => \{\s*if \(open\) prepareComment\(\);\s*\}, \[open\]\);/);
+  assert.match(form, /Feedback\._open\(opts \|\| \{\}\);[\s\S]*?prepareComment\(\);\s*\},/);
+  // Drawn once the sheet has slid in, watched from the moment it starts, and
+  // put up the moment the sheet has gone; otherwise drawn fresh, as before.
+  assert.match(src, /const AHEAD_SETTLE_MS = 350;/);
+  assert.match(src, /const AHEAD_TTL_MS = 20000;/);
+  assert.match(src, /watching = true;\s*observer\.observe\(document\.body, \{ subtree: true, childList: true, characterData: true, characterDataOldValue: true \}\);/);
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+  assert.match(src, /if \(!stillFresh\(a\) \|\| a\.size\.width !== size\.width\) \{/);
+  // A scroll of the page or a new width spoils it too.
+  assert.match(src, /const onScroll = \(e: Event\) => \{ if \(!outOfPicture\(e\.target instanceof Node \? e\.target : null\)\) spoil\(\); \};/);
+  assert.match(src, /const onResize = \(\) => \{ if \(window\.innerWidth !== size\.width\) spoil\(\); \};/);
+  // The menu's dim is cut out of every picture, or one drawn under the menu would be dimmed.
+  assert.ok(picture.PAGE_EXCLUDES.includes('.overlay-scrim'));
+});
+
+test('what counts as the page changing since the picture was drawn', () => {
+  const realDoc = global.document;
+  const el = ({ parent = null, overlay = false, internal = false, rects = 1, holdsOverlay = false, text = '' } = {}) => ({
+    nodeType: 1, parentElement: parent, isConnected: true, textContent: text,
+    closest: (sel) => ((overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)) ? {} : null),
+    matches: (sel) => (overlay && /#apps-switcher-sheet/.test(sel)) || (internal && /data-snapdom-internal/.test(sel)),
+    querySelector: () => (holdsOverlay ? {} : null),
+    getClientRects: () => ({ length: rects }),
+  });
+  const text = (parent, value) => ({ nodeType: 3, parentElement: parent, isConnected: true, textContent: value });
+  const rec = (type, target, added = [], removed = []) => ({ type, target, addedNodes: added, removedNodes: removed });
+  try {
+    const page = el();
+    const heading = el({ parent: page });
+    // A visible change of nodes on the page counts.
+    assert.equal(picture.changesPicture(rec('childList', heading, [text(heading, 'New')], [text(heading, 'Old')])), true);
+    // Inside an overlay, inside the drawing library's own nodes, or on a
+    // node that is not laid out: it does not.
+    assert.equal(picture.changesPicture(rec('childList', el({ overlay: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ internal: true }), [el()])), false);
+    assert.equal(picture.changesPicture(rec('childList', el({ rects: 0 }), [el()])), false);
+    // The kit lifting the menu sheet out of the page and putting it back,
+    // and the library adding its sandbox to the body: not a change.
+    assert.equal(picture.changesPicture(rec('childList', page, [], [el({ overlay: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ holdsOverlay: true }), { nodeType: 8 }, text(page, '  ')])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ internal: true })])), false);
+    assert.equal(picture.changesPicture(rec('childList', page, [el({ overlay: true }), el()])), true, 'one real node among them counts');
+    // Text: judged by the first value against what it says now.
+    const a = text(heading, 'Plant Pal');
+    const b = text(heading, 'Changed');
+    assert.equal(picture.textsUnchanged(new Map([[a, 'Plant Pal']])), true, 'written away and back');
+    assert.equal(picture.textsUnchanged(new Map([[b, 'Before']])), false);
+    assert.equal(picture.textsUnchanged(new Map([[{ ...b, isConnected: false }, 'Before']])), true, 'a node that has gone is a childList change, judged there');
+  } finally {
+    global.document = realDoc;
+  }
+});
+
+test('overlayOnScreen: a leaving sheet counts, the always-mounted dim and a hidden menu do not', () => {
+  const el = (style, rects = 1) => ({ style, getClientRects: () => ({ length: rects }) });
+  const doc = (els) => ({ querySelectorAll: (sel) => { assert.equal(sel, picture.PAGE_EXCLUDES.join(',')); return els; } });
+  const styleOf = (e) => e.style;
+  assert.equal(picture.overlayOnScreen(doc([]), styleOf), false);
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' })]), styleOf), false, 'the menu\'s dim at rest');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'hidden', opacity: '1' })]), styleOf), false, 'a closed menu sheet');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' }, 0)]), styleOf), false, 'a hidden form');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '1' })]), styleOf), true, 'the form sliding away');
+  assert.equal(picture.overlayOnScreen(doc([el({ visibility: 'visible', opacity: '0' }), el({ visibility: 'visible', opacity: '0.5' })]), styleOf), true, 'a fading dim');
 });
 
 test('"Screenshot" leads the bar above the picture, never over the picture (#4774)', () => {
@@ -191,8 +362,8 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   assert.ok(label > 0, 'the word renders inside the toolbar');
   assert.ok(label < bar.indexOf('{confirm ? ('), 'it leads the bar, before either of its states');
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
-  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className="comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400"/,
-    'a muted label that truncates first, and stays while the bar asks its question: the picture is still there');
+  assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
+    'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
   // On a phone the label takes the place of the mode's chat glyph, so the
   // bar still fits a 390px screen.
   assert.match(bar, /\$\{shotLabel \? 'hidden sm:inline-flex' : 'inline-flex'\} shrink-0 items-center gap-1\.5 text-sm font-bold text-violet-700/);
@@ -221,7 +392,99 @@ test('the picture leaves the suggest flow\'s own overlays out, so the form never
   for (const sel of picture.PAGE_EXCLUDES) {
     assert.match(sel, /^[.#][\w-]+$/, 'a selector SnapDOM can match, not a bare word');
   }
-  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe', \.\.\.PAGE_EXCLUDES\]/);
+  // They are cut out of the picture, not hidden in it (#4773): SnapDOM's
+  // `hide` stands an in-flow block of the element's size in its place,
+  // dropping its `position`, so the menu's always-mounted `fixed inset-0`
+  // dim became a screen-tall block that pushed the whole screen out of the
+  // bounded shell's body. Only the layer's host and the frames keep `hide`.
+  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe'\],\s*excludeMode: 'hide',\s*filter: \(el: Element\) => !isPageOverlay\(el\),\s*filterMode: 'remove',/);
+  assert.doesNotMatch(src, /'iframe', \.\.\.PAGE_EXCLUDES\]/, 'no overlay goes through hide');
+  const el = (matches) => ({ matches: (sel) => matches.includes(sel) });
+  assert.equal(picture.isPageOverlay(el(['#apps-switcher-overlay'])), true);
+  assert.equal(picture.isPageOverlay(el(['.un-sheet'])), true);
+  assert.equal(picture.isPageOverlay(el(['#home-screen'])), false, 'the page itself stays');
+  assert.equal(picture.isPageOverlay({ matches: () => { throw new Error('bad'); } }), false);
+  assert.equal(picture.isPageOverlay(null), false);
+});
+
+test('scrollers are drawn as clipped boxes in the copy, so WebKit paints them the first time', () => {
+  // Home's Discover rail (a horizontal scroller) was missing from the first
+  // picture after the app launched: WebKit left the scrolling layer out of
+  // its first rasterization of the SVG. The copy draws every scroller as a
+  // plain clipped box instead; the page itself is never touched.
+  const node = (connected, styleProps = null) => {
+    const set = {};
+    return { nodeType: 1, isConnected: connected, styleProps, style: { setProperty: (k, v, p) => { set[k] = `${v}${p ? ' !' + p : ''}`; } }, set };
+  };
+  const rail = node(true, { overflowX: 'auto', overflowY: 'hidden' });
+  const railCopy = node(false);
+  const card = node(true, { overflowX: 'visible', overflowY: 'visible' });
+  const cardCopy = node(false);
+  const feed = node(true, { overflowX: 'hidden', overflowY: 'scroll' });
+  const feedCopy = node(false);
+  const text = { nodeType: 3, isConnected: true };
+  const styleOf = (el) => el.styleProps;
+  // SnapDOM's map, either way round: original to copy, or copy to original.
+  const map = new Map([[rail, railCopy], [cardCopy, card], [feed, feedCopy], [text, { nodeType: 3 }]]);
+  assert.equal(picture.flattenScrollers({ nodeMap: map }, styleOf), 2);
+  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(cardCopy.set, {}, 'a box that does not scroll is left as it is');
+  assert.deepEqual(rail.set, {}, 'the page is never written to');
+  assert.equal(picture.flattenScrollers({}, styleOf), 0, 'no map, nothing done');
+  assert.equal(picture.FLAT_SCROLLERS.name, 'homeroom-flat-scrollers');
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /filterMode: 'remove',\s*plugins: \[FLAT_SCROLLERS\],/, 'every capture of the page uses it');
+});
+
+test('the picture is clipped to the page the mode keeps, and only a paged document scrolls it', () => {
+  const realDoc = global.document;
+  const realWin = global.window;
+  const withPage = (paged, win, fn) => {
+    global.document = { documentElement: { hasAttribute: (name) => paged && name === 'data-browser-scroller' } };
+    global.window = win;
+    try { return fn(); } finally { global.document = realDoc; global.window = realWin; }
+  };
+  const win = { scrollX: 0, scrollY: 335, innerWidth: 402, innerHeight: 539 };
+  // The bounded shell (the app, a computer): the document never scrolls, so
+  // an offset is iOS panning a field into view, and the keys' collapsed
+  // innerHeight gives way to the size the mode keeps.
+  assert.deepEqual(withPage(false, win, () => picture.pageClip({ width: 402, height: 874 })),
+    { x: 0, y: 0, width: 402, height: 874 });
+  // A phone browser's paged document is the page's own scroller.
+  assert.deepEqual(withPage(true, { ...win, scrollY: 1200 }, () => picture.pageClip({ width: 402, height: 874 })),
+    { x: 0, y: 1200, width: 402, height: 874 });
+  // No kept size: the window's.
+  assert.deepEqual(withPage(false, win, () => picture.pageClip(null)), { x: 0, y: 0, width: 402, height: 539 });
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /clip: pageClip\(viewport\),/);
+  assert.match(src, /const actual = canvas\.width \/ width;/, 'the picture\'s scale is read against the kept width');
+});
+
+test('a preview crop slides to the pins and puts them where the crop drew them', () => {
+  const box = { width: 64, height: 42 };
+  const phone = { width: 804, height: 1748 };
+  // A phone's tall picture in the wide chip: the width fills, a slice of the
+  // height shows, centred on the pin where the edges allow.
+  const mid = picture.coverCrop(box, phone, { x: 0.3, y: 0.4 });
+  assert.equal(mid.width, 64);
+  assert.ok(Math.abs(mid.height - 139.14) < 0.01);
+  assert.ok(Math.abs(mid.y - (21 - 0.4 * mid.height)) < 1e-9, 'the pin sits at the box\'s middle');
+  const pinY = mid.y + 0.4 * mid.height;
+  assert.ok(pinY > 0 && pinY < 42, 'and inside the box');
+  // Near an edge the crop stops at the picture's edge instead.
+  assert.deepEqual(picture.coverCrop(box, phone, { x: 0.5, y: 0 }).y, 0);
+  const foot = picture.coverCrop(box, phone, { x: 0.5, y: 1 });
+  assert.ok(Math.abs(foot.y - (42 - foot.height)) < 1e-9);
+  // A wide picture fills the height and slides sideways.
+  const wide = picture.coverCrop(box, { width: 2880, height: 1800 }, { x: 0.9, y: 0.5 });
+  assert.equal(wide.height, 42);
+  assert.ok(Math.abs(wide.x - (64 - wide.width)) < 1e-9);
+  // The chip draws the crop and its pins with it, never as fractions of the box.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, pic\.size \|\| size, focus\);/);
+  assert.match(src, /style=\{\{ left: crop\.x \+ c\.pin\.x \* crop\.width, top: crop\.y \+ c\.pin\.y \* crop\.height \}\}/);
+  assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
 });
 
 // ── 1c. The retake when the picture lost what the pin is on (#4773) ────
@@ -242,8 +505,9 @@ test('flatRegion: one colour, noise under the tolerance, one inked pixel', () =>
 test('the retake captures with the cache off when fresh, and keeps the excludes either way', () => {
   const src = read('frontend/src/features/comment-pin/picture.ts');
   assert.match(src, /cache: fresh \? 'disabled' : 'soft',/, 'the flag is SnapDOM\'s cache switch');
-  assert.match(src, /excludeMode: 'hide',/, 'overlays are hidden, not cut out');
-  assert.match(src, /exclude: \[\(el: Element\) => el === host, 'iframe', \.\.\.PAGE_EXCLUDES\]/);
+  assert.match(src, /excludeMode: 'hide',/, 'the layer and frames keep their places');
+  assert.match(src, /filterMode: 'remove',/, 'the overlays are cut out');
+  assert.match(src, /drawShell\(scale, host, false, viewport\)/, 'the first picture is clipped to the kept page size');
 });
 
 test('pinTarget: the page element under the pin, never the layer, a frame or an overlay', () => {
@@ -292,7 +556,7 @@ test('takeBase checks the pin\'s element and retakes at most once, with a clean 
   // The retake is one call, spelled through the fresh flag, and it sits
   // behind the flat-region check: no flat region, no retake; a second flat
   // picture is kept, never retaken again.
-  assert.equal((src.match(/drawShell\(scale, host, true\)/g) || []).length, 1, 'one retake, not a loop');
+  assert.equal((src.match(/drawShell\(scale, host, true, viewport\)/g) || []).length, 1, 'one retake, not a loop');
   assert.match(src, /const checked = await missingUnderPin\(canvas, actual, target\);\s*if \(checked\) \{/);
   assert.match(src, /return flatRegion\(data\);/, 'the check is a flat region under the pin');
   // The retake waits two animation frames before it draws.
