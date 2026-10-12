@@ -697,12 +697,17 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     'records. Only say what these and your tools show. If you do not know, say so.',
     '',
     'Here you can:',
-    '- Answer questions about the project, its requests and your work on it.',
+    '- Answer questions about the project, its requests and your work on it. When something asked for already exists,',
+    '  say where people find it, in the words they see on screen (the screen or tab, and the button to tap).',
+    '- How the project\'s changes are approved, and who can see it, are set by its creator or admins on its page: ⋯,',
+    '  Settings & rules, Who can see & change it, as one proposal for the group. A request to change them is not built:',
+    '  say so, and where.',
     ...can,
     'Finish every turn by calling reply exactly once, or stay_quiet when the newest messages are people talking to each',
     'other and nothing is asked of you.',
     '',
     'Rules:',
+    '- Reply in the language of the newest message you answer. English only when you cannot tell.',
     '- Keep a reply under 100 words unless they ask for detail. No headings. Never start with "Homeroom bot" or with a',
     '  note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
@@ -1173,7 +1178,17 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
           kind: 'file_request', forUserId: user.id,
           args: { title, details: clip(withoutEmDashes(args.details), 3000), messageId: Number(ctx.triggerMessage.id) },
         };
-        return { ok: true, offered: 'File it and Not now are under your reply, for them to tap. Nothing is filed until they do.' };
+        // An open request that looks like this one is said, so their words
+        // can go on it instead of a second copy (request-similarity.js).
+        const similar = await require('./request-similarity').openSimilar(app, title, { github: ctx.deps?.github });
+        return {
+          ok: true,
+          offered: 'File it and Not now are under your reply, for them to tap. Nothing is filed until they do.',
+          ...(similar.length ? {
+            similarOpen: similar,
+            similarNote: 'These open requests on this project look like the same thing: say so, by number, so they can add to one instead of filing a second.',
+          } : {}),
+        };
       }
       default:
         return { error: `There is no ${name} here.` };

@@ -331,6 +331,17 @@ function stagingMockProposals(viewer) {
         8, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(64) }),
       my_vote_uncounted: true,
     },
+    // #4747: an advisory vote — the viewer is not one of the people who
+    // decide here (an invited project's approvers are), so their vote is
+    // recorded and shown but does not decide this one, and the vote picker
+    // says so. Reviewable on staging via ?demo=1.
+    {
+      ...mk(9000047, 900147,
+        '[Mock] Advisory vote: only approvers decide this one',
+        6, 0, 0, 1, { required: 2, windowEndsAt: hoursAhead(66) }),
+      approval_policy: 'invited',
+      my_vote_advisory: true,
+    },
     // One No vote: eased threshold restored, window pushed back out.
     {
       ...mk(9000002, 900102,
@@ -4652,6 +4663,17 @@ function voteRoutes(config) {
         row.rejection_armed = gate.rejectionArmed;
         row.approval_policy = gate.policy;
         row.approvals_required = gate.approvalsRequired;
+        // #4747: whether this viewer's vote decides, or is advisory — an
+        // invited project's non-approver, or someone outside every group a
+        // rules project's rule names. The picker and the vote rows say so.
+        row.my_vote_advisory = !!userId
+          && row.my_vote_uncounted !== true
+          && !governance.viewerDecides(gov, {
+            approverIds: electorate.approverIds,
+            facts: rulesCtx ? rulesCtx.facts : null,
+            explicitApproval: !!row.requires_explicit_approval,
+            explicitReason: row.explicit_approval_reason || null,
+          }, userId);
         Object.assign(row, governance.explicitApprovalRowFields(row, gate));
         if (gate.mode === 'rules') Object.assign(row, governance.ruleRowFields(gate));
         delete row.other_yes_count;
@@ -5243,6 +5265,9 @@ function voteRoutes(config) {
         const gov = await governance.getGovernance(pool, gatedApp.id);
         const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
         const flagged = !!proposal.requires_explicit_approval;
+        const rulesCtx = gov.rules
+          ? await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id])
+          : null;
         const q = electorate.approverIds
           ? await governance.qualifiedCounts(
             pool, 'pr', proposal.id, electorate.approverIds,
@@ -5258,8 +5283,8 @@ function voteRoutes(config) {
             memberCount: flagged
               ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
             // #4666: who voted, on a project with rules of its own.
-            ...(gov.rules ? governance.rulesGateOpts(
-              await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id]),
+            ...(rulesCtx ? governance.rulesGateOpts(
+              rulesCtx,
               proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
             ) : {}),
           }
@@ -5271,6 +5296,17 @@ function voteRoutes(config) {
         proposal.rejection_armed = gate.rejectionArmed;
         proposal.approval_policy = gate.policy;
         proposal.approvals_required = gate.approvalsRequired;
+        // #4747, same field the /promoted rows carry. Always written: the
+        // board merges this response into its held row key by key, so a
+        // missing key would leave a stale advisory value behind.
+        proposal.my_vote_advisory = !!userId
+          && proposal.my_vote_uncounted !== true
+          && !governance.viewerDecides(gov, {
+            approverIds: electorate.approverIds,
+            facts: rulesCtx ? rulesCtx.facts : null,
+            explicitApproval: flagged,
+            explicitReason: proposal.explicit_approval_reason || null,
+          }, userId);
         Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
         if (gate.mode === 'rules') Object.assign(proposal, governance.ruleRowFields(gate));
         proposal.qualified_yes_count = gate.qualifiedYes;

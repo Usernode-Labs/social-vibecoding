@@ -580,6 +580,83 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
     });
   });
 
+  // A study timer through its own flow, not run(): it seeds nothing, so
+  // `run`'s staging assertions do not apply. Its only data is each viewer's
+  // own count of finished sessions (its table is staging:private), which
+  // the staging conventions keep out of a preview: a preview's Today card
+  // starts empty, which is the honest state for it.
+  await t.test('a study timer: one count per person, a retried session counts once, the day where the person is', async () => {
+    const dir = writeRepo('study-timer');
+    dirs.push(dir);
+
+    // The zone's wall-clock "yesterday 23:30" as of PINNED NOW, as an ISO
+    // instant: what x-usernode-now sends, and what finished_at then stores.
+    const PINNED_NOW = '2026-10-11T12:00:00Z';
+    function yesterdayEnd(zone) {
+      const offsetOf = (at) => {
+        const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+          .formatToParts(at).find((p) => p.type === 'timeZoneName').value; // "GMT+02:00"
+        const sign = part.startsWith('GMT-') ? -1 : 1;
+        const [h, m] = part.replace(/^GMT[+-]/, '').split(':').map(Number);
+        return sign * (h * 60 + m) * 60000;
+      };
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date(Date.parse(PINNED_NOW) - DAY));
+      const get = (type) => parts.find((p) => p.type === type).value;
+      const wall = `${get('year')}-${get('month')}-${get('day')}T23:30:00Z`;
+      const first = Date.parse(wall);
+      return new Date(first - offsetOf(new Date(first))).toISOString();
+    }
+
+    // Production: the table, and nothing in it.
+    const prodDb = await database();
+    let app = await boot(dir, prodDb, 'production', env);
+    let today = (await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada })).data;
+    assert.deepEqual([today.me.id, today.me.username, today.count], [101, 'ada', 0], 'production seeds nothing');
+    assert.match(today.day, /^\d{4}-\d{2}-\d{2}$/, 'the day is the viewer’s own');
+    assert.equal(await app.stop(), 0, `SIGTERM drains and exits 0:\n${app.output()}`);
+    assert.match(app.output(), /\[shutdown\] SIGTERM received, draining/);
+
+    // Staging: no seed, and the app still works for whoever opens it.
+    const stagingDb = await database();
+    app = await boot(dir, stagingDb, 'staging', env);
+    await common(app, '/api/today');
+    assert.equal((await app.call('GET', '/api/today', { as: ada })).data.count, 0, 'a preview starts empty');
+
+    // A session that runs out is counted once, however many times the same
+    // key arrives; each person's count is their own. Posted and read as of
+    // the pinned "now", so every session lands on Oct 11 in every zone
+    // named below.
+    let posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.data.count, 1);
+    posted = await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-1', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal(posted.status, 201, 'the same key again is accepted, and counts no more');
+    assert.equal(posted.data.count, 1);
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-ada-2', tz: 'Europe/Berlin' }, now: PINNED_NOW });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2);
+    assert.equal((await app.call('GET', '/api/today', { as: grace })).data.count, 0, 'nobody else’s sessions');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: { key: 'short' } })).status, 400, 'a key that is not a key');
+    assert.equal((await app.call('POST', '/api/sessions', { as: ada, body: {} })).status, 400);
+
+    // The day is the viewer's own. The reads are pinned to a fixed "now"
+    // (Oct 11, midday UTC) so the day each session lands in is the same
+    // whenever this runs.
+    const berlin = yesterdayEnd('Europe/Berlin');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-berlin-late', tz: 'Europe/Berlin' }, now: berlin });
+    assert.equal((await app.call('GET', '/api/today?tz=Europe/Berlin', { as: ada, now: PINNED_NOW })).data.count, 2, 'not today where they are');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 2, 'an unknown zone falls back to UTC');
+
+    // And one that is yesterday on the US west coast is already today in
+    // UTC: the fallback really does count by UTC.
+    const angeles = yesterdayEnd('America/Los_Angeles');
+    await app.call('POST', '/api/sessions', { as: ada, body: { key: 'session-angeles-late', tz: 'America/Los_Angeles' }, now: angeles });
+    assert.equal((await app.call('GET', '/api/today?tz=America/Los_Angeles', { as: ada, now: PINNED_NOW })).data.count, 2, 'yesterday there');
+    assert.equal((await app.call('GET', '/api/today?tz=Not/AZone', { as: ada, now: PINNED_NOW })).data.count, 3, 'and today in UTC');
+    assert.equal(await app.stop(), 0, app.output());
+  });
+
   // ── The game starters ──────────────────────────────────────────────────
 
   // Nobody without a token, nor with another app's, gets a live connection.

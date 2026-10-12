@@ -323,7 +323,7 @@ function acceptItem(item, answer, glossary) {
  * order. Entries no longer in English are dropped; a locked entry that is
  * still current is kept as it is.
  */
-function writeLanguage(root, language, accepted, english = readEnglishEntries(root)) {
+function writeLanguage(root, language, accepted, english = readEnglishEntries(root), collected = null) {
   const written = [];
   for (const [namespace, entries] of Object.entries(english)) {
     const updates = accepted[namespace] || {};
@@ -334,8 +334,11 @@ function writeLanguage(root, language, accepted, english = readEnglishEntries(ro
     const { required } = packs.requiredMessages(texts, language);
     const next = {};
     for (const key of Object.keys(required)) {
-      if (key in updates) next[key] = { text: updates[key], source: packs.hash(required[key]) };
-      else if (key in existing) next[key] = existing[key];
+      if (key in updates) {
+        next[key] = { text: updates[key], source: packs.hash(required[key]) };
+        // What was accepted, as the translation cache keeps it.
+        if (collected) (collected[namespace] ||= {})[key] = next[key];
+      } else if (key in existing) next[key] = existing[key];
     }
     if (!Object.keys(updates).length && JSON.stringify(next) === JSON.stringify(existing)) continue;
     if (!Object.keys(next).length && !fs.existsSync(file)) continue;
@@ -383,8 +386,10 @@ function failureReason(failure) {
  * were answered; what fails twice stays English and is reported. A first
  * round in which every request failed is not asked again at all.
  *
- * Returns { files, languages: { tag: { requested, written, failed: [{ id, problem }] } },
- * requests: { sent, failed, reasons: { reason: count }, example }, nothingAnswered, unanswered }.
+ * Returns { files, entries, languages: { tag: { requested, written, failed: [{ id, problem }] } },
+ * requests: { sent, failed, reasons: { reason: count }, example }, nothingAnswered, unanswered },
+ * where `entries` is what was accepted, language -> namespace -> key ->
+ * { text, source } (the translation cache keeps exactly that).
  * `requests` counts the requests that failed and why, over both rounds, with
  * one error message as the API worded it; `nothingAnswered` is true when the
  * first round got no answer to any request; `unanswered` is how many messages
@@ -395,7 +400,10 @@ async function syncTranslations({
   maxRetries = Infinity,
 }) {
   const { config, glossary, english, targets, plans, requests } = prepareSync(root, { languages, onlyIds, chunkSize });
-  const summary = { files: [], languages: {}, requests: { sent: 0, failed: 0, reasons: {}, example: null }, nothingAnswered: false, unanswered: 0 };
+  const summary = {
+    files: [], entries: {}, languages: {},
+    requests: { sent: 0, failed: 0, reasons: {}, example: null }, nothingAnswered: false, unanswered: 0,
+  };
   for (const [language, items] of plans) summary.languages[language] = { requested: items.length, written: 0, failed: [] };
   if (!requests.length) return summary;
   const total = [...plans.values()].reduce((sum, items) => sum + items.length, 0);
@@ -481,7 +489,8 @@ async function syncTranslations({
   }
 
   for (const language of targets) {
-    summary.files.push(...writeLanguage(root, language, accepted.get(language), english));
+    summary.entries[language] = {};
+    summary.files.push(...writeLanguage(root, language, accepted.get(language), english, summary.entries[language]));
   }
   return summary;
 }

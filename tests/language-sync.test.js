@@ -1,8 +1,9 @@
 'use strict';
 
 // The translation step (services/language-sync.js) and Homeroom's sweep that
-// runs it (services/language-sync-runner.js), against a fake model and a fake
-// GitHub. frontend/locales/README.md, "Translations", is the contract.
+// runs it (services/language-sync-runner.js) into the translation cache
+// (services/language-cache.js), against a fake model and a fake pool.
+// frontend/locales/README.md, "Translations", is the contract.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,7 +13,8 @@ const path = require('node:path');
 
 const sync = require('../src/services/language-sync');
 const runner = require('../src/services/language-sync-runner');
-const { buildLanguagePacks, hash } = require('../scripts/language-packs');
+const { buildLanguagePacks, hash, writeSource } = require('../scripts/language-packs');
+const languageCache = require('../src/services/language-cache');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -404,51 +406,45 @@ test('no build calls a model: the builder and the shell build never load the tra
 
 // ── The sweep ──────────────────────────────────────────────────────────
 
-function platform(t, { translations = {}, english = ENGLISH, state = null, sessions = {} } = {}) {
+/**
+ * Homeroom's sweep over a running build: its catalogs as the build wrote them
+ * (scripts/language-packs.js writeSource), the translation cache in a fake
+ * pool, and a fake model. `deploy(english)` is a new build with new English.
+ */
+function platform(t, { translations = {}, english = ENGLISH, state = null } = {}) {
   const repo = checkout(t, { translations, english });
-  const db = { state, sessions: { ...sessions }, inserted: [], spend: 0 };
+  const db = { state, cache: [], spend: 0 };
   const logged = [];
   const clock = { now: Date.parse('2026-10-11T12:00:00Z') };
   const pool = {
     async query(sql, params = []) {
       const text = String(sql);
-      if (/FROM apps WHERE self_hosted/.test(text)) {
-        return { rows: [{ id: 7, slug: 'usernode-2d5619', name: 'Homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' }] };
-      }
       if (/SELECT value FROM platform_settings WHERE key = \$1/.test(text) && params[0] === runner.STATE_KEY) {
         return { rows: db.state ? [{ value: JSON.stringify(db.state) }] : [] };
       }
       if (/INSERT INTO platform_settings/.test(text)) { db.state = JSON.parse(params[1]); return { rows: [] }; }
-      if (/SELECT status FROM chat_sessions WHERE id = \$1/.test(text)) {
-        return { rows: db.sessions[params[0]] ? [{ status: db.sessions[params[0]] }] : [] };
+      if (/SELECT COUNT\(\*\)::int AS n, MAX\(created_at\) AS at FROM language_translations/.test(text)) {
+        return { rows: [{ n: db.cache.length, at: db.cache.length ? new Date(1700000000000 + db.cache.length) : null }] };
       }
-      if (/INSERT INTO chat_sessions/.test(text)) { db.inserted.push(params); return { rows: [{ id: 900 + db.inserted.length }] }; }
+      if (/SELECT language, namespace, key, source, text FROM language_translations/.test(text)) return { rows: [...db.cache] };
+      if (/INSERT INTO language_translations/.test(text)) {
+        let added = 0;
+        params[0].forEach((language, i) => {
+          const row = { language, namespace: params[1][i], key: params[2][i], source: params[3][i], text: params[4][i] };
+          if (db.cache.some((r) => r.language === row.language && r.namespace === row.namespace && r.key === row.key && r.source === row.source)) return;
+          db.cache.push(row);
+          added += 1;
+        });
+        return { rows: [], rowCount: added };
+      }
       if (/INSERT INTO system_token_usage/.test(text)) { db.spend += Number(params[0]); return { rows: [] }; }
       return { rows: [] };
     },
   };
-  const files = () => {
-    const out = [];
-    const walk = (dir) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else out.push({ path: path.relative(repo.root, full).split(path.sep).join('/'), size: 1, sha: full });
-      }
-    };
-    walk(path.join(repo.root, 'frontend'));
-    return out;
-  };
-  const pushed = [];
-  const reads = [];
-  let main = 'a'.repeat(40);
-  const github = {
-    async getBranchSha() { return main; },
-    async listRepoFiles(owner, name, ref) { reads.push(ref); return { files: [...files(), { path: 'README.md', size: 1, sha: 'x' }], truncated: false }; },
-    async getBlobContent(owner, name, sha) { return fs.readFileSync(sha, 'utf8'); },
-    async ensureBranchAtSha(owner, name, branch, sha) { pushed.push({ branch, at: sha }); },
-    async pushFiles(owner, name, list, { branch }) { pushed.push({ branch, files: list }); },
-    async createPR(owner, name, { title }) { return { number: 5000 + pushed.length, html_url: 'https://github.com/x/y/pull/1', title }; },
+  const sourceOf = () => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'language-source-'));
+    t.after(() => fs.rmSync(out, { recursive: true, force: true }));
+    return JSON.parse(fs.readFileSync(writeSource(repo.root, out), 'utf8'));
   };
   const model = fakeModel((item) => SPANISH[item.id]);
   const batches = [];
@@ -465,69 +461,72 @@ function platform(t, { translations = {}, english = ENGLISH, state = null, sessi
       return batch.answers ? batch.answers(batch.requests) : model.translate(batch.requests);
     },
   };
-  const kicked = [];
   const deps = {
-    github,
     llm,
+    source: sourceOf(),
     now: () => clock.now,
     log: {
       info: (scope, message, detail) => logged.push({ level: 'info', scope, message, detail }),
       warn: (scope, message, detail) => logged.push({ level: 'warn', scope, message, detail }),
     },
-    maintenance: {
-      PLATFORM_USERNAME: 'usernode-platform',
-      ensurePlatformUser: async () => 1,
-      kickChecks: (config, p, session) => kicked.push(session),
-    },
-    ws: { pushVoteUpdate() {}, pushNotificationToUser() {} },
-    notifications: { createPrProposedNotifications: async () => [], serialize: (row) => row },
   };
+  languageCache.reset();
   return {
-    repo, db, pool, deps, pushed, kicked, batches, model, reads, logged, clock, llm,
-    moveMain: (sha) => { main = sha; },
+    repo, db, pool, deps, batches, model, logged, clock, llm, english,
+    deploy: (next) => { repo.put('en/core.json', next); deps.source = sourceOf(); languageCache.reset(); },
+    cached: (key) => db.cache.filter((row) => row.key === key),
     run: () => runner.runOnce({ config: {}, pool, deps }),
   };
 }
 
-test('the sweep translates what main is missing and puts it to the community as one proposal', async (t) => {
+test('the sweep translates what the running build is missing into the cache, and proposes nothing', async (t) => {
   const p = platform(t);
   const result = await p.run();
-  assert.equal(result.opened, 5002);
-  assert.deepEqual(p.pushed[0], { branch: p.pushed[0].branch, at: 'a'.repeat(40) }, 'branched at the commit the English was read from');
-  assert.match(p.pushed[0].branch, /^i18n\/translations-\d+$/);
-  assert.deepEqual(p.pushed[1].files.map((file) => file.path), ['frontend/locales/es/core.json'], 'only the translation files');
-  assert.equal(JSON.parse(p.pushed[1].files[0].content)['button.leave'].text, 'Salir');
-  const [session] = p.db.inserted;
-  assert.equal(session[6], 'translation', 'a translation proposal, by source');
-  assert.match(session[5], /^Translations: 4 interface messages in Español$/);
-  assert.match(session[7], /in Español/);
-  assert.equal(p.kicked.length, 1, 'its preview and checks start like any platform-opened proposal');
+  // Three messages and Spanish's three forms of the count.
+  assert.equal(result.cached, 6);
+  assert.deepEqual(p.cached('button.leave').map((row) => [row.language, row.text, row.source]), [['es', 'Salir', hash('Leave')]]);
+  assert.deepEqual(p.cached('items_many').map((row) => row.text), ['{{count}} de elementos']);
   assert.ok(p.db.spend > 0, 'the spend counts against the system budget');
-  assert.equal(p.db.state.proposal.sessionId, 901);
-
-  // While it is open, nothing else is opened.
-  p.db.sessions[901] = 'promoted';
-  p.moveMain('b'.repeat(40));
-  assert.deepEqual(await p.run(), { skipped: 'proposal_open' });
+  assert.equal(p.db.state.proposal, undefined, 'no proposal');
+  assert.doesNotMatch(read('src/services/language-sync-runner.js'), /createPR|pushFiles|INSERT INTO chat_sessions/, 'nothing that opens one');
+  // And the shell is offered Spanish from the cache at once.
+  const live = await languageCache.live(p.pool, { source: p.deps.source });
+  assert.deepEqual(live.languages, { en: 'English', es: 'Español' });
+  assert.equal(JSON.parse(live.files.get(live.manifest.es.core.url.split('/').pop()))['button.leave'], 'Salir');
 });
 
-test('a closed translation proposal is not offered again until the English changes', async (t) => {
+test('a deploy that does not change the English translates nothing again; new English is translated alone', async (t) => {
   const p = platform(t);
   await p.run();
-  p.db.sessions[901] = 'closed';
-  p.moveMain('b'.repeat(40));
-  assert.deepEqual(await p.run(), { skipped: 'declined' });
-  p.moveMain('c'.repeat(40));
-  assert.deepEqual(await p.run(), { skipped: 'declined' }, 'main moved, but the English is the same');
-  p.repo.put('en/core.json', { ...ENGLISH, 'button.join': says('Join', 'Button: become a member.') });
-  p.moveMain('d'.repeat(40));
+  assert.deepEqual(await p.run(), { skipped: 'unchanged' });
+  // Another instance, or the state lost: the cache already has it all.
+  p.db.state = null;
+  assert.deepEqual(await p.run(), { skipped: 'nothing_missing' });
   SPANISH['core:button.join'] = { text: 'Unirse' };
   t.after(() => { delete SPANISH['core:button.join']; });
+  p.deploy({ ...ENGLISH, 'button.join': says('Join', 'Button: become a member.') });
+  const calls = p.model.calls.length;
   const again = await p.run();
-  assert.equal(again.opened > 0, true, 'new English, a new proposal');
+  assert.equal(again.cached, 1);
+  assert.deepEqual(p.model.calls.slice(calls).flat().flatMap((request) => request.items.map((item) => item.id)), ['core:button.join'],
+    'only the new message is asked for');
+  // A reworded message is translated again, under its new English.
+  SPANISH['core:button.leave'] = { text: 'Abandonar' };
+  t.after(() => { SPANISH['core:button.leave'] = { text: 'Salir' }; });
+  p.deploy({ ...ENGLISH, 'button.join': says('Join', 'Button: become a member.'), 'button.leave': says('Leave the community', 'Button on a community\'s menu.') });
+  await p.run();
+  assert.deepEqual(p.cached('button.leave').map((row) => [row.text, row.source]), [['Salir', hash('Leave')], ['Abandonar', hash('Leave the community')]]);
 });
 
-test('a whole language goes as a Message Batch, and its proposal opens on the pass after it ends', async (t) => {
+test('a committed translation wins over the cache, and the step does not translate it again', async (t) => {
+  const p = platform(t, { translations: { es: { 'button.leave': from('Leave', 'Abandonar', { locked: true }) } } });
+  await p.run();
+  assert.deepEqual(p.cached('button.leave'), [], 'already committed');
+  const live = await languageCache.live(p.pool, { source: p.deps.source });
+  assert.equal(JSON.parse(live.files.get(live.manifest.es.core.url.split('/').pop()))['button.leave'], 'Abandonar');
+});
+
+test('a whole language goes as a Message Batch; its answers are kept once it ends, and only for English it was asked about', async (t) => {
   const english = { ...ENGLISH };
   for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) english[`bulk.m${i}`] = says(`Message ${i}`, 'Bulk fixture message.');
   const p = platform(t, { english });
@@ -535,15 +534,26 @@ test('a whole language goes as a Message Batch, and its proposal opens on the pa
   t.after(() => { for (let i = 0; i <= runner.DIRECT_LIMIT; i += 1) delete SPANISH[`core:bulk.m${i}`]; });
   const submitted = await p.run();
   assert.equal(submitted.submitted, 'batch_1');
-  assert.equal(p.db.state.batch.baseSha, 'a'.repeat(40));
+  assert.equal(p.db.state.batch.english['core:bulk.m3'], runner.englishOf({ english: 'Message 3' }));
   assert.deepEqual(await p.run(), { waiting: 'batch_1' });
   p.batches[0].status = 'ended';
-  p.moveMain('b'.repeat(40));
-  const opened = await p.run();
-  assert.ok(opened.opened, 'opened from the batch');
-  assert.equal(p.reads.at(-1), 'a'.repeat(40), 'the answers are matched against the catalogs the batch was built from');
-  assert.equal(p.pushed[0].at, 'a'.repeat(40), 'at the commit the batch translated, not today\'s main');
+  // A deploy while it ran: one message reworded, one added before the rest,
+  // so every request after it carries other messages than it did.
+  p.deploy({ 'a.first': says('First', 'Added at the top.'), ...english, 'bulk.m3': says('Message three', 'Bulk fixture message.') });
+  SPANISH['core:a.first'] = { text: 'Primero' };
+  t.after(() => { delete SPANISH['core:a.first']; });
+  const calls = p.model.calls.length;
+  const kept = await p.run();
+  assert.ok(kept.cached > runner.DIRECT_LIMIT, 'the batch\'s answers are kept, matched by message');
   assert.equal(p.db.state.batch, undefined);
+  const askedAgain = p.model.calls.slice(calls + 1).flat().flatMap((request) => request.items.map((item) => item.id)).sort();
+  assert.deepEqual(askedAgain, ['core:a.first', 'core:bulk.m3'], 'what the batch was not asked about is asked on its own');
+  assert.deepEqual(p.cached('bulk.m3').map((row) => row.source), [hash('Message three')], 'never under English it was not asked about');
+  // The batch was asked from the English before the deploy, so the next pass
+  // reads the new English again rather than calling it unchanged; the cache
+  // already has all of it.
+  assert.notEqual(p.db.state.checkedDigest, runner.sourceDigest(p.deps.source));
+  assert.deepEqual(await p.run(), { skipped: 'nothing_missing' });
 });
 
 /** A catalog too large to translate directly, with its Spanish, removed after the test. */
@@ -576,7 +586,6 @@ test('a batch in which every request failed is logged with its reason and is not
   const failed = await p.run();
   assert.deepEqual(failed, { failed: true, reasons: { 'errored: invalid_request_error': requests }, spentCents: 0 });
   assert.equal(p.model.calls.length, 0, 'nothing is asked again one message at a time');
-  assert.equal(p.pushed.length, 0, 'no proposal');
 
   const warnings = p.logged.filter((line) => line.level === 'warn');
   assert.equal(warnings.length, 1);
@@ -595,15 +604,14 @@ test('a batch in which every request failed is logged with its reason and is not
   // Counts and the API's words only: no message, English or translated.
   assert.doesNotMatch(JSON.stringify(warnings), /Message \d|Mensaje|Hello|Leave/);
 
-  // The state keeps the failure and does not call main read.
+  // The state keeps the failure and does not call the build's catalogs read.
   assert.equal(p.db.state.batch, undefined);
-  assert.equal(p.db.state.checkedSha, null);
+  assert.equal(p.db.state.checkedDigest, null);
   assert.equal(p.db.state.failure.shape, sync.requestShape());
-  assert.equal(p.db.state.failure.baseSha, 'a'.repeat(40));
 
   // Main moves, as it does on every merge: the same requests are not sent.
   for (const sha of ['b', 'c', 'd']) {
-    p.moveMain(sha.repeat(40));
+    p.deploy({ ...p.english, [`moved.${sha}`]: says('Moved', 'Fixture.') });
     p.clock.now += 3 * HOUR;
     assert.deepEqual(await p.run(), { skipped: 'failed_before' });
   }
@@ -620,15 +628,14 @@ test('a batch in which every request failed is logged with its reason and is not
     retryAfter: '2026-10-12T12:00:00.000Z',
   });
 
-  // A day on it is tried again, and a good batch opens the proposal and clears the failure.
+  // A day on it is tried again, and a good batch is kept and clears the failure.
   p.clock.now = Date.parse('2026-10-12T12:00:00Z');
   assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure.retryAfter, null, 'due: the day has passed');
   assert.equal((await p.run()).submitted, 'batch_2');
   assert.ok(p.db.state.failure, 'kept until a pass gets an answer');
   p.batches[1].status = 'ended';
   const opened = await p.run();
-  assert.ok(opened.opened, 'the proposal opens');
-  assert.equal(p.pushed[0].at, 'd'.repeat(40));
+  assert.ok(opened.cached, 'the answers are kept');
   assert.equal(p.db.state.failure, undefined);
   assert.equal((await runner.status(p.pool, { now: p.clock.now })).failure, null);
 });
@@ -676,21 +683,21 @@ test('a direct pass in which every request failed is logged and held back the sa
   const [warning] = p.logged.filter((line) => line.level === 'warn');
   assert.equal(warning.detail.example, REFUSED.message);
   assert.equal(warning.detail.batchId, undefined);
-  p.moveMain('b'.repeat(40));
+  p.deploy({ ...p.english, [`moved.b`]: says('Moved', 'Fixture.') });
   assert.deepEqual(await p.run(), { skipped: 'failed_before' });
   assert.deepEqual(calls, [1]);
-  // The next day the API answers: the proposal opens.
+  // The next day the API answers: the answers are kept.
   p.clock.now += 25 * HOUR;
   p.llm.translateCatalogDirect = direct;
-  assert.ok((await p.run()).opened);
+  assert.ok((await p.run()).cached);
   assert.equal(p.db.state.failure, undefined);
 });
 
 test('a pass that wrote only part, or nothing the checks would pass, says why at warn level and is not held back', async (t) => {
-  // Three messages pass, one is refused twice: the proposal opens, with a warning.
+  // Three messages pass, one is refused twice: the answers are kept, with a warning.
   const part = platform(t);
   part.llm.translateCatalogDirect = fakeModel((item) => (item.id === 'core:button.leave' ? { text: 'Salir — ahora' } : SPANISH[item.id])).translate;
-  assert.ok((await part.run()).opened);
+  assert.ok((await part.run()).cached);
   const partWarnings = part.logged.filter((line) => line.level === 'warn');
   assert.equal(partWarnings.length, 1);
   assert.equal(partWarnings[0].message, 'Translation pass wrote less than it asked for');
@@ -699,7 +706,7 @@ test('a pass that wrote only part, or nothing the checks would pass, says why at
 
   // Everything written: no warning.
   const whole = platform(t);
-  assert.ok((await whole.run()).opened);
+  assert.ok((await whole.run()).cached);
   assert.equal(whole.logged.filter((line) => line.level === 'warn').length, 0);
 
   // Every request answered, nothing the checks pass.
@@ -713,7 +720,7 @@ test('a pass that wrote only part, or nothing the checks would pass, says why at
   assert.deepEqual(warning.detail.reasons, {});
   assert.equal(warning.detail.leftInEnglish['an em dash'], 1);
   assert.equal(p.db.state.failure, undefined, 'the requests were answered');
-  assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+  assert.equal(p.db.state.checkedDigest, runner.sourceDigest(p.deps.source));
 });
 
 test('answers the checks refused, then retries that failed in transport: not a held failure', async (t) => {
@@ -725,7 +732,7 @@ test('answers the checks refused, then retries that failed in transport: not a h
   assert.equal(result.nothingUsable, true);
   assert.ok(result.spentCents > 0, 'the answered request was paid for');
   assert.equal(p.db.state.failure, undefined);
-  assert.equal(p.db.state.checkedSha, 'a'.repeat(40), 'as any pass whose requests were answered');
+  assert.equal(p.db.state.checkedDigest, runner.sourceDigest(p.deps.source), 'as any pass whose requests were answered');
   const [warning] = p.logged.filter((line) => line.level === 'warn');
   assert.equal(warning.message, 'Translation pass produced nothing');
   assert.deepEqual(warning.detail.reasons, { 'request: timeout_error': 4 });
@@ -859,7 +866,7 @@ const emptyAnswers = (requests) => requests.map((request) => [request.customId, 
 }]);
 const OUTAGE = { kind: 'request', type: 'api_error', message: 'Internal server error' };
 
-test('a pass that wrote nothing while requests went unanswered does not call main read', async (t) => {
+test('a pass that wrote nothing while requests went unanswered does not mark the catalogs as read', async (t) => {
   // Direct: the first request fails, and so does every retry of its
   // messages; the second is answered with nothing the checks pass.
   const p = platform(t, { english: sixtyOne() });
@@ -869,28 +876,28 @@ test('a pass that wrote nothing while requests went unanswered does not call mai
       : emptyAnswers([request])[0])));
   const mixed = await p.run();
   assert.equal(mixed.failed, true);
-  assert.equal(p.db.state.checkedSha, null, 'the work is not done');
+  assert.equal(p.db.state.checkedDigest, null, 'the work is not done');
   const [warning] = p.logged.filter((line) => line.level === 'warn');
   assert.match(warning.message, /^Translation requests failed and nothing was written; not sending them again until/);
   assert.equal(warning.detail.failedRequests, 61, 'the request, then each of its 60 messages');
   assert.deepEqual(await p.run(), { skipped: 'failed_before' });
-  // Main has not moved. A day later the same work is sent again, and opens the proposal.
+  // Main has not moved. A day later the same work is sent again, and the answers are kept.
   p.clock.now += 25 * HOUR;
   p.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, {
     text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: 'B' })) }),
     usage: { input_tokens: 100, output_tokens: 100 },
   }]));
-  assert.ok((await p.run()).opened, 'not "unchanged"');
+  assert.ok((await p.run()).cached, 'not "unchanged"');
   assert.equal(p.db.state.failure, undefined);
 
-  // The first request fails once and its messages are answered on the second try: a proposal, as before this change.
+  // The first request fails once and its messages are answered on the second try: kept, as before this change.
   const q = platform(t, { english: sixtyOne() });
   q.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request, index) => (
     index === 0 && requests.length === 2
       ? [request.customId, { error: '500', failure: OUTAGE }]
       : [request.customId, { text: JSON.stringify({ translations: request.items.map((item) => ({ id: item.id, text: 'B' })) }), usage: { input_tokens: 100, output_tokens: 100 } }])));
-  assert.ok((await q.run()).opened);
-  assert.match(q.db.inserted[0][5], /^Translations: 61 interface messages/);
+  assert.ok((await q.run()).cached);
+  assert.equal(q.db.cache.length, 61, 'every message is kept');
 
   // A batch: one request expired, the rest answered with nothing usable,
   // and too many messages are left to ask one at a time.
@@ -903,7 +910,7 @@ test('a pass that wrote nothing while requests went unanswered does not call mai
       : emptyAnswers([request])[0]))),
   });
   assert.equal((await b.run()).failed, true);
-  assert.equal(b.db.state.checkedSha, null);
+  assert.equal(b.db.state.checkedDigest, null);
   assert.equal(b.db.state.batch, undefined);
   assert.deepEqual(await b.run(), { skipped: 'failed_before' });
   b.clock.now += 25 * HOUR;
@@ -926,9 +933,9 @@ test('a batch the API will not take is logged, kept and held back like any faile
   assert.ok(warning.detail.example.length <= 300, 'the API\'s message is cut short');
   assert.doesNotMatch(JSON.stringify([warning, p.db.state]), /sk-ant-api03-A/, 'and a key in it is masked, in the log and in the state');
   assert.ok(p.db.state.failure.requests > 1, 'the batch\'s requests');
-  assert.equal(p.db.state.checkedSha, null);
+  assert.equal(p.db.state.checkedDigest, null);
   for (const sha of ['b', 'c']) {
-    p.moveMain(sha.repeat(40));
+    p.deploy({ ...p.english, [`moved.${sha}`]: says('Moved', 'Fixture.') });
     assert.deepEqual(await p.run(), { skipped: 'failed_before' });
   }
   assert.equal(creates, 1, 'one submission, not one a merge');
@@ -1025,21 +1032,21 @@ test('a failed batch entry or direct request keeps the API\'s error type and mes
   assert.equal(sent.length, 3);
 });
 
-test('a pass that could use nothing says why, in the state an admin reads, and opens nothing (#4641)', async (t) => {
+test('a pass that could use nothing says why, in the state an admin reads, and caches nothing (#4641)', async (t) => {
   const p = platform(t);
   const refused = '400 output_config.format.schema: additionalProperties must be false';
   p.deps.llm.translateCatalogDirect = async (requests) => new Map(requests.map((request) => [request.customId, { error: refused }]));
   const result = await p.run();
   assert.equal(result.nothingUsable, true);
-  assert.equal(p.db.inserted.length, 0, 'no proposal');
-  assert.equal(p.db.state.checkedSha, 'a'.repeat(40));
+  assert.equal(p.db.cache.length, 0);
+  assert.equal(p.db.state.checkedDigest, runner.sourceDigest(p.deps.source));
   const { lastPass } = p.db.state;
   assert.equal(lastPass.requested, 4);
   assert.equal(lastPass.written, 0);
   assert.equal(lastPass.failed, 4);
   assert.equal(lastPass.problems[0].count, 4);
   assert.match(lastPass.problems[0].problem, /additionalProperties must be false/, 'the API\'s own words, not "no answer"');
-  const status = await runner.status(p.pool);
+  const status = await runner.status(p.pool, { deps: { cache: { live: async () => null } } });
   assert.deepEqual(status.lastPass, lastPass);
 });
 
@@ -1051,6 +1058,13 @@ test('a pass that wrote translations records what it used too', async (t) => {
     { requested: 4, written: 4, failed: 0 },
   );
   assert.deepEqual(p.db.state.lastPass.problems, []);
+});
+
+test('a build without its catalogs\' source translates nothing', async () => {
+  const result = await runner.runOnce({
+    config: {}, pool: { query: async () => ({ rows: [] }) }, deps: { llm: { isEnabled: () => true }, source: null },
+  });
+  assert.deepEqual(result, { skipped: 'no_source' });
 });
 
 test('the sweep is idle without a key, off with LANGUAGE_SYNC_ENABLED=false, and runs only on the leader', () => {

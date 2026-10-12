@@ -11,12 +11,13 @@
  * READY-MADE APPS (Evan, 8 October 2026). The four general starters of the
  * old create dialog (social productivity, multimedia social, a 2D game, a 3D
  * game) were deleted with it. What came back are apps finished enough that
- * a project made from one needs nothing built: the eight choices on "What
+ * a project made from one needs nothing built: the nine choices on "What
  * do you want to make?" that need no typing
  * (frontend/src/features/first-session/examples.ts, each choice's
  * `template`). A tier list of restaurants, hikes, cities or games is one
  * app with its category filled in at creation; a grocery list, a chore
- * list, a lending library and a potluck planner are one app each. They are
+ * list, a lending library, a potluck planner and a study timer are one app
+ * each. They are
  * `ready`: POST /api/apps starts no Homeroom bot build for them
  * (routes/apps.js), so the project is usable as soon as it is running.
  * Words of the maker's own, and every game, still go to Homeroom bot.
@@ -238,6 +239,31 @@ const TEMPLATES = Object.freeze([
       },
       { name: 'A potluck can be planned', path: '/', expectSelector: '#plan-form input[name="title"]' },
       { name: 'Each potluck has its chat', path: '/', expectSelector: '#potlucks [data-potluck] [data-chat] [data-message]' },
+    ]),
+  }),
+  Object.freeze({
+    id: 'study-timer',
+    ready: true,
+    title: 'Study timer',
+    summary: 'One big Start button for a 25 minute focus session, a gentle beep when it ends, and how many sessions you finished today.',
+    icon: '⏱️',
+    features: Object.freeze([
+      '**One big button**: tap Start and a 25 minute session counts down; the big button becomes Pause, then Resume, with Reset beside it. The timer goes by the clock, so it still ends at the right time when the phone locks or the tab sits in the background.',
+      '**A gentle beep**: two soft notes when the session is over, made by the browser itself. No sound file and nothing to turn on.',
+      '**Today’s count**: how many sessions you finished today, and the minutes that makes. Yours alone, kept when you close the app, back to zero at midnight.',
+    ]),
+    tables: '`study_sessions`',
+    tests: Object.freeze([
+      {
+        id: 'timer.ready',
+        name: 'The timer is ready for a 25 minute session',
+        path: '/',
+        expectSelector: '#timer[data-state="ready"] #start',
+        expectText: '25:00',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'Today’s count of finished sessions loads', path: '/', expectSelector: '#today[data-loaded]' },
     ]),
   }),
   gameStarter({
