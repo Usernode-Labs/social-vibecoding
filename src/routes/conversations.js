@@ -123,7 +123,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.get('/api/conversations/homeroom-bot/work', async (req, res) => {
     try {
       const tray = require('../services/homeroom-bot-tray');
-      if (isDemo(req)) return res.json(tray.demoWork());
+      if (isDemo(req)) return res.json(await tray.demoWorkFor(pool, req.user));
       return res.json(await tray.workFor(pool, { user: req.user }));
     } catch (err) {
       log.error('conversations', 'homeroom bot work failed', { err: err.message, userId: req.user?.id });
