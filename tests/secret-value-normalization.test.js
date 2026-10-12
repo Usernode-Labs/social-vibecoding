@@ -289,7 +289,9 @@ test('every route normalizes the value, none is left out', () => {
 // ── scope: what this change must NOT have touched ─────────────────────
 
 test('the encryption helper is untouched — it is on the self-edit risk list', () => {
-  const secretsJs = fs.readFileSync(path.join(root, 'src/services/secrets.js'), 'utf8');
+  // The helper lives in src/workflow/rules/secrets.ts (services/secrets.js
+  // re-exports it), and the self-edit list names both.
+  const secretsJs = fs.readFileSync(path.join(root, 'src/workflow/rules/secrets.ts'), 'utf8');
   assert.doesNotMatch(secretsJs, /trim\(\)/,
     'normalization is not an encryption concern, and secrets.js also encrypts '
     + 'BYOK Anthropic keys; SELF-HOSTING.md puts this file behind allow_risky');

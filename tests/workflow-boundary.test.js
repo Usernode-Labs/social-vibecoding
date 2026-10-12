@@ -33,6 +33,35 @@ async function write(pool) {
 async function noteOnly(pool) { await pool.query("UPDATE things SET note = 'x'"); }
 module.exports = { write, noteOnly };
 `,
+  // A SET list built from a named fragment is read with the fragment's columns.
+  'src/services/fragments.js': `
+const NOTE_SQL = \`note = 'x'\`;
+function noteFor(p) { const keep = 'k'; return \`note = \${p}\`; }
+async function touch(pool) {
+  await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`);
+  await pool.query(\`UPDATE things SET \${noteFor('$1')} WHERE id = 1\`);
+}
+module.exports = { touch };
+`,
+  // The same name, meaning something else: a local built at run time, and a
+  // file that does not import the fragment. Both stay "dynamic".
+  'src/services/shadow.js': `
+async function rewrite(pool, cols) {
+  const NOTE_SQL = cols.join(', ');
+  await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`);
+}
+module.exports = { rewrite };
+`,
+  'src/services/stranger.js': `
+async function guess(pool) { await pool.query(\`UPDATE things SET \${NOTE_SQL} WHERE id = 1\`); }
+module.exports = { guess };
+`,
+  'src/services/importer.js': `
+const { touch } = require('./fragments');
+const fragments = require('./fragments');
+async function again(pool) { await pool.query(\`UPDATE things SET \${fragments.NOTE_SQL} WHERE id = 2\`); }
+module.exports = { again, touch };
+`,
   'src/workflow/legacy.ts': `
 import { createRequire } from 'node:module';
 const load = createRequire(new URL('../', import.meta.url));
@@ -42,9 +71,23 @@ export function legacy(path: string): any { return load('./' + path); }
 import { legacy } from './legacy.ts';
 export function closeWith(close: (m: any) => unknown) { const gh = legacy('services/helper'); return close(gh); }
 `,
+  // The decisions' own code: held to what a transition may do, and followed
+  // through the rules modules it imports in turn.
+  'src/workflow/rules/wording.ts': `
+import { sentence } from './deeper.ts';
+export function line(n: number): string { return sentence(n); }
+`,
+  'src/workflow/rules/deeper.ts': `
+import { legacy } from '../legacy.ts';
+const seen = new Set<number>();
+export function sentence(n: number): string { seen.add(n); return legacy('services/helper').other(n); }
+export async function lookUp(): Promise<unknown> { return fetch('https://example.com'); }
+`,
   'src/workflow/demo/machine.ts': `
 import { legacy } from '../legacy.ts';
 import { closeWith } from '../shared.ts';
+import { line } from '../rules/wording.ts';
+export const said = (n: number) => line(n);
 const memo = new Map();
 const TABLE = new Map([['a', 1]]);
 let version = 0;
@@ -124,6 +167,14 @@ test('what the workflow code does itself, per part', () => {
   assert.deepEqual(platform, ['web | state src/workflow/platform.ts#runtime']);
 });
 
+test('rules/ is shared decision code, not a machine, and is followed through its own imports', () => {
+  const { root, demo } = fixture();
+  assert.ok(!boundary(root).has('rules'), 'rules/ is not listed as a machine');
+  has(demo, 'rules | uses src/services/helper.js:other');          // two imports away from the machine
+  has(demo, 'rules | state src/workflow/rules/deeper.ts#seen');
+  has(demo, 'rules | io src/workflow/rules/deeper.ts#lookUp fetch'); // outside I/O is a transition's, refused
+});
+
 test('notifiers, and other writers of owned columns', () => {
   const { demo } = fixture();
   has(demo, 'notifiers | notifier kick');
@@ -132,5 +183,9 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← src/services/writer.js#write (dynamic SET)');
   has(demo, 'ownership | things.status ← trigger things_fill');
   assert.ok(!demo.some((e) => e.includes('noteOnly')), 'a writer of another column');
+  assert.ok(!demo.some((e) => e.includes('fragments.js')), 'a SET built from named fragments of other columns');
+  assert.ok(!demo.some((e) => e.includes('importer.js')), 'a fragment of a module the file requires');
+  has(demo, 'ownership | things.status ← src/services/shadow.js#rewrite (dynamic SET)');      // a local of the same name
+  has(demo, 'ownership | things.status ← src/services/stranger.js#guess (dynamic SET)');     // not imported
   assert.ok(!demo.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
 });
