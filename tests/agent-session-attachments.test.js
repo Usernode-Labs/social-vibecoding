@@ -281,6 +281,23 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(100, { level: 'unavailable' })), null);
 });
 
+test('the low-credits note shows before the first message of a conversation whose pill is red, and not once started (#4784)', () => {
+  const figures = (remainingCents) => ({ limitCents: 5000, remainingCents, spentCents: 5000 - remainingCents, byokCents: 0, weekly: true, level: 'ok' });
+  const red = parts.creditView(figures(300));
+  assert.equal(parts.showLowCreditNote(red, false), true, 'red pill, nothing sent: the note shows');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(1500)), false), false, 'the yellow pill says nothing');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(4000)), false), false, 'nor the green');
+  assert.equal(parts.showLowCreditNote(null, false), false, 'no figures, no note');
+  assert.equal(parts.showLowCreditNote(red, true), false, 'a conversation already under way says nothing');
+  assert.equal(parts.showLowCreditNote(parts.creditView(figures(0)), false), true, 'nothing left at all is the other line');
+
+  const html = renderToHtml(createElement(parts.LowCreditNote, { credit: red }));
+  assert.match(html, /^<p class="px-2 text-\[13px\] text-red-600 dark:text-red-400" data-agent-session-low-credit="true">/);
+  assert.match(html, new RegExp(`>${message('agent:session.credits.lowNote', { amount: '$3.00' }).replace('$', '\\$')}<`));
+  const none = renderToHtml(createElement(parts.LowCreditNote, { credit: parts.creditView(figures(0)) }));
+  assert.match(none, new RegExp(`>${message('agent:session.credits.lowNoteNone')}<`));
+});
+
 test('the pill is gray in every state and only its ink changes; a bar along its bottom drains from the right', () => {
   const view = (remainingCents) => parts.creditView({ limitCents: 5000, remainingCents, spentCents: 0, byokCents: 0, weekly: true, level: 'ok' });
   const pill = (credit) => renderToHtml(createElement(parts.CreditPill, { credit, onOpen() {} }));
