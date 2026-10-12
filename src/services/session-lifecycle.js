@@ -298,7 +298,6 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
     `SELECT id FROM chat_sessions
      WHERE status = 'active'
        AND source IS DISTINCT FROM 'imported'
-       AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)
        AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)${exclude}
      ORDER BY last_activity_at ASC
      LIMIT 20`,

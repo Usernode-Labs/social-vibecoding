@@ -1608,8 +1608,11 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   // route that starts a session passes the gate that asks it (#2779; the
   // native proposal start once had a copy without the clause, 12 Oct 2026).
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  assert.ok(require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
-    'the global-cap count leaves synthetic sessions out');
+  // None: the bot's proposals hold preview pods like anyone's, and the cap is
+  // sized from the cluster's pod slots, so every count includes them.
+  assert.ok(!require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
+    'the global-cap count includes synthetic sessions');
+  assert.ok(!read('src/services/session-lifecycle.js').includes(capClause));
   assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 4);
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });

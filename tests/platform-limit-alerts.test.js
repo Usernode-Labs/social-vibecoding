@@ -237,7 +237,7 @@ test('each cap counts exactly what its enforcing route counts', async () => {
   assert.equal(count, collapse(require('../src/services/session-caps').GLOBAL_SESSIONS_SQL));
   assert.match(count, /status IN \('active', 'promoted'\)/);
   assert.match(count, /source IS DISTINCT FROM 'imported'/);
-  assert.match(count, /is_synthetic = TRUE/);
+  assert.doesNotMatch(count, /is_synthetic/, 'synthetic users\' sessions count');
   assert.match(read('src/services/session-lifecycle.js'), /const \{ countGlobalSessions \} = require\('\.\/session-caps'\);/,
     'the gate the routes pass counts the same way');
   const apps = collapse(read('src/routes/apps.js'));

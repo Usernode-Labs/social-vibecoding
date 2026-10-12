@@ -77,19 +77,15 @@ function effectiveSessionCaps(config, user) {
 //
 // What spends config.maxGlobalSessions: active and promoted sessions, except
 // an imported pull request's (it was produced elsewhere and owns no
-// Homeroom worker) and a synthetic account's. The Homeroom bot is one: its
-// builds have their own ceilings (BOT_PROMOTED_CEILING above, the bot's
-// slots), and counting them here let the bot's backlog turn people away.
+// Homeroom worker). Synthetic accounts' sessions count: the Homeroom bot's
+// proposals hold preview pods like anyone's, and the cap is sized from them.
 // Every start, resume and reopen asks this count, and so does the admins'
 // capacity alert (services/platform-limit-alerts.js). On 12 Oct 2026 the
-// native proposal start (routes/proposal-handoff.js) still had its own copy
-// without the synthetic clause: with merges paused, the bot's proposals piled
-// up and every proposal_start was refused as "at capacity" while the count
-// everyone else used, and the alert, read under 80%.
+// native proposal start (routes/proposal-handoff.js) had its own copy that
+// disagreed with the others; there is one count now.
 const GLOBAL_SESSIONS_SQL = `SELECT COUNT(*)::int AS cnt FROM chat_sessions
   WHERE status IN ('active', 'promoted')
-    AND source IS DISTINCT FROM 'imported'
-    AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`;
+    AND source IS DISTINCT FROM 'imported'`;
 
 /** The sessions spending the platform-wide budget, as a number. */
 async function countGlobalSessions(pool) {
