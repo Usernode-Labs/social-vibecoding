@@ -162,7 +162,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
   const order = [];
   const calls = {
     resets: 0, stored: 0, cleaned: 0, dispatches: 0, minted: 0,
-    stopClears: 0, workerReleased: 0, turnStops: [],
+    stopClears: 0, workerReleased: 0, turnStops: [], starterReads: 0,
   };
   let currentState = 'planned';
   let turnMode = null;
@@ -232,6 +232,10 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
     },
     shotsControl: controlPlane,
+    // An ordinary change: its before build is not the starter's placeholder.
+    shotsStarter: {
+      beforeIsStarter: async () => { calls.starterReads += 1; return false; },
+    },
     worker: {
       isInFlight: () => false,
       getActiveTurnMode: () => turnMode,
@@ -828,6 +832,71 @@ test('Homeroom\'s own shots tell the guest lookup so, and the guest carries noth
   assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
   assert.equal('appRoles' in brief, false, 'on Homeroom\'s own copies the administrators are its administrators');
   assert.equal(brief.browsers.full_admin.who, 'a full administrator that exists only in these two throwaway copies');
+  assert.equal(fixture.calls.starterReads, 0, 'Homeroom itself never ships the starter');
+  assert.equal('afterOnly' in brief, false);
+});
+
+// A project's first version: its before build is the starter template's
+// placeholder (services/shots-starter.js). Every before shot of proposals
+// 7608, 7871 and 7610 was that placeholder, taken at the cost of half the
+// agent's turn. Now the run takes and publishes the after side only.
+test('a first version\'s run takes and publishes the after side only, and says so', async () => {
+  let brief = null;
+  let refused = null;
+  let stored = null;
+  let starterPair = null;
+  const fixture = setup({
+    storeArtifacts: async (_pool, _runId, artifacts) => { stored = artifacts; },
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      try {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png({ shade: 10 }));
+      } catch (error) { refused = error; }
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png({ shade: 200 }));
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async (pair) => { starterPair = pair; return true; };
+  const result = await execute(fixture);
+
+  assert.equal(result.state, 'verified');
+  assert.equal(starterPair, fixture.pair, 'read from the two checkouts the run built');
+  assert.deepEqual(brief.afterOnly, orchestrator.AFTER_ONLY);
+  assert.equal(brief.afterOnly.beforeIsStarter, true);
+  assert.match(brief.afterOnly.note, /starter template's placeholder screen/);
+  assert.match(brief.afterOnly.note, /do not open the before address, and save only after shots/);
+  assert.match(brief.afterOnly.note, /Do not call note_change to say the before side is a placeholder/);
+  assert.equal(brief.addresses.before, ORIGINS.base, 'the bridge still knows both addresses');
+  assert.equal(refused?.code, 'before_not_needed');
+
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.deepEqual(verified.hardVerdict, {
+    passed: true, mode: shots.SHOTS_MODE, runs: 1,
+    stories: [{ id: 'invite-suggestions', status: 'ready', files: 1 }],
+    afterOnly: true,
+  }, 'nothing to compare, so no screens');
+  assert.equal(verified.traceSummary.afterOnly, true);
+  assert.deepEqual(stored.map(({ side, variant }) => `${side}:${variant}`), ['head:context']);
+});
+
+test('a first version that cannot be recognised is shot on both sides, as before', async () => {
+  let brief = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async () => { throw new Error('checkout gone'); };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal('afterOnly' in brief, false);
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.equal('afterOnly' in verified.hardVerdict, false);
+  assert.ok(Array.isArray(verified.hardVerdict.screens));
 });
 
 // An app built on Homeroom is told who is signed in, never their role in

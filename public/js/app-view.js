@@ -23504,6 +23504,10 @@ const AppView = {
     ));
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
+    // A project's first version (services/shots-starter.js): its before build
+    // was still the starter template's placeholder, so only the after side
+    // was taken. The card says so where a before would be.
+    const afterOnly = shots.afterOnly === true;
     const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
     // A failed change was tried on the after build and the app broke; like a
     // skipped one it has no shots of its own, but it reads as a problem.
@@ -23629,7 +23633,7 @@ const AppView = {
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">${PlatformI18n.htmlText('changes:shots.clip.none')}</div>`}
         </figure>`;
       if (baseClip || headClip) {
-        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('base', baseClip, poster('base'))}${clip('head', headClip, poster('head'))}</div>`;
+        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${afterOnly ? '' : clip('base', baseClip, poster('base'))}${clip('head', headClip, poster('head'))}</div>`;
       }
       if (pairedClip) {
         const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
@@ -23642,14 +23646,14 @@ const AppView = {
       const onScreen = onScreenOf(screen);
       const before = by(screen.shot, screen.viewport, 'base', 'context');
       const after = by(screen.shot, screen.viewport, 'head', 'context');
-      const absent = onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
+      const absent = !afterOnly && onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
       const who = seenAs([...new Set(onScreen.map(personaKey))]);
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
       const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
       const side = (which, artifact, altId) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
-        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText('changes:shots.screen.noShot')}</span>`;
+        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
         return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}</span>`;
       };
@@ -23720,9 +23724,10 @@ const AppView = {
     if (!screenParts.length && !claims.some(skipped)) {
       return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.card.missingDetails')}</section>`;
     }
-    const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
-      ? PlatformI18n.htmlText('changes:shots.card.introClips')
-      : PlatformI18n.htmlText('changes:shots.card.intro');
+    const withClips = artifacts.some((artifact) => artifact?.variant === 'animation');
+    const lookCopy = afterOnly
+      ? PlatformI18n.htmlText(withClips ? 'changes:shots.card.introNewAppClips' : 'changes:shots.card.introNewApp')
+      : PlatformI18n.htmlText(withClips ? 'changes:shots.card.introClips' : 'changes:shots.card.intro');
     if (detailsOnly) {
       // Shot details (#4455): the steps and sizes the card leaves out.
       const rows = claims.map((claim) => {
@@ -23757,7 +23762,7 @@ const AppView = {
       }).join('')}</ul></section>`
       : '';
     if (thread) {
-      return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
+      return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body"${afterOnly ? ' data-shots-after-only="1"' : ''}>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
     }
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
@@ -23765,7 +23770,7 @@ const AppView = {
     const retake = Number.isInteger(sessionId) && sessionId > 0
       ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
       : '';
-    return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
+    return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"${afterOnly ? ' data-shots-after-only="1"' : ''}><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
       <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">${PlatformI18n.htmlText('changes:shots.card.details')}</summary>
         <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span>${shotResults.length ? `<span>${PlatformI18n.htmlText('changes:shots.card.takenByAgent')}</span>` : ''}</div>
       </details>${retake}</div></section>`;

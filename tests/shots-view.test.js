@@ -290,6 +290,30 @@ test('problems the shots agent noticed reach the view only for the verified run 
   assert.deepEqual(view.fromSnapshot({ shots_state: 'planned', shots_detail: { required: true } }, null).shotNotices, []);
 });
 
+// A project's first version (services/shots-starter.js): its before was the
+// starter template's placeholder, so the run took the after side only and
+// the card says so.
+test('an after-only run reaches the view only as the verified run on the current head', () => {
+  const state = require('../src/services/shots-state');
+  const row = {
+    state: 'verified', base_sha: BASE, head_sha: HEAD, plan_hash: 'c'.repeat(64),
+    intent: null, trace_summary: { runs: 1 },
+    hard_verdict: {
+      passed: true, mode: 'shots', runs: 1, stories: [{ id: 'dialog', status: 'ready', files: 1 }], afterOnly: true,
+    },
+  };
+  const summary = { ...state.runSummary(row), claims: run().claims };
+  assert.equal(summary.afterOnly, true);
+  assert.equal(view.serialize(summary, session(), 'demo', HEAD).afterOnly, true);
+  assert.equal(view.serialize(summary, session(), 'demo', OTHER).afterOnly, false, 'a superseded run says nothing');
+  assert.equal(view.serialize({ ...summary, state: 'exploring' }, session(), 'demo', HEAD).afterOnly, false);
+  // Every other run, and a proposal with no run yet, takes both sides.
+  assert.equal(state.runSummary({ ...row, hard_verdict: { ...row.hard_verdict, afterOnly: undefined } }).afterOnly, false);
+  assert.equal(state.runSummary({ ...row, hard_verdict: { ...row.hard_verdict, afterOnly: 'yes' } }).afterOnly, false);
+  assert.equal(view.serialize(run(), session(), 'demo', HEAD).afterOnly, false);
+  assert.equal(view.fromSnapshot({ shots_state: 'planned', shots_detail: { required: true } }, null).afterOnly, false);
+});
+
 test('noticed problems are cleaned before they reach any reviewer surface', () => {
   const claims = run().claims;
   assert.deepEqual(view.cleanShotNotices(null, claims), []);

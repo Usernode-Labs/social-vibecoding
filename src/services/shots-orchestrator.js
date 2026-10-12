@@ -17,6 +17,7 @@ const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
 const shotsHomeTile = require('./shots-home-tile');
+const shotsStarter = require('./shots-starter');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
 const lifecycle = require('./lifecycle');
@@ -477,13 +478,28 @@ const CHILD_APP_ROLES = Object.freeze({
     + 'app itself is different: when hints.setup says how to get it, do that first.',
 });
 
+// A project's first version (shots-starter.js): the before address is still
+// the starter template's placeholder, which shows none of the declared
+// changes. Before this, every before shot of such a proposal was that
+// placeholder and the agent spent half its turn taking it (proposals 7608,
+// 7871 and 7610, each with a note saying so). Fixed words only.
+const AFTER_ONLY = Object.freeze({
+  beforeIsStarter: true,
+  note: 'This proposal builds the app\'s first real screens. The before address still shows only the starter '
+    + 'template\'s placeholder screen, which has none of the declared changes, so there is no before to take: do not '
+    + 'open the before address, and save only after shots (side "after"), plus an after clip for a motion change. '
+    + 'save_shot refuses a before shot in this run. Do not call note_change to say the before side is a placeholder: '
+    + 'the proposal already says the app is new.',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
 // `childApp` is an app built on Homeroom rather than Homeroom itself.
+// `afterOnly` is a project's first version: only the after side is taken.
 function shotsBrief({
   run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, selfApp = false,
-  childApp = false,
+  childApp = false, afterOnly = false,
 }) {
   const testingPaths = testingPathsForSession(session);
   const phones = new Set(planContract.phonePersonas(intent));
@@ -518,6 +534,7 @@ function shotsBrief({
     },
     screenBrowsers: screenBrowsers(intent),
     ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
+    ...(afterOnly ? { afterOnly: { ...AFTER_ONLY } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -1053,6 +1070,7 @@ function traceSummary(metrics, extra = {}) {
     ...(metrics.workerMemory ? { workerMemory: workerMemorySummary(metrics.workerMemory) } : {}),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
+    ...(metrics.afterOnly ? { afterOnly: true } : {}),
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
   };
 }
@@ -1118,6 +1136,7 @@ async function executeRun(config, options, injected = {}) {
     identities: injected.identities || identities,
     shotsAgent: injected.shotsAgent || shotsAgent,
     shotsControl: injected.shotsControl || shotsControl,
+    shotsStarter: injected.shotsStarter || shotsStarter,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
   };
@@ -1254,12 +1273,28 @@ async function executeRun(config, options, injected = {}) {
         sessionId: session.id, runId: run.id, error: error.message,
       });
     }
+    // A project's first version: its before build is still the starter
+    // template's placeholder, read from the two checkouts' own sentinel
+    // (shots-starter.js), so only the after side is taken and published.
+    // Homeroom itself never ships the starter. A read that fails takes both
+    // sides, as every run did before.
+    let afterOnly = false;
+    if (app.slug !== config.selfAppSlug) {
+      try { afterOnly = await deps.shotsStarter.beforeIsStarter(pair); }
+      catch (error) {
+        log.warn('shots', 'Could not tell whether the before build is the starter', {
+          sessionId: session.id, runId: run.id, error: error.message,
+        });
+      }
+    }
+    metrics.afterOnly = afterOnly;
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
       selfApp: app.slug === config.selfAppSlug,
       childApp: app.slug !== config.selfAppSlug,
+      afterOnly,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
@@ -1281,6 +1316,7 @@ async function executeRun(config, options, injected = {}) {
       context,
       expiresAt: Date.now() + runBudgetMs,
       homeTiles,
+      afterOnly,
     });
 
     const agentStartedAt = Date.now();
@@ -1451,24 +1487,27 @@ async function executeRun(config, options, injected = {}) {
     }
     // Where each change's before and after screens differ, so the card can
     // outline it. A screen that cannot be compared is shown without outlines;
-    // it never holds the run back.
-    try {
-      const ready = intent.stories.filter((story) => summary.stories
-        .some((result) => result.id === story.id && result.status === 'ready'));
-      const diff = deps.shotsDiff || shotsDiff;
-      summary.verdict.screens = await diff.screensFor(ready, summary.files);
-      // A change whose screens show no difference anywhere says so on its
-      // card, as a byte-identical pair already does (shots-files.summarize).
-      if (typeof diff.unchangedStories === 'function') {
-        summary.verdict.stories = shotsFiles.markUnchanged(
-          summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
-        );
-        summary.stories = summary.verdict.stories;
+    // it never holds the run back. An after-only run has nothing to compare,
+    // and its card shows each after screen on its own.
+    if (!afterOnly) {
+      try {
+        const ready = intent.stories.filter((story) => summary.stories
+          .some((result) => result.id === story.id && result.status === 'ready'));
+        const diff = deps.shotsDiff || shotsDiff;
+        summary.verdict.screens = await diff.screensFor(ready, summary.files);
+        // A change whose screens show no difference anywhere says so on its
+        // card, as a byte-identical pair already does (shots-files.summarize).
+        if (typeof diff.unchangedStories === 'function') {
+          summary.verdict.stories = shotsFiles.markUnchanged(
+            summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
+          );
+          summary.stories = summary.verdict.stories;
+        }
+      } catch (error) {
+        log.warn('shots', 'Could not compare the before and after screens', {
+          runId: run.id, error: String(error?.message || error).slice(0, 300),
+        });
       }
-    } catch (error) {
-      log.warn('shots', 'Could not compare the before and after screens', {
-        runId: run.id, error: String(error?.message || error).slice(0, 300),
-      });
     }
     failurePhase = 'persist_shots';
     stage(failurePhase);
@@ -1832,6 +1871,7 @@ module.exports = {
   resolveRevisionContext,
   declaredCheckSummary,
   INSTALL_STRIP,
+  AFTER_ONLY,
   shotsBrief,
   sameProvenance,
   waitForSessionIdle,

@@ -241,7 +241,7 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),

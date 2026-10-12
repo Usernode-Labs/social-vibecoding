@@ -2084,6 +2084,8 @@ function registerTools(server, ctx) {
       alsoBefore: z.union([z.boolean(), z.literal('unknown')]),
     })).optional().describe('Problems the shots agent noticed on the after build besides the declared changes, '
       + 'where each shows, and whether the before build has it too (alsoBefore). Advisory: they change no result.'),
+    afterOnly: z.boolean().optional().describe('True when the before build was still the starter template\'s '
+      + 'placeholder (the app\'s first real screens), so only after shots were taken.'),
     overriddenBy: z.number().nullable(),
     overriddenAt: z.string().nullable(),
     overrideReason: z.string().nullable(),
