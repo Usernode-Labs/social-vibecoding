@@ -248,11 +248,47 @@ export interface HomeroomBotJob {
    * (services/release-watch.js), which the tray words. Absent otherwise.
    */
   release?: ReleaseOutlook;
+  /**
+   * One request, one story (services/homeroom-bot-tray.js threadsOf): the
+   * request's card in the chat with the bot, the root of its thread.
+   */
+  cardId?: number;
+  /** Its newest message there still waiting on the person: what the strip's Needs you button opens. */
+  ask?: HomeroomBotAsk;
+  /** Its newest "ready to try" card there, and what that card's buttons do. */
+  ready?: HomeroomBotReadyRef;
+  /** A build that stopped: why (as an activity card's `stopCause`). */
+  stopCause?: HomeroomBotActivity['stopCause'];
+}
+
+/** The newest message about a request still waiting on its person (tray entry `ask`). */
+export interface HomeroomBotAsk {
+  messageId: number | null;
+  /** question, followup_ask, plan, person, blocked, empty, build_failed, checks, needs_look, first_version_failed. */
+  kind: string;
+  said?: string;
+  /** A question's own words. */
+  question?: string;
+}
+
+/** A request's newest "ready to try" card (tray entry `ready`). */
+export interface HomeroomBotReadyRef {
+  messageId: number | null;
+  sessionId: number | null;
+  epoch: number;
+  /** Its buttons are still open. */
+  open: boolean;
+  /** The person's yes would count: Approve is theirs to press. */
+  approve: boolean;
+  /** Who it waits on ("@ada"), when not on them. */
+  waiting: string | null;
 }
 
 /** What the bot is doing for them now: its step of the request's steps, what it is doing, since when. */
 export interface HomeroomBotCurrentJob extends HomeroomBotJob {
   phase: HomeroomBotPhase;
+  /** The progress stage it is at (reading, planning, building, on_hold…), when the server says. */
+  stage?: string | null;
   step: number | null;
   of: number | null;
   stepName: string | null;
@@ -706,6 +742,13 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
+  /**
+   * The message a reply thread opens at (store.openThreadAt): the strip's
+   * Needs you button opens a request's thread at the question it asks.
+   * Scrolled to and flashed once by the thread pane, never by the
+   * conversation beside it. Optional so a fixture without it reads as null.
+   */
+  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {

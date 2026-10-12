@@ -703,17 +703,18 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
-test('the staging preview\'s declared check finds the card being built in the demo DM, beside the tray, and the card opening it gave work under way', () => {
+test('the staging preview\'s declared check finds the strip under the demo DM\'s header, with its groups and their buttons', () => {
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-activity-tray');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  // A step ring is drawn only while a card's work goes, and the panel (which
-  // leads its tiles with the same ring) is not drawn while it is closed, as
-  // the check requires: a ring here is a card in the transcript.
-  // One story: the steps are named for what happens (Building, Planning).
-  assert.match(check.expectSelector, /\.messages-thread-pane:has\(\[aria-label="Step 3 of 6: Building"\]\)/);
-  assert.match(check.expectSelector, /:has\(\[aria-label="Step 2 of 6: Planning"\]\) > \.messages-thread-header /);
+  // One request, one story: the cards in the transcript are one-line news
+  // now and the Activity disc is gone, so the check reads the strip that
+  // replaced them ("Your requests", ./bot-strip.tsx): what needs you with its
+  // one button, Ready to try with Approve, and the In progress line.
+  assert.match(check.expectSelector, /\.messages-thread-header \+ \[data-bot-strip=open\]/);
+  assert.match(check.expectSelector, /\[data-bot-strip-group=needs\] \[data-bot-strip-act=open\]/);
+  assert.match(check.expectSelector, /\[data-bot-strip-group=ready\] \[data-bot-strip-act=approve\]/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Working on 3', 'the tray counts the work the new card follows');
+  assert.equal(check.expectText, '1 needs you', 'the demo strip\'s summary');
   for (const file of ['src/services/homeroom-bot-activity.js', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }

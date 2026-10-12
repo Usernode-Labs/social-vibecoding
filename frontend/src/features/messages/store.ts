@@ -78,6 +78,7 @@ let state: InternalState = {
   listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
+  threadFocusId: null,
 };
 
 /*
@@ -1919,6 +1920,28 @@ export function messageAddress(conversationId: number, messageId: number): strin
 /** The address of a reply thread beside its conversation (#2387). */
 export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
+}
+
+/**
+ * Open a request's thread at one of its messages (the strip's buttons, a
+ * news line in the chat with Homeroom bot): the thread pane scrolls to it
+ * and flashes it (`threadFocusId`). Without a root it opens the message
+ * itself, wherever it is, by its link.
+ */
+export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
+  const conversationId = state.route.conversationId;
+  if (typeof window === 'undefined' || !conversationId) return;
+  if (!validId(rootId)) {
+    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
+    return;
+  }
+  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
+  openThread(rootId);
+}
+
+/** The thread pane has shown the message it was opened at. */
+export function clearThreadFocus(): void {
+  if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
 /** Open the thread that hangs off a message of the open conversation. */

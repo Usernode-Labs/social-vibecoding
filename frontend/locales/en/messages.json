@@ -663,6 +663,298 @@
     "text": "I’ll start when one of my changes across Homeroom is voted in or closed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot has as many changes up for a vote across all of Homeroom as it may, and starts once one is decided."
   },
+  "bot.strip.name": {
+    "text": "Your requests",
+    "description": "Accessible name of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the person's requests to the bot and where each stands."
+  },
+  "bot.strip.hide": {
+    "text": "Hide",
+    "description": "Button on the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: folds it down to its one summary line."
+  },
+  "bot.strip.show": {
+    "text": "Show",
+    "description": "Button on the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens it from its one summary line to its rows."
+  },
+  "bot.strip.summary.needs_one": {
+    "text": "{{count}} needs you",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests wait on the person. {{count}} is that number."
+  },
+  "bot.strip.summary.needs_other": {
+    "text": "{{count}} need you",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests wait on the person. {{count}} is that number."
+  },
+  "bot.strip.summary.ready_one": {
+    "text": "{{count}} ready to try",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many changes the bot built are ready for the person to try. {{count}} is that number."
+  },
+  "bot.strip.summary.ready_other": {
+    "text": "{{count}} ready to try",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many changes the bot built are ready for the person to try. {{count}} is that number."
+  },
+  "bot.strip.summary.progress_one": {
+    "text": "{{count}} in progress",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests the bot is working on now. {{count}} is that number."
+  },
+  "bot.strip.summary.progress_other": {
+    "text": "{{count}} in progress",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests the bot is working on now. {{count}} is that number."
+  },
+  "bot.strip.summary.done_one": {
+    "text": "{{count}} done today",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests went live in the last day. {{count}} is that number."
+  },
+  "bot.strip.summary.done_other": {
+    "text": "{{count}} done today",
+    "description": "Part of the summary line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: how many requests went live in the last day. {{count}} is that number."
+  },
+  "bot.strip.group.needs": {
+    "text": "Needs you",
+    "description": "Small heading over the rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot that wait on the person."
+  },
+  "bot.strip.group.ready": {
+    "text": "Ready to try",
+    "description": "Small heading over the rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot whose change is ready for the person to try."
+  },
+  "bot.strip.group.progress": {
+    "text": "In progress",
+    "description": "Small heading over the line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot naming the requests the bot is working on now."
+  },
+  "bot.strip.moreNeeds_one": {
+    "text": "+{{count}} more needs you ›",
+    "description": "Button under the Needs you rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the rest. {{count}} is how many more."
+  },
+  "bot.strip.moreNeeds_other": {
+    "text": "+{{count}} more need you ›",
+    "description": "Button under the Needs you rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the rest. {{count}} is how many more."
+  },
+  "bot.strip.moreReady_one": {
+    "text": "+{{count}} more ready to try ›",
+    "description": "Button under the Ready to try rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the rest. {{count}} is how many more."
+  },
+  "bot.strip.moreReady_other": {
+    "text": "+{{count}} more ready to try ›",
+    "description": "Button under the Ready to try rows of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the rest. {{count}} is how many more."
+  },
+  "bot.strip.doneToday_one": {
+    "text": "{{count}} done today ›",
+    "description": "Button at the foot of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the requests that went live in the last day. {{count}} is how many."
+  },
+  "bot.strip.doneToday_other": {
+    "text": "{{count}} done today ›",
+    "description": "Button at the foot of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: shows the requests that went live in the last day. {{count}} is how many."
+  },
+  "bot.strip.firstVersion": {
+    "text": "{{project}}, first version",
+    "description": "Name of a project's first version on a row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{project}} is the project's name."
+  },
+  "bot.strip.requestNumber": {
+    "text": "Request #{{number}}",
+    "description": "Name of a request with no title on a row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{number}} is its number on the project's board, keep the #."
+  },
+  "bot.strip.progressItem": {
+    "text": "{{title}} ({{doing}})",
+    "description": "One request in the In progress line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot. {{title}} is the request's title and {{doing}} what the bot is doing on it, in a word or two (for example: building)."
+  },
+  "bot.strip.progressTwo": {
+    "text": "{{first}}, {{second}}",
+    "description": "The In progress line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot naming two requests. {{first}} and {{second}} are each a request with what is being done on it."
+  },
+  "bot.strip.progressMore_one": {
+    "text": "{{first}}, {{second}} +{{count}}",
+    "description": "The In progress line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot naming two requests and how many more there are. {{first}} and {{second}} are each a request with what is being done on it; {{count}} is how many more."
+  },
+  "bot.strip.progressMore_other": {
+    "text": "{{first}}, {{second}} +{{count}}",
+    "description": "The In progress line of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot naming two requests and how many more there are. {{first}} and {{second}} are each a request with what is being done on it; {{count}} is how many more."
+  },
+  "bot.strip.doing.reading": {
+    "text": "reading",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: reading it. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.planning": {
+    "text": "planning",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: writing its plan. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.building": {
+    "text": "building",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: building it. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.testing": {
+    "text": "testing",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: testing what it built. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.queued": {
+    "text": "in the queue",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: the request waits its turn. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.followingUp": {
+    "text": "following up",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: updating its change after replies. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.goingLive": {
+    "text": "going live",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: its change is going live. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.doing.settingUp": {
+    "text": "setting up",
+    "description": "What Homeroom bot is doing on a request, in the In progress line of the \"Your requests\" strip: setting up a new project. Lower case, it follows the request's title in brackets."
+  },
+  "bot.strip.state.needsAnswer": {
+    "text": "Needs your answer",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot asked a question."
+  },
+  "bot.strip.state.planReady": {
+    "text": "Your plan is ready",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot's plan waits for the person to say Build it."
+  },
+  "bot.strip.state.needsDecision": {
+    "text": "Needs your decision",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: a person has to decide something before the bot builds it."
+  },
+  "bot.strip.state.stopped": {
+    "text": "Stopped",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot's work on it stopped before it finished."
+  },
+  "bot.strip.state.stoppedTime": {
+    "text": "Stopped: took too long",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot's build stopped because it ran out of time."
+  },
+  "bot.strip.state.blocked": {
+    "text": "Can’t build it as written",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot needs more detail to build it."
+  },
+  "bot.strip.state.empty": {
+    "text": "Nothing to build yet",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the bot found nothing to build in it yet."
+  },
+  "bot.strip.state.needsLook": {
+    "text": "Needs a person to look",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: a person has to look at the change before it can go on."
+  },
+  "bot.strip.state.onHold": {
+    "text": "On hold until Monday",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the person's building time for this week is used up."
+  },
+  "bot.strip.state.secrets": {
+    "text": "Waiting for its secrets",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: a new project waits for the person to add its secrets (keys and passwords it needs)."
+  },
+  "bot.strip.state.needsYou": {
+    "text": "Needs you",
+    "description": "Line under a request's title on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: when nothing more specific is known."
+  },
+  "bot.strip.state.testing": {
+    "text": "Being tested",
+    "description": "Line under a request's title on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the change is built and being tested before anyone tries it."
+  },
+  "bot.strip.state.readyForYes": {
+    "text": "Ready for your yes",
+    "description": "Line under a request's title on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the person's approval would count."
+  },
+  "bot.strip.state.waitingFor": {
+    "text": "Waiting for {{who}}",
+    "description": "Line under a request's title on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: who still has to approve the change. {{who}} is one or more @names."
+  },
+  "bot.strip.state.waitingApproval": {
+    "text": "Waiting for approval",
+    "description": "Line under a request's title on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the change waits for people to approve it."
+  },
+  "bot.strip.state.live": {
+    "text": "Live",
+    "description": "Line under a request's title on a Done row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: its change is live."
+  },
+  "bot.strip.state.closed": {
+    "text": "Closed",
+    "description": "Line under a request's title on a Done row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: its change was closed without going live."
+  },
+  "bot.strip.action.answer": {
+    "text": "Answer",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread at the bot's question."
+  },
+  "bot.strip.action.buildIt": {
+    "text": "Build it",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread at the bot's plan, where Build it starts the build. \"Build\" is a verb."
+  },
+  "bot.strip.action.decide": {
+    "text": "Decide",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread at what needs deciding."
+  },
+  "bot.strip.action.tryAgain": {
+    "text": "Try again",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread at the message that stopped, with its Try again."
+  },
+  "bot.strip.action.addDetail": {
+    "text": "Add detail",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread to say more about what is wanted."
+  },
+  "bot.strip.action.open": {
+    "text": "Open",
+    "description": "Button on a Needs you row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens the request's thread."
+  },
+  "bot.strip.action.tryIt": {
+    "text": "Try it",
+    "description": "Button on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: opens a preview of the change."
+  },
+  "bot.strip.action.approve": {
+    "text": "Approve",
+    "description": "Button on a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot: the person's yes vote on the change."
+  },
+  "bot.strip.approveStale": {
+    "text": "It changed since you looked. Try it again first.",
+    "description": "Shown under a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot when Approve was refused because the change was updated."
+  },
+  "bot.strip.approveFailed": {
+    "text": "Couldn’t approve it. Try again.",
+    "description": "Shown under a Ready to try row of the \"Your requests\" strip pinned under the header of the chat with Homeroom bot when Approve failed."
+  },
+  "bot.news.started": {
+    "text": "I’ve started on it",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the bot (speaking as I) started working on the request."
+  },
+  "bot.news.answer": {
+    "text": "needs your answer",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the bot asked the person a question about it. Lower case: it follows the title."
+  },
+  "bot.news.plan": {
+    "text": "plan is ready",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the bot's plan for it is ready. Lower case: it follows the title."
+  },
+  "bot.news.decision": {
+    "text": "needs your decision",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the person has to decide something. Lower case: it follows the title."
+  },
+  "bot.news.detail": {
+    "text": "needs more detail",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the bot cannot build it as written. Lower case: it follows the title."
+  },
+  "bot.news.ready": {
+    "text": "is ready to try",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the change the bot built is ready to try. Lower case: it follows the title."
+  },
+  "bot.news.stopped": {
+    "text": "stopped",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: the bot's work on it stopped. Lower case: it follows the title."
+  },
+  "bot.news.onHold": {
+    "text": "is on hold until Monday",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: building time for this week is used up. Lower case: it follows the title."
+  },
+  "bot.news.live": {
+    "text": "is live",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: its change is live. Lower case: it follows the title."
+  },
+  "bot.news.update": {
+    "text": "has an update",
+    "description": "Words after a request's title on a short news line in the chat with Homeroom bot: other news about it. Lower case: it follows the title."
+  },
+  "bot.news.updates_one": {
+    "text": "· {{count}} update ›",
+    "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
+  },
+  "bot.news.updates_other": {
+    "text": "· {{count}} updates ›",
+    "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
+  },
   "bot.span.underMinute": {
     "text": "under a minute",
     "description": "A duration of less than one minute, shown where a length of time is given on a Homeroom bot card, as in \"under a minute so far\" or \"took under a minute\"."
@@ -786,418 +1078,6 @@
   "bot.activity.name": {
     "text": "Homeroom bot activity: {{title}}",
     "description": "Accessible name of a Homeroom bot activity card. Homeroom bot is the assistant's name. {{title}} names the piece of work, for example \"Ear Trainer #12: Sort by date\"."
-  },
-  "bot.phase.looking": {
-    "text": "Looking at it",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: reading the request. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.building": {
-    "text": "Building",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: building the change. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.followingUp": {
-    "text": "Following up on its change",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: following up on the change it built for this request. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.settingUp": {
-    "text": "Getting the project ready",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: preparing a new project. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.queued": {
-    "text": "Waiting its turn in my queue",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the request waits in the bot's queue. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.followUpQueued": {
-    "text": "Waiting its turn to follow up on its change",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the follow-up waits in the bot's queue. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.phase.merging": {
-    "text": "Making the approved change live",
-    "description": "Status line of a tile in Homeroom bot's Activity panel when the bot has not said more: the approved change is being put into use. The bot speaks in the first person (\"my queue\")."
-  },
-  "bot.last.question": {
-    "text": "Last: asked you about {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot asked the person a question and is waiting for the answer). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.questionUnnamed": {
-    "text": "Last: asked you about A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot asked the person a question and is waiting for the answer). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.proposed": {
-    "text": "Last: {{job}} waiting for approval",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and waits for the group's approval). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.proposedUnnamed": {
-    "text": "Last: A project waiting for approval",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and waits for the group's approval). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.live": {
-    "text": "Last: {{job}} went live",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and now in use). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.liveUnnamed": {
-    "text": "Last: A project went live",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and now in use). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.closed": {
-    "text": "Last: the change for {{job}} was closed",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change was built but then closed without going into use). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.closedUnnamed": {
-    "text": "Last: the change for A project was closed",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change was built but then closed without going into use). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.blocked": {
-    "text": "Last: couldn’t build {{job}} as written",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the request cannot be built as it is worded). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.blockedUnnamed": {
-    "text": "Last: couldn’t build A project as written",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the request cannot be built as it is worded). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.buildFailed": {
-    "text": "Last: couldn’t finish building {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the build did not complete). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.buildFailedUnnamed": {
-    "text": "Last: couldn’t finish building A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the build did not complete). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.person": {
-    "text": "Last: left {{job}} to the group",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot left the decision to the group). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.personUnnamed": {
-    "text": "Last: left A project to the group",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot left the decision to the group). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.empty": {
-    "text": "Last: found nothing to build in {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot found nothing in the request to build). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.emptyUnnamed": {
-    "text": "Last: found nothing to build in A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot found nothing in the request to build). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.failed": {
-    "text": "Last: couldn’t finish looking at {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot could not finish reading the request). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.failedUnnamed": {
-    "text": "Last: couldn’t finish looking at A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot could not finish reading the request). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.held": {
-    "text": "Last: held {{job}} back for now",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is ready but is being kept back for the moment). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.heldUnnamed": {
-    "text": "Last: held A project back for now",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is ready but is being kept back for the moment). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.stopped": {
-    "text": "Last: stopped on {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the work was stopped before it finished). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.stoppedUnnamed": {
-    "text": "Last: stopped on A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the work was stopped before it finished). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.answer": {
-    "text": "Last: answered on {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot answered a question on the change). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.answerUnnamed": {
-    "text": "Last: answered on A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot answered a question on the change). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.revise": {
-    "text": "Last: updated the change for {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot updated the change after feedback). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.reviseUnnamed": {
-    "text": "Last: updated the change for A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the bot updated the change after feedback). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.checking": {
-    "text": "Last: checking {{job}} before you try it",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and is being checked before the person can try it). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.checkingUnnamed": {
-    "text": "Last: checking A project before you try it",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built and is being checked before the person can try it). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.needsLook": {
-    "text": "Last: {{job}} needs a look",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built but something in it needs the person's attention). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.needsLookUnnamed": {
-    "text": "Last: A project needs a look",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built but something in it needs the person's attention). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.last.goingLive": {
-    "text": "Last: {{job}} going live",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built, approved and being put into use). {{job}} names the work, for example \"Ear Trainer #3\" or just \"#3\". The bot is the unstated subject."
-  },
-  "bot.last.goingLiveUnnamed": {
-    "text": "Last: A project going live",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did (the change is built, approved and being put into use). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.activity": {
-    "text": "Activity",
-    "description": "Line under Homeroom bot's name at the top of its conversation when there is nothing to report. A noun: the bot's activity."
-  },
-  "bot.tray.needYou_one": {
-    "text": "{{count}} needs you",
-    "description": "One fact in the dot-separated line under Homeroom bot's name on a wide screen, complete on its own: how many of the person's requests are waiting for their answer or decision. It is joined to the fact before it by a middle dot. {{count}} is that number."
-  },
-  "bot.tray.needYou_other": {
-    "text": "{{count}} need you",
-    "description": "One fact in the dot-separated line under Homeroom bot's name on a wide screen, complete on its own: how many of the person's requests are waiting for their answer or decision. It is joined to the fact before it by a middle dot. {{count}} is that number."
-  },
-  "bot.tray.workingOn": {
-    "text": "Working on {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, when its stage is not known. {{job}} names it, for example \"Ear Trainer #3\"."
-  },
-  "bot.tray.workingOnUnnamed": {
-    "text": "Working on A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, when its stage is not known. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.looking": {
-    "text": "Working on {{job}} · reading it",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is reading the request). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.lookingUnnamed": {
-    "text": "Working on A project · reading it",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is reading the request). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.building": {
-    "text": "Working on {{job}} · building",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is building the change). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.buildingUnnamed": {
-    "text": "Working on A project · building",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is building the change). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.followingUp": {
-    "text": "Working on {{job}} · following up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is following up on the change it built for this request). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.followingUpUnnamed": {
-    "text": "Working on A project · following up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is following up on the change it built for this request). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.settingUp": {
-    "text": "Working on {{job}} · setting up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is preparing a new project). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.settingUpUnnamed": {
-    "text": "Working on A project · setting up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the bot is preparing a new project). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.queued": {
-    "text": "Working on {{job}} · in my queue",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the request waits in the bot's queue). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.queuedUnnamed": {
-    "text": "Working on A project · in my queue",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the request waits in the bot's queue). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.followUpQueued": {
-    "text": "Working on {{job}} · queued to follow up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the follow-up waits in the bot's queue). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.followUpQueuedUnnamed": {
-    "text": "Working on A project · queued to follow up",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the follow-up waits in the bot's queue). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnPhase.merging": {
-    "text": "Working on {{job}} · going live",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the approved change is being put into use). {{job}} names the work, for example \"Ear Trainer #3\". The bot speaks in the first person."
-  },
-  "bot.tray.workingOnPhase.mergingUnnamed": {
-    "text": "Working on A project · going live",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing and its stage (the approved change is being put into use). Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.queuedNeedYou_one": {
-    "text": "Queued · {{count}} needs you",
-    "description": "Phone-width line under Homeroom bot's name when everything the bot has for this person waits in its queue and some requests wait for the person's answer. {{count}} is how many requests need the person."
-  },
-  "bot.tray.queuedNeedYou_other": {
-    "text": "Queued · {{count}} need you",
-    "description": "Phone-width line under Homeroom bot's name when everything the bot has for this person waits in its queue and some requests wait for the person's answer. {{count}} is how many requests need the person."
-  },
-  "bot.tray.workingNeedYou_one": {
-    "text": "Working · {{count}} needs you",
-    "description": "Phone-width line under Homeroom bot's name when the bot is working and some requests wait for the person's answer. {{count}} is how many requests need the person."
-  },
-  "bot.tray.workingNeedYou_other": {
-    "text": "Working · {{count}} need you",
-    "description": "Phone-width line under Homeroom bot's name when the bot is working and some requests wait for the person's answer. {{count}} is how many requests need the person."
-  },
-  "bot.tray.workingOnShort": {
-    "text": "Working on {{job}}",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a phone: the one piece of work the bot is doing. {{job}} is its short name, a request number such as \"#3\" or a project's name."
-  },
-  "bot.tray.workingOnShortUnnamed": {
-    "text": "Working on A project",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a phone: the one piece of work the bot is doing. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.jobQueued": {
-    "text": "{{job}} queued",
-    "description": "Phone-width line under Homeroom bot's name when the person's one request is waiting in the bot's queue. {{job}} is a request number such as \"#3\" or a project's name."
-  },
-  "bot.tray.jobQueuedUnnamed": {
-    "text": "A project queued",
-    "description": "Phone-width line under Homeroom bot's name when the person's one request is waiting in the bot's queue. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.workingOnCount_one": {
-    "text": "Working on {{count}}",
-    "description": "Phone-width line under Homeroom bot's name: how many of the person's requests the bot is working on. {{count}} is that number."
-  },
-  "bot.tray.workingOnCount_other": {
-    "text": "Working on {{count}}",
-    "description": "Phone-width line under Homeroom bot's name: how many of the person's requests the bot is working on. {{count}} is that number."
-  },
-  "bot.tray.countQueued_one": {
-    "text": "{{count}} queued",
-    "description": "Phone-width line under Homeroom bot's name: how many of the person's requests are waiting in the bot's queue. {{count}} is that number."
-  },
-  "bot.tray.countQueued_other": {
-    "text": "{{count}} queued",
-    "description": "Phone-width line under Homeroom bot's name: how many of the person's requests are waiting in the bot's queue. {{count}} is that number."
-  },
-  "bot.tray.workingOnRequests_one": {
-    "text": "Working on {{count}} request",
-    "description": "Line under Homeroom bot's name on a wide screen: how many of the person's requests the bot is working on. {{count}} is that number."
-  },
-  "bot.tray.workingOnRequests_other": {
-    "text": "Working on {{count}} requests",
-    "description": "Line under Homeroom bot's name on a wide screen: how many of the person's requests the bot is working on. {{count}} is that number."
-  },
-  "bot.tray.jobNeedsYou": {
-    "text": "{{job}} needs you",
-    "description": "Line under Homeroom bot's name on a wide screen when one request waits for the person's answer or decision. {{job}} names it, for example \"Ear Trainer #3\"."
-  },
-  "bot.tray.jobNeedsYouUnnamed": {
-    "text": "A project needs you",
-    "description": "Line under Homeroom bot's name on a wide screen when one request waits for the person's answer or decision. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.jobNeedsYouShort": {
-    "text": "{{job}} needs you",
-    "description": "Phone-width line under Homeroom bot's name when one request waits for the person's answer or decision. {{job}} is a request number such as \"#3\" or a project's name."
-  },
-  "bot.tray.jobNeedsYouShortUnnamed": {
-    "text": "A project needs you",
-    "description": "Phone-width line under Homeroom bot's name when one request waits for the person's answer or decision. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
-  },
-  "bot.tray.requestsNeedYou_one": {
-    "text": "{{count}} request needs you",
-    "description": "Line under Homeroom bot's name on a wide screen: how many requests wait for the person's answer or decision. {{count}} is that number."
-  },
-  "bot.tray.requestsNeedYou_other": {
-    "text": "{{count}} requests need you",
-    "description": "Line under Homeroom bot's name on a wide screen: how many requests wait for the person's answer or decision. {{count}} is that number."
-  },
-  "bot.tray.needYouShort_one": {
-    "text": "{{count}} needs you",
-    "description": "Phone-width line under Homeroom bot's name: how many requests wait for the person's answer or decision. {{count}} is that number."
-  },
-  "bot.tray.needYouShort_other": {
-    "text": "{{count}} need you",
-    "description": "Phone-width line under Homeroom bot's name: how many requests wait for the person's answer or decision. {{count}} is that number."
-  },
-  "bot.tray.button": {
-    "text": "Activity",
-    "description": "Accessible name and tooltip of the button at the top of the conversation with Homeroom bot: opens the panel listing what the bot is working on. A noun."
-  },
-  "bot.tray.openChange": {
-    "text": "Open change",
-    "description": "Link on a tile in Homeroom bot's Activity panel: opens the page of the change the bot built. \"Open\" is a verb; \"change\" is a noun."
-  },
-  "bot.tray.openRequest": {
-    "text": "Open request",
-    "description": "Link on a tile in Homeroom bot's Activity panel: opens the request the work is for. \"Open\" is a verb; \"request\" is a noun."
-  },
-  "bot.tray.requestNumber": {
-    "text": "Request #{{number}}",
-    "description": "Link on a tile in Homeroom bot's Activity panel: opens the request the work is for. \"Request\" is a noun; {{number}} is the request number, keep the #."
-  },
-  "bot.tray.openProject": {
-    "text": "Open project",
-    "description": "Link on a tile in Homeroom bot's Activity panel: opens the project the work is for. \"Open\" is a verb."
-  },
-  "bot.tray.earlierRuns_one": {
-    "text": "{{count}} earlier run",
-    "description": "Button on a tile in Homeroom bot's Activity panel: shows or hides the bot's earlier attempts at the same request. A \"run\" is one attempt by the bot; {{count}} is how many."
-  },
-  "bot.tray.earlierRuns_other": {
-    "text": "{{count}} earlier runs",
-    "description": "Button on a tile in Homeroom bot's Activity panel: shows or hides the bot's earlier attempts at the same request. A \"run\" is one attempt by the bot; {{count}} is how many."
-  },
-  "bot.tray.eyebrowStep": {
-    "text": "Step {{step}} of {{total}}",
-    "description": "Small heading on a tile in Homeroom bot's Activity panel for work in progress. {{step}} is the current step number and {{total}} the number of steps."
-  },
-  "bot.tray.eyebrowStepNamed": {
-    "text": "{{name}} · step {{step}} of {{total}}",
-    "description": "Small heading on a tile in Homeroom bot's Activity panel for work in progress: the step it is at, by name, then its number. {{name}} is what the step is called (for example Building), {{step}} the current step number and {{total}} the number of steps."
-  },
-  "bot.tray.eyebrowWorking": {
-    "text": "Working on it",
-    "description": "Small heading on a tile in Homeroom bot's Activity panel for work in progress when no step number is known. \"it\" is the request."
-  },
-  "bot.tray.soFar": {
-    "text": "{{duration}} so far",
-    "description": "One fact in the dot-separated status of a tile in Homeroom bot's Activity panel, complete on its own: how long the bot has been working on it. {{duration}} is a short duration such as \"5m\", \"2h 5m\" or \"under a minute\"."
-  },
-  "bot.tray.waitingOnYou": {
-    "text": "Waiting on you",
-    "description": "Status of a tile in Homeroom bot's Activity panel when the bot waits for the person and has said nothing more specific."
-  },
-  "bot.tray.panelName": {
-    "text": "Homeroom bot activity",
-    "description": "Accessible name of the panel that lists what Homeroom bot is working on. Homeroom bot is the assistant's name."
-  },
-  "bot.tray.loadFailed": {
-    "text": "Couldn’t load what I’m working on.",
-    "description": "Error in Homeroom bot's Activity panel when the list could not be fetched. The bot speaks in the first person. A \"Try again\" button follows."
-  },
-  "bot.tray.loading": {
-    "text": "Loading activity",
-    "description": "Accessible label of the placeholder shown while Homeroom bot's Activity panel loads."
-  },
-  "bot.tray.sectionNow": {
-    "text": "Now",
-    "description": "Section heading in Homeroom bot's Activity panel: the work the bot is doing at this moment."
-  },
-  "bot.tray.sectionNeedsYou": {
-    "text": "Needs you",
-    "description": "Section heading in Homeroom bot's Activity panel: requests that wait for the reader to answer or decide."
-  },
-  "bot.tray.idle": {
-    "text": "I’m not working on anything for you right now.",
-    "description": "Note in Homeroom bot's Activity panel when nothing is in progress and nothing waits for the person. The bot speaks in the first person."
-  },
-  "bot.tray.hideHistory": {
-    "text": "Hide history",
-    "description": "Button in Homeroom bot's Activity panel: folds away the list of finished work."
-  },
-  "bot.tray.showHistory_one": {
-    "text": "Show history ({{count}})",
-    "description": "Button in Homeroom bot's Activity panel: unfolds the list of finished work. {{count}} is how many finished items there are."
-  },
-  "bot.tray.showHistory_other": {
-    "text": "Show history ({{count}})",
-    "description": "Button in Homeroom bot's Activity panel: unfolds the list of finished work. {{count}} is how many finished items there are."
-  },
-  "bot.tray.empty": {
-    "text": "Nothing yet. When I work on a request of yours, it shows up here.",
-    "description": "Note in Homeroom bot's Activity panel when the bot has never worked on anything for this person. The bot speaks in the first person."
-  },
-  "bot.tray.stale": {
-    "text": "Couldn’t refresh this just now; it may be out of date.",
-    "description": "Note at the foot of Homeroom bot's Activity panel when the latest refresh failed and older information is still shown."
   },
   "bot.head.requestNumber": {
     "text": "Request #{{number}}",
@@ -3083,6 +2963,10 @@
     "text": "Direct message",
     "description": "Line under a person's name in a direct conversation's header."
   },
+  "header.subtitle.homeroomBot": {
+    "text": "Builds what you ask for",
+    "description": "Line under Homeroom bot's name at the top of the chat with it: what the bot is for."
+  },
   "header.aiBadge": {
     "text": "AI",
     "description": "Small badge beside the name in a conversation's header when the other party is an AI assistant rather than a person."
@@ -3358,46 +3242,6 @@
   "bot.outcome.goingLiveRelease": {
     "text": "Built it. {{release}}",
     "description": "How a piece of Homeroom bot's work ended, shown as the status on its activity card and in its history, for a change to Homeroom itself: the change is built and merged, and waits for the platform's next release. {{release}} is a finished sentence saying when it goes live, for example \"Merged; goes live in the next release (about 8 minutes)\". Homeroom bot is the assistant that builds changes; \"it\" is what the person asked for."
-  },
-  "bot.tray.workingOnRelease.waiting": {
-    "text": "Working on {{job}} · waiting for a release",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, a change to Homeroom itself that has merged and waits for the platform's next release, when that release is not promised yet. {{job}} names the work, for example \"Homeroom #12\". \"Homeroom\" is the product's name."
-  },
-  "bot.tray.workingOnRelease.now": {
-    "text": "Working on {{job}} · going live now",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, a change to Homeroom itself that has merged and waits for the platform's next release, when that release is going out now. {{job}} names the work, for example \"Homeroom #12\". \"Homeroom\" is the product's name."
-  },
-  "bot.tray.workingOnRelease.next": {
-    "text": "Working on {{job}} · goes live in the next release",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, a change to Homeroom itself that has merged and waits for the platform's next release, when there is no estimate of when that release comes. {{job}} names the work, for example \"Homeroom #12\". \"Homeroom\" is the product's name."
-  },
-  "bot.tray.workingOnRelease.minutes_one": {
-    "text": "Working on {{job}} · goes live in about a minute",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, a change to Homeroom itself that has merged and waits for the platform's next release, with an estimate of when. {{job}} names the work, for example \"Homeroom #12\". \"Homeroom\" is the product's name. {{count}} is the estimated number of minutes until it goes live; English spells the singular out, and a translation may use {{count}} in any form."
-  },
-  "bot.tray.workingOnRelease.minutes_other": {
-    "text": "Working on {{job}} · goes live in about {{count}} minutes",
-    "description": "Line under Homeroom bot's name at the top of its conversation on a wide screen: the one piece of work the bot is doing, a change to Homeroom itself that has merged and waits for the platform's next release, with an estimate of when. {{job}} names the work, for example \"Homeroom #12\". \"Homeroom\" is the product's name. {{count}} is the estimated number of minutes until it goes live; English spells the singular out, and a translation may use {{count}} in any form."
-  },
-  "bot.last.release.waiting": {
-    "text": "Last: {{job}} waiting for a release",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, when that release is not promised yet. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence."
-  },
-  "bot.last.release.now": {
-    "text": "Last: {{job}} going live now",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, when that release is going out now. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence."
-  },
-  "bot.last.release.next": {
-    "text": "Last: {{job}} goes live in the next release",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, when there is no estimate of when that release comes. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence."
-  },
-  "bot.last.release.minutes_one": {
-    "text": "Last: {{job}} goes live in about a minute",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, with an estimate of when. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence. {{count}} is the estimated number of minutes until it goes live; English spells the singular out, and a translation may use {{count}} in any form."
-  },
-  "bot.last.release.minutes_other": {
-    "text": "Last: {{job}} goes live in about {{count}} minutes",
-    "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, with an estimate of when. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence. {{count}} is the estimated number of minutes until it goes live; English spells the singular out, and a translation may use {{count}} in any form."
   },
   "bot.plan.complicatedNote": {
     "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",

@@ -144,9 +144,13 @@ test('Try again replies to its message; Add detail quotes it in the composer and
   ], 'only a prompt quotes');
 });
 
-test('the staging preview’s declared check finds Try again in the demo DM', () => {
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097:/.test(t.name));
-  assert.match(check.expectSelector, /^#messages-screen:not\(\.hidden\):has\(\.messages-message button\.messages-bot-primary\[data-bot-prompt\]\) /);
+test('the staging preview’s declared check finds the demo DM’s stopped build, in the need colour', () => {
+  // One request, one story: the stopped build is one line in the main chat
+  // ("stopped", in the need colour); its Try again is in the request's
+  // thread, or in place once the line of a message from before threads is
+  // opened.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
+  assert.match(check.expectSelector, /:has\(\[data-bot-news=build_failed\] \.text-amber-700\)/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);

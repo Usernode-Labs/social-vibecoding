@@ -425,8 +425,11 @@ export function ReadyCardView({
   );
 }
 
-/** Open a change's preview over the chat, or its page when there is no preview overlay to open. */
-function tryChange(meta: HomeroomBotMeta, sessionId: number) {
+/**
+ * Open a change's preview over the chat, or its page when there is no
+ * preview overlay to open. Also the strip's Try it (./bot-strip.tsx).
+ */
+export function tryChange(meta: Pick<HomeroomBotMeta, 'appSlug'>, sessionId: number) {
   const view = typeof window !== 'undefined' ? window.AppView : null;
   if (meta.appSlug && view && typeof view.ensureStaging === 'function') {
     void view.ensureStaging(sessionId, null, null, { readOnly: false, app: { slug: meta.appSlug } });
