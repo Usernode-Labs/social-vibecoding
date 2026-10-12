@@ -1612,12 +1612,6 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
 // that index already produced.
 //
-// #4797: a read ask about a decided change (DECIDED_HIDDEN_KINDS on a session
-// 'merged' or 'archived') is not listed — the merge already read it, and a
-// row that only opens the merged page is not news. The COALESCE keeps a row
-// with no session (a digest of several) or a deleted session listed, as
-// today. Unread rows are never hidden, so the badge and the list agree, and
-// getForUser (a push opening one row) still returns it.
 async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
   const params = [userId];
   let cursorClause = '';
@@ -1631,6 +1625,13 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
     params.push(kinds);
     kindClause = `AND n.kind = ANY($${params.length})`;
   }
+  // #4795: a merged change is decided, so the rows that asked you to vote on
+  // it or try it leave the list instead of staying as read entries somebody
+  // taps and finds a merged page behind. `IS NOT DISTINCT FROM` so a row
+  // with no session behind it (NULL cs.status) evaluates to false and is
+  // kept, rather than to NULL and dropped by the NOT.
+  params.push(MERGED_HIDDEN_KINDS);
+  const mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
   const { rows } = await pool.query(
@@ -1665,9 +1666,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
-     AND NOT (n.read_at IS NOT NULL
-              AND n.kind = ANY(${DECIDED_HIDDEN_KINDS_SQL})
-              AND COALESCE(cs.status IN ('merged', 'archived'), false))
+     ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
@@ -1722,8 +1721,11 @@ async function countUnread(pool, userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
-    [userId]
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
+              SELECT 1 FROM chat_sessions s
+               WHERE s.id = n.session_id AND s.status = 'merged'))`,
+    [userId, MERGED_HIDDEN_KINDS]
   );
   return rows[0]?.c || 0;
 }
@@ -1838,19 +1840,15 @@ async function markReadForSession(pool, userId, sessionId) {
 // settled apart, because a change that went live makes it news.
 const DECIDED_ASK_KINDS = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest']);
 
-// #4797 (Page Turners): once a change is decided, the asks about it leave the
-// bell's LIST as soon as they are read — nobody scrolls past a "New change"
-// that only opens the merged page, waiting for 100 newer rows to push it off.
-// DECIDED_ASK_KINDS plus "ready to try": a read change_ready row has been
-// seen, and the news the merge made of it (relit unread for a non-voter)
-// stays until it is read too. The news kinds (voted_change_merged, pr_merged,
-// a live wording) are not asks and are never hidden. A digest of several has
-// no single change to be decided and is never hidden.
-const DECIDED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready']);
-// A static literal, not a bound parameter: listForUser's cursor and kinds
-// already hold the positional parameters, and the kinds are this file's own
-// frozen constants.
-const DECIDED_HIDDEN_KINDS_SQL = `ARRAY[${DECIDED_HIDDEN_KINDS.map((kind) => `'${kind}'`).join(',')}]::text[]`;
+// #4795: the kinds whose rows are about one change and ask something about
+// it, so once that change has MERGED the rows leave the bell's list instead
+// of lingering as read entries somebody taps and finds a merged page behind.
+// It is every ask the decision settles plus "ready to try" itself: a merged
+// change is decided, so the vote it asked for is already in. The rows that
+// say the change went live (pr_merged to its author, voted_change_merged to
+// its voters) are not asks and stay. A closed change keeps its rows in the
+// list, where "ready to try" reads Closed.
+const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready']);
 
 /**
  * "Waiting for your approval" digests that no longer count anything
@@ -1886,14 +1884,13 @@ async function settleVoteDigests(pool, { userIds = null, appId = null, since = n
  * ('merged') or closed ('archived'), so the bell stops asking about it:
  *
  *   - the asks it answered (DECIDED_ASK_KINDS) are read;
- *   - "ready to try" rows: closed, they are read. Live, the newest one each
- *     person was sent is the news that it is live (the bell words it Live,
- *     from the change's status) and is unread again for whoever never voted
- *     on it and so did not see it go; the ones about older versions are
- *     read. #4787: a voter now hears the merge through
- *     voted_change_merged, so their newest row is left as they read it and
- *     the bell does not show two unread rows about one change.
- *     Unread again, never a new row: nothing rings twice;
+ *   - "ready to try" rows are read, whatever the decision. #4795: on a
+ *     merge they leave the list altogether (listForUser hides them for a
+ *     merged change), so the rule that re-opened the newest one as the
+ *     unread news that it is live is retired: the news now arrives as its
+ *     own row (pr_merged to the author, voted_change_merged to the voters),
+ *     which a person who was asked to try the change and never voted also
+ *     does not get;
  *   - digests of several changes it was the last one waiting in are read.
  *
  * Everyone whose bell changed hears `notifications_changed`, which also
@@ -1928,33 +1925,15 @@ async function settleDecidedChange(pool, sessionId, { status = null, push = true
     [id, DECIDED_ASK_KINDS]
   )).rows);
 
-  if (session.status === 'merged') {
-    // The newest "ready to try" each person was sent about it.
-    const NEWEST = `n.id = (SELECT MAX(newest.id) FROM notifications newest
-                             WHERE newest.user_id = n.user_id AND newest.session_id = n.session_id
-                               AND newest.kind = 'change_ready')`;
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NOW()
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NULL AND NOT (${NEWEST})
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NULL
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NOT NULL AND ${NEWEST}
-          AND NOT EXISTS (SELECT 1 FROM pr_votes voted
-                           WHERE voted.session_id = n.session_id AND voted.user_id = n.user_id)
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-  } else {
-    note((await pool.query(
-      `UPDATE notifications SET read_at = NOW()
-        WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
-        RETURNING user_id`,
-      [id]
-    )).rows);
-  }
+  // #4795: both decisions read every "ready to try" about the change. On a
+  // merge the rows leave the list (MERGED_HIDDEN_KINDS in listForUser); on a
+  // close they stay, where the bell words them Closed.
+  note((await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
+      RETURNING user_id`,
+    [id]
+  )).rows);
 
   for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from })) {
     touched.add(userId);
@@ -2280,6 +2259,7 @@ module.exports = {
   settleVoteDigests,
   refreshFiledMessage,
   DECIDED_ASK_KINDS,
+  MERGED_HIDDEN_KINDS,
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,
