@@ -176,6 +176,23 @@ function provenanceRefusal(side, origins, { base, head }) {
   return null;
 }
 
+// ── Requests the shots tools may hold or fail ───────────────────────────
+//
+// One exact API GET on the pair's own two addresses: a path under /api/, with
+// its query if it has one, and nothing a pattern could widen (no wildcard, no
+// fragment, no backslash or control character). The proxy applies it to both
+// addresses alike and to nothing else, and the platform records the same path
+// beside the change's shots. The same rule as a declared
+// controlledFailurePath (src/services/visible-changes.js).
+function controlledRequestPath(value) {
+  if (typeof value !== 'string' || value.length > 512 || !value.startsWith('/api/')
+      || value.includes('*') || value.includes('\\') || /[\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value, 'http://shots.invalid');
+    return url.origin === 'http://shots.invalid' && !url.hash && `${url.pathname}${url.search}` === value;
+  } catch { return false; }
+}
+
 module.exports = {
   WEB_PORTS,
   NON_PUBLIC,
@@ -188,4 +205,5 @@ module.exports = {
   recordSession,
   sessionOrigins,
   provenanceRefusal,
+  controlledRequestPath,
 };

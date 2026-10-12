@@ -184,6 +184,10 @@ COPY shots-boundary.js /usr/local/bin/shots-boundary.js
 COPY shots-memory.js /usr/local/bin/shots-memory.js
 COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
 COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
+# The only files a shots page can be handed (the shots bridge's upload_file),
+# drawn once into a read-only directory the observer chooses them from.
+COPY shots-samples.js /usr/local/bin/shots-samples.js
+RUN node /usr/local/bin/shots-samples.js /usr/local/share/usernode/shots-samples
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js

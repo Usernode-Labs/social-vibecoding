@@ -3,9 +3,12 @@
 // A before/after run gets one purpose-bound JWT and this in-memory,
 // run-scoped control plane. The shots agent can read its brief, save shots
 // and clips, note what a change's shots leave out, skip a change with a
-// reason, and note a few problems it saw on the after build. It cannot address another run, obtain app auth material, or invoke
-// generic platform APIs. A platform restart drops the registry; recovery
-// retries the durable run rather than trusting an orphan model process.
+// reason, note a few problems it saw on the after build, and record what it
+// did to both builds to reach a change (a request held or failed, a sample
+// file uploaded). It cannot address another run, obtain app auth material,
+// or invoke generic platform APIs. A platform restart drops the registry;
+// recovery retries the durable run rather than trusting an orphan model
+// process.
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
@@ -66,6 +69,10 @@ class RunControl {
     // changes, in the order it noted them (at most shots.MAX_NOTICES).
     // Advisory: nothing here changes a change's status or the run's.
     this.notices = [];
+    // What the agent did to both builds to reach each change's state (an API
+    // GET held or failed, a sample file uploaded), recorded before it does
+    // it and shown beside that change's shots.
+    this.conditions = new Map();
     // Set when the agent says nothing at all can be shot (for example every
     // screen shows a sign-in page); it explains every change that is not
     // ready and has no reason of its own.
@@ -222,6 +229,29 @@ class RunControl {
     }
   }
 
+  // The shots bridge records what it is about to do to both builds for a
+  // change (control_request, upload_file) before it does it; the same thing
+  // again is recorded once.
+  noteCondition(raw = {}) {
+    try {
+      this.assertOpen();
+      const { change, ...entry } = shots.condition(this.intent, raw);
+      const list = this.conditions.get(change) || [];
+      if (!list.some((existing) => shots.sameCondition(existing, entry))) {
+        if (list.length >= shots.MAX_CONDITIONS) {
+          throw new ShotsControlError('too_many_conditions',
+            `${change} already has ${shots.MAX_CONDITIONS} controlled tests and sample files, the most a change shows.`);
+        }
+        list.push(entry);
+        this.conditions.set(change, list);
+      }
+      return { recorded: change, conditions: list.length };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'note-condition', error };
+      throw error;
+    }
+  }
+
   declaredChange(change) {
     const story = this.intent.stories.find((candidate) => candidate.id === String(change ?? ''));
     if (!story) {
@@ -234,7 +264,7 @@ class RunControl {
     return shots.summarize(this.intent, this.saved, this.skipped, {
       fallbackReason: this.skippedAll, notes: this.notes,
       failed: this.failed, fallbackFailed: this.skippedAllFailed, notices: this.notices,
-      afterOnly: this.afterOnly,
+      conditions: this.conditions, afterOnly: this.afterOnly,
     });
   }
 

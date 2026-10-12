@@ -2062,10 +2062,17 @@ function registerTools(server, ctx) {
     // One result per declared change: its shots are ready (with the shots
     // agent's note on what they leave out, if any), or it skipped the change
     // and says why, or the change failed: the agent did the steps and the
-    // after build broke.
+    // after build broke. `conditions`: what the shots agent did to both
+    // builds alike to reach it, beyond the author's steps (an API GET held
+    // or made to fail, sample files uploaded); people see it beside the shots.
     shotResults: z.array(z.object({
       id: z.string(), status: z.enum(['ready', 'skipped', 'failed']), reason: z.string().nullable(),
       note: z.string().nullable().optional(),
+      conditions: z.array(z.object({
+        kind: z.enum(['request_held', 'request_failed', 'sample_file']),
+        request: z.string().optional(),
+        files: z.array(z.string()).optional(),
+      })).optional(),
     })).optional(),
     // Up to five problems the shots agent noticed on the after build
     // besides the declared changes (content cut off, controls overlapping,
