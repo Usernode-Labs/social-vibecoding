@@ -809,6 +809,7 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
       no={no}
       prior={prior}
       uncounted={!!yes.uncounted}
+      advisory={!!yes.advisory}
       side={side}
       line={line}
       reasonId={reasonId}
@@ -902,13 +903,15 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
  * `VoteButton`.
  */
 export function VotePicker({
-  yes, no, prior, uncounted = false, side, line, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onBoxKey, onCancel, onSend,
+  yes, no, prior, uncounted = false, advisory = false, side, line, reasonId, boxRef, tally, withLine, solo, approve = false, onSide, onLine, onBoxKey, onCancel, onSend,
 }: {
   yes: ActionSpec;
   no: ActionSpec;
   prior: 'yes' | 'no' | null;
   /** The viewer is a test account on an app a real person made (`ActionSpec.uncounted`). */
   uncounted?: boolean;
+  /** #4747: the viewer's vote is advisory, it does not decide (`ActionSpec.advisory`). */
+  advisory?: boolean;
   side: 'yes' | 'no';
   line: string;
   reasonId: string;
@@ -944,8 +947,10 @@ export function VotePicker({
   return (
     <>
       <div className="dev-vote-switch-label" id={headId}>{approve ? t('project:card.vote.picker.headApproval') : t('project:card.vote.picker.headVote')}</div>
-      {uncounted ? (
-        <p className="dev-vote-uncounted" data-vote-uncounted="">{t('project:card.vote.picker.uncounted')}</p>
+      {(uncounted || advisory) ? (
+        <p className="dev-vote-uncounted" data-vote-uncounted="">
+          {uncounted ? t('project:card.vote.picker.uncounted') : t('project:card.vote.picker.advisory')}
+        </p>
       ) : null}
       <div className="dev-vote-switch" role="group" aria-labelledby={headId}>
         <button

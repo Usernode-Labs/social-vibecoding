@@ -177,6 +177,14 @@ export interface ActionSpec {
    * so in one line.
    */
   uncounted?: boolean;
+  /**
+   * #4747, on the Yes spec: the viewer is outside the people who decide this
+   * change (not an approver on an approver project, or outside every group
+   * the project's rules name), so their vote is recorded and advisory. The
+   * picker says so in one line. Never set together with `uncounted` — the
+   * test-account line wins.
+   */
+  advisory?: boolean;
 }
 
 /** Everything that can appear in the status band, as a tagged union. */
