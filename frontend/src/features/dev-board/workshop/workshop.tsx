@@ -49,6 +49,7 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   ArrowUpIcon,
   BallotIcon,
+  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -59,6 +60,7 @@ import {
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
+  TagIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -3639,6 +3641,12 @@ function MineSection({ section, title, count, ask = false, rows, slug, openKey, 
  */
 function GroupStrip({ group }: { group: string }): ReactNode {
   const t = useMessages('project');
+  // #4916: each tab is its glyph, a tag for category and the board's own
+  // columns for stage (BoardIcon, the Workshop's mark in the places list).
+  // Its words ride along as the tooltip, the aria-label and an sr-only copy
+  // (the declared checks read the page's innerText for "By category").
+  const category = t('project:allItems.group.category');
+  const stage = t('project:allItems.group.stage');
   return (
     <div className="dev-ws-group" role="tablist" aria-label={t('project:allItems.group.label')}>
       <button
@@ -3647,9 +3655,12 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         className="dev-ws-group-tab"
         data-ws-group="category"
         aria-selected={group === 'category'}
+        aria-label={category}
+        title={category}
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
       >
-        {t('project:allItems.group.category')}
+        <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
+        <span className="sr-only">{category}</span>
       </button>
       <button
         type="button"
@@ -3657,9 +3668,12 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         className="dev-ws-group-tab"
         data-ws-group="stage"
         aria-selected={group === 'stage'}
+        aria-label={stage}
+        title={stage}
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
       >
-        {t('project:allItems.group.stage')}
+        <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
+        <span className="sr-only">{stage}</span>
       </button>
     </div>
   );

@@ -20134,7 +20134,13 @@ button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outlin
   background: transparent; color: var(--text-muted);
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative;
 }
+/* #4916: each tab is a glyph now (a tag, the board's columns), its words in
+   the tooltip and an sr-only copy. 16px at the shell's 2px stroke, the size
+   the filter chips beside it draw theirs. */
+.dev-ws-group-icon { width: 16px; height: 16px; flex: none; }
 /* The tokens carry their own dark values, so there is no dark variant —
    the same note `.dev-ws-tab[aria-selected="true"]` carries. */
 .dev-ws-group-tab[aria-selected="true"] {
