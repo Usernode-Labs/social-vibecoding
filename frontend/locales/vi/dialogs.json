@@ -2656,8 +2656,8 @@
     "source": "b118b9239994d2ce40c7a31d0ead5a84402e81d7869a573e82736a4022bd0fac"
   },
   "whoDecides.plays.two_yeses.other": {
-    "text": "Áp dụng khi có một người không phải {{name}} đồng ý. Người đó có thể là bạn.",
-    "source": "d37efd672b44cc1ebaed6f3247175f7e9c996516207809708283ab1a71199140"
+    "text": "Được đưa vào hoạt động khi có thêm một người đồng ý. Người đó có thể là bạn.",
+    "source": "edf8c3a05d00b2098e566751f7026d35331fdd4d0b9284ab44ddf7c54dd675b3"
   },
   "whoDecides.plays.open_floor.you": {
     "text": "Phiếu của bạn là đủ. Áp dụng khi kiểm tra đạt.",

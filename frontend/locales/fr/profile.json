@@ -862,5 +862,149 @@
   "breakdown.bonus": {
     "text": "Points bonus",
     "source": "244d63c27eedf108b00283604bd978b4af951c62d6b7b734ba31bbd50c2a21a4"
+  },
+  "identity.apps_many": {
+    "text": "{{count}} applis",
+    "source": "81d6b019f34b611544798444c6fd7306452cd1180bc797cb86d0b1bdb2b7932a"
+  },
+  "identity.apps_one": {
+    "text": "{{count}} appli",
+    "source": "98f8909e187559c63ece87803176f341d483c23f14f5f1b861d76c52f0c4e79d"
+  },
+  "identity.apps_other": {
+    "text": "{{count}} applis",
+    "source": "81d6b019f34b611544798444c6fd7306452cd1180bc797cb86d0b1bdb2b7932a"
+  },
+  "work.changes.live_many": {
+    "text": "{{number}} en ligne",
+    "source": "0874bfc49e962bf332794ae0e9609ebe5614661102b1b422579074678deed05c"
+  },
+  "work.changes.live_one": {
+    "text": "{{number}} en ligne",
+    "source": "0874bfc49e962bf332794ae0e9609ebe5614661102b1b422579074678deed05c"
+  },
+  "work.changes.live_other": {
+    "text": "{{number}} en ligne",
+    "source": "0874bfc49e962bf332794ae0e9609ebe5614661102b1b422579074678deed05c"
+  },
+  "work.changes.inProgress_many": {
+    "text": "{{number}} en cours",
+    "source": "e07e9c76e52c285a16e9d967c0a64d5b319cba9652d45f2209424fb59d6dbde6"
+  },
+  "work.changes.inProgress_one": {
+    "text": "{{number}} en cours",
+    "source": "e07e9c76e52c285a16e9d967c0a64d5b319cba9652d45f2209424fb59d6dbde6"
+  },
+  "work.changes.inProgress_other": {
+    "text": "{{number}} en cours",
+    "source": "e07e9c76e52c285a16e9d967c0a64d5b319cba9652d45f2209424fb59d6dbde6"
+  },
+  "work.requests.open_many": {
+    "text": "{{number}} ouvertes",
+    "source": "4a5b46ca8aabea6957e584572e3da185c2351f56d21249894107fa0ed1913172"
+  },
+  "work.requests.open_one": {
+    "text": "{{number}} ouverte",
+    "source": "4a5b46ca8aabea6957e584572e3da185c2351f56d21249894107fa0ed1913172"
+  },
+  "work.requests.open_other": {
+    "text": "{{number}} ouvertes",
+    "source": "4a5b46ca8aabea6957e584572e3da185c2351f56d21249894107fa0ed1913172"
+  },
+  "work.requests.done_many": {
+    "text": "{{number}} terminées",
+    "source": "540dc8006ff304805cddad5b8dcbf53c9ff605858d36a768df0640d64a6623f8"
+  },
+  "work.requests.done_one": {
+    "text": "{{number}} terminée",
+    "source": "540dc8006ff304805cddad5b8dcbf53c9ff605858d36a768df0640d64a6623f8"
+  },
+  "work.requests.done_other": {
+    "text": "{{number}} terminées",
+    "source": "540dc8006ff304805cddad5b8dcbf53c9ff605858d36a768df0640d64a6623f8"
+  },
+  "more.challenges.done_many": {
+    "text": "{{done}} sur {{count}} terminés",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "more.challenges.done_one": {
+    "text": "{{done}} sur {{count}} terminé",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "more.challenges.done_other": {
+    "text": "{{done}} sur {{count}} terminés",
+    "source": "bfb4eaaef4aa4292a41903e2f0960fca96e2a109228c758694c737574f9a65bb"
+  },
+  "more.kudos.received_many": {
+    "text": "{{number}} reçus",
+    "source": "79ea04b05361dbaaf6114eff1339fbaa6193a4f107a5fde1bc255e4030a4e424"
+  },
+  "more.kudos.received_one": {
+    "text": "{{number}} reçu",
+    "source": "79ea04b05361dbaaf6114eff1339fbaa6193a4f107a5fde1bc255e4030a4e424"
+  },
+  "more.kudos.received_other": {
+    "text": "{{number}} reçus",
+    "source": "79ea04b05361dbaaf6114eff1339fbaa6193a4f107a5fde1bc255e4030a4e424"
+  },
+  "more.friends.waiting_many": {
+    "text": "{{number}} demandes en attente",
+    "source": "bc0a742524dd4c45956a3812a7b3412911b9be1c7967514b3786d1efb30c2e3b"
+  },
+  "more.friends.waiting_one": {
+    "text": "{{number}} demande en attente",
+    "source": "dfbbfa3fa82900043384c492dcb9fc253ff8a9ef77102d5b66011c3aa3e19dc5"
+  },
+  "more.friends.waiting_other": {
+    "text": "{{number}} demandes en attente",
+    "source": "bc0a742524dd4c45956a3812a7b3412911b9be1c7967514b3786d1efb30c2e3b"
+  },
+  "date.daysAgo_many": {
+    "text": "il y a {{count}} jours",
+    "source": "0d0d0a848ddf761192c49ddfd37a427c4230e2354b957e6998256e9c6ed4389f"
+  },
+  "date.daysAgo_one": {
+    "text": "il y a {{count}} jour",
+    "source": "47c2a06f6d2f744ecd7a30b31cac04657899918d4395d3d7ba6c06cc6bf7dc94"
+  },
+  "date.daysAgo_other": {
+    "text": "il y a {{count}} jours",
+    "source": "0d0d0a848ddf761192c49ddfd37a427c4230e2354b957e6998256e9c6ed4389f"
+  },
+  "feedback.status.countedPoints_many": {
+    "text": "Pris en compte · {{points}} pts",
+    "source": "637c3cab148197658d32d569ad743980c3255808c3cd3455599032ea2e6ed1b8"
+  },
+  "feedback.status.countedPoints_one": {
+    "text": "Pris en compte · {{points}} pt",
+    "source": "637c3cab148197658d32d569ad743980c3255808c3cd3455599032ea2e6ed1b8"
+  },
+  "feedback.status.countedPoints_other": {
+    "text": "Pris en compte · {{points}} pts",
+    "source": "637c3cab148197658d32d569ad743980c3255808c3cd3455599032ea2e6ed1b8"
+  },
+  "feedback.summary.sent_many": {
+    "text": "{{number}} envoyés",
+    "source": "8b0ef3abd0cce52a9c65d303eb37fa35a5264c04ef2b57fad8f0d0f353b28064"
+  },
+  "feedback.summary.sent_one": {
+    "text": "{{number}} envoyé",
+    "source": "8b0ef3abd0cce52a9c65d303eb37fa35a5264c04ef2b57fad8f0d0f353b28064"
+  },
+  "feedback.summary.sent_other": {
+    "text": "{{number}} envoyés",
+    "source": "8b0ef3abd0cce52a9c65d303eb37fa35a5264c04ef2b57fad8f0d0f353b28064"
+  },
+  "feedback.summary.sentCounted_many": {
+    "text": "{{number}} envoyés · {{counted}} pris en compte",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
+  },
+  "feedback.summary.sentCounted_one": {
+    "text": "{{number}} envoyé · {{counted}} pris en compte",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
+  },
+  "feedback.summary.sentCounted_other": {
+    "text": "{{number}} envoyés · {{counted}} pris en compte",
+    "source": "95385c444c4bf4b902d8d230e426e6790f9a83e52224a58112f297209ff8de81"
   }
 }
