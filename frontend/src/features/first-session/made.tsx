@@ -99,6 +99,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { usePageLock } from '../../lib/page-lock';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
@@ -787,6 +788,10 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
   underHeader?: boolean;
 }) {
   const t = useMessages('onboarding');
+  // Home holds still under it, as under the make screen (lib/page-lock.ts):
+  // inert on the first session, only kept from scrolling under the header.
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef, { inert: !underHeader });
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
@@ -894,6 +899,7 @@ export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'fi
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-labelledby="first-session-made-title"
       data-first-session-made=""
