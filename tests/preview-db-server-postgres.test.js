@@ -48,6 +48,17 @@ const REQUIRED = !!process.env.TEST_PREVIEW_DATABASE_URL;
 const token = () => crypto.randomBytes(4).toString('hex');
 const at = (dsn, database) => { const url = new URL(dsn); url.pathname = `/${database}`; return String(url); };
 
+// Every pg_dump and pg_restore db-manager starts. Patched before db-manager
+// is first required (in setup), because it takes `spawn` when it loads.
+const childProcess = require('node:child_process');
+const spawned = [];
+const realSpawn = childProcess.spawn;
+childProcess.spawn = function recordingSpawn(command, ...rest) {
+  spawned.push(command);
+  return realSpawn.call(this, command, ...rest);
+};
+test.after(() => { childProcess.spawn = realSpawn; });
+
 // Every statement db-manager sends through pg, with the server it went to.
 const sent = [];
 const realQuery = pg.Client.prototype.query;
@@ -197,6 +208,7 @@ test('preview databases live on the preview server, redacted, and the main serve
   assert.equal(cloned.server, 'preview');
   assert.equal(cloned.via, 'template');
   assert.equal(cloned.templateRefreshed, true, 'the first build makes the template');
+  assert.deepEqual(spawned.slice(-2).sort(), ['pg_dump', 'pg_restore'], 'by one dump of the source and one restore');
 
   assert.deepEqual(await names(preview, `%${tok}%`), [`${source}_staging_s901_abc123`, `${source}_stgtmpl`]);
   assert.deepEqual(await names(main, `%${tok}%`), [source], 'the main server has the live source and nothing else');
@@ -488,48 +500,73 @@ async function tlsAdmin(t, dsn, required) {
   return client;
 }
 
-test('a server that offers TLS: this module, its child processes and the preview\'s own pool all connect the same, plain way', async (t) => {
+// What a connection says about itself, asked on that connection.
+const OWN_TLS = 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()';
+const psqlSays = (args, env) => new Promise((resolve) => {
+  require('node:child_process').execFile('psql', ['-X', '-At', ...args, '-c', OWN_TLS], { env }, (err, stdout, stderr) =>
+    resolve(err ? `error: ${String(stderr).trim().split('\n')[0]}` : String(stdout).trim()));
+});
+
+test('a server that offers TLS: every client of a preview database connects the same, plain way', async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
   const tls = await tlsAdmin(t, TLS_OFFERED, !!process.env.TEST_PREVIEW_TLS_DATABASE_URL);
   if (!tls) return;
   const { main, dbManager, tok, source, names, wipe } = ctx;
-  // (TLS settings in the platform's own environment are covered with stubs:
-  // here they would also reach the main server's children, which inherit
-  // the environment as before.)
+  const shotsFixtures = require('../src/services/shots-fixtures');
+  const ambient = { PGSSLMODE: process.env.PGSSLMODE };
   try {
-  for (const query of ['', '?sslmode=disable']) {
-    process.env.STAGING_DB_ADMIN_URL = `${TLS_OFFERED}${query}`;
-    dbManager._resetPreviewServerStateForTest();
-    const target = `${source}_staging_s98${query ? 2 : 1}_abc123`;
-    // What each client did is read from the server: pg_stat_ssl, sampled
-    // while the clone runs, for every connection that is not this test's.
-    const seen = [];
-    const sample = setInterval(() => {
-      tls.query(`SELECT a.application_name AS app, s.ssl FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid)
-                  WHERE a.pid <> pg_backend_pid() AND a.backend_type = 'client backend'`)
-        .then((r) => seen.push(...r.rows)).catch(() => {});
-    }, 5);
-    let cloned;
-    try { cloned = await dbManager.cloneDatabase(source, target, { viaTemplate: true }); } finally { clearInterval(sample); }
-    assert.equal(cloned.server, 'preview');
-    assert.equal(cloned.via, 'template', 'the fast path, not a production dump per build');
-    assert.ok(seen.length > 0, 'connections were observed');
-    assert.deepEqual([...new Set(seen.map((row) => row.ssl))], [false], 'psql, pg_restore and node-postgres all connected without TLS');
-    assert.ok(seen.some((row) => row.app === 'social-template-clone') && seen.some((row) => row.app !== 'social-template-clone'),
-      'both kinds of client were among them');
+    for (const query of ['', '?sslmode=disable']) {
+      process.env.STAGING_DB_ADMIN_URL = `${TLS_OFFERED}${query}`;
+      dbManager._resetPreviewServerStateForTest();
+      const target = `${source}_staging_s98${query ? 2 : 1}_abc123`;
+      sent.length = 0;
+      const cloned = await dbManager.cloneDatabase(source, target, { viaTemplate: true });
+      assert.equal(cloned.server, 'preview');
+      assert.equal(cloned.via, 'template', 'the fast path, not a production dump per build');
 
-    // The URL a preview is handed, used the way a generated app uses it.
-    const url = dbManager.connectionUrl(target, cloned.password, { server: cloned.server });
-    assert.equal(new URL(url).search, '');
-    const pool = new pg.Pool({ connectionString: url });
-    try {
-      const row = (await pool.query('SELECT (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS ssl, count(*)::int AS n FROM notes')).rows[0];
-      assert.deepEqual(row, { ssl: false, n: 2 });
-    } finally { await pool.end(); }
-    await dbManager.dropDatabase(target, { strict: true });
-  }
-  assert.deepEqual(await names(main, `%${tok}%`), [source]);
+      // 1. This module's own node-postgres connections: each one's socket,
+      //    looked at after the fact. Nothing is sampled.
+      const own = [...new Set(sent.filter((q) => q.port === String(new URL(TLS_OFFERED).port)).map((q) => q.client))];
+      assert.ok(own.length >= 2, 'the maintenance session and the clone\'s own session');
+      for (const client of own) assert.notEqual(client.connection.stream.encrypted, true, 'node-postgres did not negotiate TLS');
+
+      // 2. Its child processes: the real psql, started with exactly the
+      //    environment this module gives a preview-side child, asked about
+      //    its own connection.
+      const childEnv = dbManager._childEnvForTest('postgres', 'preview');
+      assert.equal(childEnv.PGSSLMODE, 'disable');
+      assert.equal(await psqlSays([], childEnv), 'f', 'psql, pg_dump and pg_restore are started this way');
+
+      // 3. Everything that is handed the returned URL, with a PGSSLMODE in
+      //    the environment that demands a verified certificate: what the
+      //    platform's own environment may hold while it writes shots
+      //    fixtures, and what a self-signed server cannot satisfy.
+      const url = dbManager.connectionUrl(target, cloned.password, { server: cloned.server });
+      assert.equal(new URL(url).search, '?sslmode=disable', 'whichever form the admin URL took');
+      process.env.PGSSLMODE = 'verify-full';
+      try {
+        // The platform's shots fixture client, as it is.
+        assert.equal(await shotsFixtures.withClient(url, async (client) => (await client.query(OWN_TLS)).rows[0].ssl), false);
+        // A preview's own pool, built the way a generated app builds it.
+        const pool = new pg.Pool({ connectionString: url });
+        try {
+          const row = (await pool.query(`SELECT (${OWN_TLS}) AS ssl, count(*)::int AS n FROM notes`)).rows[0];
+          assert.deepEqual(row, { ssl: false, n: 2 });
+        } finally { await pool.end(); }
+        // libpq given the same URL (an app that is not node-postgres).
+        assert.equal(await psqlSays([url], { PATH: process.env.PATH, PGSSLMODE: 'verify-full' }), 'f');
+        // The control: the same URL without its sslmode does what each
+        // client's default says, which is why it is spelled out.
+        const bare = url.replace('?sslmode=disable', '');
+        await assert.rejects(shotsFixtures.withClient(bare, (client) => client.query('SELECT 1')), /self-signed certificate/);
+        assert.equal(await psqlSays([bare], { PATH: process.env.PATH }), 't', 'libpq alone would have taken TLS');
+      } finally {
+        if (ambient.PGSSLMODE === undefined) delete process.env.PGSSLMODE; else process.env.PGSSLMODE = ambient.PGSSLMODE;
+      }
+      await dbManager.dropDatabase(target, { strict: true });
+    }
+    assert.deepEqual(await names(main, `%${tok}%`), [source]);
   } finally { await wipe(tls); }
 });
 
@@ -541,7 +578,7 @@ test('a server that takes TLS only is refused by all three clients alike, before
   const { main, dbManager, tok, source, names } = ctx;
   process.env.STAGING_DB_ADMIN_URL = TLS_ONLY;
   dbManager._resetPreviewServerStateForTest();
-  const before = (await main.query('SELECT xact_commit + xact_rollback AS n FROM pg_stat_database WHERE datname = $1', [source])).rows[0].n;
+  spawned.length = 0;
   const target = `${source}_staging_s991_abc123`;
   await assert.rejects(dbManager.cloneDatabase(source, target, { viaTemplate: true }), (err) => {
     assert.equal(err.previewDatabaseServerFault, true);
@@ -549,10 +586,11 @@ test('a server that takes TLS only is refused by all three clients alike, before
     return true;
   });
   await assert.rejects(dbManager.prepareStagingCloneSource(source, { sourceId: `run-${tok}` }), /pg_hba\.conf rejects connection|no encryption/i);
-  await main.query('SELECT pg_stat_force_next_flush()').catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  const after = (await main.query('SELECT xact_commit + xact_rollback AS n FROM pg_stat_database WHERE datname = $1', [source])).rows[0].n;
-  assert.equal(String(after), String(before), 'nothing connected to the production source: no dump, no discovery');
+  // The child processes are turned away too: each of the three is plain.
+  assert.match(await psqlSays([], dbManager._childEnvForTest('postgres', 'preview')), /^error: .*(pg_hba\.conf rejects connection|no encryption)/i);
+  assert.match(await psqlSays([dbManager.connectionUrl(target, 'pw', { server: 'preview' })], { PATH: process.env.PATH }),
+    /^error: .*(pg_hba\.conf rejects connection|no encryption)/i, 'and so is anything using a handed-out URL');
+  assert.deepEqual(spawned, [], 'no pg_dump of production was started, and no pg_restore');
   assert.deepEqual(await names(tls, `%${tok}%`), [], 'nothing was made there');
   assert.deepEqual(await names(main, `%${tok}%`), [source]);
 

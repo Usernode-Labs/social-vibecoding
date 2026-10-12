@@ -524,7 +524,7 @@ test('the preview server is reached without TLS by every client, and any other s
           assert.equal(call.env.PGSSLROOTCERT, undefined);
         }
         const url = new URL(h.dbManager.connectionUrl(TARGET, cloned.password, { server: cloned.server }));
-        assert.equal(url.search, '', 'the preview\'s own pool gets a URL with no sslmode');
+        assert.equal(url.search, '?sslmode=disable', 'every reader of the handed-out URL is told outright, whichever form the admin URL took');
         assert.equal(url.hostname, PREVIEW_HOST);
         // The main server's clients are configured as they always were.
         for (const client of h.clients.filter((c) => c.host === MAIN_HOST)) assert.equal(client.ssl, undefined);
@@ -1062,4 +1062,37 @@ test('a preview runtime is labelled with its database and server where it is dep
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/staging.js'), 'utf8');
   assert.match(source, /\.\.\.\(dbManager\.previewDatabaseLabels\?\.\(stagingDbNameStr, cloned\.server\) \|\| \{\}\)/,
     'the labels are what the heal pass judges a preview\'s database by');
+});
+
+test('with the setting absent a returned URL is the base\'s, byte for byte, unless it carried ?user or ?password', () => {
+  const saved = { admin: process.env.DB_ADMIN_URL, preview: process.env.STAGING_DB_ADMIN_URL };
+  delete process.env.STAGING_DB_ADMIN_URL;
+  delete require.cache[require.resolve('../src/services/db-manager')];
+  const dbManager = require('../src/services/db-manager');
+  // What the base did: swap the role, the password and the database into
+  // the admin URL and print it. Nothing else.
+  const asBase = (adminUrl, dbName, password) => {
+    const url = new URL(adminUrl);
+    url.username = `${dbName}_owner`; url.password = password; url.pathname = `/${dbName}`;
+    return url.toString();
+  };
+  try {
+    for (const adminUrl of [
+      'postgres://usernode:pw@db.internal:5432/usernode',
+      'postgres://usernode:pw@db.internal/usernode',
+      'postgresql://usernode:p%40w@db.internal:6432/usernode?sslmode=require',
+      'postgres://usernode:pw@db.internal:5432/usernode?sslmode=verify-full&application_name=x',
+      'postgres://usernode:pw@[::1]:5432/usernode?options=-c%20x%3D1',
+    ]) {
+      process.env.DB_ADMIN_URL = adminUrl;
+      for (const dbName of ['app_demo', 'app_demo_staging_s9_abc123', 'app_demo_shots_0123456789ab_b']) {
+        assert.equal(dbManager.connectionUrl(dbName, 'rolepw'), asBase(adminUrl, dbName, 'rolepw'), `${adminUrl.replace(/:[^:@/]+@/, ':…@')} ${dbName}`);
+      }
+    }
+  } finally {
+    delete require.cache[require.resolve('../src/services/db-manager')];
+    for (const [key, env] of [['admin', 'DB_ADMIN_URL'], ['preview', 'STAGING_DB_ADMIN_URL']]) {
+      if (saved[key] === undefined) delete process.env[env]; else process.env[env] = saved[key];
+    }
+  }
 });

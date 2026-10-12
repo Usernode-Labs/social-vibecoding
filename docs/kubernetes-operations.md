@@ -327,7 +327,8 @@ The chart does not create the server. It needs:
 - **One address that resolves the same from both places.** A preview is
   handed the URL's host and port with its own role and password, so use the
   server's fully qualified Service name, not a Pod address. The URL it
-  receives carries no `sslmode`: it connects without TLS.
+  receives ends in `?sslmode=disable`: it connects without TLS, whatever its
+  client's own default would have been.
 - **Enough `max_connections` for the previews.** Each preview database is
   capped at `STAGING_DB_CONNECTION_LIMIT` (12). The connection-pressure pass
   reads the preview server's own budget and reclaims idle previews there at
@@ -359,7 +360,11 @@ known cost of the shared-block copy.
    such a URL as two different servers. **`sslmode` may only be `disable`
    (or left out): the preview server is reached without TLS**, by the
    platform, by its `psql`, `pg_dump` and `pg_restore` processes and by each
-   preview, which is how the main server is reached today. Every other mode
+   preview, which is how the main server is reached today. Each is told so
+   outright: the child processes get `PGSSLMODE=disable`, the platform's own
+   client is given `ssl: false`, and every database URL handed to a preview,
+   a shots runtime or the shots fixtures ends in `?sslmode=disable`,
+   whichever of the two accepted forms the setting took. Every other mode
    is refused by name. The reason is that the three clients do not agree on
    what a mode means (node-postgres verifies the certificate for `require`
    where libpq does not) or on where the certificate authority comes from,

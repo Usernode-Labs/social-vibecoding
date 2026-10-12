@@ -109,10 +109,19 @@ function connectionUrl(dbName, password, { server = PRIMARY_SERVER } = {}) {
   // administrative `?user=…&password=…` left in place would make the app or
   // preview connect as the administrator whatever role the authority names.
   // The role and password above are the only credentials this URL carries.
-  for (const key of ['user', 'password']) admin.searchParams.delete(key);
-  // A preview-server URL carries no sslmode: the preview's own pool connects
-  // plainly, as this module does (see previewAdminUrl).
-  if (serverKey(server) !== PRIMARY_SERVER) admin.search = '';
+  // Only when one is there: touching searchParams rewrites the whole query
+  // (`%20` becomes `+`), and a URL without them must come back byte for
+  // byte as it always did.
+  for (const key of ['user', 'password']) if (admin.searchParams.has(key)) admin.searchParams.delete(key);
+  // A preview-server URL says `sslmode=disable` outright, whichever of the
+  // two accepted forms the admin URL took. Left out, each reader would fall
+  // back to its own default: libpq tries TLS first, and node-postgres obeys
+  // a PGSSLMODE in its process's environment, so the platform's own shots
+  // fixtures (shots-fixtures.withClient) could demand a verified certificate
+  // of a server the rest of the build reached plainly. Both clients read
+  // `disable` the same way, and a value in the URL outranks the environment
+  // in both. The main server's URLs are returned as they always were.
+  if (serverKey(server) !== PRIMARY_SERVER) admin.search = '?sslmode=disable';
   return admin.toString();
 }
 
@@ -208,7 +217,7 @@ function primaryAdminUrl() {
 // the URL may say `sslmode=disable` or nothing, any other mode is refused
 // by name, and every client is told so explicitly rather than left to its
 // own default (PGSSLMODE=disable for the children, `ssl: false` for
-// node-postgres, no sslmode in the URL a preview receives).
+// node-postgres, `sslmode=disable` in every URL handed out: connectionUrl).
 const KNOWN_SSLMODES = new Set(['allow', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify']);
 const PREVIEW_URL_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
@@ -2800,6 +2809,9 @@ module.exports = {
   LABEL_PREVIEW_DB,
   LABEL_PREVIEW_DB_SERVER,
   retireStrayTemplates,
+  // What a preview-side child process is started with (tests run the real
+  // psql with it).
+  _childEnvForTest: postgresEnv,
   _resetPreviewServerStateForTest() {
     _mainIdentifier.at = 0;
     _mainIdentifier.value = '';
