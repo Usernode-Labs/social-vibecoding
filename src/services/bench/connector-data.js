@@ -167,6 +167,11 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // What started this read: the queue row's reason, and for a change what
     // moved (homeroom-bot.js readReasonOf).
     readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+    // A held ready verdict acted on again with no read of its own, because
+    // the request had not changed: the run it reused (homeroom-bot.js
+    // reuseHeldVerdict).
+    reused: r.reused_run_id != null,
+    reusedFrom: num(r.reused_run_id),
     // Its build wherever it got to: a ready verdict queued, building,
     // built or failed, or never built and why (skipped, superseded). A run
     // with none of those has no build.
