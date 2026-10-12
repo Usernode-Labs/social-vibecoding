@@ -326,8 +326,13 @@ export function notePostable(how: SentHow, note: string, example: string | null 
 /** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
 export function linkNote(links: unknown): string | null {
   if (!Array.isArray(links)) return null;
-  const mine = links.find((l) => l && typeof l === 'object' && (l as { mine?: boolean }).mine
-    && typeof (l as { note?: unknown }).note === 'string' && (l as { note: string }).note);
+  const mine = links.find((l) => {
+    if (!l || typeof l !== 'object') return false;
+    const row = l as { mine?: boolean; status?: unknown; note?: unknown };
+    // The list also carries links that ended recently: not one of these.
+    if (!row.mine || (row.status != null && row.status !== 'live')) return false;
+    return typeof row.note === 'string' && row.note;
+  });
   return mine ? (mine as { note: string }).note : null;
 }
 

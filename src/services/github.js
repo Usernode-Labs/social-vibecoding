@@ -2278,7 +2278,10 @@ async function checkRepoPublic(owner, repo) {
     // GitHub's own "API rate limit exceeded for user ID ..." told a person
     // nothing about what to do. Say it in plain words, with when it resets.
     const notice = budget.rateLimitNotice(err);
-    if (notice) return { ok: false, code: 'rate_limited', message: notice };
+    if (notice) {
+      const retryAfterSeconds = budget.rateLimitRetryAfterSeconds(err);
+      return { ok: false, code: 'rate_limited', message: notice, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+    }
     return { ok: false, code: 'github_error', message: err.message };
   }
 }

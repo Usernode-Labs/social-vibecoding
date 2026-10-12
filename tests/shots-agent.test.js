@@ -230,6 +230,18 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   }
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder, and every before shot of proposals 7608, 7871 and 7610 was
+// that placeholder, at the cost of half the agent's turn.
+test('the shots agent takes only the after side when the brief has afterOnly', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /When the brief has afterOnly, the proposal builds the app's first real\s+screens/);
+  assert.match(prompt, /leave out step 7 and the before clip, do not open the\s+before address at all/);
+  assert.match(prompt, /create hints\.setup data on the after address only/);
+  assert.match(prompt, /A change is ready with its after shots\./);
+  assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+});
+
 // reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to
 // 10-12): a loading or error state no change declared, and a file to choose.
 test('the shots agent holds or fails an undeclared request, and chooses only sample files, both sides alike', () => {
@@ -251,11 +263,16 @@ test('the shots agent notes clear problems on the after build, a handful, never 
   const prompt = agent.SYSTEM_PROMPT;
   assert.match(prompt, /Call note_problem with the change and screen where you saw it/);
   assert.match(prompt, /content cut off or\s+running off the screen, text or controls overlapping each other, an error\s+message or a broken image on screen, a layout that falls apart at the phone\s+size/);
-  assert.match(prompt, /alsoBefore: true when the before address shows the same thing, false\s+when it does not, "unknown" when you did not look/);
-  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a handful per run/);
+  // Whether the before build has it too, from the before shot it takes
+  // anyway: every problem noted in the proposals merged 2026-10-09 to 10-12
+  // said "unknown".
+  assert.match(prompt, /You shoot the before side of that screen anyway: look at\s+that before shot, or the same place on the before address, and say\s+alsoBefore true when it shows the same thing, false when it does not/);
+  assert.match(prompt, /Say "unknown" only when you\s+could not look/);
+  assert.match(prompt, /If you noticed it before you shot the before side, note it\s+again once you have/);
+  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a\s+handful per run/);
   assert.match(prompt, /never a matter of\s+taste, style or wording/);
-  assert.match(prompt, /never whether the declared change is shown or\s+works \(that is note_change and skip_change\)/);
-  assert.match(prompt, /under\s+"Also noticed"; they change nothing about the shots/);
+  assert.match(prompt, /never\s+whether the declared change is shown or works \(that is note_change and\s+skip_change\)/);
+  assert.match(prompt, /under\s+"Also noticed"; they change nothing about\s+the shots/);
   assert.match(prompt, /Do not go looking for problems\s+on other screens/);
 });
 

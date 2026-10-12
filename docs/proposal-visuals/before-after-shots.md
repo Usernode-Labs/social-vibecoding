@@ -261,7 +261,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
-   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore` (`true`, `false` or `"unknown"`, the default). At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
+   | `note_problem` | Records a clear problem seen on the after build that is not about the declared change itself (content cut off or off the screen, overlapping text or controls, an error or broken image on screen, a layout that falls apart at the phone size): the change and screen where it shows, one short sentence (at most 300 characters), optionally which after shot shows it (`shot: "screen" \| "element"`), and `alsoBefore`: `true` or `false` from the before shot of the same screen, which the agent takes anyway, or `"unknown"` only when it could not look. The tool requires it, and the platform still reads one left out as `"unknown"`; a note that says `"unknown"` is answered with a `hint` to look at that before shot (now, or once it is taken) and note the problem again. At most five per run; noting the same problem at the same place again updates it, and a sixth is refused (`too_many_notices`) |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready. `outcome: "failed"` says the agent did the steps on the after address and the app broke, rather than that these copies cannot reach the state |
    | `fail_request` | Blocks a declared `controlledFailurePath` on both builds |
    | `control_request` | Holds (a loading state) or fails (an error state) one exact API GET on both builds, for a change that declares no `controlledFailurePath`; recorded first, and shown beside the change's shots (see "Reaching a state the steps cannot" below) |
@@ -289,7 +289,11 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    broken, at most a handful, never a matter of taste, style or wording, and
    never whether the declared change is shown or works (that is
    `note_change` and `skip_change`). It does not go looking for problems on
-   other screens.
+   other screens. For each one it says whether the before build shows it
+   too, from its before shot of the same screen, so a problem the change
+   did not bring reads as such. Until 2026-10-12 that was optional and left
+   `"unknown"` for every problem noted in the proposals merged 10-09 to
+   10-12.
 4. **Saving** (`reviewing`). Each change is folded into one result. A change
    the agent skipped by name is **skipped**, even if shots were saved for it,
    or **failed** when it skipped it with `outcome: "failed"`.
@@ -301,23 +305,30 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    no area that differs) is still published, marked `unchanged`, with a note
    saying so ("Not in these shots: any visible difference…"): people judge
    the shots, and two copies of one screen must not pass for the change.
+   The verdict keeps it `status: "ready"` with `unchanged: true`, so it
+   counts toward publishing the run; every result read off the verdict
+   (`shotResults`, the admin listing, the runs export) says `unchanged`
+   (`shots-files.resultStatus`).
    `save_shot` already warns the agent (`sameAsOtherSide`) when it saves the
    same image on both sides, while it can still retake them. Anything else is **skipped**, with the agent's reason or, failing
    that, a list of exactly what is missing. The files of ready changes are
    stored, fenced by a hash of the manifest, and the before/after builds are
-   torn down.
+   torn down. A project's first version needs only the after side (see "A
+   project's first version" below).
 5. **Shots ready** (`verified`). A run publishes if at least one change is
    ready, so one unreachable change never hides the others. If none is
    ready, the run fails with `shots_capture_incomplete` and each change's
-   reason, or with `shots_change_failed` when a change failed: then it keeps
-   its verdict, so every reader can say which change failed. If the agent
+   reason, or with `shots_change_failed` when a change failed. Either way it
+   keeps its verdict, so every reader can say which change failed or was
+   skipped, and why (see "A skip its author can fix" below). If the agent
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
-`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note?, conditions? }], notices? }`.
+`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note?, conditions? }], notices?, afterOnly? }`.
 `conditions` (`[{ kind: "request_held" | "request_failed", request }]` or
 `[{ kind: "sample_file", files }]`, at most four) is there only when the
 agent held or failed a request or uploaded sample files for that change.
+`afterOnly: true` is there only on a project's first version (see below).
 `notices` (`[{ text, change, screen, shot, alsoBefore }]`) is there only when
 the agent noted a problem; a notice names its `shot` only while that after
 shot is published. Notices are advisory: they never change a change's
@@ -358,6 +369,24 @@ the run has been marked interrupted for 30 seconds. Until then the card says
 "Trying the shots again" rather than asking anyone to retry, and the view
 carries `automaticRetryPending: true`. A person can take the shots again,
 stop a running set, or (as an app manager) waive them.
+
+A run that a platform step failed, past that step's own retries, is taken
+again automatically ONCE on the same commit (`shots-gc.retryPlatformFaults`,
+trigger `platform-retry`). In the 200 proposals merged 2026-10-09 to 10-12,
+11 of 166 runs ended that way and none was retried, so each went to its vote
+with no shots. The run's trace names the kind (`platformFault`, read off the
+error by `shots-orchestrator.platformFault`, never off its wording):
+`database` (preparing the copies' clone source or cloning a side from it,
+such as a template copy cut off at psql's 90 seconds), `clone` (the
+revision's checkout), `worker_bootstrap` (the shots worker's own clone or
+warm start), `github_rate_limited`, and `agent_exit` (the shots agent's
+process ended with an error). The sweep starts it a minute after the
+failure, or for GitHub's hourly limit a minute after the limit resets. The
+card says "Trying the shots again" with the cause in plain words, and the
+admin export has the kind in `platform_fault`. A second failure stays
+failed, whatever it was. A revision that does not build, a change that
+failed and a change the copies cannot reach are the proposal's, and are
+not taken again.
 
 ## The same data on both sides
 
@@ -778,6 +807,41 @@ A role the app grants through its own UI (whoever creates a group manages
 it) is reachable as before, through `hints.setup`. Homeroom's own copies are
 unaffected: there the two administrator personas are its administrators.
 
+## A project's first version
+
+A new app's repository starts as Homeroom's starter template: one
+placeholder screen, a "Starter template" hero wrapped in the
+`usernode-starter-notice@1` sentinel comments in `public/index.html`, which
+the first real version deletes (`src/prompts/app-conventions.md`,
+"Starter-template notice"). A proposal that builds those first screens was
+shot against that placeholder, so every before shot was the placeholder and
+the shots agent spent half its turn taking it. From 2026-10-09 to 10-12 at
+least six changes carried a note saying so (proposals 7608, 7871 and 7610
+among them).
+
+Now, when the before checkout still carries the opening sentinel and the
+after checkout no longer does (`services/shots-starter.js`
+`beforeIsStarter`), the run takes and publishes the after side only:
+
+- the brief carries `afterOnly`, which tells the agent not to open the
+  before address and to save after shots alone (`shotsBrief`);
+- `save_shot` refuses a before shot in that run (`before_not_needed`), and a
+  change is ready when every screen has its after screen shot, plus an after
+  clip for motion (`shots-files.summarize`);
+- nothing is compared, so the run stores no `screens`, and the verdict
+  carries `afterOnly: true`;
+- the card opens with "New app: nothing before", and its Before side shows
+  the same words where a picture would be. `get_proposal` carries
+  `shots.afterOnly`.
+
+The sentinel is read from each revision's own checkout, never from what a
+page shows, and only on an app built on Homeroom. A ready-made or game
+starter (`services/app-templates.js`) is a working app with no sentinel, so
+its first version keeps a real before. So does a change that leaves the
+placeholder in place, such as a new name on the starter screen. A placeholder
+without the sentinel is shot on both sides, as before. Both copies are still
+built: the before checkout is what says the app is new.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -833,19 +897,37 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   publish shows none.
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
+- **New app.** A project's first version has after shots only: the card
+  opens with "New app: nothing before", and its Before side says the same.
 - A proposal declared with nothing visible reads "No before & after needed"
   and "This proposal has no visual changes." The author's `rationale` stays
   with the declaration, for whoever reviews it.
 
 The public view model and the connector's `get_proposal` carry `shotResults`
-(`[{ id, status: "ready" | "skipped" | "failed", reason, note }]`) beside `claims` and
+(`[{ id, status: "ready" | "unchanged" | "skipped" | "failed", reason, note }]`) beside `claims` and
 `artifacts`, and `shotNotices`
 (`[{ text, change, screen, shot: "screen" | "element" | null, alsoBefore: true | false | "unknown" }]`,
-at most five, only for a published run on the current revision). The
-connector's `list_recent_shots` lists each proposal's `shotNotices` too, its
-text marked untrusted. Runs from before shots have no `shotResults`, runs
-from before notices have empty `shotNotices`, and older paired clips still
-play.
+at most five, only for a published run on the current revision). An
+`unchanged` result has its shots published like a ready one, and its `note`
+says the before and after came out the same, so a reader that knows only
+ready, skipped and failed can show it as ready; before 2026-10-12 it read
+`ready`. The change page's card shows it as it always has: the shots, and
+the note under "Not in these shots".
+
+The admin connector's `list_recent_shots` lists each proposal's
+`shotNotices` too, its text marked untrusted, each declared change with
+how it came out (`claims[].status`, null when the run has no result for
+it), and the counts (`changes: { declared, ready, unchanged, skipped,
+failed }`), so a run that shot one change of three does not read as a
+success. Its `stats` (`stats: true`) are the current shots over the last
+`statsDays` days (7 unless asked, at most 90) of merged proposals, for the
+app filter: how each one's shots ended, how the declared changes of their
+current runs came out, how many noted problems are also on the before
+build, and the failure codes (`routes/gallery.js` `shotsStats`). The
+console's Screenshot gallery keeps its own counters, the retired
+route-capture pipeline's over all time. Runs from before shots have no
+`shotResults`, runs from before notices have empty `shotNotices`, and older
+paired clips still play.
 
 A staging preview has one published run with notices to look at: the
 merged proposal 900108 on the Screenshot gallery's demo app
@@ -918,7 +1000,9 @@ phone, and impact `ui`. The build's own declaration wins. A derivation the
 validator refuses records nothing, and a spec with no changes list is never
 read as impact `none`. A first version declares nothing: its base is the
 starter, so there is no meaningful before, and its screens are already
-reviewed on the build (`bot-review.js`).
+reviewed on the build (`bot-review.js`). When a proposal that builds an
+app's first screens does declare changes, its run takes the after side only
+(see "A project's first version").
 
 The bot offers a change of its own as ready to try only once its shots on
 that exact head have settled (`shots-state.holdsReady`, read by
@@ -933,6 +1017,42 @@ round is spent, the card says plainly what does not work ("Flat 4B Chores is
 built, but not everything works yet", "One thing isn’t working yet: …"), and
 nobody else is asked to approve it. Problems the shots agent only noticed
 (`notices`) are not a failing change and never start that round.
+
+A change the shots skipped for want of data the change itself can seed (see
+"A skip its author can fix") goes back to the bot in the same round
+(`checksDue`'s `skipped`), with each reason and the advice to add the data to
+the app's staging seed, and `hints.setup` when that helps. Its push is a
+revision like any other: the votes are cleared and the shots are taken again,
+once, on the new head. A skip is never a reason for a round after a fix round
+has revised the proposal (`fix_revised`), so it never loops. A round that
+adds nothing says nothing (the shots card already gives the reason) and sends
+the ready card that waited on it.
+
+## A skip its author can fix
+
+From 9 to 12 October 2026, of the 166 merged proposals that needed shots, 22
+runs failed because no declared change could be reached, and 13 more changes
+were skipped inside runs that published. Each of those went to its vote
+without pictures of that change, and a skip went nowhere.
+
+Many skips have a known fix: the change is new, so the copies hold none of
+its data, and a staging seed in the proposal (which reaches only the after
+copy, the side that has the change) or a `hints.setup` step would let the
+shots agent reach it. Others do not: no seed gives the copies a model key, a
+wallet, a file to upload, a mailbox, a network to drop or a location.
+`shots-state.skippedOnHead` keeps to the first kind and is narrow on purpose:
+a skipped change qualifies only when it was declared new on the after side
+(`baseState: "not_present"`) and its reason names missing data (no such row,
+no fixture, a project that does not exist there) and none of those causes
+(`seedableSkip`). 11 of those 35 reasons qualify before the `baseState` rule.
+
+Such a skip goes back to whoever can fix it, on that exact head:
+
+- a proposal the Homeroom bot built: its fix round, as above;
+- anyone else's: `get_proposal`'s `nextStep` names each skipped change and
+  its reason, and says to seed the data (or declare `hints.setup`) and submit
+  again, for the author's coding agent. Its `shots.shotResults` now carries
+  each change's reason on a `shots_capture_incomplete` run too.
 
 ## Configuration
 
@@ -978,6 +1098,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Egress proxy (origins, public-only egress, platform assets, requests held or failed) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
+| A project's first version: whether the before is the starter's placeholder (`beforeIsStarter`) | `src/services/shots-starter.js` |
 | States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |

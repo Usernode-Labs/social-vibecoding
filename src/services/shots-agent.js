@@ -122,6 +122,13 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+When the brief has afterOnly, the proposal builds the app's first real
+screens and the before address still shows only the starter template's
+placeholder, which has none of the declared changes. Then there is no
+before to take: leave out step 7 and the before clip, do not open the
+before address at all, create hints.setup data on the after address only,
+and save after shots alone. A change is ready with its after shots.
+
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:
 add the query parameter named by previewAt.param, set to previewAt.at, to
@@ -204,17 +211,24 @@ running off the screen, text or controls overlapping each other, an error
 message or a broken image on screen, a layout that falls apart at the phone
 size. Call note_problem with the change and screen where you saw it, what is
 broken in one short sentence, the after shot it shows in if you saved one,
-and alsoBefore: true when the before address shows the same thing, false
-when it does not, "unknown" when you did not look. People read these under
-"Also noticed"; they change nothing about the shots. Note only what any
-person would agree is broken, at most a handful per run: never a matter of
-taste, style or wording, and never whether the declared change is shown or
-works (that is note_change and skip_change). Do not go looking for problems
-on other screens; note what you see on the way.`;
+and alsoBefore. You shoot the before side of that screen anyway: look at
+that before shot, or the same place on the before address, and say
+alsoBefore true when it shows the same thing, false when it does not (also
+when that place is new with this change), so people can tell a problem the
+change brought from one that was already there. Say "unknown" only when you
+could not look. If you noticed it before you shot the before side, note it
+again once you have: the same problem at the same place is updated, not
+added. People read these under "Also noticed"; they change nothing about
+the shots. Note only what any person would agree is broken, at most a
+handful per run: never a matter of taste, style or wording, and never
+whether the declared change is shown or works (that is note_change and
+skip_change). Do not go looking for problems on other screens; note what
+you see on the way.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of
-each side for motion changes), or skip a change you cannot reach and say why.`;
+each side for motion changes), or skip a change you cannot reach and say why.
+When the brief has afterOnly, save the after side only.`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;
