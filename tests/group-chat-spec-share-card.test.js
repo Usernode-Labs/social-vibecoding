@@ -228,6 +228,26 @@ test('the topic frame carries the spec panel slot, as the general chat pane does
   assert.equal(topic.split('id="gc-spec-resizer"').length, 2);
 });
 
+// #4875: the Workshop's side panel (workshop/side-panel.tsx) shows the same
+// request page on a wide window, plan card and all, and its Read went dead the
+// same way: the panel had no slot. It carries one now, over the page.
+test('the Workshop side panel carries the spec panel slot over its page', () => {
+  const panel = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
+  assert.match(panel,
+    /<div className="dev-ws-side-body">\s*<div key=\{`\$\{item\.kind\}:\$\{item\.id\}`\} id="dev-topic-thread" className="dev-ws-side-page" \/>[\s\S]*?<div key=\{`spec:\$\{item\.kind\}:\$\{item\.id\}`\} id="gc-spec-side-panel" className="gc-spec-side-panel" \/>\s*<\/div>/,
+    'the slot follows the page inside one body, keyed by the item like the page');
+  assert.equal(panel.split('id="gc-spec-side-panel"').length, 2, 'one slot');
+  // Escape closes an open plan first, the panel only after.
+  assert.match(panel, /if \(document\.querySelector\('\.dev-ws-side \.gc-spec-side-panel-open'\)\) return;\s*onClose\(\);/);
+  assert.match(panel, /window\.addEventListener\('keydown', onKey, true\);/, 'ahead of group-chat.js on document');
+  // The plan closes with the panel, while its slot is still in the document.
+  assert.match(panel, /useLayoutEffect\(\(\) => \(\) => \{\s*const gc = \(window as any\)\.GroupChat;\s*if \(gc && gc\._specPanelRaw != null\) gc\._closeSpecPanel\?\.\(\);\s*\}, \[item\.kind, item\.id\]\);/);
+  // The reader fills the panel below its bar at every width.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-side-body \{ position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; \}/);
+  assert.match(css, /\.dev-ws-side \.gc-spec-side-panel\.gc-spec-side-panel-open \{\s*position: absolute; inset: 0; z-index: 2;\s*width: auto !important;/);
+});
+
 /** A DOM element with just what the spec panel code touches. */
 function fakeEl() {
   const classes = new Set();
