@@ -258,9 +258,13 @@ test('the words: the landing card, the invite pane', () => {
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
   const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
-  assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
+  // #4785 (simpati): the row says whether anyone joined, not how many uses
+  // are taken. Nobody yet reads as words, not a zero.
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 joined · 7 days left');
+  assert.equal(pane.linkDetail(fresh, now), 'No one joined yet · 7 days left');
   // WP-D: a link with no end date, or for anyone, says so.
   const forever = { expiresAt: null, maxUses: null, uses: 0 };
+  assert.equal(pane.linkDetail(forever, now), 'No one joined yet · no end date');
   assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');

@@ -3229,6 +3229,18 @@ function voteRoutes(config) {
     return { fromFork, headRepo: fromFork ? headFull : null };
   }
 
+  // A failed getPR on the import paths (#4817). Only GitHub's own 404 means
+  // the pull request does not exist; a rate limit, a timeout or a bad token
+  // is GitHub being unreachable, and saying "not found" for those sent people
+  // looking for a typo in a PR number that was right.
+  function sendGetPrFailure(res, err, prNumber, slug) {
+    if (err && err.status === 404) {
+      return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+    }
+    log.warn('votes', 'PR-import getPR failed', { slug, prNumber, status: err?.status, err: err?.message });
+    return res.status(502).json({ error: `Could not reach GitHub to read PR #${prNumber}. Please try again.` });
+  }
+
   // GET candidate PRs to import (open PRs on the app's repo not already
   // imported). Collab access.
   router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
@@ -3237,9 +3249,9 @@ function voteRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
       const gh = importGithubClient();
-      // #4817: "not configured" is a stated answer now, not an empty list the
-      // client has to guess at — it keeps `candidates: []` so an older client
-      // that ignores the flag reads the same state as before.
+      // #4817: "nothing to import because GitHub is off" and "GitHub could
+      // not be read" are different answers from "no open pull requests", so
+      // each gets its own shape: `configured: false` here, a 502 below.
       if (!gh.isEnabled() || !repo) return res.json({ candidates: [], configured: false });
 
       const imported = await importedPrNumbers(app.id);
@@ -3248,13 +3260,7 @@ function voteRoutes(config) {
         pulls = await gh.listOpenPulls(repo.owner, repo.repo);
       } catch (err) {
         log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
-        // A failed list is not an empty one (#4817): say GitHub could not be
-        // read so the dialog shows its load-failed state, not "nothing to
-        // import".
-        return res.status(502).json({
-          error: 'Couldn’t reach GitHub to list pull requests. Please try again.',
-          configured: true,
-        });
+        return res.status(502).json({ error: 'Could not load open pull requests from GitHub. Please try again.' });
       }
       const candidates = pulls
         .filter((p) => !imported.has(p.number))
@@ -3295,16 +3301,7 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        // #4817: "not found" is GitHub's own 404 answer. Anything else — rate
-        // limit, timeout, bad token, GitHub 5xx — is an unreachable GitHub,
-        // not a missing pull request.
-        if (err && err.status === 404) {
-          return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
-        }
-        log.warn('votes', 'PR-import getPR failed', { slug: req.params.slug, prNumber, status: err?.status || null, err: err?.message });
-        return res.status(502).json({
-          error: `Couldn’t reach GitHub to read PR #${prNumber}. Please try again in a moment.`,
-        });
+        return sendGetPrFailure(res, err, prNumber, req.params.slug);
       }
       const headSha = pr.head?.sha || null;
       const baseRef = pr.base?.ref || 'main';
@@ -3373,16 +3370,7 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        // #4817: "not found" is GitHub's own 404 answer. Anything else — rate
-        // limit, timeout, bad token, GitHub 5xx — is an unreachable GitHub,
-        // not a missing pull request.
-        if (err && err.status === 404) {
-          return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
-        }
-        log.warn('votes', 'PR-import getPR failed', { slug: req.params.slug, prNumber, status: err?.status || null, err: err?.message });
-        return res.status(502).json({
-          error: `Couldn’t reach GitHub to read PR #${prNumber}. Please try again in a moment.`,
-        });
+        return sendGetPrFailure(res, err, prNumber, req.params.slug);
       }
       if (pr.state !== 'open') {
         return res.status(409).json({ error: `PR #${prNumber} is not open.` });
@@ -6076,6 +6064,22 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         'Merged notification failed', { sessionId: session.id, err: err.message }));
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
+    }
+    // #4787: the people who voted on it, yes or no, hear that it went live
+    // too — the author's row above stays the only one they (the author) get.
+    // Wrapped, and optional-called, for the same reason as above: never able
+    // to fail a MERGE.
+    try {
+      notifications.createVotedChangeMergedNotifications?.(pool, {
+        appId: session.app_id,
+        sessionId: session.id,
+        authorId: session.user_id,
+      })?.then((created) => Promise.all(
+        created.map((row) => notifications.hydrateAndPush(pool, row))
+      ))?.catch((err) => log.error('votes',
+        'Voted-change merged notification failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.error('votes', 'Voted-change merged notification threw', { sessionId: session.id, err: err.message });
     }
     // 5 October (Page Turners): the bell stops asking about it. Its "ready
     // to try" rows say it is live (unread again for whoever had not said

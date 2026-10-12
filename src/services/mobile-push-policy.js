@@ -518,6 +518,18 @@ function buildCopy(kind, context, now) {
           ? `@${actor} pushed an update after your feedback. One tap keeps your yes`
           : 'A new version was pushed after your feedback. One tap keeps your yes',
       };
+    // #4787: the change this person voted on went live. #2897's split, as
+    // pr_merged above: a child app's merge is live when the row arrives; the
+    // platform's own is released a few minutes after, so it says approved.
+    case 'voted_change_merged':
+      return {
+        title: withApp(context.appSelfHosted === true
+          ? (quotedTitle ? `${quotedTitle} was approved` : 'A change you voted on was approved')
+          : (quotedTitle ? `${quotedTitle} is live` : 'A change you voted on is live')),
+        body: context.appSelfHosted === true
+          ? 'You voted on it. It will be live in a few minutes'
+          : 'You voted on it. Open it to see what changed',
+      };
     // #1688: the Friday card. `detail` is "<merged>:<open>" — how many
     // changes went live this week and how many proposals are waiting.
     case 'weekly_digest': {

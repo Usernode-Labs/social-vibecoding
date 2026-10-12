@@ -164,13 +164,12 @@ export function ImportPrDialog() {
       return;
     }
     if (!ok) {
-      // #4817: any non-OK answer is a failed load (the server answers 502 when
-      // GitHub could not be read), not a GitHub-off state — show the error.
+      // A failed answer (GitHub unreachable, rate-limited, a server error) is
+      // a load failure, never "nothing to import" (#4817). The GitHub-off
+      // state arrives as a 200 with `configured: false`, below.
       setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
       return;
     }
-    // GitHub-off comes from the 200 body now (`configured: false`), checked
-    // before the rows so a not-configured app never reads as empty.
     if (data.configured === false) {
       setList({
         kind: 'note',

@@ -12,6 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { message } = require('./lib/platform-i18n');
+const { loadTsx } = require('./lib/render-tsx');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -138,7 +139,7 @@ test('a 401 replaces stale data rather than leaving the last user on screen', ()
     profileJs.indexOf('async _load('),
     profileJs.indexOf('// ── rendering')
   );
-  const branch = fn.slice(fn.indexOf('err.status === 401) {'));
+  const branch = fn.slice(fn.indexOf('if (signedOut) {'));
   // `_data = { signedOut: true }` unconditionally — NOT `if (!_data)`,
   // which would keep showing the previous user's rank after logout.
   assert.match(branch.slice(0, 300), /Profile\._data = \{ signedOut: true \}/);
@@ -147,8 +148,141 @@ test('a 401 replaces stale data rather than leaving the last user on screen', ()
   const catchBlock = fn.slice(fn.indexOf('} catch (err) {'));
   assert.match(
     catchBlock.slice(0, catchBlock.indexOf('if (token !== Profile._loadToken) return;')),
-    /err\.status === 401\) Profile\._ownCache = null/,
+    /if \(signedOut\) Profile\._ownCache = null/,
   );
+});
+
+// #4808: a 401 from the ranking read while the shell still holds a signed-in
+// user showed "Sign in to see your profile." to someone the bell and tab bar
+// knew. App.user is display state, so the shell's own session read
+// (App._fetchSession, classified by App._answeredSignedOut) decides.
+// Executed, not grepped: the load runs against a stubbed fetch, starting the
+// way open() starts it, from the cached own profile.
+function loadProfileModule() {
+  return loadTsx('frontend/src/features/profile/profile.js', {
+    stubs: {
+      '../friends/api': {
+        act: async () => null,
+        announceFriendsChanged: () => {},
+        errorMessage: () => '',
+        FRIENDS_CHANGED_EVENT: 'friends-changed',
+        listFriends: async () => null,
+      },
+    },
+  }).Profile;
+}
+
+const RANKING = { scope: 'season', season_id: 3, season_name: 'Season 3', rank: 3 };
+const CACHED = { username: 'webuser', data: { summary: { merged: 1 } } };
+
+// `ranking` lists the ranking read's answers in order (the last repeats).
+// `session` is what the shell's session read does: a status, 'throw', or
+// 'absent' for a shell without one.
+async function loadWith({ user, cache = null, ranking = [401], session = 200, signOutMidFlight = false }) {
+  const saved = { window: globalThis.window, App: globalThis.App, fetch: globalThis.fetch };
+  const calls = { ranking: 0, session: 0 };
+  const App = {
+    user,
+    // The shell's real classifier (public/js/app.js).
+    _answeredSignedOut(res) { return !!res && (res.status === 401 || res.status === 403); },
+    async _fetchSession() {
+      calls.session += 1;
+      if (session === 'throw') throw new Error('timed out');
+      return { ok: session >= 200 && session < 300, status: session };
+    },
+  };
+  if (session === 'absent') { delete App._fetchSession; delete App._answeredSignedOut; }
+  // The module reads `window.App` and the bare `App` global (a classic
+  // script's), and subscribes to window events when it loads.
+  globalThis.window = { App, addEventListener() {}, removeEventListener() {} };
+  globalThis.App = App;
+  globalThis.fetch = async (url) => {
+    if (!String(url).startsWith('/challenges-api/me/ranking')) {
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    const status = ranking[Math.min(calls.ranking, ranking.length - 1)];
+    calls.ranking += 1;
+    if (signOutMidFlight) App.user = null;
+    return status === 200
+      ? { ok: true, status, json: async () => ({ success: true, data: RANKING }) }
+      : { ok: false, status, json: async () => ({ success: false }) };
+  };
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const Profile = loadProfileModule();
+    Profile._targetUsername = null;
+    Profile._ownCache = cache;
+    // What open() does before it loads.
+    Profile._data = Profile._cachedOwnData();
+    Profile._open = true;
+    await Profile._load();
+    return { Profile, data: Profile._data, cache: Profile._ownCache, calls };
+  } finally {
+    console.warn = realWarn;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete globalThis[k]; else globalThis[k] = v;
+    }
+  }
+}
+
+const SIGNED_IN = { id: 7, username: 'webuser' };
+
+test('#4808: a 401 the shell\'s session read confirms is the signed-out state', async () => {
+  const { data, cache, calls } = await loadWith({ user: SIGNED_IN, cache: CACHED, session: 401 });
+  assert.equal(calls.session, 1, 'the shell\'s own session read is asked');
+  assert.deepEqual(data, { signedOut: true });
+  assert.equal(cache, null, 'and the copy kept for the next visit goes');
+});
+
+test('#4808: a live session gets the load once more, and its answer is drawn', async () => {
+  const { Profile, data, cache, calls } = await loadWith({ user: SIGNED_IN, cache: CACHED, ranking: [401, 200] });
+  assert.equal(calls.ranking, 2, 'one retry');
+  assert.equal(data.ranking.rank, 3);
+  assert.deepEqual(data.season, { season_id: 3, name: 'Season 3' });
+  assert.equal(cache.data, data, 'filed for the next visit');
+  assert.equal(Profile._loading, false);
+});
+
+test('#4808: a retry that 401s again is a load failure, with no second round', async () => {
+  const { data, cache, calls } = await loadWith({ user: SIGNED_IN, cache: CACHED, ranking: [401] });
+  assert.equal(calls.ranking, 2);
+  assert.equal(calls.session, 1, 'one session read, never a loop');
+  assert.equal(data, CACHED.data, 'the cached profile open() painted stays');
+  assert.equal(cache, CACHED);
+});
+
+test('#4808: a session read that fails or answers 5xx is a load failure, not signed out', async () => {
+  for (const session of [500, 'throw']) {
+    const withCache = await loadWith({ user: SIGNED_IN, cache: CACHED, session });
+    assert.equal(withCache.data, CACHED.data, `${session}: the cached profile stays`);
+    assert.equal(withCache.cache, CACHED, `${session}: and is kept`);
+    assert.equal(withCache.calls.ranking, 1, `${session}: no retry`);
+    const bare = await loadWith({ user: SIGNED_IN, session });
+    assert.deepEqual(bare.data, { error: true }, `${session}: an empty screen says it could not load`);
+  }
+});
+
+test('#4808: a shell without its session read keeps the old reading of a 401', async () => {
+  const { data, cache } = await loadWith({ user: SIGNED_IN, cache: CACHED, session: 'absent' });
+  assert.deepEqual(data, { signedOut: true });
+  assert.equal(cache, null);
+});
+
+test('a 401 once the shell has no user either is still the signed-out state', async () => {
+  // The pre-check answers before any request when App.user is empty, so the
+  // 401 branch is reached by someone signed out while the read was out:
+  // the stubbed ranking read clears App.user before it answers.
+  const { data, cache, calls } = await loadWith({ user: SIGNED_IN, cache: CACHED, signOutMidFlight: true });
+  assert.deepEqual(data, { signedOut: true });
+  assert.equal(cache, null, 'the copy kept for the next visit goes');
+  assert.equal(calls.session, 0, 'no session read needed');
+});
+
+test('no App.user at all is signed out before any request', async () => {
+  const { data, calls } = await loadWith({ user: null, cache: CACHED });
+  assert.deepEqual(data, { signedOut: true });
+  assert.equal(calls.ranking, 0);
 });
 
 // ─── Instant return visits (#2777) ───────────────────────────────────────

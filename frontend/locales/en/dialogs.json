@@ -969,7 +969,7 @@
   },
   "importPr.list.loadFailed": {
     "text": "Couldn’t load pull requests. Please try again.",
-    "description": "Error in place of the list in the import dialog when the pull requests could not be loaded (a network, server or GitHub failure)."
+    "description": "Error in place of the list in the import dialog when the pull requests could not be loaded: the request could not be sent, or GitHub or the server did not answer it."
   },
   "importPr.list.notConfigured": {
     "text": "GitHub isn’t configured for this app, so there’s nothing to import.",

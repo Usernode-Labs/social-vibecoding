@@ -25,7 +25,7 @@ export const REVEAL_KEY = 'sv:profile_tokens_revealed';
 // rebuilds on a timer (CHALLENGE_SCORER_AGGREGATE_HOURS, six hours by
 // default), while a challenge credits its points the moment it is done. The
 // interval is server config the client never sees, hence "every few hours".
-// The standings pane's empty hint says the same sentence.
+// The standings pane's empty hint repeats only that first sentence.
 export const STANDINGS_UPDATE_NOTE = 'leaderboard:standing.updateNote';
 
 export const myStandingStore = createStore({

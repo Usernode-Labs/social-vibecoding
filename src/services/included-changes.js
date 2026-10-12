@@ -268,6 +268,16 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
     for (const n of created || []) await d.notifications.hydrateAndPush(pool, n).catch(() => {});
   });
 
+  // #4787: and its voters, yes or no, as its author was told above — a
+  // change carried inside another goes live there, and a voter of the
+  // carried change had a say in it.
+  await step('tell its voters', async () => {
+    const created = await d.notifications.createVotedChangeMergedNotifications?.(pool, {
+      appId: row.app_id, sessionId: row.id, authorId: row.user_id,
+    });
+    for (const n of created || []) await d.notifications.hydrateAndPush(pool, n).catch(() => {});
+  });
+
   // Whoever asked for it hears it is live (for a first version, its
   // creator), and the journey records it going live, as on its own merge.
   await step('tell whoever asked for it', () => d.dm.noteProposalMerged(pool, row, { config, sha }));

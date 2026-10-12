@@ -332,6 +332,24 @@ test('the composer keeps what was typed per conversation, and the drafts list of
 
 // ── 4. What a typical change costs ─────────────────────────────────────
 
+test('the low-credits note sits between the field and the send row, before the first message only (#4784)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
+    'a sent message shown or still on its way is a conversation under way');
+  assert.match(panel, /\{!archived && showLowCreditNote\(credit, snapshot\.started\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
+    'the note is the red pill before the first message, and never in an archived conversation');
+  const field = panel.indexOf('<textarea');
+  const note = panel.indexOf('showLowCreditNote(credit, snapshot.started)');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', note);
+  assert.ok(field !== -1 && note !== -1 && row !== -1 && field < note && note < row,
+    'the note reads between the box and the row with Send');
+  assert.equal(message('agent:session.credits.lowNote', { amount: '$0.60' }),
+    'Only $0.60 of credits left. A build can cost more than that and may stop partway.');
+  assert.equal(message('agent:session.credits.lowNoteNone'),
+    'No credits left. A build may not start, or may stop partway.');
+});
+
+
 test('each model says what a typical change costs on it, never as a bare amount', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
   const catalog = {
