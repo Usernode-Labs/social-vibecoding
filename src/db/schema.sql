@@ -10521,6 +10521,18 @@ COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
 
+-- Where a live or shadow build is between its steps, saved at each step
+-- boundary so a restart carries it on from there instead of building it
+-- again or sending it back to be triaged (homeroom-bot-checkpoint.js):
+-- { sessionId, step ('session' | 'spec_turn' | 'spec' | 'build_turn' |
+-- 'landed' | 'reviewed' | 'proposed'), at, specVersion, landed { sha,
+-- commits, pushOk, text }, reviewed { finalSha, finalCommits, costUsd },
+-- prNumber, recovered (what restart recovery found for its last turn),
+-- once { debited: { <sessionId>: usd } } }. `text` and `recovered` can
+-- quote a private project's code: private, as build_no_change is.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_checkpoint JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_checkpoint IS 'staging:private';
+
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, up to three builds per project at a time
 -- (homeroom-bot.js BUILDS_PER_PROJECT), so reading the project's next

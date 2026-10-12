@@ -860,8 +860,9 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.ok(h.queries.some((q) => /SET live_build_waiting_at = COALESCE\(live_build_waiting_at, NOW\(\)\)/.test(q.sql) && q.params[0] === 900));
   // The lane builds it.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
-  assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
-    'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471), and no longer waits');
+  assert.ok(h.queries.some((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL,\s+build_checkpoint = jsonb_build_object\('sessionId', \$2::int, 'step', 'session'[^]*?WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
+    'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471), and no longer waits; '
+    + 'the link starts its checkpoint (homeroom-bot-checkpoint.js)');
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
   assert.deepEqual(card.metadata, { vote: { sessionId: 5001, prNumber: 42 } });
@@ -918,7 +919,7 @@ test('a second build of one run stops at its link and leaves the run to the firs
   // The run answers no row: another build linked its session first.
   assert.equal(await build(h, { verdict: 'ready', buildNote: 'x' }), 'lost_claim');
   assert.equal(refused, bot.LOST_CLAIM);
-  const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/.test(q.sql));
+  const claim = h.queries.find((q) => /SET build_session_id = \$2, live_build_waiting_at = NULL,\s+build_checkpoint = jsonb_build_object\('sessionId', \$2::int, 'step', 'session'[^]*?WHERE id = \$1/.test(q.sql));
   assert.match(claim.sql, /WHERE id = \$1\s+AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL\s+RETURNING id/,
     'once: only a run no build has linked, still waiting for its outcome');
   assert.deepEqual(claim.params, [900, 5009]);

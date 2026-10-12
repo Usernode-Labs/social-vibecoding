@@ -6547,15 +6547,16 @@ async function cleanup() {
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
-  // The bot's builds under way in this process are waited on until each one
-  // has finished or is parked inside a detached turn whose record and journal
-  // are saved, never between two of its steps, which a restart would lose
-  // (homeroom-bot-drain.js). Up to 75s on Kubernetes, where the Pod's grace
-  // allows it; most waits are seconds. The listener still closes at once
-  // below, and the leader lock is still released last, so the next leader
-  // adopts the parked turns. Awaited with the handler drain.
+  // The bot's builds under way in this process are not waited on: each step
+  // boundary is saved on its run, and the next leader carries a build on from
+  // the step it was at (homeroom-bot-checkpoint.js). An admin can restore the
+  // wait with HOMEROOM_BOT_DRAIN_TIMEOUT_MS (up to 75s): each build is then
+  // waited on until it has finished or is parked inside a detached turn whose
+  // record and journal are saved (homeroom-bot-drain.js). The listener still
+  // closes at once below, and the leader lock is still released last, so the
+  // next leader adopts the parked turns. Awaited with the handler drain.
   const botDrain = require('./src/services/homeroom-bot-drain');
-  const botDeadlineMs = botDrain.deadlineMs(process.env, { fallbackMs: DRAIN_TIMEOUT_MS });
+  const botDeadlineMs = botDrain.deadlineMs(process.env);
   const botPipelines = botDrain.snapshot();
   const botSafe = botDrain.waitForSafePoint({ timeoutMs: botDeadlineMs })
     .catch((err) => {
@@ -6676,6 +6677,10 @@ async function cleanup() {
       log.info('server', 'Homeroom bot builds reached a saved point', {
         waitedMs: botWait.waitedMs, parked: botWait.parked.slice(0, 20).map(summary),
       });
+    } else if (botDeadlineMs === 0) {
+      log.info('server', 'Left Homeroom bot builds between steps for the next leader to carry on from their checkpoints', {
+        midStep: botWait.midStep.slice(0, 20).map(summary),
+      });
     } else {
       log.warn('server', 'Shutdown deadline passed with Homeroom bot builds mid-step', {
         waitedMs: botWait.waitedMs, deadlineMs: botDeadlineMs, midStep: botWait.midStep.slice(0, 20).map(summary),
@@ -6694,9 +6699,11 @@ async function cleanup() {
   await pushStop;
   await agentTurnsEnded;
 
-  // The builds the deadline caught between steps: one incident each, so
-  // admins see what the restart cut short. Bounded like the marks below.
-  if (botWait.midStep.length && shutdownPool) {
+  // The builds a wait an admin set caught between steps: one incident each,
+  // so admins see what the restart cut short. Bounded like the marks below.
+  // With no wait (the default) leaving builds between steps is the plan:
+  // their checkpoints carry them on, and nothing is recorded.
+  if (botWait.midStep.length && botDeadlineMs > 0 && shutdownPool) {
     let markTimer = null;
     await Promise.race([
       botDrain.recordMidStep(shutdownPool, botWait.midStep).catch(() => 0),
