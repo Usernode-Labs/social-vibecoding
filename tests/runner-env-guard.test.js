@@ -35,7 +35,7 @@ test('every test that runs a worker runner gives it no push pauses', () => {
 test('the override is a pause of nothing, which usernode-push does not read as unset', () => {
   assert.equal(RUNNER_TEST_ENV.USERNODE_PUSH_BACKOFF, '0');
   const script = fs.readFileSync(path.join(__dirname, '..', 'worker', 'usernode-push'), 'utf8');
-  assert.match(script, /BACKOFF="\$\{USERNODE_PUSH_BACKOFF:-[0-9 ]+\}"/);
+  assert.match(script, /BACKOFF="\$\{USERNODE_PUSH_BACKOFF:-\$DEFAULT_BACKOFF\}"/);
 });
 
 test('the guard sees a runner run, and not one only read', () => {

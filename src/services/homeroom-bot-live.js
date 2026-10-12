@@ -2847,6 +2847,11 @@ async function buildAndPropose({
   // the work it pushed, which its review then looks at (worker.keepPartialWork).
   // Never a bench trial's or a later change's.
   keepPartial = false,
+  // Each step boundary the build reaches, saved by the caller so a restart
+  // carries the build on from there (homeroom-bot-checkpoint.js), called
+  // with (step, { sessionId, ...what the step left }) and awaited. Never a
+  // reason the build stops.
+  onStep = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2955,6 +2960,10 @@ async function buildAndPropose({
   if (claimRefused) {
     return { ...(await fail(claimRefused)), skipped: claimRefused, lostClaim: true, costUsd: null };
   }
+  const step = async (name, data = {}) => {
+    if (!onStep) return;
+    try { await onStep(name, { ...data, sessionId: session.id }); } catch { /* a checkpoint never stops a build */ }
+  };
 
   let branchName;
   try {
@@ -2965,6 +2974,7 @@ async function buildAndPropose({
   } catch (err) {
     return fail(`could not create its branch: ${err.message}`);
   }
+  await step('session', { branch: branchName });
   // A later build of a project whose repository has the frontend-design
   // skill is told, at its spec and its build, to read it (the nudge alone;
   // services/design-skill.js). A first version's prompts say that, and more,
@@ -3006,6 +3016,7 @@ async function buildAndPropose({
   // session and said below, once, as a spec just written would be.
   if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   if (!presetSpec && onStage) { try { await onStage('spec'); } catch { /* a watcher never stops a build */ } }
+  if (!presetSpec) await step('spec_turn');
   spec = presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
@@ -3058,6 +3069,7 @@ async function buildAndPropose({
     };
   }
   if (spec.ok) {
+    await step('spec', { specVersion: spec.version ?? null });
     if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
@@ -3105,6 +3117,7 @@ async function buildAndPropose({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress,
   });
+  await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
   // timer). A nudge runs on what is left of it.
   const turnStartedMs = Date.now();
@@ -3254,6 +3267,14 @@ async function buildAndPropose({
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
+  // Pushed: a restart from here on proposes this work, never builds it again.
+  await step('landed', {
+    landed: {
+      sha: result.sha || null, commits: Number(result.ahead) || 0, pushOk: true,
+      text: clipText(result.lastResultText || '', 20000), partial: !!partial,
+    },
+    turnIds: buildTurnIds,
+  });
 
   // A first version under a configuration with a reviewer: its screens are
   // reviewed and fixed before anybody sees it (bot-review.js). It fails
@@ -3286,6 +3307,11 @@ async function buildAndPropose({
     return { ...(await fail(`${faultError}; the work it pushed did not boot`)), costUsd, ...reviewOut };
   }
   const partialOut = partial ? { partial } : {};
+  if (review?.reviewer) {
+    await step('reviewed', {
+      reviewed: { finalSha: landedSha, finalCommits: landedCommits, costUsd: Number(reviewed?.costUsd) || 0 },
+    });
+  }
 
   if (!propose) {
     // Built, pushed, and put away: the session is archived exactly as a
@@ -3337,6 +3363,7 @@ async function buildAndPropose({
       ...noChangeOut(), ...partialOut, notProposed: true,
     };
   }
+  await step('proposed', { prNumber: promoted.body.prNumber || null });
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
     ...costsOut(), ...noChangeOut(), ...partialOut,

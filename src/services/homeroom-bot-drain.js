@@ -10,8 +10,13 @@
 // in this process. A SIGTERM between two steps lost them: with no plan
 // saved the request went back to be triaged, with one it was built again.
 //
-// So the bot's in-process pipelines are tracked here, and shutdown
-// (server.js cleanup) waits, up to a deadline, until each one has either
+// Each step boundary of a build is saved on its run now
+// (homeroom-bot-checkpoint.js), and restart recovery carries a build on from
+// the step it was at, so shutdown no longer has to wait: the deadline below
+// is 0 unless HOMEROOM_BOT_DRAIN_TIMEOUT_MS raises it (up to 75s, what the
+// Pod's grace allows). What stays is the tracking, and the gate: once
+// shutdown starts, no new bot work is claimed. With a deadline set, shutdown
+// (server.js cleanup) waits, up to it, until each pipeline has either
 // finished or is parked inside a detached turn whose record is saved:
 //
 //   run(info, work)        a pipeline: `work` runs inside an async context
@@ -45,28 +50,27 @@ const als = new AsyncLocalStorage();
 const pipelines = new Map();
 let nextId = 1;
 
-// How long shutdown waits on Kubernetes. The Pod gets
-// terminationGracePeriodSeconds 90 (platform.yaml), the preStop sleep takes
-// 5 of it, and the rest of cleanup (marks, pool close, the leader lock) a
-// few more: tests/homeroom-bot-drain.test.js pins the sum below the grace.
-const K8S_DEADLINE_MS = 75000;
-// Anything longer from the environment is clamped to this.
+// How long shutdown waits by default: not at all. A restart between two
+// steps of a build is carried on from its checkpoint by the next leader.
+const DEFAULT_DEADLINE_MS = 0;
+// What an admin may raise it to (HOMEROOM_BOT_DRAIN_TIMEOUT_MS), clamped:
+// the Pod gets terminationGracePeriodSeconds 90 (platform.yaml), the preStop
+// sleep takes 5 of it, and the rest of cleanup (marks, pool close, the leader
+// lock) a few more: tests/homeroom-bot-drain.test.js pins the sum below the
+// grace.
 const MAX_DEADLINE_MS = 75000;
-// Elsewhere (docker compose: a 10s stop_grace_period) the wait runs beside
-// the handler drain and takes no longer than it.
-const DEFAULT_DEADLINE_MS = 5000;
 
 /**
  * How long cleanup waits for the bot's pipelines: HOMEROOM_BOT_DRAIN_TIMEOUT_MS
- * when set (clamped to 0..MAX_DEADLINE_MS), else K8S_DEADLINE_MS on Kubernetes
- * and `fallbackMs` elsewhere. Pure but for `env`.
+ * when set (clamped to 0..MAX_DEADLINE_MS), else DEFAULT_DEADLINE_MS (0).
+ * Pure but for `env`.
  */
-function deadlineMs(env = process.env, { fallbackMs = DEFAULT_DEADLINE_MS } = {}) {
+function deadlineMs(env = process.env) {
   const raw = env.HOMEROOM_BOT_DRAIN_TIMEOUT_MS;
   if (raw != null && String(raw).trim() !== '' && Number.isFinite(Number(raw))) {
     return Math.min(Math.max(0, Math.floor(Number(raw))), MAX_DEADLINE_MS);
   }
-  return env.KUBERNETES_SERVICE_HOST ? K8S_DEADLINE_MS : fallbackMs;
+  return DEFAULT_DEADLINE_MS;
 }
 
 // The pipeline this code runs in. A timer a pipeline set (a wake) runs in its
@@ -203,7 +207,6 @@ async function recordMidStep(pool, midStep, { incidents = null } = {}) {
 }
 
 module.exports = {
-  K8S_DEADLINE_MS,
   MAX_DEADLINE_MS,
   DEFAULT_DEADLINE_MS,
   deadlineMs,

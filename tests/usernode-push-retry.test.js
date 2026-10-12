@@ -6,7 +6,9 @@
 // restart recovery then read as "no change to propose". It now tries again,
 // with pauses, on a curl failure, a 5xx or a 429, and never on another
 // answer or on a failure the platform marks permanent. Its output keeps the
-// lines run-cc.sh and the host read.
+// lines run-cc.sh and the host read. The retry is opt-in: every real turn
+// sets USERNODE_PUSH_RETRY=1 (worker.js), and anything else tries once, so a
+// test whose platform is never there does not wait out two minutes of pauses.
 //
 // Run with: node --test tests/usernode-push-retry.test.js
 
@@ -20,11 +22,18 @@ const { spawnSync } = require('node:child_process');
 const SCRIPT = path.join(__dirname, '..', 'worker', 'usernode-push');
 
 // A fake curl that answers, one try at a time, from `answers`: a line
-// "exit <n>" fails as curl does, anything else is "<code> <body>".
+// "exit <n>" fails as curl does, anything else is "<code> <body>". A fake
+// sleep records each pause and returns at once. An env value of null leaves
+// that variable unset.
 function run(answers, env = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-push-'));
   try {
     fs.writeFileSync(path.join(dir, 'answers'), `${answers.join('\n')}\n`);
+    fs.writeFileSync(path.join(dir, 'sleep'), [
+      '#!/bin/sh',
+      `echo "$1" >> ${JSON.stringify(path.join(dir, 'pauses'))}`,
+      '',
+    ].join('\n'), { mode: 0o755 });
     fs.writeFileSync(path.join(dir, 'curl'), [
       '#!/bin/sh',
       `D=${JSON.stringify(dir)}`,
@@ -37,17 +46,18 @@ function run(answers, env = {}) {
       'printf "%s\\n%s" "$body" "$code"',
       '',
     ].join('\n'), { mode: 0o755 });
-    const out = spawnSync('sh', [SCRIPT], {
-      env: {
-        PATH: `${dir}:${process.env.PATH}`,
-        WORKER_JWT: 'secret-jwt', SESSION_ID: '42', PLATFORM_URL: 'http://usernode:3000',
-        USERNODE_PUSH_BACKOFF: '0 0 0 0 0',
-        ...env,
-      },
-      encoding: 'utf8',
-    });
+    const merged = {
+      PATH: `${dir}:${process.env.PATH}`,
+      WORKER_JWT: 'secret-jwt', SESSION_ID: '42', PLATFORM_URL: 'http://usernode:3000',
+      USERNODE_PUSH_BACKOFF: '0 0 0 0 0',
+      ...env,
+    };
+    for (const k of Object.keys(merged)) if (merged[k] === null) delete merged[k];
+    const out = spawnSync('sh', [SCRIPT], { env: merged, encoding: 'utf8' });
     const tries = Number(fs.readFileSync(path.join(dir, 'count'), 'utf8').trim());
-    return { status: out.status, stdout: out.stdout, stderr: out.stderr, tries };
+    const pausesFile = path.join(dir, 'pauses');
+    const pauses = fs.existsSync(pausesFile) ? fs.readFileSync(pausesFile, 'utf8').trim().split('\n') : [];
+    return { status: out.status, stdout: out.stdout, stderr: out.stderr, tries, pauses };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -90,4 +100,29 @@ test('a rate-limited push is tried again', () => {
   const r = run(['429 {"ok":false,"code":"rate_limited"}', '200 {"ok":true}']);
   assert.equal(r.status, 0);
   assert.equal(r.tries, 2);
+});
+
+test('without the opt-in, a push that cannot land is tried once and fails at once', () => {
+  const started = Date.now();
+  const r = run(Array(8).fill('exit 7'), { USERNODE_PUSH_BACKOFF: null, USERNODE_PUSH_RETRY: null });
+  assert.equal(r.status, 1);
+  assert.equal(r.tries, 1);
+  assert.deepEqual(r.pauses, []);
+  assert.match(r.stdout, /^__USERNODE_WARN__ usernode-push: curl failed: /m);
+  assert.ok(Date.now() - started < 10000, 'no pauses without the opt-in');
+});
+
+test('with the opt-in, a real turn waits out about two minutes of pauses between six tries', () => {
+  const r = run(Array(8).fill('exit 7'), { USERNODE_PUSH_BACKOFF: null, USERNODE_PUSH_RETRY: '1' });
+  assert.equal(r.status, 1);
+  assert.equal(r.tries, 6);
+  assert.deepEqual(r.pauses, ['5', '10', '20', '30', '45']);
+});
+
+test('every turn the platform runs in a worker opts in', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  const perTurn = src.indexOf("COMMIT_MSG: commitMsg || 'Changes via Homeroom'");
+  assert.ok(perTurn > 0, 'the per-turn env literal is where it was');
+  const literal = src.slice(perTurn, src.indexOf('};', perTurn));
+  assert.match(literal, /USERNODE_PUSH_RETRY: '1'/);
 });

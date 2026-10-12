@@ -176,6 +176,7 @@ const DENIED_COLUMNS = {
     'review', // a first version's review: issues quoting a private project's screens (review_rounds and review_stop stay readable)
     'build_no_change', // a build agent's last message when it changed nothing: can quote a private project's code
     'build_retry', // why a first version's first try failed, which can quote its build agent's last message
+    'build_checkpoint', // where a build is between its steps, with its build agent's last message
   ],
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip

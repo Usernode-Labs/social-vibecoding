@@ -1,10 +1,12 @@
 'use strict';
 
-// Platform shutdown waits for the Homeroom bot's builds to reach a saved
+// Platform shutdown can wait for the Homeroom bot's builds to reach a saved
 // point (src/services/homeroom-bot-drain.js): nothing new starts once
 // shutdown has begun, the wait ends once every pipeline is finished or
 // parked in a saved turn, a pipeline does not go on past a turn that ends
-// during shutdown, and the deadline is honoured, logged and recorded.
+// during shutdown, and the deadline is honoured, logged and recorded. By
+// default there is no deadline: builds carry on from their checkpoints
+// (homeroom-bot-checkpoint.js), and HOMEROOM_BOT_DRAIN_TIMEOUT_MS restores it.
 //
 // Run with: node --test tests/homeroom-bot-drain.test.js
 
@@ -159,13 +161,30 @@ test('a pipeline started from another one\'s context is tracked on its own', asy
   await innerPromise;
 });
 
-test('the deadline: 75s on Kubernetes, the handler drain elsewhere, an override clamped', () => {
-  assert.equal(drain.deadlineMs({ KUBERNETES_SERVICE_HOST: '10.0.0.1' }), 75000);
-  assert.equal(drain.deadlineMs({}, { fallbackMs: 5000 }), 5000);
+test('the deadline: none by default, on Kubernetes or not; an admin\'s override is honoured, clamped', () => {
+  // Builds carry on from their checkpoints (homeroom-bot-checkpoint.js), so
+  // a redeploy does not wait for them.
+  assert.equal(drain.deadlineMs({ KUBERNETES_SERVICE_HOST: '10.0.0.1' }), 0);
+  assert.equal(drain.deadlineMs({}), 0);
+  assert.equal(drain.DEFAULT_DEADLINE_MS, 0);
+  // HOMEROOM_BOT_DRAIN_TIMEOUT_MS restores the wait, up to what the Pod's grace allows.
   assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: '20000' }), 20000);
+  assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: '75000', KUBERNETES_SERVICE_HOST: 'x' }), 75000);
   assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: '600000', KUBERNETES_SERVICE_HOST: 'x' }), drain.MAX_DEADLINE_MS);
   assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: '-3' }), 0);
-  assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: 'soon', KUBERNETES_SERVICE_HOST: 'x' }), 75000);
+  assert.equal(drain.deadlineMs({ HOMEROOM_BOT_DRAIN_TIMEOUT_MS: 'soon', KUBERNETES_SERVICE_HOST: 'x' }), 0);
+});
+
+test('with no deadline the wait returns at once, listing what is mid-step', async () => {
+  let release;
+  const pipeline = drain.run({ kind: 'live_build', runId: 5 }, () => new Promise((r) => { release = r; }));
+  const startedAt = Date.now();
+  const out = await drain.waitForSafePoint({ timeoutMs: drain.deadlineMs({ KUBERNETES_SERVICE_HOST: 'x' }) });
+  assert.ok(Date.now() - startedAt < 200, 'did not wait');
+  assert.equal(out.safe, false);
+  assert.deepEqual(out.midStep.map((p) => p.runId), [5]);
+  release();
+  await pipeline;
 });
 
 test('guard: the bot drain and the rest of cleanup fit inside the Pod\'s termination grace', () => {
@@ -186,14 +205,15 @@ test('guard: the bot drain and the rest of cleanup fit inside the Pod\'s termina
   // checks release (each bounded by its own timer) and the pool close.
   const after = constant('BUILD_SHUTDOWN_MARK_TIMEOUT_MS') * 3
     + constant('SHOTS_SHUTDOWN_MARK_TIMEOUT_MS') + constant('POOL_CLOSE_TIMEOUT_MS');
-  const deadline = Math.max(drain.K8S_DEADLINE_MS, drain.MAX_DEADLINE_MS);
+  // The longest wait an admin can set (HOMEROOM_BOT_DRAIN_TIMEOUT_MS).
+  const deadline = drain.MAX_DEADLINE_MS;
   assert.ok(deadline + after < budgetMs,
     `the bot drain (${deadline}ms) plus the rest of cleanup (${after}ms) must stay below ` +
     `terminationGracePeriodSeconds minus the preStop sleep (${budgetMs}ms)`);
   // And the bounded wait is what cleanup uses.
   assert.match(serverJs, /botDrain\.waitForSafePoint\(\{ timeoutMs: botDeadlineMs \}\)/);
-  assert.match(serverJs, /botDrain\.deadlineMs\(process\.env, \{ fallbackMs: DRAIN_TIMEOUT_MS \}\)/,
-    'off Kubernetes the wait must run no longer than the handler drain the compose grace is sized for');
+  assert.match(serverJs, /botDrain\.deadlineMs\(process\.env\)/,
+    'the wait is the bot drain\'s own deadline: none unless an admin sets one');
 });
 
 test('the worker marks a bot turn parked once its record is saved, and holds it past its end on shutdown', () => {
