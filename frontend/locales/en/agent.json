@@ -1679,9 +1679,13 @@
     "text": "{{count}} joined",
     "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people joined through this link, which has no limit. {{count}} is that number."
   },
-  "appContext.invite.detail.used": {
-    "text": "{{used}} of {{max}} used",
-    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many of the link's uses are taken. {{used}} is how many people joined through it, {{max}} how many it allows."
+  "appContext.invite.detail.nobodyYet": {
+    "text": "No one joined yet",
+    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: nobody has joined through the link yet. Sentence case because it starts the line."
+  },
+  "appContext.invite.detail.joinedOf": {
+    "text": "{{joined}} of {{max}} joined",
+    "description": "The first of two facts on an invite link row in the Invite pane of the app menu, joined by a middle dot: how many people have joined through the link. {{joined}} is how many people joined through it, {{max}} how many it allows."
   },
   "appContext.invite.detail.noEnd": {
     "text": "no end date",
@@ -1701,7 +1705,7 @@
   },
   "appContext.invite.detail.pair": {
     "text": "{{uses}} · {{expiry}}",
-    "description": "The line on a row of the list of invite links in the Invite pane of the app menu: two facts about one link, side by side. {{uses}} is how much the link has been used, already worded, for example \"3 of 25 used\" or \"4 joined\"; {{expiry}} is how long it still works, already worded, for example \"7 days left\" or \"no end date\". Keep the middle dot between them, or use the separator this language puts between two short facts."
+    "description": "The line on a row of the list of invite links in the Invite pane of the app menu: two facts about one link, side by side. {{uses}} is how many people have joined through the link, already worded, for example \"3 of 25 joined\", \"4 joined\" or \"No one joined yet\"; {{expiry}} is how long it still works, already worded, for example \"7 days left\" or \"no end date\". Keep the middle dot between them, or use the separator this language puts between two short facts."
   },
   "appContext.invite.title": {
     "text": "Invite people to {{project}}",
