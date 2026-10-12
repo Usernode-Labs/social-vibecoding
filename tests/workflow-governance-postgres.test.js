@@ -325,6 +325,27 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await inst(i)).state, 'applied');
   });
 
+  await t.test('#4666 a project with rules of its own is decided by them, through the rules copy', async () => {
+    // One rule: a yes from the Lifeguards group. The columns alone (at least
+    // one yes) would apply it on anybody's yes.
+    const [author, other, lifeguard] = [await user(), await user(), await user()];
+    const a = await app({ approvals: 1, members: [author, other, lifeguard] });
+    await pool.query('UPDATE apps SET governance_rules = $2 WHERE id = $1', [a.id, JSON.stringify({
+      preset: null,
+      groups: [{ name: 'Lifeguards', people: [lifeguard.username], ids: [lifeguard.id] }],
+      rules: [{ group: 'lifeguards', kind: 'atLeast', n: 1 }],
+    })]);
+    const i = await issue(a, author, 'rename', { newName: 'By the rules' });
+    await file(i);
+    await vote(i, other, 'up');
+    const s = await inst(i);
+    assert.deepEqual([s.state, s.data.evaluation.waiting], ['open', 'waiting_for_votes'],
+      'a yes from outside the group passes no rule');
+    await vote(i, lifeguard, 'up');
+    assert.equal((await inst(i)).state, 'applied');
+    assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By the rules');
+  });
+
   await t.test('G9 refusals close the proposal with their reason instead of leaving it open', async () => {
     const author = await user();
     const platformApp = await app({ selfHosted: true });
