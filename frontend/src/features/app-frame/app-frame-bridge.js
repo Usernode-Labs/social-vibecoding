@@ -499,6 +499,23 @@ export const appFrameBridge = {
     appFrameStore.set((s) => (s.cover ? { ...s, cover: { ...s.cover, note: text || '' } } : s));
   },
   /**
+   * #4813: the launch failed, or the failed launch is being retried. With
+   * `true` the cover keeps its icon and name and shows the failed card in
+   * place of the wait; with `false` the card goes away and the cover returns
+   * to "Opening…" while the retry's src assignment re-arms the ladder. Both
+   * are no-ops without a cover, like `coverNote`.
+   */
+  coverFailed(failed) {
+    appFrameStore.set((s) => (s.cover
+      ? {
+        ...s,
+        cover: failed
+          ? { ...s.cover, failed: true, spinner: false }
+          : { ...s.cover, failed: false, note: null, spinner: false, out: false },
+      }
+      : s));
+  },
+  /**
    * Cross-fade the app in and the cover out. `reduceMotion` drops the cover
    * outright (the CSS kills both transitions on that path anyway); otherwise
    * the caller drops it after LAUNCH_FADE_MS, exactly as `cover.remove()` used

@@ -25,6 +25,17 @@ test('the error card: title, detail, and a Try again button', () => {
   assert.match(html, /<svg/, 'with the warning glyph');
 });
 
+test('#4813: a detail prop overrides the line, and the default is unchanged', () => {
+  const html = renderComponent('frontend/src/features/apps/load-error.tsx', 'AppsLoadError', {
+    title: "Couldn't open this app",
+    detail: "It didn't finish loading. Check your connection and try again.",
+    onRetry: () => {},
+  });
+  assert.match(html, />It didn&#x27;t finish loading\. Check your connection and try again\.</,
+    'the override is rendered');
+  assert.doesNotMatch(html, /app directory/, 'the directory\'s own line is not');
+});
+
 test('Home\'s grid draws the card for an error notice and retries through Home.load', () => {
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /state\.notice && state\.notice\.tone === 'error' \? \(/);
