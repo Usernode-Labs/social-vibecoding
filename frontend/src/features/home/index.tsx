@@ -90,7 +90,6 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
-import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -246,18 +245,11 @@ export function HomeScreen() {
         */}
         <section id="home-apps-section" className="px-3">
           {/*
-              The area's label, in the same treatment the two below it use —
-              see ./panels/ui.tsx's SectionHeading for why every area on this
-              screen is now "grey label, then the thing". It was "Your apps",
-              then "Shortcuts" once the UI overhaul gave your communities
-              (every project you are in) the Communities tab, which left this
-              set as what it always was: the apps you keep a tile for. It is
-              "My apps" since #4187, in the sentence case of Recents and
-              Discover. The rest of the product names the set the same way
-              (the tile menus' "Add to My apps", the browse screen's badge),
-              because two names for one collection is worse than either.
+              NO LABEL since #4759: the tiles explain themselves, and the
+              welcome tour names the area. The set is still "My apps"
+              everywhere else (the tile menus' "Add to My apps", the browse
+              screen's badge).
           */}
-          <SectionHeading>{t('home:grid.heading')}</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
