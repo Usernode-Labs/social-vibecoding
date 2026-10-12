@@ -109,6 +109,10 @@ const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-w
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
+// The free app slots the member and the read-only admin get on the copies:
+// as many projects as a person may make in an hour (routes/apps.js
+// appCreateLimiter), so the allowance is never what stops a make there.
+const ROOM_TO_MAKE = 5;
 
 const sessionPath = (id) => `/#messages/agent/${id}`;
 
@@ -271,6 +275,19 @@ async function memberBotChat(client, ctx) {
     [conversationId, bot.id, ctx.member.id]
   );
   return { botId: bot.id, conversationId };
+}
+
+// The free app slots of each persona the room state is for: its allowance
+// less the projects it owns, counted as app-allowance.js counts them (a
+// project whose setup failed holds no slot).
+async function roomToMake(client, ctx) {
+  const { rows } = await client.query(
+    `SELECT u.app_quota - (SELECT COUNT(*)::int FROM apps a
+                            WHERE a.created_by = u.id AND a.status <> 'error') AS room
+       FROM users u WHERE u.id = ANY($1::int[])`,
+    [[ctx.member.id, ctx.admin.id]]
+  );
+  return rows.map((row) => Number(row.room));
 }
 
 // The bot's message to the member, and its record as news about one of
@@ -1396,6 +1413,44 @@ const STATES = [
         shows: [{
           state: 'A project of yours (Just you) with a GitHub repository: on its page, ⋯ then App settings shows Access with the levels you can pick, Propose access change and the hint under it (these copies have no GitHub, so do not press Propose access change).',
           path: `/#app/${ACCESS_APP_SLUG}/dev`,
+        }],
+      };
+    },
+  },
+  {
+    // Free app slots for the member and the read-only admin. The states
+    // above give the member three projects (the remix, the book club and the
+    // walking club) against the allowance of two everyone starts with, so
+    // "What do you want to make?" read "3 of 2 app slots used" with Make it
+    // off, and two of PR 4777's three changes (a ready-made Study timer)
+    // were skipped for it. The copies already lift the server-wide cap
+    // (shots-environment.js shotsCapacityEnv); this is each person's own
+    // allowance, users.app_quota. Last of the states, so it counts the
+    // projects the others gave them. The full admin has no allowance to
+    // spend. A project made here still never finishes setting up: the
+    // brief's makeProject says why (shots-orchestrator.js MAKE_PROJECT).
+    id: 'shots-demo-room-to-make-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'app_quota'],
+      apps: ['id', 'created_by', 'status'],
+    },
+    free: async (client, ctx) => (await roomToMake(client, ctx)).some((room) => room < ROOM_TO_MAKE),
+    async install(client, ctx) {
+      // Raised, never lowered: a persona that already has the room keeps
+      // its own allowance.
+      await client.query(
+        `UPDATE users u
+            SET app_quota = GREATEST(u.app_quota, $2::int + (SELECT COUNT(*)::int FROM apps a
+                                                             WHERE a.created_by = u.id AND a.status <> 'error'))
+          WHERE u.id = ANY($1::int[])`,
+        [[ctx.member.id, ctx.admin.id], ROOM_TO_MAKE]
+      );
+      return {
+        alsoFor: ['read_only_admin'],
+        shows: [{
+          state: `Room to make projects: on What do you want to make? Make it is on, with ${ROOM_TO_MAKE} app slots free and no allowance card. What it makes never finishes setting up on these copies: see makeProject in the brief.`,
+          path: '/#create',
         }],
       };
     },

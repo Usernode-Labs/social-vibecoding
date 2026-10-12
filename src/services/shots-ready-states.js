@@ -60,6 +60,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
+  ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
+    ['member', 'read_only_admin']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when

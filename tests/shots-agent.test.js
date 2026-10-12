@@ -159,6 +159,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   // strip itself opens its start path with the brief's flag (4420, 4321).
   assert.match(prompt, /If the brief has installStrip, Homeroom's "Add it to your home screen" strip\s+is dismissed on every page these browsers open/);
   assert.match(prompt, /open the start path with\s+installStrip\.param added to its query \(before any #\), on both addresses and\s+in the phone browser/);
+  // A project made on Homeroom's copies never finishes setting up there
+  // (shots-orchestrator.js MAKE_PROJECT): a change that needs one running is
+  // skipped at once, not tried in every browser (PR 4777, 2026-10-12).
+  assert.match(prompt, /If the brief has makeProject, a project made on these copies never finishes\s+setting up/);
+  assert.match(prompt, /Read makeProject\.note before a change whose\s+steps make, remix or import a project/);
+  assert.match(prompt, /a\s+change that needs a made project to run is skipped at once/);
   assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
     'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
