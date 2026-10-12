@@ -66,9 +66,15 @@ poolMod.getPool = () => ({
       return { rows: botExists ? [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] : [] };
     }
     if (/COUNT\(\*\)::int AS runs/.test(s)) return { rows: [{ runs: 3, questions: 1, ready: 1, person: 1, failed: 0, rated: 2, agreed: 1, suppressed: 0, cost_usd: 0.12 }] };
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: [] };
-    if (/COUNT\(\*\)::int AS depth/.test(s)) return { rows: [{ depth: 4 }] };
-    if (/FROM homeroom_bot_runs r/.test(s)) {
+    // The queue's one snapshot (queueSnapshot): its counts ride on its rows.
+    if (/FROM snap q/.test(s)) {
+      return { rows: [{
+        id: 3, app_id: 9, issue_number: 7, priority: 1, reason: 'new', started_at: null,
+        app_slug: 'todo', app_name: 'Todo', waiting_total: 4, running_total: 1,
+      }] };
+    }
+    // (Not the move offers' read of the week's platform verdicts.)
+    if (/FROM homeroom_bot_runs r/.test(s) && !/move_offer/.test(s)) {
       runsParams.push(params);
       // [app, verdict, cursor, limit] — the export walks the cursor, so the
       // mock answers from a fixture ledger the way Postgres would.
@@ -141,6 +147,8 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.bot.model, 'z-ai/glm-5.3-flash');
   assert.equal(data.totals.runs, 3);
   assert.equal(data.queue.depth, 4);
+  assert.equal(data.queue.running, 1, 'waiting and running counted in the one snapshot the items come from');
+  assert.deepEqual(data.queue.items.map((i) => [i.issue_number, i.waiting && i.waiting.reason]), [[7, 'bot_paused']], 'the bot is off');
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
   assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 100, questionsPerAppPerDay: 10 });
@@ -588,7 +596,7 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.equal(waitingFor(0, 0), '');
   assert.match(tsx, /tile\('Waiting in the queue',\s*payload \? String\(payload\.queue\.depth \+ \(payload\.queue\.buildsWaiting \|\| 0\)\) : '–', 'admin-homeroom-bot-tile-queue',/);
   const botSrc = read('src/services/homeroom-bot.js');
-  assert.match(botSrc, /queue: \{ depth: depthRows\[0\]\?\.depth \|\| 0, items: queueRows, buildsWaiting: builds\.waiting \}/);
+  assert.match(botSrc, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \}/);
   assert.match(botSrc, /workingNow: \[\.\.\.await workingNow\(pool, settings\), \.\.\.builds\.building\]/);
   assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
 

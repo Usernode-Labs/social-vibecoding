@@ -1341,6 +1341,23 @@ function outcomesOf(rows) {
 }
 
 /**
+ * Whether a result is the platform's failure rather than its
+ * configuration's, so it is left out of the build rate on both sides alike
+ * and counted on its own: a side build the platform failed (infra_fail,
+ * recorded skipped: finishSideTrial), and a live build a restart failed
+ * (finished by restart recovery and not built: homeroom-bot.js
+ * completeRecoveredLive says "(finished after a restart)", or the platform
+ * restarted in the middle of each try). Pure.
+ */
+function platformFailureOf(r) {
+  if (!r || r.built === true) return false;
+  const error = String(r.error || '');
+  if (r.status === 'skipped') return /^the platform failed the side build/.test(error);
+  if (r.status !== 'done') return false;
+  return /^the platform restarted in the middle/.test(error) || /\(finished after a restart\)$/.test(error);
+}
+
+/**
  * One scope's versions (first versions unless said) with their numbers:
  * builds, build rate, average real cost and what it was made of, median
  * active time, boot rate, and win rate against the scope's version current
@@ -1355,13 +1372,13 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
   const versions = await listVersions(pool, scope);
   const current = versions.find((v) => v.role === 'current') || null;
   const { rows: results } = await pool.query(
-    `SELECT r.config_version_id, r.source, r.built, r.booted, r.cost_usd::float8 AS cost, r.active_ms::float8 AS ms, r.cost_parts,
-            run.mode, ps.status AS proposal_status
+    `SELECT r.config_version_id, r.source, r.status, r.built, r.booted, r.cost_usd::float8 AS cost, r.active_ms::float8 AS ms,
+            r.cost_parts, r.error, run.mode, ps.status AS proposal_status
        FROM bot_config_results r
        JOIN bot_config_versions v ON v.id = r.config_version_id
        JOIN homeroom_bot_runs run ON run.id = r.bot_run_id
        LEFT JOIN chat_sessions ps ON ps.id = run.proposal_session_id
-      WHERE r.status = 'done' AND v.scope = $1`,
+      WHERE (r.status = 'done' OR (r.status = 'skipped' AND r.error LIKE 'the platform failed%')) AND v.scope = $1`,
     [scope],
   );
   const { rows: pairs } = await pool.query(
@@ -1380,9 +1397,15 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
     [scope],
   );
   const out = versions.map((v) => {
-    const mine = results.filter((r) => Number(r.config_version_id) === v.id);
+    const ofVersion = results.filter((r) => Number(r.config_version_id) === v.id);
+    const mine = ofVersion.filter((r) => r.status === 'done');
     const costs = mine.map((r) => num(r.cost)).filter((c) => c != null);
     const builtN = mine.filter((r) => r.built === true).length;
+    // The build rate leaves the platform's failures out on both sides alike
+    // (platformFailureOf): a side build the platform failed and a live one
+    // a restart failed say nothing about the configuration.
+    const platformFailures = ofVersion.filter(platformFailureOf).length;
+    const rated = mine.filter((r) => !platformFailureOf(r)).length;
     // Booted out of the builds whose boot was measured. A build that failed
     // had no boot to measure, and one with no capture (every later change,
     // a first version without a final capture) is unknown, not a failure:
@@ -1414,9 +1437,11 @@ async function listWithStats(pool, { scope: rawScope = null } = {}) {
     return {
       ...v,
       stats: {
-        builds: mine.length,
+        builds: rated,
         built: builtN,
-        buildRate: mine.length ? builtN / mine.length : null,
+        buildRate: rated ? builtN / rated : null,
+        // Left out of builds and the build rate, counted here.
+        platformFailures,
         // A later change's current version: its live builds' proposals.
         ...(scope === 'later' && v.role === 'current'
           ? { proposals: outcomesOf(mine.filter((r) => r.source === 'live')) } : {}),
@@ -1903,6 +1928,7 @@ function configIdOfModel(model) {
 }
 
 module.exports = {
+  platformFailureOf,
   GLM,
   OPUS,
   ROLES,
