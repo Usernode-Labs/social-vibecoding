@@ -412,3 +412,29 @@ test('the form offers comment mode with its draft, and only where the switch is 
   const fc = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(fc, /Feedback\._takeDraft = \(\) => \{[\s\S]*?feedbackText\.value = '';[\s\S]*?resetScreenshotState\(\);[\s\S]*?return draft;/);
 });
+
+test('comment mode\'s code and drawing library are fetched a few seconds after the page loads, where the switch is on', () => {
+  // A quick tap on "Suggest an improvement" right after the app opened waited
+  // on both downloads before anything could move (12 Oct 2026).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/improve/suggest-shortcut.ts'), 'utf8');
+  assert.equal(shortcut.WARM_DELAY_MS, 3000);
+  // Scheduled after the load event, or at once when the page has already loaded.
+  const calls = [];
+  const fakeWin = (state) => ({
+    document: { readyState: state },
+    setTimeout: (fn, ms) => { calls.push(['timeout', ms]); return 1; },
+    addEventListener: (type, fn, opts) => { calls.push(['listen', type, !!(opts && opts.once)]); fn(); },
+  });
+  shortcut.scheduleWarmComment(fakeWin('loading'));
+  assert.deepEqual(calls, [['listen', 'load', true], ['timeout', 3000]]);
+  calls.length = 0;
+  shortcut.scheduleWarmComment(fakeWin('complete'));
+  assert.deepEqual(calls, [['timeout', 3000]]);
+  // Only where comment mode is the way Suggest opens, once per page, and the
+  // mode's own warm-up fetches the library without drawing anything.
+  assert.match(src, /export function warmComment\(\): void \{\s*if \(warmed \|\| !suggestOpensComment\(\)\) return;\s*warmed = true;\s*import\('\.\.\/comment-pin\/comment-pin'\)\s*\.then\(\(m\) => m\.warmCommentMode\(\)\)/);
+  assert.match(src, /scheduleWarmComment\(window\);/);
+  assert.match(src, /setEnabled: \(on: boolean\) => \{\s*setSuggestShortcutEnabled\(!!on\);\s*if \(on\) warmComment\(\);\s*\},/, 'and when the switch is turned on');
+  const mode = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/comment-pin/comment-pin.tsx'), 'utf8');
+  assert.match(mode, /export function warmCommentMode\(\): void \{\s*loadLibrary\(\)\.catch\(/);
+});

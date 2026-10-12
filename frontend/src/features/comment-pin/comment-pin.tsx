@@ -81,7 +81,7 @@ import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
 import {
-  changesPicture, outOfPicture, textsUnchanged,
+  changesPicture, loadLibrary, outOfPicture, textsUnchanged,
   closeUpView, coverCrop, describeElement, encodeUnder, inRect, insetFrame, overlaysGone, pictureScale, placeBeside,
   takeBase, thumbnail, toPage, toScreen,
   type Base, type ElementInfo, type Point, type Rect, type Size,
@@ -1956,6 +1956,16 @@ function dropAhead(): void {
   ahead = null;
   a.stop();
   void a.result.then((r) => { if (r) URL.revokeObjectURL(r.url); });
+}
+
+/**
+ * Fetch the drawing library now, so the first picture of this session does
+ * not wait for it (../improve/suggest-shortcut.ts `warmComment`, a few
+ * seconds after the page loads where the comment switch is on). This
+ * module's own code is loaded by the import that calls it. Nothing is drawn.
+ */
+export function warmCommentMode(): void {
+  loadLibrary().catch(() => { /* fetched again when a picture is drawn */ });
 }
 
 /**

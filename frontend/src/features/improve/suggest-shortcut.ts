@@ -304,6 +304,34 @@ function toggleComment(_point: Point | null): void {
     .catch(() => openSuggest());
 }
 
+/** How long after the page has loaded comment mode's code and library are fetched (ms). */
+export const WARM_DELAY_MS = 3000;
+let warmed = false;
+
+/**
+ * Comment mode's code and its drawing library, fetched ahead of time where
+ * the switch is on: a few seconds after the page loads, and when the switch
+ * is turned on. Without it the first picture of a session waited on both
+ * downloads (about 250 KB for the library), and a quick tap on "Suggest an
+ * improvement" right after the app opened sat on a still screen for over a
+ * second (iPhone 17 simulator, production, 12 Oct 2026). Once per page;
+ * nothing is drawn, and nothing at all where the switch is off.
+ */
+export function warmComment(): void {
+  if (warmed || !suggestOpensComment()) return;
+  warmed = true;
+  import('../comment-pin/comment-pin')
+    .then((m) => m.warmCommentMode())
+    .catch(() => { warmed = false; });
+}
+
+/** Run `warmComment` once the page has loaded and settled, out of the way of the first paint. */
+export function scheduleWarmComment(win: Pick<Window, 'setTimeout' | 'addEventListener'> & { document?: { readyState?: string } }): void {
+  const later = () => { win.setTimeout(() => warmComment(), WARM_DELAY_MS); };
+  if (win.document?.readyState === 'complete') later();
+  else win.addEventListener('load', later, { once: true });
+}
+
 /**
  * The Homeroom menu or the form has opened, and comment mode is one tap
  * away: load its code and draw the page now, while it sits still under the
@@ -386,9 +414,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // feedback dialog's controller asks where "Suggest an improvement" goes;
   // both are classic code there and cannot import.
   const bridge = ((window as unknown as { UsernodeReact?: Record<string, unknown> }).UsernodeReact ||= {});
+  scheduleWarmComment(window);
   bridge.suggestShortcut = {
     enabled: () => suggestShortcutEnabled(),
-    setEnabled: (on: boolean) => setSuggestShortcutEnabled(!!on),
+    setEnabled: (on: boolean) => {
+      setSuggestShortcutEnabled(!!on);
+      if (on) warmComment();
+    },
     opensComment: () => suggestOpensComment(),
     openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
   };
