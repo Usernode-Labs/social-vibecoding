@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const ROOT = path.join(__dirname, '..');
 const LIB = path.join(ROOT, 'worker', 'session-branch.sh');
@@ -310,7 +311,7 @@ function runnerEnv(t, ws, agentScript, extra = {}) {
     PATH: `${bin}:${process.env.PATH}`,
     HOME: dir,
     PROMPT_FILE: prompt, SYSTEM_PROMPT_FILE: system,
-    SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
+    ...RUNNER_TEST_ENV, SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9', WORKER_JWT: 'jwt',
     MODE: 'build', BRANCH: 'dev/me', WORKSPACE_DIR: ws,
     BROWSER_MCP_CONFIG: path.join(dir, 'no-mcp.json'),
     INLOOP_PGDATA: path.join(dir, 'no-pgdata'),
@@ -386,7 +387,7 @@ exit 0
     ...GIT_ENV,
     PATH: `${bin}:${process.env.PATH}`, HOME: dir,
     PROMPT_FILE: prompt, BRANCH: 'dev/me', MODE: 'build',
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://127.0.0.1:9',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),
