@@ -44,6 +44,7 @@ const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
 const appOutages = require('./app-outages');
+const appTeardown = require('./app-teardown');
 const { getPool } = require('../db/pool');
 
 const FIRST_PASS_DELAY_MS = 30_000;
@@ -85,7 +86,35 @@ function containerName(slug) {
 // every other deploy path uses (per-slug serialized, drives the version
 // pill); repo-less apps re-run their already-built image with a freshly
 // assembled env. Returns the result status string.
+// A recovery takes minutes, so an app can be deleted while one runs: the
+// teardown removes the runtime, then this puts it back. Whatever the recovery
+// did, an app that is gone or going by the end keeps no runtime. A lookup
+// that fails removes nothing.
 async function recoverFromScratch(config, pool, app) {
+  try {
+    return await rebuildOrRespawn(config, pool, app);
+  } finally {
+    await removeRuntimeIfDeleted(config, pool, app);
+  }
+}
+
+async function removeRuntimeIfDeleted(config, pool, app) {
+  try {
+    if (!appTeardown.isTearingDown(app.slug)) {
+      const { rows } = await pool.query('SELECT 1 FROM apps WHERE id = $1', [app.id]);
+      if (rows.length) return;
+    }
+    const ref = applicationRuntime.productionRef(config, app);
+    await applicationRuntime.remove(config, { ...ref, appId: app.id }, {
+      deleteBuilds: ref.runtimeKind === 'kubernetes',
+    });
+    log.warn('app-heal', 'App was deleted during recovery; runtime removed', { slug: app.slug });
+  } catch (err) {
+    log.warn('app-heal', 'Could not check for a deleted app after recovery', { slug: app.slug, err: err.message });
+  }
+}
+
+async function rebuildOrRespawn(config, pool, app) {
   const github = require('./github');
   const name = containerName(app.slug);
 
@@ -248,6 +277,7 @@ async function provisionMissingRepo(config, pool, app) {
 // structured status so the sweep loop and tests can act on the outcome:
 //   healthy         — container is running (and, when probed, answering)
 //   skipped         — self-hosted / not eligible
+//   deleting        — the app is being taken down (app-teardown)
 //   in_flight       — a heal for this slug is already running
 //   deploying       — a rebuild is mid-flight (app-deploy-status)
 //   restart_grace   — 'restarting' seen once; give Docker's policy a tick
@@ -266,6 +296,7 @@ async function provisionMissingRepo(config, pool, app) {
 // down app (requestHeal) is never held.
 async function checkAndHealOne(config, pool, app, { probeRunning = false, background = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
+  if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
   if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
