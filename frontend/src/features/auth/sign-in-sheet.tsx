@@ -433,6 +433,23 @@ export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'ref
 }
 
 /**
+ * Whether that one-time sign-in is being spent right now, as `onSigningIn`
+ * tells it: the open sheet on its `link` step, not on its way down, with
+ * nothing gone wrong. It stays true while a spent link that signed straight
+ * in finishes (the step is still `link`), and ends at every other outcome:
+ * Welcome (the account step), the code a refused or failed spend falls back
+ * to (the code or email step), an error that leaves the step where it was
+ * (offline, a failed send), and a session the shell could not confirm. So
+ * whatever covers the sheet for the moment is never over a step that asks
+ * for something, or over the message that says what went wrong.
+ */
+export function linkSigningIn({ open, step, closing, error, failure }: {
+  open: boolean; step: string; closing: boolean; error: string | null; failure: unknown;
+}): boolean {
+  return open && step === 'link' && !closing && !error && !failure;
+}
+
+/**
  * On a step's main button: the press keeps the caret where it is until its
  * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
  * "Text me a code" only closed the keyboard. The press blurred the field,
@@ -493,6 +510,17 @@ export type SignInSheetProps = {
    */
   releaseSignIn?: string | null;
   /**
+   * Told when that one-time sign-in starts and stops being spent
+   * (`linkSigningIn`), for a screen that draws its own "Signing you in…"
+   * over the sheet for that moment (./landing.tsx).
+   */
+  onSigningIn?: (signingIn: boolean) => void;
+  /**
+   * Keeps the panel and its dim down while that screen is up, so the step
+   * that follows (Welcome, or the code) comes up as the screen goes.
+   */
+  held?: boolean;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made).
@@ -520,7 +548,7 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, beforeFinish, onClose, primaryClass,
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const t = useMessages('auth');
   const otherWays: Step = providers.length ? 'choose' : 'email';
@@ -725,7 +753,9 @@ export function SignInSheet({
   //
   // While it is spent the sheet says "Signing you in…" (the `link` step),
   // not the email step with its Send code button, which the first open
-  // used to show for the length of the request.
+  // used to show for the length of the request. The story covers that step
+  // with a plain "Signing you in…" screen of its own (`onSigningIn`, `held`;
+  // ./landing.tsx SigningIn), and the step after it comes up as that goes.
   const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
     const seen = releaseSignIn || releaseToken;
@@ -771,6 +801,15 @@ export function SignInSheet({
     }
     return () => { live = false; };
   }, [open, releaseToken, releaseSignIn, requestCode]);
+
+  // Said to the screen that covers that moment (`onSigningIn`): true as it
+  // starts, false as it ends, and false if the sheet goes first.
+  const signingIn = linkSigningIn({ open, step, closing, error, failure: completion.failure });
+  useEffect(() => {
+    if (!signingIn || !onSigningIn) return undefined;
+    onSigningIn(true);
+    return () => onSigningIn(false);
+  }, [signingIn, onSigningIn]);
 
   // Away to the make screen: the panel goes down while the wallpaper comes
   // up behind it. Resolves once that has had its time.
@@ -1136,10 +1175,11 @@ export function SignInSheet({
             : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : t('auth:signInSheet.account.lead'));
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
-  // card, it fades.
+  // card, it fades. `held`, it stays down under the screen that covers it.
+  const up = shown && !held;
   const panelState = leaving
     ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
-    : shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
+    : up ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
   const close = leaving ? undefined : requestClose;
 
   return (
@@ -1149,7 +1189,7 @@ export function SignInSheet({
       <div
         aria-hidden="true"
         onClick={close}
-        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${up ? 'opacity-100' : 'opacity-0'}`}
       />
       {/*
           The make screen's own ground (../first-session/make.tsx paints the
