@@ -178,6 +178,7 @@ function fromSnapshot(session, currentHead) {
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
     shotNotices: [],
+    afterOnly: false,
     screens: [],
     progress: null,
     verifiedReason: null,
@@ -222,6 +223,10 @@ function serialize(run, session, slug, currentHead) {
     // Only a published run's card shows them.
     shotNotices: matchesCurrent && run.state === 'verified'
       ? cleanShotNotices(run.shotNotices, cleanClaims(run.claims)) : [],
+    // A project's first version (services/shots-starter.js): its before was
+    // the starter template's placeholder, so the run took the after side
+    // only, and the card says "New app: nothing before".
+    afterOnly: matchesCurrent && run.state === 'verified' && run.afterOnly === true,
     screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,

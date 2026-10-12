@@ -443,6 +443,10 @@ function runSummary(row, artifactSummary = []) {
     // from before them have none.
     shotNotices: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.notices)
       ? row.hard_verdict.notices : [],
+    // A project's first version: its before build was the starter
+    // template's placeholder, so only the after side was taken
+    // (services/shots-starter.js).
+    afterOnly: shots.isShotsVerdict(row.hard_verdict) && row.hard_verdict.afterOnly === true,
     progress: progress && typeof progress.phase === 'string'
       && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
       ? { phase: progress.phase, at: progress.at || null } : null,

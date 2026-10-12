@@ -344,6 +344,47 @@ test('absence is labelled only when the author explicitly declared a new before 
   assert.match(absent, /shots-flip-chip-before">Before · not there yet</);
 });
 
+// A project's first version (services/shots-starter.js): its before build was
+// the starter template's placeholder, so only the after side was taken. The
+// card says so, where it opens and where a before would be, instead of
+// showing a missing shot.
+test('a first version\'s card says New app: nothing before, and shows its after shots', () => {
+  const afterOnly = (overrides = {}) => shots({
+    afterOnly: true,
+    artifacts: shots().artifacts.filter((artifact) => artifact.side !== 'base'),
+    ...overrides,
+  });
+  const html = AppView.shotsHtml(afterOnly(), { sessionId: 42 });
+  assert.match(html, /data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3" data-shots-after-only="1"/);
+  assert.match(html, /<p class="text-xs text-zinc-600 dark:text-zinc-400">New app: nothing before\. This proposal builds the app’s first real screens, so these are its after shots only\./);
+  assert.match(html, /<span class="shots-flip-side shots-flip-before shots-flip-missing">New app: nothing before<\/span>/);
+  assert.match(html, new RegExp(`<img src="${url('4')}"`), 'the after screen is shown');
+  assert.doesNotMatch(html, /No shot|not there yet|Taken on the exact before and after builds/);
+  // Even when the author declared the feature absent before, the card names the app as new.
+  const declaredAbsent = afterOnly();
+  declaredAbsent.claims = [{ ...declaredAbsent.claims[0], baseState: 'not_present' }];
+  assert.doesNotMatch(AppView.shotsHtml(declaredAbsent, { sessionId: 42 }), /not there yet/);
+
+  // The change page's Before and after card says the same where the before would be.
+  const thread = AppView.shotsHtml(afterOnly(), { sessionId: 42, thread: true });
+  assert.match(thread, /class="dev-change-shots-body" data-shots-after-only="1"/);
+  assert.match(thread, /shots-flip-missing">New app: nothing before</);
+
+  // A motion change plays its after clip alone, with no empty before player.
+  const motion = afterOnly({
+    artifacts: [...afterOnly().artifacts, ...clipArtifacts().filter((artifact) => artifact.side === 'head')],
+  });
+  motion.claims = [{ ...motion.claims[0], animation: 'motion' }];
+  const clips = AppView.shotsHtml(motion, { sessionId: 42 });
+  assert.match(clips, /these are its after shots and clips only/);
+  assert.match(clips, new RegExp(`<video src="${url('8')}"`));
+  assert.doesNotMatch(clips, /No clip|Before clip/);
+
+  // An ordinary run is unchanged.
+  const ordinary = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.doesNotMatch(ordinary, /New app|data-shots-after-only/);
+});
+
 test('a skipped change shows its reason and no media, beside a ready one', () => {
   const value = shots({
     claims: [

@@ -289,7 +289,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    same image on both sides, while it can still retake them. Anything else is **skipped**, with the agent's reason or, failing
    that, a list of exactly what is missing. The files of ready changes are
    stored, fenced by a hash of the manifest, and the before/after builds are
-   torn down.
+   torn down. A project's first version needs only the after side (see "A
+   project's first version" below).
 5. **Shots ready** (`verified`). A run publishes if at least one change is
    ready, so one unreachable change never hides the others. If none is
    ready, the run fails with `shots_capture_incomplete` and each change's
@@ -298,7 +299,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    itself failed and skipped nothing, it keeps the agent's error instead.
 
 `hard_verdict` records the outcome:
-`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }], notices? }`.
+`{ passed, mode: "shots", runs: 1, stories: [{ id, status, reason?, note? }], notices?, afterOnly? }`.
+`afterOnly: true` is there only on a project's first version (see below).
 `notices` (`[{ text, change, screen, shot, alsoBefore }]`) is there only when
 the agent noted a problem; a notice names its `shot` only while that after
 shot is published. Notices are advisory: they never change a change's
@@ -634,6 +636,41 @@ A role the app grants through its own UI (whoever creates a group manages
 it) is reachable as before, through `hints.setup`. Homeroom's own copies are
 unaffected: there the two administrator personas are its administrators.
 
+## A project's first version
+
+A new app's repository starts as Homeroom's starter template: one
+placeholder screen, a "Starter template" hero wrapped in the
+`usernode-starter-notice@1` sentinel comments in `public/index.html`, which
+the first real version deletes (`src/prompts/app-conventions.md`,
+"Starter-template notice"). A proposal that builds those first screens was
+shot against that placeholder, so every before shot was the placeholder and
+the shots agent spent half its turn taking it. From 2026-10-09 to 10-12 at
+least six changes carried a note saying so (proposals 7608, 7871 and 7610
+among them).
+
+Now, when the before checkout still carries the opening sentinel and the
+after checkout no longer does (`services/shots-starter.js`
+`beforeIsStarter`), the run takes and publishes the after side only:
+
+- the brief carries `afterOnly`, which tells the agent not to open the
+  before address and to save after shots alone (`shotsBrief`);
+- `save_shot` refuses a before shot in that run (`before_not_needed`), and a
+  change is ready when every screen has its after screen shot, plus an after
+  clip for motion (`shots-files.summarize`);
+- nothing is compared, so the run stores no `screens`, and the verdict
+  carries `afterOnly: true`;
+- the card opens with "New app: nothing before", and its Before side shows
+  the same words where a picture would be. `get_proposal` carries
+  `shots.afterOnly`.
+
+The sentinel is read from each revision's own checkout, never from what a
+page shows, and only on an app built on Homeroom. A ready-made or game
+starter (`services/app-templates.js`) is a working app with no sentinel, so
+its first version keeps a real before. So does a change that leaves the
+placeholder in place, such as a new name on the starter screen. A placeholder
+without the sentinel is shot on both sides, as before. Both copies are still
+built: the before checkout is what says the app is new.
+
 ## What people see
 
 The proposal's card shows one screen at a time in a frame that keeps its
@@ -689,6 +726,8 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   publish shows none.
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
+- **New app.** A project's first version has after shots only: the card
+  opens with "New app: nothing before", and its Before side says the same.
 - A proposal declared with nothing visible reads "No before & after needed"
   and "This proposal has no visual changes." The author's `rationale` stays
   with the declaration, for whoever reviews it.
@@ -774,7 +813,9 @@ phone, and impact `ui`. The build's own declaration wins. A derivation the
 validator refuses records nothing, and a spec with no changes list is never
 read as impact `none`. A first version declares nothing: its base is the
 starter, so there is no meaningful before, and its screens are already
-reviewed on the build (`bot-review.js`).
+reviewed on the build (`bot-review.js`). When a proposal that builds an
+app's first screens does declare changes, its run takes the after side only
+(see "A project's first version").
 
 The bot offers a change of its own as ready to try only once its shots on
 that exact head have settled (`shots-state.holdsReady`, read by
@@ -832,6 +873,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
+| A project's first version: whether the before is the starter's placeholder (`beforeIsStarter`) | `src/services/shots-starter.js` |
 | States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |

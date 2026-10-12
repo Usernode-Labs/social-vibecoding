@@ -281,10 +281,16 @@ function missingWords(viewport, side, variant) {
 // `fallbackFailed` says that skip was the app breaking. `notices` (what
 // the agent noticed broken on the after build) ride along as they are, and
 // a notice names its shot only while that shot is published.
+// `afterOnly` is a project's first version, whose before side is the
+// starter template's placeholder (shots-starter.js): a change is ready with
+// its after shots alone, nothing from the before side is published, and the
+// verdict says so for the card.
 function summarize(intent, saved, skipped = new Map(), {
   fallbackReason = null, notes = new Map(), failed = new Set(), fallbackFailed = false, notices = [],
+  afterOnly = false,
 } = {}) {
   const published = [];
+  const sides = afterOnly ? ['head'] : ['base', 'head'];
   const results = intent.stories.map((story) => {
     if (skipped.has(story.id)) {
       return { id: story.id, status: failed.has(story.id) ? 'failed' : 'skipped', reason: skipped.get(story.id) };
@@ -293,7 +299,7 @@ function summarize(intent, saved, skipped = new Map(), {
     const files = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
     for (const viewport of story.viewports) {
-      for (const side of ['base', 'head']) {
+      for (const side of sides) {
         for (const variant of ['context', 'focus', 'animation']) {
           const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
           if (file) files.push(file);
@@ -314,8 +320,9 @@ function summarize(intent, saved, skipped = new Map(), {
   });
   // A ready change is still published when its before and after are the same
   // image (people judge the shots), but the card says so rather than letting
-  // two copies of one screen pass for the change.
-  const stories = markUnchanged(results, identicalStories(intent, saved));
+  // two copies of one screen pass for the change. An after-only run has no
+  // before to compare.
+  const stories = afterOnly ? results : markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
     .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
@@ -337,8 +344,12 @@ function summarize(intent, saved, skipped = new Map(), {
     // which files were published.
     manifestHash: sha256(Buffer.from(planContract.canonicalJson({ mode: SHOTS_MODE, intent, manifest }))),
     // A run without notices stores no `notices` key, as every run before
-    // them did.
-    verdict: { passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories, ...(noticed.length ? { notices: noticed } : {}) },
+    // them did, and only an after-only run stores `afterOnly`.
+    verdict: {
+      passed: ready > 0, mode: SHOTS_MODE, runs: 1, stories,
+      ...(noticed.length ? { notices: noticed } : {}),
+      ...(afterOnly ? { afterOnly: true } : {}),
+    },
   };
 }
 

@@ -98,6 +98,29 @@ test('a clip is saved only for a motion change, and a refused file saves nothing
   assert.equal(run.saved.size, 1);
 });
 
+// A project's first version: the before address is the starter template's
+// placeholder (services/shots-starter.js), so the run takes the after side
+// only, and a before shot is refused while the agent can still move on.
+test('a first version\'s run refuses a before shot and is ready with the after side alone', () => {
+  const run = control({ intent: fixtures.intent(), afterOnly: true });
+  assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
+    sideShot('before')), (error) => {
+    assert.equal(error.code, 'before_not_needed');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /starter template's placeholder/);
+    assert.match(error.message, /takes after shots only/);
+    return true;
+  });
+  assert.equal(run.saved.size, 0, 'nothing from the before side is kept');
+  assert.equal(run.lastToolFailure.operation, 'save-shot');
+  run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, sideShot('after'));
+  assert.deepEqual(statuses(run), [['invite-suggestions', 'ready']]);
+  assert.equal(run.summary().verdict.afterOnly, true);
+  // An ordinary run takes both sides, as before.
+  assert.equal(control({ intent: fixtures.intent() }).saveShot(
+    { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before')).side, 'before');
+});
+
 test('progress reports each change as missing, ready or skipped', () => {
   const run = control();
   const initial = run.progress();
