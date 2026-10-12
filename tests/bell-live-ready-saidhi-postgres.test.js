@@ -243,7 +243,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [later]);
   });
 
-  await t.test('#4797: a read ask about a decided change is not listed; the news about it is', async () => {
+  await t.test('#4797: the asks about a merged change leave the list read or unread; the news about it stays', async () => {
     const merged = await change('Keep a reading streak');
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [merged]);
     const stillOpen = await change('Sort the shelf by colour');
@@ -252,8 +252,10 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     const openAsk = await notify(mo.id, 'pr_proposed', { sessionId: stillOpen, read: true });
     const news = await notify(mo.id, 'voted_change_merged', { sessionId: merged, read: true });
 
+    // #4795, as merged: a decided change's asks leave the list however much
+    // you have read, so nobody taps one and finds a merged page behind.
     assert.equal(await listed(mo.id, readAsk), null, 'read ask, change merged: not listed');
-    assert.notEqual(await listed(mo.id, unreadAsk), null, 'unread ask, change merged: listed until read');
+    assert.equal(await listed(mo.id, unreadAsk), null, 'unread ask, change merged: not listed either');
     assert.notEqual(await listed(mo.id, openAsk), null, 'read ask, change still up: listed');
     assert.notEqual(await listed(mo.id, news), null, 'the merge news about the same change is listed');
   });
