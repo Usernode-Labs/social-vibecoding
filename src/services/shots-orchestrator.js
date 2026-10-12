@@ -479,6 +479,35 @@ const INSTALL_STRIP = Object.freeze({
   note: 'Homeroom\'s "Add it to your home screen" strip is dismissed on every page these browsers open. For a change to the strip itself, add param to the start path\'s query (before any #) on both addresses, in the phone browser.',
 });
 
+// What making a project does on Homeroom's own copies. Make it is accepted
+// there (the copies lift the server-wide cap, shots-environment.js
+// shotsCapacityEnv, and the personas get free app slots, shots-demo-states.js
+// shots-demo-room-to-make-v1), but no copy can set a project up: it runs
+// unreviewed code, so it gets no rights to create a database (its role owns
+// only its own clone), no image builder or container runtime, and no
+// GitHub. The setup stops at its first step, the database, and the screen
+// after Make it says so; a remix stops the same way and an import is
+// refused. Said up front so a change that needs a made project running is
+// skipped at once with the copies' reason, rather than tried in every
+// browser or reported as the change failing (PR 4777's ready-made Study
+// timer, 2026-10-12). Fixed words only.
+const MAKE_PROJECT = Object.freeze({
+  setupFinishes: false,
+  note: 'Make it on "What do you want to make?" (/#create) works on these copies for whoever has free app slots '
+    + '(availableFixtures says who), and the screen after it shows the new project\'s card. But these copies cannot '
+    + 'set a project up: they have no rights to create its database, no image builder and no GitHub. So within '
+    + 'seconds the screen says "Setting it up didn’t finish" and "Setup stopped before it was running" with Try '
+    + 'again, on both addresses alike, and Try again stops the same way. A remix stops the same way too, and '
+    + 'importing a GitHub repository is refused. That is '
+    + 'these copies, not the change failing: never use outcome "failed" for it. A change to the make screen, or '
+    + 'to the screen after Make it, can be shot once the setup has stopped on both addresses; say in note_change '
+    + 'what that leaves out. A change that needs a made project to run (its app open, its first version built, '
+    + 'its repository) cannot be shown here: call skip_change for it at once, saying these copies cannot set up '
+    + 'a new project, and do not try the other browsers. Each persona can make five projects an hour on each '
+    + 'address, its phone browser included, so make one only where a change needs it, the same one on both '
+    + 'addresses.',
+});
+
 // Who the signed-in browsers are to an app built on Homeroom. Its identity
 // token says who is signed in ({ id, username, usernode_pubkey, locale }),
 // never a role in the app: there is no creator or admin claim, and no
@@ -606,6 +635,7 @@ function shotsBrief({
     ...(homeTile ? { homeTile } : {}),
     // Only Homeroom's own copies have the strip, and only a phone shows it.
     ...(selfApp && phones.size ? { installStrip: { ...INSTALL_STRIP } } : {}),
+    ...(selfApp ? { makeProject: { ...MAKE_PROJECT } } : {}),
     ...(moment ? {
       previewAt: {
         at: moment.at,
@@ -1927,6 +1957,7 @@ module.exports = {
   resolveRevisionContext,
   declaredCheckSummary,
   INSTALL_STRIP,
+  MAKE_PROJECT,
   AFTER_ONLY,
   shotsBrief,
   sameProvenance,

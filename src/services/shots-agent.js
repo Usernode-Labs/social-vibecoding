@@ -164,6 +164,11 @@ shots. For a change to the strip itself, open the start path with
 installStrip.param added to its query (before any #), on both addresses and
 in the phone browser, so the strip shows as it does on a member's phone.
 
+If the brief has makeProject, a project made on these copies never finishes
+setting up, on either address. Read makeProject.note before a change whose
+steps make, remix or import a project: it says what can be shot, and a
+change that needs a made project to run is skipped at once.
+
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.

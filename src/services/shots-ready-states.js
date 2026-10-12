@@ -82,6 +82,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
     ['member']],
+  ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
+    ['member', 'read_only_admin']],
   ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live, with its row in your bell',
     ['member']],
   ['shots-demo-member-bot-built-proposal-v1', 'a change Homeroom bot built from your request, up for a vote',

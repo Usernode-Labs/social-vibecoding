@@ -25,6 +25,7 @@ const { loadCadence } = require('../src/services/topochain/challenge-scorer');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
 const { attachForkLineage, accessFlags } = require('../src/routes/apps');
 const suggestBack = require('../src/services/suggest-back');
+const appAllowance = require('../src/services/app-allowance');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
 const mayor = require('../src/services/homeroom-bot-mayor');
@@ -447,6 +448,23 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     `SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2`,
     [accessApp.id, member]);
   assert.equal(collab.status, 'member');
+
+  // Room to make projects (PR 4777): the member owns the three projects the
+  // states above made, and both the member and the read-only admin have
+  // five slots free beside what they own, read through the allowance the
+  // make screen and POST /api/apps read. Five free hides the allowance card
+  // (app-allowance.tsx allowanceWorthShowing) as for anybody with room.
+  const memberRoom = await appAllowance.read(pool, { id: member });
+  assert.deepEqual(memberRoom.quota, { used: 3, limit: 8, remaining: 5 });
+  assert.equal(memberRoom.canCreateApps, true);
+  const adminRoom = await appAllowance.read(pool, { id: ids['usernode-capture-admin'] });
+  assert.deepEqual(adminRoom.quota, { used: 0, limit: 5, remaining: 5 });
+  assert.equal(adminRoom.canCreateApps, true);
+  // A project whose setup stopped (as every one made on a copy does) holds
+  // no slot, so making one never uses the room up.
+  await pool.query(`UPDATE apps SET status = 'error' WHERE id = $1`, [demoStates.IDS.firstVersionApp]);
+  assert.equal((await appAllowance.read(pool, { id: member })).quota.remaining, 6);
+  await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [demoStates.IDS.firstVersionApp]);
 
   // The member's chat with the Homeroom bot: two activity cards on one
   // request, read through the cards' own reader. The older one's build is
