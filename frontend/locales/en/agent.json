@@ -196,12 +196,12 @@
     "description": "Note in the credits card of the \"Build with\" sheet: how much the person spent today through their own API key, which does not count against Homeroom credits. {{amount}} is an exact dollar amount such as $1.20."
   },
   "session.credits.lowNote": {
-    "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red because less than 15% of the AI allowance is left: what remains may not cover a build, which may stop partway. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it."
+    "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.",
+    "description": "Note above the send row of an agent session, shown whenever the credits pill beside Send is red because less than 15% of the AI allowance is left — before the first message and once the conversation is under way. What remains may not cover a build, which may stop partway; the note also names the two ways to keep going, as the out-of-credits card does. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it. Tag 0 links to Settings, API key."
   },
   "session.credits.lowNoteNone": {
-    "text": "No credits left. A build may not start, or may stop partway.",
-    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red and nothing at all remains of the AI allowance: a build may not start, or may stop partway. It is a note, not a block; the person can still send."
+    "text": "No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.",
+    "description": "Note above the send row of an agent session, shown whenever the credits pill beside Send is red and nothing at all remains of the AI allowance — before the first message and once the conversation is under way. A build may not start, or may stop partway; the note also names the two ways to keep going, as the out-of-credits card does. It is a note, not a block; the person can still send. Tag 0 links to Settings, API key."
   },
   "session.model.pillLabel": {
     "text": "Model: {{model}}",

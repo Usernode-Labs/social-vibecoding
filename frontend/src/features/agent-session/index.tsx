@@ -1804,9 +1804,10 @@ function Composer({ id }: { id: string }) {
     stopPending: s.turn.stopPending,
     stopError: s.turn.stopError,
     turnPhase: s.turn.phase,
-    // The low-credits note is a word to a NEW conversation (#4784): a sent
-    // message shown or still on its way is a conversation under way.
-    started: s.messages.length > 0 || s.outbox.length > 0,
+    // The low-credits note covers a conversation under way too (#4801); the
+    // out-of-credits card is what replaces it, so a refusal set on the store
+    // hides the note while the card is open.
+    refused: !!s.credits,
   }));
   const [value, setValue] = useState('');
   const input = useRef<HTMLTextAreaElement | null>(null);
@@ -2041,10 +2042,11 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      {/* The low-credits note (#4784): a new conversation and the credits
-          pill is already red — one line, before the send row. Hidden in an
-          archived conversation, and only before the first message. */}
-      {!archived && showLowCreditNote(credit, snapshot.started) ? <LowCreditNote credit={credit} /> : null}
+      {/* The low-credits note (#4784, #4801): the credits pill is red — one
+          line, before the send row, before the first message and once the
+          conversation is under way. Hidden in an archived conversation, and
+          while the out-of-credits card is open. */}
+      {!archived && showLowCreditNote(credit, snapshot.refused) ? <LowCreditNote credit={credit} /> : null}
       {/* #3574: the row is a size container so the model pill can tighten
           its padding on the narrowest phones (composer-parts.tsx ModelPill).
           Its width is the composer's, never its contents'. */}
