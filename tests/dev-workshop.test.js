@@ -1049,6 +1049,31 @@ test('#4457: a week is one row that opens its own page, grouped, with the way ba
   assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /endMs - 86400000/);
 });
 
+// ── #4818: a week's dates are in the interface's language ─────────────
+
+test('#4818: weekDate formats in the interface language, never a fixed en-US', () => {
+  const { weekDate } = loadTsx('frontend/src/features/dev-board/workshop/week-pages.tsx');
+  const ms = Date.UTC(new Date().getUTCFullYear(), 7, 25);
+  assert.equal(weekDate(ms), 'Aug 25', 'English while the interface is English, whatever the device says');
+  const seen = [];
+  const original = Date.prototype.toLocaleDateString;
+  Date.prototype.toLocaleDateString = function (locales, options) {
+    seen.push({ locales, options });
+    return original.call(this, locales, options);
+  };
+  try {
+    weekDate(ms);
+  } finally {
+    Date.prototype.toLocaleDateString = original;
+  }
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].locales, 'en', 'the interface language (getLanguage) is the locale, not the device default');
+  assert.equal(seen[0].options.timeZone, 'UTC', 'a week is still named by its UTC days');
+  assert.equal(original.call(new Date(ms), 'fr', { month: 'short', day: 'numeric', timeZone: 'UTC' }), '25 août',
+    'so a French interface reads "25 août"');
+  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'), /toLocaleDateString\(getLanguage\(\), \{/);
+});
+
 // ── #4717: the page fetches its week, and says so while it does ───────
 
 test('#4717: a week page draws its fetched rows, and says loading, failed or empty', async () => {
