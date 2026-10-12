@@ -196,6 +196,7 @@ test('the columns are pinned in order, so an analysis that reads them by positio
     'worker_memory_limit_mb', 'worker_memory_peak_mb', 'worker_memory_last_mb',
     'worker_oom_kills', 'worker_memory_by_process_json',
     'egress_blocked_json',
+    'platform_fault',
   ]);
 });
 
@@ -250,6 +251,18 @@ test('a run a Homeroom restart interrupted says so; anything else leaves the col
   assert.equal(shotsExport.exportRecord(runs[0]).interrupted_by, null);
   assert.equal(shotsExport.exportRecord({ ...runs[1], trace_summary: { interruptedBy: '=cmd()' } }).interrupted_by,
     null, 'only a fixed tag is copied out');
+});
+
+test('a run a platform step failed names the kind; the retry is its own row', () => {
+  const fault = shotsExport.exportRecord({
+    ...runs[1], state: 'failed', failure_code: 'shots_failed',
+    trace_summary: { platformFault: { kind: 'database' } },
+  });
+  assert.equal(fault.platform_fault, 'database');
+  assert.equal(shotsExport.exportRecord({ ...runs[1], trigger: 'platform-retry' }).trigger, 'platform-retry');
+  assert.equal(shotsExport.exportRecord(runs[0]).platform_fault, null);
+  assert.equal(shotsExport.exportRecord({ ...runs[1], trace_summary: { platformFault: { kind: '=cmd()' } } })
+    .platform_fault, null, 'only a fixed word is copied out');
 });
 
 test('a failed run carries what the diagnostics screen would say, and no private answer', () => {

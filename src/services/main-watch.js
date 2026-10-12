@@ -82,6 +82,8 @@ const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+// Required when used: it reads scripts/test-changed.js and the bot's queue.
+const redFix = () => require('./main-red-fix');
 
 // How many failing tests a verdict keeps by name, in its detail.
 const MAX_FAILING_TESTS = 20;
@@ -323,6 +325,23 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
   }
 }
 
+// A pause of the app's merges starting or ending, as an event each
+// (events.MAIN_PAUSED / MAIN_RESUMED): the proposal-pipeline topic's "Merges
+// paused by a red main" figure counts the pauses and adds up how long they
+// lasted (services/topic-figures.js). `by` says what ended one: a green
+// verdict, a red of known flakes only, or an admin's Resume. Fire-and-forget.
+function notePauseChange(pool, appId, { was_paused: was, now_paused: now }, { sha, state = null, by = null } = {}) {
+  const events = require('./events');
+  if (!was && now) {
+    events.record(pool, { type: events.EVENT_TYPES.MAIN_PAUSED, appId, metadata: { sha: now, confirming: state === 'confirming' } });
+  } else if (was && !now) {
+    events.record(pool, {
+      type: events.EVENT_TYPES.MAIN_RESUMED, appId,
+      metadata: { sha: sha || was, by: by || (state === 'passing' ? 'green' : 'flakes') },
+    });
+  }
+}
+
 // The compare-and-swap write of a state for the merge commit this run is
 // about. The pause column moves with the state: green clears it, red sets
 // it (unless an admin already resumed this very sha), anything else — a run
@@ -334,18 +353,23 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
 async function writeState(pool, app, mergeSha, state, detail) {
   const quiet = !!detail && Array.isArray(detail.flakesOnly) && detail.flakesOnly.length > 0;
   try {
+    // The CTE reads the pause as it stood, so a pause that starts or ends
+    // here is recorded (notePauseChange).
     const write = await pool.query(
-      `UPDATE apps
+      `WITH prev AS (SELECT main_check_paused_sha AS was FROM apps WHERE id = $1)
+       UPDATE apps
           SET main_check_state = $3, main_check_at = NOW(), main_check_detail = $4::jsonb,
               main_check_paused_sha = CASE
                 WHEN $5::boolean THEN NULL
                 WHEN $6::boolean AND lower(coalesce(main_check_resumed_sha, '')) <> lower($2::text) THEN $2::text
                 ELSE main_check_paused_sha
               END
-        WHERE id = $1 AND main_check_sha = $2::text`,
+        WHERE id = $1 AND main_check_sha = $2::text
+    RETURNING (SELECT was FROM prev) AS was_paused, main_check_paused_sha AS now_paused`,
       [app.id, mergeSha, state, JSON.stringify(detail),
         state === 'passing' || quiet, (state === 'failing' || state === 'confirming') && !quiet]
     );
+    if (write.rows && write.rows[0]) notePauseChange(pool, app.id, write.rows[0], { sha: mergeSha, state });
     return write.rowCount !== 0;
   } catch (err) {
     log.warn('main-watch', 'state write failed', { appId: app.id, sha: mergeSha, state, err: err.message });
@@ -415,6 +439,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   // The first red's tests, for a flake record if the re-run is green.
   const firstRun = verdict.state === 'failing' ? verdict.detail : null;
   const firstExcerpts = verdict.excerpts || [];
+  let confirmExcerpts = [];
   if (verdict.state === 'failing' && confirmEnabled()) {
     // Provisional: hold the pause, say so, and ask the suite again. A red
     // of known flakes alone holds nothing while it is asked again.
@@ -425,6 +450,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     if (held === null) return null;
     if (!held) {
       log.info('main-watch', 'Discarded a first red for a superseded merge', { appId: app.id, sha: mergeSha });
+      await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: 'failing', superseded: true, confirmed: false });
       return null;
     }
     // Held, the board's banner says so (main-pause-store: "re-running to
@@ -436,6 +462,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     });
     const again = await runSuite(config, pool, app, parsed, mergeSha);
     if (again.state === 'superseded') return null;
+    confirmExcerpts = again.excerpts || [];
     if (again.state === 'passing') {
       verdict = { state: 'passing', detail: { ...again.detail, flake: firstRun } };
     } else if (again.state === 'failing') {
@@ -456,7 +483,10 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   const stored = await writeState(pool, app, mergeSha, verdict.state, detail);
   if (stored === null) return null;
   if (!stored) {
-    log.info('main-watch', 'Discarded a verdict for a superseded merge', { appId: app.id, sha: mergeSha });
+    // Kept all the same: a superseded green is still the newest merge known
+    // to pass, which is where a later red's suspects are read from.
+    log.info('main-watch', 'Discarded a verdict for a superseded merge', { appId: app.id, sha: mergeSha, state: verdict.state });
+    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, superseded: true, confirmed: detail.confirmed });
     return null;
   }
   log.info('main-watch', `main is ${verdict.state}`, {
@@ -464,6 +494,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     confirmed: detail.confirmed, flake: !!detail.flake,
     ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
   });
+  await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, confirmed: detail.confirmed });
 
   // A red pauses merges and a green lifts the pause: the stored state is
   // the whole of it, and the board's banner is how it is seen
@@ -479,6 +510,13 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     await noteFlakes(config, pool, app, mergeSha, [firstRun], firstExcerpts);
   } else if (detail.flakesOnly) {
     await fileFlakeRequests(config, pool, app, redOf(detail).failingTests || [], { mergeSha });
+  } else if (verdict.state === 'failing' && detail.confirmed === true) {
+    // Broken, twice over: ask the Homeroom bot to fix it, naming the merges
+    // the failing tests point at (services/main-red-fix.js).
+    await redFix().fileFixRequest(config, pool, {
+      app, parsed, redSha: mergeSha, prNumber, detail: redOf(detail),
+      excerpts: confirmExcerpts.length ? confirmExcerpts : firstExcerpts, fileBotIssue,
+    });
   }
   return { state: verdict.state, sha: mergeSha, detail };
 }
@@ -594,6 +632,37 @@ function flakeRequestText(t, { mergeSha, seenCount, firstSeenAt, excerpt }) {
   return { title: `Flaky test: ${name}`, body: lines.join('\n') };
 }
 
+// A request on the app's repo, filed as Homeroom bot: the GitHub issue, its
+// row, and the notices a person's request gets. Resolves the issue number;
+// throws when the issue could not be filed. Shared with the request to fix a
+// red main (services/main-red-fix.js).
+async function fileBotIssue(config, pool, app, parsed, { title, body }) {
+  const github = require('./github');
+  const bot = require('./homeroom-bot');
+  const botUser = await bot.ensureBotUser(pool, config);
+  const created = await github.createIssue(parsed.owner, parsed.repo, {
+    title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
+  });
+  const issueNumber = Number(created && created.number);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
+  try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
+  const { rows } = await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+     VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
+    [app.id, issueNumber, title, body, botUser.id]
+  );
+  try {
+    require('./notifications').notifyIssueFiled?.(pool, {
+      appId: app.id, issueNumber, authorId: botUser.id, text: `${title}\n\n${body}`,
+    });
+  } catch {}
+  try {
+    require('./ws').pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0]?.id, kind: 'general' });
+  } catch {}
+  try { bot.noteIssueActivity?.({ appId: app.id, issueNumber, reason: 'created' }); } catch {}
+  return issueNumber;
+}
+
 // One request for a flaky test, filed as Homeroom bot: at most once per
 // FLAKE_REQUEST_DAYS, and never while the last one is still open. The
 // request_filed_at claim keeps two processes from filing the same one.
@@ -624,35 +693,14 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
   }
   if (!claimed || !claimed.length) return null;
   try {
-    const bot = require('./homeroom-bot');
-    const botUser = await bot.ensureBotUser(pool, config);
     const { title, body } = flakeRequestText(t, {
       mergeSha, seenCount: Number(claimed[0].seen_count) || 1, firstSeenAt: claimed[0].first_seen_at, excerpt,
     });
-    const created = await github.createIssue(parsed.owner, parsed.repo, {
-      title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
-    });
-    const issueNumber = Number(created && created.number);
-    if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-    try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
-    const { rows } = await pool.query(
-      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-       VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
-      [app.id, issueNumber, title, body, botUser.id]
-    );
+    const issueNumber = await fileBotIssue(config, pool, app, parsed, { title, body });
     await pool.query(
       'UPDATE main_test_flakes SET request_issue_number = $4 WHERE app_id = $1 AND file = $2 AND test = $3',
       [...key, issueNumber]
     );
-    try {
-      require('./notifications').notifyIssueFiled?.(pool, {
-        appId: app.id, issueNumber, authorId: botUser.id, text: `${title}\n\n${body}`,
-      });
-    } catch {}
-    try {
-      require('./ws').pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0]?.id, kind: 'general' });
-    } catch {}
-    try { bot.noteIssueActivity?.({ appId: app.id, issueNumber, reason: 'created' }); } catch {}
     log.info('main-watch', 'Filed a request for a flaky test', { appId: app.id, slug: app.slug, issueNumber, test: t.test });
     return issueNumber;
   } catch (err) {
@@ -766,6 +814,9 @@ async function recheckOne(config, pool, row, max) {
   }
   const stored = await writeState(pool, app, mergeSha, state, detail);
   if (!stored) return null;
+  if (again.state === 'passing' || again.state === 'failing') {
+    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state, confirmed: detail.confirmed });
+  }
   log.info('main-watch', `main is ${state}`, {
     appId: app.id, slug: app.slug, sha: mergeSha, state, recheck: n, flake: !!detail.flake,
     ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
@@ -798,6 +849,7 @@ async function resume(config, pool, appId, { by = null } = {}) {
   log.info('main-watch', 'Merges resumed by an admin', {
     appId, sha: rows[0].main_check_resumed_sha, by: by && by.username,
   });
+  notePauseChange(pool, appId, { was_paused: rows[0].main_check_resumed_sha, now_paused: null }, { by: 'admin' });
   kickQueue(config, appId, 'post-resume');
   return describe(rows[0]);
 }
@@ -917,6 +969,7 @@ module.exports = {
   knownFlakeNames,
   noteFlakes,
   fileFlakeRequest,
+  fileBotIssue,
   flakeRequestText,
   maxRechecks,
   recheckMs,

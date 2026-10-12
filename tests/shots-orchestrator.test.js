@@ -162,7 +162,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
   const order = [];
   const calls = {
     resets: 0, stored: 0, cleaned: 0, dispatches: 0, minted: 0,
-    stopClears: 0, workerReleased: 0, turnStops: [],
+    stopClears: 0, workerReleased: 0, turnStops: [], starterReads: 0,
   };
   let currentState = 'planned';
   let turnMode = null;
@@ -232,6 +232,10 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
     },
     shotsControl: controlPlane,
+    // An ordinary change: its before build is not the starter's placeholder.
+    shotsStarter: {
+      beforeIsStarter: async () => { calls.starterReads += 1; return false; },
+    },
     worker: {
       isInFlight: () => false,
       getActiveTurnMode: () => turnMode,
@@ -492,6 +496,10 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
   const failed = fixture.transitions.at(-1).patch;
   assert.equal(failed.failureCode, 'shots_capture_incomplete');
   assert.match(failed.failureReason, /Before never loads the members list/);
+  assert.deepEqual(failed.hardVerdict.stories, [{
+    id: 'invite-suggestions', status: 'skipped', reason: 'Before never loads the members list.',
+  }], 'kept, so whoever can supply the data a change lacked hears which change it was');
+  assert.equal(failed.hardVerdict.passed, false);
   assert.equal(failed.traceSummary.failure.phase, 'agent_exploration');
   assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, notedChanges: 0, skippedAll: false });
   assert.equal(fixture.calls.stored, 0);
@@ -828,6 +836,71 @@ test('Homeroom\'s own shots tell the guest lookup so, and the guest carries noth
   assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
   assert.equal('appRoles' in brief, false, 'on Homeroom\'s own copies the administrators are its administrators');
   assert.equal(brief.browsers.full_admin.who, 'a full administrator that exists only in these two throwaway copies');
+  assert.equal(fixture.calls.starterReads, 0, 'Homeroom itself never ships the starter');
+  assert.equal('afterOnly' in brief, false);
+});
+
+// A project's first version: its before build is the starter template's
+// placeholder (services/shots-starter.js). Every before shot of proposals
+// 7608, 7871 and 7610 was that placeholder, taken at the cost of half the
+// agent's turn. Now the run takes and publishes the after side only.
+test('a first version\'s run takes and publishes the after side only, and says so', async () => {
+  let brief = null;
+  let refused = null;
+  let stored = null;
+  let starterPair = null;
+  const fixture = setup({
+    storeArtifacts: async (_pool, _runId, artifacts) => { stored = artifacts; },
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      try {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, fixtures.png({ shade: 10 }));
+      } catch (error) { refused = error; }
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, fixtures.png({ shade: 200 }));
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async (pair) => { starterPair = pair; return true; };
+  const result = await execute(fixture);
+
+  assert.equal(result.state, 'verified');
+  assert.equal(starterPair, fixture.pair, 'read from the two checkouts the run built');
+  assert.deepEqual(brief.afterOnly, orchestrator.AFTER_ONLY);
+  assert.equal(brief.afterOnly.beforeIsStarter, true);
+  assert.match(brief.afterOnly.note, /starter template's placeholder screen/);
+  assert.match(brief.afterOnly.note, /do not open the before address, and save only after shots/);
+  assert.match(brief.afterOnly.note, /Do not call note_change to say the before side is a placeholder/);
+  assert.equal(brief.addresses.before, ORIGINS.base, 'the bridge still knows both addresses');
+  assert.equal(refused?.code, 'before_not_needed');
+
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.deepEqual(verified.hardVerdict, {
+    passed: true, mode: shots.SHOTS_MODE, runs: 1,
+    stories: [{ id: 'invite-suggestions', status: 'ready', files: 1 }],
+    afterOnly: true,
+  }, 'nothing to compare, so no screens');
+  assert.equal(verified.traceSummary.afterOnly, true);
+  assert.deepEqual(stored.map(({ side, variant }) => `${side}:${variant}`), ['head:context']);
+});
+
+test('a first version that cannot be recognised is shot on both sides, as before', async () => {
+  let brief = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.dependencies.shotsStarter.beforeIsStarter = async () => { throw new Error('checkout gone'); };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal('afterOnly' in brief, false);
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.equal('afterOnly' in verified.hardVerdict, false);
+  assert.ok(Array.isArray(verified.hardVerdict.screens));
 });
 
 // An app built on Homeroom is told who is signed in, never their role in
@@ -2319,4 +2392,78 @@ test('only a busy agent reads as retryable, never a failed one', () => {
   assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_failed' }), false);
   assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_timeout' }), false);
   assert.equal(orchestrator.agentBusyRetryable(null), false);
+});
+
+// ── A platform fault is recorded so the sweep can take the run again ──
+
+test('a failure on a platform step is recorded as one, and anything else is not', async () => {
+  const database = setup();
+  database.dependencies.environment.preparePair = async () => {
+    throw Object.assign(new Error('No answer from Postgres within 90 seconds, psql\'s time limit.'),
+      { shotsPlatformFault: 'database' });
+  };
+  await assert.rejects(execute(database), /No answer from Postgres/);
+  assert.deepEqual(database.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'database' });
+
+  // The agent's process exited 1 and nothing recorded why: taken again once.
+  const exited = setup({
+    dispatch: async () => {
+      throw Object.assign(new Error('The shots agent stopped with an error before it finished.'),
+        { code: 'shots_agent_failed', shotsExitCode: 1, shotsExitCause: null });
+    },
+  });
+  await assert.rejects(execute(exited), { code: 'shots_agent_failed' });
+  assert.equal(exited.calls.dispatches, 1, 'no second dispatch inside the run for an exit with no cause');
+  assert.deepEqual(exited.transitions.at(-1).patch.traceSummary.platformFault, { kind: 'agent_exit' });
+
+  // A revision that does not build is the proposal's to fix.
+  const build = setup();
+  build.dependencies.environment.preparePair = async () => {
+    throw new Error('Image build failed: npm ci exited 1');
+  };
+  await assert.rejects(execute(build), /Image build failed/);
+  assert.equal(Object.hasOwn(build.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+
+  // So is a state the copies cannot reach.
+  const skipped = setup({
+    dispatch: async (options) => {
+      controlFor(options).skipChange({ change: 'invite-suggestions', reason: 'No such state here.' });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(skipped), { code: 'shots_capture_incomplete' });
+  assert.equal(Object.hasOwn(skipped.transitions.at(-1).patch.traceSummary, 'platformFault'), false);
+});
+
+test('a platform fault is read off the error, and GitHub\'s limit waits for its reset', () => {
+  const now = Date.parse('2026-10-12T09:00:00Z');
+  const fault = (error) => orchestrator.platformFault(error, { now });
+  assert.deepEqual(fault({ shotsPlatformFault: 'database' }), { kind: 'database' });
+  assert.deepEqual(fault({ shotsPlatformFault: 'clone' }), { kind: 'clone' });
+  assert.deepEqual(fault({ code: 'shots_agent_failed', shotsExitCode: 1 }), { kind: 'agent_exit' });
+  assert.deepEqual(fault(new Error("clone failed: Cloning into '.'... | fatal: could not read Username")),
+    { kind: 'worker_bootstrap' });
+  assert.deepEqual(fault(new Error('warm-ready timeout for usernode-worker-42')), { kind: 'worker_bootstrap' });
+  // GitHub's hourly limit: once it has reset, with a minute to spare; within
+  // the hour when the reset is not known.
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 3 * 60_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 4 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited' }),
+    { kind: 'github_rate_limited', retryAt: now + 15 * 60_000 });
+  assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 5 * 3600_000 }),
+    { kind: 'github_rate_limited', retryAt: now + 65 * 60_000 }, 'never more than the hour and a little');
+
+  for (const error of [
+    null,
+    new Error('Image build failed'),
+    // The wrapper dying is structural; the worker does not retry it either.
+    new Error('warm wrapper exited before warm-ready (code=1)'),
+    { code: 'shots_capture_incomplete' },
+    { code: 'shots_change_failed' },
+    { code: 'shots_stopped' },
+    { code: 'visible_changes_conflict' },
+    { shotsPlatformFault: 'not_a_kind' },
+  ]) {
+    assert.equal(fault(error), null, String(error?.code || error?.message || error?.shotsPlatformFault || error));
+  }
 });
