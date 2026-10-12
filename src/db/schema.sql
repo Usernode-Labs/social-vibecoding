@@ -9413,6 +9413,11 @@ CREATE TABLE IF NOT EXISTS main_watch_verdicts (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_main_watch_verdicts_app ON main_watch_verdicts(app_id, state, created_at DESC);
+-- A red that the same merge commit, run again, did not keep: it passed on
+-- the confirm run or a recheck (state 'passing'), or failed twice on tests
+-- that each passed the other time (disjointReds). The proposal-pipeline
+-- topic's "Reds that passed on a re-run" counts them (topic-figures.js).
+ALTER TABLE main_watch_verdicts ADD COLUMN IF NOT EXISTS flake BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- The requests main watch filed to fix a red main (services/main-red-fix.js),
 -- one per red commit and one open per app at a time. `issue_number` is null

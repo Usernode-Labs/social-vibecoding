@@ -50,8 +50,11 @@ const HOMEROOM_FIGURES = {
     'bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal',
     'bot.builds-proposed', 'bot.first-versions', 'bot.failed-spend',
   ],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused'],
-  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away'],
+  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused', 'pipeline.reds-rerun'],
+  infra: [
+    'infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away',
+    'infra.homeroom-stalls', 'infra.homeroom-crashes',
+  ],
 };
 
 // Homeroom's own topics: the four it started with, each with its figures,

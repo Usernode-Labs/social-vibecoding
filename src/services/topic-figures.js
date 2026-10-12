@@ -451,6 +451,70 @@ const TURNED_AWAY_SQL = `
    WHERE event_type = 'session_capacity_refused'
      AND created_at >= $1::timestamptz AND created_at < $2::timestamptz`;
 
+// The check triggers that run a proposal's code again without moving it
+// (services/visuals.js CHECK_TRIGGERS): a person's "Re-run checks", the run
+// promotion asks for before merging, and the re-drives of a run a restart or
+// a stall interrupted. A commit, a sync with main, an imported head moving
+// or a conflict resolved runs different code.
+const SAME_CODE_TRIGGERS = Object.freeze(['manual-recheck', 'promote-kick', 'boot-reconcile', 'stuck-sweep']);
+
+// Reds the same code did not keep when it ran again: a flaky test or the
+// platform, not the change. A proposal's red check run counts when the next
+// run on that proposal that reached a verdict, or that ran different code,
+// passed on the same code ($6: SAME_CODE_TRIGGERS). Main's red counts once
+// per merge commit, and flaked when main watch saw that commit not keep it
+// (main_watch_verdicts.flake). Every red is in the total, run again or not,
+// so the share is a floor.
+const REDS_RERUN_SQL = `
+  WITH proposal_reds AS (
+    SELECT COALESCE(nxt.status = 'passing' AND nxt.same_code, FALSE) AS flaked
+      FROM merge_debug_runs r
+      LEFT JOIN LATERAL (
+        SELECT n.status, COALESCE(n.trigger = ANY($6::text[]), FALSE) AS same_code
+          FROM merge_debug_runs n
+         WHERE n.kind = 'checks' AND n.session_id = r.session_id
+           AND (n.started_at, n.id) > (r.started_at, r.id)
+           AND (n.status IN ('passing', 'failing') OR NOT COALESCE(n.trigger = ANY($6::text[]), FALSE))
+         ORDER BY n.started_at, n.id
+         LIMIT 1
+      ) nxt ON TRUE
+     WHERE r.kind = 'checks' AND r.status = 'failing' AND r.session_id IS NOT NULL
+       AND r.started_at >= $1::timestamptz AND r.started_at < $2::timestamptz
+       AND ($3::boolean OR (r.app_id = ANY($4::int[])) = $5::boolean)
+  ), main_reds AS (
+    SELECT bool_or(v.flake) AS flaked
+      FROM main_watch_verdicts v
+     WHERE (v.state = 'failing' OR v.flake)
+       AND v.created_at >= $1::timestamptz AND v.created_at < $2::timestamptz
+       AND ($3::boolean OR (v.app_id = ANY($4::int[])) = $5::boolean)
+     GROUP BY v.app_id, v.sha
+  )
+  SELECT ((SELECT COUNT(*) FROM proposal_reds) + (SELECT COUNT(*) FROM main_reds))::int AS reds,
+         ((SELECT COUNT(*) FROM proposal_reds WHERE flaked) + (SELECT COUNT(*) FROM main_reds WHERE flaked))::int AS flaked`;
+
+// Merged commits of Homeroom that did not become the running release in
+// time (release-watch.js records each once per kind): the release workflow
+// failed or stood still, or it published and the new build never came up,
+// as when it crashes on start. One commit is one stall, whatever its kinds.
+const RELEASE_STALLS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'sha')::int AS n FROM events e
+   WHERE e.event_type = 'release_stalled'
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// A Homeroom process that came up in a pod where one had come up before:
+// Kubernetes started the container again after its process died
+// (platform-release.recordBoot). A rollout's new pods are not counted.
+const HOMEROOM_CRASHES_SQL = `
+  SELECT COUNT(*)::int AS n FROM events b
+   WHERE b.event_type = 'platform_booted'
+     AND b.created_at >= $1::timestamptz AND b.created_at < $2::timestamptz
+     AND EXISTS (
+       SELECT 1 FROM events p
+        WHERE p.event_type = 'platform_booted'
+          AND p.metadata->>'pod' = b.metadata->>'pod'
+          AND p.created_at < b.created_at
+          AND p.created_at >= b.created_at - interval '7 days')`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -486,6 +550,9 @@ const SOURCES = Object.freeze({
   limits: { days: 7, read: (pool, w) => pool.query(LIMITS_SQL, [w.from, w.until]) },
   turnedAway: { days: 7, read: (pool, w) => pool.query(TURNED_AWAY_SQL, [w.from, w.until]) },
   mainPaused: { days: 7, scoped: true, read: (pool, w, s) => pool.query(MAIN_PAUSED_SQL, [w.from, w.until, ...scoped(s)]) },
+  redsRerun: { days: 7, scoped: true, read: (pool, w, s) => pool.query(REDS_RERUN_SQL, [w.from, w.until, ...scoped(s), SAME_CODE_TRIGGERS]) },
+  releaseStalls: { days: 7, read: (pool, w) => pool.query(RELEASE_STALLS_SQL, [w.from, w.until]) },
+  homeroomCrashes: { days: 7, read: (pool, w) => pool.query(HOMEROOM_CRASHES_SQL, [w.from, w.until]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -711,6 +778,12 @@ const FIGURES = Object.freeze({
     target: { atMost: 0 },
     measure: (r) => ({ n: r.n, secs: r.secs }),
   },
+  'pipeline.reds-rerun': {
+    source: 'redsRerun', kind: 'rate', covers: 'split', label: 'Reds that passed on a re-run', noun: 'reds',
+    tip: 'Of the red checks on proposals and on main, the share that passed when the same code ran again: a flaky test or the platform, not the change. Each one cost a re-run, and on main it can pause merges. A red nobody ran again is counted as real, so the share is at least this.',
+    target: { atMost: 0.05 },
+    measure: (r) => ({ hits: r.flaked, total: r.reds }),
+  },
   'infra.merge-to-live': {
     kind: 'duration', covers: 'split', sources: { homeroom: 'homeroomLive', others: 'mergeLive' }, label: 'Merge → live',
     tip: 'How long from a change merging to it running in production. Half are faster. A project deploys as part of the merge; Homeroom goes out in its next release, so its changes wait for one.',
@@ -743,6 +816,18 @@ const FIGURES = Object.freeze({
   'infra.turned-away': {
     source: 'turnedAway', kind: 'count', label: 'Turned away at a session cap',
     tip: 'How many times somebody asked to start or reopen a session and was refused because a cap was full: the platform’s cap on sessions running at once, or their own.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.homeroom-stalls': {
+    source: 'releaseStalls', kind: 'count', label: 'Homeroom releases that stalled',
+    tip: 'How many merges into Homeroom did not go live within ten minutes of their turn: the release build failed or stood still, or it was published and the new version never came up, as when it crashes on start. Until one is fixed, Homeroom keeps running the version before.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.homeroom-crashes': {
+    source: 'homeroomCrashes', kind: 'count', label: 'Homeroom crashes',
+    tip: 'How many times one of Homeroom’s own server processes died without being asked to stop (a crash, running out of memory, or failing its health check) and was started again in its place. A release replacing them is not counted.',
     target: { atMost: 0 },
     measure: (r) => ({ n: r.n }),
   },
@@ -1130,12 +1215,15 @@ const DEMO_MEASURES = Object.freeze({
   'pipeline.shots': { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } },
   'pipeline.vote-to-merged': { homeroom: { secs: 540, n: 18 }, others: { secs: 240, n: 13 } },
   'pipeline.main-paused': { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } },
+  'pipeline.reds-rerun': { homeroom: { hits: 6, total: 41 }, others: { hits: 1, total: 23 } },
   'infra.merge-to-live': { homeroom: { secs: 1140, n: 18 }, others: { secs: 80, n: 56 } },
   'infra.deploys-failed': { hits: 3, total: 74 },
   'infra.apps-up': { hits: 1204, total: 1213 },
   'infra.restarts': { n: 4, apps: 3 },
   'infra.limits-filled': { n: 2 },
   'infra.turned-away': { n: 3 },
+  'infra.homeroom-stalls': { n: 1 },
+  'infra.homeroom-crashes': { n: 0 },
 });
 
 /** The demo strip for `ids`. Pure. */
@@ -1155,6 +1243,7 @@ function _resetForTests() {
 
 module.exports = {
   FIGURES,
+  SAME_CODE_TRIGGERS,
   FIGURE_IDS,
   SIDES,
   COVERS,
