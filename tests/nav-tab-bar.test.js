@@ -1012,6 +1012,32 @@ test('the strip: the sections as an icon over a label, the five recent apps, the
   assert.match(css, /\.platform-strip-apps,\n\.platform-section-column \{\n  display: none;\n\}/);
 });
 
+// #4738: the names read in full (two lines before the clamp) and the list's
+// scroll is cued by a bottom fade, not a hidden scrollbar's hard cut.
+test('the strip names wrap to two lines and the list fades while more sits below (#4738)', () => {
+  const stripBlock = css.slice(css.indexOf('.platform-strip-apps:not(.hidden) {'),
+    css.indexOf('/* ── THE SECTION COLUMN'));
+  // The fade is drawn only while data-more is set: bottom edge only, so the
+  // border-top line above the apps stays solid.
+  const more = stripBlock.match(/\.platform-strip-apps\[data-more\] \{[^}]*\}/);
+  assert.ok(more, 'the fade rule exists in the desktop block');
+  assert.match(more[0], /mask-image: linear-gradient\(to bottom, #000 calc\(100% - 24px\), transparent\);/);
+  // Rows grow with a second line instead of squeezing or clipping.
+  const row = stripBlock.match(/\.platform-strip-app \{[^}]*\}/)[0];
+  assert.match(row, /min-height: 58px;/, 'a row is at least 58px');
+  assert.doesNotMatch(row, /(?<!min-)height: 58px;/, 'a row is not a fixed height any more');
+  assert.match(row, /padding: 6px 2px;/);
+  // The label: two clamped lines, centred, wrapping.
+  const label = stripBlock.match(/\.platform-strip-label \{[^}]*\}/)[0];
+  assert.match(label, /-webkit-line-clamp: 2;/);
+  assert.match(label, /white-space: normal;/);
+  assert.doesNotMatch(label, /white-space: nowrap;/);
+  // The cue is driven post-mount and the full name stays on hover.
+  const src = read(STRIP);
+  assert.match(src, /data-more=\{more \? 'true' : undefined\}/);
+  assert.match(src, /title=\{app\.name\}/);
+});
+
 test('five recent apps, newest first, once each; the app on screen leads before it was ever left', () => {
   const { stripApps, STRIP_APPS } = loadTsx(STRIP);
   assert.equal(STRIP_APPS, 5);

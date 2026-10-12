@@ -33,6 +33,15 @@
  * The root ships EMPTY and `hidden`; the apps arrive from localStorage after
  * hydration, one commit after mount, so the prerendered document and the
  * first client render agree. `hidden` goes through useHiddenClass.
+ *
+ * ── The scroll cue (#4738) ───────────────────────────────────────────
+ *
+ * On a short window the list scrolls under the settings cog with no sign of
+ * it (the scrollbar is hidden on purpose), so a bottom fade is drawn instead
+ * — `data-more`, set post-mount only when more apps sit below the fold and
+ * cleared once the list is scrolled to its end. It never ships in the
+ * prerender: the attribute is absent from the first render, so the
+ * prerendered document and the first client render still agree.
  */
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
@@ -127,6 +136,7 @@ export function StripApps() {
   const t = useMessages('core');
   const ref = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [more, setMore] = useState(false);
   const { apps } = useStoreState(recentAppsStore);
   const live = useLiveAppSlugs();
   const frameSlug = useCurrentAppSlug();
@@ -154,8 +164,35 @@ export function StripApps() {
   const items = mounted && viewer ? stripApps(apps as StripApp[], current, live) : [];
   useHiddenClass(ref, items.length === 0);
 
+  // THE SCROLL CUE (#4738): the fade shows only while apps sit below the
+  // fold. Keyed on the rendered slugs so a change of list re-checks; the
+  // ResizeObserver covers a window resize and a row growing to two lines.
+  // The root is `display: none` when the strip is hidden, so the check reads
+  // zero sizes there and clears the fade. Absent from the prerender.
+  const slugKey = items.map((a) => a.slug).join();
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const check = () => setMore(el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    check();
+    el.addEventListener('scroll', check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', check);
+      ro.disconnect();
+    };
+  }, [slugKey]);
+
   return (
-    <div ref={ref} id="platform-strip-apps" className="platform-strip-apps hidden" role="group" aria-label={t('core:stripApps.label')}>
+    <div
+      ref={ref}
+      id="platform-strip-apps"
+      className="platform-strip-apps hidden"
+      role="group"
+      aria-label={t('core:stripApps.label')}
+      data-more={more ? 'true' : undefined}
+    >
       {items.map((app) => {
         const running = live.includes(app.slug);
         const lit = app.slug === on;
