@@ -860,7 +860,11 @@ function questionLead(line, it, dm) {
  * ended: a build that ran too long or changed nothing is said as that.
  */
 function buildFailedCause(reason) {
-  const r = String(reason || '').replace(/\s*\(finished after a restart\)/g, '');
+  // Read from the reason alone: what a failed turn was last doing and its
+  // final message follow it (homeroom-bot-live.js failureDetail), and an
+  // agent that wrote "the server would not start" did not fail to start.
+  const r = String(reason || '').split(/; (?:last activity|it last said):/)[0]
+    .replace(/\s*\(finished after a restart\)/g, '');
   const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
   if (restarts) return { cause: 'restarts', times: Number(restarts[1]) };
   if (/ran past its time limit/.test(r)) return { cause: 'time' };
@@ -983,6 +987,9 @@ function dmText(kind, dm, context) {
     case 'followup_ask':
       return `${line}\n\nI have a question before I update your change:\n\n${clip(dm.question, 2000)}`;
     case 'spec':
+      // A first version tried once more on its own (homeroom-bot.js
+      // buildLive): the one start of a build that is a message of its own.
+      if (dm.retry) return `${line}\n\nMy first try at building ${it} didn't finish, so I'm trying once more from the same plan. I'll message you here when it's ready to try.`;
       return `${line}\n\nI'm building ${it} now. I'll message you here when it's ready to try.`;
     // #20 (WP3): the change's card under the message is its link (cardsFor
     // attaches it whenever the news names its session), so the text points
@@ -1180,6 +1187,9 @@ const CARD_ONLY = new Set(['spec', 'held_proposals_per_app', 'held_proposals_tot
 
 /** Pure: whether a post's news stays on the card rather than being a DM message (CARD_ONLY). */
 function cardOnly(kind, dm = null) {
+  // Trying once more is news the card alone would not say: it reads
+  // "building" either way.
+  if (kind === 'spec' && dm?.retry) return false;
   if (CARD_ONLY.has(kind)) return true;
   // A change's red checks handed to a person: the change's own discussion
   // says so, where the group votes on it (homeroom-bot.js runChecksFix).
@@ -1323,7 +1333,7 @@ async function relayIssuePost({
   const shown = await cardShown(pool, requester.userId, app.id, issueNumber);
   // B4: one card follows a request through every look, so while it has one,
   // that card says it, wherever it sits.
-  if (shown && CARD_SAYS.has(kind)) {
+  if (shown && CARD_SAYS.has(kind) && !dm.retry) {
     return {
       conversationId: shown.conversationId, messageId: shown.messageId, duplicate: true,
       userId: requester.userId, username: requester.username, card: true,

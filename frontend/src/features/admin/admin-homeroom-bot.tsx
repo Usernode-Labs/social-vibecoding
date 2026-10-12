@@ -187,6 +187,9 @@ interface Run {
   reason: string | null;
   cap_suppressed: string | null;
   budget_stop: string | null;
+  // A held ready verdict acted on again with no read of its own: the run it
+  // reused (homeroom-bot.js reuseHeldVerdict).
+  reused_run_id?: number | null;
   rating: 'yes' | 'no' | null;
   rating_note: string | null;
   rated_at: string | null;
@@ -1732,6 +1735,7 @@ function HomeroomBotSection() {
                             {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                           </span>
                           {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
+                          {run.reused_run_id ? <span className={`${AdminUI.badge.outline} ml-1`} data-homeroom-bot-reused={run.reused_run_id}>reused</span> : null}
                           {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
                           <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                         </button>
@@ -1781,6 +1785,7 @@ function HomeroomBotSection() {
                               <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                               {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
                               {run.cap_suppressed ? <span data-run-held={run.cap_suppressed}>{heldLine(run.cap_suppressed, payload?.caps)}</span> : null}
+                              {run.reused_run_id ? <span>{`reused run #${run.reused_run_id}'s verdict: the request had not changed`}</span> : null}
                               {run.model ? <span>{run.model}</span> : null}
                               {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}
                               {run.duration_ms != null ? <span>{Math.round(run.duration_ms / 1000)}s</span> : null}

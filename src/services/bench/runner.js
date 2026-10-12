@@ -1585,7 +1585,8 @@ function recoveredBuild({ session, result = {}, timedOut = false, specMd: given 
     error: landed ? null
       : timedOut ? `the build ran past its time limit${RECOVERED_NOTE}`
         : turnFailed ? `the build turn failed (${turnFailed})${RECOVERED_NOTE}`
-          : `the build produced no change to propose${RECOVERED_NOTE}`,
+          : r.pushFailed ? `couldn't push the build's commit (${r.pushFailed})${RECOVERED_NOTE}`
+            : `the build produced no change to propose${RECOVERED_NOTE}`,
   };
 }
 
