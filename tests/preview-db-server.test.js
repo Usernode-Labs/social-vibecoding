@@ -72,10 +72,11 @@ function load({
   for (const [key, id] of Object.entries(ids)) orig[key] = require.cache[id];
 
   const calls = [];
+  const clients = [];
   const logs = [];
   const answer = (host, db, sql, via) => {
     calls.push({ via, host, db, sql });
-    const failure = failures.find((f) => (!f.host || f.host === host) && f.match.test(sql) && (f.times ?? Infinity) > 0);
+    const failure = failures.find((f) => f.match && (!f.host || f.host === host) && f.match.test(sql) && (f.times ?? Infinity) > 0);
     if (failure) {
       failure.times = (failure.times ?? Infinity) - 1;
       throw failure.error(sql);
@@ -110,12 +111,13 @@ function load({
     constructor(config) {
       super();
       const url = new URL(config.connectionString);
+      clients.push({ host: url.hostname, search: url.search, ssl: config.ssl });
       this.host = url.hostname;
       this.db = url.pathname.slice(1);
       this.session = Symbol('session');
     }
     async connect() {
-      const failure = failures.find((f) => f.connect && (!f.host || f.host === this.host));
+      const failure = failures.find((f) => (f.connect || f.connectOnly) && (!f.host || f.host === this.host));
       if (failure) throw failure.error('connect');
     }
     async query(config) {
@@ -146,7 +148,7 @@ function load({
   };
   const on = (host) => calls.filter((c) => c.host === host);
   const sqlOn = (host) => on(host).filter((c) => c.sql).map((c) => c.sql);
-  return { dbManager, calls, logs, restore, on, sqlOn };
+  return { dbManager, calls, clients, logs, restore, on, sqlOn };
 }
 
 const SOURCE = 'app_demo';
@@ -437,7 +439,7 @@ test('the preview URL is one connection for every client: routing and credential
   for (const [query, name] of [
     ['?port=5999', 'port'], ['?host=main-db.example.test', 'host'], ['?user=postgres', 'user'],
     [`?password=${PREVIEW_PASSWORD}x`, 'password'], ['?dbname=usernode', 'dbname'], ['?options=-c%20x%3D1', 'options'],
-    ['?sslmode=require&port=5999', 'port'], ['?application_name=x', 'application_name'],
+    ['?sslmode=disable&port=5999', 'port'], ['?application_name=x', 'application_name'],
   ]) {
     const h = load({ preview: `${base}${query}` });
     try {
@@ -454,9 +456,7 @@ test('the preview URL is one connection for every client: routing and credential
   }
   for (const bad of [
     `${base}?sslmode=whatever`,
-    `${base}?sslmode=require&sslmode=disable`,
-    // node-postgres knows this one; libpq answers `invalid sslmode value`.
-    `${base}?sslmode=no-verify`,
+    `${base}?sslmode=disable&sslmode=disable`,
     `postgres://:${PREVIEW_PASSWORD}@${PREVIEW_HOST}/postgres`,
     // Two hosts to libpq, one unresolvable name to node-postgres.
     `postgres://previewadmin:${PREVIEW_PASSWORD}@10.0.0.1,10.0.0.2:5432/postgres`,
@@ -477,15 +477,83 @@ test('the preview URL is one connection for every client: routing and credential
       assert.equal(h.calls.filter((c) => /^CREATE /.test(c.sql)).length, 0, 'refused before anything is created');
     } finally { h.restore(); }
   }
-  // sslmode is the one parameter both clients read alike. It is kept, for
-  // the platform and in the URL a preview is handed.
-  const ssl = load({ preview: `${base}?sslmode=require` });
+});
+
+test('the preview server is reached without TLS by every client, and any other sslmode is refused by name', async () => {
+  const base = `postgres://previewadmin:${PREVIEW_PASSWORD}@${PREVIEW_HOST}:5432/postgres`;
+  for (const mode of ['allow', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify']) {
+    const h = load({ preview: `${base}?sslmode=${mode}` });
+    try {
+      await assert.rejects(h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), (err) => {
+        assert.match(err.message, new RegExp(`STAGING_DB_ADMIN_URL: sslmode=${mode} is not supported`));
+        assert.match(err.message, /leave sslmode out or set sslmode=disable/);
+        assert.equal(err.previewDatabaseServerFault, true);
+        return true;
+      });
+      assert.equal(h.calls.filter((c) => c.via === 'pg_dump' || /^CREATE /.test(c.sql)).length, 0,
+        `${mode}: nothing is read from production and nothing is created`);
+    } finally { h.restore(); }
+  }
+  const odd = load({ preview: `${base}?sslmode=${PREVIEW_PASSWORD}` });
   try {
-    const cloned = await ssl.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
-    const url = new URL(ssl.dbManager.connectionUrl(TARGET, cloned.password, { server: cloned.server }));
-    assert.equal(url.search, '?sslmode=require');
-    assert.equal(url.hostname, PREVIEW_HOST);
-  } finally { ssl.restore(); }
+    await assert.rejects(odd.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), (err) => {
+      assert.match(err.message, /this sslmode is not supported/);
+      assert.doesNotMatch(err.message, new RegExp(PREVIEW_PASSWORD), 'an unknown value is not echoed');
+      return true;
+    });
+  } finally { odd.restore(); }
+
+  // Absent or `disable`: one contract for the three clients, whatever TLS
+  // settings are in the platform's own environment.
+  const saved = { PGSSLMODE: process.env.PGSSLMODE, PGSSLROOTCERT: process.env.PGSSLROOTCERT };
+  process.env.PGSSLMODE = 'verify-full';
+  process.env.PGSSLROOTCERT = '/etc/ca.crt';
+  try {
+    for (const query of ['', '?sslmode=disable']) {
+      const h = load({ preview: `${base}${query}` });
+      try {
+        const cloned = await h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true });
+        const there = h.clients.filter((c) => c.host === PREVIEW_HOST);
+        assert.ok(there.length >= 2);
+        for (const client of there) {
+          assert.equal(client.ssl, false, 'node-postgres is told outright: no TLS');
+          assert.equal(client.search, '', 'and is given no sslmode to read its own way');
+        }
+        for (const call of h.on(PREVIEW_HOST).filter((c) => c.env)) {
+          assert.equal(call.env.PGSSLMODE, 'disable', `${call.via}: libpq is told outright`);
+          assert.equal(call.env.PGSSLROOTCERT, undefined);
+        }
+        const url = new URL(h.dbManager.connectionUrl(TARGET, cloned.password, { server: cloned.server }));
+        assert.equal(url.search, '', 'the preview\'s own pool gets a URL with no sslmode');
+        assert.equal(url.hostname, PREVIEW_HOST);
+        // The main server's clients are configured as they always were.
+        for (const client of h.clients.filter((c) => c.host === MAIN_HOST)) assert.equal(client.ssl, undefined);
+        for (const call of h.on(MAIN_HOST).filter((c) => c.env)) assert.equal(call.env.PGSSLMODE, 'verify-full', 'inherited, as before');
+      } finally { h.restore(); }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('a preview server node-postgres cannot connect to costs no production dump and returns no clone', async () => {
+  // psql reaches it, node-postgres does not: what a TLS setting the two
+  // read differently looked like.
+  const refused = () => new Error('self-signed certificate');
+  for (const templates of [{}, { [PREVIEW_HOST]: fresh() }]) {
+    const h = load({ templates, failures: [{ host: PREVIEW_HOST, connectOnly: true, error: refused }] });
+    try {
+      await assert.rejects(h.dbManager.cloneDatabase(SOURCE, TARGET, { viaTemplate: true }), (err) => {
+        assert.match(err.message, /self-signed certificate/);
+        assert.equal(err.previewDatabaseServerFault, true);
+        return true;
+      });
+      assert.equal(h.calls.filter((c) => c.via === 'pg_dump').length, 0, 'production is not dumped');
+      assert.equal(h.calls.filter((c) => /^CREATE /.test(c.sql)).length, 0, 'nothing is created');
+      await assert.rejects(h.dbManager.prepareStagingCloneSource(SOURCE, { sourceId: 'run-1' }), /self-signed certificate/);
+      assert.equal(h.calls.filter((c) => c.via === 'pg_dump').length, 0, 'nor for a shots run');
+    } finally { h.restore(); }
+  }
 });
 
 test('a preview-side child process takes its connection from the URL alone, whatever libpq variables are around', async () => {
@@ -504,7 +572,8 @@ test('a preview-side child process takes its connection from the URL alone, what
     assert.ok(preview.some((c) => c.via === 'pg_restore') && preview.some((c) => c.via === 'psql'));
     for (const call of preview) {
       const pg = Object.keys(call.env).filter((key) => /^PG/i.test(key)).sort();
-      assert.deepEqual(pg, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGUSER'], `${call.via}: only what the URL says`);
+      assert.deepEqual(pg, ['PGDATABASE', 'PGHOST', 'PGPASSWORD', 'PGPORT', 'PGSSLMODE', 'PGUSER'], `${call.via}: only what the URL says`);
+      assert.equal(call.env.PGSSLMODE, 'disable');
       assert.equal(call.env.PGHOST, PREVIEW_HOST);
       assert.equal(call.env.PGUSER, 'previewadmin');
       assert.equal(call.env.PATH, process.env.PATH, 'the rest of the environment is kept');

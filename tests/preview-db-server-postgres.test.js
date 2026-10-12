@@ -465,31 +465,103 @@ test('an administrator this module cannot name in SQL is refused before anything
   assert.deepEqual(await names(main, `%${tok}%`), [source]);
 });
 
-test('every sslmode the setting accepts is one the real PostgreSQL client knows', async (t) => {
-  const { execFile } = require('node:child_process');
-  const run = (mode) => new Promise((resolve) => {
-    const url = new URL(PREVIEW);
-    execFile('psql', ['-X', '-Atc', 'select 1'], {
-      env: { PATH: process.env.PATH, PGHOST: url.hostname, PGPORT: url.port || '5432', PGUSER: 'postgres', PGPASSWORD: 'x', PGDATABASE: 'postgres', PGSSLMODE: mode, PGCONNECT_TIMEOUT: '3' },
-    }, (err, stdout, stderr) => resolve(`${stderr}`));
-  });
-  if (/ENOENT/.test(await run('disable').catch((err) => String(err)))) { t.skip('psql is not on PATH'); return; }
-  const saved = { url: process.env.STAGING_DB_ADMIN_URL, admin: process.env.DB_ADMIN_URL };
-  process.env.DB_ADMIN_URL = 'postgres://usernode:x@main.example.test:5432/usernode';
-  const dbManager = require('../src/services/db-manager');
+// ─── TLS: one contract for the three clients ────────────────────────────
+//
+// Two more throwaway PostgreSQL servers, both with a self-signed
+// certificate: one that offers TLS and also takes plain connections
+// (TEST_PREVIEW_TLS_DATABASE_URL, by default 127.0.0.1:5434) and one that
+// takes TLS only (TEST_PREVIEW_TLSONLY_DATABASE_URL, by default
+// 127.0.0.1:5435). Skipped when they are not running, required when the
+// variables are set.
+const TLS_OFFERED = process.env.TEST_PREVIEW_TLS_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5434/postgres';
+const TLS_ONLY = process.env.TEST_PREVIEW_TLSONLY_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5435/postgres';
+
+async function tlsAdmin(t, dsn, required) {
+  const client = new pg.Client({ connectionString: dsn, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 3000 });
+  client.on('error', () => {});
+  try { await client.connect(); } catch (err) {
+    if (required) throw err;
+    t.skip('no TLS PostgreSQL server; set TEST_PREVIEW_TLS_DATABASE_URL and TEST_PREVIEW_TLSONLY_DATABASE_URL to require this check');
+    return null;
+  }
+  t.after(() => client.end().catch(() => {}));
+  return client;
+}
+
+test('a server that offers TLS: this module, its child processes and the preview\'s own pool all connect the same, plain way', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const tls = await tlsAdmin(t, TLS_OFFERED, !!process.env.TEST_PREVIEW_TLS_DATABASE_URL);
+  if (!tls) return;
+  const { main, dbManager, tok, source, names, wipe } = ctx;
+  // (TLS settings in the platform's own environment are covered with stubs:
+  // here they would also reach the main server's children, which inherit
+  // the environment as before.)
   try {
-    for (const mode of ['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']) {
-      process.env.STAGING_DB_ADMIN_URL = `postgres://previewadmin:x@preview.example.test:5432/postgres?sslmode=${mode}`;
-      assert.equal(new URL(dbManager.connectionUrl('app_x_staging_s1_abc123', 'pw', { server: 'preview' })).searchParams.get('sslmode'), mode);
-      assert.doesNotMatch(await run(mode), /invalid sslmode value/, mode);
-    }
-    process.env.STAGING_DB_ADMIN_URL = 'postgres://previewadmin:x@preview.example.test:5432/postgres?sslmode=no-verify';
-    assert.throws(() => dbManager.connectionUrl('app_x_staging_s1_abc123', 'pw', { server: 'preview' }), /unknown sslmode/);
-    assert.match(await run('no-verify'), /invalid sslmode value/, 'which is why it is refused');
-  } finally {
-    for (const [key, env] of [['url', 'STAGING_DB_ADMIN_URL'], ['admin', 'DB_ADMIN_URL']]) {
-      if (saved[key] === undefined) delete process.env[env]; else process.env[env] = saved[key];
-    }
+  for (const query of ['', '?sslmode=disable']) {
+    process.env.STAGING_DB_ADMIN_URL = `${TLS_OFFERED}${query}`;
+    dbManager._resetPreviewServerStateForTest();
+    const target = `${source}_staging_s98${query ? 2 : 1}_abc123`;
+    // What each client did is read from the server: pg_stat_ssl, sampled
+    // while the clone runs, for every connection that is not this test's.
+    const seen = [];
+    const sample = setInterval(() => {
+      tls.query(`SELECT a.application_name AS app, s.ssl FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid)
+                  WHERE a.pid <> pg_backend_pid() AND a.backend_type = 'client backend'`)
+        .then((r) => seen.push(...r.rows)).catch(() => {});
+    }, 5);
+    let cloned;
+    try { cloned = await dbManager.cloneDatabase(source, target, { viaTemplate: true }); } finally { clearInterval(sample); }
+    assert.equal(cloned.server, 'preview');
+    assert.equal(cloned.via, 'template', 'the fast path, not a production dump per build');
+    assert.ok(seen.length > 0, 'connections were observed');
+    assert.deepEqual([...new Set(seen.map((row) => row.ssl))], [false], 'psql, pg_restore and node-postgres all connected without TLS');
+    assert.ok(seen.some((row) => row.app === 'social-template-clone') && seen.some((row) => row.app !== 'social-template-clone'),
+      'both kinds of client were among them');
+
+    // The URL a preview is handed, used the way a generated app uses it.
+    const url = dbManager.connectionUrl(target, cloned.password, { server: cloned.server });
+    assert.equal(new URL(url).search, '');
+    const pool = new pg.Pool({ connectionString: url });
+    try {
+      const row = (await pool.query('SELECT (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS ssl, count(*)::int AS n FROM notes')).rows[0];
+      assert.deepEqual(row, { ssl: false, n: 2 });
+    } finally { await pool.end(); }
+    await dbManager.dropDatabase(target, { strict: true });
+  }
+  assert.deepEqual(await names(main, `%${tok}%`), [source]);
+  } finally { await wipe(tls); }
+});
+
+test('a server that takes TLS only is refused by all three clients alike, before production is read', async (t) => {
+  const ctx = await setup(t);
+  if (!ctx) return;
+  const tls = await tlsAdmin(t, TLS_ONLY, !!process.env.TEST_PREVIEW_TLSONLY_DATABASE_URL);
+  if (!tls) return;
+  const { main, dbManager, tok, source, names } = ctx;
+  process.env.STAGING_DB_ADMIN_URL = TLS_ONLY;
+  dbManager._resetPreviewServerStateForTest();
+  const before = (await main.query('SELECT xact_commit + xact_rollback AS n FROM pg_stat_database WHERE datname = $1', [source])).rows[0].n;
+  const target = `${source}_staging_s991_abc123`;
+  await assert.rejects(dbManager.cloneDatabase(source, target, { viaTemplate: true }), (err) => {
+    assert.equal(err.previewDatabaseServerFault, true);
+    assert.match(err.message, /pg_hba\.conf rejects connection|no encryption/i);
+    return true;
+  });
+  await assert.rejects(dbManager.prepareStagingCloneSource(source, { sourceId: `run-${tok}` }), /pg_hba\.conf rejects connection|no encryption/i);
+  await main.query('SELECT pg_stat_force_next_flush()').catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const after = (await main.query('SELECT xact_commit + xact_rollback AS n FROM pg_stat_database WHERE datname = $1', [source])).rows[0].n;
+  assert.equal(String(after), String(before), 'nothing connected to the production source: no dump, no discovery');
+  assert.deepEqual(await names(tls, `%${tok}%`), [], 'nothing was made there');
+  assert.deepEqual(await names(main, `%${tok}%`), [source]);
+
+  // And the modes that would have made only one client work are refused
+  // by name.
+  for (const mode of ['require', 'verify-ca', 'verify-full', 'prefer', 'allow', 'no-verify']) {
+    process.env.STAGING_DB_ADMIN_URL = `${TLS_ONLY}?sslmode=${mode}`;
+    await assert.rejects(dbManager.cloneDatabase(source, target, { viaTemplate: true }),
+      new RegExp(`sslmode=${mode} is not supported`));
   }
 });
 

@@ -326,8 +326,8 @@ The chart does not create the server. It needs:
   both are in place a preview builds and then cannot reach its database.
 - **One address that resolves the same from both places.** A preview is
   handed the URL's host and port with its own role and password, so use the
-  server's fully qualified Service name, not a Pod address. An `sslmode`
-  query parameter in the URL is passed on.
+  server's fully qualified Service name, not a Pod address. The URL it
+  receives carries no `sslmode`: it connects without TLS.
 - **Enough `max_connections` for the previews.** Each preview database is
   capped at `STAGING_DB_CONNECTION_LIMIT` (12). The connection-pressure pass
   reads the preview server's own budget and reclaims idle previews there at
@@ -352,11 +352,22 @@ known cost of the shared-block copy.
    (`postgres://<user>:<password>@<host>:<port>/<maintenance database>`). It
    carries a password: keep it in the Secret, never in plaintext values.
    The host, port, user, password and database go in the address. The only
-   query parameter accepted is `sslmode`, with one of libpq's six values; a
+   query parameter accepted is `sslmode`; a
    URL with any other parameter (`?host=`, `?port=`, `?user=`, `?password=`,
    `?options=` and so on) is refused as a whole and preview builds fail until
    it is corrected, because the platform's two database clients would read
-   such a URL as two different servers. For the same reason the address names
+   such a URL as two different servers. **`sslmode` may only be `disable`
+   (or left out): the preview server is reached without TLS**, by the
+   platform, by its `psql`, `pg_dump` and `pg_restore` processes and by each
+   preview, which is how the main server is reached today. Every other mode
+   is refused by name. The reason is that the three clients do not agree on
+   what a mode means (node-postgres verifies the certificate for `require`
+   where libpq does not) or on where the certificate authority comes from,
+   and a server only one of them could reach produced previews that could
+   not open their database. The server must therefore accept plain
+   connections from the platform and the app namespace; one that takes TLS
+   only fails every build, before production is read. TLS with a shared
+   certificate authority for all three clients is a follow-up. For the same reason the address names
    exactly one host, as a DNS name or an IPv4 address (no host list, no IPv6
    literal, no socket path), and the user is made of letters, digits and
    underscores: restored objects are handed from that user to each preview's
@@ -407,9 +418,15 @@ turns the shared-block attempt off without moving anything.
      preview, build or shots run found`. It counts every preview runtime
      that exists, in any state (running, starting, restarting, stopped),
      whose labels say its database is there; every runtime it could not
-     read; every build under way on any platform Pod (a pending check in its
-     build phase); every unfinished before & after shots run; and every
-     shots database still on the server. Wait for the second line on two
+     read; the builds it can see (sessions whose checks are pending in their
+     build phase, on any platform Pod, and this Pod's own builds); every
+     unfinished before & after shots run; and every shots database still on
+     the server. It does not see every build: a rebuild another Pod starts
+     from recovery, for a proposal whose checks commit is already recorded,
+     is in neither count. That is why the rollout comes first (a Pod with the
+     drain setting builds on the main server, so an unseen build adds nothing
+     here) and why one empty line is not enough (a build that was under way
+     shows up as a runtime on the next pass). Wait for the second line on two
      consecutive passes after the rollout finished.
    - **A look at the server itself**: `pg_stat_activity` there shows no
      client on an `app_…` database. This is supporting evidence only. A

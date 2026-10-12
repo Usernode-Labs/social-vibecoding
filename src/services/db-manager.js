@@ -110,6 +110,9 @@ function connectionUrl(dbName, password, { server = PRIMARY_SERVER } = {}) {
   // preview connect as the administrator whatever role the authority names.
   // The role and password above are the only credentials this URL carries.
   for (const key of ['user', 'password']) admin.searchParams.delete(key);
+  // A preview-server URL carries no sslmode: the preview's own pool connects
+  // plainly, as this module does (see previewAdminUrl).
+  if (serverKey(server) !== PRIMARY_SERVER) admin.search = '';
   return admin.toString();
 }
 
@@ -188,9 +191,25 @@ function primaryAdminUrl() {
 // IPv4 address: libpq reads `a,b` as two hosts to try and node-postgres as
 // one name that does not resolve. A user name this module can write into SQL
 // unquoted (SAFE_IDENT): restored objects are owned by that user and are
-// handed to each preview's role by name. And an sslmode both clients know:
-// the six libpq values, not node-postgres's own `no-verify`.
-const PREVIEW_URL_SSLMODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full']);
+// handed to each preview's role by name.
+//
+// And NO TLS, which is what the main server's connections are today (its
+// URL carries no sslmode, the platform's pool and every app's pool are made
+// from the bare URL, and nothing configures a certificate). Three clients
+// use a preview database: this module through node-postgres, its psql,
+// pg_dump and pg_restore children through libpq, and the preview's own
+// pool through the URL it is handed. They do not mean the same thing by one
+// `sslmode`: node-postgres reads `prefer`, `require` and `verify-ca` as
+// full verification where libpq does not verify at all, and each finds its
+// certificate authority somewhere else. With `sslmode=require` and a
+// self-signed server certificate psql connected, node-postgres did not, and
+// a preview was handed a URL it could not use. Until there is one way to
+// give all three the same trust, the connection is plain for all three:
+// the URL may say `sslmode=disable` or nothing, any other mode is refused
+// by name, and every client is told so explicitly rather than left to its
+// own default (PGSSLMODE=disable for the children, `ssl: false` for
+// node-postgres, no sslmode in the URL a preview receives).
+const KNOWN_SSLMODES = new Set(['allow', 'prefer', 'require', 'verify-ca', 'verify-full', 'no-verify']);
 const PREVIEW_URL_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
 function previewAdminUrl() {
@@ -211,7 +230,12 @@ function previewAdminUrl() {
       throw new Error(`${PREVIEW_ADMIN_URL_ENV} has an unsupported parameter ${JSON.stringify(key.slice(0, 40))}: `
         + 'the host, port, user, password and database go in the address, and only sslmode may follow it');
     }
-    if (!PREVIEW_URL_SSLMODES.has(setting)) throw new Error(`${PREVIEW_ADMIN_URL_ENV} has an unknown sslmode`);
+    if (setting !== 'disable') {
+      // Name the mode when it is one of the known words; never echo a value.
+      const mode = KNOWN_SSLMODES.has(setting) ? `sslmode=${setting}` : 'this sslmode';
+      throw new Error(`${PREVIEW_ADMIN_URL_ENV}: ${mode} is not supported. The preview database server is reached `
+        + 'without TLS, as the main server is: leave sslmode out or set sslmode=disable');
+    }
   }
   if (parsed.searchParams.getAll('sslmode').length > 1) throw new Error(`${PREVIEW_ADMIN_URL_ENV} sets sslmode more than once`);
   parsed.hash = '';
@@ -320,7 +344,10 @@ function postgresEnv(dbName, server = PRIMARY_SERVER) {
     PGUSER: decodeURIComponent(admin.username || DB_USER),
     PGPASSWORD: decodeURIComponent(admin.password || ''),
     PGDATABASE: dbName,
-    ...(admin.searchParams.get('sslmode') ? { PGSSLMODE: admin.searchParams.get('sslmode') } : {}),
+    // The preview server: plain, said outright (libpq's own default would
+    // try TLS first and the other two clients would not).
+    ...(serverKey(server) !== PRIMARY_SERVER ? { PGSSLMODE: 'disable' }
+      : admin.searchParams.get('sslmode') ? { PGSSLMODE: admin.searchParams.get('sslmode') } : {}),
   };
 }
 
@@ -854,6 +881,7 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
 }
 
 async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
+  await assertPreviewServerReachable(server);
   if (viaTemplate && stagingTemplatesEnabled()) {
     const viaTmpl = await withTemplateLock(sourceDb, async () => {
       const ensured = await ensureStagingTemplate(sourceDb, { server }).catch((err) => {
@@ -867,6 +895,10 @@ async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
         const result = await cloneFromTemplate(ensured.template, targetDb, { server });
         return { ...result, via: 'template', templateRefreshed: ensured.refreshed, templateStale: ensured.stale };
       } catch (err) {
+        // The direct copy is another way to make the clone, not another way
+        // to reach the server: if the preview server stopped taking this
+        // module's connections, dumping production to it helps nobody.
+        if (err?.previewServerConnectFailed) throw err;
         log.warn('db-manager', 'Clone from staging template failed — cloning directly', {
           sourceDb, targetDb, template: ensured.template, err: err.message,
         });
@@ -1415,6 +1447,7 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
   // (cloneFromPreparedSource reads the server back from what this returns).
   const server = previewCreateServer();
   const inAdmin = adminExecutor(server);
+  await assertPreviewServerReachable(server);
   return withTemplateLock(sourceDb, async () => {
     // The template and its stamp, read again. A missing template rebuilds
     // here; a template with no provenance is a real problem and throws.
@@ -1792,6 +1825,37 @@ async function roleExists(roleName) {
   }
 }
 
+// What node-postgres is given for a server. The main server: its URL, as
+// always. The preview server: its URL without a query, and `ssl: false`
+// said outright, so that neither an sslmode nor a PGSSLMODE in the
+// platform's environment decides how this client connects.
+function pgClientConfig(url, server) {
+  if (serverKey(server) === PRIMARY_SERVER) return { connectionString: url.toString() };
+  const plain = new URL(url.toString());
+  plain.search = '';
+  return { connectionString: plain.toString(), ssl: false };
+}
+
+// The preview server could not be CONNECTED to by node-postgres. Marked so
+// that a build stops there (cloneDatabaseOn) instead of trying another way
+// to the same server.
+function previewConnectFailure(err, server) {
+  if (err && typeof err === 'object' && serverKey(server) !== PRIMARY_SERVER) err.previewServerConnectFailed = true;
+  return fromPreviewServer(err, server);
+}
+
+// Before a build reads anything from production on the preview server's
+// behalf: can BOTH clients reach it? psql is the first thing every path
+// runs there anyway; node-postgres is not, and a server only psql can reach
+// used to cost a full production dump before the build failed, or, worse,
+// produced a clone whose URL nothing could use. One short connection.
+async function assertPreviewServerReachable(server) {
+  if (serverKey(server) === PRIMARY_SERVER) return;
+  const maintenanceDb = adminDatabase(server);
+  await withDatabaseConnection(maintenanceDb, (run) => run(maintenanceDb, 'SELECT 1'), { server });
+  await execInDb('SELECT 1', { server, tuplesOnly: true });
+}
+
 // Match the existing psql executor's discovery format while reusing a single
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
@@ -1803,7 +1867,7 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
   try { url = adminConnection(server); } catch (err) { throw fromPreviewServer(err, server); }
   url.pathname = `/${dbName}`;
   const client = new Client({
-    connectionString: url.toString(),
+    ...pgClientConfig(url, server),
     connectionTimeoutMillis: 30000,
     statement_timeout: timeoutMs,
     query_timeout: timeoutMs,
@@ -1813,7 +1877,7 @@ async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000, ser
   let failed = false;
   client.on('error', (err) => { lost = err; });
   try {
-    await client.connect();
+    try { await client.connect(); } catch (err) { throw previewConnectFailure(err, server); }
     return await fn(singleConnection(async (targetDb, sql, opts = {}) => {
       if (targetDb !== dbName) throw new Error('Clone connection database mismatch');
       if (lost) throw lost;
@@ -2469,7 +2533,7 @@ function previewServerQueryable() {
       const url = adminConnection(PREVIEW_SERVER);
       url.pathname = `/${adminDatabase(PREVIEW_SERVER)}`;
       const client = new Client({
-        connectionString: url.toString(),
+        ...pgClientConfig(url, PREVIEW_SERVER),
         connectionTimeoutMillis: 10_000,
         statement_timeout: 30_000,
         query_timeout: 30_000,

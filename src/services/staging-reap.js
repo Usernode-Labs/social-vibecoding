@@ -1074,15 +1074,21 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
 //     restarting, stopped), whose labels say its database is there. A
 //     runtime that is restarting today is serving again tomorrow;
 //   - every session row that names a runtime it could not read;
-//   - every build under way, from the database (a pending check in its
-//     build phase), so builds run by other platform replicas count too, and
-//     from this process's own map;
+//   - the builds it can see: sessions whose checks are pending in their
+//     build phase (a row, so other platform replicas' builds of that kind
+//     count), and this process's own builds. NOT every build: a rebuild
+//     another replica starts from recovery while a checks commit is already
+//     pinned leaves the phase empty and is in neither;
 //   - every before & after shots run that has not finished, and every shots
 //     database still on the server.
 //
-// What it CANNOT see: a platform replica that has not yet been restarted
-// with the drain setting keeps making previews on the preview server, and a
-// build it starts a moment after this count is not in it. So the line this
+// What it CANNOT see: the rebuilds just named, and a platform replica that
+// has not yet been restarted with the drain setting, which keeps making
+// previews on the preview server; a build it starts a moment after this
+// count is not in it. A replica that HAS the drain setting builds on the
+// main server, so once the rollout is over an unseen build no longer adds a
+// dependent, and one that finished shows up as a labelled runtime on the
+// next pass: hence two passes. So the line this
 // logs is "none found", not "safe to remove": the procedure in
 // docs/kubernetes-operations.md also requires the rollout that set the
 // drain to have finished, and the line to hold for two passes. Logged every
