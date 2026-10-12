@@ -5,6 +5,7 @@
 // view model.
 
 const state = require('./shots-state');
+const shotsFiles = require('./shots-files');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 const PUBLIC_STATES = new Set([
@@ -41,17 +42,24 @@ function cleanClaims(value) {
 // inside JSON (\"Continue\"); people should read the quotation mark.
 const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
 
+// A result carries `conditions` only when the shots agent did something to
+// both builds to reach the change: an API GET it held or made fail, or
+// sample files it uploaded, each from a fixed shape (shots-files.condition).
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
-    .map((result) => ({
-      id: String(result.id),
-      status: result.status === 'ready' || result.status === 'failed' ? result.status : 'skipped',
-      reason: result.status === 'ready' || typeof result.reason !== 'string'
-        ? null : unescapeQuotes(result.reason).slice(0, 1000),
-      note: result.status !== 'ready' || typeof result.note !== 'string'
-        ? null : unescapeQuotes(result.note).slice(0, 500),
-    }));
+    .map((result) => {
+      const conditions = shotsFiles.cleanConditions(result.conditions);
+      return {
+        id: String(result.id),
+        status: result.status === 'ready' || result.status === 'failed' ? result.status : 'skipped',
+        reason: result.status === 'ready' || typeof result.reason !== 'string'
+          ? null : unescapeQuotes(result.reason).slice(0, 1000),
+        note: result.status !== 'ready' || typeof result.note !== 'string'
+          ? null : unescapeQuotes(result.note).slice(0, 500),
+        ...(conditions.length ? { conditions } : {}),
+      };
+    });
 }
 
 // What the shots agent noticed broken on the after build besides the

@@ -16,7 +16,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { parseHostedOriginsFile } = require('./shots-hosted-origins');
-const { vetPublicDestination } = require('./shots-boundary');
+const { vetPublicDestination, controlledRequestPath } = require('./shots-boundary');
 const shotsMemory = require('./shots-memory');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_SHOTS_BROWSER__ ';
@@ -250,22 +250,42 @@ function forwardHomeTile(req, res, side) {
 let documentOrdinal = 0;
 const controlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 const controlPath = '/__usernode_shots_control/request-failure';
-const controlledFailures = new Set();
+// The API GETs the shots tools make wait or fail, each exact path to its
+// mode, on the pair's two addresses alike. `fail` breaks the request as a
+// lost connection would (an error state: a declared controlledFailurePath, or
+// the shots agent's control_request); `hold` keeps it waiting, unanswered (a
+// loading state), until it is let go.
+const controlledRequests = new Map();
+const CONTROL_MODES = Object.freeze(['fail', 'hold', 'off']);
 let controlledFailureHits = 0;
-
-function validApiPath(value) {
-  if (typeof value !== 'string' || value.length > 512 || !value.startsWith('/api/')
-      || value.includes('*') || value.includes('\\') || /[\u0000-\u001f\u007f]/.test(value)) return false;
-  try {
-    const url = new URL(value, 'http://shots.invalid');
-    return !url.hash && `${url.pathname}${url.search}` === value;
-  } catch { return false; }
-}
+// A held request goes on as normal when its path is let go, and after this
+// long whatever happens, so no page waits on the shots for ever.
+const HOLD_MAX_MS = Number(process.env.SHOTS_HOLD_MAX_MS) > 0 ? Number(process.env.SHOTS_HOLD_MAX_MS) : 120_000;
+const heldRequests = new Set();
 
 function validControlToken(value) {
   if (!/^[0-9a-f]{64}$/.test(controlToken) || typeof value !== 'string'
       || value.length !== controlToken.length) return false;
   return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(controlToken));
+}
+
+// fail_request sends { path, enabled }; control_request sends { path, mode }.
+function controlMode(body) {
+  if (!body || typeof body !== 'object' || !controlledRequestPath(body.path)) return null;
+  const keys = Object.keys(body).sort().join(',');
+  if (keys === 'enabled,path' && typeof body.enabled === 'boolean') return body.enabled ? 'fail' : 'off';
+  if (keys === 'mode,path' && CONTROL_MODES.includes(body.mode)) return body.mode;
+  return null;
+}
+
+function setControl(apiPath, mode) {
+  if (mode === 'off') controlledRequests.delete(apiPath);
+  else controlledRequests.set(apiPath, mode);
+  // What was held for this path goes on now, or fails with it.
+  if (mode === 'hold') return;
+  for (const entry of [...heldRequests]) {
+    if (entry.path === apiPath) entry.settle(mode === 'fail' ? 'fail' : 'forward');
+  }
 }
 
 function controlRequest(req, res) {
@@ -280,13 +300,31 @@ function controlRequest(req, res) {
   req.on('end', () => {
     let body;
     try { body = JSON.parse(data); } catch { return reject(res, 400); }
-    if (!body || Object.keys(body).sort().join(',') !== 'enabled,path'
-        || typeof body.enabled !== 'boolean' || !validApiPath(body.path)) return reject(res, 400);
-    if (body.enabled) controlledFailures.add(body.path);
-    else controlledFailures.delete(body.path);
-    diagnostic({ kind: 'controlled_failure_set', enabled: body.enabled });
+    const mode = controlMode(body);
+    if (!mode) return reject(res, 400);
+    setControl(body.path, mode);
+    diagnostic({ kind: 'controlled_failure_set', enabled: mode !== 'off', mode });
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, enabled: body.enabled, hitCount: controlledFailureHits }));
+    res.end(JSON.stringify({ ok: true, enabled: mode !== 'off', mode, hitCount: controlledFailureHits }));
+  });
+}
+
+// Keeps one request waiting, unanswered, until its path is let go (it is then
+// sent on like any other), failed, or HOLD_MAX_MS passes. A page that gives up
+// on it first simply goes.
+function holdRequest(apiPath, res, send) {
+  const entry = { path: apiPath, timer: null, settle: null };
+  entry.settle = (how) => {
+    if (!heldRequests.delete(entry)) return;
+    clearTimeout(entry.timer);
+    if (how === 'fail') res.destroy();
+    else send();
+  };
+  entry.timer = setTimeout(() => entry.settle('forward'), HOLD_MAX_MS);
+  entry.timer.unref?.();
+  heldRequests.add(entry);
+  res.once('close', () => {
+    if (heldRequests.delete(entry)) clearTimeout(entry.timer);
   });
 }
 
@@ -422,19 +460,31 @@ async function handleRequestAsync(persona, req, res) {
       Number(target.port) || (target.protocol === 'https:' ? 443 : 80));
     if (!vetted.ok) return reject(res);
   }
-  if (origins.has(target.origin) && req.method === 'GET'
-      && controlledFailures.has(`${target.pathname}${target.search}`)) {
-    controlledFailureHits += 1;
-    diagnostic({ kind: 'controlled_failure_hit',
-      side: target.origin === originList[0] ? 'base' : 'head', hitOrdinal: controlledFailureHits });
-    return res.destroy();
-  }
   const side = target.origin === originList[0] ? 'base'
     : target.origin === originList[1] ? 'head' : vetted ? 'outside' : 'hosted';
+  // Only the pair's own two addresses, only a GET, only the exact path.
+  const controlledPath = `${target.pathname}${target.search}`;
+  const controlled = origins.has(target.origin) && req.method === 'GET'
+    ? controlledRequests.get(controlledPath) || null : null;
+  if (controlled) {
+    controlledFailureHits += 1;
+    diagnostic({ kind: 'controlled_failure_hit', mode: controlled, side, hitOrdinal: controlledFailureHits });
+    if (controlled === 'fail') return res.destroy();
+  }
   if ((side === 'base' || side === 'head') && target.pathname === HOME_TILE_PATH) {
     return forwardHomeTile(req, res, side);
   }
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
+  // A held request is sent on later, outside this call's own catch.
+  const send = () => {
+    try { forward(persona, req, res, target, side, vetted); }
+    catch { if (!res.headersSent) reject(res, 502); else res.destroy(); }
+  };
+  if (controlled === 'hold') return holdRequest(controlledPath, res, send);
+  return send();
+}
+
+function forward(persona, req, res, target, side, vetted) {
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const signedAddress = addressRedirect(persona, target, req);
@@ -492,7 +542,9 @@ async function handleRequestAsync(persona, req, res) {
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)) });
     reject(res, 502);
   });
-  req.pipe(upstream);
+  // A held request's body (a GET has none) may already have been read.
+  if (req.readableEnded) upstream.end();
+  else req.pipe(upstream);
 }
 
 // A CONNECT tunnel is opaque, so no persona adds anything to one: the pair's

@@ -293,6 +293,36 @@ test('the problem route records what the agent noticed on the after build, for i
   })).status, 401);
 });
 
+test('the condition route records what the agent is about to do to both builds, for its own run only', async (t) => {
+  const runId = '6'.repeat(32);
+  const { registration, base, token } = await serve(t, { runId });
+  const condition = (body, auth = token) => fetch(`${base}/condition`, {
+    method: 'POST', headers: { ...bearer(auth), 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const held = await json(await condition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/items?page=1' }));
+  assert.deepEqual([held.status, held.body.result], [200, { recorded: 'invite-suggestions', conditions: 1 }]);
+  const uploaded = await json(await condition({ change: 'invite-suggestions', kind: 'sample_file', files: ['document.pdf'] }));
+  assert.equal(uploaded.body.result.conditions, 2);
+  assert.deepEqual(registration.control.conditions.get('invite-suggestions'), [
+    { kind: 'request_held', request: '/api/items?page=1' },
+    { kind: 'sample_file', files: ['document.pdf'] },
+  ]);
+  for (const [body, code] of [
+    [{ change: 'someone-elses-change', kind: 'request_held', request: '/api/items' }, 'unknown_change'],
+    [{ change: 'invite-suggestions', kind: 'request_held', request: '/api/*' }, 'invalid_condition'],
+    [{ change: 'invite-suggestions', kind: 'sample_file', files: ['../../member.json'] }, 'invalid_condition'],
+  ]) {
+    const refused = await json(await condition(body));
+    assert.deepEqual([refused.status, refused.body.code], [400, code]);
+  }
+  const foreign = await json(await condition({ change: 'invite-suggestions', kind: 'request_held', request: '/api/x' },
+    platformJwt.signShotsToken({ runId, sessionId: 43 })));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
+  assert.equal((await fetch(`${base}/condition`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  })).status, 401);
+});
+
 test('each side\'s home tile page is readable only with this run\'s shots token', async (t) => {
   const runId = '2'.repeat(32);
   const homeTiles = {
@@ -327,7 +357,7 @@ test('a run without home tiles answers 404 for them', async (t) => {
   assert.deepEqual([response.status, response.body.code], [404, 'home_tile_unavailable']);
 });
 
-test('the brief, shot, skip, note, problem and home tile routes are the whole shots surface', async (t) => {
+test('the brief, shot, skip, note, problem, condition and home tile routes are the whole shots surface', async (t) => {
   const runId = '1'.repeat(32);
   const { base, token } = await serve(t, { runId });
   // The replay-era routes are gone, even for a valid token of this run.
@@ -338,7 +368,7 @@ test('the brief, shot, skip, note, problem and home tile routes are the whole sh
     });
     assert.equal(response.status, 404, `POST /${route} must not exist`);
   }
-  for (const route of ['shot', 'skip', 'note', 'problem', 'diagnostics', 'artifacts']) {
+  for (const route of ['shot', 'skip', 'note', 'problem', 'condition', 'diagnostics', 'artifacts']) {
     const response = await fetch(`${base}/${route}`, { headers: bearer(token) });
     assert.equal(response.status, 404, `GET /${route} must not exist`);
   }
