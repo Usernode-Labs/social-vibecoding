@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const docker = require('../src/services/docker');
 const kubernetes = require('../src/services/kubernetes');
@@ -515,7 +516,7 @@ exit 0
       BRANCH: 'test',
       SESSION_ID: '1',
       WORKER_JWT: 'test-worker-jwt',
-      PLATFORM_URL: 'http://platform',
+      ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
       WORKSPACE_DIR: workspace,
     },
   });
@@ -558,7 +559,7 @@ exit 0
     BRANCH: 'test',
     SESSION_ID: '1',
     WORKER_JWT: 'test-worker-jwt',
-    PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: workspace,
   };
   const omitted = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {

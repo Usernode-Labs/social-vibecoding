@@ -195,11 +195,14 @@ test('merge-queue counts a queued run as in flight, so nothing re-drives it', ()
   assert.match(src, /function checkRunInFlight\(row\) \{[\s\S]{0,400}return !require\('\.\/staging-recovery'\)\.checkRunOverdue\(row\);/);
 });
 
-test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and re-drives a dead waiting one now', () => {
+test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and takes a dead one now, waiting or admitted', () => {
   const src = stripComments(read('src/services/main-watch.js'));
   const sweep = src.slice(src.indexOf('async function resumeInterrupted('));
   assert.match(sweep, /AND NOT EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id[\s\S]{0,120}cr\.heartbeat_at >= NOW\(\)/);
-  assert.match(sweep, /OR EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main'[\s\S]{0,200}cr\.admitted_at IS NULL\)\)/);
+  // A dead row of the merge's own, whether it was waiting or admitted
+  // (tests/main-watch.test.js and checks-queue-postgres pin what follows).
+  assert.match(sweep, /LEFT JOIN LATERAL \(\s*SELECT cr\.run_id, cr\.owner, cr\.admitted_at FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id/);
+  assert.match(sweep, /OR dead\.run_id IS NOT NULL\)/);
 });
 
 test('the harvest leaves main-watch rows to main-watch, and runOnCluster counts a waiting run as the run', () => {
