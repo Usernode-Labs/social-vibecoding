@@ -236,7 +236,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // only after prepare_work has already been discussed.
     id: 'platform-build-fallback',
     title: 'When the user has no coding agent',
-    text: 'If neither this conversation nor the user has a coding agent, explain that start_platform_build spends the user\'s daily Homeroom credits and ask which path they want. Call it only after the user explicitly chooses the paid platform build; never infer consent merely because the current chat lacks repository tools or GitHub access. Then poll get_platform_build, use answer_questions when it comes back with questions, and submit_platform_build when it is ready.',
+    text: 'If neither this conversation nor the user has a coding agent, explain that start_platform_build spends the user\'s weekly Homeroom credits and ask which path they want. Call it only after the user explicitly chooses the paid platform build; never infer consent merely because the current chat lacks repository tools or GitHub access. Then poll get_platform_build, use answer_questions when it comes back with questions, and submit_platform_build when it is ready.',
   },
   {
     // Charter-only (#3654). The eight tools (four to grade, four to run)

@@ -2285,19 +2285,28 @@
     // src/services/limits.js, and a reader has no Layer 0 or Layer 2 to place
     // it against.
     //
-    // ONLY the two ladder states say "Signed in · $0 / day". On a deployment
+    // ONLY the two ladder states say "Signed in · $0 / week". On a deployment
     // whose policy is `legacy` (the default — see IDENTITY_CREDIT_POLICY) or
     // for an account with an administrator override, connecting an account
     // changes nothing about credits, and a list that implied otherwise would
     // be a false promise with a Connect button under it.
+    //
+    // #4913: the figure is the WEEKLY allowance (`weeklyLimitCents`). #2571
+    // switched the per-user daily cap off, but this list went on printing
+    // `limitCents`, the daily value nothing applies any more, as "$20 / day"
+    // beside a $50 week. An entitlement that carries no weekly figure shows
+    // none rather than a guessed one.
     _socialIdentityMoney(cents) {
       const value = Math.max(0, Number(cents) || 0) / 100;
-      return tr('settings:socialIdentity.perDay', { amount: Number.isInteger(value) ? value : value.toFixed(2) });
+      return tr('settings:socialIdentity.perWeek', { amount: Number.isInteger(value) ? value : value.toFixed(2) });
     },
 
     _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const amount = this._socialIdentityMoney(e.limitCents);
+      const weekly = Number(e.weeklyLimitCents);
+      const amount = e.weeklyLimitCents != null && Number.isFinite(weekly)
+        ? this._socialIdentityMoney(weekly)
+        : null;
       if (e.entitlementAvailable === false) {
         return {
           tone: 'warn',
@@ -2307,6 +2316,22 @@
           note: tr('settings:socialIdentity.tier.unavailable.note'),
         };
       }
+      // An administrator's weekly figure for this one account is the
+      // override a reader can see, whatever the policy. A daily one changes
+      // no figure any more; on the tiered ladder it still lets the account
+      // past the identity gate, which is what `tier: 'override'` says there.
+      // An account the tiered gate still holds back is on the ladder, weekly
+      // figure or not: nothing is granted until it connects.
+      if ((e.weeklySource === 'admin_override' && !e.verificationRequired)
+        || (e.policy !== 'legacy' && e.tier === 'override')) {
+        return {
+          tone: 'plain',
+          done: true,
+          title: tr('settings:socialIdentity.tier.override.title'),
+          amount,
+          note: tr('settings:socialIdentity.tier.override.note'),
+        };
+      }
       if (e.policy === 'legacy') {
         return {
           tone: 'plain',
@@ -2314,15 +2339,6 @@
           title: tr('settings:socialIdentity.tier.legacy.title'),
           amount,
           note: tr('settings:socialIdentity.tier.legacy.note'),
-        };
-      }
-      if (e.tier === 'override') {
-        return {
-          tone: 'plain',
-          done: true,
-          title: tr('settings:socialIdentity.tier.override.title'),
-          amount,
-          note: tr('settings:socialIdentity.tier.override.note'),
         };
       }
       return {
@@ -2356,10 +2372,14 @@
       // there is no figure at all, because connecting changes no figure.
       const tiered = entitlement.policy === 'tiered' && entitlement.tier !== 'override'
         && entitlement.entitlementAvailable !== false;
-      // The figure limits.js calls TIER_ONE_LIMIT_CENTS. A literal, as the
-      // sentence it replaces had it: the status payload reports the CURRENT
-      // limit, not what the next tier would be.
-      const unlock = tr('settings:socialIdentity.perDay', { amount: 10 });
+      // #4913: what connecting unlocks is the weekly allowance the account
+      // is already resolved to (limits.js resolveWeeklyEntitlement): the
+      // tiered gate only decides whether it is granted. Not the $10/day
+      // TIER_ONE_LIMIT_CENTS literal, which no cap applies since #2571.
+      const weekly = Number(entitlement.weeklyLimitCents);
+      const unlock = entitlement.weeklyLimitCents != null && Number.isFinite(weekly) && weekly > 0
+        ? this._socialIdentityMoney(weekly)
+        : null;
       const firstLinked = provider === 'github' || !(others && others.github
         && others.github.linked && !others.github.reconnectRequired);
       let state;

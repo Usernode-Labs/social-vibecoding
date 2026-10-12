@@ -1124,7 +1124,7 @@
     "description": "Status line in the coding-agent dialog when the settings failed to load and 'Homeroom · Claude' is selected. {{error}} is a whole sentence saying what went wrong. 'Homeroom · Claude' is a name and is not translated."
   },
   "agentChoice.status.claude": {
-    "text": "Homeroom · Claude builds in this chat on your daily Homeroom credits.",
+    "text": "Homeroom · Claude builds in this chat on your weekly Homeroom credits.",
     "description": "Status line in the coding-agent dialog while 'Homeroom · Claude' is selected. 'Homeroom · Claude' is a name and is not translated; 'builds' is a verb."
   },
   "agentChoice.status.openRouterDisabled": {
