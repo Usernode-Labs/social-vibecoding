@@ -7,8 +7,9 @@
  *
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
  *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
- *   first of yours in flight, "1 in progress") and the Discussion (#general
- *   and its last line). ForYouCard.
+ *   first of yours in flight, "1 in progress"), the changes where you and
+ *   Homeroom bot are still talking ("With Homeroom bot · it replied 2h
+ *   ago", #4772) and the Discussion (#general and its last line). ForYouCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when. RecentlyLive.
  *
@@ -49,7 +50,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
+import { BallotIcon, BoardIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
@@ -428,6 +429,55 @@ function WorkRow({ mine, empty, onOpen }: {
 }
 
 /**
+ * How many With Homeroom bot rows the hub draws at most. The server caps the
+ * list too; this is the client's own ceiling.
+ */
+const BOT_TALK_MAX = 3;
+
+/**
+ * WITH HOMEROOM BOT (#4772), between Your work and the Discussion: a row for
+ * each open change where this viewer and Homeroom bot have both written in
+ * the change's discussion lately, newest first, each opening that change so
+ * the conversation can be picked back up. The row's second line says who
+ * spoke last and when — "With Homeroom bot · it replied 2h ago" — which is
+ * why the rows carry no heading of their own. No pill and no count: its one
+ * job is the door back to the conversation. Nothing at all with no such
+ * conversation: no empty line, no zero.
+ */
+function BotTalkRows({ slug, data }: {
+  slug: string;
+  data: CommunityPayload | null;
+}): ReactNode {
+  const t = useMessages('project');
+  const talks = (data?.bot_talks || []).slice(0, BOT_TALK_MAX);
+  if (!slug || !talks.length) return null;
+  return (
+    <>
+      {talks.map((talk) => {
+        const ago = agoStamp(talk.last_at);
+        return (
+          <ListRow
+            key={talk.session_id}
+            as="a"
+            inset="none"
+            className="dev-ws-foryou-row"
+            href={changeHref(slug, talk.session_id, talk.pr_number)}
+            data-ws-bot-talk={String(talk.session_id)}
+            leading={<IconTile size="xs"><ChatBubbleTailIcon aria-hidden="true" /></IconTile>}
+            title={talk.title || ''}
+            subtitle={(
+              <span data-ws-bot-talk-last="">
+                {t(talk.bot_last ? 'project:hub.forYou.bot.botLast' : 'project:hub.forYou.bot.youLast', { ago: ago.text })}
+              </span>
+            )}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/**
  * THE DISCUSSION, as the card's last row: the channel's name and the last
  * thing said in it, "@kempis: enjoy the weekend guys · 4h ago", opening the
  * Discussion place (./project-discussion.tsx), where the room is whole. How
@@ -492,10 +542,11 @@ function DiscussionRow({ name, data, onOpen }: {
 
 /**
  * FOR YOU: what on this project is the viewer's, one card of doors under its
- * label — Needs you, Your work, the Discussion — each row a door to its
- * place, at most one pill on it, 15 over 13. With no vote owed, Needs you is
- * the quiet line that says so (NothingToVote, #3408), or nothing on a
- * project nobody else is in. Nothing at all when no row has anything to say.
+ * label — Needs you, Your work, the conversations with Homeroom bot still
+ * open (#4772), the Discussion — each row a door to its place, at most one
+ * pill on it, 15 over 13. With no vote owed, Needs you is the quiet line
+ * that says so (NothingToVote, #3408), or nothing on a project nobody else
+ * is in. Nothing at all when no row has anything to say.
  */
 export function ForYouCard({
   slug, name, queue, unclaimed, mine, workEmpty, alone, data, canPost, onNeeds, onWork, onDiscussion,
@@ -526,8 +577,9 @@ export function ForYouCard({
   const needs = owes || !alone || claims > 0;
   const cards = (mine?.rows || []).some((row) => row.t === 'card');
   const work = cards || !!(mine?.viewer && workEmpty);
+  const bots = (data?.bot_talks || []).length > 0;
   const talk = !!(data && data.channel && data.audience !== 'solo');
-  if (!needs && !work && !talk) return null;
+  if (!needs && !work && !bots && !talk) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
       <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
@@ -536,6 +588,7 @@ export function ForYouCard({
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
         <WorkRow mine={mine} empty={workEmpty} onOpen={onWork} />
+        <BotTalkRows slug={slug} data={data} />
         <DiscussionRow name={name} data={data} onOpen={onDiscussion} />
       </div>
     </section>

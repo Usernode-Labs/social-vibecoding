@@ -1459,6 +1459,14 @@
     "text": "{{count}} in progress",
     "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
   },
+  "hub.forYou.bot.botLast": {
+    "text": "With Homeroom bot · it replied {{ago}}",
+    "description": "Second line of a row on a project's Hub, under Your work, for a change where this person and Homeroom bot are talking in its discussion. Homeroom bot wrote last. {{ago}} is a time such as \"2h ago\". \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
+  "hub.forYou.bot.youLast": {
+    "text": "With Homeroom bot · you replied {{ago}}",
+    "description": "Second line of a row on a project's Hub, under Your work, for a change where this person and Homeroom bot are talking in its discussion. This person wrote last. {{ago}} is a time such as \"1d ago\". \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
   "hub.forYou.discussion.title": {
     "text": "Discussion <0>#{{handle}}</0>",
     "description": "Title of the row that opens a project's discussion on its Hub. <0></0> draws the channel's name in a lighter weight; {{handle}} is the channel's name without the #, for example general."

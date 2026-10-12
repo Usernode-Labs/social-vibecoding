@@ -647,4 +647,72 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.ok(feed.includes(kept.slug) && !feed.includes(suspended.slug), 'no Needs you card for a suspended app');
     }
   });
+
+  // #4772: the hub's With Homeroom bot rows. A change where BOTH this viewer
+  // and the bot wrote in the change's own discussion lately, newest first,
+  // three at most, open changes only.
+  await t.test('botTalks lists the change threads the viewer and the bot both wrote in', async () => {
+    const me = await user();
+    const other = await user();
+    const { rows: botRows } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`);
+    const botId = botRows[0].id;
+    const a = await app();
+    const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000);
+    const say = (sessionId, userId, at, deleted = false) => pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at, deleted_at)
+       VALUES ($1, $2, 'said', 'session', $3, $4, $5)`,
+      [a.id, userId, sessionId, at, deleted ? at : null]);
+    const session = async (status, pr = null) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, session_title)
+       VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
+      [a.id, me.id, status, pr, `Change ${++seq}`])).rows[0].id;
+    // A live back and forth, the bot speaking last, two hours ago.
+    const live = await session('active', 34);
+    await say(live, me.id, hoursAgo(3));
+    await say(live, botId, hoursAgo(2));
+    // The viewer spoke last, yesterday, on a change with no pull request.
+    const mine = await session('paused');
+    await say(mine, botId, hoursAgo(48));
+    await say(mine, me.id, hoursAgo(24));
+    // Quiet for four days: past the window.
+    const quiet = await session('active');
+    await say(quiet, me.id, hoursAgo(96));
+    await say(quiet, botId, hoursAgo(96));
+    // Merged: not open any more, however recent.
+    const merged = await session('merged', 35);
+    await say(merged, me.id, hoursAgo(1));
+    await say(merged, botId, hoursAgo(1));
+    // The viewer asked, the bot never answered: not a conversation.
+    const unanswered = await session('active');
+    await say(unanswered, me.id, hoursAgo(1));
+    // The bot answered, the viewer never did.
+    const botOnly = await session('active');
+    await say(botOnly, botId, hoursAgo(1));
+    // Somebody else's conversation with the bot.
+    const theirs = await session('active');
+    await say(theirs, other.id, hoursAgo(1));
+    await say(theirs, botId, hoursAgo(1));
+    // A back and forth whose viewer's line was taken back: the bot's answer
+    // alone does not make it one.
+    const retracted = await session('active');
+    await say(retracted, me.id, hoursAgo(1), true);
+    await say(retracted, botId, hoursAgo(0.5));
+    // A fifth live conversation, to hold the cap of three, the viewer
+    // speaking last four minutes ago.
+    const extra = await session('active');
+    await say(extra, botId, hoursAgo(1 / 12));
+    await say(extra, me.id, hoursAgo(1 / 15));
+
+    const rows = await communities.botTalks(pool, a.id, me.id, botId);
+    assert.deepEqual(rows.map((r) => r.session_id), [extra, live, mine],
+      'newest conversation first, and only live ones both sides wrote in');
+    assert.deepEqual(rows.map((r) => r.pr_number), [null, 34, null], 'the pull request number rides along, or null');
+    assert.equal(rows[0].bot_last, false, 'the viewer spoke last on the newest');
+    assert.equal(rows[1].bot_last, true, 'the bot spoke last on the second');
+    assert.equal(rows[0].title, `Change ${seq}`, 'the title, from the PR title or the session title');
+    assert.deepEqual(await communities.botTalks(pool, a.id, me.id, me.id), [], 'nobody talks with themself');
+    assert.deepEqual(await communities.botTalks(pool, a.id, other.id, botId).then((r) => r.map((r) => r.session_id)),
+      [theirs], 'another viewer sees only their own conversation');
+  });
 });

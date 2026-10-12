@@ -4110,6 +4110,21 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // see hasLiveLink for what the records can and cannot say.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
+      // #4772: THE VIEWER'S CONVERSATIONS WITH HOMEROOM BOT, on this app's
+      // open changes, for the hub's With Homeroom bot rows. Only a signed-in
+      // viewer has any: a guest has nobody to have talked with. Best-effort,
+      // the same way as the places read below: a read that fails is no rows,
+      // never a failed hub. Every row is a thread the viewer themself wrote
+      // in, so nothing new is exposed.
+      let botTalks = [];
+      if (req.user?.id) {
+        try {
+          const bot = await botDm.botAccount(pool);
+          botTalks = await communities.botTalks(pool, app.id, req.user.id, bot?.id || null);
+        } catch (err) {
+          log.warn('apps', 'Could not read the bot conversations for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       // #4417: THE PLACES. The page is navigated by one list — Hub, Needs
       // you, Workshop, then #general and the project's topics — and this is
       // what the list says beside each: the votes owed, and per channel its
@@ -4135,6 +4150,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         first_week: firstWeek,
         invite_link: inviteLink,
         first_version: firstVersion,
+        // #4772: where this viewer and Homeroom bot are talking (communities.js
+        // botTalks), for the hub's With Homeroom bot rows. Empty for a guest.
+        bot_talks: botTalks,
         ...membership,
         members,
         channel,

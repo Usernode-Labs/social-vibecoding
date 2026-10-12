@@ -696,6 +696,60 @@ async function unchosenCommunities(pool, userId) {
   return new Set(rows.map((row) => row.slug));
 }
 
+// #4772: how long a conversation with Homeroom bot stays on the hub, and how
+// many of the newest show. A conversation gone quiet for longer is yours to
+// pick back up from the change itself, not from the hub.
+const BOT_TALK_DAYS = 3;
+const BOT_TALK_MAX = 3;
+
+// The change threads where BOTH the viewer and Homeroom bot wrote, latest
+// activity first. Only the thread's own stream counts (thread_type
+// 'session'): that is where the bot answers on a change, not inside a reply
+// thread under one message. Deleted and moderation-hidden lines say nothing.
+// Only changes still open list — active, paused, up for a vote or going in.
+const BOT_TALKS_SQL = `
+WITH talk AS (
+  SELECT m.thread_ref AS session_id,
+         MAX(m.created_at) FILTER (WHERE m.user_id = $2) AS mine_at,
+         MAX(m.created_at) FILTER (WHERE m.user_id = $3) AS bot_at
+    FROM chat_messages m
+   WHERE m.app_id = $1 AND m.thread_type = 'session'
+     AND m.msg_type = 'message'
+     AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+     AND m.user_id IN ($2, $3)
+   GROUP BY m.thread_ref
+)
+SELECT cs.id AS session_id, cs.pr_number,
+       COALESCE(cs.pr_title, cs.session_title) AS title,
+       GREATEST(t.mine_at, t.bot_at) AS last_at,
+       (t.bot_at >= t.mine_at) AS bot_last
+  FROM talk t
+  JOIN chat_sessions cs ON cs.id = t.session_id AND cs.app_id = $1
+ WHERE t.mine_at IS NOT NULL AND t.bot_at IS NOT NULL
+   AND GREATEST(t.mine_at, t.bot_at) > NOW() - make_interval(days => $4::int)
+   AND cs.status = ANY($5::text[])
+ ORDER BY last_at DESC
+ LIMIT $6`;
+
+/**
+ * #4772: the viewer's conversations with Homeroom bot on this app's open
+ * changes (BOT_TALKS_SQL), for the hub's With Homeroom bot rows. `[]` with
+ * no viewer or no bot — a guest has nobody to have talked with, and the
+ * viewer never talks with themself.
+ */
+async function botTalks(pool, appId, userId, botId) {
+  if (!appId || !userId || !botId || userId === botId) return [];
+  const { rows } = await pool.query(BOT_TALKS_SQL,
+    [appId, userId, botId, BOT_TALK_DAYS, ['active', 'paused', 'promoted', 'merging'], BOT_TALK_MAX]);
+  return rows.map((row) => ({
+    session_id: Number(row.session_id),
+    pr_number: row.pr_number == null ? null : Number(row.pr_number),
+    title: row.title || null,
+    last_at: row.last_at,
+    bot_last: !!row.bot_last,
+  }));
+}
+
 module.exports = {
   appNeedsJoin,
   channelSummary,
@@ -722,4 +776,5 @@ module.exports = {
   listMembers,
   UNCHOSEN_COMMUNITIES_SQL,
   unchosenCommunities,
+  botTalks,
 };

@@ -169,6 +169,17 @@ export type CommunityPayload = {
       "Just you". Only ever true for a member, on a Just you project. */
   invite_link?: boolean;
   first_version?: HubFirstVersion | null;
+  /** #4772: the open changes where this viewer and Homeroom bot are
+      talking in the discussion, newest first, for the hub's With Homeroom
+      bot rows. Empty for a guest. */
+  bot_talks?: Array<{
+    session_id: number;
+    pr_number: number | null;
+    title: string | null;
+    last_at: string;
+    /** True when Homeroom bot wrote last, false when the viewer did. */
+    bot_last: boolean;
+  }>;
   member_count: number;
   is_member: boolean;
   is_creator: boolean;
