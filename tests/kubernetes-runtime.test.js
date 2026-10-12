@@ -369,16 +369,16 @@ for (const [name, environment, database, preferred] of [
           'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
         } },
       };
-      // The zone outweighs the host: a node in the primary's data centre is
-      // near enough, a node in another one is not (the evidence is in the
-      // comment on databaseAffinity). Both stay soft so a full zone still
-      // schedules.
+      // The zone is the whole preference: a node in the primary's data centre
+      // is near enough, a node in another one is not, and a term for the
+      // primary's own host packs the fleet onto it (the evidence for both is
+      // in the comment on databaseAffinity). It stays soft so a full zone
+      // still schedules.
       assert.deepEqual(spec.affinity, {
         podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [
           { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
-          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
         ] },
-      }, 'prefer the current primary’s zone, then its host, and require neither');
+      }, 'prefer the current primary’s zone, never its host, and require neither');
       assert.equal(spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined);
     } else {
       assert.equal(spec.affinity, undefined);

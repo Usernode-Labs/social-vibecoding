@@ -71,7 +71,8 @@ test('challenge points the standings have not caught up with keep the card, with
   const { standingView, STANDINGS_UPDATE_NOTE } = loadTsx(STANDING);
   assert.equal(STANDINGS_UPDATE_NOTE, 'leaderboard:standing.updateNote');
   assert.equal(message(STANDINGS_UPDATE_NOTE),
-    'Standings update every few hours; points from challenges you just finished appear at the next update.');
+    'Standings update every few hours. Your rank can change at each update as other people earn points, '
+    + 'even if you did nothing; points from challenges you just finished appear then too.');
   const empty = { ...RANKING, rank: null, total_points: 0 };
   const view = standingView({ status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false });
   assert.ok(view, 'someone with 1,500 challenge points still sees the card');
@@ -90,7 +91,8 @@ test('challenge points the standings have not caught up with keep the card, with
   });
   const html = renderToHtml(createElement(mod.YourStanding, {}));
   assert.match(html, /1,500 pts earned, not in the standings yet/);
-  assert.match(html, /Standings update every few hours; points from challenges you just finished appear at the next update\./);
+  assert.match(html,
+    /Standings update every few hours\. Your rank can change at each update as other people earn points, even if you did nothing; points from challenges you just finished appear then too\./);
 });
 
 test('the ledger is read only when the standings have nothing for the viewer', async () => {

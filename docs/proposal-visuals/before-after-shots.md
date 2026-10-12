@@ -474,6 +474,50 @@ people are the judges, which is also how the replay pipeline ended: people
 still had to look. The builds are platform-made from exact revisions with
 fixture data, so no author's local data or credentials can appear in them.
 
+## Signed in, as an app's page reads it
+
+Inside Homeroom an app's frame opens with `?token=` in its address
+(`public/js/app-view.js` `buildAppIframeSrc`, and the staging `buildSrc`),
+and many apps decide who is signed in from that query in the page rather
+than by asking their server: homeroom-maps gates every signed-in screen on
+it (`public/js/auth.js` `hasToken`), job-vacancy reads the person's name
+from it, and the bridge reads the linked address and locale from it. On a
+child app's copies the shots proxy signs each persona in by adding its
+token as `x-usernode-token` to the persona's requests to the pair's two
+addresses, which signs a page in on its server only. Pages the shots agent
+opened had no token in their address, so such an app showed the member as
+signed out: homeroom-maps PR 36 (proposal 7761) got only "Location Sharing
+needs a signed-in account", and job-vacancy PR 27 (proposal 7524) only its
+"Sign in" link.
+
+So the proxy now opens a child app's pages the way Homeroom's frame does
+(`worker/shots-origin-proxy.js`, `addressRedirect`):
+
+- A signed-in persona's page load (a top-level `GET` document) of either of
+  the pair's addresses with no `token` in its query is redirected to the same
+  address with `token=<display token>` added after the app's own query. The
+  browser keeps the fragment, so `/#/sharing` opens as
+  `/?token=…#/sharing`.
+- The display token is the persona token's own header and claims with the
+  placeholder signature `shots-display-only`: the page can read who is
+  signed in from it, but it signs nobody in anywhere. On its way to the
+  pair's two addresses the proxy puts the real token in its place, in the
+  `token` query value and in the `x-usernode-token` header the page forwards
+  it in; a redirect from the pair that names the real token goes back to the
+  browser with the display one. The real token stays out of the address,
+  the browser's history and what the shots agent reads.
+- An app's own redirect from a page that carried the token to an address
+  without one (an app that takes the token out of its address) is followed
+  as it is, once, rather than round again. The page has no token there in
+  Homeroom's frame either, and the header still signs it in on the server.
+- The guest is never redirected: Homeroom's frame has no guests, and at an
+  app's own address nobody's token is in the query. Homeroom's own copies
+  are unchanged; their sessions are cookies.
+
+The trace marks a page load the proxy sent on this way with
+`identityRedirect` on its `document_request`, and the redirect itself as a
+302 `document_response`.
+
 ## The guest browser
 
 The `guest` persona is a browser that is not signed in: the bootstrap writes
@@ -503,6 +547,15 @@ on the app:
 No gate is loosened for this: the guest gets only what a signed-out request
 already gets, and a preview still never admits guests. The guest token is
 masked with the other tokens and never enters the brief or the trace.
+
+An app on the scaffold from before guests verifies only a person's token,
+so it answers every `/api/*` request a guest makes with 401, at its own
+production address as on the copies. job-vacancy PR 27 (proposal 7524:
+`/api/bootstrap` and `/api/rates`) and world-weather PR 18 (proposal 7131:
+`/api/place`) were shot that way: what the guest browser showed is what a
+visitor with no account sees there. The fix is the app's (the current
+scaffold's guest check in `services/template.js`, and read routes that do
+not assume `req.user`), or a change declared for `member`.
 
 ## Phone sign-in on Homeroom's copies
 

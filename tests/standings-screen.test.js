@@ -1212,3 +1212,52 @@ test('the empty standings say how often they update (#3187)', () => {
     /data-tc-lb-empty="">No leaderboard entries yet\. Standings update every few hours; points from challenges you just finished appear at the next update\.<\/p>/,
     'the same sentence as the standing card, after the words the declared checks read');
 });
+
+// #4782: someone watched their rank jump six places with no activity of
+// their own and nothing on screen said why — ranks move when OTHER people
+// earn kudos, and the Kudos tab now says so under its ranked lists.
+test('the Kudos ranked lists say ranks move when other people act (#4782)', () => {
+  const render = (body) => {
+    const state = { mounted: true, chrome: null, body };
+    const mod = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+      stubs: {
+        './kudos-pane-store.js': {
+          kudosPaneStore: { get: () => state, subscribe: () => () => {} },
+        },
+      },
+    });
+    return renderToHtml(createElement(mod.KudosPane, {}));
+  };
+
+  const note = message('leaderboard:kudos.rankNote');
+  assert.equal(note,
+    'Ranks update live as people give kudos and changes go live, so yours can move even when you did nothing.');
+
+  const rows = [
+    { key: 'a', rank: 1, who: 'maya', initial: 'M', meta: [], unmergedNote: null, mergedKudos: 41 },
+    { key: 'b', rank: 2, who: 'jo', initial: 'J', meta: [], unmergedNote: null, mergedKudos: 33 },
+  ];
+  const out = render({ kind: 'users', rows });
+  const body = out.slice(out.indexOf('id="leaderboard-body"'));
+  assert.ok(body.includes(`>${note}</p>`), 'the note follows the Top users rows');
+  assert.ok(body.lastIndexOf('data-lb-user=') < body.indexOf(`>${note}</p>`),
+    'the note is under the rows, not before them');
+  // Two fixes for the same request (#4782, #4786) once drew it twice.
+  assert.equal(body.split(note).length - 1, 1, 'the list carries the note once');
+  assert.match(body, /class="mt-3 text-xs text-zinc-500 dark:text-zinc-400"/,
+    'the standing card\'s small grey note style');
+
+  const prOut = render({ kind: 'prs', rows: [] });
+  const prBody = prOut.slice(prOut.indexOf('id="leaderboard-body"'));
+  assert.ok(prBody.includes(`>${note}</p>`), 'the note shows on Top changes too');
+
+  // No ranks on screen, nothing to explain.
+  assert.ok(!render({ kind: 'empty', message: 'No kudos yet.' }).includes(note),
+    'an empty list carries no note');
+  assert.ok(!render({
+    kind: 'history',
+    chips: [{ key: 'given', label: 'Given', on: true }],
+    list: { kind: 'empty', message: 'Nothing yet.' },
+    more: null,
+  }).includes(note), 'My history is not a ranking and carries no note');
+});

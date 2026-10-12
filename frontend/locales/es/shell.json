@@ -1,4 +1,112 @@
 {
+  "confirm.title": {
+    "text": "¿Seguro?",
+    "source": "f0762c4f3bfcd695e32e7fcd087dc2a60bc26cda108b4fc0a643445b397168c7"
+  },
+  "alerts.notification.fallbackTitle": {
+    "text": "Sesión del agente",
+    "source": "da3d3fb8f5983aa4a93c71fb29e22a58a9f1fbcf2b15bb11ca32eff3d7630d9f"
+  },
+  "alerts.test.queueFailed": {
+    "text": "No se pudo poner en cola la notificación de prueba. Inténtalo de nuevo.",
+    "source": "237ab0ed948edc6de837474252d502289d6a908ba75bb51f4d26c12b1cb6b35a"
+  },
+  "alerts.test.title": {
+    "text": "Alerta de prueba de Homeroom",
+    "source": "6358ce2ccf3650710d9b0172a3f016b5a40dbdcb91c30555e5d0784806bae3e4"
+  },
+  "alerts.test.body": {
+    "text": "Esta es una prueba del sonido y las alertas de la sesión de tu agente.",
+    "source": "f885d5af9382efed4cee290f9e915f5aa9c1ce8dcbbd0fc55ebdbdace7d5cd09"
+  },
+  "feedbackQueue.error.screenshotUpload": {
+    "text": "falló la subida de la captura de pantalla",
+    "source": "f4dd20277ba825ec90d05b7e18396e1c2b72e779be4f19f7b54fc979ca5ed94d"
+  },
+  "feedbackQueue.error.network": {
+    "text": "error de red",
+    "source": "b026fa61abcf11c4dc129fd3462457f58be83bbcf06c002e17a3def9e0955429"
+  },
+  "feedbackQueue.error.couldNotSend": {
+    "text": "No se pudo enviar",
+    "source": "e42c42e0b72fb4f0cbac1955884dfbd2d29644a9a6669552343139e16de71c89"
+  },
+  "push.error.unsupported": {
+    "text": "Esta versión de la app no admite las notificaciones de actividad",
+    "source": "5003a51d4080406ed2075c3a0a2af8739abe7a27ff1e8805b88b85a3c5e88be5"
+  },
+  "push.error.signInFinishing": {
+    "text": "El inicio de sesión seguro de la app aún no ha terminado. Inténtalo de nuevo en un momento",
+    "source": "63614c59868ca62958472699465db6f1425e2c3aaba17e3fa724f6ca8136bab8"
+  },
+  "push.error.sessionChanged": {
+    "text": "La sesión nativa cambió al actualizar las notificaciones",
+    "source": "d9aab0836bffbed52062f1e364300e79b8a4bb13fc3172874f8d62d56c99c7be"
+  },
+  "push.error.invalidState": {
+    "text": "La app devolvió un estado de notificaciones no válido",
+    "source": "a2e3a628dd560feb804d489a15005b2ad3b6176210f8d1e10769b444769a5ba4"
+  },
+  "permissions.title": {
+    "text": "Configura tu dispositivo",
+    "source": "be470ccb63986283003f3e02ad5fec4be77585fa2369b95677a8241098924b42"
+  },
+  "permissions.intro.androidProducer": {
+    "text": "Tu teléfono ayuda a mantener Homeroom en marcha: tu nodo puede producir bloques mientras la app está en segundo plano. Para ello, Android necesita activarlo en los momentos exactos de cada turno y que quede libre de la optimización de batería. Estos ajustes solo programan activaciones. No dan a Homeroom acceso a tus datos.",
+    "source": "8954db94bb4bf9ce2ce1f373d9843fa198db0159c41ecc4798fa961371615722"
+  },
+  "permissions.intro.android": {
+    "text": "Permite las notificaciones para que Homeroom te avise de la actividad de tus apps y de tu nodo.",
+    "source": "35a0ec0c3fa557e59c51d9a121f7acd170ddc037ea7ef211bb3c4a8f7ecb0a37"
+  },
+  "permissions.intro.ios": {
+    "text": "Permite las notificaciones para que Homeroom te avise de la actividad del nodo y de la cuenta.",
+    "source": "9d98f246ebb1d36e085c387687bfb59f6157407fe4e64c912bd2fdb683e04a17"
+  },
+  "permissions.status.granted": {
+    "text": "Concedido",
+    "source": "62026a42b2390a87bf21a984cabce8067c2bddf5031a519a11397f38a0ee828c"
+  },
+  "permissions.status.notGranted": {
+    "text": "No concedido",
+    "source": "352a5b4c1246d1bf84a4bc5902b808a29e50b008bb7f2f26ba2881289deb9adb"
+  },
+  "permissions.row.exactAlarms": {
+    "text": "Alarmas exactas",
+    "source": "b39f0e4186c82efbde64084d006a87e3aa040a4a3cd641d220dc203031eac9f4"
+  },
+  "permissions.row.notifications": {
+    "text": "Notificaciones",
+    "source": "788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9"
+  },
+  "permissions.row.battery": {
+    "text": "Optimización de batería",
+    "source": "e2c2b8efa9f25025dd12a329574dce5a0cc28cd886d841099d804b9d3c244c2b"
+  },
+  "permissions.action.grant": {
+    "text": "Conceder permisos",
+    "source": "6d6a893fff9f01cfccb2959bfdc363cfe60a75fae346d45f7e184e89a9969806"
+  },
+  "permissions.action.allowNotifications": {
+    "text": "Permitir notificaciones",
+    "source": "001559c8913cdf3d6f835cbbe86da612c0affb5c7e8602221053fcd292db52d6"
+  },
+  "permissions.action.openBatterySettings": {
+    "text": "Abrir ajustes de batería",
+    "source": "3163b5ddd02cd4358f691773b33474693e871028dc8be96e522a47babe61bfca"
+  },
+  "permissions.action.skip": {
+    "text": "Omitir por ahora",
+    "source": "b58eb52c8810b97857e264ea9de45f7bd7edb754bb0edad30ffab78ff027c45e"
+  },
+  "permissions.action.openNotificationSettings": {
+    "text": "Abrir ajustes de notificaciones",
+    "source": "c6885c8ebcb22d112322a0c0f644efc40dc07a6207068b69ed25503ca45b092f"
+  },
+  "permissions.action.allowExactAlarms": {
+    "text": "Permitir alarmas exactas",
+    "source": "fe8bbe784d8d71d1ac2393892ec8e6000b96bb7297d06ba627a35f3619866894"
+  },
   "permissions.action.allowBackground": {
     "text": "Permitir uso en segundo plano",
     "source": "5bdfdc5597d906055f690b9d2e3b3e6e772ca895e51b048b74ec8b844310628c"

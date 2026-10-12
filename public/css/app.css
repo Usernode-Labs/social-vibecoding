@@ -11000,10 +11000,11 @@ html .un-backdrop.platform-backdrop-dim {
 
 /* THE VIEW PICTURE'S ENTRANCE (#4665): while the first view picture is
    drawn, comment mode leaves the live page on show, and when the picture
-   lands it mounts together with the grey ground and the chip that names it.
-   The picture starts exactly over the viewport (--comment-shot-from, the
-   inverse of its inset frame) and shrinks into its frame, the ground fading
-   in behind it and the chip after. Mount-only keyframes: the classes stay
+   lands it mounts together with the grey ground and the word that names it,
+   "Screenshot", which leads the bar above the picture (#4774). The picture
+   starts exactly over the viewport (--comment-shot-from, the inverse of its
+   inset frame) and shrinks into its frame, the ground fading in behind it
+   and the word after. Mount-only keyframes: the classes stay
    on the elements, so a retake's new src replays nothing. */
 .comment-shot-in { animation: comment-shot-in 320ms ease-out; transform-origin: 0 0; }
 @keyframes comment-shot-in {
@@ -11013,14 +11014,14 @@ html .un-backdrop.platform-backdrop-dim {
 @keyframes comment-shot-ground-in {
   from { opacity: 0; }
 }
-.comment-shot-chip-in { animation: comment-shot-chip-in 160ms ease-out 200ms both; }
-@keyframes comment-shot-chip-in {
+.comment-shot-label-in { animation: comment-shot-label-in 160ms ease-out 200ms both; }
+@keyframes comment-shot-label-in {
   from { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .comment-shot-in,
   .comment-shot-ground-in,
-  .comment-shot-chip-in { animation: none; }
+  .comment-shot-label-in { animation: none; }
 }
 /* The sheet's grabber, the same handle the feedback sheet's carries — the
    component renders it only on a phone, so no media query here. */

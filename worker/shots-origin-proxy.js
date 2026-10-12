@@ -81,6 +81,41 @@ for (const persona of PERSONAS) {
   const value = String(process.env[PERSONA_TOKEN_ENV[persona]] || '');
   if (/^[A-Za-z0-9._-]{1,8192}$/.test(value)) personaTokens[persona] = value;
 }
+// The page's half of the same sign-in. Inside Homeroom an app's frame opens
+// with `?token=` in its address (public/js/app-view.js buildAppIframeSrc),
+// and many apps decide who is signed in from that query in the page, not on
+// their server: homeroom-maps gates every signed-in screen on it
+// (public/js/auth.js hasToken), job-vacancy reads the person's name from it,
+// and the bridge reads the linked address and locale from it. The header
+// above signs such a page in on its server only, so the page said "signed
+// out" (homeroom-maps PR 36, proposal 7761: "Location Sharing needs a
+// signed-in account"; job-vacancy PR 27, proposal 7524). So a signed-in
+// persona's page load of either of the pair's addresses with no token in its
+// query is sent to the same address with one, as Homeroom's frame would open
+// it. What goes in the address is a DISPLAY token: the persona token's own
+// header and claims with a placeholder signature, so the page can read who
+// is signed in, but the address signs nobody in anywhere. On its way to the
+// pair's two origins it is swapped for the real token, in the query and in
+// the header the page forwards it in, and a redirect from the pair that
+// names the real token goes back to the browser with the display one: the
+// real token stays out of the address, the history and the shots agent's
+// view. The guest gets none: Homeroom's frame never has guests, and at an
+// app's own address nobody's token is in the query.
+const DISPLAY_SIGNATURE = 'shots-display-only';
+const ADDRESS_PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+const displayTokens = {};
+for (const persona of ADDRESS_PERSONAS) {
+  const parts = String(personaTokens[persona] || '').split('.');
+  if (parts.length === 3 && parts[0] && parts[1] && parts[2] !== DISPLAY_SIGNATURE) {
+    displayTokens[persona] = `${parts[0]}.${parts[1]}.${DISPLAY_SIGNATURE}`;
+  }
+}
+// An app may send a page that arrived with the token on to an address
+// without it (one that takes the token out of its address, say). The page
+// then has no token in Homeroom's frame either, so the next page load, to
+// that address, goes to the app as it is (the header still signs it in on
+// the server) rather than round the redirect again.
+const keepAddress = {};
 let hostedOrigins = new Set();
 let hostedAuthorities = new Set();
 let hostedLoaded = !hostedFile;
@@ -279,6 +314,70 @@ function identityToken(persona, target, headers) {
   return personaTokens[persona] || null;
 }
 
+// The persona's display token, where its page may carry one: a signed-in
+// persona, on a hosted-app pair's own two origins.
+function addressDisplayToken(persona, target) {
+  if (!persona || !childAppPair || !origins.has(target.origin)) return null;
+  return displayTokens[persona] || null;
+}
+
+// Where a signed-in persona's page load with no token in its address is
+// sent instead: the same address with the display token added, the app's own
+// query left exactly as it was. The browser keeps the fragment (#/sharing)
+// across the redirect.
+function addressRedirect(persona, target, req) {
+  const display = addressDisplayToken(persona, target);
+  if (!display || req.headers['sec-fetch-dest'] !== 'document') return null;
+  const kept = keepAddress[persona];
+  keepAddress[persona] = null;
+  if (req.method !== 'GET' || target.searchParams.has('token')) return null;
+  if (kept === `${target.origin}${target.pathname}${target.search}`) return null;
+  return `${target.origin}${target.pathname}${target.search ? `${target.search}&` : '?'}token=${display}`;
+}
+
+// Called with the pair's answer to a page load that carried the display
+// token: a redirect to an address of the pair without a token is the app's
+// own doing, and the next page load there is kept as it is.
+function noteAppRedirect(persona, target, status, location) {
+  if (status < 300 || status >= 400 || typeof location !== 'string') return;
+  let next;
+  try { next = new URL(location, target); } catch { return; }
+  if (!origins.has(next.origin) || next.searchParams.has('token')) return;
+  keepAddress[persona] = `${next.origin}${next.pathname}${next.search}`;
+}
+
+function queryValue(part) {
+  try { return decodeURIComponent(part.replace(/\+/g, ' ')); } catch { return null; }
+}
+
+// The display token, on its way to the pair, becomes the real one: in the
+// `token` query value and in the header the page forwards it in. Anything
+// else the page sends stands, as before.
+function withRealToken(persona, target, headers) {
+  const display = addressDisplayToken(persona, target);
+  if (!display) return target;
+  if (headers['x-usernode-token'] === display) headers['x-usernode-token'] = personaTokens[persona];
+  if (target.searchParams.get('token') !== display) return target;
+  const real = new URL(target.href);
+  real.search = target.search.slice(1).split('&').map((part) => {
+    const eq = part.indexOf('=');
+    return eq > 0 && queryValue(part.slice(0, eq)) === 'token' && queryValue(part.slice(eq + 1)) === display
+      ? `token=${personaTokens[persona]}` : part;
+  }).join('&');
+  return real;
+}
+
+// A redirect from the pair that names the real token (an app that keeps the
+// query when it redirects) goes back to the browser with the display one.
+function withDisplayLocation(persona, target, responseHeaders) {
+  const display = addressDisplayToken(persona, target);
+  const location = responseHeaders.location;
+  if (!display || typeof location !== 'string' || !location.includes(personaTokens[persona])) {
+    return responseHeaders;
+  }
+  return { ...responseHeaders, location: location.split(personaTokens[persona]).join(display) };
+}
+
 // What kind of host a refused destination was, as one of a few fixed words:
 // one of the pair's or the catalog's own hosts on another port or scheme
 // (a browser trying https:// first, say), a loopback address, or anything
@@ -338,10 +437,24 @@ async function handleRequestAsync(persona, req, res) {
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
+  const signedAddress = addressRedirect(persona, target, req);
+  if (signedAddress) {
+    // Fixed values only: never the address.
+    diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side,
+      identityAttached: false, identityRedirect: true });
+    res.writeHead(302, { location: signedAddress, 'cache-control': 'no-store', 'content-length': '0' });
+    res.end();
+    diagnostic({ kind: 'document_response', documentOrdinal: ordinal, side,
+      outcome: 'ok', httpStatus: 302, durationMs: 0, bodyBytes: 0 });
+    return undefined;
+  }
   const startedAt = performance.now();
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
   delete headers['proxy-connection'];
+  const asked = target;
+  target = withRealToken(persona, target, headers);
+  const carriedDisplay = isDocument && target !== asked;
   const token = identityToken(persona, target, headers);
   if (token) headers['x-usernode-token'] = token;
   // Whether this page load carried the persona's identity: a boolean, never
@@ -366,7 +479,11 @@ async function handleRequestAsync(persona, req, res) {
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       bodyBytes: Math.min(bodyBytes, 10_000_000),
     }));
-    res.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
+    if (carriedDisplay) {
+      noteAppRedirect(persona, target, upstreamResponse.statusCode, upstreamResponse.headers.location);
+    }
+    res.writeHead(upstreamResponse.statusCode || 502,
+      withDisplayLocation(persona, target, upstreamResponse.headers));
     upstreamResponse.pipe(res);
   });
   upstream.on('error', () => {

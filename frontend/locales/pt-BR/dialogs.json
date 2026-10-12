@@ -2656,8 +2656,8 @@
     "source": "b118b9239994d2ce40c7a31d0ead5a84402e81d7869a573e82736a4022bd0fac"
   },
   "whoDecides.plays.two_yeses.other": {
-    "text": "Vai ao ar quando qualquer pessoa além de {{name}} disser sim. Pode ser você.",
-    "source": "d37efd672b44cc1ebaed6f3247175f7e9c996516207809708283ab1a71199140"
+    "text": "Entra no ar quando mais uma pessoa disser sim. Pode ser você.",
+    "source": "edf8c3a05d00b2098e566751f7026d35331fdd4d0b9284ab44ddf7c54dd675b3"
   },
   "whoDecides.plays.open_floor.you": {
     "text": "Seu sim basta. Vai ao ar quando as verificações passarem.",
@@ -3070,6 +3070,354 @@
   "appSettings.access.open": {
     "text": "Quem pode ver e alterar",
     "source": "c9bd22ce67ecde912f31f5e9f47e293a554bd7dbd60c031f38754e4635ccaadd"
+  },
+  "appDomain.status.pending.checkedMinutes_many": {
+    "text": "Aguardando o DNS. Verificado há {{count}} de minutos. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "6b6e6f643102526fd080081b03954f0115e72cdada285182daba629794a5373a"
+  },
+  "appDomain.status.pending.checkedMinutes_one": {
+    "text": "Aguardando o DNS. Verificado há {{count}} minuto. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "5642d4a50db5aea035c00fb2375aaf6769f15bb3d1a04dfcc7b56bf4990efb9e"
+  },
+  "appDomain.status.pending.checkedMinutes_other": {
+    "text": "Aguardando o DNS. Verificado há {{count}} minutos. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "6b6e6f643102526fd080081b03954f0115e72cdada285182daba629794a5373a"
+  },
+  "appDomain.status.pending.checkedHours_many": {
+    "text": "Aguardando o DNS. Verificado há {{count}} de horas. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "3917e67813b96186864ef518af0d53e4bdccf7b30041e91f4d710116695648dc"
+  },
+  "appDomain.status.pending.checkedHours_one": {
+    "text": "Aguardando o DNS. Verificado há {{count}} hora. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "dcf6e86ff22ee2e7cad6a7b0272412b003d5f226c54469c8b10a59b4af5f453e"
+  },
+  "appDomain.status.pending.checkedHours_other": {
+    "text": "Aguardando o DNS. Verificado há {{count}} horas. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "3917e67813b96186864ef518af0d53e4bdccf7b30041e91f4d710116695648dc"
+  },
+  "appDomain.status.pending.checkedDays_many": {
+    "text": "Aguardando o DNS. Verificado há {{count}} de dias. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "bdaf427988cc1df82cc29d4e8d2494b5517a141eb139215f6b2f8f93bf991da0"
+  },
+  "appDomain.status.pending.checkedDays_one": {
+    "text": "Aguardando o DNS. Verificado há {{count}} dia. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "8b310e80c2b9b4fa55705ef64574b3ae3c6b9d149fc00a760a294060ebf93701"
+  },
+  "appDomain.status.pending.checkedDays_other": {
+    "text": "Aguardando o DNS. Verificado há {{count}} dias. Alterações de DNS podem levar até uma hora para aparecer.",
+    "source": "bdaf427988cc1df82cc29d4e8d2494b5517a141eb139215f6b2f8f93bf991da0"
+  },
+  "allowance.headline.usedNoLimit_many": {
+    "text": "{{count}} de apps · sem limite",
+    "source": "35ac02eaa72f99edca03e591f34f667e71f13bd150d58301462fc09e2dd7f652"
+  },
+  "allowance.headline.usedNoLimit_one": {
+    "text": "{{count}} app · sem limite",
+    "source": "93075aa466cdd5d60e67aad2f6df26a3a18ee3c3e5cc83a8daa1fb31a7601f99"
+  },
+  "allowance.headline.usedNoLimit_other": {
+    "text": "{{count}} apps · sem limite",
+    "source": "35ac02eaa72f99edca03e591f34f667e71f13bd150d58301462fc09e2dd7f652"
+  },
+  "allowance.headline.slots_many": {
+    "text": "{{count}} de vagas de app",
+    "source": "b7d271fed799e3a56b3cfbdaaebd54a490c14dabb5dcc96765233c9ac5f4883b"
+  },
+  "allowance.headline.slots_one": {
+    "text": "{{count}} vaga de app",
+    "source": "b7d271fed799e3a56b3cfbdaaebd54a490c14dabb5dcc96765233c9ac5f4883b"
+  },
+  "allowance.headline.slots_other": {
+    "text": "{{count}} vagas de app",
+    "source": "b7d271fed799e3a56b3cfbdaaebd54a490c14dabb5dcc96765233c9ac5f4883b"
+  },
+  "allowance.headline.used_many": {
+    "text": "{{used}} de {{count}} de vagas de app usadas",
+    "source": "11d2a4dfd26ec6355a2cbf3b6e74aa76195487d49af53ac73d236d49d63b7085"
+  },
+  "allowance.headline.used_one": {
+    "text": "{{used}} de {{count}} vaga de app usada",
+    "source": "a60e91c659e4b94ae0ec0d3c9e318355893d0b7a1bc1991907d0e16288fb7f89"
+  },
+  "allowance.headline.used_other": {
+    "text": "{{used}} de {{count}} vagas de app usadas",
+    "source": "11d2a4dfd26ec6355a2cbf3b6e74aa76195487d49af53ac73d236d49d63b7085"
+  },
+  "allowance.headline.slotsRequested_many": {
+    "text": "{{count}} de vagas de app · mais solicitadas",
+    "source": "7d13dd833fef745e6741770cebb46ce1048ae607161430a4a9eeafef0b2c0b51"
+  },
+  "allowance.headline.slotsRequested_one": {
+    "text": "{{count}} vaga de app · mais solicitadas",
+    "source": "7d13dd833fef745e6741770cebb46ce1048ae607161430a4a9eeafef0b2c0b51"
+  },
+  "allowance.headline.slotsRequested_other": {
+    "text": "{{count}} vagas de app · mais solicitadas",
+    "source": "7d13dd833fef745e6741770cebb46ce1048ae607161430a4a9eeafef0b2c0b51"
+  },
+  "allowance.headline.usedRequested_many": {
+    "text": "{{used}} de {{count}} de vagas de app usadas · mais solicitadas",
+    "source": "8d1f1e45480f206629e3f413f09d5075cd134bf832fba211302a5ccdcd068160"
+  },
+  "allowance.headline.usedRequested_one": {
+    "text": "{{used}} de {{count}} vaga de app usada · mais solicitadas",
+    "source": "d884183dff005d881c4c0b9c2648e4a47fd5672b7bb63221e5971d17909bc995"
+  },
+  "allowance.headline.usedRequested_other": {
+    "text": "{{used}} de {{count}} vagas de app usadas · mais solicitadas",
+    "source": "8d1f1e45480f206629e3f413f09d5075cd134bf832fba211302a5ccdcd068160"
+  },
+  "allowance.detail.available_many": {
+    "text": "{{count}} de vagas disponíveis. Criar, importar e remixar usam esta mesma cota.",
+    "source": "66d078f1f555db858065313c5cb84562a0db4914032d3d5b020c4598dd805915"
+  },
+  "allowance.detail.available_one": {
+    "text": "{{count}} vaga disponível. Criar, importar e remixar usam esta mesma cota.",
+    "source": "4e80fb84b0e6bcf0acd094fb38397e3d4b9a5f2d58b318fd41e8e0531a9d4b55"
+  },
+  "allowance.detail.available_other": {
+    "text": "{{count}} vagas disponíveis. Criar, importar e remixar usam esta mesma cota.",
+    "source": "66d078f1f555db858065313c5cb84562a0db4914032d3d5b020c4598dd805915"
+  },
+  "allowance.detail.availableSpent_many": {
+    "text": "{{count}} de vagas disponíveis. Criar, importar e remixar usam esta mesma cota. Solicite mais vagas para criar outro app.",
+    "source": "c570ded6c264f2d5f4d2af6002001d8c2326047c6cf3ae810c4c56f139380ac5"
+  },
+  "allowance.detail.availableSpent_one": {
+    "text": "{{count}} vaga disponível. Criar, importar e remixar usam esta mesma cota. Solicite mais vagas para criar outro app.",
+    "source": "4a8739207f174c95d4c5a32123c5fea87681f4a2118c132412caf5c4abec0c0c"
+  },
+  "allowance.detail.availableSpent_other": {
+    "text": "{{count}} vagas disponíveis. Criar, importar e remixar usam esta mesma cota. Solicite mais vagas para criar outro app.",
+    "source": "c570ded6c264f2d5f4d2af6002001d8c2326047c6cf3ae810c4c56f139380ac5"
+  },
+  "allowance.server.fullSlotsFree_many": {
+    "text": "Este servidor atingiu o limite de apps ({{limit}}). Peça a um admin para remover um app ou aumentar o limite. Sua cota: {{count}} de vagas livres.",
+    "source": "640483f4a12878bfb50e30fb33aed5d9cc1811f254c1573c29be464ab6682b01"
+  },
+  "allowance.server.fullSlotsFree_one": {
+    "text": "Este servidor atingiu o limite de apps ({{limit}}). Peça a um admin para remover um app ou aumentar o limite. Sua cota: {{count}} vaga livre.",
+    "source": "31823cd669cee4b9e817decbfc2b2c7eab5148f30e03e2fdc73e8379b377d955"
+  },
+  "allowance.server.fullSlotsFree_other": {
+    "text": "Este servidor atingiu o limite de apps ({{limit}}). Peça a um admin para remover um app ou aumentar o limite. Sua cota: {{count}} vagas livres.",
+    "source": "640483f4a12878bfb50e30fb33aed5d9cc1811f254c1573c29be464ab6682b01"
+  },
+  "allowance.server.room_many": {
+    "text": "Este servidor tem espaço para mais {{count}} de apps (limite de {{limit}}).",
+    "source": "c8c389cfc80f6705dff024e1d3406ca0082ddf3706e5993be7a64093e292fbf9"
+  },
+  "allowance.server.room_one": {
+    "text": "Este servidor tem espaço para mais {{count}} app (limite de {{limit}}).",
+    "source": "b94d7005e8992d69b90cf4d0ea9a43aa03386d8ad68cca83785f5458655ec3ad"
+  },
+  "allowance.server.room_other": {
+    "text": "Este servidor tem espaço para mais {{count}} apps (limite de {{limit}}).",
+    "source": "c8c389cfc80f6705dff024e1d3406ca0082ddf3706e5993be7a64093e292fbf9"
+  },
+  "appSettings.demo.noticeApprovals_many": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@{{partner}}</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} de aprovações, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "71f8fe3466852a76938cd80fde1ca65daec6bcb7e051d7982d68688681b75847"
+  },
+  "appSettings.demo.noticeApprovals_one": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@{{partner}}</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} aprovação, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "9cc2ae7c2058745bb50bbdf6aeee7b67d6482452181e9e2d8c62d452f1469bbc"
+  },
+  "appSettings.demo.noticeApprovals_other": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@{{partner}}</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} aprovações, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "71f8fe3466852a76938cd80fde1ca65daec6bcb7e051d7982d68688681b75847"
+  },
+  "appSettings.demo.noticeUnnamedApprovals_many": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@seu parceiro de demo</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} de aprovações, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "ccb886bf0a8df665b51a2e7a6ee0e32df7ab3c09e7b936b63072553cc7d2577c"
+  },
+  "appSettings.demo.noticeUnnamedApprovals_one": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@seu parceiro de demo</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} aprovação, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "f218e0db1585c34e97029b09c8443cd6867b6534591805187801c7a25fdcea2c"
+  },
+  "appSettings.demo.noticeUnnamedApprovals_other": {
+    "text": "Este app está no modo demo. As propostas e os votos de <0>@seu parceiro de demo</0> são sintéticos: o criador do app os fez para registrar como uma alteração é proposta, vista em prévia e mesclada. Enquanto o modo demo estiver ativo, uma proposta aqui é mesclada com {{count}} aprovações, em vez das regras de tempo habituais do app; ao desativar o modo demo, elas voltam.",
+    "source": "ccb886bf0a8df665b51a2e7a6ee0e32df7ab3c09e7b936b63072553cc7d2577c"
+  },
+  "appSettings.delete.blocked.shared_many": {
+    "text": "Este app tem {{count}} de outros colaboradores, então ninguém pode excluí-lo sozinho. Excluir um app compartilhado exige o acordo do grupo.",
+    "source": "100f279bdaebb28a07c26ff017efa0d4f10790d495f9b235a16c402082a1c541"
+  },
+  "appSettings.delete.blocked.shared_one": {
+    "text": "Este app tem {{count}} outro colaborador, então ninguém pode excluí-lo sozinho. Excluir um app compartilhado exige o acordo do grupo.",
+    "source": "ae774ab0605ff91c0d0c19d6f29b18ee245c9bbb5b13da44e4f35d6c694b974b"
+  },
+  "appSettings.delete.blocked.shared_other": {
+    "text": "Este app tem {{count}} outros colaboradores, então ninguém pode excluí-lo sozinho. Excluir um app compartilhado exige o acordo do grupo.",
+    "source": "100f279bdaebb28a07c26ff017efa0d4f10790d495f9b235a16c402082a1c541"
+  },
+  "appSettings.danger.sharedAck_many": {
+    "text": "Este app tem {{count}} de outros colaboradores que não concordaram com isso. Excluir mesmo assim como administrador da plataforma. Eles serão notificados.",
+    "source": "6bf4d18a857798f3351df1a66e9889d0156a1ab5b3e534068d3543ba34404eb8"
+  },
+  "appSettings.danger.sharedAck_one": {
+    "text": "Este app tem {{count}} outro colaborador que não concordou com isso. Excluir mesmo assim como administrador da plataforma. Ele será notificado.",
+    "source": "5b95b2798db90c28982bd11da2bce0f538dd602f63a4d5984517439844449981"
+  },
+  "appSettings.danger.sharedAck_other": {
+    "text": "Este app tem {{count}} outros colaboradores que não concordaram com isso. Excluir mesmo assim como administrador da plataforma. Eles serão notificados.",
+    "source": "6bf4d18a857798f3351df1a66e9889d0156a1ab5b3e534068d3543ba34404eb8"
+  },
+  "feedback.screenshot.limit_many": {
+    "text": "Você pode anexar até {{count}} de imagens.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.screenshot.limit_one": {
+    "text": "Você pode anexar até {{count}} imagem.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.screenshot.limit_other": {
+    "text": "Você pode anexar até {{count}} imagens.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.screenshot.attached_many": {
+    "text": "{{attached}} de {{count}} de imagens anexadas.",
+    "source": "964ef39c8a4abf860b79630d783cefdabaca8ec17d397aa42c096283508846af"
+  },
+  "feedback.screenshot.attached_one": {
+    "text": "{{attached}} de {{count}} imagem anexada.",
+    "source": "964ef39c8a4abf860b79630d783cefdabaca8ec17d397aa42c096283508846af"
+  },
+  "feedback.screenshot.attached_other": {
+    "text": "{{attached}} de {{count}} imagens anexadas.",
+    "source": "964ef39c8a4abf860b79630d783cefdabaca8ec17d397aa42c096283508846af"
+  },
+  "feedback.screenshot.attachedFull_many": {
+    "text": "{{attached}} de {{count}} de imagens anexadas. Remova uma para adicionar outra.",
+    "source": "5308f9c2b574e09435911091345d858fba649d9c615e40b57f0274f1180a1b12"
+  },
+  "feedback.screenshot.attachedFull_one": {
+    "text": "{{attached}} de {{count}} imagem anexada. Remova uma para adicionar outra.",
+    "source": "5308f9c2b574e09435911091345d858fba649d9c615e40b57f0274f1180a1b12"
+  },
+  "feedback.screenshot.attachedFull_other": {
+    "text": "{{attached}} de {{count}} imagens anexadas. Remova uma para adicionar outra.",
+    "source": "5308f9c2b574e09435911091345d858fba649d9c615e40b57f0274f1180a1b12"
+  },
+  "feedback.image.onlyFirst_many": {
+    "text": "Você pode anexar até {{max}} imagens, então só as primeiras {{count}} foram adicionadas.",
+    "source": "89ab2eb74973e28f1f4a1c5089dc0e5e49e131600ef1c48d99f8a4a6cbf5e197"
+  },
+  "feedback.image.onlyFirst_one": {
+    "text": "Você pode anexar até {{max}} imagens, então só a primeira foi adicionada.",
+    "source": "d7e31eb130006960797b0148c68424d8fee20de6f58dc44157db45e70ec87c86"
+  },
+  "feedback.image.onlyFirst_other": {
+    "text": "Você pode anexar até {{max}} imagens, então só as primeiras {{count}} foram adicionadas.",
+    "source": "89ab2eb74973e28f1f4a1c5089dc0e5e49e131600ef1c48d99f8a4a6cbf5e197"
+  },
+  "feedback.image.dropLimit_many": {
+    "text": "Você pode anexar até {{count}} de imagens.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.image.dropLimit_one": {
+    "text": "Você pode anexar até {{count}} imagem.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.image.dropLimit_other": {
+    "text": "Você pode anexar até {{count}} imagens.",
+    "source": "e7abb7359ca3b664282af3c6b6f88176214a65e6e8a50c37fe2fd62377f28c31"
+  },
+  "feedback.bounty.costRemaining_many": {
+    "text": "Custa 1 kudos. Restam {{count}} de {{limit}} nesta semana",
+    "source": "5edfc5d7a2d21a8a10f9e3b103dfafccd0f53e20041ba186955b910a56d7b368"
+  },
+  "feedback.bounty.costRemaining_one": {
+    "text": "Custa 1 kudos. Resta {{count}} de {{limit}} nesta semana",
+    "source": "5edfc5d7a2d21a8a10f9e3b103dfafccd0f53e20041ba186955b910a56d7b368"
+  },
+  "feedback.bounty.costRemaining_other": {
+    "text": "Custa 1 kudos. Restam {{count}} de {{limit}} nesta semana",
+    "source": "5edfc5d7a2d21a8a10f9e3b103dfafccd0f53e20041ba186955b910a56d7b368"
+  },
+  "feedback.bounty.usedAll_many": {
+    "text": "Você usou todos os {{count}} de kudos nesta semana. Renova {{day}} às {{time}}.",
+    "source": "31ac46d54e66d21e02d4f3c113a6efe16dbefc1b473bd81a513591c63f13fb7e"
+  },
+  "feedback.bounty.usedAll_one": {
+    "text": "Você usou {{count}} kudos nesta semana. Renova {{day}} às {{time}}.",
+    "source": "31ac46d54e66d21e02d4f3c113a6efe16dbefc1b473bd81a513591c63f13fb7e"
+  },
+  "feedback.bounty.usedAll_other": {
+    "text": "Você usou todos os {{count}} kudos nesta semana. Renova {{day}} às {{time}}.",
+    "source": "31ac46d54e66d21e02d4f3c113a6efe16dbefc1b473bd81a513591c63f13fb7e"
+  },
+  "feedback.bounty.usedAllUtc_many": {
+    "text": "Você usou todos os {{count}} de kudos nesta semana. Renova na segunda, 00:00 UTC.",
+    "source": "9c89a343b8948841875ffc71525a4309162b5cff878c836627160dcf53becd17"
+  },
+  "feedback.bounty.usedAllUtc_one": {
+    "text": "Você usou {{count}} kudos nesta semana. Renova na segunda, 00:00 UTC.",
+    "source": "9c89a343b8948841875ffc71525a4309162b5cff878c836627160dcf53becd17"
+  },
+  "feedback.bounty.usedAllUtc_other": {
+    "text": "Você usou todos os {{count}} kudos nesta semana. Renova na segunda, 00:00 UTC.",
+    "source": "9c89a343b8948841875ffc71525a4309162b5cff878c836627160dcf53becd17"
+  },
+  "feedback.bounty.pledged_many": {
+    "text": "1 kudos prometido como recompensa. Restam {{count}} nesta semana.",
+    "source": "e2dc0c2426b55cbd50e1f119c8cc13443e6e81029525aaf841618b734e9d9f79"
+  },
+  "feedback.bounty.pledged_one": {
+    "text": "1 kudos prometido como recompensa. Resta {{count}} nesta semana.",
+    "source": "e2dc0c2426b55cbd50e1f119c8cc13443e6e81029525aaf841618b734e9d9f79"
+  },
+  "feedback.bounty.pledged_other": {
+    "text": "1 kudos prometido como recompensa. Restam {{count}} nesta semana.",
+    "source": "e2dc0c2426b55cbd50e1f119c8cc13443e6e81029525aaf841618b734e9d9f79"
+  },
+  "feedback.queue.offlineWaiting_many": {
+    "text": "Você está offline. {{count}} de mensagens salvas neste dispositivo aguardam envio. Esta também será salva.",
+    "source": "6061e7ab073a1bc0c78b40e0e90e184218466be88f5eb04b0377807a14de7be9"
+  },
+  "feedback.queue.offlineWaiting_one": {
+    "text": "Você está offline. {{count}} mensagem salva neste dispositivo aguarda envio. Esta também será salva.",
+    "source": "1bfb5f24b8b5284deb41ee1253c139b2aca207d92de617102ced1c8b3a512458"
+  },
+  "feedback.queue.offlineWaiting_other": {
+    "text": "Você está offline. {{count}} mensagens salvas neste dispositivo aguardam envio. Esta também será salva.",
+    "source": "6061e7ab073a1bc0c78b40e0e90e184218466be88f5eb04b0377807a14de7be9"
+  },
+  "feedback.queue.waiting_many": {
+    "text": "{{count}} de mensagens salvas neste dispositivo ainda não foram enviadas.",
+    "source": "0930dc49624739ee7405f346dd258ba6a5bd27bf2bf3981aceb9086ee208f655"
+  },
+  "feedback.queue.waiting_one": {
+    "text": "{{count}} mensagem salva neste dispositivo ainda não foi enviada.",
+    "source": "e7486cef71d8a4bfbb2bcc5cf7c6bb85af7438475897f1fb3c8a4700089c45da"
+  },
+  "feedback.queue.waiting_other": {
+    "text": "{{count}} mensagens salvas neste dispositivo ainda não foram enviadas.",
+    "source": "0930dc49624739ee7405f346dd258ba6a5bd27bf2bf3981aceb9086ee208f655"
+  },
+  "feedback.queue.refused.full_many": {
+    "text": "Só {{count}} de mensagens podem esperar offline por vez. As anteriores são enviadas primeiro.",
+    "source": "4b25d4dae002cff58b5383a4f0efb6551d1809de65324928e684b61cd27d51b9"
+  },
+  "feedback.queue.refused.full_one": {
+    "text": "Só {{count}} mensagem pode esperar offline por vez. As anteriores são enviadas primeiro.",
+    "source": "4b25d4dae002cff58b5383a4f0efb6551d1809de65324928e684b61cd27d51b9"
+  },
+  "feedback.queue.refused.full_other": {
+    "text": "Só {{count}} mensagens podem esperar offline por vez. As anteriores são enviadas primeiro.",
+    "source": "4b25d4dae002cff58b5383a4f0efb6551d1809de65324928e684b61cd27d51b9"
+  },
+  "feedback.queue.stillWaiting_many": {
+    "text": "Ainda não foi possível enviar. As {{count}} estão guardadas neste dispositivo e vão tentar de novo sozinhas.",
+    "source": "c3e35a2d25a89ce0e8ad3e7bea422afb34ac47b3a32b8ea8753a4596702c713e"
+  },
+  "feedback.queue.stillWaiting_one": {
+    "text": "Ainda não foi possível enviar. Ela está guardada neste dispositivo e vai tentar de novo sozinha.",
+    "source": "b03324ac728e968f2e8b90ae3d112fd2b701b6ed76df854287806560193f3334"
+  },
+  "feedback.queue.stillWaiting_other": {
+    "text": "Ainda não foi possível enviar. As {{count}} estão guardadas neste dispositivo e vão tentar de novo sozinhas.",
+    "source": "c3e35a2d25a89ce0e8ad3e7bea422afb34ac47b3a32b8ea8753a4596702c713e"
   },
   "feedback.queue.flushed_many": {
     "text": "Seus {{count}} feedbacks salvos foram enviados.",

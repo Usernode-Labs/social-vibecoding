@@ -82,11 +82,15 @@ const NO_LIMIT = 0;
 const DAY_CHOICES = [1, 7, 30, NO_LIMIT];
 const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
-/** "3 of 25 used · 5 days left", for a row of Your links. */
+/** "3 of 25 joined · 5 days left", for a row of Your links. */
 export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
-  const uses = link.maxUses == null
-    ? t('agent:appContext.invite.detail.joined', { count: link.uses })
-    : t('agent:appContext.invite.detail.used', { used: link.uses, max: link.maxUses });
+  // #4785: a link nobody has used says so, instead of "0 of 25 used", which
+  // read as if nothing were happening.
+  const uses = link.uses <= 0
+    ? t('agent:appContext.invite.detail.nobodyYet')
+    : link.maxUses == null
+      ? t('agent:appContext.invite.detail.joined', { count: link.uses })
+      : t('agent:appContext.invite.detail.joinedOf', { joined: link.uses, max: link.maxUses });
   // Two facts about the link, side by side.
   if (link.expiresAt == null) return t('agent:appContext.invite.detail.pair', { uses, expiry: t('agent:appContext.invite.detail.noEnd') });
   const days = daysUntil(link.expiresAt, now);
