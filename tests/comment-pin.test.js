@@ -303,6 +303,36 @@ test('the picture leaves the suggest flow\'s own overlays out, so the form never
   assert.equal(picture.isPageOverlay(null), false);
 });
 
+test('scrollers are drawn as clipped boxes in the copy, so WebKit paints them the first time', () => {
+  // Home's Discover rail (a horizontal scroller) was missing from the first
+  // picture after the app launched: WebKit left the scrolling layer out of
+  // its first rasterization of the SVG. The copy draws every scroller as a
+  // plain clipped box instead; the page itself is never touched.
+  const node = (connected, styleProps = null) => {
+    const set = {};
+    return { nodeType: 1, isConnected: connected, styleProps, style: { setProperty: (k, v, p) => { set[k] = `${v}${p ? ' !' + p : ''}`; } }, set };
+  };
+  const rail = node(true, { overflowX: 'auto', overflowY: 'hidden' });
+  const railCopy = node(false);
+  const card = node(true, { overflowX: 'visible', overflowY: 'visible' });
+  const cardCopy = node(false);
+  const feed = node(true, { overflowX: 'hidden', overflowY: 'scroll' });
+  const feedCopy = node(false);
+  const text = { nodeType: 3, isConnected: true };
+  const styleOf = (el) => el.styleProps;
+  // SnapDOM's map, either way round: original to copy, or copy to original.
+  const map = new Map([[rail, railCopy], [cardCopy, card], [feed, feedCopy], [text, { nodeType: 3 }]]);
+  assert.equal(picture.flattenScrollers({ nodeMap: map }, styleOf), 2);
+  assert.deepEqual(railCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(feedCopy.set, { overflow: 'hidden !important', '-webkit-overflow-scrolling': 'auto !important' });
+  assert.deepEqual(cardCopy.set, {}, 'a box that does not scroll is left as it is');
+  assert.deepEqual(rail.set, {}, 'the page is never written to');
+  assert.equal(picture.flattenScrollers({}, styleOf), 0, 'no map, nothing done');
+  assert.equal(picture.FLAT_SCROLLERS.name, 'homeroom-flat-scrollers');
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  assert.match(src, /filterMode: 'remove',\s*plugins: \[FLAT_SCROLLERS\],/, 'every capture of the page uses it');
+});
+
 test('the picture is clipped to the page the mode keeps, and only a paged document scrolls it', () => {
   const realDoc = global.document;
   const realWin = global.window;

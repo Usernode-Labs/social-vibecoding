@@ -399,6 +399,52 @@ export function isPageOverlay(el: Element): boolean {
   return PAGE_EXCLUDES.some((sel) => { try { return el.matches(sel); } catch { return false; } });
 }
 
+/** What SnapDOM hands a plugin's `afterClone`: its own map between the page's nodes and their copies. */
+interface CloneContext { nodeMap?: Map<unknown, unknown> | null }
+
+const isElementNode = (n: unknown): n is HTMLElement => !!n && (n as Node).nodeType === 1;
+
+/**
+ * Every scroller in the copy of the page drawn as a plain clipped box, so
+ * WebKit paints it on the first picture. Returns how many it changed.
+ *
+ * Home's Discover cards were missing from the first picture comment mode
+ * took after the Homeroom app launched, and present in every later one
+ * (iPhone 17 and 17 Pro simulators, production and local, 12 Oct 2026).
+ * Both SVGs held the cards. WebKit just did not paint them the first time
+ * it rasterized such an SVG in a page: the rail is a scroller
+ * (`overflow-x: auto`, `-webkit-overflow-scrolling: touch`), which WebKit
+ * draws as a layer of its own, and on that first rasterization the layer
+ * came out empty. SnapDOM rasterizes a capture once and keeps the result,
+ * so drawing the same capture again stayed empty, even seconds later; a
+ * new capture drew it.
+ *
+ * Drawn with `overflow: hidden` the box clips exactly as before. The copy
+ * keeps the scroll offset, and the pictures matched the unchanged capture
+ * pixel for pixel (Settings scrolled, Home's own scroller, Messages, the
+ * rail scrolled sideways). Only the copy is touched, never the page.
+ */
+export function flattenScrollers(ctx: CloneContext, styleOf: (el: Element) => CSSStyleDeclaration = (el) => getComputedStyle(el)): number {
+  const map = ctx?.nodeMap;
+  if (!map || typeof map.forEach !== 'function') return 0;
+  let changed = 0;
+  map.forEach((a, b) => {
+    // Whichever side of the pair is in the page is the original.
+    const live = isElementNode(b) && b.isConnected ? b : isElementNode(a) && a.isConnected ? a : null;
+    const copy = live === b ? a : b;
+    if (!live || !isElementNode(copy) || copy.isConnected || !copy.style) return;
+    const s = styleOf(live);
+    if (!/(auto|scroll)/.test(`${s.overflowX} ${s.overflowY}`)) return;
+    copy.style.setProperty('overflow', 'hidden', 'important');
+    copy.style.setProperty('-webkit-overflow-scrolling', 'auto', 'important');
+    changed++;
+  });
+  return changed;
+}
+
+/** The SnapDOM plugin that applies `flattenScrollers` to every capture of the page. */
+export const FLAT_SCROLLERS = { name: 'homeroom-flat-scrollers', afterClone: (ctx: CloneContext) => { flattenScrollers(ctx); } };
+
 /**
  * The page's own size and scroll for a picture. `viewport` is the size
  * comment mode keeps for the page, which the keyboard does not change (iOS
@@ -424,9 +470,11 @@ export function pageClip(viewport?: Size | null): Rect {
  * own picture), and without the flow's own overlays (PAGE_EXCLUDES). The
  * layer and the frames keep their places (`hide`); the overlays are cut out
  * (`filter` with `remove`), because `hide` would stand an in-flow block the
- * size of the screen in each one's place (the header comment, #4773). With
- * `fresh` the capture's cache is off: a first picture that lost the content
- * under a pin is retaken on a clean read of the page.
+ * size of the screen in each one's place (the header comment, #4773). Its
+ * scrollers are drawn as clipped boxes (`flattenScrollers`), or WebKit
+ * leaves them out of the first picture. With `fresh` the capture's cache is
+ * off: a first picture that lost the content under a pin is retaken on a
+ * clean read of the page.
  */
 async function drawShell(scale: number, host: Element, fresh = false, viewport?: Size | null): Promise<HTMLCanvasElement> {
   const snapdom = await loadLibrary();
@@ -442,6 +490,7 @@ async function drawShell(scale: number, host: Element, fresh = false, viewport?:
     excludeMode: 'hide',
     filter: (el: Element) => !isPageOverlay(el),
     filterMode: 'remove',
+    plugins: [FLAT_SCROLLERS],
   });
   return capture.toCanvas();
 }
