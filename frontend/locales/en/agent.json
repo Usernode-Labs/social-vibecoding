@@ -195,6 +195,14 @@
     "text": "Your key: {{amount}} today",
     "description": "Note in the credits card of the \"Build with\" sheet: how much the person spent today through their own API key, which does not count against Homeroom credits. {{amount}} is an exact dollar amount such as $1.20."
   },
+  "session.credits.lowNote": {
+    "text": "Only {{amount}} of credits left. A build can cost more than that and may stop partway.",
+    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red because less than 15% of the AI allowance is left: what remains may not cover a build, which may stop partway. It is a note, not a block; the person can still send. {{amount}} is a dollar amount such as $0.60, written the way the credits pill writes it."
+  },
+  "session.credits.lowNoteNone": {
+    "text": "No credits left. A build may not start, or may stop partway.",
+    "description": "Note above the send row of a new agent session, when the credits pill beside Send is red and nothing at all remains of the AI allowance: a build may not start, or may stop partway. It is a note, not a block; the person can still send."
+  },
   "session.model.pillLabel": {
     "text": "Model: {{model}}",
     "description": "Accessible name of the model button beside the message box of an agent session; pressing it opens the \"Build with\" sheet. {{model}} is the AI model's full name, for example Claude Opus 5.5."

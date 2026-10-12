@@ -156,6 +156,31 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
   );
 }
 
+/**
+ * The low-credits note (#4784): before a conversation's first message, and
+ * only when the credits pill is already red, one small line above the send
+ * row says how much is left and that a build can cost more than that and may
+ * stop partway. It is a note, not a gate — Send stays the composer's one
+ * primary action — and it sits and reads like the composer's "saved as a
+ * draft, not sent" note, in the pill's red so the two read together. Once the
+ * conversation is under way it is the out-of-credits card that speaks, not
+ * this.
+ */
+export function showLowCreditNote(credit: CreditView | null, started: boolean): boolean {
+  return !!credit && credit.tone === 'red' && !started;
+}
+
+export function LowCreditNote({ credit }: { credit: CreditView }) {
+  const t = useMessages('agent');
+  return (
+    <p className="px-2 text-[13px] text-red-600 dark:text-red-400" data-agent-session-low-credit>
+      {credit.remainingCents > 0
+        ? t('agent:session.credits.lowNote', { amount: dollars(credit.remainingCents) })
+        : t('agent:session.credits.lowNoteNone')}
+    </p>
+  );
+}
+
 // ── The model pill and its sheet ────────────────────────────────────────
 
 /**
