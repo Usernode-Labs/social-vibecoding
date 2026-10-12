@@ -325,6 +325,23 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
   }
 }
 
+// A pause of the app's merges starting or ending, as an event each
+// (events.MAIN_PAUSED / MAIN_RESUMED): the proposal-pipeline topic's "Merges
+// paused by a red main" figure counts the pauses and adds up how long they
+// lasted (services/topic-figures.js). `by` says what ended one: a green
+// verdict, a red of known flakes only, or an admin's Resume. Fire-and-forget.
+function notePauseChange(pool, appId, { was_paused: was, now_paused: now }, { sha, state = null, by = null } = {}) {
+  const events = require('./events');
+  if (!was && now) {
+    events.record(pool, { type: events.EVENT_TYPES.MAIN_PAUSED, appId, metadata: { sha: now, confirming: state === 'confirming' } });
+  } else if (was && !now) {
+    events.record(pool, {
+      type: events.EVENT_TYPES.MAIN_RESUMED, appId,
+      metadata: { sha: sha || was, by: by || (state === 'passing' ? 'green' : 'flakes') },
+    });
+  }
+}
+
 // The compare-and-swap write of a state for the merge commit this run is
 // about. The pause column moves with the state: green clears it, red sets
 // it (unless an admin already resumed this very sha), anything else — a run
@@ -336,18 +353,23 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
 async function writeState(pool, app, mergeSha, state, detail) {
   const quiet = !!detail && Array.isArray(detail.flakesOnly) && detail.flakesOnly.length > 0;
   try {
+    // The CTE reads the pause as it stood, so a pause that starts or ends
+    // here is recorded (notePauseChange).
     const write = await pool.query(
-      `UPDATE apps
+      `WITH prev AS (SELECT main_check_paused_sha AS was FROM apps WHERE id = $1)
+       UPDATE apps
           SET main_check_state = $3, main_check_at = NOW(), main_check_detail = $4::jsonb,
               main_check_paused_sha = CASE
                 WHEN $5::boolean THEN NULL
                 WHEN $6::boolean AND lower(coalesce(main_check_resumed_sha, '')) <> lower($2::text) THEN $2::text
                 ELSE main_check_paused_sha
               END
-        WHERE id = $1 AND main_check_sha = $2::text`,
+        WHERE id = $1 AND main_check_sha = $2::text
+    RETURNING (SELECT was FROM prev) AS was_paused, main_check_paused_sha AS now_paused`,
       [app.id, mergeSha, state, JSON.stringify(detail),
         state === 'passing' || quiet, (state === 'failing' || state === 'confirming') && !quiet]
     );
+    if (write.rows && write.rows[0]) notePauseChange(pool, app.id, write.rows[0], { sha: mergeSha, state });
     return write.rowCount !== 0;
   } catch (err) {
     log.warn('main-watch', 'state write failed', { appId: app.id, sha: mergeSha, state, err: err.message });
@@ -827,6 +849,7 @@ async function resume(config, pool, appId, { by = null } = {}) {
   log.info('main-watch', 'Merges resumed by an admin', {
     appId, sha: rows[0].main_check_resumed_sha, by: by && by.username,
   });
+  notePauseChange(pool, appId, { was_paused: rows[0].main_check_resumed_sha, now_paused: null }, { by: 'admin' });
   kickQueue(config, appId, 'post-resume');
   return describe(rows[0]);
 }

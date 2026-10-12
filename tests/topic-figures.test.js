@@ -44,7 +44,7 @@ const DSN = process.env.TEST_DATABASE_URL
 const TOPIC_IDS = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
   'homeroom-bot': ['bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal'],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged'],
+  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged', 'pipeline.main-paused'],
   infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled', 'infra.turned-away'],
 };
 
@@ -116,6 +116,10 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   const away = figures.present('infra.turned-away', { n: 3 });
   assert.deepEqual([away.state, away.value, away.sub], ['warn', '3 times', 'across the platform · target none']);
   assert.deepEqual(figures.present('infra.turned-away', { n: 0 }).value, 'None');
+  // Pauses of a project's merges: how many and how long in all, per side.
+  const paused = figures.present('pipeline.main-paused', { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } });
+  assert.deepEqual([paused.state, paused.value, paused.sub], ['warn', 'Homeroom 2 times · Other projects None', 'target none']);
+  assert.deepEqual(sidesOf(paused), [['homeroom', 'warn', '2 times', '2 h 30 min in all'], ['others', 'ok', 'None', '']]);
   const none = figures.present('infra.apps-up', { hits: 0, total: 0 });
   assert.deepEqual([none.state, none.value, none.sub], ['empty', 'None yet', 'No opens yet'], 'nothing to count is never a 0%');
   const unread = figures.present('infra.deploys-failed', null);
@@ -215,7 +219,7 @@ test('which figures split: the bot\'s cost and speed, the whole pipeline, merge 
   assert.deepEqual(split, [
     'bot.reply-cost', 'bot.reply-time', 'bot.merged-cost', 'bot.request-to-proposal',
     'pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged',
-    'infra.merge-to-live',
+    'pipeline.main-paused', 'infra.merge-to-live',
   ]);
   for (const id of figures.FIGURE_IDS) assert.ok(figures.COVERS.includes(figures.FIGURES[id].covers || 'all'), id);
   const reads = (id) => figures.readsFor(figures.FIGURES[id]).map((r) => [r.side, r.name, r.scope]);
@@ -517,6 +521,19 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     await pool.query(`INSERT INTO notifications (user_id, kind, detail, created_at) VALUES ($1, 'platform_limit', 'sessions_full:25:25', date_trunc('minute', NOW()) - interval '2 hours')`, [id]);
   }
   await pool.query(`INSERT INTO notifications (user_id, kind, detail, created_at) VALUES ($1, 'platform_limit', 'apps_warn:40:50', NOW() - interval '3 hours')`, [admins[0]]);
+  // Homeroom's merges paused twice: one an hour long that ended, one that
+  // began 30 minutes ago and is still on. The project's once, for 10
+  // minutes, three days ago. A pause that ended before the week is not
+  // counted; one that began a day before it is counted from its start.
+  const mark = (app, type, when) => pool.query(`INSERT INTO events (app_id, event_type, metadata, created_at)
+    VALUES ($1, $2, '{}'::jsonb, NOW() - $3::interval)`, [app.id, type, when]);
+  await mark(platform, 'main_paused', '2 hours');
+  await mark(platform, 'main_resumed', '1 hour');
+  await mark(platform, 'main_paused', '30 minutes');
+  await mark(project, 'main_paused', '3 days');
+  await mark(project, 'main_resumed', '3 days - 10 minutes');
+  await mark(project, 'main_paused', '9 days');
+  await mark(project, 'main_resumed', '8 days 23 hours');
   // Two people turned away at a session cap this week, one a fortnight ago.
   for (const [cap, when] of [['global', '1 hour'], ['user', '30 minutes'], ['global', '14 days']]) {
     await pool.query(`INSERT INTO events (user_id, event_type, metadata, created_at)
@@ -588,6 +605,12 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual(sidesOf(got['pipeline.checks-couldnt-run']), [['homeroom', 'warn', '33%', '1 of 3 runs'], ['others', 'ok', '0%', '0 of 3 runs']]);
     assert.deepEqual(sidesOf(got['pipeline.vote-to-merged']), [['homeroom', 'empty', 'None yet', ''], ['others', 'ok', '10 min', '']]);
     assert.equal(got['pipeline.shots'].state, 'empty');
+    const paused = sidesOf(got['pipeline.main-paused']);
+    assert.deepEqual(paused.map(([key, state, value]) => [key, state, value]), [['homeroom', 'warn', '2 times'], ['others', 'warn', '1 time']]);
+    // The window ends on a 10-minute step, so the pause still running counts
+    // 20 to 30 of its minutes.
+    assert.match(paused[0][3], /^1 h [23]\d min in all$/, 'the hour that ended and the half hour still running');
+    assert.equal(paused[1][3], '10 min in all');
   });
 
   await t.test('a production build stamps the merges into Homeroom it carries, once', async () => {

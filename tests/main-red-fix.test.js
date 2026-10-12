@@ -78,16 +78,29 @@ const PARSED = { owner: 'Usernode-Labs', repo: 'social-vibecoding' };
 const KUDOS = { file: 'tests/standings-screen.test.js', test: 'the Kudos ranked lists say ranks move when other people act (#4782)' };
 
 // A pool for main watch's statements plus the two new tables, in memory.
-function redPool({ greens = [GREEN], openRequest = false } = {}) {
+function redPool({ greens = [GREEN], openRequest = false, paused = null } = {}) {
   const verdicts = [];
   const requests = [];
   const calls = [];
-  return {
-    calls, verdicts, requests,
+  const events = [];
+  const pool = {
+    calls, verdicts, requests, events,
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/main_check_state = 'running'/.test(sql)) return { rows: [{ was_state: 'passing', was_sha: GREEN, was_paused_sha: null }], rowCount: 1 };
-      if (/SET main_check_state = \$3/.test(sql)) return { rows: [], rowCount: 1 };
+      if (/main_check_state = 'running'/.test(sql)) return { rows: [{ was_state: 'passing', was_sha: GREEN, was_paused_sha: paused }], rowCount: 1 };
+      if (/SET main_check_state = \$3/.test(sql)) {
+        // writeState's pause column, as its CASE moves it.
+        const was = pool.paused;
+        const [, mergeSha, , , clear, set] = params;
+        pool.paused = clear ? null : set ? mergeSha : was;
+        return { rows: [{ was_paused: was, now_paused: pool.paused }], rowCount: 1 };
+      }
+      if (/SET main_check_resumed_sha = main_check_paused_sha/.test(sql)) {
+        const was = pool.paused;
+        pool.paused = null;
+        return { rows: was ? [{ main_check_state: 'failing', main_check_sha: was, main_check_resumed_sha: was, main_check_paused_sha: null }] : [] };
+      }
+      if (/INSERT INTO events/.test(sql)) { events.push([params[3], params[1], JSON.parse(params[4])]); return { rows: [], rowCount: 1 }; }
       if (/SELECT file, test FROM main_test_flakes/.test(sql)) return { rows: [] };
       if (/INSERT INTO main_watch_verdicts/.test(sql)) { verdicts.push(params); return { rows: [], rowCount: 1 }; }
       if (/FROM main_watch_verdicts/.test(sql)) return { rows: greens.map((s, i) => ({ sha: s, created_at: new Date(Date.now() - i * 60000) })) };
@@ -104,6 +117,8 @@ function redPool({ greens = [GREEN], openRequest = false } = {}) {
       return { rows: [], rowCount: 0 };
     },
   };
+  pool.paused = paused;
+  return pool;
 }
 
 function scripted(...answers) {
@@ -217,3 +232,29 @@ test('the schema keeps every verdict and one request per red', () => {
   assert.match(schema, /CREATE TABLE IF NOT EXISTS main_watch_verdicts \(/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS main_red_requests \([\s\S]*?UNIQUE \(app_id, red_sha\)/);
 });
+
+// The proposal-pipeline topic's "Merges paused by a red main" pairs these
+// (services/topic-figures.js).
+test('a pause of the merges is recorded where it starts and where it ends, with what ended it', async () => {
+  const settle = () => new Promise((r) => setImmediate(r));
+  let restore = scripted(red([KUDOS]), red([KUDOS]));
+  const pool = redPool();
+  try {
+    await mainWatch.afterMerge({ workerRuntime: 'docker' }, pool, { app: APP, session: { id: 7894, pr_number: 4826 }, mergeSha: RED });
+  } finally { restore(); }
+  await settle();
+  assert.deepEqual(pool.events, [['main_paused', 10, { sha: RED, confirming: true }]],
+    'once, when the first red holds the merges; the confirmed red keeps the same pause');
+  restore = scripted(pass);
+  try {
+    await mainWatch.afterMerge({ workerRuntime: 'docker' }, pool, { app: APP, session: { id: 7923, pr_number: 4843 }, mergeSha: sha('e') });
+  } finally { restore(); }
+  await settle();
+  assert.deepEqual(pool.events.at(-1), ['main_resumed', 10, { sha: sha('e'), by: 'green' }]);
+
+  const admin = redPool({ paused: RED });
+  await mainWatch.resume({}, admin, 10, { by: { username: 'snait' } });
+  await settle();
+  assert.deepEqual(admin.events, [['main_resumed', 10, { sha: RED, by: 'admin' }]]);
+});
+

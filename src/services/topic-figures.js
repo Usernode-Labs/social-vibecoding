@@ -383,6 +383,29 @@ const LIMITS_SQL = `
    WHERE n.kind = 'platform_limit' AND n.detail ~ '^[a-z_]+_full:'
      AND n.created_at >= $1::timestamptz AND n.created_at < $2::timestamptz`;
 
+// Each pause of a project's merges by a red main that overlapped the window,
+// and how long they lasted inside it (main-watch.notePauseChange records
+// main_paused and main_resumed). A pause ends at the next mark for its app,
+// whichever it is, so one lost mark cannot stretch it; one still running
+// counts up to the window's end. The week before the window is read too, for
+// a pause that began before it.
+const MAIN_PAUSED_SQL = `
+  WITH marks AS (
+    SELECT e.app_id, e.event_type, e.created_at,
+           LEAD(e.created_at) OVER (PARTITION BY e.app_id ORDER BY e.created_at, e.id) AS next_at
+      FROM events e
+     WHERE e.event_type IN ('main_paused', 'main_resumed')
+       AND e.created_at >= $1::timestamptz - interval '7 days' AND e.created_at < $2::timestamptz
+       AND ($3::boolean OR (e.app_id = ANY($4::int[])) = $5::boolean)
+  ), spans AS (
+    SELECT created_at AS started_at, COALESCE(next_at, $2::timestamptz) AS ended_at
+      FROM marks WHERE event_type = 'main_paused'
+  )
+  SELECT COUNT(*)::int AS n,
+         COALESCE(SUM(EXTRACT(EPOCH FROM LEAST(ended_at, $2::timestamptz) - GREATEST(started_at, $1::timestamptz))), 0)::float8 AS secs
+    FROM spans
+   WHERE ended_at > $1::timestamptz`;
+
 // Each time somebody asked for a session and a session cap turned them away
 // (session-lifecycle.recordCapacityRefusal). LIMITS_SQL above counts the
 // admins' alerts, which sample the count every few minutes: how often a cap
@@ -425,6 +448,7 @@ const SOURCES = Object.freeze({
   restarts: { days: 7, read: (pool, w) => pool.query(RESTARTS_SQL, [w.from, w.until]) },
   limits: { days: 7, read: (pool, w) => pool.query(LIMITS_SQL, [w.from, w.until]) },
   turnedAway: { days: 7, read: (pool, w) => pool.query(TURNED_AWAY_SQL, [w.from, w.until]) },
+  mainPaused: { days: 7, scoped: true, read: (pool, w, s) => pool.query(MAIN_PAUSED_SQL, [w.from, w.until, ...scoped(s)]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -625,6 +649,12 @@ const FIGURES = Object.freeze({
     target: { atMost: 900 },
     measure: (r) => ({ secs: r.median_secs, n: r.n }),
   },
+  'pipeline.main-paused': {
+    source: 'mainPaused', kind: 'count', covers: 'split', label: 'Merges paused by a red main',
+    tip: 'How many times a project’s merges were paused because its main branch failed its own tests, and how long the pauses lasted in all. While one lasts, approved changes wait; a fix that turns main green, or an admin’s Resume, ends it.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n, secs: r.secs }),
+  },
   'infra.merge-to-live': {
     kind: 'duration', covers: 'split', sources: { homeroom: 'homeroomLive', others: 'mergeLive' }, label: 'Merge → live',
     tip: 'How long from a change merging to it running in production. Half are faster. A project deploys as part of the merge; Homeroom goes out in its next release, so its changes wait for one.',
@@ -802,7 +832,13 @@ function reading(def, measure) {
       const apps = int(measure.apps);
       detail = apps ? `in ${apps} ${apps === 1 ? 'project' : 'projects'}` : '';
     }
-    return { state: verdict(off), value: n ? `${n} ${n === 1 ? 'time' : 'times'}` : 'None', detail, off, final: false };
+    // How long they lasted in all, when the source adds it up.
+    const total = measure.secs != null && n ? `${formatDuration(Number(measure.secs))} in all` : null;
+    if (total != null) detail = total;
+    return {
+      state: verdict(off), value: n ? `${n} ${n === 1 ? 'time' : 'times'}` : 'None', detail, off, final: false,
+      ...(total ? { sideDetail: total } : {}),
+    };
   }
 
   if (def.kind === 'compare') {
@@ -850,7 +886,8 @@ function present(id, measure) {
       // not read, says so in its value alone, unless its record is new
       // (#4697): then when counting began.
       const detail = !read.final && def.kind === 'rate' ? read.detail
-        : read.since ? (read.final ? read.detail : `since ${read.since}`) : '';
+        : read.sideDetail ? read.sideDetail
+          : read.since ? (read.final ? read.detail : `since ${read.since}`) : '';
       return { key: side.key, name: side.name, state: read.state, value: read.value, detail };
     });
     const state = SPLIT_STATE_ORDER.find((st) => sides.some((side) => side.state === st)) || 'error';
@@ -858,7 +895,8 @@ function present(id, measure) {
       ...base,
       state,
       value: sides.map((side) => `${side.name} ${side.value}`).join(' · '),
-      sub: joinLine(def.kind === 'duration' ? 'median' : '', targetLine(def.target, def.kind, false)),
+      sub: joinLine(def.kind === 'duration' ? 'median' : '',
+        def.kind === 'count' ? (def.target ? 'target none' : '') : targetLine(def.target, def.kind, false)),
       sides,
     };
   }
@@ -1026,6 +1064,7 @@ const DEMO_MEASURES = Object.freeze({
   'pipeline.checks-couldnt-run': { homeroom: { hits: 3, total: 143 }, others: { hits: 2, total: 262 } },
   'pipeline.shots': { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } },
   'pipeline.vote-to-merged': { homeroom: { secs: 540, n: 18 }, others: { secs: 240, n: 13 } },
+  'pipeline.main-paused': { homeroom: { n: 2, secs: 9000 }, others: { n: 0, secs: 0 } },
   'infra.merge-to-live': { homeroom: { secs: 1140, n: 18 }, others: { secs: 80, n: 56 } },
   'infra.deploys-failed': { hits: 3, total: 74 },
   'infra.apps-up': { hits: 1204, total: 1213 },

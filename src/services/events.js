@@ -262,6 +262,12 @@ const EVENT_TYPES = Object.freeze({
   // | 'user', path: where they asked }. The infra topic's "Turned away at a
   // session cap" figure counts these (services/topic-figures.js).
   SESSION_CAPACITY_REFUSED: 'session_capacity_refused',
+  // An app's merges paused by a red main, and the pause ending
+  // (services/main-watch.js notePauseChange): { sha, confirming } and
+  // { sha, by: 'green' | 'flakes' | 'admin' }. The proposal-pipeline
+  // topic's "Merges paused by a red main" figure pairs them.
+  MAIN_PAUSED: 'main_paused',
+  MAIN_RESUMED: 'main_resumed',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise
