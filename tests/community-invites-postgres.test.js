@@ -454,25 +454,31 @@ test('invite links against a real PostgreSQL', async (t) => {
       // A new link serializes like the list does, with nobody waiting on it yet.
       const fresh = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
       assert.ok(fresh.ok);
-      assert.deepEqual({ pending: fresh.link.pending, joined: fresh.link.joined, ended: fresh.link.ended },
-        { pending: 0, joined: 0, ended: null });
+      assert.deepEqual({ waiting: fresh.link.waiting, joined: fresh.link.joined, status: fresh.link.status },
+        { waiting: 0, joined: 0, status: 'live' });
       // Somebody without access follows it and is not let in yet (a queued
       // redemption, as private membership leaves one waiting on nothing):
-      // the row counts them, and the person dee joined is the joined count.
-      const { rows: [{ id: queuedId }] } = await pool.query("INSERT INTO users (username) VALUES ('nia') RETURNING id");
+      // the row counts them, and the person hal joined is the joined count.
+      // These people carry explicit ids well above every other subtest's, so
+      // this subtest leaves the id sequence as it found it (a later one
+      // inserts 31 and 32 by hand), and hal is its own joiner, not dee
+      // (#4780 below redeems with dee expecting to join on the spot).
+      const { rows: [{ id: queuedId }] } = await pool.query("INSERT INTO users (id, username) VALUES (101, 'noor') RETURNING id");
+      const { rows: [{ id: joinedId }] } = await pool.query(
+        "INSERT INTO users (id, username, has_platform_access) VALUES (102, 'hal', TRUE) RETURNING id");
       await pool.query(
         "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
         [fresh.link.id, queuedId]);
       await pool.query('UPDATE community_invites SET uses = 1 WHERE id = $1', [fresh.link.id]);
-      assert.equal((await invites.redeem(pool, { token: fresh.link.token, user: as(4, 'dee', true) })).status, 'joined');
+      assert.equal((await invites.redeem(pool, { token: fresh.link.token, user: as(joinedId, 'hal', true) })).status, 'joined');
       let listed = (await links()).find((l) => l.id === fresh.link.id);
-      assert.deepEqual({ pending: listed.pending, joined: listed.joined, ended: listed.ended },
-        { pending: 1, joined: 1, ended: null }, 'the queued one waits, the joined one counts');
+      assert.deepEqual({ waiting: listed.waiting, joined: listed.joined, status: listed.status },
+        { waiting: 1, joined: 1, status: 'live' }, 'the queued one waits, the joined one counts');
       // An expired link made this week is still listed, after the live ones,
       // with the people it queued still waiting on it (they are applied when
       // they are let in).
       const expired = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
-      const { rows: [{ id: expQueued }] } = await pool.query("INSERT INTO users (username) VALUES ('omar') RETURNING id");
+      const { rows: [{ id: expQueued }] } = await pool.query("INSERT INTO users (id, username) VALUES (103, 'omar') RETURNING id");
       await pool.query(
         "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
         [expired.link.id, expQueued]);
@@ -480,7 +486,7 @@ test('invite links against a real PostgreSQL', async (t) => {
         [expired.link.id]);
       // A turned-off link keeps no waiting people: revoking cancels them.
       const turnedOff = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
-      const { rows: [{ id: offQueued }] } = await pool.query("INSERT INTO users (username) VALUES ('pia') RETURNING id");
+      const { rows: [{ id: offQueued }] } = await pool.query("INSERT INTO users (id, username) VALUES (104, 'peri') RETURNING id");
       await pool.query(
         "INSERT INTO community_invite_redemptions (invite_id, user_id, status) VALUES ($1, $2, 'queued')",
         [turnedOff.link.id, offQueued]);
@@ -489,19 +495,20 @@ test('invite links against a real PostgreSQL', async (t) => {
       listed = await links();
       const expiredRow = listed.find((l) => l.id === expired.link.id);
       const offRow = listed.find((l) => l.id === turnedOff.link.id);
-      assert.deepEqual({ pending: expiredRow.pending, joined: expiredRow.joined, ended: expiredRow.ended },
-        { pending: 1, joined: 0, ended: 'expired' });
-      assert.deepEqual({ pending: offRow.pending, joined: offRow.joined, ended: offRow.ended },
-        { pending: 0, joined: 0, ended: 'revoked' });
+      assert.deepEqual({ waiting: expiredRow.waiting, joined: expiredRow.joined, status: expiredRow.status },
+        { waiting: 1, joined: 0, status: 'expired' });
+      assert.deepEqual({ waiting: offRow.waiting, joined: offRow.joined, status: offRow.status },
+        { waiting: 0, joined: 0, status: 'revoked' });
       // Live rows come first, ended ones after them.
-      const firstEnded = listed.findIndex((l) => l.ended);
+      const firstEnded = listed.findIndex((l) => l.status !== 'live');
       assert.ok(firstEnded > 0, 'the list has live rows before the ended ones');
-      assert.equal(listed.slice(firstEnded).every((l) => l.ended), true);
+      assert.equal(listed.slice(firstEnded).every((l) => l.status !== 'live'), true);
       // A link that ended more than 30 days ago is not listed, whatever the
-      // pane's maker holds.
+      // pane's maker holds. The keep window runs from when it ended, each
+      // link by its own clock, so it is its end that must age out.
       const old = await invites.createInvite(pool, { app: arena, user: ADA, days: 7, maxUses: 25 });
       await pool.query(
-        "UPDATE community_invites SET created_at = NOW() - INTERVAL '31 days', expires_at = NOW() - INTERVAL '1 day' WHERE id = $1",
+        "UPDATE community_invites SET created_at = NOW() - INTERVAL '32 days', expires_at = NOW() - INTERVAL '31 days' WHERE id = $1",
         [old.link.id]);
       assert.equal((await links()).some((l) => l.id === old.link.id), false, 'an old ended link is not listed');
     });

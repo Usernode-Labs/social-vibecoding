@@ -286,7 +286,7 @@ test('a viewer with a link of their own makes none; a failure is an answer, not 
 
 test('#4779: a viewer whose only link ended gets a new one made on opening, and it fills the link box', async () => {
   const api = loadTsx('tests/fixtures/invite-pane-api.ts');
-  const ended = { ...LINK, id: 8, ended: 'expired', pending: 1 };
+  const ended = { ...LINK, id: 8, status: 'expired', waiting: 1 };
   const fresh = { ...LINK, id: 9, token: 'tok9', path: '/invite/tok9' };
   const { fake, calls } = stubFetch({
     GET: { body: { ...STATE, links: [ended] } },
@@ -302,9 +302,9 @@ test('#4779: a viewer whose only link ended gets a new one made on opening, and 
   });
   const html = renderToHtml(createElement(api.InvitePane, { slug: 'notes-ab12', label: 'Notes' }));
   assert.match(html, /value="\/invite\/tok9"/, 'the new link is in the box, not the ended one');
-  assert.match(html, /data-invite-ended="expired"/, 'the ended row says why it is ended');
-  assert.match(html, /No one joined yet · 1 waiting · expired/,
-    'the ended row keeps its facts and its waiting people');
+  assert.match(html, /data-invite-status="expired"/, 'the ended row says why it is ended');
+  assert.match(html, /0 of 25 used · expired/, 'the ended row keeps its use count and why it ended');
+  assert.match(html, /1 waiting/, 'the ended row keeps its waiting people');
 });
 
 // ── the pane ─────────────────────────────────────────────────────────────
