@@ -253,6 +253,36 @@ test('the invite funnel renders Signed in as a total, split into from the link a
       'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700', 'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700']);
 });
 
+// #4895: under the creation path, where the time to running goes: each
+// stage's median, sized by the slowest and printed beside it, and each newest
+// project's slowest stages and how its image was built.
+test('the creation path says where the time to running goes', () => {
+  assert.match(src, /<div id="admin-journey-creation-timing">\n\s*<CreationTimingRows timing=\{data\.timing\} \/>/);
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx.js');
+  const mod = loadTsx('frontend/src/features/admin/admin-journey.tsx', {
+    stubs: {
+      './admin-console.js': { AdminUI: new Proxy({}, { get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)) }) },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+  const text = (html) => html.replace(/<[^>]+>/g, '|').replace(/\|+/g, '|');
+  const html = renderToHtml(createElement(mod.CreationTimingRows, { timing: {
+    from: '2026-10-12T15:00:00.000Z', of: 3, totalMs: 45000,
+    stages: [{ key: 'database', medianMs: 800 }, { key: 'repository', medianMs: 4300 }, { key: 'build', medianMs: 28000 }, { key: 'rollout', medianMs: 9200 }],
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  } }));
+  assert.match(text(html), /\|Database\|0\.8 s\|Repository\|4\.3 s\|Image build\|28 s\|Start\|9\.2 s\|/);
+  assert.match(html, /data-journey-creation-stage="build"[^>]*>[\s\S]*?style="width:100%"/, 'the slowest stage fills its bar');
+  assert.match(text(html), /placed 1 s · image pulled and started 5 s · booted until healthy 3 s/);
+  assert.match(text(html), /Median per stage over 3 projects made from a starter, 45 s in all\./);
+  const none = renderToHtml(createElement(mod.CreationTimingRows, { timing: { from: null, of: 0, totalMs: null, stages: [], pod: null } }));
+  assert.match(text(none), /Not timed yet/);
+  assert.equal(mod.exampleTiming({
+    kind: 'new_repo', totalMs: 45000, stages: { database: 800, repository: 4300, build: 28000, rollout: 9200 },
+    build: { engine: 'buildkit', steps: [{ name: 'exporting cache to registry', ms: 8100 }] },
+  }), 'Image build 28 s · Start 9.2 s · Repository 4.3 s · built with buildkit, slowest exporting cache to registry 8.1 s');
+});
+
 test('one declared check opens the demo page', () => {
   const checks = manifest.tests.filter((t) => t.path === '/?demo=1#admin/journey');
   assert.equal(checks.length, 1);

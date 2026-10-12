@@ -182,6 +182,15 @@ const EVENT_TYPES = Object.freeze({
   APP_RUNNING: 'app_running',
   PREVIEW_OPENED: 'preview_opened',
   CHANGE_LIVE: 'change_live',
+  // Where a new project's time to running went (#4895): one row per
+  // creation attempt, whatever its outcome, written by
+  // services/app-creation-timing.js and read by journey.js creationPath.
+  // No backfill: nothing timed creation before.
+  //   app_creation_timed  metadata: { outcome ('running' | 'awaiting_secrets'
+  //                       | 'error'), kind ('new_repo' | 'existing_repo'),
+  //                       starter, totalMs, stages: { name: ms }, failedIn?,
+  //                       build?, pod? }
+  APP_CREATION_TIMED: 'app_creation_timed',
   // The admin Journey's first session (services/journey.js firstSession).
   // No backfill: nothing recorded these moments before.
   //   first_artefact_shown  the first thing of theirs a maker sees: the sketch
