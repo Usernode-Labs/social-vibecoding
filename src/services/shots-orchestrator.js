@@ -26,6 +26,7 @@ const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
+const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
@@ -553,6 +554,9 @@ function shotsBrief({
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     availableFixtures: deployment.availableFixtures || [],
+    // The only files upload_file can choose where a page asks for one, the
+    // same on both copies (worker/shots-samples.js).
+    sampleFiles: SAMPLE_FILES.map(({ name, type, about }) => ({ name, type, about })),
     // The app's tile on Homeroom's home screen, which these addresses do not
     // otherwise show: each serves its own side's at homeTile.path.
     ...(homeTile ? { homeTile } : {}),
@@ -764,6 +768,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
+  'sample_upload',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -775,6 +780,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
   'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
+  'control_request', 'upload_file',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -812,7 +818,7 @@ function recordAgentDiagnostic(metrics, raw) {
   if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
   if (['ok', 'error', 'tool_error', 'rpc_error', 'unparsed', 'server_exit',
     'loaded', 'invalid', 'request_error', 'invalid_catalog',
-    'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
+    'http_error', 'network_error', 'stream_error', 'cancelled', 'timeout', 'browser_gone'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
@@ -840,6 +846,9 @@ function recordAgentDiagnostic(metrics, raw) {
   if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
     event.identityAttached = raw.identityAttached;
   }
+  // And whether the proxy sent that page load on to the same address with
+  // the persona's display token, as Homeroom's frame opens an app.
+  if (kind === 'document_request' && raw.identityRedirect === true) event.identityRedirect = true;
   // Why the shots proxy refused a destination outside the pair, by reason
   // only (worker/shots-boundary.js): never which destination.
   if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
@@ -851,6 +860,11 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
+  }
+  // Whether the shots proxy failed or held a controlled request.
+  if ((kind === 'controlled_failure_set' || kind === 'controlled_failure_hit')
+      && ['fail', 'hold', 'off'].includes(raw.mode)) {
+    event.mode = raw.mode;
   }
   if (['timeout', 'network', 'browser_closed', 'locator_ambiguous', 'other'].includes(raw.errorClass)) {
     event.errorClass = raw.errorClass;
@@ -1555,6 +1569,10 @@ async function executeRun(config, options, injected = {}) {
         ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
         notedChanges: control.notes.size,
         ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
+        // Requests held or failed and sample files uploaded, all changes together.
+        ...(control.conditions?.size ? {
+          notedConditions: [...control.conditions.values()].reduce((sum, list) => sum + list.length, 0),
+        } : {}),
         skippedAll: control.skippedAll ? true : false,
       } } : {}),
     });

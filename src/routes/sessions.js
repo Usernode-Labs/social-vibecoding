@@ -1948,8 +1948,7 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   const { rows: globalRows } = await pool.query(
     `SELECT COUNT(*) as cnt FROM chat_sessions
       WHERE status IN ('active', 'promoted')
-        AND source IS DISTINCT FROM 'imported'
-        AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+        AND source IS DISTINCT FROM 'imported'`
   );
   if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
     // At the global cap: reclaim a slot from a globally idle session
@@ -3049,11 +3048,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // budget, not a policy privilege, so full admins queue behind it like
       // everyone else. Imported PRs are produced externally and own no
       // Homeroom worker, so they do not spend this budget.
+      // Synthetic users' sessions (the Homeroom bot's proposals) do: each
+      // holds a preview pod like anyone's, and the cap is sized from the pod
+      // slots the cluster has, so every count of it includes them.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         // At the global cap: try to reclaim a slot from a globally idle
@@ -3279,8 +3280,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
@@ -3466,8 +3466,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
           WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+            AND source IS DISTINCT FROM 'imported'`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
