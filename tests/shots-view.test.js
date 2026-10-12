@@ -198,6 +198,23 @@ test('shot results are exposed only for the verified run on the current head', (
   assert.deepEqual(view.fromSnapshot({ shots_state: 'planned', shots_detail: { required: true } }, null).shotResults, []);
 });
 
+test('an unchanged result is served as unchanged, with its note and no reason', () => {
+  const state = require('../src/services/shots-state');
+  const summary = state.runSummary({
+    state: 'verified', base_sha: BASE, head_sha: HEAD, plan_hash: 'c'.repeat(64),
+    intent: null, trace_summary: { runs: 1 },
+    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories: [
+      { id: 'dialog', status: 'ready', files: 2, unchanged: true, note: 'any visible difference.' },
+    ] },
+  });
+  assert.deepEqual(view.serialize(summary, session(), 'demo', HEAD).shotResults, [
+    { id: 'dialog', status: 'unchanged', reason: null, note: 'any visible difference.' },
+  ]);
+  assert.deepEqual(view.cleanShotResults([
+    { id: 'dialog', status: 'unchanged', reason: 'ignored', note: 'The \\"Save\\" screens came out the same.' },
+  ]), [{ id: 'dialog', status: 'unchanged', reason: null, note: 'The "Save" screens came out the same.' }]);
+});
+
 test('shot results are cleaned before they reach any reviewer surface', () => {
   assert.deepEqual(view.cleanShotResults(null), []);
   assert.deepEqual(view.cleanShotResults('ready'), []);

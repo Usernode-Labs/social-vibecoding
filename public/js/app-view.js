@@ -23583,8 +23583,11 @@ const AppView = {
     const flowOf = (claim) => (Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((step) => esc(step)).join(' <span aria-hidden="true">→</span> ') : '');
     const noteOf = (claim) => {
       const result = resultOf(claim);
-      // What the shots agent said its shots leave out of the claim.
-      const shotNote = result && result.status === 'ready' && typeof result.note === 'string' ? result.note : '';
+      // What the shots agent said its shots leave out of the claim. An
+      // unchanged change (its before and after came out the same) is shown
+      // as a ready one, and its note says so.
+      const shotNote = result && (result.status === 'ready' || result.status === 'unchanged')
+        && typeof result.note === 'string' ? result.note : '';
       return shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [(inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`])}</p>` : '';
     };
     const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);

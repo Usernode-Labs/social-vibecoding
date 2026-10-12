@@ -175,7 +175,7 @@ test('the stored summary, the public view and get_proposal keep "failed"; old ro
   assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', OTHER_HEAD).shotResults, [],
     'never on a newer commit');
 
-  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'skipped', 'failed'\]\)/);
+  assert.match(read('src/services/mcp-tools.js'), /status: z\.enum\(\['ready', 'unchanged', 'skipped', 'failed'\]\)/);
 });
 
 test('brokenOnHead reads the failed changes of shots on exactly that head', () => {

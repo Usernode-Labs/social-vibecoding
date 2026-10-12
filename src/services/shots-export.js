@@ -27,6 +27,8 @@
 // run's images after 24 hours. `artifacts_retained` is therefore what is
 // left NOW; `artifact_bytes_stored` is what the run stored at the time.
 
+const { resultStatus } = require('./shots-files');
+
 const RUN_STATES = Object.freeze([
   'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
   'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden',
@@ -36,6 +38,7 @@ const RUN_STATES = Object.freeze([
 // group a person means when asking "what is running right now".
 const IN_PROGRESS_STATES = Object.freeze(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const STATE_FILTERS = Object.freeze([...RUN_STATES, 'in_progress']);
+const SHOWN = new Set(['ready', 'unchanged']);
 
 const EXPORT_COLUMNS = Object.freeze([
   'run_id', 'created_at', 'started_at', 'completed_at', 'updated_at', 'duration_ms',
@@ -227,7 +230,9 @@ function exportRecord(row) {
     const s = obj(story);
     return {
       id: s.id ?? null,
-      status: s.status ?? null,
+      // A ready change whose before and after came out the same reads
+      // 'unchanged', as every result does (shots-files.resultStatus).
+      status: s.status === 'ready' ? resultStatus(s) : (s.status ?? null),
       ...(s.reason ? { reason: s.reason } : {}),
       ...(s.note ? { note: s.note } : {}),
     };
@@ -281,8 +286,9 @@ function exportRecord(row) {
     failure_detail_json: json(failure.detail),
     impact: intent.impact ?? null,
     stories_declared: declared.length,
-    stories_ready: results.length ? results.filter((s) => s.status === 'ready').length : null,
-    stories_skipped: results.length ? results.filter((s) => s.status !== 'ready').length : null,
+    // Ready counts an unchanged change too: its shots were published.
+    stories_ready: results.length ? results.filter((s) => SHOWN.has(s.status)).length : null,
+    stories_skipped: results.length ? results.filter((s) => !SHOWN.has(s.status)).length : null,
     story_results_json: json(results),
     plan_source: trace.planSource ?? null,
     agent_attempts: num(trace.agentAttempts),

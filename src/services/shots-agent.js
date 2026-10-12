@@ -189,13 +189,19 @@ running off the screen, text or controls overlapping each other, an error
 message or a broken image on screen, a layout that falls apart at the phone
 size. Call note_problem with the change and screen where you saw it, what is
 broken in one short sentence, the after shot it shows in if you saved one,
-and alsoBefore: true when the before address shows the same thing, false
-when it does not, "unknown" when you did not look. People read these under
-"Also noticed"; they change nothing about the shots. Note only what any
-person would agree is broken, at most a handful per run: never a matter of
-taste, style or wording, and never whether the declared change is shown or
-works (that is note_change and skip_change). Do not go looking for problems
-on other screens; note what you see on the way.`;
+and alsoBefore. You shoot the before side of that screen anyway: look at
+that before shot, or the same place on the before address, and say
+alsoBefore true when it shows the same thing, false when it does not (also
+when that place is new with this change), so people can tell a problem the
+change brought from one that was already there. Say "unknown" only when you
+could not look. If you noticed it before you shot the before side, note it
+again once you have: the same problem at the same place is updated, not
+added. People read these under "Also noticed"; they change nothing about
+the shots. Note only what any person would agree is broken, at most a
+handful per run: never a matter of taste, style or wording, and never
+whether the declared change is shown or works (that is note_change and
+skip_change). Do not go looking for problems on other screens; note what
+you see on the way.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of

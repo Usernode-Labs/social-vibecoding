@@ -168,7 +168,11 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
         nextCursor: { before: '2026-09-30T00:00:00Z', before_id: 69 },
       };
     },
-    async galleryStats() { return { stats: { total: 3, no_shots: 1 } }; },
+    async shotsStats(_pool, q) {
+      assert.deepEqual(q, { app: 'bread', days: '14' }, 'the window and the app, never the capture problem');
+      return { window: { days: 14 }, proposals: 3 };
+    },
+    async galleryStats() { assert.fail('the retired pipeline\'s counters are the console strip\'s, not the connector\'s'); },
   };
   const out = await data.recentShots(null, { app: 'bread', beforeId: 7 }, { gallery });
   const p = out.proposals[0];
@@ -184,7 +188,48 @@ test('recent shots page through the gallery\'s own listing and counts, and keep 
   assert.equal(p.legacyCaptures, 2);
   assert.equal(p.authorEmail, undefined);
   assert.deepEqual(out.nextCursor, { before: '2026-09-30T00:00:00.000Z', beforeId: 69 });
-  assert.deepEqual((await data.shotStats(null, {}, { gallery })).stats, { total: 3, no_shots: 1 });
+  assert.deepEqual((await data.shotStats(null, { app: 'bread', problem: 'root_only', days: '14' }, { gallery })).stats,
+    { window: { days: 14 }, proposals: 3 });
+});
+
+// A run that shot one change of three (PR 4777) read as a success: the
+// listing gave its state and not its changes.
+test('each run in recent shots says how each declared change came out, and counts them', async () => {
+  const claim = (n) => ({ id: `c${n}`, claim: `Change ${n}` });
+  const gallery = {
+    async listProposals() {
+      return {
+        proposals: [
+          { id: 80, shots: {
+            state: 'verified', artifacts: [], claims: [claim(1), claim(2), claim(3)],
+            shotResults: [
+              { id: 'c1', status: 'ready' }, { id: 'c2', status: 'skipped', reason: 'Needs a wallet.' },
+              { id: 'c3', status: 'skipped', reason: 'Needs a second member.' },
+            ],
+          } },
+          { id: 81, shots: {
+            state: 'verified', artifacts: [], claims: [claim(1), claim(2)],
+            shotResults: [{ id: 'c1', status: 'unchanged', note: 'any visible difference.' }, { id: 'c2', status: 'failed' }],
+          } },
+          // Stopped before it saved anything: no results to count.
+          { id: 82, shots: { state: 'failed', failureCode: 'shots_agent_failed', artifacts: [], claims: [claim(1)], shotResults: [] } },
+          { id: 83, shots: { state: 'verified', artifacts: [], claims: [claim(1)], shotResults: [{ id: 'c1', status: 'published' }] } },
+        ],
+        nextCursor: null,
+      };
+    },
+  };
+  const out = await data.recentShots(null, {}, { gallery });
+  const [partial, unchanged, stopped, odd] = out.proposals.map((p) => p.shots);
+  assert.deepEqual(partial.changes, { declared: 3, ready: 1, unchanged: 0, skipped: 2, failed: 0 });
+  assert.deepEqual(partial.claims.map((c) => c.status), ['ready', 'skipped', 'skipped']);
+  assert.deepEqual(unchanged.changes, { declared: 2, ready: 0, unchanged: 1, skipped: 0, failed: 1 });
+  assert.deepEqual(unchanged.claims, [
+    { id: 'c1', claim: 'Change 1', status: 'unchanged' }, { id: 'c2', claim: 'Change 2', status: 'failed' },
+  ]);
+  assert.deepEqual(stopped.changes, { declared: 1, ready: 0, unchanged: 0, skipped: 0, failed: 0 });
+  assert.equal(stopped.claims[0].status, null);
+  assert.equal(odd.claims[0].status, null, 'a status it does not know is not passed on');
 });
 
 test('one proposal\'s shots: only a verified run\'s stills, focus first, within the count and the bytes', async () => {

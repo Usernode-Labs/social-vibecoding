@@ -401,6 +401,22 @@ test('a ready change shows the shots agent\'s note on what its shots leave out, 
   }
 });
 
+// An unchanged change (its before and after came out the same) is shown as
+// a ready one was before it had its own status: its shots, then its note.
+test('an unchanged change shows its shots and the note that they came out the same, as a ready one', () => {
+  const note = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
+  const unchanged = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'unchanged', reason: null, note }],
+  }), { sessionId: 42 });
+  const ready = AppView.shotsHtml(shots({
+    shotResults: [{ id: 'dialog', status: 'ready', reason: null, note }],
+  }), { sessionId: 42 });
+  assert.equal(unchanged, ready, 'the card reads it exactly as a ready change with that note');
+  assert.match(unchanged, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> any visible difference\. The before and after screens came out the same/);
+  assert.match(unchanged, new RegExp(`<img src="${url('3')}"`));
+  assert.doesNotMatch(unchanged, /data-shots-shot-status="skipped"|>Skipped</);
+});
+
 // The shots agent's notes on clear problems it saw on the after build
 // (note_problem): under a quiet small-caps label, each saying where it shows
 // and whether the before build has it too, and never on a card that is not

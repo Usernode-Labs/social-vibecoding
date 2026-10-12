@@ -4536,6 +4536,12 @@ test('get_proposal carries before/after shot results through its own output sche
     }
     const blocked = { ...evidence, shotResults: [{ id: 'saved-toast', status: 'blocked', reason: null }] };
     assert.equal(shape.shotResults.safeParse(blocked.shotResults).success, false);
+    // Unchanged is its own status: published, but the before and after came
+    // out the same, and its note says so.
+    assert.equal(shape.shotResults.safeParse([
+      { id: 'saved-toast', status: 'unchanged', reason: null, note: 'any visible difference.' },
+    ]).success, true);
+    assert.match(shape.shotResults.description, /unchanged \(its shots are published, but the before and after came out the same/);
     assert.match(c.specs.get('get_proposal').description, /before\/after shots of each declared change/);
     assert.match(c.specs.get('get_proposal').description, /`shotResults` says which changes it skipped/);
   } finally { c.restore(); }

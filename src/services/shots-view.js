@@ -34,24 +34,30 @@ function cleanClaims(value) {
   })).filter((claim) => claim.id && claim.claim);
 }
 
-// One result per declared change: its shots are ready, or the shots agent
-// skipped it and says why, or it failed: the agent did the steps and the
-// after build broke.
+// One result per declared change: its shots are ready, or unchanged (shown,
+// but its before and after came out the same, and its note says so), or the
+// shots agent skipped it and says why, or it failed: the agent did the steps
+// and the after build broke.
 // The agent sometimes writes a quotation mark already escaped, as it would
 // inside JSON (\"Continue\"); people should read the quotation mark.
 const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
+const SHOWN_RESULTS = new Set(['ready', 'unchanged']);
 
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
-    .map((result) => ({
-      id: String(result.id),
-      status: result.status === 'ready' || result.status === 'failed' ? result.status : 'skipped',
-      reason: result.status === 'ready' || typeof result.reason !== 'string'
-        ? null : unescapeQuotes(result.reason).slice(0, 1000),
-      note: result.status !== 'ready' || typeof result.note !== 'string'
-        ? null : unescapeQuotes(result.note).slice(0, 500),
-    }));
+    .map((result) => {
+      const status = SHOWN_RESULTS.has(result.status) || result.status === 'failed' ? result.status : 'skipped';
+      const shown = SHOWN_RESULTS.has(status);
+      return {
+        id: String(result.id),
+        status,
+        reason: shown || typeof result.reason !== 'string'
+          ? null : unescapeQuotes(result.reason).slice(0, 1000),
+        note: !shown || typeof result.note !== 'string'
+          ? null : unescapeQuotes(result.note).slice(0, 500),
+      };
+    });
 }
 
 // What the shots agent noticed broken on the after build besides the

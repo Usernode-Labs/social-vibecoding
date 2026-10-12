@@ -237,11 +237,16 @@ test('the shots agent notes clear problems on the after build, a handful, never 
   const prompt = agent.SYSTEM_PROMPT;
   assert.match(prompt, /Call note_problem with the change and screen where you saw it/);
   assert.match(prompt, /content cut off or\s+running off the screen, text or controls overlapping each other, an error\s+message or a broken image on screen, a layout that falls apart at the phone\s+size/);
-  assert.match(prompt, /alsoBefore: true when the before address shows the same thing, false\s+when it does not, "unknown" when you did not look/);
-  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a handful per run/);
+  // Whether the before build has it too, from the before shot it takes
+  // anyway: every problem noted in the proposals merged 2026-10-09 to 10-12
+  // said "unknown".
+  assert.match(prompt, /You shoot the before side of that screen anyway: look at\s+that before shot, or the same place on the before address, and say\s+alsoBefore true when it shows the same thing, false when it does not/);
+  assert.match(prompt, /Say "unknown" only when you\s+could not look/);
+  assert.match(prompt, /If you noticed it before you shot the before side, note it\s+again once you have/);
+  assert.match(prompt, /Note only what any\s+person would agree is broken, at most a\s+handful per run/);
   assert.match(prompt, /never a matter of\s+taste, style or wording/);
-  assert.match(prompt, /never whether the declared change is shown or\s+works \(that is note_change and skip_change\)/);
-  assert.match(prompt, /under\s+"Also noticed"; they change nothing about the shots/);
+  assert.match(prompt, /never\s+whether the declared change is shown or works \(that is note_change and\s+skip_change\)/);
+  assert.match(prompt, /under\s+"Also noticed"; they change nothing about\s+the shots/);
   assert.match(prompt, /Do not go looking for problems\s+on other screens/);
 });
 
