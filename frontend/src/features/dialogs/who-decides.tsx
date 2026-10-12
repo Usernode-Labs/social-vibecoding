@@ -13,8 +13,9 @@
  *                             or Make your own: groups and rules, any one
  *                             passing is enough, starting from the one
  *                             picked.
- *   How it plays out          what the pick means for you and for someone
- *                             else in it.
+ *   How it plays out          what the pick means: for a change anyone
+ *                             makes, or (You or the group, rules of its
+ *                             own) for you and for someone else in it.
  *   People                    who is in it and its admins, a door to the
  *                             Members dialog, where they are managed.
  *
