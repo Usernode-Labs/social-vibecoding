@@ -529,7 +529,8 @@ test('a GLM follow-up that ended on an API error with exit 0 is no revision, wha
   const out = await run(t, h);
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
-  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error)');
+  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error: '
+    + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
   // Discarded by run-cc.sh, as it now is: the same, and the reason is named.
   const discarded = harness({
     comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
@@ -538,7 +539,9 @@ test('a GLM follow-up that ended on an API error with exit 0 is no revision, wha
   const out2 = await run(t, discarded);
   assert.equal(out2.verdict, 'failed');
   assert.equal(discarded.calls.reconciled.length, 0);
-  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (the agent exited with code 1)');
+  // The notice, read before the exit code run-cc.sh gave it.
+  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (it ended on an API error: '
+    + 'API Error: 429 {"error":{"message":"Provider returned error","code":429}})');
 });
 
 test('a Codex follow-up whose agent failed fails exactly as it did', async (t) => {

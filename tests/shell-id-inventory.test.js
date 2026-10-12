@@ -350,6 +350,12 @@ const RETIRED_IDS = {
   'dev-flow-pref-section': '#4311: the "Where changes get built" part of Settings → Connectors & CLI. Nothing chose a venue from its value any more.',
   'settings-dev-flow': '#4311: that part\'s dropdown, which saved users.dev_flow_preference through POST /api/me/dev-flow (removed).',
   'settings-dev-flow-status': '#4311: the dropdown\'s save/error line.',
+  // ── #4891: the email sign-up asks for no password ──────────────────
+  // The set-password step (#otp-step-password, named for its route) asks a
+  // new account for its username and nothing else: it signs in with an
+  // emailed code and adds a password in Settings (#cp-title-add below).
+  'otp-new-password': '#4891: the set-password step\'s optional New password field. A password is one more decision at the very first step; Settings → Account offers "Add a password" instead.',
+  'otp-confirm-password': '#4891: the same step\'s Confirm password field, gone with the password it confirmed.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -1039,6 +1045,15 @@ const ADDED_IDS = {
   'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
+  // ── #4891: Settings offers "Add a password" to an account with none ───
+  // Each pair is rendered once (features/settings/sections/password.tsx) and
+  // settings.js _setChangePasswordMode shows the one that fits, as it does
+  // #cp-current-row: the email sign-up no longer asks for a password, and
+  // sends the person here to add one.
+  'cp-title-change': '#4891: the Password part\'s "Change password" title, shown to an account that has a password.',
+  'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
+  'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
+  'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

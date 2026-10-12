@@ -82,6 +82,13 @@
  * only movement. In the app, whose web view ends at the keys, the band is the
  * whole screen and only the reveal does anything.
  *
+ * OVER A PAGE THAT HOLDS STILL (onboarding run, 12 Oct 2026, iPhone 17
+ * Safari, #4893): a drag the screen's own scroller did not take scrolled
+ * Home underneath, and its cards came up behind the status bar. While it is
+ * up the page is held (lib/page-lock.ts): the document does not scroll, and
+ * on the first session Home takes no tap or focus. In a phone browser on iOS
+ * its ground also runs on above it, under the status bar (app.css).
+ *
  * STARTING POINTS (Evan, 8 Oct 2026): four tiles, two by two. A tier list,
  * a game and an organizer are sentences with a blank (./examples.ts); the
  * fourth, Your own idea, is the plain description box, which is also what
@@ -110,6 +117,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
+import { usePageLock } from '../../lib/page-lock';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { MakeRuleLine } from '../who-decides/make-rule';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
@@ -279,6 +287,11 @@ export function MakeScreen({
   const wordsFieldRef = useRef<HTMLInputElement>(null);
   const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // Home holds still under it, and takes no tap or focus (lib/page-lock.ts).
+  // From Create the header and what stands above this screen stay in use, so
+  // only the scrolling stops there.
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef, { inert: !underHeader });
   // The caret for a hardware keyboard; on a phone the first tap raises the
   // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap). A
   // touch screen gets no caret from code (#4597, the sign-in sheet's own
@@ -457,6 +470,7 @@ export function MakeScreen({
 
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""

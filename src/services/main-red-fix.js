@@ -45,14 +45,17 @@ function fixRequestsEnabled() {
 
 const short = (sha) => String(sha || '').slice(0, 9);
 
-/** Keep one verdict. `superseded`: a newer merge took the row first. Never throws. */
-async function recordVerdict(pool, { appId, sha, state, superseded = false, confirmed = null }) {
+/**
+ * Keep one verdict. `superseded`: a newer merge took the row first. `flake`:
+ * a red that the same commit, run again, did not keep. Never throws.
+ */
+async function recordVerdict(pool, { appId, sha, state, superseded = false, confirmed = null, flake = false }) {
   if (!pool || !appId || !sha || !state) return;
   try {
     await pool.query(
-      `INSERT INTO main_watch_verdicts (app_id, sha, state, superseded, confirmed)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [appId, String(sha).toLowerCase(), state, !!superseded, confirmed == null ? null : !!confirmed]
+      `INSERT INTO main_watch_verdicts (app_id, sha, state, superseded, confirmed, flake)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [appId, String(sha).toLowerCase(), state, !!superseded, confirmed == null ? null : !!confirmed, !!flake]
     );
   } catch (err) {
     log.warn('main-red-fix', 'verdict record failed (non-fatal)', { appId, sha: short(sha), err: err.message });

@@ -182,6 +182,15 @@ const EVENT_TYPES = Object.freeze({
   APP_RUNNING: 'app_running',
   PREVIEW_OPENED: 'preview_opened',
   CHANGE_LIVE: 'change_live',
+  // Where a new project's time to running went (#4895): one row per
+  // creation attempt, whatever its outcome, written by
+  // services/app-creation-timing.js and read by journey.js creationPath.
+  // No backfill: nothing timed creation before.
+  //   app_creation_timed  metadata: { outcome ('running' | 'awaiting_secrets'
+  //                       | 'error'), kind ('new_repo' | 'existing_repo'),
+  //                       starter, totalMs, stages: { name: ms }, failedIn?,
+  //                       build?, pod? }
+  APP_CREATION_TIMED: 'app_creation_timed',
   // The admin Journey's first session (services/journey.js firstSession).
   // No backfill: nothing recorded these moments before.
   //   first_artefact_shown  the first thing of theirs a maker sees: the sketch
@@ -268,6 +277,18 @@ const EVENT_TYPES = Object.freeze({
   // topic's "Merges paused by a red main" figure pairs them.
   MAIN_PAUSED: 'main_paused',
   MAIN_RESUMED: 'main_resumed',
+  // A merged commit of Homeroom itself that did not become the running
+  // release in time (services/release-watch.js, once per commit and kind):
+  // { sha, kind: 'workflow_failed' | 'workflow_running' | 'rollout_missing'
+  // | 'unknown', prNumber }. The infra topic's "Homeroom releases that
+  // stalled" counts the commits.
+  RELEASE_STALLED: 'release_stalled',
+  // A Homeroom server process came up on Kubernetes
+  // (services/platform-release.js recordBoot): { sha, pod }. A second boot
+  // in the same pod is its container started again after the process died
+  // (a crash, the memory limit, a failed liveness probe): the infra topic's
+  // "Homeroom crashes" counts those. A rollout starts new pods instead.
+  PLATFORM_BOOTED: 'platform_booted',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

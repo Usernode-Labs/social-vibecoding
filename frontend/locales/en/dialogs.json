@@ -2881,7 +2881,11 @@
   },
   "whoDecides.plays.title": {
     "text": "How it plays out",
-    "description": "Section label over two rows showing what the picked rule means for the reader and for someone else."
+    "description": "Section label over the rows showing what the picked rule means: one row for anyone, or two, for the reader and for someone else."
+  },
+  "whoDecides.plays.anyoneTitle": {
+    "text": "Anyone makes a change",
+    "description": "Row title under How it plays out, for a rule that treats every change alike (Two yeses, Open floor, Group vote): what happens to a change anyone makes, the reader's included."
   },
   "whoDecides.plays.youTitle": {
     "text": "You make a change",
@@ -2907,29 +2911,17 @@
     "text": "Live when {{creator}} says yes, or when most of the group does.",
     "description": "You or the group, for a change someone else makes, when the reader is not the creator."
   },
-  "whoDecides.plays.two_yeses.you": {
-    "text": "Live once one other person says yes too.",
-    "description": "Two yeses, for a change the reader makes."
+  "whoDecides.plays.two_yeses.anyone": {
+    "text": "Live once one more person says yes.",
+    "description": "Two yeses, under the row Anyone makes a change: one yes besides that of the person who made the change puts it live."
   },
-  "whoDecides.plays.two_yeses.other": {
-    "text": "Live once one more person says yes. That can be you.",
-    "description": "Two yeses, for a change someone else makes, under a row titled with that person's name: one yes besides theirs puts it live, and the reader's counts."
+  "whoDecides.plays.open_floor.anyone": {
+    "text": "Their own yes is enough. Live once its checks pass.",
+    "description": "Open floor, under the row Anyone makes a change: \"their\" is whoever made the change, whose own yes puts it live."
   },
-  "whoDecides.plays.open_floor.you": {
-    "text": "Your yes is enough. Live once its checks pass.",
-    "description": "Open floor, for a change the reader makes."
-  },
-  "whoDecides.plays.open_floor.other": {
-    "text": "{{name}}’s own yes is enough, same as yours.",
-    "description": "Open floor, for a change someone else makes. {{name}} is that person's username."
-  },
-  "whoDecides.plays.group_vote.you": {
+  "whoDecides.plays.group_vote.anyone": {
     "text": "Live when most active members say yes, or after a wait if nobody objects.",
-    "description": "Group vote, for a change the reader makes."
-  },
-  "whoDecides.plays.group_vote.other": {
-    "text": "Same as yours: the group decides.",
-    "description": "Group vote, for a change someone else makes."
+    "description": "Group vote, under the row Anyone makes a change: the group decides, whoever made the change."
   },
   "whoDecides.plays.own.you": {
     "text": "Live when any one of its rules passes.",

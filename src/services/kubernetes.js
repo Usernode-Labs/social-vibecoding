@@ -596,21 +596,46 @@ function databaseAffinity(cfg, environment) {
   };
 }
 
-// The node an app's ready Pod was scheduled on, for the deploy log. Best
-// effort: a lookup that fails or finds no ready Pod returns null and never
-// fails the deploy that just succeeded.
-async function scheduledNode(core, namespace, name, imageRef) {
+// The app's ready Pod, for the deploy log (the node it was scheduled on) and
+// for the creation timing (podStartTimeline). Best effort: a lookup that
+// fails or finds no ready Pod returns null and never fails the deploy that
+// just succeeded.
+async function findReadyAppPod(core, namespace, name, imageRef) {
   try {
     const pods = await core.listNamespacedPod({ namespace,
       labelSelector: `social.usernode.io/runtime-name=${name}` });
-    const pod = (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
+    return (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
       && item.spec?.nodeName
       && item.spec?.containers?.some((c) => c.name === 'app' && c.image === imageRef)
-      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True'));
-    return pod ? pod.spec.nodeName : null;
+      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True')) || null;
   } catch {
     return null;
   }
+}
+
+// How a Pod's start was spent, from its own status (#4895): placed on a node
+// (PodScheduled), its app container running (the image pulled and the
+// container created), and Ready (the app booted and its /health answered
+// the probes). Whole seconds, as the API keeps them. Null when any of the
+// four stamps is missing, e.g. a Pod that restarted since.
+function podStartTimeline(pod) {
+  const at = (value) => {
+    const t = Date.parse(value || '');
+    return Number.isFinite(t) ? t : null;
+  };
+  const condition = (type) => at(pod?.status?.conditions
+    ?.find((c) => c.type === type && c.status === 'True')?.lastTransitionTime);
+  const created = at(pod?.metadata?.creationTimestamp);
+  const scheduled = condition('PodScheduled');
+  const ready = condition('Ready');
+  const app = (pod?.status?.containerStatuses || []).find((c) => c.name === 'app');
+  const started = at(app?.state?.running?.startedAt);
+  if ([created, scheduled, started, ready].some((t) => t == null) || app?.restartCount) return null;
+  return {
+    scheduleMs: Math.max(0, scheduled - created),
+    startMs: Math.max(0, started - scheduled),
+    readyMs: Math.max(0, ready - started),
+  };
 }
 
 // ── Platform assets on every app's own origin ─────────────────────────
@@ -1045,7 +1070,7 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [], runAsUser = null,
+  command = [], runAsUser = null, onRollout = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   // runAsUser is an explicit override for an image that names no user and
@@ -1157,6 +1182,9 @@ async function deployApplication(config, {
     await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
       appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend, gateBackend }));
   }
+  // Everything is applied; what follows is the Pod starting. A caller timing
+  // the two apart (services/app-creator.js) hears it here.
+  if (typeof onRollout === 'function') { try { onRollout(); } catch { /* observer only */ } }
   try {
     await waitForDeployment(namespace, name, {
       generation: deployed?.metadata?.generation, uid: deployed?.metadata?.uid,
@@ -1187,12 +1215,15 @@ async function deployApplication(config, {
     }
     throw err;
   }
-  const node = await scheduledNode(core, namespace, name, imageRef);
+  const pod = await findReadyAppPod(core, namespace, name, imageRef);
+  const node = pod ? pod.spec.nodeName : null;
+  const podTimeline = podStartTimeline(pod);
   return {
     runtimeKind: 'kubernetes', runtimeName: name, imageRef,
     hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
     ...(node ? { node } : {}),
+    ...(podTimeline ? { podTimeline } : {}),
   };
 }
 
@@ -3031,6 +3062,7 @@ module.exports = {
   _attachLineObserverForTest: attachLineObserver,
   _clientsLogApiForTest: clientsLogApi,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
+  podStartTimeline,
   _deploymentStateForTest: deploymentState,
   _waitForDeploymentForTest: waitForDeployment,
   _terminalPodFailureDetailsForTest: terminalPodFailureDetails,

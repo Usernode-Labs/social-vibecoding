@@ -79,6 +79,7 @@ const dmSim = require('./dm-sim');
 const taste = require('./taste');
 const progress = require('./progress');
 const snapshots = require('../homeroom-bot-snapshots');
+const drain = require('../homeroom-bot-drain');
 
 const MAX_CONCURRENCY = 8;
 // Heavy stages: at most this many of one run's at once.
@@ -1519,6 +1520,8 @@ async function tick(pool, config, deps = {}) {
       }
       let free = Math.min(run.concurrency, MAX_CONCURRENCY) - mine.length;
       while (free > 0) {
+        // Shutdown began: start no trial (homeroom-bot-drain.js).
+        if (drain.refusing()) { out.paused = 'stopped'; break; }
         if (inFlight.size >= MAX_IN_FLIGHT) { out.paused = out.paused || 'lane_full'; break; }
         if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings)) { out.paused = 'live_bot_busy'; break; }
         if (run.kind === LATER_SIDE_RUN_KIND) {
@@ -1585,7 +1588,11 @@ async function tick(pool, config, deps = {}) {
           laterSide: run.kind === LATER_SIDE_RUN_KIND,
         };
         inFlight.set(claim.id, entry);
-        entry.promise = executeTrial(pool, config, claim, { ...deps, user })
+        // A pipeline shutdown waits on until it is parked in a saved turn.
+        entry.promise = drain.run(
+          { kind: 'bench_trial', trialId: claim.id },
+          () => executeTrial(pool, config, claim, { ...deps, user }),
+        )
           .catch(async (err) => {
             log.error('bench', 'Trial threw', { trialId: claim.id, err: err.message });
             await pool.query(

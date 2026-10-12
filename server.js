@@ -1735,8 +1735,11 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
-    // The merges into Homeroom this build carries are live now that it serves.
-    require('./src/services/platform-release').recordRunning(getPool(config));
+    // The merges into Homeroom this build carries are live now that it serves,
+    // and this process is up (a second boot in one pod is a crash).
+    const platformRelease = require('./src/services/platform-release');
+    platformRelease.recordRunning(getPool(config));
+    platformRelease.recordBoot(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
@@ -4569,12 +4572,24 @@ async function resumeDetachedTurnInner({
   const botFollowUp = !benchTurn && !botTurn && homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
   let botTimedOut = false;
   let botClock = null;
+  // The bot's clock's deadline, for a recovered build that changed nothing:
+  // it is nudged on what is left of it, as the live path nudges one.
+  let botDeadline = null;
   if (botTurn || benchTurn || botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
-    const deadline = await (benchTurn
+    let deadline = await (benchTurn
       ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, clockTurn)
       : homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn)).catch(() => null);
+    botDeadline = deadline;
+    // The bot's clock had already stopped this turn before the restart, and
+    // saved why on its record (homeroom-bot-live.js stopOnClock). Its journal
+    // ends in the 143 the stop left, which read alone is the agent's own
+    // failure: it is the time-out it was, whatever this clock has left.
+    if (botTurn && require('./src/services/homeroom-bot-live').botStopOf(activeTurn)) {
+      botTimedOut = true;
+      deadline = Date.now();
+    }
     if (deadline != null) {
       const botClockMs = Math.max(0, deadline - Date.now());
       botClock = setTimeout(() => {
@@ -4843,6 +4858,16 @@ async function resumeDetachedTurnInner({
     throw err;
   }
 
+  // A build whose commit the restart kept from being pushed (its worker's
+  // push landed while this platform was down) is pushed now, from the
+  // worker, as a person's recovered turn is below: what the bot or the lane
+  // reads next is the turn as the live path would have had it.
+  if (benchTurn || botTurn) {
+    result = await homeroomBotRecovery().repushRecovered({
+      session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || (benchTurn && !!handle.stopped),
+    });
+  }
+
   // #3401: the journal is followed and the attempt settled; the rest is the
   // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
   // turn must not get. The bot records the result on its run, then the
@@ -4869,7 +4894,7 @@ async function resumeDetachedTurnInner({
 
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
-      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut, deadlineMs: botDeadline,
     });
     const botCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(
@@ -6530,6 +6555,22 @@ async function cleanup() {
   try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
     log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
+  // The bot's builds under way in this process are not waited on: each step
+  // boundary is saved on its run, and the next leader carries a build on from
+  // the step it was at (homeroom-bot-checkpoint.js). An admin can restore the
+  // wait with HOMEROOM_BOT_DRAIN_TIMEOUT_MS (up to 75s): each build is then
+  // waited on until it has finished or is parked inside a detached turn whose
+  // record and journal are saved (homeroom-bot-drain.js). The listener still
+  // closes at once below, and the leader lock is still released last, so the
+  // next leader adopts the parked turns. Awaited with the handler drain.
+  const botDrain = require('./src/services/homeroom-bot-drain');
+  const botDeadlineMs = botDrain.deadlineMs(process.env);
+  const botPipelines = botDrain.snapshot();
+  const botSafe = botDrain.waitForSafePoint({ timeoutMs: botDeadlineMs })
+    .catch((err) => {
+      log.warn('server', 'Waiting for the Homeroom bot\'s builds failed', { err: err.message });
+      return { safe: false, waitedMs: 0, midStep: [], parked: [] };
+    });
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
@@ -6627,14 +6668,33 @@ async function cleanup() {
     activeWorkers: startingCount,
     activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
+    botPipelines: botPipelines.length,
+    botDeadlineMs,
   });
 
-  const [drained] = await Promise.all([
+  const [drained, , botWait] = await Promise.all([
     lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
+    botSafe,
   ]);
+  if (botPipelines.length || botWait.midStep.length) {
+    const summary = (p) => ({ kind: p.kind, runId: p.runId, trialId: p.trialId, step: p.step });
+    if (botWait.safe) {
+      log.info('server', 'Homeroom bot builds reached a saved point', {
+        waitedMs: botWait.waitedMs, parked: botWait.parked.slice(0, 20).map(summary),
+      });
+    } else if (botDeadlineMs === 0) {
+      log.info('server', 'Left Homeroom bot builds between steps for the next leader to carry on from their checkpoints', {
+        midStep: botWait.midStep.slice(0, 20).map(summary),
+      });
+    } else {
+      log.warn('server', 'Shutdown deadline passed with Homeroom bot builds mid-step', {
+        waitedMs: botWait.waitedMs, deadlineMs: botDeadlineMs, midStep: botWait.midStep.slice(0, 20).map(summary),
+      });
+    }
+  }
 
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
@@ -6646,6 +6706,21 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
+
+  // The builds a wait an admin set caught between steps: one incident each,
+  // so admins see what the restart cut short. Bounded like the marks below.
+  // With no wait (the default) leaving builds between steps is the plan:
+  // their checkpoints carry them on, and nothing is recorded.
+  if (botWait.midStep.length && botDeadlineMs > 0 && shutdownPool) {
+    let markTimer = null;
+    await Promise.race([
+      botDrain.recordMidStep(shutdownPool, botWait.midStep).catch(() => 0),
+      new Promise((resolve) => {
+        markTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (markTimer) clearTimeout(markTimer);
+  }
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can

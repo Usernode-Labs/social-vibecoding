@@ -8,7 +8,8 @@ import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
  * (current password required, except for an account with none yet, #4595:
- * settings.js hides that row when /api/auth/me says hasPassword is false). In the Homeroom native app with a linked
+ * settings.js hides that row when /api/auth/me says hasPassword is false,
+ * and shows "Add a password" over the section and on its button, #4891). In the Homeroom native app with a linked
  * wallet, a "Don't have a password? Create one" link switches to the
  * wallet-backed creation mode (cp-wallet-mode shown, current password hidden),
  * which signs a wallet-check challenge and calls POST
@@ -29,7 +30,21 @@ export function PasswordSection() {
   return (
     <div data-settings-section="password" className="hidden">
       <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
-        <SectionHeading title={t('settings:password.title')}>
+        {/*
+            #4891: an account with no password (it signs in with an emailed
+            code) is offered "Add a password", the words the sign-up step
+            sends it here with. Both wordings are rendered once, here and on
+            the button; settings.js shows the one that fits
+            (`_setChangePasswordMode`), as it does the current-password row.
+        */}
+        <SectionHeading
+          title={(
+            <>
+              <span id="cp-title-change">{t('settings:password.title')}</span>
+              <span id="cp-title-add" className="hidden">{t('settings:password.titleAdd')}</span>
+            </>
+          )}
+        >
           {t('settings:password.intro')}
         </SectionHeading>
         {/* One card, the three fields as its rows. */}
@@ -70,7 +85,8 @@ export function PasswordSection() {
         </div>
         {/* Default (password) submit */}
         <Button id="cp-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          {t('settings:password.submit')}
+          <span id="cp-save-change">{t('settings:password.submit')}</span>
+          <span id="cp-save-add" className="hidden">{t('settings:password.submitAdd')}</span>
         </Button>
         {/* Wallet (signature) submit — shown only in wallet mode */}
         <Button id="cp-wallet-save" layout="hiddenStacked" variant="pillAccent" size="pillLg">

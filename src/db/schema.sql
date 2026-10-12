@@ -1421,8 +1421,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
   ON chat_sessions(user_id, handoff_request_id)
   WHERE handoff_request_id IS NOT NULL;
 
--- ===================================================================
--- #907: local coding agents.
+-- ============================================================-- #907: local coding agents.
 --
 -- A user can attach a coding agent running on their own machine to one of
 -- their dev sessions and have the Mayor dispatch that session's coding turns
@@ -9422,6 +9421,11 @@ CREATE TABLE IF NOT EXISTS main_watch_verdicts (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_main_watch_verdicts_app ON main_watch_verdicts(app_id, state, created_at DESC);
+-- A red that the same merge commit, run again, did not keep: it passed on
+-- the confirm run or a recheck (state 'passing'), or failed twice on tests
+-- that each passed the other time (disjointReds). The proposal-pipeline
+-- topic's "Reds that passed on a re-run" counts them (topic-figures.js).
+ALTER TABLE main_watch_verdicts ADD COLUMN IF NOT EXISTS flake BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- The requests main watch filed to fix a red main (services/main-red-fix.js),
 -- one per red commit and one open per app at a time. `issue_number` is null
@@ -10522,6 +10526,25 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 
+-- A live first version that did not finish and was tried once more on its
+-- own, from its plan (homeroom-bot.js buildLive claimAutoRetry): { at, error
+-- (why the first try failed), session_id (its session) }. At most one run of
+-- a request has it: a first version is retried automatically once.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_retry JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_retry IS 'staging:private';
+
+-- Where a live or shadow build is between its steps, saved at each step
+-- boundary so a restart carries it on from there instead of building it
+-- again or sending it back to be triaged (homeroom-bot-checkpoint.js):
+-- { sessionId, step ('session' | 'spec_turn' | 'spec' | 'build_turn' |
+-- 'landed' | 'reviewed' | 'proposed'), at, specVersion, landed { sha,
+-- commits, pushOk, text }, reviewed { finalSha, finalCommits, costUsd },
+-- prNumber, recovered (what restart recovery found for its last turn),
+-- once { debited: { <sessionId>: usd } } }. `text` and `recovered` can
+-- quote a private project's code: private, as build_no_change is.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_checkpoint JSONB;
+COMMENT ON COLUMN homeroom_bot_runs.build_checkpoint IS 'staging:private';
+
 -- A live build waiting its turn: a live 'ready' verdict is built after the
 -- turn that read it ends, up to three builds per project at a time
 -- (homeroom-bot.js BUILDS_PER_PROJECT), so reading the project's next
@@ -10560,6 +10583,14 @@ CREATE INDEX IF NOT EXISTS homeroom_bot_runs_plan_unsent_idx
 -- itself rather than the project it was filed on (the triage's `platform`
 -- flag). Its requester is offered to move it to Homeroom's own board.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS about_platform BOOLEAN;
+-- What became of that offer, for the console and get_homeroom_bot
+-- (homeroom-bot-move.js noteMoveOffer): 'sent'; or why none went out:
+-- 'no_requester' (nobody is known to have asked for it), 'no_bot' (its
+-- requester does not have the bot), 'repeat_held' (the note was not said
+-- again: nobody addressed the bot since the last one), 'already_offered'
+-- (they were offered it before), 'not_sent' (the DM did not go out). NULL
+-- on a run from before this was recorded.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS move_offer TEXT;
 -- #4488: a `ready` verdict on an existing project the triage labelled
 -- complicated (a new screen or kind of thing, a change to how people get
 -- around or what it stores, two quite different ways to do it, or large).
@@ -13056,6 +13087,24 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAM
 -- from before, or one no queue row started.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
 ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
+-- A reply whose verdict could not be read, kept whole enough to read why:
+-- { reply: { text, chars }, repair: { text, chars } | null }, each text its
+-- first 4 KB and last 12 KB (homeroom-bot.js keptReply), `repair` the reply
+-- to the one turn that asked for the JSON block. The run's error stays one
+-- short line; 17 such failures in a week left only a clipped 300-character
+-- tail to read. Shown to admins beside that error (the console's run row,
+-- the connector's get_homeroom_bot). Null on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS unreadable_reply JSONB;
+-- What a read saw of its request (homeroom-bot.js readFingerprintOf): a
+-- hash of its title, body, GitHub comments and discussion messages (the
+-- screenshots they link included), the bot's own posts left out, with a
+-- few counts beside it. A ready verdict a cap held is reused when its turn
+-- comes (cap_freed) if the request still hashes the same: no new read, and
+-- the new run names the one it reused in `reused_run_id`, at no cost. Null
+-- on a run from before, or one that read nothing.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_fingerprint JSONB;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS reused_run_id INTEGER
+  REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL;
 -- #4533: why a queued row is waiting, and until when, as the refusal that
 -- left it there said (homeroom-bot.js recordRefusal; 'session_busy' when a
 -- turn was running on its session). A refusal keeps the row and its place,

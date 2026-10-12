@@ -20,6 +20,7 @@
 //
 // Read by the Infra topic's Merge → live (services/topic-figures.js).
 
+const os = require('os');
 const log = require('./logger');
 
 const STAMP_SQL = `
@@ -61,4 +62,28 @@ async function recordRunning(pool, { sha = process.env.GIT_SHA, env = process.en
   }
 }
 
-module.exports = { recordRunning, STAMP_SQL };
+/**
+ * Say that a production process came up on Kubernetes, and in which pod
+ * (events 'platform_booted'). A pod keeps its name when Kubernetes starts its
+ * container again after the process died (a crash, the memory limit, a
+ * failed liveness probe); a rollout starts new pods. So a second boot in one
+ * pod is a crash, which the infra topic's "Homeroom crashes" counts
+ * (services/topic-figures.js). A process that dies before it serves records
+ * nothing: a release that never comes up is release-watch's to report.
+ * Staging's previews and anything off Kubernetes record nothing. Never
+ * throws.
+ */
+function recordBoot(pool, {
+  sha = process.env.GIT_SHA, env = process.env.USERNODE_ENV,
+  onKubernetes = !!process.env.KUBERNETES_SERVICE_HOST, pod = os.hostname(),
+} = {}) {
+  if (env === 'staging' || !onKubernetes || !pod) return Promise.resolve();
+  const events = require('./events');
+  const commit = String(sha || '').toLowerCase();
+  return events.record(pool, {
+    type: events.EVENT_TYPES.PLATFORM_BOOTED,
+    metadata: { sha: /^[0-9a-f]{40}$/.test(commit) ? commit : null, pod: String(pod) },
+  });
+}
+
+module.exports = { recordRunning, recordBoot, STAMP_SQL };

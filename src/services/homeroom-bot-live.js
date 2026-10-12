@@ -224,6 +224,14 @@ function buildFailedText(reason) {
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
+// A first version whose build did not finish is tried once more on its own,
+// from the plan its creator already said Build it to (homeroom-bot.js
+// buildLive): said on its request as the build's start is.
+function retryCommentText() {
+  return 'Homeroom bot\'s first try at building this didn\'t finish, so it is trying once more from the same plan. '
+    + 'The change will be linked here when it\'s ready to try.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -511,6 +519,24 @@ function swapWording(text, pairs) {
   }, text);
 }
 
+// 12 Oct 2026: a first version's size and order. Its build gets about 40
+// minutes (homeroom-bot.js buildBudgets, FIRST_VERSION_BUILD_TIME_FACTOR),
+// took a median 36, and some ran out of time, so the spec plans for about 25
+// and ranks its work: the build does the must-haves first
+// (FIRST_VERSION_ORDER_LINES) and the rest only with time left. Nothing is
+// cut: blind comparisons favoured the complete, reviewed first versions, and
+// what decided close pairs is the must-have list below.
+const FIRST_VERSION_SIZE_LINES = Object.freeze([
+  '- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves',
+  '  it time to look at the result and fix it. This is a size to aim for, not a cut: nothing the request needs is',
+  '  dropped to fit, and what may not fit goes last in the order below.',
+  '- Ranked, so the build does what matters most first. End the technical half with a "Build order" subsection',
+  '  of two short lists. "Must-haves first": the main action working end to end; honest loading, empty and error',
+  '  states (never a blank loading screen, a made-up zero or a raw server error); the phone layout (nothing',
+  '  covering or cutting off content, the tab you are on marked); demo data that shows the app\'s core idea; and',
+  '  the signature element on the first screen. Then "Nice-to-haves": everything else, most valuable first.',
+]);
+
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
 function specScopeLines(firstVersion = false, starter = null) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
@@ -526,6 +552,7 @@ function specScopeLines(firstVersion = false, starter = null) {
     '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
     '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
     '  and why. What binds you is the request itself and what its creator approved, above.',
+    ...FIRST_VERSION_SIZE_LINES,
   ];
 }
 
@@ -1793,7 +1820,14 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
-function browserLines({ readsImages = false, clocked = false } = {}) {
+//
+// A first version under a configuration with a reviewer (bot-review.js) has
+// its screens captured at both widths, in both looks, and reviewed once the
+// build turn is over. Its build checked the same things first: first versions
+// took a median 36 minutes of a 40-minute clock, and one ran out of time
+// inside a browser check. So that build boots the app and does its main thing
+// once, at one width, and leaves the sweep to the review.
+function browserLines({ readsImages = false, clocked = false, reviewed = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -1806,12 +1840,20 @@ function browserLines({ readsImages = false, clocked = false } = {}) {
     'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
     'shows on:',
     IN_LOOP_BROWSER_GUIDANCE,
+    ...(reviewed ? [
+      '- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main',
+      '  thing once (below), enough to know it runs and its main flow works, and fix what that shows is broken. Do not',
+      '  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at',
+      '  both widths and in both looks once your turn is over, and you fix what it finds.',
+      '  Skip it only when the app cannot boot promptly, and then say why in your summary. ' + withinTime,
+    ] : [
     '- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will',
     '  see. Boot the app, then',
     `  ${look}`,
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     `  the app cannot boot promptly, and then say why in your summary. ${withinTime}`,
+    ]),
     '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
     '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
@@ -1853,12 +1895,16 @@ function utcClock(ms) {
  * The TIME section of a build prompt, or [] without a clock. `startedAt` is
  * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
  */
-function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {}) {
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false } = {}) {
   if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
   const minutes = (ms) => Math.round(ms / 60000);
   const stopAt = utcClock(startedAt + budgetMs);
   const soft = Number(softMs) > 0 && softMs < budgetMs;
   const softAt = soft ? utcClock(startedAt + softMs) : null;
+  // With a reviewer, the sizes, looks and empty and error states are its.
+  const rest = reviewed
+    ? 'the spec\'s other screens, and polish (the reviewer checks sizes, looks, and empty and error states).'
+    : 'the other screens, sizes and looks, the empty and error states, and polish.';
   return [
     '',
     `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
@@ -1869,10 +1915,7 @@ function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {})
     '1. Build everything the spec and the plan ask for. This is never what gets cut.',
     '2. Boot the app and do its main thing once, as a person would.',
     '3. Fix what that shows is broken.',
-    soft
-      ? `4. Only then, while it is before ${softAt} UTC: the other screens, sizes and looks, the empty and error states,`
-        + ' and polish.'
-      : '4. Only then, with time to spare: the other screens, sizes and looks, the empty and error states, and polish.',
+    soft ? `4. Only then, while it is before ${softAt} UTC: ${rest}` : `4. Only then, with time to spare: ${rest}`,
     soft
       ? `After ${softAt} UTC, start no new round of testing or polish. Finish building what the spec asks for if you`
         + ' still are, finish the fix you are in, check the app still boots, and finish your turn. Say in your summary'
@@ -1958,6 +2001,14 @@ const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
   '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
 ]);
 
+// A first version's build follows its spec's "Build order"
+// (FIRST_VERSION_SIZE_LINES): the must-haves first, the rest with time left.
+const FIRST_VERSION_ORDER_LINES = Object.freeze([
+  '',
+  'Build in the order the spec\'s "Build order" gives: every must-have first, working, then the nice-to-haves, most',
+  'valuable first, only while time is left.',
+]);
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -1987,11 +2038,14 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // A first version whose configuration has a reviewer (bot-review.js): the
+  // review does the visual sweep, so the build checks its main flow once.
+  reviewed = false,
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
 }) {
-  const time = clock ? clockLines(clock) : [];
+  const time = clock ? clockLines({ ...clock, reviewed }) : [];
   const specBlock = spec
     ? [
       '',
@@ -2016,6 +2070,7 @@ function buildPrompt({
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
+    ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -2027,7 +2082,7 @@ function buildPrompt({
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
-    ...browserLines({ readsImages, clocked: time.length > 0 }),
+    ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2079,12 +2134,35 @@ async function buildSeesImages({ pool, config, userId, model }) {
  */
 function failedClaudeTurn(result) {
   if (!result || result.agentHarness !== 'claude') return null;
+  // The notice first: run-cc.sh exits 1 after a turn that ended on it, so
+  // "exited with code 1" was all the run kept of an OpenRouter 429.
+  const api = agentApiFailure(result.lastResultText);
+  if (api) return api.line ? `it ended on an API error: ${clipText(api.line, 200)}` : 'it ended on an API error';
   const exited = (code) => Number.isInteger(code) && code > 0;
   if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
   if (result.ccIsError === true) return 'the agent reported an error';
   if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
-  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
   return null;
+}
+
+/**
+ * Why a build turn failed, beyond its one-line reason: what it was last
+ * doing and its final message (redacted, clipped), for the run's
+ * build_error, which the admin console and the connector's
+ * get_homeroom_bot show. A final message that is the API error notice the
+ * reason already quotes is not repeated. '' when there is nothing. Pure.
+ */
+const FAILED_SAID_CHARS = 240;
+function failureDetail({ progress = null, result = null, reason = '' } = {}) {
+  const parts = [];
+  const activity = progress ? progress.suffix() : '';
+  if (activity) parts.push(activity);
+  const said = agentSaid(result?.lastResultText);
+  const api = said ? agentApiFailure(said) : null;
+  if (said && !(api && api.line && String(reason).includes(clipText(api.line, 200)))) {
+    parts.push(`; it last said: ${clipText(said.replace(/\s+/g, ' '), FAILED_SAID_CHARS)}`);
+  }
+  return parts.join('');
 }
 
 /**
@@ -2232,6 +2310,40 @@ function readSpecText(text) {
     : { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
+/**
+ * The bot's clock stopping its turn on `sessionId`. Why is saved on the
+ * turn's record first (BOT_STOP_KEY, turn-lifecycle stampTurn), then the turn
+ * is stopped. The journal of a stopped turn ends `__USERNODE_EXIT__ 143`,
+ * which says nothing of who stopped it: a restart between the stop and the
+ * build recording it left the next server reading the 143 as the agent's
+ * own failure ("the agent exited with code 143 (finished after a
+ * restart)"). Restart recovery reads the saved stop instead (botStopOf) and
+ * records the turn as the time-out it was. Never throws: the stop goes
+ * ahead whether or not the note could be saved.
+ */
+const BOT_STOP_KEY = 'botStop';
+
+async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
+  try {
+    const turnLifecycle = require('./turn-lifecycle');
+    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn && turn.turnId) {
+      await turnLifecycle.stampTurn(pool, {
+        sessionId, turnId: turn.turnId, key: BOT_STOP_KEY, value: { why, at: new Date().toISOString() },
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not save why the bot stopped its turn', { sessionId, err: err.message });
+  }
+  return worker.stopTurn(sessionId);
+}
+
+/** The bot's own stop saved on a turn record (stopOnClock), or null. Pure. */
+function botStopOf(activeTurn) {
+  const stop = activeTurn && typeof activeTurn === 'object' ? activeTurn[BOT_STOP_KEY] : null;
+  return stop && typeof stop === 'object' && stop.why ? stop : null;
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2253,7 +2365,7 @@ async function draftSpec({
   let stopping = null;
   const timer = setTimeout(() => {
     stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    stopping = stopOnClock(pool, worker, session.id).catch(() => {});
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
@@ -2586,7 +2698,7 @@ function buildTurnRunner({
     let stopping = null;
     const timer = setTimeout(() => {
       turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+      stopping = stopOnClock(pool, worker, session.id).catch(() => {});
     }, budgetMs);
     if (typeof timer.unref === 'function') timer.unref();
     activeWorkers.add(session.id);
@@ -2731,6 +2843,15 @@ async function buildAndPropose({
   // for the language rule the prompts that write to people carry
   // (localeRule). The caller reads it off the request's recorded requester.
   locale = null,
+  // A live first version: a build turn that ran out of time or failed keeps
+  // the work it pushed, which its review then looks at (worker.keepPartialWork).
+  // Never a bench trial's or a later change's.
+  keepPartial = false,
+  // Each step boundary the build reaches, saved by the caller so a restart
+  // carries the build on from there (homeroom-bot-checkpoint.js), called
+  // with (step, { sessionId, ...what the step left }) and awaited. Never a
+  // reason the build stops.
+  onStep = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2839,6 +2960,10 @@ async function buildAndPropose({
   if (claimRefused) {
     return { ...(await fail(claimRefused)), skipped: claimRefused, lostClaim: true, costUsd: null };
   }
+  const step = async (name, data = {}) => {
+    if (!onStep) return;
+    try { await onStep(name, { ...data, sessionId: session.id }); } catch { /* a checkpoint never stops a build */ }
+  };
 
   let branchName;
   try {
@@ -2849,6 +2974,7 @@ async function buildAndPropose({
   } catch (err) {
     return fail(`could not create its branch: ${err.message}`);
   }
+  await step('session', { branch: branchName });
   // A later build of a project whose repository has the frontend-design
   // skill is told, at its spec and its build, to read it (the nudge alone;
   // services/design-skill.js). A first version's prompts say that, and more,
@@ -2890,6 +3016,7 @@ async function buildAndPropose({
   // session and said below, once, as a spec just written would be.
   if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   if (!presetSpec && onStage) { try { await onStage('spec'); } catch { /* a watcher never stops a build */ } }
+  if (!presetSpec) await step('spec_turn');
   spec = presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
@@ -2942,6 +3069,7 @@ async function buildAndPropose({
     };
   }
   if (spec.ok) {
+    await step('spec', { specVersion: spec.version ?? null });
     if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
@@ -2989,12 +3117,14 @@ async function buildAndPropose({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress,
   });
+  await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
   // timer). A nudge runs on what is left of it.
   const turnStartedMs = Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    reviewed: Boolean(review?.reviewer),
     locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
@@ -3097,16 +3227,54 @@ async function buildAndPropose({
   endLive();
 
   const result = (routed && routed.result) || {};
-  if (stopped) {
-    return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
+  // A turn that ran past its clock or failed, and why, with what it was last
+  // doing and its final message (failureDetail), so the run says more than
+  // "exited with code 1". A failed turn is a failed build, whatever it left
+  // behind (failedClaudeTurn), unless it is a first version's whose work so
+  // far is kept below.
+  const turnFailed = stopped || routed?.error ? null : failedClaudeTurn(result);
+  let faultReason = null;
+  if (stopped) faultReason = 'the build ran past its time limit';
+  else if (routed?.error) faultReason = `the build turn failed (${routed.error})`;
+  else if (turnFailed) faultReason = `the build turn failed (${turnFailed})`;
+  // A dispatch error ran no turn: its reason stays as it is, which
+  // homeroom-bot.js isInfraBuildError reads whole.
+  const faultError = faultReason && !routed?.error
+    ? `${faultReason}${failureDetail({ progress, result, reason: faultReason })}`
+    : faultReason;
+  // A first version's build turn that ran out of time or failed keeps the
+  // work it did: committed and pushed from its worker when it differs from
+  // main, then reviewed as any build is. The review's captures say whether it
+  // boots; a build kept this way that never booted fails as before.
+  let partial = null;
+  if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
+    const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
+    if (kept?.pushed && Number(kept.commits) > 0) {
+      partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
+      Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
+      // A stop aimed at the build would skip the review's fix turns.
+      worker.clearPendingStop?.(session.id);
+      log.warn('homeroom-bot', 'A first version\'s build turn did not finish; reviewing the work it pushed', {
+        app: app.slug, issueNumber, sessionId: session.id, why: faultReason, commits: partial.commits,
+      });
+    } else {
+      log.info('homeroom-bot', 'A first version\'s build turn did not finish and left nothing to keep', {
+        app: app.slug, issueNumber, sessionId: session.id, why: kept?.reason || null,
+      });
+    }
   }
-  if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
-  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
-  const turnFailed = failedClaudeTurn(result);
-  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
+  if (faultError && !partial) return { ...(await fail(faultError)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
+  // Pushed: a restart from here on proposes this work, never builds it again.
+  await step('landed', {
+    landed: {
+      sha: result.sha || null, commits: Number(result.ahead) || 0, pushOk: true,
+      text: clipText(result.lastResultText || '', 20000), partial: !!partial,
+    },
+    turnIds: buildTurnIds,
+  });
 
   // A first version under a configuration with a reviewer: its screens are
   // reviewed and fixed before anybody sees it (bot-review.js). It fails
@@ -3133,6 +3301,17 @@ async function buildAndPropose({
     if (skippedLate) return { ...(await fail(skippedLate)), skipped: skippedLate, costUsd, review: reviewed };
   }
   const reviewOut = reviewed ? { review: reviewed } : {};
+  // Work kept from a turn that did not finish goes on only if it boots, as
+  // the review's last capture (or the commit it rolled back to) saw it.
+  if (partial && reviewed?.finalCapture?.booted !== true) {
+    return { ...(await fail(`${faultError}; the work it pushed did not boot`)), costUsd, ...reviewOut };
+  }
+  const partialOut = partial ? { partial } : {};
+  if (review?.reviewer) {
+    await step('reviewed', {
+      reviewed: { finalSha: landedSha, finalCommits: landedCommits, costUsd: Number(reviewed?.costUsd) || 0 },
+    });
+  }
 
   if (!propose) {
     // Built, pushed, and put away: the session is archived exactly as a
@@ -3145,6 +3324,7 @@ async function buildAndPropose({
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
       sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(), ...noChangeOut(),
+      ...partialOut,
     };
   }
 
@@ -3180,12 +3360,13 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
       error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut, ...costsOut(),
-      ...noChangeOut(),
+      ...noChangeOut(), ...partialOut, notProposed: true,
     };
   }
+  await step('proposed', { prNumber: promoted.body.prNumber || null });
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(), ...noChangeOut(),
+    ...costsOut(), ...noChangeOut(), ...partialOut,
   };
 }
 
@@ -3293,6 +3474,9 @@ async function reviewLanded({
 }
 
 module.exports = {
+  BOT_STOP_KEY,
+  stopOnClock,
+  botStopOf,
   waitOutShotsRun,
   askerOf,
   creditedDescription,
@@ -3311,6 +3495,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  retryCommentText,
   heldText,
   heldKind,
   lastPostKind,
@@ -3351,6 +3536,8 @@ module.exports = {
   REQUEST_IS_DATA_LINES,
   requestRulesLines,
   teeProgress,
+  lastActivity,
+  utcClock,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
@@ -3373,6 +3560,7 @@ module.exports = {
   RECIPE_SPEC_EFFORT,
   browserLines,
   failedClaudeTurn,
+  failureDetail,
   stampSessionModel,
   draftSpec,
   specPrompt,
@@ -3380,6 +3568,8 @@ module.exports = {
   specScopeLines,
   specDesignBrief,
   firstVersionDesignLines,
+  FIRST_VERSION_SIZE_LINES,
+  FIRST_VERSION_ORDER_LINES,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,

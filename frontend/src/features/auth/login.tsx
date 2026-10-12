@@ -131,7 +131,8 @@ interface OtpSignup {
 
 // The set-password step's opening line, one per case. A brand-new account is
 // told that is what is happening: it used to read "Now choose a password for
-// your account" as if the account had been there all along.
+// your account" as if the account had been there all along. The step asks
+// for no password any more (#4891); its id and name are the route's.
 // The copy constants in this file hold message ids; they are read with `t`
 // when shown.
 const OTP_PASSWORD_INTRO = 'auth:login.signup.intro';
@@ -533,9 +534,7 @@ export function LoginScreen() {
   const password = useRef<HTMLInputElement>(null);
   const otpEmailInput = useRef<HTMLInputElement>(null);
   const otpCode = useRef<HTMLInputElement>(null);
-  const otpNewPassword = useRef<HTMLInputElement>(null);
   const otpUsername = useRef<HTMLInputElement>(null);
-  const otpConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryNewPassword = useRef<HTMLInputElement>(null);
   const recoveryConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryEmailInput = useRef<HTMLInputElement>(null);
@@ -952,10 +951,11 @@ export function LoginScreen() {
     }
   }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
-  // #4595: the password is optional. "Skip for now" (`skip`), or both
-  // fields left empty, finishes without one; the account then signs in with
-  // an email code and can add a password in Settings.
-  const onOtpSetPassword = useCallback(async (skip = false) => {
+  // #4891: the step asks for no password. The account signs in with an
+  // emailed code and adds a password in Settings if it wants one (a first
+  // password needs no current one there, #4595); set-password takes the
+  // request with no password in it as exactly that.
+  const onOtpSetPassword = useCallback(async () => {
     clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
@@ -968,27 +968,14 @@ export function LoginScreen() {
       otpUsername.current?.focus();
       return;
     }
-    const value = skip ? '' : otpNewPassword.current?.value || '';
-    const confirm = skip ? '' : otpConfirmPassword.current?.value || '';
-    if (value || confirm) {
-      if (value.length < 8) {
-        setOtpError(translate('auth:login.signup.passwordTooShort'));
-        return;
-      }
-      if (value !== confirm) {
-        setOtpError(translate('auth:login.signup.passwordMismatch'));
-        return;
-      }
-    }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus(value ? translate('auth:login.signup.saving') : translate('auth:login.signup.finishing'));
+    setOtpStatus(translate('auth:login.signup.finishing'));
     try {
       const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          ...(value ? { password: value, passwordConfirmation: confirm } : {}),
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -1779,7 +1766,8 @@ export function LoginScreen() {
 
                   #4596 (overturning #3575 for this step): the field arrives
                   holding a suggestion the server made from the address, the
-                  letters and digits before the @, free when it was read, or
+                  letters and digits before the @ (and before any "+",
+                  #4891), free when it was read, or
                   empty when none fits. The person can change it, the server
                   refuses to finish without one (`username_required`), and
                   the line under the field says who will see it. That line is its own <p>, ahead of the
@@ -1798,7 +1786,7 @@ export function LoginScreen() {
                     defaultValue={otpSignup.suggestedUsername}
                     autoComplete="username"
                     maxLength={32}
-                    enterKeyHint="next"
+                    enterKeyHint="go"
                     {...HANDLE_FIELD}
                     aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
@@ -1814,32 +1802,10 @@ export function LoginScreen() {
                   </p>
                 </div>
               ) : null}
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  {t('auth:login.signup.passwordLabel')}
-                </label>
-                <PasswordInput
-                  ref={otpNewPassword}
-                  id="otp-new-password"
-                  autoComplete="new-password"
-                  enterKeyHint="next"
-                  {...FIELD}
-                  placeholder={t('auth:login.signup.passwordPlaceholder')}
-                />
-              </div>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  {t('auth:login.signup.confirmLabel')}
-                </label>
-                <PasswordInput
-                  ref={otpConfirmPassword}
-                  id="otp-confirm-password"
-                  autoComplete="new-password"
-                  enterKeyHint="go"
-                  {...FIELD}
-                  placeholder={t('auth:login.signup.confirmPlaceholder')}
-                />
-              </div>
+              {/* No password here (#4891): how they sign in, and where a password is added. */}
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                {t('auth:login.signup.codeNote')}
+              </p>
               {otpSignup?.waitlisted ? (
                 <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
                   {t(OTP_WAITLIST_NOTE)}
@@ -1854,13 +1820,6 @@ export function LoginScreen() {
               >
                 {otpSignup?.created ? t('auth:login.signup.submitNew') : t('auth:login.signup.submit')}
               </Button>
-              <button
-                type="button"
-                className="block w-full py-1 text-center text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline"
-                onClick={() => { void onOtpSetPassword(true); }}
-              >
-                {t('auth:login.signup.skip')}
-              </button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}

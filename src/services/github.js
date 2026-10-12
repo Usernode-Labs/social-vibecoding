@@ -607,7 +607,10 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
       throw err;
     }
     log.info('github', 'Adopting existing repo', { repo: data.full_name });
-    return data;
+    // `adopted`: its main may hold more than a fresh repository's one README,
+    // so a caller cannot take what it pushes next for the whole tree
+    // (services/app-creator.js clones it back instead).
+    return { ...data, adopted: true };
   }
 }
 
