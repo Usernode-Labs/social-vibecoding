@@ -1990,6 +1990,37 @@ test('keptReply keeps a short reply whole and a long one as its first 4 KB and l
   assert.deepEqual(bot.unreadableReplyOf('x', null), { reply: { text: 'x', chars: 1 }, repair: null });
 });
 
+test('seedStagingUnreadableReply: staging only, once, a fake failed run with its kept reply', async () => {
+  const queries = [];
+  let have = false;
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql, params });
+    if (/SELECT 1 FROM homeroom_bot_runs WHERE issue_number/.test(sql)) return { rows: have ? [{}] : [] };
+    if (/FROM apps WHERE status = 'running'/.test(sql)) return { rows: [{ id: 7 }] };
+    if (/INSERT INTO homeroom_bot_runs/.test(sql)) return { rows: [{ id: 41 }] };
+    return { rows: [] };
+  } };
+  const env = process.env.USERNODE_ENV;
+  try {
+    delete process.env.USERNODE_ENV;
+    assert.equal(await bot.seedStagingUnreadableReply(pool), false);
+    assert.equal(queries.length, 0, 'nothing outside staging');
+    process.env.USERNODE_ENV = 'staging';
+    assert.equal(await bot.seedStagingUnreadableReply(pool), true);
+    const insert = queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.sql));
+    assert.match(insert.params[2], /^unparseable: /);
+    const kept = JSON.parse(queries.find((q) => /SET unreadable_reply/.test(q.sql)).params[1]);
+    assert.match(kept.reply.text, /^Staging demo:/);
+    assert.match(kept.repair.text, /^Staging demo:/);
+    have = true;
+    queries.length = 0;
+    assert.equal(await bot.seedStagingUnreadableReply(pool), false, 'seeded once');
+    assert.ok(!queries.some((q) => /INSERT/.test(q.sql)));
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+});
+
 test('runTriage: a thread the runtime will not resume is never asked on a fresh one', async () => {
   const h = repairHarness(954, [WORDS_ONLY, { lastResultText: '```json\n{"verdict":"ready","determined":true,"build_note":"Invented."}\n```' }]);
   h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, resumeThreadId }) => {

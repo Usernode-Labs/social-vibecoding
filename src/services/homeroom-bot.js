@@ -1124,6 +1124,46 @@ function unreadableReplyOf(reply, repair = null) {
   return kept.reply || kept.repair ? kept : null;
 }
 
+// The fixed issue number that marks the staging run below.
+const STAGING_UNREADABLE_ISSUE = 936711;
+
+/**
+ * Staging only (USERNODE_ENV), idempotent, and never throws: one obviously
+ * fake failed triage whose reply had no verdict block, with the reply and the
+ * repair turn's reply kept as keptReply keeps them, so a preview of the
+ * console's run row has an unreadable reply to show. Run on a running app,
+ * under an issue number no request has.
+ */
+async function seedStagingUnreadableReply(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return false;
+  try {
+    const { rows: [have] } = await pool.query(
+      'SELECT 1 FROM homeroom_bot_runs WHERE issue_number = $1 LIMIT 1', [STAGING_UNREADABLE_ISSUE],
+    );
+    if (have) return false;
+    const { rows: [app] } = await pool.query("SELECT id FROM apps WHERE status = 'running' ORDER BY id LIMIT 1");
+    if (!app) return false;
+    const reply = [
+      'Staging demo: I read the request and the files it names.',
+      'The change is small and bounded: one button, no schema, nothing anyone else is working on.',
+      'So it can be built now. Verdict below.',
+    ].join('\n\n');
+    const repair = 'Staging demo: it is ready to build, as I said.';
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, model, cost_usd, duration_ms, error, created_at)
+       VALUES ($1, $2, 'shadow', 'failed', 'staging/demo', 0.02, 95000, $3, NOW() - INTERVAL '1 hour')
+       RETURNING id`,
+      [app.id, STAGING_UNREADABLE_ISSUE, `unparseable: ${clip(reply.slice(-300), 300)}`],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET unreadable_reply = $2 WHERE id = $1',
+      [run.id, JSON.stringify(unreadableReplyOf(reply, repair))]);
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not seed the staging unreadable reply', { err: err.message });
+    return false;
+  }
+}
+
 /**
  * Every JSON object a reply holds, as text, the one that ends last first
  * (and, of two that end together, the outer one). Each `{` is matched to its
@@ -10860,6 +10900,7 @@ module.exports = {
   parseVerdict,
   keptReply,
   unreadableReplyOf,
+  seedStagingUnreadableReply,
   parseRepo,
   BOT_USERNAME,
   MODES,
