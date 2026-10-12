@@ -496,6 +496,10 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
   const failed = fixture.transitions.at(-1).patch;
   assert.equal(failed.failureCode, 'shots_capture_incomplete');
   assert.match(failed.failureReason, /Before never loads the members list/);
+  assert.deepEqual(failed.hardVerdict.stories, [{
+    id: 'invite-suggestions', status: 'skipped', reason: 'Before never loads the members list.',
+  }], 'kept, so whoever can supply the data a change lacked hears which change it was');
+  assert.equal(failed.hardVerdict.passed, false);
   assert.equal(failed.traceSummary.failure.phase, 'agent_exploration');
   assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, notedChanges: 0, skippedAll: false });
   assert.equal(fixture.calls.stored, 0);

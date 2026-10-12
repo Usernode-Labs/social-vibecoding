@@ -543,13 +543,12 @@ function timeOf(value) {
 }
 
 /**
- * Pure: the declared changes the shots on head `headSha` show failing (the
- * shots agent did the steps and the after build broke), from a session row's
+ * Pure: the declared changes whose result in the settled shots on head
+ * `headSha` passes `keep(result, declared)`, from a session row's
  * `shots_state` and `shots_detail`: [{ id, claim, steps, reason }]. Empty
- * for shots on another head, unsettled shots, and runs from before the
- * failed outcome existed.
+ * for shots on another head and for unsettled shots.
  */
-function brokenOnHead(row, headSha) {
+function resultsOnHead(row, headSha, keep) {
   const detail = row?.shots_detail;
   const head = lowerSha(headSha);
   if (!detail || typeof detail !== 'object' || !head) return [];
@@ -557,17 +556,74 @@ function brokenOnHead(row, headSha) {
   if (lowerSha(detail.headSha) !== head) return [];
   const claims = Array.isArray(detail.claims) ? detail.claims : [];
   const results = Array.isArray(detail.shotResults) ? detail.shotResults : [];
-  return results.filter((result) => result && result.status === 'failed' && typeof result.id === 'string')
+  return results.filter((result) => result && typeof result.id === 'string')
+    .map((result) => ({ result, declared: claims.find((claim) => claim && claim.id === result.id) || {} }))
+    .filter(({ result, declared }) => keep(result, declared))
     .slice(0, planContract.MAX_STORIES)
-    .map((result) => {
-      const declared = claims.find((claim) => claim && claim.id === result.id) || {};
-      return {
-        id: result.id,
-        claim: clip(declared.claim, 300) || result.id,
-        steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
-        reason: clip(result.reason, 1000),
-      };
-    });
+    .map(({ result, declared }) => ({
+      id: result.id,
+      claim: clip(declared.claim, 300) || result.id,
+      steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
+      reason: clip(result.reason, 1000),
+    }));
+}
+
+/**
+ * Pure: the declared changes the shots on head `headSha` show failing (the
+ * shots agent did the steps and the after build broke): [{ id, claim,
+ * steps, reason }]. Empty for shots on another head, unsettled shots, and
+ * runs from before the failed outcome existed.
+ */
+function brokenOnHead(row, headSha) {
+  return resultsOnHead(row, headSha, (result) => result.status === 'failed');
+}
+
+// ── A skip its author can fix ────────────────────────────────────────────
+//
+// 9 to 12 Oct 2026: of the 166 merged proposals that needed shots, 22 runs
+// failed with no declared change reachable and 13 more changes were skipped
+// inside runs that published, and each of those proposals went to its vote
+// without pictures of that change. Only a change that FAILED went back to its
+// author (brokenOnHead); a skip went nowhere.
+//
+// The shots agent skips a change for two kinds of reason. Some say the
+// copies lack the data the change needs: "The after copy has no '[Mock]
+// Advisory vote' row", "These copies have no member with a nearly spent
+// weekly allowance", "no fixture for this state". Its author can supply
+// that, with a staging seed in the proposal or a hints.setup step. Others
+// say the copies lack something no data gives them: a model key (4 of the
+// 35), a wallet (4), a mailbox to read a code from, a file to upload, a
+// network to drop, a location, the browser's own tab; or the after build
+// answered an error, or the agent never finished. A seed changes none of
+// those, so they never go back.
+//
+// So the rule is narrow on purpose. A skip qualifies only when its reason
+// names missing data (MISSING_DATA_RE) and none of those causes
+// (NOT_SEEDABLE_RE), and the change is new on the after side (baseState
+// not_present). A seed the proposal adds runs on the after copy alone, which
+// for a new change is the side that has it; for a change to something both
+// sides already show, the same seed would make them differ by more than the
+// change, so that one is left to a person. 11 of the 35 reasons name missing
+// data and no such cause; the baseState rule then leaves out the ones
+// declared as a change to a screen that was already there (a new bell row
+// declared "present" because the bell was, proposal 7886).
+const MISSING_DATA_RE = /\bfixtures?\b|\bno\b[^.;:]{0,60}?\b(?:rows?|records?|data|changes?|projects?|apps?|members?|accounts?|items?|entries|messages?|cards?|runs?|requests?|states?|seeds?)\b|\bdoes(?: not|n't) exist\b|\b(?:is|are)(?: not|n't) (?:on|in) (?:these|this|the|either) (?:copies|copy|after copy)\b/i;
+const NOT_SEEDABLE_RE = /\bmodel\b|\bwallets?\b|\bupload|file chooser|e-?mail|mailbox|\boffline\b|connection drop|network (?:request|connection)|stub fetch|geolocation|location permission|camera|microphone|clipboard|\bnot signed in\b|sign(?:ing|-| )in (?:is|isn't|is not)|browser(?:-| )tab|favicon|too fast|in flight|(?:hold|delay)(?: or (?:hold|delay))? (?:the )?(?:api )?requests?|\b(?:401|403|5\d\d)\b|unauthori[sz]ed|server error|did not save/i;
+
+/** Pure: whether a skip's reason says the copies lack data a seed could supply, and nothing a seed cannot. */
+function seedableSkip(reason) {
+  const text = typeof reason === 'string' ? reason : '';
+  return MISSING_DATA_RE.test(text) && !NOT_SEEDABLE_RE.test(text);
+}
+
+/**
+ * Pure: the declared changes the shots on head `headSha` skipped for want of
+ * data that the proposal itself could seed (seedableSkip, on a change
+ * declared new on the after side): [{ id, claim, steps, reason }].
+ */
+function skippedOnHead(row, headSha) {
+  return resultsOnHead(row, headSha, (result, declared) => result.status === 'skipped'
+    && declared.baseState === 'not_present' && seedableSkip(result.reason));
 }
 
 /**
@@ -1212,6 +1268,8 @@ module.exports = {
   getForSession,
   READY_HOLD_MS,
   brokenOnHead,
+  seedableSkip,
+  skippedOnHead,
   holdsReady,
   _setSettleListenerForTests: setSettleListenerForTests,
 };

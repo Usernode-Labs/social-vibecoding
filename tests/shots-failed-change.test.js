@@ -165,13 +165,17 @@ test('the stored summary, the public view and get_proposal keep "failed"; old ro
 
   assert.deepEqual(shotsView.cleanShotResults([{ id: 'tick-and-undo', status: 'failed', reason: SAW }]),
     [{ id: 'tick-and-undo', status: 'failed', reason: SAW, note: null }]);
-  // A failed run serves its results only when a change failed, so the page can say which.
+  // A failed run serves its results when a change failed, so the page can
+  // say which, or when none could be reached, so its author's agent reads
+  // why each was skipped (tests/shots-skipped-change.test.js).
   const session = { id: 6269, app_slug: 'flat-4b-chores', shots_detail: {} };
   const served = shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', HEAD);
   assert.equal(served.state, 'failed');
   assert.equal(served.shotResults[0].status, 'failed');
   const incomplete = shotsView.serialize({ ...summary, failureCode: 'shots_capture_incomplete' }, session, 'flat-4b-chores', HEAD);
-  assert.deepEqual(incomplete.shotResults, [], 'an incomplete run keeps showing only its reason');
+  assert.equal(incomplete.shotResults.length, 1, 'an incomplete run serves each change\'s reason too');
+  assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_agent_failed' }, session, 'flat-4b-chores', HEAD).shotResults, [],
+    'any other failure keeps showing only its reason');
   assert.deepEqual(shotsView.serialize({ ...summary, failureCode: 'shots_change_failed' }, session, 'flat-4b-chores', OTHER_HEAD).shotResults, [],
     'never on a newer commit');
 
@@ -343,7 +347,7 @@ test('a failed change on the current head is due a fix even when every check pas
   assert.equal(followup.checksDue(botRow({ check_state: 'pending' })), null, 'it waits for the checks, so one turn sees everything');
   assert.equal(followup.checksDue(botRow({ reviewed_head_sha: OTHER_HEAD })), null, 'shots of an older commit');
   assert.equal(followup.checksDue(botRow({ shots_detail: { ...botRow().shots_detail, shotResults: [{ id: 'tick-and-undo', status: 'skipped', reason: 'r' }] } })), null,
-    'a skip is never the bot\'s to fix');
+    'a skip that names no data the change could seed is never the bot\'s to fix');
   // Failing checks and a failed change on one head: one turn, both lists.
   const both = followup.checksDue(botRow({ check_state: 'failing', test_results: [{ name: 'rota.week', status: 'fail', failureReason: 'no text' }] }));
   assert.equal(both.failing.length, 1);
@@ -402,7 +406,7 @@ test('ready to try waits for the shots on its head, and carries what they show f
   const waiting = await dm.changeReadiness(readinessPool(sessionRow({
     shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
   })), 6269);
-  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], title: null });
+  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
   // #3870: what the change is, for its card: the proposal's title unless it
   // is the placeholder, else the session's.
   const titled = (extra) => dm.changeReadiness(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);
