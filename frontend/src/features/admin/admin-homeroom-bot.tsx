@@ -168,7 +168,9 @@ interface QueueItem {
 
 interface QueueWait {
   reason: string;
-  until: string;
+  until: string | null;
+  // first_version_pending: the first version's own request, once it is filed.
+  firstVersionIssue?: number | null;
 }
 
 interface Run {
@@ -300,7 +302,12 @@ interface Payload {
   totals: Totals;
   // `buildsWaiting`: live builds waiting their turn, which wait on their
   // runs rather than in the queue.
-  queue: { depth: number; items: QueueItem[]; buildsWaiting?: number };
+  // One snapshot (homeroom-bot.js queueSnapshot): `depth` waiting and
+  // `running` running, and the rows listed from that same set.
+  queue: {
+    depth: number; running?: number; items: QueueItem[]; buildsWaiting?: number;
+    listedWaiting?: number; listedRunning?: number;
+  };
   runs: Run[];
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
@@ -312,6 +319,21 @@ interface Payload {
   // The configurations' pairs waiting for a pick, per scope (bot-configs.js
   // pairsWaitingByScope); null when they could not be counted.
   pairsWaiting?: PairsWaiting | null;
+  // Requests about Homeroom itself: the last week's move offers
+  // (homeroom-bot-move.js moveOfferSummary).
+  moveOffers?: MoveOffers | null;
+}
+
+export interface MoveOffers {
+  days: number;
+  sent: number;
+  moved: number;
+  kept: number;
+  open: number;
+  failed: number;
+  notOffered: number;
+  notOfferedByWhy: Record<string, number>;
+  notOfferedRecent?: { runId: number; app: string; issueNumber: number; why: string; at: string }[];
 }
 
 interface PairsWaiting { first_version?: number; later?: number }
@@ -378,11 +400,19 @@ function ProposalLink({ run, children }: { run: Run; children: string }) {
   );
 }
 
-const CAP_LABEL: Record<string, string> = {
-  proposals_per_app: 'would be held: 5 bot proposals already open on this app',
-  proposals_total: 'would be held: the bot is at its ceiling of proposals open across Homeroom',
-  question_tripwire: 'would be held: question tripwire for this app tripped today',
-};
+/**
+ * Why a cap held a run, with the cap's own limit (the payload's caps), as
+ * get_homeroom_bot says it (connector-data.js heldWords). The caps act now:
+ * a held run is held, not one that would have been. Pure.
+ */
+export function heldLine(cap: string | null | undefined, caps?: Partial<Payload['caps']> | null): string {
+  if (!cap) return '';
+  const n = (v: unknown) => (Number.isInteger(v) ? `${v} ` : '');
+  if (cap === 'proposals_per_app') return `held: ${n(caps?.proposalsPerApp)}proposals open on this app`;
+  if (cap === 'proposals_total') return `held: the bot's ceiling of ${n(caps?.proposalsTotal)}proposals open across Homeroom`;
+  if (cap === 'question_tripwire') return `held: ${n(caps?.questionsPerAppPerDay)}questions asked on this app today`;
+  return `held: ${cap.replace(/_/g, ' ')}`;
+}
 
 /**
  * A shadow build of a ready verdict: the branch it left on the app's
@@ -806,17 +836,67 @@ export function waitingFor(depth: number, buildsWaiting: number): string {
 // #4533: a queued row a refusal left where it was looked like one next in
 // line; a checks fix backing off for up to an hour behind a busy proposal
 // said nothing at all.
+// And the rows the loop passes over without a refusal (homeroom-bot.js
+// queueWait), which read as next in line: type-racer-battle's #2, #5 and #6
+// waited days behind a first version still up for a vote, saying nothing.
 const WAIT_WORDS: Record<string, string> = {
   session_busy: 'a turn is running on its session',
   allowance: 'its payer\'s week is used up',
   platform_fault: 'the bot is backing off a platform fault',
+  bot_paused: 'the bot is off or its weekly budget is spent',
+  app_paused: 'its app is paused',
+  first_version_pending: 'the project\'s first version is not live yet',
+  build_pending: 'a build of this request is waiting or under way',
+  per_person: 'its person already has as much running as they may',
+  settling: 'somebody is still writing on it',
 };
 
 /** Why a queued row waits, and until when, in words; empty when it does not. Pure. */
 export function waitLine(waiting: QueueWait | null | undefined): string {
   if (!waiting || !waiting.reason) return '';
-  const until = when(waiting.until);
-  return `waiting: ${WAIT_WORDS[waiting.reason] || waiting.reason.replace(/_/g, ' ')}${until ? `, until ${until}` : ''}`;
+  const until = waiting.until ? when(waiting.until) : '';
+  const words = waiting.reason === 'first_version_pending' && Number.isInteger(waiting.firstVersionIssue)
+    ? `the project's first version (#${waiting.firstVersionIssue}) is not live yet`
+    : WAIT_WORDS[waiting.reason] || waiting.reason.replace(/_/g, ' ');
+  return `waiting: ${words}${until ? `, until ${until}` : ''}`;
+}
+
+/** The queue's header: how many wait and how many run, from one snapshot. Pure. */
+export function queueCountLine(queue: Payload['queue'] | null | undefined): string {
+  if (!queue) return '';
+  return `${queue.depth} waiting, ${queue.running || 0} running`;
+}
+
+/** Under the queue's list, when it shows only the first of those waiting. Pure. */
+export function queueMoreLine(queue: Payload['queue'] | null | undefined): string {
+  if (!queue || queue.listedWaiting == null) return '';
+  const more = queue.depth - queue.listedWaiting;
+  return more > 0 ? `Showing the first ${queue.listedWaiting} of ${queue.depth} waiting, in the order they are read.` : '';
+}
+
+// Why a request about Homeroom itself was offered no move (homeroom-bot-move.js).
+const NOT_OFFERED_WORDS: Record<string, string> = {
+  no_requester: 'nobody is known to have asked for it',
+  no_bot: 'its requester does not have the bot',
+  repeat_held: 'the note was not repeated',
+  already_offered: 'already offered',
+  not_sent: 'the message did not go out',
+  unrecorded: 'not recorded',
+};
+
+/**
+ * The move offers in one line: sent, and how they were decided, then the
+ * verdicts about Homeroom that sent none, with why. Empty when there were
+ * neither. Pure.
+ */
+export function moveOffersLine(m: MoveOffers | null | undefined): string {
+  if (!m || (!m.sent && !m.notOffered)) return '';
+  const decided = countsLine([[m.moved, 'moved'], [m.kept, 'kept'], [m.open, 'not answered yet'], [m.failed, 'failed']]);
+  const sent = `${m.sent} offer${m.sent === 1 ? '' : 's'} to move a request to Homeroom in the last ${m.days || 7} days${decided ? ` (${decided})` : ''}`;
+  if (!m.notOffered) return `${sent}.`;
+  const why = Object.entries(m.notOfferedByWhy || {}).filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${NOT_OFFERED_WORDS[k] || k.replace(/_/g, ' ')}`).join(', ');
+  return `${sent}; ${m.notOffered} about Homeroom with no offer${why ? ` (${why})` : ''}.`;
 }
 
 /**
@@ -881,7 +961,10 @@ function WorkingNow({ items }: { items: Working[] }) {
   );
 }
 
-/** The queue, one line each: what put it there, the app and request, and why it waits, when it does. */
+/**
+ * The queue, one line each, the running rows first: what put it there, the
+ * app and request, and why it waits, when it does.
+ */
 function QueueItems({ items }: { items: QueueItem[] }) {
   if (!items.length) {
     return <p className={AdminUI.muted}>Nothing queued. The queue refreshes from open requests every five minutes while the bot is on.</p>;
@@ -1443,6 +1526,7 @@ function HomeroomBotSection() {
   const chip = health(settings, payload?.loop);
   const working = payload?.workingNow || [];
   const pairsLine = pairsWaitingLine(payload?.pairsWaiting);
+  const movesLine = moveOffersLine(payload?.moveOffers);
 
   const tile = (label: string, value: string, id: string, sub?: string) => (
     <div className="rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3" id={id}>
@@ -1515,6 +1599,7 @@ function HomeroomBotSection() {
               : ''}
           </p>
           <p className={pairsLine ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-pairs-waiting">{pairsLine}</p>
+          <p className={movesLine ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-move-offers">{movesLine}</p>
 
           <details className="mt-3" id="admin-homeroom-bot-health-details">
             <summary className={`${AdminUI.muted} cursor-pointer`}>How the loop is doing</summary>
@@ -1563,10 +1648,13 @@ function HomeroomBotSection() {
               <div className={AdminUI.cardHeader}>
                 <h3 className={AdminUI.cardTitle}>Queue</h3>
                 <span className={AdminUI.cardDescription} id="admin-homeroom-bot-queue-depth">
-                  {payload ? `${payload.queue.depth} waiting` : ''}
+                  {queueCountLine(payload?.queue)}
                 </span>
               </div>
               <QueueItems items={payload?.queue.items || []} />
+              <p className={queueMoreLine(payload?.queue) ? `${AdminUI.muted} mt-1` : 'hidden'} id="admin-homeroom-bot-queue-more">
+                {queueMoreLine(payload?.queue)}
+              </p>
             </div>
           </div>
           {canWrite ? (
@@ -1730,7 +1818,7 @@ function HomeroomBotSection() {
                               {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                               <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                               {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
-                              {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}
+                              {run.cap_suppressed ? <span data-run-held={run.cap_suppressed}>{heldLine(run.cap_suppressed, payload?.caps)}</span> : null}
                               {run.reused_run_id ? <span>{`reused run #${run.reused_run_id}'s verdict: the request had not changed`}</span> : null}
                               {run.model ? <span>{run.model}</span> : null}
                               {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}

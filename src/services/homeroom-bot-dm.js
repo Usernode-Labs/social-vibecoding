@@ -1268,9 +1268,16 @@ async function relayIssuePost({
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: CHAT_STATUS_OF_KIND[kind] });
   }
   if (!dm || !bot?.id) return null;
+  // A verdict about Homeroom itself offers a move (below); where it cannot,
+  // the run records why (homeroom-bot-move.js noteMoveOffer).
+  const noteMove = (outcome) => (kind === 'person' && dm.platform
+    ? require('./homeroom-bot-move').noteMoveOffer(pool, runId, outcome) : null);
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) return null;
+  if (!requester || !hasBot(settings, requester)) {
+    await noteMove(requester ? 'no_bot' : 'no_requester');
+    return null;
+  }
   const context = {
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -1397,7 +1404,10 @@ async function relayIssuePost({
     // #3707: news about a request they started here points back at it.
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
-  if (!sent?.messageId) return null;
+  if (!sent?.messageId) {
+    await noteMove('not_sent');
+    return null;
+  }
   const told = { ...sent, userId: requester.userId, username: requester.username };
   // The same post relayed again (a retry) was already sent and recorded.
   if (sent.duplicate) return told;
@@ -1432,7 +1442,7 @@ async function relayIssuePost({
   // Homeroom's own board, under its own buttons. Never throws.
   if (kind === 'person' && dm.platform) {
     await require('./homeroom-bot-move').offerMove(pool, {
-      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason,
+      bot, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
       key: `${app.id}-${issueNumber}-${runId || postId || sent.messageId}`,
     });
   } else if ((kind === 'person' || kind === 'empty') && dm.done) {

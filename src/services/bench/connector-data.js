@@ -185,14 +185,17 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // What started this read: the queue row's reason, and for a change what
     // moved (homeroom-bot.js readReasonOf).
     readReason: READ_REASON_RE.test(String(r.read_reason || '')) ? r.read_reason : null,
+    // Held by a cap (homeroom-bot.js simulateCaps): which, and its limit,
+    // so a held ready verdict says why it has no build.
+    held: heldOf(r.cap_suppressed, p.caps),
     // A held ready verdict acted on again with no read of its own, because
     // the request had not changed: the run it reused (homeroom-bot.js
     // reuseHeldVerdict).
     reused: r.reused_run_id != null,
     reusedFrom: num(r.reused_run_id),
     // Its build wherever it got to: a ready verdict queued, building,
-    // built or failed, or never built and why (skipped, superseded). A run
-    // with none of those has no build.
+    // built or failed, held by a cap, or never built and why (skipped,
+    // superseded). A run with none of those has no build.
     build: buildStateOf(r) == null ? null : {
       state: buildStateOf(r),
       ok: r.build_ok, branch: r.build_branch || null, sha: r.build_sha || null, commits: num(r.build_commits),
@@ -227,6 +230,10 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     ok: true,
     settings: {
       mode: s.mode || null,
+      // What the console calls it: the stored "shadow" is On, acting for real
+      // on every app but the paused ones (live is refused: homeroom-bot.js
+      // validateSettingsPatch). The stored value stays in `mode`.
+      modeLabel: modeLabelOf(s.mode),
       pausedApps: Array.isArray(s.pausedApps) ? s.pausedApps : [],
       everyoneSince: s.everyoneSince || null,
       models: p.bot?.models || null,
@@ -251,24 +258,44 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       weeklyLimitCents: num(p.bot.weeklyLimitCents), weeklySpentCents: num(p.bot.weeklySpentCents), hasIncludedKey: !!p.bot.hasIncludedKey,
     } : null,
     totals: p.totals || null,
+    // One snapshot (homeroom-bot.js queueSnapshot): `depth` rows waiting and
+    // `running` rows running, and the rows listed from that same set: every
+    // running one, then the first waiting ones in the order they are read.
     queue: {
       depth: num(p.queue?.depth) || 0,
+      running: num(p.queue?.running) || 0,
+      listedWaiting: num(p.queue?.listedWaiting),
+      listedRunning: num(p.queue?.listedRunning),
       items: (p.queue?.items || []).map((q) => ({
         app: q.app_slug || null, issueNumber: num(q.issue_number), reason: q.reason ? clipText(q.reason, 120) : null,
         enqueuedAt: iso(q.enqueued_at), startedAt: iso(q.started_at),
         // #4533: why it waits and until when (homeroom-bot.js queueWait): a
-        // turn running on its session, its payer's week, a platform fault.
+        // turn running on its session, its payer's week, a platform fault,
+        // the bot or its app paused, the project's first version, a build of
+        // the same request, the person's limit, a person still writing.
         waiting: q.waiting && CODE_RE.test(String(q.waiting.reason || ''))
-          ? { reason: q.waiting.reason, until: iso(q.waiting.until) } : null,
+          ? {
+            reason: q.waiting.reason,
+            until: iso(q.waiting.until),
+            ...(num(q.waiting.firstVersionIssue) != null ? { firstVersionIssue: num(q.waiting.firstVersionIssue) } : {}),
+          } : null,
       })),
     },
+    // The DM answers and the voice are counted this week (since Monday 00:00
+    // UTC: `period` and `since` say so), unlike `totals`, which are the last
+    // 7 days.
     dmChat: p.dmChat ? {
+      period: 'this_week', since: iso(weekStart(deps)),
       turns: num(p.dmChat.turns), failed: num(p.dmChat.failed), recovered: num(p.dmChat.recovered),
       people: num(p.dmChat.people), costUsd: num(p.dmChat.costUsd),
     } : null,
     // Its voice outside the DM this week (homeroom-bot-voice.js
     // voiceSummary): codes and counts, never anybody's words.
-    voice: p.voice ? voiceOf(p.voice) : null,
+    voice: p.voice ? { period: 'this_week', since: iso(weekStart(deps)), ...voiceOf(p.voice) } : null,
+    // Requests about Homeroom itself (homeroom-bot-move.js moveOfferSummary):
+    // the last `days` days' move offers and how each was decided, and the
+    // verdicts flagged as about Homeroom that sent none, with why.
+    moveOffers: p.moveOffers ? moveOffersOf(p.moveOffers) : null,
     // Errors that should not happen, the last week's (platform-incidents.js).
     incidents: p.incidents ? {
       days: num(p.incidents.days), total: num(p.incidents.total) || 0,
@@ -338,6 +365,66 @@ function voiceOf(v) {
   };
 }
 
+/** The bot's stored mode as the console says it: 'off', or 'on' for "shadow" (and "live"). Pure. */
+function modeLabelOf(mode) {
+  if (!mode) return null;
+  return mode === 'off' ? 'off' : 'on';
+}
+
+/** The start of this week (Monday 00:00 UTC), as limits.js counts a week. */
+function weekStart(deps = {}) {
+  try {
+    return (deps.weekStartUtc || require('../limits').weekStartUtc)();
+  } catch {
+    return null;
+  }
+}
+
+// Why a move offer was not sent (homeroom-bot-move.js MOVE_OFFER_OUTCOMES,
+// and `unrecorded`).
+const NOT_OFFERED = Object.freeze(['no_requester', 'no_bot', 'repeat_held', 'already_offered', 'not_sent', 'unrecorded']);
+
+/** The move offers' summary as the connector carries it: counts and codes. Pure. */
+function moveOffersOf(m) {
+  const whys = m.notOfferedByWhy || {};
+  return {
+    days: num(m.days) || 7,
+    sent: num(m.sent) || 0, moved: num(m.moved) || 0, kept: num(m.kept) || 0,
+    open: num(m.open) || 0, failed: num(m.failed) || 0,
+    notOffered: num(m.notOffered) || 0,
+    notOfferedByWhy: Object.fromEntries(NOT_OFFERED.filter((k) => num(whys[k])).map((k) => [k, num(whys[k])])),
+    notOfferedRecent: (m.notOfferedRecent || []).slice(0, 10).map((r) => ({
+      runId: num(r.runId), app: SLUG_RE.test(String(r.app || '')) ? r.app : null, issueNumber: num(r.issueNumber),
+      why: NOT_OFFERED.includes(r.why) ? r.why : null, at: iso(r.at),
+    })),
+  };
+}
+
+// The caps that hold a verdict (homeroom-bot.js simulateCaps).
+const HELD_CAPS = Object.freeze(['proposals_per_app', 'proposals_total', 'question_tripwire']);
+
+/**
+ * A run a cap held: { cap, limit, why } with the cap's limit from the
+ * payload's caps and its reason in words, or null when none held it. Pure.
+ */
+function heldOf(cap, caps = {}) {
+  if (!cap) return null;
+  const code = HELD_CAPS.includes(cap) ? cap : null;
+  if (!code) return { cap: null, limit: null, why: 'held by a cap' };
+  const limit = num(code === 'proposals_per_app' ? caps?.proposalsPerApp
+    : code === 'proposals_total' ? caps?.proposalsTotal : caps?.questionsPerAppPerDay);
+  return { cap: code, limit, why: heldWords(code, limit) };
+}
+
+/** A cap's hold in words, shared with the console (admin-homeroom-bot.tsx heldLine). Pure. */
+function heldWords(cap, limit) {
+  const n = limit == null ? '' : `${limit} `;
+  if (cap === 'proposals_per_app') return `held: ${n}proposals open on this app`;
+  if (cap === 'proposals_total') return `held: the bot's ceiling of ${n}proposals open across Homeroom`;
+  if (cap === 'question_tripwire') return `held: ${n}questions asked on this app today`;
+  return 'held by a cap';
+}
+
 // A run's read reason: a queue reason, and for a change what moved.
 const READ_REASON_RE = /^[a-z][a-z0-9_]{0,63}(?::[a-z]{1,20})?$/;
 
@@ -345,7 +432,8 @@ const READ_REASON_RE = /^[a-z][a-z0-9_]{0,63}(?::[a-z]{1,20})?$/;
  * Where a run's build got to: 'built', 'failed', 'building', 'queued',
  * 'superseded' (a later verdict on the same issue replaced it), 'not_built'
  * (skipped, with why in its error), 'started' (a branch and nothing else
- * yet), or null for a run with no build at all.
+ * yet), 'held' (a ready verdict a cap held), or null for a run with no
+ * build at all.
  * Pure.
  */
 function buildStateOf(r) {
@@ -355,6 +443,9 @@ function buildStateOf(r) {
   if (r.build_queued_at) return 'queued';
   if (r.build_error) return /^superseded/.test(String(r.build_error)) ? 'superseded' : 'not_built';
   if (r.build_branch) return 'started';
+  // A ready verdict a cap held before any build: its build waits for room
+  // (the run's `held` says which cap), rather than reading as no build.
+  if (r.cap_suppressed && r.verdict === 'ready') return 'held';
   return null;
 }
 
@@ -545,6 +636,9 @@ module.exports = {
   botFilters,
   botOverview,
   buildStateOf,
+  heldOf,
+  modeLabelOf,
+  moveOffersOf,
   personFilter,
   personWeek,
   rateRun,
