@@ -699,23 +699,45 @@ async function notifyIssueFiled(pool, { appId, issueNumber, authorId, text = '' 
 // #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
 // for a merge the vote carried — it rides in `detail`, which a force merge
 // uses for its own marker, so the two never meet.
-async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false, credits = null }) {
-  if (!userId || !sessionId) return [];
-  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) return [];
-  const detail = forced
-    ? 'forced'
-    : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'pr_merged', $4
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [userId, appId, sessionId, detail]
-  );
-  return rows;
+// #4787: `alsoVoters` asks for the voters' rows in the same call, so a caller
+// inside the merge workflow (which may only name the members of this module
+// it already names) tells the whole say-had crowd through the one door. The
+// author's mute of pr_merged says nothing about the voters: each side asks
+// its own preference.
+async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false, credits = null, alsoVoters = false }) {
+  const created = [];
+  if (userId && sessionId
+    && await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) {
+    const detail = forced
+      ? 'forced'
+      : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
+    const { rows } = await pool.query(
+      `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+       SELECT $1, $2, $3, NULL, 'pr_merged', $4
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
+        )
+       RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+      [userId, appId, sessionId, detail]
+    );
+    created.push(...rows);
+  }
+  if (alsoVoters && sessionId) {
+    try {
+      created.push(...await createVotedChangeMergedNotifications(pool, {
+        appId, sessionId, authorId: userId ?? null,
+      }));
+    } catch (err) {
+      // A voter's row failing must not take the author's down with it, nor
+      // the merge that is being told about: logged, and the author's rows
+      // still return.
+      log.warn('notifications', 'Voted-change merged notifications failed', {
+        appId, sessionId, err: err.message,
+      });
+    }
+  }
+  return created;
 }
 
 // #1688: a proposal this person had said yes to got a new version from its

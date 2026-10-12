@@ -10,7 +10,10 @@
 //      writes nothing — and, against the full PostgreSQL schema, the
 //      producer's INSERT actually runs (its VALUES row is cast: the columns
 //      are otherwise typed text and `n.user_id = v.user_id` is an integer =
-//      text comparison Postgres refuses);
+//      text comparison Postgres refuses); and the door the merge workflow
+//      uses, createPrMergedNotification's alsoVoters, which tells the author
+//      and the voters in one call and keeps a voters-side failure off the
+//      author's rows;
 //   2. the phone's banner, on a child app (live when it arrives) and on the
 //     platform's own (approved now, live in a few minutes);
 //   3. the bell's row: the same drawing as the author's "Live" row, no
@@ -224,6 +227,69 @@ test('the row is drawn like the author\'s "Live" row, with no button of its own'
 });
 
 // ── 4. The merge paths ────────────────────────────────────────────────
+
+// The merge workflow may only name the members of services/notifications.js
+// it already names (tests/workflow-process-state.test.js), so its write asks
+// for the voters' rows through createPrMergedNotification's own `alsoVoters`
+// rather than through a second door.
+function mergedPool({ voters = [], failVotes = false } = {}) {
+  const queries = [];
+  return {
+    queries,
+    query: async (sql, params) => {
+      const s = String(sql);
+      queries.push({ sql: s, params });
+      if (/FROM pr_votes/.test(s)) {
+        if (failVotes) throw new Error('db hiccup');
+        return { rows: voters };
+      }
+      if (/INSERT INTO notifications/.test(s)) {
+        if (/'pr_merged'/.test(s)) {
+          return { rows: [{ id: 800, user_id: params[0], app_id: params[1], session_id: params[2], source_user_id: null, kind: 'pr_merged', detail: params[3] }] };
+        }
+        return {
+          rows: params.slice(2).map((userId, i) => ({
+            id: 900 + i, user_id: userId, app_id: params[0], session_id: params[1],
+            source_user_id: null, kind: 'voted_change_merged', detail: null,
+          })),
+        };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+test('alsoVoters: the author and the voters in one call, the author never double-told', async () => {
+  filtered.length = 0;
+  const pool = mergedPool({ voters: [{ user_id: 8 }, { user_id: 7 }, { user_id: 10 }, { user_id: 12 }] });
+  const rows = await notifications.createPrMergedNotification(pool, {
+    userId: 7, appId: 5, sessionId: 41, credits: 'Backed by ada.', alsoVoters: true,
+  });
+  assert.deepEqual(rows.map((r) => [r.kind, r.user_id]),
+    [['pr_merged', 7], ['voted_change_merged', 8], ['voted_change_merged', 12]],
+    'the author\'s row first, then the voters\' — the author (7) and the muted voter (10) left out');
+  assert.deepEqual(filtered, [{ userIds: [8, 10, 12], appId: 5, categoryKey: 'voted_changes_live' }]);
+});
+
+test('alsoVoters with no author (a bot build): only the voters have someone to tell', async () => {
+  filtered.length = 0;
+  const pool = mergedPool({ voters: [{ user_id: 8 }, { user_id: 12 }] });
+  const rows = await notifications.createPrMergedNotification(pool, {
+    userId: null, appId: 5, sessionId: 41, credits: null, alsoVoters: true,
+  });
+  assert.deepEqual(rows.map((r) => r.kind), ['voted_change_merged', 'voted_change_merged']);
+  assert.equal(pool.queries.some((q) => /'pr_merged'/.test(q.sql)), false,
+    'no author row where there is no author');
+});
+
+test('alsoVoters: a voters-side failure leaves the author\'s rows standing', async () => {
+  filtered.length = 0;
+  const pool = mergedPool({ voters: [{ user_id: 8 }], failVotes: true });
+  const rows = await notifications.createPrMergedNotification(pool, {
+    userId: 7, appId: 5, sessionId: 41, credits: null, alsoVoters: true,
+  });
+  assert.deepEqual(rows.map((r) => r.kind), ['pr_merged'], 'the author still hears it');
+});
 
 test('the votes.js merge tail calls the producer after the author\'s, wrapped so it cannot fail a merge', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/votes.js'), 'utf8');
