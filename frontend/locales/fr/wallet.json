@@ -354,5 +354,77 @@
   "appVersion.label": {
     "text": "Version de l’appli mobile",
     "source": "04c1664b979a0e3b98ea052cff7c108833f6c2a553a3dcc7d15c18a239764856"
+  },
+  "node.sheet.peersReady_many": {
+    "text": "{{ready}} prêts",
+    "source": "7aca59dcb5b59a72a015d685d23965da22880ed0b1e14e3360f72c3c969a9f1e"
+  },
+  "node.sheet.peersReady_one": {
+    "text": "{{ready}} prêt",
+    "source": "7aca59dcb5b59a72a015d685d23965da22880ed0b1e14e3360f72c3c969a9f1e"
+  },
+  "node.sheet.peersReady_other": {
+    "text": "{{ready}} prêts",
+    "source": "7aca59dcb5b59a72a015d685d23965da22880ed0b1e14e3360f72c3c969a9f1e"
+  },
+  "node.sheet.peersReadyOfKnown_many": {
+    "text": "{{ready}} prêts / {{known}} connus",
+    "source": "c2aaa7e0b6bfe630b6a93e84a945bb56a3bb7a299855ad1dad8df5a6e8a2ffaa"
+  },
+  "node.sheet.peersReadyOfKnown_one": {
+    "text": "{{ready}} prêt / {{known}} connus",
+    "source": "c2aaa7e0b6bfe630b6a93e84a945bb56a3bb7a299855ad1dad8df5a6e8a2ffaa"
+  },
+  "node.sheet.peersReadyOfKnown_other": {
+    "text": "{{ready}} prêts / {{known}} connus",
+    "source": "c2aaa7e0b6bfe630b6a93e84a945bb56a3bb7a299855ad1dad8df5a6e8a2ffaa"
+  },
+  "node.tipAge.seconds_many": {
+    "text": "il y a {{count}} secondes",
+    "source": "4021d7563cab19632311dd9acaf77c33e2cb79fc394e58dbf25e650805a1cf5d"
+  },
+  "node.tipAge.seconds_one": {
+    "text": "il y a {{count}} seconde",
+    "source": "5eed9f582a1a9cdb3ad1c9d7cd424ce20c718879af6808a3e9d33b7b0c3c4c16"
+  },
+  "node.tipAge.seconds_other": {
+    "text": "il y a {{count}} secondes",
+    "source": "4021d7563cab19632311dd9acaf77c33e2cb79fc394e58dbf25e650805a1cf5d"
+  },
+  "node.tipAge.minutes_many": {
+    "text": "il y a {{count}} minutes",
+    "source": "3d92f208d6c90f9ca0cb024c04162df5ce4524bc1c0565b7b96f2920427cec70"
+  },
+  "node.tipAge.minutes_one": {
+    "text": "il y a {{count}} minute",
+    "source": "b24fecc493c323dbec66a0869f3ff84ef62731e9302f0466d1fc47509b6b83f7"
+  },
+  "node.tipAge.minutes_other": {
+    "text": "il y a {{count}} minutes",
+    "source": "3d92f208d6c90f9ca0cb024c04162df5ce4524bc1c0565b7b96f2920427cec70"
+  },
+  "node.tipAge.hours_many": {
+    "text": "il y a {{count}} heures",
+    "source": "0687828cfa4d8b52bb7174db34e6f4d5a8e61c31d15964e31733ea4a0a8db1cc"
+  },
+  "node.tipAge.hours_one": {
+    "text": "il y a {{count}} heure",
+    "source": "4ce5a7e7a0aed652b6924b77fe534b1c3e0b23bbe2edb55462110aab4441205a"
+  },
+  "node.tipAge.hours_other": {
+    "text": "il y a {{count}} heures",
+    "source": "0687828cfa4d8b52bb7174db34e6f4d5a8e61c31d15964e31733ea4a0a8db1cc"
+  },
+  "node.tipAge.days_many": {
+    "text": "il y a {{count}} jours",
+    "source": "0d0d0a848ddf761192c49ddfd37a427c4230e2354b957e6998256e9c6ed4389f"
+  },
+  "node.tipAge.days_one": {
+    "text": "il y a {{count}} jour",
+    "source": "47c2a06f6d2f744ecd7a30b31cac04657899918d4395d3d7ba6c06cc6bf7dc94"
+  },
+  "node.tipAge.days_other": {
+    "text": "il y a {{count}} jours",
+    "source": "0d0d0a848ddf761192c49ddfd37a427c4230e2354b957e6998256e9c6ed4389f"
   }
 }
