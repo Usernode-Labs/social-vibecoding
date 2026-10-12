@@ -3237,7 +3237,10 @@ function voteRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
       const gh = importGithubClient();
-      if (!gh.isEnabled() || !repo) return res.json({ candidates: [] });
+      // #4817: "not configured" is a stated answer now, not an empty list the
+      // client has to guess at — it keeps `candidates: []` so an older client
+      // that ignores the flag reads the same state as before.
+      if (!gh.isEnabled() || !repo) return res.json({ candidates: [], configured: false });
 
       const imported = await importedPrNumbers(app.id);
       let pulls = [];
@@ -3245,7 +3248,13 @@ function voteRoutes(config) {
         pulls = await gh.listOpenPulls(repo.owner, repo.repo);
       } catch (err) {
         log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
-        return res.json({ candidates: [] });
+        // A failed list is not an empty one (#4817): say GitHub could not be
+        // read so the dialog shows its load-failed state, not "nothing to
+        // import".
+        return res.status(502).json({
+          error: 'Couldn’t reach GitHub to list pull requests. Please try again.',
+          configured: true,
+        });
       }
       const candidates = pulls
         .filter((p) => !imported.has(p.number))
@@ -3260,7 +3269,7 @@ function voteRoutes(config) {
           // #866: fork provenance for the picker's "from a fork — …" label.
           ...prForkInfo(p, repo),
         }));
-      res.json({ candidates });
+      res.json({ candidates, configured: true });
     } catch (err) {
       log.error('votes', 'PR-import candidates failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3286,7 +3295,16 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        // #4817: "not found" is GitHub's own 404 answer. Anything else — rate
+        // limit, timeout, bad token, GitHub 5xx — is an unreachable GitHub,
+        // not a missing pull request.
+        if (err && err.status === 404) {
+          return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        }
+        log.warn('votes', 'PR-import getPR failed', { slug: req.params.slug, prNumber, status: err?.status || null, err: err?.message });
+        return res.status(502).json({
+          error: `Couldn’t reach GitHub to read PR #${prNumber}. Please try again in a moment.`,
+        });
       }
       const headSha = pr.head?.sha || null;
       const baseRef = pr.base?.ref || 'main';
@@ -3355,7 +3373,16 @@ function voteRoutes(config) {
       try {
         pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
-        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        // #4817: "not found" is GitHub's own 404 answer. Anything else — rate
+        // limit, timeout, bad token, GitHub 5xx — is an unreachable GitHub,
+        // not a missing pull request.
+        if (err && err.status === 404) {
+          return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+        }
+        log.warn('votes', 'PR-import getPR failed', { slug: req.params.slug, prNumber, status: err?.status || null, err: err?.message });
+        return res.status(502).json({
+          error: `Couldn’t reach GitHub to read PR #${prNumber}. Please try again in a moment.`,
+        });
       }
       if (pr.state !== 'open') {
         return res.status(409).json({ error: `PR #${prNumber} is not open.` });

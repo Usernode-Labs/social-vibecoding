@@ -101,10 +101,14 @@ test('the fork label is per-row and never renders blank', () => {
 
 test('the empty and GitHub-off responses are distinct list states', () => {
   const load = fnBody('loadCandidates');
-  // A 404 means GitHub isn't configured for this app — a state the user can't
-  // act on is worse than a plain sentence saying so.
-  assert.match(load, /if \(!ok\) \{[\s\S]*text: 'dialogs:importPr\.list\.notConfigured'/,
-    'non-OK renders the GitHub-off note');
+  // #4817: a non-OK answer is a failed load (the server answers 502 when
+  // GitHub could not be read), never the GitHub-off note.
+  assert.match(load, /if \(!ok\) \{[\s\S]*text: 'dialogs:importPr\.list\.loadFailed'/,
+    'non-OK renders the load-failed error');
+  // GitHub-off arrives on the 200 body as `configured: false`, checked before
+  // the rows so a not-configured app never reads as empty.
+  assert.match(load, /data\.configured === false[\s\S]*text: 'dialogs:importPr\.list\.notConfigured'/,
+    'configured: false renders the GitHub-off note');
   assert.equal(message('dialogs:importPr.list.notConfigured'), 'GitHub isn’t configured for this app, so there’s nothing to import.');
   assert.match(load, /rows\.length === 0[\s\S]*text: 'dialogs:importPr\.list\.empty'/,
     'an empty candidate list renders the empty note');

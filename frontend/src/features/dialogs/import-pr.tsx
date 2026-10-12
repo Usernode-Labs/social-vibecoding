@@ -80,10 +80,10 @@ const ERROR_CLASS = 'text-sm text-red-700 dark:text-red-400 py-6 text-center';
 /**
  * Turn an import failure into copy the user can act on.
  *
- * The server's own 404/409 strings are already user-grade (PR not found / not
- * open / already imported / GitHub not configured), so they win; the
- * status-code branches cover the ones that aren't (503 = drainGuard
- * mid-deploy). Exported for tests/dialog-import-pr.test.js.
+ * The server's own 404/409/502 strings are already user-grade (PR not found /
+ * not open / already imported / GitHub not configured / GitHub unreachable),
+ * so they win; the status-code branches cover the ones that aren't (503 =
+ * drainGuard mid-deploy). Exported for tests/dialog-import-pr.test.js.
  */
 export function importPrErrorMessage(
   status: number,
@@ -153,7 +153,7 @@ export function ImportPrDialog() {
     const slug = window.AppView?.appData?.slug as string | undefined;
     if (!slug) return;
     setSelected(null);
-    let data: { candidates?: Candidate[] } = {};
+    let data: { candidates?: Candidate[]; configured?: boolean } = {};
     let ok = false;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import/candidates`);
@@ -164,8 +164,14 @@ export function ImportPrDialog() {
       return;
     }
     if (!ok) {
-      // 404 = GitHub not configured for this app. Treat as the GitHub-off
-      // state rather than an error the user can't act on.
+      // #4817: any non-OK answer is a failed load (the server answers 502 when
+      // GitHub could not be read), not a GitHub-off state — show the error.
+      setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
+      return;
+    }
+    // GitHub-off comes from the 200 body now (`configured: false`), checked
+    // before the rows so a not-configured app never reads as empty.
+    if (data.configured === false) {
       setList({
         kind: 'note',
         text: 'dialogs:importPr.list.notConfigured',
