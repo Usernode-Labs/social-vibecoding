@@ -1402,6 +1402,87 @@ test('the demo layout survives repair for a viewer with no apps of their own', (
   assert.equal(layout.filter((i) => i.type === 'app').length, 2);
 });
 
+// ── More apps than cells: a repair that only moves overflow is not a write ──
+//
+// With more apps than the 4 x MAX_ROWS canvas holds, repair() parks the rest
+// on the overflow row and reports `changed` on every call. Writing that was a
+// loop in production (93 apps): toWire() dropped the overflow, the server kept
+// the same 32 cells, its answer reset _layouts, and every render — three per
+// home refresh — wrote again.
+
+/** A full stored canvas, plus `extra` apps that do not fit on it. */
+function seedFullCanvas(Home, HomeLayout, extra) {
+  const cells = 4 * HomeLayout.MAX_ROWS;
+  const slugs = Array.from({ length: cells + extra }, (_, i) => `app-${i}`);
+  Home._apps = slugs.map((s) => app(s));
+  Home._layouts = {
+    4: slugs.slice(0, cells).map((slug, i) => (
+      { type: 'app', slug, col: i % 4, row: Math.floor(i / 4) }
+    )),
+    5: [],
+  };
+  Home._layoutFetchedAt = Date.now();
+  return slugs;
+}
+
+/** The server's answer to a PUT: the cells it stored, as GET returns them. */
+function echoStoredCells(setFetch) {
+  setFetch(async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    return {
+      ok: true,
+      json: async () => (body ? { layouts: { 4: body.items, 5: [] } } : {}),
+    };
+  });
+}
+
+test('a full canvas with overflow apps renders without writing', async () => {
+  const { Home, HomeLayout, fetchCalls, setFetch } = makeHome();
+  seedFullCanvas(Home, HomeLayout, 61);
+  echoStoredCells(setFetch);
+
+  for (let i = 0; i < 3; i++) {
+    const layout = Home.currentLayout(4);
+    assert.equal(layout.length, 4 * HomeLayout.MAX_ROWS + 61, 'every app is still laid out');
+    await flush();
+  }
+  assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0,
+    'nothing the server would store changed, so nothing is written');
+});
+
+test('a real correction beside overflow apps is written once, then settles', async () => {
+  const { Home, HomeLayout, fetchCalls, setFetch } = makeHome();
+  const slugs = seedFullCanvas(Home, HomeLayout, 10);
+  echoStoredCells(setFetch);
+  // The app in the first cell was deleted: its cell is free for an overflow app.
+  Home._apps = Home._apps.filter((a) => a.slug !== slugs[0]);
+
+  for (let i = 0; i < 3; i++) {
+    Home.currentLayout(4);
+    await flush();
+  }
+  const writes = fetchCalls.filter((c) => c.method === 'PUT');
+  assert.equal(writes.length, 1, 'the correction is written, and only once');
+  const stored = writes[0].body.items;
+  assert.equal(stored.length, 4 * HomeLayout.MAX_ROWS, 'the freed cell is filled');
+  assert.ok(!stored.some((i) => i.slug === slugs[0]), 'the deleted app is gone');
+});
+
+test('a stored canvas with room still writes a newly added app', async () => {
+  const { Home, fetchCalls, setFetch } = makeHome();
+  seedLayout(Home);
+  echoStoredCells(setFetch);
+  Home._apps = [...Home._apps, app('e')];
+
+  Home.currentLayout(4);
+  await flush();
+  Home.currentLayout(4);
+  await flush();
+  const writes = fetchCalls.filter((c) => c.method === 'PUT');
+  assert.equal(writes.length, 1);
+  assert.ok(writes[0].body.items.some((i) => i.slug === 'e'));
+});
+
 
 // ── The drag-time overlay lives INSIDE a React-owned host ─────────────
 //
