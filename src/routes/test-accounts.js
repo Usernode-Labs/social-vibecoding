@@ -2,8 +2,8 @@
 
 // Test accounts (services/test-accounts.js), for a full platform admin's
 // connector session: create_test_account, create_test_phone_sign_in,
-// send_test_release_email, list_test_accounts and retire_test_account in
-// services/mcp-tools.js.
+// send_test_release_email, list_test_accounts, retire_test_account and
+// get_run_report in services/mcp-tools.js.
 //
 // They live at their own prefix, outside /api/admin and /api/auth, because a
 // connector token can reach neither (services/cli-api-policy.js) — the same
@@ -84,6 +84,18 @@ function testAccountRoutes(config) {
   router.post('/api/test-accounts/release-emails', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Send test release email', async (req) => {
     const release = await testAccounts.sendRelease(pool, req.body || {}, { actorId: req.user.id, config });
     return { release };
+  }));
+
+  // What was recorded about a test project's first version (services/
+  // run-report.js), for get_run_report: built now while the app is live, or
+  // the copy retire kept once it is gone; with a username, that account's
+  // kept reports. A read: it has the list's room in the limiter.
+  router.get('/api/test-accounts/run-report', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Read run report', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    return testAccounts.runReportFor(pool, {
+      slug: typeof req.query.slug === 'string' ? req.query.slug : null,
+      username: typeof req.query.username === 'string' ? req.query.username : null,
+    });
   }));
 
   router.post('/api/test-accounts/:id/retire', requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, handler('Retire test account', async (req) => {

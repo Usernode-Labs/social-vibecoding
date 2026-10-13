@@ -63,6 +63,8 @@ const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
 const snapshots = require('./homeroom-bot-snapshots');
 const { withoutEmDashes } = require('./em-dashes');
 const { agentApiFailure } = require('./agent-result-text');
+// Newcomer run five: a first version's stages, as they happen.
+const timeline = require('./first-version-timeline');
 
 // A build's checkpoint as its session is linked to its run: written by the
 // link itself, keeping only what the run debited for earlier sessions.
@@ -3116,6 +3118,8 @@ async function planFromEarly(pool, config, {
     plan: { bullets: plan.bullets, questions: plan.questions }, complicated: false, platform: false,
     // Decided already: the chat's plan card is news, not a question.
     ...(decidedNow ? { quietPlan: true } : {}),
+    // Its timeline has the plan from Make it already (first-version-timeline.js).
+    fromMakeIt: true,
   };
   const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings);
   const runId = await insertRun(pool, {
@@ -4144,6 +4148,15 @@ let buildDrainAgain = false;
 // { attempts, until, error }, like platformFault but for the lane alone.
 let buildFault = null;
 let lastBuildDrain = null;
+// The LIVE build loop's own last pass (dispatch, its first block: the live
+// builds waiting their turn), for get_homeroom_bot beside the shadow lane's
+// lastBuildDrain above, which is a different timer. Run five (13 Oct 2026)
+// read the shadow lane's last pass as the live loop's. { startedAt, ms,
+// slots, waiting, started, paused }.
+let lastLiveBuildPass = null;
+function noteLivePass(pass, startedMs) {
+  lastLiveBuildPass = { ...pass, ms: Date.now() - startedMs };
+}
 
 /** True when `app` is the platform's own repository. */
 function isPlatformRepo(app, config = {}) {
@@ -6361,6 +6374,12 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
         });
         if (promoted.status === 200 && promoted.body?.ok) {
           await checkpoint.save(pool, plan.runId, sessionId, 'proposed', { prNumber: promoted.body.prNumber || null });
+          // A first version's timeline: proposed by recovery, as the live
+          // path's own step says it (buildLive onStep).
+          void timeline.recordStep(pool, {
+            runId: plan.runId, step: 'proposed', sessionId,
+            detail: { recovered: true, ...(promoted.body.prNumber ? { prNumber: Number(promoted.body.prNumber) } : {}) },
+          });
         }
       }
       if (promoted.status === 200 && promoted.body?.ok) {
@@ -8400,8 +8419,11 @@ async function actOnVerdict({
 // built is left alone.
 async function queueLiveBuild(pool, { runId, appId }) {
   try {
+    // Queued with no Build it to wait for: that is its go-ahead (goAhead
+    // keeps the tap's time for a plan that waited for one).
     await pool.query(
-      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW())
+      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW()),
+              go_ahead_at = COALESCE(go_ahead_at, NOW())
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL`,
       [runId],
     );
@@ -8511,6 +8533,11 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
   } catch (err) {
     log.warn('homeroom-bot', 'Could not record a first version\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
     return 'failed';
+  }
+  // The triage wrote it just now; a plan from Make it was recorded when it
+  // was written (first-version-plan.js startEarlyPlan).
+  if (!parsed?.fromMakeIt) {
+    void timeline.record(pool, { runId, stage: 'plan_written', detail: { source: 'triage', questions: plan.questions.length } });
   }
   // A plan its maker already decided on the made screen (planFromEarly) is
   // sent without a ring: it goes ahead the moment it is sent.
@@ -8920,15 +8947,19 @@ async function goAhead(pool, { runId, answers = [] }) {
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
   const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester: run.plan?.complicated === true });
+  // `go_ahead_at` keeps when, after live_build_waiting_at is cleared (the
+  // build's start): how long the build waited for its slot (buildLive).
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
-        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
+        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), go_ahead_at = NOW(),
+            build_note = CONCAT(build_note, $2::text),
             plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb)
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL
       RETURNING app_id, issue_number`,
     [runId, note, JSON.stringify(chosen)],
   );
   if (!went) return { ok: false, why: 'gone' };
+  void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
@@ -9063,6 +9094,28 @@ async function botBudgetStop(pool, bot, deps = {}, { spentUsd = 0 } = {}) {
 }
 
 /**
+ * A live build's claim on its run (buildLive's `onSession`): its session
+ * linked, its wait over (live_build_waiting_at cleared) and its checkpoint
+ * started, only when no other build has the run and no outcome is in.
+ * Resolves { claimed, waitedMs }: how long after it went ahead
+ * (go_ahead_at, which the claim leaves) it took its slot, or null when that
+ * is not known.
+ */
+async function claimLiveBuild(pool, { runId, sessionId }) {
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL,
+            build_checkpoint = ${CHECKPOINT_START_SQL}
+      WHERE id = $1
+        AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
+      RETURNING id, ROUND(EXTRACT(EPOCH FROM (NOW() - go_ahead_at)) * 1000)::bigint AS waited_ms`,
+    [runId, sessionId],
+  );
+  if (!rows.length) return { claimed: false, waitedMs: null };
+  const waited = rows[0].waited_ms;
+  return { claimed: true, waitedMs: waited == null ? null : Math.max(0, Number(waited)) };
+}
+
+/**
  * Build a live 'ready' verdict and say what came of it on the issue: the
  * spec as it is written, then the proposal, the request found impossible,
  * or the build that did not finish. What actOnVerdict did inline until the
@@ -9174,6 +9227,9 @@ async function buildLive({
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
     const buildStartedMs = Date.now();
+    // How many times a build of this run took its slot: a first version that
+    // did not finish is tried once more (below), and claims it again.
+    let claims = 0;
     // #4645: the requester's language preference, for the prompts' wording
     // rule (localeRule); unset, everything the group reads stays English.
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
@@ -9196,18 +9252,37 @@ async function buildLive({
       // another build already linked (or whose outcome is in) refuses it, so
       // a second build of one run stops before its plan (LOST_CLAIM).
       // The claim starts the build's checkpoint too (homeroom-bot-checkpoint.js).
+      // Run five (13 Oct 2026): and says how long the build waited for its
+      // slot since it went ahead (`waitedMs`, from go_ahead_at, which the
+      // claim leaves; live_build_waiting_at is the one it clears).
       onSession: async (session) => {
-        const { rows } = await pool.query(
-          `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL,
-                  build_checkpoint = ${CHECKPOINT_START_SQL}
-            WHERE id = $1
-              AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
-            RETURNING id`,
-          [runId, session.id],
-        );
-        return rows.length ? null : LOST_CLAIM;
+        const claim = await claimLiveBuild(pool, { runId, sessionId: session.id });
+        if (!claim.claimed) return LOST_CLAIM;
+        claims += 1;
+        const { waitedMs } = claim;
+        log.info('homeroom-bot', 'A live build took its slot', {
+          app: app.slug, issueNumber, runId, sessionId: session.id, waitedMs, attempt: claims,
+        });
+        if (firstVersion) {
+          void timeline.record(pool, {
+            runId, stage: 'picked_up', sessionId: session.id,
+            detail: { ...(waitedMs != null ? { waitedMs } : {}), attempt: claims },
+          });
+        }
+        return null;
       },
-      onStep: (name, data) => checkpoint.save(pool, runId, data.sessionId, name, data),
+      onStep: (name, data) => {
+        // A first version's step boundaries that are stages of its timeline
+        // (first-version-timeline.js STAGE_OF_STEP), as the build reaches them.
+        if (firstVersion) {
+          void timeline.recordStep(pool, {
+            runId, step: name, sessionId: data.sessionId,
+            detail: name === 'landed' ? { partial: !!data.landed?.partial }
+              : name === 'proposed' && data.prNumber ? { prNumber: Number(data.prNumber) } : null,
+          });
+        }
+        return checkpoint.save(pool, runId, data.sessionId, name, data);
+      },
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
       // #4387: what the people waiting on a first version watch on its App
@@ -9236,10 +9311,14 @@ async function buildLive({
               if (!drawn) return;
               drewEarly = true;
               log.info('homeroom-bot', 'A first version\'s first look is drawn from its saved main screen', { app: app.slug, runId });
+              void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'saved_screen' } });
             });
           },
           onFirstLook: ({ specHtml, containerName }) => (drewEarly ? false : firstVersionScreens().renderFirstLook({
             pool, worker: deps.worker || require('./worker'), containerName, runId, specHtml,
+          }).then((drawn) => {
+            if (drawn) void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'spec' } });
+            return drawn;
           })),
         };
       })() : {}),
@@ -10239,6 +10318,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   // anything still to be read. Up to BUILDS_PER_PROJECT per project, each in
   // a slot of its own, so the project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
+  const livePassMs = Date.now();
+  const livePass = { startedAt: new Date(livePassMs).toISOString(), slots: buildSlots, waiting: null, started: 0, paused: null };
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
     // Never a run whose build already has its slot (track sets it before
@@ -10251,6 +10332,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
     const waiting = (await liveBuildCandidates(pool, { scope, pausedApps: settings.pausedApps || [] }))
       .filter((row) => !seen.has(`build:${Number(row.id)}`) && !inFlight.has(buildSlot(row.id))
         && !liveBuildsInFlight.has(Number(row.id)));
+    livePass.waiting = waiting.length;
     const picks = pickLiveBuilds(waiting, {
       buildingAppIds: running.filter((e) => e.build).map((e) => Number(e.appId)),
       active: running.filter((e) => e.lane === 'live'), slots: buildSlots, perPerson,
@@ -10263,6 +10345,8 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       const budget = await (deps.limits || require('./limits')).checkBudget(pool, bot.id);
       if (budget.error) {
         log.info('homeroom-bot', 'Builds paused on budget', { reason: budget.reason || null });
+        livePass.paused = 'budget';
+        noteLivePass(livePass, livePassMs);
         await pauseOnBudget(pool, { settings, bot, reason: budget.reason, people: picks.map((p) => p.person_id), deps });
         return started;
       }
@@ -10309,9 +10393,11 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
             tray().noteWorkChanged(pick.person_id, deps);
           }
         }));
+        livePass.started += 1;
       }
     }
   }
+  noteLivePass(livePass, livePassMs);
 
   const running = [...inFlight.values()];
   const liveActive = running.filter((e) => e.lane === 'live');
@@ -11347,8 +11433,13 @@ async function adminPayload(pool, config, {
     // The shadow lane's own counts (buildLaneSummary, which never counts a
     // live build, #3509), and beside them the live builds under way and
     // waiting (buildsNow): first versions above all, which until run four
-    // (13 Oct 2026) the lane's figures left at 0 while one built.
-    builds: { ...await buildLaneSummary(pool), live: { building: builds.building.length, waiting: builds.waiting } },
+    // (13 Oct 2026) the lane's figures left at 0 while one built. And the
+    // live build loop's own last pass (lastLiveBuildPass): the lane's `lane`
+    // is the shadow lane's timer, which run five read as the live loop's.
+    builds: {
+      ...await buildLaneSummary(pool),
+      live: { building: builds.building.length, waiting: builds.waiting, lastPass: lastLiveBuildPass },
+    },
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
@@ -11898,6 +11989,9 @@ module.exports = {
   workingNow,
   dmChatSummary,
   dispatch,
+  // The live build loop's last pass, as get_homeroom_bot carries it.
+  lastLiveBuildPass: () => lastLiveBuildPass,
+  claimLiveBuild,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -11915,7 +12009,7 @@ module.exports = {
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
     pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear(); interruptedReviews.clear();
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
-    buildFault = null; lastBuildDrain = null;
+    buildFault = null; lastBuildDrain = null; lastLiveBuildPass = null;
     if (buildTimer) clearTimeout(buildTimer);
     buildTimer = null;
   },

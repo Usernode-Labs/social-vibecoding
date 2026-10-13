@@ -316,11 +316,25 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // (why a queued build is waiting: the budget, a platform fault, …).
     // `queued` and `building` are the shadow lane's own; `live` is the live
     // builds (first versions among them) under way and waiting their turn,
-    // which never go through that lane (homeroom-bot.js buildsNow).
+    // which never go through that lane (homeroom-bot.js buildsNow), and the
+    // live build loop's own last pass (`live.lastPass`: when it looked, how
+    // long it took, how many waited and how many it started). `lastPass`
+    // below is the shadow lane's timer, not the live loop's.
     buildLane: p.builds ? {
       queued: num(p.builds.queued) || 0,
       building: num(p.builds.building) || 0,
-      live: p.builds.live ? { building: num(p.builds.live.building) || 0, waiting: num(p.builds.live.waiting) || 0 } : null,
+      live: p.builds.live ? {
+        building: num(p.builds.live.building) || 0,
+        waiting: num(p.builds.live.waiting) || 0,
+        lastPass: p.builds.live.lastPass ? {
+          startedAt: p.builds.live.lastPass.startedAt || null,
+          ms: num(p.builds.live.lastPass.ms),
+          slots: num(p.builds.live.lastPass.slots),
+          waiting: num(p.builds.live.lastPass.waiting),
+          started: num(p.builds.live.lastPass.started),
+          paused: CODE_RE.test(String(p.builds.live.lastPass.paused || '')) ? p.builds.live.lastPass.paused : null,
+        } : null,
+      } : null,
       lastPass: p.builds.lane ? {
         at: p.builds.lane.at || null, started: num(p.builds.lane.started), inFlight: num(p.builds.lane.inFlight),
         paused: CODE_RE.test(String(p.builds.lane.paused || '')) ? p.builds.lane.paused : null,

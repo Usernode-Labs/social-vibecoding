@@ -204,8 +204,20 @@ function normalizeEvent(event = {}) {
     attempt_number: attempt && attempt > 0 ? attempt : null,
     correlation_id: safeOpaqueId(event.correlationId),
   };
+  // Which of OpenRouter's providers served (or refused) a helper call
+  // (llm.js askHelperModel), beside `provider`, which names the ledger's
+  // route ('openrouter'), not its host. A provider's name, never content;
+  // absent when unknown, so older rows and other callers are unchanged.
+  addOptional(normalized, { routed_provider: safeProviderName(event.routedProvider) });
 
   return Object.assign(normalized, normalizeDiagnostics(event));
+}
+
+// An OpenRouter provider's name as OpenRouter gives it ("Z.AI",
+// "DeepInfra", "Together"): a few plain characters, else nothing.
+function safeProviderName(value) {
+  const text = safeString(value, 80);
+  return text && /^[\w .-]+$/.test(text) ? text : null;
 }
 
 // Complete content-free diagnostic contract. Every value below is either a
@@ -327,6 +339,15 @@ function normalizeDiagnostics(event = {}) {
     first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
     first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
     last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // What the turn's own look-and-fix loop changed (worker.js
+    // noteFileChangeAfterBrowser): its edits after its first browser call,
+    // and how many files they touched. Counts only; absent for a turn that
+    // never used the browser. The paths themselves are kept on the turn's
+    // own agent_turns row (agent-turn.js), never in this ledger.
+    file_change_after_first_browser_count: tokenCount(event.fileChangeAfterFirstBrowserCount),
+    distinct_file_change_after_first_browser_count: tokenCount(event.distinctFileChangeAfterFirstBrowserCount
+      ?? (event.browserCallSeen === true && event.telemetryFileChangesAfterBrowser instanceof Set
+        ? event.telemetryFileChangesAfterBrowser.size : null)),
     // The Homeroom bot's build turns in Claude Code: how many times the stop
     // guard (worker/build-stop-hook.js) sent the agent back to work after it
     // tried to end a turn that had changed nothing. Absent without the guard.

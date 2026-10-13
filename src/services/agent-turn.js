@@ -489,6 +489,23 @@ async function lockAttempt(client, turnUuid) {
   return rows[0] || null;
 }
 
+// The paths a turn changed after its first browser call, as worker.js keeps
+// them: at most 20, each a short plain string, or null for none. Pure.
+const CHANGED_PATHS_MAX = 20;
+const CHANGED_PATH_MAX_CHARS = 200;
+function changedPaths(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  for (const path of value) {
+    // eslint-disable-next-line no-control-regex
+    if (typeof path !== 'string' || !path || /[\u0000-\u001f]/.test(path)) continue;
+    const kept = path.slice(0, CHANGED_PATH_MAX_CHARS);
+    if (!out.includes(kept)) out.push(kept);
+    if (out.length >= CHANGED_PATHS_MAX) break;
+  }
+  return out.length ? out : null;
+}
+
 // ── Phase 3: complete one attempt idempotently ────────────────────────
 // Lock the attempt, compute cumulative provider totals (delta vs the latest
 // terminal row for the same thread), estimate cost from the immutable pricing
@@ -586,6 +603,12 @@ async function completeCodexAttempt({
           || (status === 'cancelled' ? 'cancelled'
             : status === 'failed' ? 'provider' : null),
       });
+      // The paths the turn changed after its first browser call (worker.js
+      // noteFileChangeAfterBrowser), at most CHANGED_PATHS_MAX: a path,
+      // never what is in it. On this row only: normalizeDiagnostics feeds
+      // the content-free llm_invocation ledger too, and keeps no path.
+      const afterBrowser = changedPaths(telemetryMetrics?.filesChangedAfterFirstBrowser);
+      if (afterBrowser) normalizedMetrics.files_changed_after_first_browser = afterBrowser;
       if (Object.keys(normalizedMetrics).length) {
         metadata.telemetry_metrics = normalizedMetrics;
       }
@@ -1053,6 +1076,7 @@ module.exports = {
   usageScopeForHarness,
   startCodexAttempt,
   completeCodexAttempt,
+  changedPaths,
   completeCodexTurn,
   resolveCodexTurn,
   settleRecoveredAgentAttempt,
