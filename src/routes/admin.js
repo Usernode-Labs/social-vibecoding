@@ -11,6 +11,7 @@ const log = require('../services/logger');
 const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
+const adminAppsUsage = require('../services/admin-apps-usage');
 const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
@@ -1097,6 +1098,18 @@ function adminRoutes(config) {
         digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
       },
     });
+  });
+
+  // Apps & usage: every app with its members, contributors and activity
+  // over a 7/30/90-day window (services/admin-apps-usage.js). Read-only, so
+  // view-only admins see it too.
+  router.get('/api/admin/apps-usage', async (req, res) => {
+    try {
+      res.json(await adminAppsUsage.adminPayload(pool, { days: (req.query || {}).days }));
+    } catch (err) {
+      log.error('admin', 'Read apps & usage failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read apps & usage' });
+    }
   });
 
   router.get('/api/admin/limits', async (_req, res) => {

@@ -1634,9 +1634,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // same route took that selector past the runner's 256 characters. 730
   // leaves 150 slots.
   //
+  // 730 → 731: +1: the admin console's Apps & usage section (#admin/apps),
+  // a route no other check reaches. 731 leaves 149 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 730);
+  checkCap.assertPinned(DAPP.tests.length, 731);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

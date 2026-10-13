@@ -3263,6 +3263,12 @@
       "expectText": "Unexpected events"
     },
     {
+      "name": "Admin Apps & usage lists every app with its members, contributors and activity, with its search, sort and time window controls",
+      "path": "/#admin/apps",
+      "expectSelector": "#admin-apps-usage:has(#admin-apps-usage-totals [data-tile=\"apps\"]):has(#admin-apps-usage-search):has(#admin-apps-usage-sort):has(#admin-apps-usage-days) #admin-apps-usage-summary[data-state=\"ready\"]",
+      "expectText": "Apps & usage"
+    },
+    {
       "name": "Admin console renders the Health & status section (#860)",
       "path": "/?demo=1#admin/status",
       "expectSelector": "#admin-status-root #admin-status-summary"
