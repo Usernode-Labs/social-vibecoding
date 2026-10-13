@@ -969,37 +969,64 @@ async function backfillVotesRequired(pool) {
     candidates: sessions.length,
   });
 
-  // Every merge announcement of the apps concerned, newest first, read ONCE.
-  // This used to be one search of the app's chat per merged row; a preview
+  // The newest merge announcement of each candidate, found in ONE pass over
+  // the chat and handed back as at most one line per candidate.
+  //
+  // This used to be one search of the app's chat per merged row. A preview
   // starts with nine merged fixtures that have no announcement at all, and
   // the nine searches of Homeroom's copied chat were 0.8 seconds of each
-  // start. The two LIKEs restrict to merge/force-merge lines (promote /
-  // vote / revert messages also mention the PR ref but carry neither
-  // phrase).
-  let announcements;
+  // start. Now the chat of the apps concerned is read once: every merge
+  // line (the two LIKEs; promote / vote / revert lines also mention the PR
+  // but carry neither phrase) gives up the PR numbers it names, those are
+  // matched to the candidates by equality, and the newest line per
+  // candidate wins before its figure is read, as it did.
+  //
+  // "(^|[^0-9])PR #" and a greedy run of digits is the old per-row pattern
+  // "(^|[^0-9])PR #<ref>([^0-9]|$)" read the other way round: "PR #12"
+  // yields 12 and never 1, and the comparison is on text, so "PR #012" is
+  // not PR 12, as before. Only ids and timestamps are held while matching;
+  // a line's text is fetched for the winners alone, so what reaches this
+  // process does not grow with the chat. Both CTEs are MATERIALIZED so the
+  // planner cannot turn the pass back into one chat scan per candidate.
+  let winners;
   try {
-    ({ rows: announcements } = await pool.query(
-      `SELECT app_id, content FROM chat_messages
-        WHERE app_id = ANY($1::int[]) AND msg_type = 'system'
-          AND (content LIKE '%merged and deployed!%'
-               OR content LIKE '%force-merged by admin%')
-        ORDER BY created_at DESC`,
-      [[...new Set(sessions.map((s) => s.app_id))]]
+    ({ rows: winners } = await pool.query(
+      `WITH candidate AS MATERIALIZED (
+         SELECT id, app_id, COALESCE(NULLIF(pr_number, 0), id)::text AS ref
+           FROM chat_sessions
+          WHERE id = ANY($1::int[])
+       ), named AS MATERIALIZED (
+         SELECT m.id, m.app_id, m.created_at, hit.pr[1] AS ref
+           FROM chat_messages m
+          CROSS JOIN LATERAL regexp_matches(m.content, '(?:^|[^0-9])PR #([0-9]+)', 'g') AS hit(pr)
+          WHERE m.app_id IN (SELECT app_id FROM candidate)
+            AND m.msg_type = 'system'
+            AND (m.content LIKE '%merged and deployed!%'
+                 OR m.content LIKE '%force-merged by admin%')
+       ), winner AS (
+         SELECT DISTINCT ON (c.id) c.id AS session_id, n.id AS message_id
+           FROM candidate c
+           JOIN named n ON n.app_id = c.app_id AND n.ref = c.ref
+          ORDER BY c.id, n.created_at DESC
+       )
+       SELECT w.session_id, m.content
+         FROM winner w
+         JOIN chat_messages m ON m.id = w.message_id`,
+      [sessions.map((s) => s.id)]
     ));
   } catch (err) {
+    // One statement now, so one failure: nothing is filled on this boot and
+    // the next one tries again (the per-row search could lose one row and
+    // carry on). Never abort boot here.
     log.warn('db', 'votes_required backfill skipped (query failed)', { err: err.message });
     return;
   }
+  const announcementOf = new Map(winners.map((w) => [w.session_id, w.content]));
 
   let filled = 0;
   for (const s of sessions) {
-    // The announcement label uses `pr_number || session.id` as the PR ref.
-    const ref = s.pr_number || s.id;
     try {
-      // The newest announcement for this PR. The word-boundary pattern
-      // stops "PR #1" from matching "PR #12".
-      const mentionsPr = new RegExp(`(^|[^0-9])PR #${Number(ref)}([^0-9]|$)`);
-      const msgs = announcements.filter((a) => a.app_id === s.app_id && mentionsPr.test(a.content)).slice(0, 1);
+      const msgs = announcementOf.has(s.id) ? [{ content: announcementOf.get(s.id) }] : [];
       if (!msgs.length) continue;
 
       const m = /\((\d+)\s*\/\s*(\d+)\s+vote/.exec(msgs[0].content);
