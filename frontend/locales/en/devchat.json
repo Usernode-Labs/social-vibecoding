@@ -2419,6 +2419,10 @@
     "text": "Open request",
     "description": "Button on the card of a request already posted from comment mode: leaves comment mode and opens that request's page."
   },
+  "commentPin.sent.label": {
+    "text": "Request posted",
+    "description": "Accessible name of the card shown in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) right after a request was posted, saying where it went."
+  },
   "commentPin.intro.title": {
     "text": "How comment mode works",
     "description": "Heading, and accessible name, of the note shown the first time comment mode opens on a device. Comment mode is the layer where a click or tap leaves a comment pinned to that spot."

@@ -68,7 +68,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, ChatIcon, DescriptionIcon, DraftEditIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ArrowPathIcon, CheckIcon, ChatIcon, DescriptionIcon, DraftEditIcon,
   ArrowsMoveIcon, PaperclipIcon, PlusIcon, SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
@@ -550,6 +550,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [draft, setDraft] = useState<Draft | null>(null);
   const [posted, setPosted] = useState<Posted[]>([]);
   const [postedPins, setPostedPins] = useState<PostedPin[]>([]);
+  // The last posted request, for the sent card on the screen: the toast is
+  // gone in a moment and the bar's chip never shows on a phone.
+  const [sent, setSent] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<'exit' | 'discard' | null>(null);
   const [carry, setCarry] = useState<CommentCarry | null>(session.carry);
@@ -611,6 +614,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   useEffect(() => {
     if (cropping && (!draft || !draft.pictures.some((pic) => pic.key === cropping.picture))) setCropping(null);
   }, [draft, cropping]);
+  // The sent card stands down once the next comment has words. Clearing
+  // here, not only in the render, means deleting the words afterwards does
+  // not bring it back.
+  useEffect(() => {
+    if (hasWords(draft)) setSent(null);
+  }, [draft]);
 
   // The bar has the keyboard from the start, so Esc and C reach the shell
   // even when the app's frame had it.
@@ -1091,6 +1100,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         kudos: !!outcome.bounty?.placed,
       }]);
       setPostedPins((list) => [...list, ...live.map((c, i) => ({ key: c.key, request: d.key, n: many ? i + 1 : null, anchor: c.anchor }))]);
+      setSent(d.key);
       setDraft(null);
       barRef.current?.focus({ preventScroll: true });
       // Whole sentences, one after another: where it went, then what came
@@ -1307,6 +1317,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const boxPoint = boxPointPage ? (inset ? toScreen(boxPointPage, inset) : boxPointPage) : null;
   const openPin = open != null ? postedPins.find((p) => p.key === open) || null : null;
   const openRequest = openPin ? posted.find((r) => r.key === openPin.request) || null : null;
+  const sentRequest = sent != null ? posted.find((r) => r.key === sent) || null : null;
   const openPointPage = openPin ? anchorPoint(openPin.anchor, size) : null;
   const openPoint = openPointPage ? (inset ? toScreen(openPointPage, inset) : openPointPage) : null;
   // The close-up at the top of the phone's sheet: the area around the open
@@ -2036,6 +2047,47 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </ul>
           <div className="flex justify-end">
             <Button variant="pillAccent" size="sm" ink="solid" onClick={() => setIntro(false)}>{t('devchat:commentPin.intro.gotIt')}</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* The sent card (#5008): where the comment just went, where the bar's
+          own chip never shows (a phone) and the toast has gone in a moment.
+          Dressed like the posted marker's card. It stands down when the next
+          comment has words, when it is closed, or when another is posted. */}
+      {sentRequest && !shotIntro && !cropping && !hasWords(draft) ? (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label={t('devchat:commentPin.sent.label')}
+          data-comment-pin-sent=""
+          className="absolute left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+          style={inset ? { top: band + 8 } : { bottom: 'calc(76px + var(--platform-safe-bottom, 0px))' }}
+        >
+          <div className="flex items-center gap-2">
+            <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-white`} aria-hidden="true"><CheckIcon className="h-3.5 w-3.5" /></span>
+            <span className="min-w-0 flex-1 truncate text-[15px] font-[650] text-zinc-900 dark:text-white">{placeOf(sentRequest)}</span>
+            <button
+              type="button"
+              aria-label={t('core:common.close')}
+              onClick={() => setSent(null)}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              <XIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {sentRequest.title ? <p className="text-[13px] text-zinc-600 dark:text-zinc-300">{sentRequest.title}</p> : null}
+          <div className="mt-1 flex items-center gap-2 border-t border-black/5 pt-2 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400">
+            <span className="min-w-0 flex-1 truncate">{t('devchat:commentPin.hint.another')}</span>
+            {sentRequest.href ? (
+              <a
+                href={sentRequest.href}
+                onClick={() => onClose()}
+                className="shrink-0 rounded-full bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-violet-500"
+              >
+                {t('devchat:commentPin.card.open')}
+              </a>
+            ) : null}
           </div>
         </div>
       ) : null}
