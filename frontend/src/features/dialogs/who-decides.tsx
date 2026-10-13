@@ -231,11 +231,6 @@ export function WhoDecidesDialog() {
         setError(t('dialogs:whoDecides.notVerified'));
         return;
       }
-      if (result.state === 'waiting') {
-        setError(t('dialogs:whoDecides.alreadyWaiting'));
-        void reloadCommunity(slug);
-        return;
-      }
       setOpened({ sessionId: result.sessionId, prNumber: result.prNumber });
       void reloadCommunity(slug);
     } catch (err) {
@@ -333,15 +328,6 @@ export function WhoDecidesDialog() {
     return (
       <>
         <Header title={t('dialogs:whoDecides.title')} sub={sub} onClose={close} />
-
-        {waiting ? (
-          <p className="mt-3 rounded-2xl bg-white px-4 py-3 text-[13px] leading-snug shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" data-who-waiting="">
-            {`${t('dialogs:whoDecides.waiting')} `}
-            <a className={`font-semibold ${ACCENT_TEXT}`} href={changeHref(slug, waiting.session_id)} onClick={() => dialog.closeForNavigation()}>
-              {t('dialogs:whoDecides.open')}
-            </a>
-          </p>
-        ) : null}
 
         {community?.can_manage !== false ? (
           <>
@@ -450,33 +436,27 @@ export function WhoDecidesDialog() {
                 </Button>
               ) : null}
             </>
-          ) : waiting && changes.length ? (
-            // #4960: a change to who can see and change it is already up for
-            // a vote, so this one cannot be proposed yet. The card says so
-            // where the person is looking, instead of a greyed propose
-            // button whose reason is the note at the top of the sheet.
-            <>
-              <p className="text-[15px] font-[650]" data-who-summary-waiting="">{t('dialogs:whoDecides.waitingTitle')}</p>
-              {changes.map((c) => (
-                <p key={c.label} className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
-                  {t('dialogs:whoDecides.changeLine', { what: c.label, from: c.from, to: c.to })}
-                </p>
-              ))}
-              <p className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">{t('dialogs:whoDecides.waitingSub')}</p>
-              <Button type="button" layout="full" variant="pillNeutral" size="pillLg" ink="neutral" className="mt-3 flex items-center justify-center"
-                data-who-waiting-open=""
-                onClick={() => { dialog.closeForNavigation(); window.location.hash = changeHref(slug, waiting.session_id).replace(/^#/, ''); }}>
-                {t('dialogs:whoDecides.open')}
-              </Button>
-            </>
           ) : changes.length ? (
             <>
-              <p className="text-[15px] font-[650]">{t('dialogs:whoDecides.count', { count: changes.length })}</p>
+              {/* #4960: another access change may already be up for a vote;
+                  competing ones are allowed, so Propose stays enabled and
+                  the heading warns here, where the person is looking. */}
+              <p className="text-[15px] font-[650]">
+                {waiting ? t('dialogs:whoDecides.waitingTitle') : t('dialogs:whoDecides.count', { count: changes.length })}
+              </p>
               {changes.map((c) => (
                 <p key={c.label} className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
                   {t('dialogs:whoDecides.changeLine', { what: c.label, from: c.from, to: c.to })}
                 </p>
               ))}
+              {waiting ? (
+                <p className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300" data-who-waiting-warning="">
+                  {`${t('dialogs:whoDecides.waitingSub')} `}
+                  <a className={`font-semibold ${ACCENT_TEXT}`} href={changeHref(slug, waiting.session_id)} onClick={() => dialog.closeForNavigation()}>
+                    {t('dialogs:whoDecides.open')}
+                  </a>
+                </p>
+              ) : null}
               <Button type="button" layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="mt-3 flex items-center justify-center"
                 data-who-propose="" disabledStyle="block" disabled={busy} onClick={() => void propose()}>
                 {busy ? t('dialogs:whoDecides.proposing') : t('dialogs:whoDecides.propose', { count: changes.length })}

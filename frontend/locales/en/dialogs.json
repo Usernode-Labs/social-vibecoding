@@ -2779,17 +2779,13 @@
     "text": "Now",
     "description": "Small badge on the approval option the project uses today."
   },
-  "whoDecides.waiting": {
-    "text": "A change to who can see and change it is already up for a vote.",
-    "description": "Note at the top of the sheet when such a proposal is waiting for votes; followed by a link that opens it."
-  },
   "whoDecides.waitingTitle": {
-    "text": "Another change is up for a vote first",
-    "description": "Summary heading when something was changed but another change to who can see and change it is already up for a vote, so this one cannot be proposed yet."
+    "text": "Another change is up for a vote too",
+    "description": "Summary heading when something was changed and another change to who can see and change it is already up for a vote; competing changes are allowed, so this one can still be proposed."
   },
   "whoDecides.waitingSub": {
-    "text": "A change to who can see and change it is already up for a vote. Once it is decided, you can propose this one.",
-    "description": "Line under the summary heading in that state; followed by a button that opens the waiting proposal."
+    "text": "A change to who can see and change it is already up for a vote. If both pass, the later one may overwrite the earlier.",
+    "description": "Warning line in the summary when another change to who can see and change it is already up for a vote; followed by a link that opens it."
   },
   "whoDecides.open": {
     "text": "Open it",
@@ -3370,10 +3366,6 @@
   "whoDecides.openedSub": {
     "text": "It’s up for a vote now, and goes live once it passes.",
     "description": "Line under Proposed."
-  },
-  "whoDecides.alreadyWaiting": {
-    "text": "A change to who can see and change it is already up for a vote. Open it from the note at the top.",
-    "description": "Error when another such proposal is already waiting."
   },
   "whoDecides.notVerified": {
     "text": "Nothing changed. Making it public needs a verified phone first.",

@@ -3097,17 +3097,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
       }
 
-      // One change to who decides in flight per project.
-      const existing = await whoDecides.findWhoDecidesPr(pool, app.id);
-      if (existing) {
-        return res.status(409).json({
-          error: 'A change to who can see and change it is already waiting for approval',
-          sessionId: existing.id,
-          prNumber: existing.pr_number,
-          prUrl: existing.pr_url,
-        });
-      }
-
+      // Competing access changes are allowed (#4960): more than one change
+      // to who can see and change it may be up for a vote at once, and the
+      // sheet warns that if both pass the later one may overwrite the
+      // earlier. The community read still returns the open one
+      // (findWhoDecidesPr) so the sheet can link to it.
       const result = await whoDecides.createWhoDecidesPR(
         config, pool, app, diff, { id: req.user.id, username: req.user.username }
       );
