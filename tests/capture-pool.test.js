@@ -827,13 +827,23 @@ test('cold fallback still fails a missing selector within a bounded window', asy
   const read = collect();
   const page = makeColdOnlyPage();
   const group = [COLD_ONLY_GROUP[0], { ...COLD_ONLY_GROUP[1], expectSelector: '#never' }];
-  const started = Date.now();
+  const settleMaxMs = 40;
+  const assertMaxMs = 100;
+  // The fallback pays one hash-switch judgement and one cold reload, each with
+  // a settle and an assertion window, so the bound comes from those windows —
+  // not a fixed wall-clock constant. It is timed with the monotonic
+  // performance.now(): a step of the wall clock once failed this test at
+  // 326ms of real time (#4933).
+  const windowsMs = 2 * (settleMaxMs + assertMaxMs);
+  const started = performance.now();
   await runTestGroup({ newPage: async () => page }, group,
-    { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20 });
+    { settleQuietMs: 20, settleMaxMs, assertMaxMs, assertPollMs: 20 });
+  const elapsed = performance.now() - started;
   const row = read().frames.find((f) => f.index === 1);
   assert.equal(row.status, 'fail');
   assert.match(row.failureReason, /#never/);
-  assert.ok(Date.now() - started < 2000, 'fallback cannot wait indefinitely');
+  assert.ok(elapsed < windowsMs * 10,
+    `fallback cannot wait indefinitely, took ${Math.round(elapsed)}ms`);
 });
 
 test('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
