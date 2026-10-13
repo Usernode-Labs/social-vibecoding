@@ -4152,15 +4152,6 @@ let buildDrainAgain = false;
 // { attempts, until, error }, like platformFault but for the lane alone.
 let buildFault = null;
 let lastBuildDrain = null;
-// The LIVE build loop's own last pass (dispatch, its first block: the live
-// builds waiting their turn), for get_homeroom_bot beside the shadow lane's
-// lastBuildDrain above, which is a different timer. Run five (13 Oct 2026)
-// read the shadow lane's last pass as the live loop's. { startedAt, ms,
-// slots, waiting, started, paused }.
-let lastLiveBuildPass = null;
-function noteLivePass(pass, startedMs) {
-  lastLiveBuildPass = { ...pass, ms: Date.now() - startedMs };
-}
 
 /** True when `app` is the platform's own repository. */
 function isPlatformRepo(app, config = {}) {
@@ -10424,8 +10415,6 @@ async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen })
   // Up to BUILDS_PER_PROJECT per project, each in a slot of its own, so the
   // project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
-  const livePassMs = Date.now();
-  const livePass = { startedAt: new Date(livePassMs).toISOString(), slots: buildSlots, waiting: null, started: 0, paused: null };
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
     // Never a run whose build already has its slot (track sets it before
@@ -10438,7 +10427,6 @@ async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen })
     const waiting = (await liveBuildCandidates(pool, { scope, pausedApps: settings.pausedApps || [] }))
       .filter((row) => !seen.has(`build:${Number(row.id)}`) && !inFlight.has(buildSlot(row.id))
         && !liveBuildsInFlight.has(Number(row.id)));
-    livePass.waiting = waiting.length;
     const picks = pickLiveBuilds(waiting, {
       buildingAppIds: running.filter((e) => e.build).map((e) => Number(e.appId)),
       active: running.filter((e) => e.lane === 'live'), slots: buildSlots, perPerson,
@@ -10451,8 +10439,6 @@ async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen })
       const budget = await (deps.limits || require('./limits')).checkBudget(pool, bot.id);
       if (budget.error) {
         log.info('homeroom-bot', 'Builds paused on budget', { reason: budget.reason || null });
-        livePass.paused = 'budget';
-        noteLivePass(livePass, livePassMs);
         await pauseOnBudget(pool, { settings, bot, reason: budget.reason, people: picks.map((p) => p.person_id), deps });
         return started;
       }
@@ -10499,11 +10485,9 @@ async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen })
             tray().noteWorkChanged(pick.person_id, deps);
           }
         }));
-        livePass.started += 1;
       }
     }
   }
-  noteLivePass(livePass, livePassMs);
 
   return started;
 }
@@ -11580,13 +11564,10 @@ async function adminPayload(pool, config, {
     // The shadow lane's own counts (buildLaneSummary, which never counts a
     // live build, #3509), and beside them the live builds under way and
     // waiting (buildsNow): first versions above all, which until run four
-    // (13 Oct 2026) the lane's figures left at 0 while one built. And the
-    // live build loop's own last pass (lastLiveBuildPass): the lane's `lane`
-    // is the shadow lane's timer, which run five read as the live loop's.
-    builds: {
-      ...await buildLaneSummary(pool),
-      live: { building: builds.building.length, waiting: builds.waiting, lastPass: lastLiveBuildPass },
-    },
+    // (13 Oct 2026) the lane's figures left at 0 while one built. The live
+    // build loop's own last pass is the loop's status (`loop`), which the
+    // connector carries as live.lastPass (bench/connector-data.js, #4993).
+    builds: { ...await buildLaneSummary(pool), live: { building: builds.building.length, waiting: builds.waiting } },
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
@@ -12136,8 +12117,6 @@ module.exports = {
   workingNow,
   dmChatSummary,
   dispatch,
-  // The live build loop's last pass, as get_homeroom_bot carries it.
-  lastLiveBuildPass: () => lastLiveBuildPass,
   claimLiveBuild,
   dispatchLiveBuilds,
   wakeLiveBuilds,
@@ -12160,7 +12139,7 @@ module.exports = {
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
     pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear(); interruptedReviews.clear();
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
-    buildFault = null; lastBuildDrain = null; lastLiveBuildPass = null;
+    buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);
     buildTimer = null;
   },

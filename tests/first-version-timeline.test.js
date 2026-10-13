@@ -143,30 +143,3 @@ test('the pipeline writes each stage where it happens', () => {
   // And at Make it, before there is a run.
   assert.match(read('src/services/first-version-plan.js'), /appId: app\.id, stage: 'plan_written', detail: \{ source: 'make_it', questions: made\.plan\.questions\.length \},/);
 });
-
-test('the live build loop keeps its own last pass, which get_homeroom_bot carries beside the shadow lane\'s', async () => {
-  const bot = require('../src/services/homeroom-bot');
-  bot._resetForTests();
-  assert.equal(bot.lastLiveBuildPass(), null);
-  const pool = { async query(sql) {
-    if (/r\.live_build_waiting_at IS NOT NULL AND r\.mode = 'live'/.test(sql)) {
-      return { rows: [{ id: 7, app_id: 3, issue_number: 1, person_id: 2, live_build_waiting_at: new Date(), created_at: new Date() }] };
-    }
-    return { rows: [] };
-  } };
-  const before = Date.now();
-  await bot.dispatch(pool, {}, {
-    settings: { mode: 'live', liveAtOnce: 2, concurrency: 0 }, bot: { id: 1 },
-    deps: { limits: { async checkBudget() { return { error: 'budget', reason: 'the bot is paused' }; } } },
-  });
-  const pass = bot.lastLiveBuildPass();
-  assert.ok(Date.parse(pass.startedAt) >= before - 5);
-  assert.ok(Number.isFinite(pass.ms) && pass.ms >= 0);
-  assert.deepEqual({ ...pass, startedAt: null, ms: null }, { startedAt: null, ms: null, slots: 2, waiting: 1, started: 0, paused: 'budget' });
-  bot._resetForTests();
-  assert.equal(bot.lastLiveBuildPass(), null);
-
-  const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /live: \{ building: builds\.building\.length, waiting: builds\.waiting, lastPass: lastLiveBuildPass \},/);
-  assert.match(read('src/services/mcp-tools.js'), /live\.lastPass for the live build loop\\'s own last pass: startedAt, ms, slots, waiting, started, paused, and lastPass for the shadow lane\\'s/);
-});
