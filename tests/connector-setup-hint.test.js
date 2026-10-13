@@ -134,7 +134,7 @@ test('every read tool returns through readResult and no others do', () => {
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
     'get_app', 'get_bench_context_pack', 'get_bench_gallery', 'get_bench_item', 'get_bench_reference_order', 'get_bench_run',
-    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial', 'get_bot_config_pair',
+    'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial', 'get_bench_trial_transcript', 'get_bot_config_pair',
     'get_browser_languages',
     'get_change', 'get_check_output', 'get_checkout_status', 'get_connector_guidance', 'get_discussion', 'get_homeroom_bot',
     'get_message',

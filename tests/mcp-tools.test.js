@@ -2817,6 +2817,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // #3654. One benchmark run's results, as aggregates only.
     'get_bench_run',
     'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial',
+    // A benchmark trial's whole transcript, a page at a time (bench_trial_lines).
+    'get_bench_trial_transcript',
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',

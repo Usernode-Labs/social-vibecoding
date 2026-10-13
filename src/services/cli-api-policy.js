@@ -259,6 +259,7 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-studio/tasks/:id/taste' },
   { method: 'GET', pattern: '/api/bot-studio/runs/:id/trials' },
   { method: 'GET', pattern: '/api/bot-studio/trials/:id' },
+  { method: 'GET', pattern: '/api/bot-studio/trials/:id/transcript' },
   { method: 'GET', pattern: '/api/bot-studio/bot' },
   { method: 'POST', pattern: '/api/bot-studio/bot/runs/:id/rating' },
   { method: 'GET', pattern: '/api/bot-studio/shots' },

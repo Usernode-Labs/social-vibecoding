@@ -14,9 +14,11 @@
 // ledger (agent_turns, every attempt) in ONE query for a whole run. A
 // trial's spec turn and its build turn are both labelled `homeroom_bench`
 // (runner.js TELEMETRY), so the component cannot tell them apart; the ids
-// can. A trial with no build turn on record (a reference, a build a restart
-// finished, which names none of its turns, one from before the ids were
-// kept) has no buildSpeed rather than zeros, and a number its turns did not
+// can. The plan step's spec turn is read the same way (planSpeedOf: its ids
+// are parsed.costParts.spec.turnIds), so a run says how long each plan took
+// beside its build. A trial with no build turn on record (a reference, one
+// from before the ids were kept, one a restart finished before 13 Oct 2026)
+// has no buildSpeed rather than zeros, and a number its turns did not
 // record is null: the coding clock (first edit, first boot, the time split)
 // from 7 Oct 2026 (worker.js noteCodingRequestClock), compactions from Claude
 // Code turns alone. Nulls are left out of an arm's medians.
@@ -49,6 +51,11 @@ const BUILD_FIELDS = Object.freeze([
   'fileChanges', 'distinctFileChanges', 'compactions', 'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes',
 ]);
 const REVIEW_FIELDS = Object.freeze(['round1Blockers', 'round1Majors', 'rounds', 'reviewMs', 'doneMs']);
+// The plan step's (planSpeedOf): its turn has no browser and no app to boot.
+const PLAN_FIELDS = Object.freeze([
+  'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'modelRequestMs',
+  'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs', 'fileChanges', 'compactions',
+]);
 const NOT_RUN = new Set(['pending', 'running', 'awaiting', 'not_applicable', 'skipped_cap', 'cancelled']);
 
 const TURNS_SQL = `SELECT logical_turn_id::text AS turn_id, attempt_number, started_at, completed_at,
@@ -66,10 +73,20 @@ const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null 
 const round3 = (v) => Math.round(v * 1000) / 1000;
 const pick = (v, re) => (typeof v === 'string' && re.test(v) ? v : null);
 
+/** The ledger ids of a trial's turns of one stage of its cost breakdown (`build`, `spec`), lower-case. Pure. */
+function stageTurnIds(parsed, stage) {
+  const ids = parsed?.costParts?.[stage]?.turnIds;
+  return (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && UUID_RE.test(id)).map((id) => id.toLowerCase());
+}
+
 /** The ledger ids of a trial's build turns (its nudge's included), lower-case. Pure. */
 function buildTurnIds(parsed) {
-  const ids = parsed?.costParts?.build?.turnIds;
-  return (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && UUID_RE.test(id)).map((id) => id.toLowerCase());
+  return stageTurnIds(parsed, 'build');
+}
+
+/** The ledger ids of a trial's spec turn, the plan step's (its cost breakdown's spec part), lower-case. Pure. */
+function planTurnIds(parsed) {
+  return stageTurnIds(parsed, 'spec');
 }
 
 /**
@@ -79,7 +96,8 @@ function buildTurnIds(parsed) {
  * (each trial then carries no buildSpeed). Never throws.
  */
 async function buildTurnsFor(pool, trialRows) {
-  const ids = [...new Set((Array.isArray(trialRows) ? trialRows : []).flatMap((r) => buildTurnIds(r?.parsed)))];
+  // The plan's turn too (planSpeedOf), in the same query.
+  const ids = [...new Set((Array.isArray(trialRows) ? trialRows : []).flatMap((r) => [...buildTurnIds(r?.parsed), ...planTurnIds(r?.parsed)]))];
   if (!ids.length) return [];
   if (!pool) return null;
   try {
@@ -123,7 +141,23 @@ async function buildTurnsFor(pool, trialRows) {
  * Pure.
  */
 function buildSpeedOf(rows, trial) {
-  const ids = new Set(buildTurnIds(trial?.parsed));
+  return turnSpeedOf(rows, buildTurnIds(trial?.parsed));
+}
+
+/**
+ * The plan step (the spec turn) as its turn recorded it, the same numbers as
+ * buildSpeedOf's for its own turn: how long the plan took, how many model
+ * calls, how many tokens, and where its time went (writing its drawn screens
+ * is an edit, reading the starter a read). Null without its turn on record
+ * (a kept plan from before 13 Oct 2026, a trial with no spec turn). Pure.
+ */
+function planSpeedOf(rows, trial) {
+  return turnSpeedOf(rows, planTurnIds(trial?.parsed));
+}
+
+/** buildSpeedOf's numbers for the turns `turnIds` names. Pure. */
+function turnSpeedOf(rows, turnIds) {
+  const ids = new Set(turnIds || []);
   if (!ids.size) return null;
   const ms = (v) => (v ? new Date(v).getTime() : NaN);
   const mine = (Array.isArray(rows) ? rows : [])
@@ -283,6 +317,7 @@ function armSpeed(trials) {
   }
   return [...arms.entries()].map(([arm, list]) => {
     const builds = list.map((t) => t.buildSpeed).filter(Boolean);
+    const plans = list.map((t) => t.planSpeed).filter(Boolean);
     const reviews = list.map((t) => t.reviewOutcome).filter(Boolean);
     const checks = (r) => {
       const passed = r.declaredChecks?.allPassed;
@@ -292,6 +327,7 @@ function armSpeed(trials) {
     return {
       arm,
       n: list.length,
+      plan: { n: plans.length, median: mediansOf(plans, PLAN_FIELDS), hosts: countsOf(plans.map((b) => b.routedProvider)) },
       build: { n: builds.length, median: mediansOf(builds, BUILD_FIELDS), hosts: countsOf(builds.map((b) => b.routedProvider)) },
       review: {
         n: reviews.length,
@@ -308,9 +344,12 @@ module.exports = {
   METRIC_KEYS,
   BUILD_FIELDS,
   REVIEW_FIELDS,
+  PLAN_FIELDS,
   buildTurnIds,
+  planTurnIds,
   buildTurnsFor,
   buildSpeedOf,
+  planSpeedOf,
   firstChecksOf,
   reviewOutcomeOf,
   median,

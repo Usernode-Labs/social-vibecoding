@@ -2532,7 +2532,7 @@
     {
       "name": "A Needs-you item's picture fills the card and the caption over it leads with who and when, then its title, then the sentence a voter reads; a change with no shots has its author's diagram as that picture (#4490)",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
+      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
     },
     {
       "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
@@ -2543,7 +2543,7 @@
     {
       "name": "#2172: one card past the last Needs-you item says that's it and how many you reviewed, with the way on to what is live",
       "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
+      "expectSelector": "#dev-workshop [data-ws-needs] .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
       "expectText": "See what’s live"
     },
     {

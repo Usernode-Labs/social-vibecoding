@@ -1091,7 +1091,7 @@ test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn b
   assert.match(pane, /<div class="dev-ws-item-caption"><a class="workshop-reel-app" data-ws-item-app=""[^>]*>[\s\S]*?<\/a><p class="dev-ws-item-by">/);
   assert.match(pane, /data-ws-rail-btn="more" data-card-menu="" data-card-menu-open="#app\/garden\/dev\/proposals\/8"/,
     'the ⋯ offers the card\'s page, the one entry that holds across projects');
-  assert.match(pane, /class="dev-ws-item-of">1 \/ 3</);
+  assert.match(pane, /class="dev-ws-needs-of">1 \/ 3</);
   assert.match(pane, /class="dev-ws-done-cta">Back to your communities</);
   assert.doesNotMatch(pane, /data-ws-done-hub/, 'the Communities screen has its own way on, and no Hub to go back to');
 

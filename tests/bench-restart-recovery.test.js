@@ -177,12 +177,12 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     turnId: `turn-${crypto.randomUUID()}`, journal: '/journals/t.log', mode, phase: 'executing',
     backend: 'codex_openrouter', model: 'z-ai/glm-5.3-flash', startedAt: new Date().toISOString(), attemptNumber: 1, ...extra,
   });
-  const newSession = async (activeTurn, { specMd = '' } = {}) => (await pool.query(
+  const newSession = async (activeTurn, { specMd = '', status = 'active' } = {}) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title,
                                 agent_backend, agent_provider, agent_model, active_turn, spec_md)
-     VALUES ($1, $2, 'active', FALSE, '{}', 'bench', 'codex_openrouter', 'openrouter', 'z-ai/glm-5.3-flash', $3::jsonb, $4)
+     VALUES ($1, $2, $5, FALSE, '{}', 'bench', 'codex_openrouter', 'openrouter', 'z-ai/glm-5.3-flash', $3::jsonb, $4)
      RETURNING id`,
-    [app.id, user.id, activeTurn ? JSON.stringify(activeTurn) : null, specMd],
+    [app.id, user.id, activeTurn ? JSON.stringify(activeTurn) : null, specMd, status],
   )).rows[0].id;
   const spend = (sessionId, usd) => pool.query(
     `INSERT INTO agent_turns (id, session_id, user_id, backend, status, estimated_cost_usd, routed_model)
@@ -289,23 +289,43 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await trialRow(trial.id);
     assert.equal(row.status, 'timeout');
     assert.deepEqual(outward, []);
+
+    // A turn that had finished before the restart, its journal ending on its
+    // own exit 0, did its work in time, though the re-armed clock fires at
+    // once (as the live bot reads it).
+    reset();
+    const { trials: [done] } = await launch(['triage']);
+    const sid2 = await newSession(turnOf('scout', { startedAt: new Date(Date.now() - 6 * 3600 * 1000).toISOString() }));
+    await claimAs(done.id, sid2);
+    journalTail = () => new Promise((resolve) => { stopped = () => resolve({ lastResultText: VERDICT, exitCode: 0, resultSeen: true }); });
+    await adopt(sid2);
+    const row2 = await trialRow(done.id);
+    assert.equal(row2.status, 'ok', 'recorded as the turn ended, not as a time-out');
   });
 
-  await t.test('a build\'s spec turn is abandoned and the trial is back in the queue at once, its spend charged', async () => {
+  await t.test('a build\'s spec turn is followed, its spec kept, and the trial handed back without spending a claim, its spend charged', async () => {
+    // Until 13 Oct 2026 it was stopped and abandoned, and the whole trial run again.
     reset();
     const { run, trials } = await launch(['build']);
     const trial = trials[0];
-    const sid = await newSession(turnOf('scout'));
+    const specTurn = turnOf('scout');
+    const sid = await newSession(specTurn);
     await claimAs(trial.id, sid);
     await spend(sid, 0.15);
+    journalTail = async () => ({ lastResultText: '# Pin the markers\n\nOne map with every marker on it.', exitCode: 0, resultSeen: true });
     await adopt(sid);
-    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'stopTurn', 'finishTurn', 'destroyWorker'],
-      'stopped and abandoned, never followed');
-    const row = await trialRow(trial.id);
-    assert.equal(row.status, 'pending');
+    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'resume', 'finishTurn', 'destroyWorker'],
+      'followed to its end, never abandoned');
+    const { rows: [row] } = await pool.query(
+      'SELECT status, session_id, claims, checkpoint, interrupted_cost_usd::float8 AS interrupted FROM bench_trials WHERE id = $1', [trial.id],
+    );
+    assert.equal(row.status, 'pending', 'back in the queue, to build from its spec');
     assert.equal(row.session_id, null);
-    assert.equal(row.interrupted, 0.15);
-    assert.equal(await spent(run.id), 0.15);
+    assert.equal(row.claims, 0, 'the restart cost it no claim');
+    assert.equal(row.checkpoint.spec.specMd, '# Pin the markers\n\nOne map with every marker on it.');
+    assert.equal(row.checkpoint.spec.turnId, specTurn.turnId);
+    assert.equal(row.interrupted, 0, 'none of it thrown away');
+    assert.equal(await spent(run.id), 0.15, 'its spend charged to the run once');
     assert.deepEqual(debits, [15]);
     assert.equal((await sessionRow(sid)).status, 'archived');
     assert.deepEqual(outward, []);
@@ -315,6 +335,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     reset();
     const { trials } = await launch(['build']);
     const [twice, exited] = trials;
+    // Its spec turn followed, but nothing came of it to keep: the claim is spent.
     const s1 = await newSession(turnOf('scout'));
     await claimAs(twice.id, s1, { claims: 2 });
     await adopt(s1);
@@ -322,6 +343,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.status, 'infra_fail');
     assert.match(row.error, /restarted during it twice/);
 
+    workerCalls.length = 0;
     const s2 = await newSession(turnOf('build'));
     await claimAs(exited.id, s2);
     await adopt(s2, 'exited');
@@ -385,7 +407,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.claims, 0, 'the restart cost it no claim');
     assert.equal(row.session_id, null);
     assert.ok(row.recovered_at);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: specSid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: specSid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.equal(row.checkpoint.triage.parsed.verdict, 'ready', 'what it kept before is kept');
     assert.equal(row.checkpoint.handBacks, 1);
     assert.equal(row.checkpoint.handedBackAt, 2);
@@ -444,6 +468,40 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.ok(row.duration_ms >= 120000 + 359000, `its elapsed time counts every claim (${row.duration_ms})`);
   });
 
+  await t.test('a restart that lost nothing (its screenshot step, after a kept build and review) costs no claim, a few times over', async () => {
+    reset();
+    const fvc = await firstVersionTrial();
+    const triSid = await newSession(null);
+    const buildSid = await newSession(null);
+    await keep(fvc.id, {
+      triageSessionId: triSid, sessions: [triSid, buildSid],
+      triage: { status: 'ok', session_id: triSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+      spec: { sessionId: buildSid, specMd: SPEC },
+      build: { ok: true, sessionId: buildSid, sha: 'd'.repeat(40), commits: 2, specMd: SPEC },
+      handBacks: 1, handedBackAt: 3,
+    });
+    await spend(buildSid, 0.4);
+    for (let n = 1; n <= 4; n += 1) {
+      // Each claim only captures, on a session of its own that spends nothing.
+      // eslint-disable-next-line no-await-in-loop
+      const shotSid = await newSession(null);
+      // Its second claim each time.
+      // eslint-disable-next-line no-await-in-loop
+      await claimAs(fvc.id, shotSid, { claims: 2 });
+      // eslint-disable-next-line no-await-in-loop
+      await lane.releaseTrial(pool, { trialId: fvc.id, sessionId: shotSid, why: 'no process or turn holds it', noTurnLost: true });
+      // eslint-disable-next-line no-await-in-loop
+      const row = await fvRow(fvc.id);
+      if (n <= 3) {
+        assert.equal(row.status, 'pending', `restart ${n}: back to go on`);
+        assert.equal(row.claims, 1, `restart ${n}: nothing was lost, so the claim it took is given back`);
+        assert.equal(row.checkpoint.freeRestarts, n);
+      } else {
+        assert.equal(row.status, 'infra_fail', 'past MAX_FREE_RESTARTS a restart counts again, so one a run of them keeps catching ends');
+      }
+    }
+  });
+
   await t.test('a first version\'s triage turn is followed and its answer kept, on the triage\'s own clock', async () => {
     reset();
     const tri = await firstVersionTrial();
@@ -461,6 +519,10 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('scout', { startedAt })),
       at + Math.min(budgets.firstVersion.buildMs, budgets.firstVersion.specMs), 'a spec turn: the spec\'s clock');
     assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('build', { startedAt })), at + budgets.firstVersion.buildMs);
+    // Each restart the turn has been through gives back what it cost, as the
+    // live bot's clock does (homeroom-bot.js restartAllowanceMs).
+    assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('build', { startedAt, restarts: 2 })),
+      at + budgets.firstVersion.buildMs + 2 * bot.restartAllowanceMs({ restarts: 1 }));
     await keep(tri.id, { triageSessionId: sid, sessions: [sid] });
 
     journalTail = async () => ({ lastResultText: VERDICT, exitCode: 0, resultSeen: true });
@@ -479,7 +541,8 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     reset();
     const fvb = await firstVersionTrial();
     const triSid = await newSession(null);
-    const buildSid = await newSession(turnOf('build'));
+    const buildTurn = turnOf('build', { logicalTurnId: crypto.randomUUID() });
+    const buildSid = await newSession(buildTurn);
     await claimAs(fvb.id, buildSid);
     // What the claim kept before the restart: what its build was told and
     // handed (kept as its build turn started), the counts its build step began
@@ -493,6 +556,19 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
       stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
       looks: { screenshots: 2, snapshots: 1, navigations: 2 },
     });
+    // What its transcript got before the restart: the turn's first two lines.
+    await pool.query(
+      `INSERT INTO bench_trial_lines (trial_id, at, step, kind, line) VALUES
+         ($1, NOW() - INTERVAL '1 hour', 'build', 'step', 'build'),
+         ($1, NOW() + INTERVAL '1 second', 'build', 'line', 'Using browser_navigate'),
+         ($1, NOW() + INTERVAL '2 seconds', 'build', 'line', 'Using mcp__playwright__browser_take_screenshot')`,
+      [fvb.id],
+    );
+    // What the studio's watch showed when the platform went down.
+    await pool.query('UPDATE bench_trials SET progress = $2::jsonb WHERE id = $1', [fvb.id, JSON.stringify({
+      step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['OpenRouter request #3: still responding after 210s'],
+      skills: { invoked: [], read: ['frontend-design'] }, looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+    })]);
     // The replay shows the turn from its start: the looks kept before the
     // restart, one the restart lost, and the ones after it.
     journalTail = async (_sid, opts) => {
@@ -507,9 +583,36 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await fvRow(fvb.id);
     assert.equal(row.status, 'pending', 'handed back to go on');
     assert.equal(row.checkpoint.build.ok, true);
+    assert.deepEqual(row.checkpoint.build.turnIds, [buildTurn.logicalTurnId],
+      'with its turn\'s ledger id: the next claim names what it cost, and the report finds its build turn');
     assert.deepEqual(row.checkpoint.sight, sight, 'what it could see is still there for the next claim');
     assert.deepEqual(row.checkpoint.looks, { screenshots: 4, snapshots: 1, navigations: 3 },
       'the step\'s counts plus the whole turn\'s: none counted twice, none lost after the restart');
+    // The studio watched the replay, not the moment of the restart.
+    const { rows: [{ progress: watched }] } = await pool.query('SELECT progress FROM bench_trials WHERE id = $1', [fvb.id]);
+    assert.equal(watched.step, 'build', 'still at its step');
+    assert.equal(watched.stepAt, '2026-10-13T18:20:00.000Z');
+    assert.equal(watched.lines[watched.lines.length - 1], 'Using mcp__playwright__browser_take_screenshot', 'its lines are the replay\'s');
+    assert.deepEqual(watched.looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'counted on the step\'s opening counts');
+    assert.deepEqual(row.checkpoint.skills, { invoked: [], read: ['frontend-design'] }, 'the skills it had reached for, kept for the next claim');
+    // Its transcript: the two lines it had, then the replay's other four, marked so.
+    const { rows: lines } = await pool.query('SELECT kind, line, replayed FROM bench_trial_lines WHERE trial_id = $1 ORDER BY id', [fvb.id]);
+    assert.deepEqual(lines.map((l) => [l.kind, l.replayed]), [
+      ['step', false], ['line', false], ['line', false], ['line', true], ['line', true], ['line', true], ['line', true],
+    ], 'none of the turn\'s lines twice, none lost');
+    assert.equal(lines[3].line, 'Using mcp__playwright__browser_take_screenshot');
+    const studio = require('../src/services/bench/studio');
+    const timeline = await studio.timelineOf(pool, fvb.id);
+    assert.equal(timeline.length, 1);
+    assert.deepEqual([timeline[0].step, timeline[0].lines, timeline[0].replayed], ['build', 6, 4]);
+    assert.ok(timeline[0].ms >= 3600_000, 'from its step\'s start to its last line');
+    const page = await studio.transcriptOf(pool, fvb.id, { limit: 4 });
+    assert.equal(page.total, 7);
+    assert.equal(page.lines.length, 4);
+    const rest = await studio.transcriptOf(pool, fvb.id, { after: page.next });
+    assert.equal(rest.lines.length, 3);
+    assert.equal(rest.next, null, 'the end');
+    assert.equal((await studio.transcriptOf(pool, fvb.id, { step: 'triage' })).lines.length, 0, 'one step\'s lines only');
     assert.ok(row.recovered_at);
     assert.deepEqual(outward, []);
   });
@@ -607,7 +710,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.claims, 0, 'the restart cost it no claim');
     assert.equal(row.session_id, null);
     assert.ok(row.recovered_at);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: sid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: sid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.equal(row.checkpoint.handBacks, 1);
     assert.deepEqual(row.checkpoint.charged, { [sid]: 0.25 }, 'charged once');
     assert.equal(row.interrupted, 0, 'none of it thrown away');
@@ -746,8 +851,49 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
     assert.equal(row.checkpoint.build.sha, 'd'.repeat(40), 'a fix is not the build: nothing new kept');
-    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to record cut short');
-    assert.equal(row.checkpoint.handedBackAt, 3);
+    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to carry on');
+    assert.equal(row.checkpoint.recoveredFix.sha, 'e'.repeat(40), 'with what its fix did, which the review was waiting on');
+    assert.equal(row.checkpoint.recoveredFix.ok, true);
+    assert.equal(row.checkpoint.handedBackAt, 5, 'its spec, build and review, the review\'s round, and the fix');
+    assert.deepEqual(outward, []);
+  });
+
+  await t.test('a first version\'s review fix turn is told from its build, followed on what was left of the review\'s minutes, and handed back with no claim spent', async () => {
+    reset();
+    const fvf = await firstVersionTrial();
+    const triSid = await newSession(null);
+    // Paused, as its build turn left it (buildTurnRunner): a fix turn runs on
+    // it so, and until 13 Oct 2026 its worker was destroyed here unfollowed.
+    const sid = await newSession(turnOf('build'), { status: 'paused' });
+    await claimAs(fvf.id, sid);
+    const reviewStarted = new Date(Date.now() - 18 * 60 * 1000).toISOString();
+    const review = {
+      state: 'reviewing', startedAt: reviewStarted, reviewer: { model: 'anthropic/claude-opus-5.5', maxRounds: 2, budgetMinutes: 20 },
+      rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.1 }], finalSha: 'd'.repeat(40), finalCommits: 2,
+      lastBooted: { sha: 'd'.repeat(40), commits: 2 },
+    };
+    // This claim kept its build as it pushed, then began the review: until
+    // 13 Oct 2026 a first version kept neither, and a restart in the review
+    // either built it again or took the fix for the build.
+    await keep(fvf.id, {
+      triageSessionId: triSid, sessions: [triSid, sid],
+      triage: { status: 'ok', session_id: triSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+      spec: { sessionId: sid, specMd: SPEC },
+      build: { ok: true, sessionId: sid, sha: 'd'.repeat(40), commits: 2, specMd: SPEC }, review,
+    });
+    await spend(sid, 0.3);
+    const fixStart = new Date().toISOString();
+    assert.equal(await lane.recoveryDeadline(pool, {}, await sessionOf(sid), turnOf('build', { startedAt: fixStart })),
+      Date.parse(reviewStarted) + 20 * 60 * 1000, 'a fix never runs past the review\'s own minutes');
+    journalTail = async () => ({ pushOk: true, ahead: 3, sha: 'e'.repeat(40), exitCode: 0, resultSeen: true });
+    await adopt(sid);
+    assert.ok(workerCalls.some((c) => c[0] === 'resume'), 'followed to its end, though its session was paused');
+    const row = await fvRow(fvf.id);
+    assert.equal(row.status, 'pending');
+    assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
+    assert.equal(row.checkpoint.build.sha, 'd'.repeat(40), 'a fix is not the build: nothing new kept');
+    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to carry on');
+    assert.equal(row.checkpoint.recoveredFix.sha, 'e'.repeat(40), 'with what its fix did, as a live first version keeps it');
     assert.deepEqual(outward, []);
   });
 
@@ -768,7 +914,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await fvRow(side.id);
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: sid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: sid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.deepEqual(outward, []);
   });
 });

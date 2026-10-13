@@ -315,6 +315,7 @@ The charter's `app-bench-studio` section is the procedure a session follows.
 | `list_bench_context_packs`, `get_bench_context_pack`, `create_bench_context_pack` | The packs; one in full with its diff from its parent; save the next version of one |
 | `list_bench_suites`, `get_bench_suite`, `add_bench_task`, `edit_bench_task` | The benchmark's suites and tasks; add a task (a brief, a capture, a bot run at a stage, a merged pull request) or edit a taste task's brief while its suite is open |
 | `list_bench_trials`, `get_bench_trial` | Any run's trials one by one, and one in full with its screenshots as images. Refused for a run that is not a studio run while any of its trials waits for the judge, so blind grading stays blind |
+| `get_bench_trial_transcript` | One trial's whole transcript, a page of up to 500 lines at a time, optionally one step's: every activity line its turns reported, with when it came and its step |
 | `get_homeroom_bot`, `rate_homeroom_bot_run` | The bot as its console section shows it (settings, spend, queue, a page of its runs) and a run's rating |
 | `list_recent_shots`, `get_recent_shots` | Merged proposals' before/after screenshots as the console's Screenshot gallery lists them, and one proposal's stills as images |
 

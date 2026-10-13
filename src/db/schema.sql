@@ -10961,6 +10961,25 @@ CREATE TABLE IF NOT EXISTS bench_trial_artifacts (
   UNIQUE (trial_id, shot_id)
 );
 COMMENT ON TABLE bench_trial_artifacts IS 'staging:private';
+-- 13 Oct 2026: a trial's whole transcript (services/bench/progress.js
+-- tracker): every activity line its turns reported, as the studio's watch
+-- sees them (the tool each step used, each model request's size and time,
+-- its review's rounds), with when it came and the trial's step then, where
+-- bench_trials.progress keeps only the last four. A `step` row marks each
+-- step's start. Lines restart recovery replayed after the platform went down
+-- are marked `replayed` (their time is the replay's). Gone with the trial;
+-- private, as its screens are: a line can quote the app's data.
+CREATE TABLE IF NOT EXISTS bench_trial_lines (
+  id        BIGSERIAL PRIMARY KEY,
+  trial_id  INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  at        TIMESTAMPTZ NOT NULL,
+  step      VARCHAR(16),
+  kind      VARCHAR(8) NOT NULL DEFAULT 'line' CHECK (kind IN ('line', 'step')),
+  line      TEXT NOT NULL,
+  replayed  BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_bench_trial_lines_trial ON bench_trial_lines (trial_id, id);
+COMMENT ON TABLE bench_trial_lines IS 'staging:private';
 -- A fifth state, `result`: the populated screen after its primary action
 -- was tapped once (worker/usernode-bench-capture.js). Widening the CHECK on
 -- a table made before it rejects no row already stored.

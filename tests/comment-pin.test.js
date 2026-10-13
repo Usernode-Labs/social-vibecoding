@@ -279,7 +279,7 @@ test('opening and leaving are one motion each, never a frame-long jump (12 Oct 2
   assert.match(src, /leave\(\(\) => \{\s*if \(post\) \{\s*handOver\(post\);/, 'Form opens after the mode has left');
   assert.match(src, /leave\(\(\) => handOver\(post\)\);/, 'and a failed post hands over the same way');
   assert.match(src, /else leave\(\); \}\}/, 'the confirm\'s Discard on Done');
-  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 2, 'onClose only inside leave and on the card\'s link, which navigates');
+  assert.equal((src.match(/\bonClose\(\)/g) || []).length, 3, 'onClose only inside leave and on the cards\' links, which navigate (the sent card\'s link joins the marker card\'s, #5008)');
   assert.match(css, /\.comment-mode-leaving \.comment-shot-in \{ animation: comment-shot-out 200ms ease-in forwards; \}/);
   assert.match(css, /@keyframes comment-shot-out \{\s*to \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
   assert.match(css, /\.comment-mode-leaving > :not\(\.comment-shot-in\):not\(\.comment-shot-ground-in\) \{ animation: comment-fade-out 120ms ease-in forwards; \}/);
@@ -1243,4 +1243,29 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);
+});
+
+test('posting a comment shows a sent card on the screen (#5008), not only the toast', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // Send success marks the request sent; the toast stays as it was.
+  assert.match(src, /setSent\(d\.key\);/);
+  assert.match(src, /toast\(kudosLine \? t\('devchat:commentPin\.toast\.sentences'/);
+  // Typing the next comment stands the card down, and stays down after.
+  assert.match(src, /useEffect\(\(\) => \{\s*if \(hasWords\(draft\)\) setSent\(null\);\s*\}, \[draft\]\);/);
+  // The card: where it went in the marker's own words, the request's title,
+  // "Open request" behind the post's link, and a close button. No hiding at
+  // any width: phones show it too, unlike the bar's posted chip.
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.sent\.label'\)\}/);
+  assert.match(src, /\{placeOf\(sentRequest\)\}/);
+  assert.match(src, /sentRequest\.title \? <p/);
+  assert.match(src, /sentRequest\.href \? \(\s*<a\s+href=\{sentRequest\.href\}\s+onClick=\{\(\) => onClose\(\)\}/);
+  assert.match(src, /devchat:commentPin\.card\.open/, 'the marker card\'s own words for the link');
+  assert.match(src, /sentRequest && !shotIntro && !cropping && !hasWords\(draft\) \? \(/, 'up while the next draft has no words');
+  const cardStart = src.indexOf('data-comment-pin-sent');
+  const cardClass = src.slice(src.indexOf('className="', cardStart), src.indexOf('"', src.indexOf('className="', cardStart) + 12));
+  assert.doesNotMatch(cardClass, /md:inline|hidden|sm:/, 'visible at every width');
+  assert.match(cardClass, /bg-white p-3 .* ring-1 ring-black\/10/, 'the marker card\'s own card');
+  assert.match(src.slice(cardStart, src.indexOf(') : null}', cardStart)), /\$\{PIN_SHAPE\} bg-violet-600/, 'the posted markers\' own disc');
+  assert.equal(message('devchat:commentPin.sent.label'), 'Request posted');
+  assert.match(src, /CheckIcon/, 'a check says it went through');
 });

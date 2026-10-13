@@ -229,6 +229,65 @@ test('#4539: a request closed while it waited on its person reads stopped, in Hi
   assert.deepEqual(proposed.history.map((job) => [job.id, job.outcome]), [[12, 'proposed']]);
 });
 
+// #5009: a closed request leaves Needs you under every ending that waits on
+// its person, not only a plan and a question: a look that found nothing to
+// build, one it cannot do as written, a decision it asked for, a build that
+// failed. Nothing is retired, so reopening brings it back.
+test('#5009: a closed request stops waiting whatever it waited for, and says so on the entry', () => {
+  const endings = [
+    ['empty', {}],
+    ['person', {}],
+    ['blocked', { verdict: 'ready', build_ok: false, build_error: 'blocked: it needs a secret' }],
+    ['build_failed', { verdict: 'ready', build_ok: false }],
+    ['failed', {}],
+  ];
+  for (const [verdict, extra] of endings) {
+    const rows = [run(20, 6, 1, { verdict, ...extra })];
+    // Open, it is what it was: blocked and empty still wait on them, the
+    // rest are History's news.
+    const open = tray.arrange([], rows);
+    if (verdict === 'blocked' || verdict === 'empty') {
+      assert.deepEqual(open.needsYou.map((job) => [job.key, job.outcome]), [['ear-trainer#6', verdict]],
+        `${verdict}: open, it waits on them`);
+      assert.deepEqual(open.history, [], `${verdict}: open, History has nothing to say`);
+    } else {
+      assert.deepEqual(open.history.map((job) => [job.key, job.outcome]), [['ear-trainer#6', verdict]],
+        `${verdict}: open, it keeps its own news`);
+    }
+    const closed = tray.arrange([], [run(20, 6, 1, { verdict, request_closed: true, ...extra })]);
+    assert.deepEqual(closed.needsYou, [], `${verdict}: a closed request needs nobody`);
+    const [tile] = closed.history;
+    assert.deepEqual([tile.key, tile.outcome, tile.requestClosed], ['ear-trainer#6', 'stopped', true],
+      `${verdict}: closed, it reads stopped and says its request row is closed`);
+  }
+  // A question that waits on them is Needs you while it is open.
+  assert.deepEqual(tray.arrange([], [run(20, 6, 1, {})]).needsYou.map((job) => job.outcome), ['question']);
+});
+
+// #5009: work the bot has taken back up never reaches Needs you, whatever
+// its last run asked: a newer run under way or queued, even past Now's
+// limit, and one held until later (on hold until Monday).
+test('#5009: work the bot has taken back up leaves Needs you, even past Now or on hold', () => {
+  const entries = [];
+  for (let n = 1; n <= 11; n += 1) entries.push(entry(n, 'building'));
+  entries.push(entry(12, 'on_hold', { waitingOn: 'time', busyNow: false }));
+  const rows = [
+    run(30, 11, 1),  // its question, answered since; the bot builds it again
+    run(31, 12, 2),  // its question, held until Monday
+  ];
+  const work = tray.arrange(entries, rows);
+  assert.equal(work.now.length, 10, 'Now holds its limit');
+  assert.ok(!work.now.some((job) => job.key === 'ear-trainer#11'), 'an eleventh in flight is past Now');
+  assert.deepEqual(work.needsYou, [], 'neither waits on the person any more');
+  const back = work.history.find((job) => job.key === 'ear-trainer#11');
+  assert.deepEqual([back.outcome, back.inHand], ['question', true], 'in History, saying the bot has it in hand');
+  const held = work.history.find((job) => job.key === 'ear-trainer#12');
+  assert.deepEqual([held.outcome, held.inHand], ['question', true], 'held until Monday is the bot\'s, not theirs');
+  // With room in Now, the same work stays where it was.
+  const roomy = tray.arrange([entry(11, 'building')], [run(30, 11, 1)]);
+  assert.deepEqual(roomy.now.map((job) => job.key), ['ear-trainer#11']);
+});
+
 test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished yet says so, never that it stopped', () => {
   const rows = [run(2, 7, 1, { verdict: 'ready' }), run(1, 7, 20, { verdict: 'question' })];
   const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Building' })], rows);
