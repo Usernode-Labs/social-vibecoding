@@ -3407,7 +3407,8 @@ async function buildAndPropose({
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
-    harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo), firstVersion,
+    harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo),
+    firstVersion,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3689,7 +3690,14 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
  * own failure is thrown, as the loop has always handled it.
  */
 async function captureBuildState({
-  pool, worker, repo, app, session, branchName, owner = {}, index, captureRound = null, prior = null, onStarted = null,
+  pool, worker, repo, app, session, branchName, owner = {}, index, captureRound = null,
+  // R5: the review loop's captures run detached in the worker, the capture's
+  // id saved on the review state before it starts (`onStarted`), so a restart
+  // in the middle of it harvests it (`prior`) rather than losing it. One a
+  // restart left running is looked for where it runs before anything makes
+  // the worker sure: a new worker image would replace the worker, and the
+  // capture with it. HOMEROOM_BOT_DETACHED_CAPTURE=0 keeps them attached.
+  detached = false, prior = null, onStarted = null,
 }) {
   const t0 = Date.now();
   const ensure = async () => {
@@ -3698,11 +3706,9 @@ async function captureBuildState({
       repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
     });
   };
-  // One a restart left running is looked for where it runs before anything
-  // makes the worker sure: a new worker image would replace the worker, and
-  // the capture with it.
+  const detach = detached && detachedCaptureOn();
   let containerName = null;
-  if (!prior?.id || !detachedCaptureOn()) {
+  if (!detach || !prior?.id) {
     try {
       containerName = await ensure();
     } catch (err) {
@@ -3713,7 +3719,7 @@ async function captureBuildState({
   const out = await step({
     pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
     store: (kept) => require('./bot-review').storeRoundShots(pool, { ...owner, round: index }, kept),
-    detached: detachedCaptureOn() ? { sessionId: session.id, prior, onStarted, ensure } : null,
+    detached: detach ? { sessionId: session.id, prior, onStarted, ensure } : null,
   });
   return { ...out, ms: Date.now() - t0 };
 }
@@ -3743,11 +3749,18 @@ async function reviewLanded({
   const { worker } = deps;
   const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
   const owner = review.owner || {};
-  // R5: each round's capture runs detached in the build's worker, its id
-  // saved on the review state before it starts (`onStarted`), so a restart
-  // in the middle of it harvests it (`prior`) rather than losing it.
+  const ensure = async () => {
+    await worker.ensureWorkerImage();
+    return worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
+    });
+  };
+  // R5: each round's capture runs detached in the build's worker
+  // (captureBuildState's `detached`), so a restart in the middle of it
+  // harvests it (`prior`) rather than losing it.
   const capture = (index, { prior = null, onStarted = null } = {}) => captureBuildState({
-    pool, worker, repo, app, session, branchName, owner, index, captureRound: deps.captureRound || null, prior, onStarted,
+    pool, worker, repo, app, session, branchName, owner, index, captureRound: deps.captureRound || null,
+    detached: true, prior, onStarted,
   });
   const fix = async ({ round, issues, budgetMs }) => {
     const t0 = Date.now();

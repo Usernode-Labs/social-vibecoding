@@ -482,6 +482,7 @@ test('a restart between two steps of a bot build carries it on from where it was
       buildText: SAID, updatedAt, rounds: [], resumes: require('../src/services/bot-review').MAX_REVIEW_RESUMES,
     })]);
     assert.equal(await sweepLater(runId), 0, 'a review in progress is not the stalled-step sweep\'s');
+    // Finished in the background, holding its project's build slot.
     assert.equal(await bot.finishInterruptedReviews(pool, {}, {}, { wait: true }), 1);
     const row = await runRow(runId);
     assert.equal(row.build_ok, true);

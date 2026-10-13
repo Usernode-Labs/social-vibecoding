@@ -218,6 +218,11 @@ test('a first version\'s review is carried on after a restart', { timeout: 18000
     assert.ok(Math.abs(r.cost - 0.25) < 1e-9, `the reviewer call, once (${r.cost})`);
     assert.deepEqual(promoted, [a.sessionId]);
     assert.deepEqual(moved, []);
+    // Carried on to its end, and still a review a restart cut short for admins.
+    const { rows: incident } = await pool.query(
+      `SELECT metadata FROM events WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(a.runId)],
+    );
+    assert.deepEqual(incident.map((e) => [e.metadata.kind, e.metadata.mode, e.metadata.outcome]), [['build_interrupted', 'review', 'review_carried_on']]);
     const { rows: [m] } = await pool.query("SELECT review->>'state' AS st FROM homeroom_bot_runs WHERE id = $1", [mine.runId]);
     assert.equal(m.st, 'reviewing', 'this process\'s own review is not taken from it');
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps, { wait: true }), 0, 'once');

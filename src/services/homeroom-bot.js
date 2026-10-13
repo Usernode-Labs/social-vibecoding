@@ -5561,7 +5561,8 @@ const REVIEW_INTERRUPTED_WHY = 'the platform restarted during the review';
  * A review a restart cut short, kept where admins see it (#4210,
  * platform-incidents.js), as every other build a restart interrupts is.
  * `outcome` says what became of it: fix_kept, fix_rolled_back,
- * proposed_as_it_stood or not_open. Never counted as a resume
+ * proposed_as_it_stood, not_open, or review_carried_on (R5: the review went
+ * on from where it was cut). Never counted as a resume
  * (resumesOfRun counts 'resumed' alone). Never throws.
  */
 function noteReviewIncident(pool, { app, sessionId, plan, why, outcome }) {
@@ -5620,11 +5621,14 @@ const interruptedReviews = new Set();
  * worker went with the restart: each is carried on from the state its review
  * saved (R5), through the same path restart recovery finishes a live build
  * by (completeRecoveredLive, which proposes it once the review is over, or as
- * it stands past MAX_REVIEW_RESUMES restarts). Each runs in the background,
- * holding its project's build slot (holdLiveBuildDuringRecovery). Resolves how many it started; with `wait`, once
- * they are over. Nothing once shutdown has begun. Never throws.
+ * it stands past MAX_REVIEW_RESUMES restarts, a fix nothing saw boot captured
+ * first: checkRecoveredFix). Each runs in the background, holding its
+ * project's build slot as resumeStalledLiveBuilds' do. Resolves how many it
+ * started; with `wait`, once they are over. Nothing once shutdown has begun.
+ * Never throws.
  */
 async function finishInterruptedReviews(pool, config = {}, deps = {}, { wait = false } = {}) {
+  // Nothing new once shutdown has begun: the next leader finds it again.
   if (refusingNew()) return 0;
   let rows = [];
   try {
@@ -5794,7 +5798,8 @@ async function reviewRecoveredBuild({
     }
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
-      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)), firstVersion: true,
+      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)),
+      firstVersion: true,
     });
     log.info('homeroom-bot', resuming
       ? 'Carrying on a review a restart cut short'
@@ -6002,9 +6007,10 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
     // its build landed, so the review is carried on from the state it saved
     // (R5: resumeInterruptedReview, below), and only past MAX_REVIEW_RESUMES
     // restarts, or when it cannot be carried on, is it proposed as it stands,
-    // its last committed state, the review recorded as interrupted. A fix
-    // turn cut short left nothing (a failed turn is neither committed nor
-    // pushed).
+    // its last committed state (a fix nothing saw boot captured once first:
+    // checkRecoveredFix). Either way the review is recorded as interrupted,
+    // for the run and for admins (noteReviewIncident). A fix turn cut short
+    // left nothing (a failed turn is neither committed nor pushed).
     const reviewing = plan.mode !== 'scout' ? await reviewInProgress(pool, plan.runId) : null;
     // Where the build was between its steps (homeroom-bot-checkpoint.js).
     // One whose build had pushed is proposed from what it pushed (reviewed
@@ -6274,15 +6280,14 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
         }
       }
       // A review that was not carried on (past MAX_REVIEW_RESUMES restarts,
-      // or it could not start) is proposed as it stands.
+      // or it could not start) is proposed as it stands. A fix no capture saw
+      // boot is not what is proposed unchecked (bot-review.js runReviewLoop's
+      // rule). It is captured once now (checkRecoveredFix): kept when it
+      // boots, and only otherwise, or when it cannot be captured, the branch
+      // goes back to the last commit that booted. Until 13 Oct 2026 every such
+      // fix was rolled back unlooked at: run 1746's fixed the broken form the
+      // reviewer had flagged, and its checks then failed on that same form.
       if (reviewing && !resumed) {
-        // A fix no capture saw boot is not what is proposed unchecked
-        // (bot-review.js runReviewLoop's rule). It is captured once now
-        // (checkRecoveredFix): kept when it boots, and only otherwise, or when
-        // it cannot be captured, the branch goes back to the last commit that
-        // booted. Until 13 Oct 2026 every such fix was rolled back unlooked
-        // at: run 1746's fixed the broken form the reviewer had flagged, and
-        // its checks then failed on that same form.
         let rolledBack = null;
         let fixCapture = null;
         const booted = reviewing?.lastBooted?.sha || null;
@@ -6309,14 +6314,17 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
           }
         }
         const keptFix = !!fixCapture && !rolledBack && fixCapture.ok && fixCapture.capture?.booted === true;
-        if (reviewing) {
-          await noteReviewInterrupted(pool, plan.runId, reviewing, pushed, rolledBack, keptFix ? fixCapture.capture : null);
-          await noteReviewIncident(pool, {
-            app, sessionId, plan, why: plan.why || REVIEW_INTERRUPTED_WHY,
-            outcome: keptFix ? 'fix_kept' : rolledBack ? 'fix_rolled_back' : 'proposed_as_it_stood',
-          });
-          if (keptFix) keptFixCapture = fixCapture.capture;
-        }
+        await noteReviewInterrupted(pool, plan.runId, reviewing, pushed, rolledBack, keptFix ? fixCapture.capture : null);
+        await noteReviewIncident(pool, {
+          app, sessionId, plan, why: plan.why || REVIEW_INTERRUPTED_WHY,
+          outcome: keptFix ? 'fix_kept' : rolledBack ? 'fix_rolled_back' : 'proposed_as_it_stood',
+        });
+        if (keptFix) keptFixCapture = fixCapture.capture;
+      } else if (reviewing && resumed) {
+        // Carried on to its end: still a review a restart cut short, for admins.
+        await noteReviewIncident(pool, {
+          app, sessionId, plan, why: plan.why || REVIEW_INTERRUPTED_WHY, outcome: 'review_carried_on',
+        });
       }
       // WP1 (#2): not proposed once a proposal of the bot's answers the
       // request, or it was closed, as the live path does (whyNotBuild).
@@ -11916,7 +11924,7 @@ module.exports = {
     await Promise.all([...buildsInFlight.values()].map((b) => b.promise));
   },
   _buildsInFlightForTests() { return [...buildsInFlight.keys()]; },
-  async _awaitStalledResumesForTests() { await Promise.all([...stalledResumes]); },
+  async _awaitStalledResumesForTests() { await Promise.all([...stalledResumes, ...interruptedReviews]); },
   async _awaitInterruptedReviewsForTests() { await Promise.all([...interruptedReviews]); },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },

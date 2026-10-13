@@ -481,7 +481,8 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const settled = await bot.settleAbandonedLiveBuilds(pool, await bot.readSettings(pool), deps);
     assert.equal(settled, 0);
 
-    // No turn on its session, nothing in this process: the review was cut short.
+    // No turn on its session, nothing in this process: the review was cut
+    // short. Finished in the background, its project's build slot held.
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps, { wait: true }), 1);
     assert.deepEqual(promoted, [s.id], 'proposed as it stands');
     const { rows: [after] } = await pool.query(
