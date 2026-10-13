@@ -289,6 +289,9 @@ export type CropHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 /** No crop: the whole picture. */
 export const FULL_CROP: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
+/** The dim drawn outside a crop's kept rect. */
+export const CROP_SHADE = '0 0 0 9999px rgba(0,0,0,0.45)';
+
 /**
  * A drag on one handle, as fractions of the picture: only the sides the
  * handle names move, nothing passes the picture's edges, and a side never

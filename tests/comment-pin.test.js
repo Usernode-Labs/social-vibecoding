@@ -139,12 +139,15 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
   // The close-up at the top of the sheet draws the pin's area of the picture
-  // the pin is on: the comment's own once drawn — which is the cropped
-  // picture (#4977) when the screenshot was cut — the view picture while it
-  // still shows the same view, and nothing (never a stretched thumbnail)
-  // otherwise.
+  // the pin is on: the comment's own once drawn — the full picture now, with
+  // the crop framed on it (#5020) — the view picture while it still shows
+  // the same view, and nothing (never a stretched thumbnail) otherwise.
   assert.match(src, /<CloseUp\s+view=\{closeUpSrc\}/);
-  assert.match(src, /const closeUpSrc = activePicture\?\.cut\?\.url \|\| activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
+  assert.match(src, /const closeUpSrc = activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
+  assert.match(src, /crop=\{activePicture\?\.cut\?\.rect \?\? null\}/,
+    'the close-up frames the crop on the full picture');
+  assert.doesNotMatch(src, /pin=\{\(boxComment \? pinInCrop/,
+    'the pin is a full-picture fraction now, never mapped into the crop');
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
   assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
@@ -216,7 +219,12 @@ test('the close-up always zooms a full picture about its own pin', () => {
   // the box, are gone.
   assert.doesNotMatch(closeUp, /\bown\?: |\{own \?/);
   assert.doesNotMatch(closeUp, /object-cover/);
-  assert.match(closeUp, /export function CloseUp\(\{ view, pin \}: \{ view: string; pin: Point \}\)/);
+  assert.match(closeUp, /export function CloseUp\(\{ view, pin, crop \}: \{ view: string; pin: Point; crop\?: Rect \| null \}\)/);
+  // A cut picture is shown whole: the kept part is framed where the zoom
+  // draws the picture, and the rest is dimmed (#5020).
+  assert.match(closeUp, /view2\.offset\.x \+ crop\.x \* view2\.size\.width/);
+  assert.match(closeUp, /view2\.offset\.y \+ crop\.y \* view2\.size\.height/);
+  assert.match(closeUp, /boxShadow: CROP_SHADE/);
   // A picture already in memory can load before an effect runs: its size is
   // kept with its own source rather than reset by one.
   assert.match(closeUp, /const picture = loaded && loaded\.src === view \? loaded\.size : null;/);
@@ -226,6 +234,10 @@ test('the close-up always zooms a full picture about its own pin', () => {
   // The comment's own picture is kept whole for it.
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   assert.match(src, /b\?\.canvas\.toBlob\(\(blob\) => \{[\s\S]*?land\(\{ url \}\);/);
+  // CropFrame and the reopened views (#5020) dim with the one shared shade.
+  assert.match(src, /height: rect\.height \* H, boxShadow: CROP_SHADE/,
+    'CropFrame dims with the shared shade, not its own literal');
+  assert.equal(picture.CROP_SHADE, '0 0 0 9999px rgba(0,0,0,0.45)');
 });
 
 test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
@@ -496,13 +508,19 @@ test('a preview crop slides to the pins and puts them where the crop drew them',
   assert.equal(wide.height, 42);
   assert.ok(Math.abs(wide.x - (64 - wide.width)) < 1e-9);
   // The chip draws the crop and its pins with it, never as fractions of the box.
-  // A cropped picture is shown at its own size, and only its pins that stay
-  // inside the crop are drawn (#4977).
+  // A cropped picture is shown whole now, the part kept framed and the rest
+  // dimmed (#5020), and only the pins the crop keeps are drawn.
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  assert.match(src, /const shown = pic\.cut\?\.size \|\| pic\.size \|\| size;/);
+  assert.match(src, /const shown = pic\.size \|\| size;/);
   assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, shown, focus\);/);
   assert.match(src, /style=\{\{ left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\}/);
   assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
+  assert.match(src, /<img\s+src=\{pic\.thumb\}/,
+    'the chip draws the full picture, never the crop\'s own thumb');
+  assert.match(src, /left: crop\.x \+ pic\.cut\.rect\.x \* crop\.width/,
+    'the frame sits over the kept part of the full picture');
+  assert.match(src, /boxShadow: CROP_SHADE/, 'the kept part is framed, the rest dimmed');
+  assert.match(src, /pinInCrop\(c\.pin, pic\.cut\.rect\) !== null/, 'a pin the crop cut away is not drawn');
 });
 
 // ── 1d. Cropping a screenshot by dragging its corners and edges (#4977) ─
