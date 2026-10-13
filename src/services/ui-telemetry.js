@@ -63,6 +63,10 @@ const KINDS = Object.freeze(new Set([
   // The page was hidden or closed while a navigation screen was showing: the
   // end of the last screen of a visit, so time on it is known.
   'screen_hidden',
+  // One measured full page load (#4965): a duration credited to the first
+  // real screen the shell showed, or shell_boot when none did before it
+  // ended.
+  'page_load',
 ]));
 const OUTCOMES = Object.freeze(new Set(['success', 'failure', 'cancelled']));
 const ERROR_CODES = Object.freeze(new Set([
@@ -240,6 +244,18 @@ function parseEvent(value, index, nowMs) {
   }
   if (kind === 'repeated_action' && durationMs != null) {
     throw new TelemetryValidationError('repeated_action cannot carry durationMs');
+  }
+  // A page load (#4965) is one bare duration on the screen it is credited to:
+  // only the screen name and the milliseconds are sent, nothing about a
+  // visit or an attempt is known.
+  if (kind === 'page_load' && !(NAV_SCREENS.has(screen) || screen === 'shell_boot')) {
+    throw new TelemetryValidationError('page_load is a duration on a landing screen');
+  }
+  if (kind === 'page_load' && (attemptId || action || outcome || errorCode || via)) {
+    throw new TelemetryValidationError('page_load is a bare duration');
+  }
+  if (kind === 'page_load' && durationMs == null) {
+    throw new TelemetryValidationError('page_load requires durationMs');
   }
   if (kind === 'boot_failure' && (action !== 'shell_boot' || !attemptId || durationMs != null)) {
     throw new TelemetryValidationError('boot_failure requires the shell_boot attempt');
@@ -427,6 +443,56 @@ async function browserLanguages(pool, { days = 14, includeAdmins = false } = {})
   return { days, people: languages.reduce((sum, row) => sum + row.people, 0), languages };
 }
 
+// Page load times (#4965): one duration per full page load, credited to the
+// first real screen the shell showed. shell_boot rows are the loads that
+// ended before any screen did. The same cohort rules as the failure report:
+// no service identities, nobody who objected, admins left out unless asked
+// for.
+async function pageLoads(pool, { days = 14, includeAdmins = false } = {}) {
+  const adminClause = includeAdmins ? '' : 'AND NOT u.is_admin';
+  const loadScreens = [...NAV_SCREENS, 'shell_boot'];
+  const loadBase = `e.created_at >= NOW() - ($1::int * INTERVAL '1 day') ${adminClause}
+    AND NOT (LOWER(u.username) = ANY($2::text[]))
+    AND e.metadata->>'screen' = ANY($3::text[])
+    AND e.metadata->>'kind' = 'page_load'`;
+  const percentiles = `ROUND(percentile_cont(0.5)
+      WITHIN GROUP (ORDER BY (e.metadata->>'durationMs')::int))::int AS p50_ms,
+    ROUND(percentile_cont(0.95)
+      WITHIN GROUP (ORDER BY (e.metadata->>'durationMs')::int))::int AS p95_ms`;
+  const [byScreen, total] = await Promise.all([
+    pool.query(
+      `SELECT e.metadata->>'screen' AS screen,
+         COUNT(*)::int AS loads,
+         COUNT(DISTINCT e.user_id)::int AS people,
+         ${percentiles}
+       FROM events e JOIN users u ON u.id = e.user_id
+       WHERE e.event_type = 'ui_experience' AND ${loadBase}
+       GROUP BY e.metadata->>'screen' ORDER BY loads DESC, screen ASC`,
+      [days, [...usernames.SERVICE_IDENTITIES], loadScreens]
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS loads,
+         COUNT(DISTINCT e.user_id)::int AS people,
+         ${percentiles}
+       FROM events e JOIN users u ON u.id = e.user_id
+       WHERE e.event_type = 'ui_experience' AND ${loadBase}`,
+      [days, [...usernames.SERVICE_IDENTITIES], loadScreens]
+    ),
+  ]);
+  const row = (r) => ({
+    screen: r.screen,
+    loads: Number(r.loads),
+    people: Number(r.people),
+    p50Ms: r.p50_ms == null ? null : Number(r.p50_ms),
+    p95Ms: r.p95_ms == null ? null : Number(r.p95_ms),
+  });
+  return {
+    days,
+    total: { ...row(total.rows[0] || { loads: 0, people: 0, p50_ms: null, p95_ms: null }), screen: null },
+    screens: byScreen.rows.map(row),
+  };
+}
+
 async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
   const adminClause = includeAdmins ? '' : 'AND NOT u.is_admin';
   const params = [days, [...usernames.SERVICE_IDENTITIES]];
@@ -437,6 +503,9 @@ async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
   // users and the screen list. Delivery receipts cannot be split by screen,
   // so they count every record a client sent.
   const uiParams = [...params, [...JOURNEY_SCREENS]];
+  // Page-load rows (#4965) share the event type too, but they are credited
+  // only to the navigation screens and shell_boot, never to a journey
+  // screen, so the screen list here leaves them out of the failure report.
   const uiBase = `${base} AND e.metadata->>'screen' = ANY($3::text[])`;
   const [overall, journeys, screens, contexts, errors, delivery] = await Promise.all([
     pool.query(
@@ -678,6 +747,7 @@ module.exports = {
   isEligibleUser,
   isRecordable,
   parseBatch,
+  pageLoads,
   recordServerFailure,
   safeServerError,
 };

@@ -13128,6 +13128,21 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "GET",
+      "path": "/api/admin/analytics/page-loads",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.analytics.page.loads.b764fa59",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
       "source": "src/routes/user-agent-files.js",
       "method": "GET",
       "path": "/api/me/agent-files",
