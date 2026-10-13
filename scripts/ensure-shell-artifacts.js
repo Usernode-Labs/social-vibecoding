@@ -8,8 +8,12 @@
 //   --runtime     before `npm start`, `npm run dev` and `npm run ensure:shell`:
 //                 the document and the bundle, then the CSS and the release.
 //
-// Under either flag the shell build runs only when what that flag needs is
-// missing or carries another stamp; otherwise nothing is built.
+// The shell build is skipped when what the run needs is current: the document
+// carries the stamp of these sources and the build id of this GIT_SHA and,
+// unless --html-only, the bundle carries the same stamp. A run that skips it
+// still writes the language catalog when that file is missing, and --runtime
+// still compiles the CSS and writes the release every time. An image marked
+// USERNODE_SHELL_ASSETS_PREBUILT builds none of this here; it only checks.
 
 'use strict';
 
