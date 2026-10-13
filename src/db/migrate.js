@@ -988,6 +988,18 @@ async function backfillVotesRequired(pool) {
   // a line's text is fetched for the winners alone, so what reaches this
   // process does not grow with the chat. Both CTEs are MATERIALIZED so the
   // planner cannot turn the pass back into one chat scan per candidate.
+  //
+  // Two things differ from the per-row search when something else writes
+  // while this runs. The statement sees the chat at ONE moment, where each
+  // search saw its own: a line that arrives too late leaves its row empty
+  // for a later boot, and that boot finds it only if it is still there
+  // (clearAutomatedChannelLines, below in migrate(), deletes a system line
+  // with no sender and no thread; nothing writes one now, see
+  // ws.sendSystemMessage). And `candidate` reads app_id and pr_number
+  // again by id, rather than using the values the query above returned.
+  // PostgreSQL still reads every merge line of these apps once and sorts
+  // their ids, on disk if they outgrow work_mem; what is bounded is what
+  // comes back here.
   let winners;
   try {
     ({ rows: winners } = await pool.query(
