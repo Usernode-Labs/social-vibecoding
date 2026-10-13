@@ -1331,6 +1331,8 @@ async function followupStage(ctx, kind) {
   const turn = await runTurn({
     pool, config, user, session, repo, prompt, mode, model, budgetMs: budgets.turnMs, deps,
     commitMsg: `Homeroom benchmark: trial ${trial.id}`,
+    // Its lines in the studio's watch, as a triage's are.
+    onActivity: ctx.onActivity,
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, session, ...turnFields(turn) };
   return followupResult({ turn, out, mode, base, branch, repo, deps });

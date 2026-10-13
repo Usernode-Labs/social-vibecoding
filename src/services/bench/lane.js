@@ -1289,9 +1289,12 @@ async function recoveryPlan(pool, session, activeTurn) {
  */
 function holdRecoveredTrial(trial, sessionId, recovery) {
   if (!trial || inFlight.has(trial.id)) return Promise.resolve(recovery);
+  // As a claim counts it: what is still to come of its estimate, less what
+  // its kept work cost (keptSpend), and a later change's side build among
+  // the live slots it takes.
   const entry = {
-    runId: trial.run_id, est: Number(trial.est_cost_usd) || 0, sessionId, promise: null,
-    heavy: HEAVY_STAGES.includes(trial.stage), recovered: true,
+    runId: trial.run_id, est: Math.max((Number(trial.est_cost_usd) || 0) - keptSpend(trial.checkpoint), 0), sessionId, promise: null,
+    heavy: HEAVY_STAGES.includes(trial.stage), recovered: true, laterSide: trial.run_kind === LATER_SIDE_RUN_KIND,
   };
   const promise = Promise.resolve(recovery).finally(() => {
     if (inFlight.get(trial.id) === entry) inFlight.delete(trial.id);
