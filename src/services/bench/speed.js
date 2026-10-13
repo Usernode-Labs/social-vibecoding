@@ -36,6 +36,9 @@ const METRIC_KEYS = Object.freeze([
   'provider_turn_count', 'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms', 'last_browser_call_ms',
   'file_change_count', 'distinct_file_change_count', 'context_compaction_count',
+  // A configuration's lean_turns tweak (worker.js noteCodingProviderToolOutput,
+  // claude-openrouter-request.js's toolBytes).
+  'tool_output_pruned_count', 'tool_output_pruned_chars', 'first_request_tool_bytes',
 ]);
 
 // The numbers an arm takes the median of, and the trials it leaves out: one
@@ -43,7 +46,7 @@ const METRIC_KEYS = Object.freeze([
 const BUILD_FIELDS = Object.freeze([
   'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'firstFileChangeMs', 'firstAppBootMs',
   'browserShare', 'modelRequestMs', 'browserToolMs', 'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs',
-  'fileChanges', 'distinctFileChanges', 'compactions',
+  'fileChanges', 'distinctFileChanges', 'compactions', 'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes',
 ]);
 const REVIEW_FIELDS = Object.freeze(['round1Blockers', 'round1Majors', 'rounds', 'reviewMs', 'doneMs']);
 const NOT_RUN = new Set(['pending', 'running', 'awaiting', 'not_applicable', 'skipped_cap', 'cancelled']);
@@ -110,6 +113,10 @@ async function buildTurnsFor(pool, trialRows) {
  *   fileChanges, distinctFileChanges, compactions
  *                       summed over the attempts (a file changed in the build
  *                       and in its nudge is distinct in each)
+ *   toolOutputPruned, toolOutputPrunedChars, toolBytes
+ *                       what a lean_turns build's requests cut (summed, null
+ *                       without the tweak), and the tool definitions' weight
+ *                       on its first request
  *   routedProvider, routedModel, requestedModel, harness
  *                       the first attempt's that recorded each
  *
@@ -166,6 +173,12 @@ function buildSpeedOf(rows, trial) {
     fileChanges: sum('file_change_count'),
     distinctFileChanges: sum('distinct_file_change_count'),
     compactions: sum('context_compaction_count'),
+    // What lean_turns cut from the requests, summed as images are (null
+    // without the tweak), and what the tool definitions weighed on the
+    // build's first request.
+    toolOutputPruned: sum('tool_output_pruned_count'),
+    toolOutputPrunedChars: sum('tool_output_pruned_chars'),
+    toolBytes: mine.map((a) => num(a.m.first_request_tool_bytes)).find((x) => x != null) ?? null,
     routedProvider: first('routed_provider', PROVIDER_RE),
     routedModel: first('routed_model', MODEL_RE),
     requestedModel: first('requested_model', MODEL_RE),

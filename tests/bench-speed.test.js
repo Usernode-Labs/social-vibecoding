@@ -83,6 +83,18 @@ test('a build\'s speed is its build turn and its nudge, the spec turn left out, 
     'the build turn\'s host, not the nudge\'s');
 });
 
+test('a lean_turns build says what its requests cut and what its tools weighed', () => {
+  const lean = [
+    { turn_id: BUILD, attempt_number: 1, started_at: at(0), completed_at: at(600_000), input_tokens: '10', output_tokens: '5',
+      metrics: { tool_output_pruned_count: 12, tool_output_pruned_chars: 90_000, first_request_tool_bytes: 21_000 } },
+    { turn_id: NUDGE, attempt_number: 1, started_at: at(700_000), completed_at: at(800_000), input_tokens: '1', output_tokens: '1',
+      metrics: { tool_output_pruned_count: 4, tool_output_pruned_chars: 10_000, first_request_tool_bytes: 20_000 } },
+  ];
+  const s = speed.buildSpeedOf(lean, trialWith([BUILD, NUDGE]));
+  assert.deepEqual([s.toolOutputPruned, s.toolOutputPrunedChars, s.toolBytes], [16, 100_000, 21_000], 'the build turn\'s first request');
+  assert.ok(speed.BUILD_FIELDS.includes('toolOutputPruned') && speed.BUILD_FIELDS.includes('toolBytes'), 'an arm takes their medians');
+});
+
 test('no build turn on record is no speed; what a turn did not record is null, never zero', () => {
   assert.equal(speed.buildSpeedOf(TURNS, trialWith(undefined)), null, 'a trial from before the ids were kept');
   assert.equal(speed.buildSpeedOf(TURNS, { parsed: { built: true, reference: true } }), null, 'a reference build');
@@ -94,7 +106,8 @@ test('no build turn on record is no speed; what a turn did not record is null, n
   const s = speed.buildSpeedOf(bare, trialWith([BUILD]));
   assert.equal(s.wallMs, 600_000);
   for (const k of ['modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'firstFileChangeMs', 'firstAppBootMs',
-    'browserShare', 'modelRequestMs', 'browserToolMs', 'fileChanges', 'compactions', 'routedProvider']) {
+    'browserShare', 'modelRequestMs', 'browserToolMs', 'fileChanges', 'compactions', 'routedProvider',
+    'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes']) {
     assert.equal(s[k], null, `${k} is unknown`);
   }
 
