@@ -1727,6 +1727,30 @@
     "text": "{{uses}} · {{expiry}}",
     "description": "The line on a row of the list of invite links in the Invite pane of the app menu: two facts about one link, side by side. {{uses}} is how many people have joined through the link, already worded, for example \"3 of 25 joined\", \"4 joined\" or \"No one joined yet\"; {{expiry}} is how long it still works, already worded, for example \"7 days left\" or \"no end date\". Keep the middle dot between them, or use the separator this language puts between two short facts."
   },
+  "appContext.invite.detail.waiting_one": {
+    "text": "{{count}} waiting",
+    "description": "The middle fact on a row of the list of invite links in the Invite pane of the app menu, between what the link has been used for and how long it works: how many people followed this link and have not got in yet, for example still on the waitlist or without a verified phone. {{count}} is that number. Shown only when it is not zero."
+  },
+  "appContext.invite.detail.waiting_other": {
+    "text": "{{count}} waiting",
+    "description": "The middle fact on a row of the list of invite links in the Invite pane of the app menu, between what the link has been used for and how long it works: how many people followed this link and have not got in yet, for example still on the waitlist or without a verified phone. {{count}} is that number. Shown only when it is not zero."
+  },
+  "appContext.invite.detail.triple": {
+    "text": "{{uses}} · {{waiting}} · {{expiry}}",
+    "description": "The line on a row of the list of invite links in the Invite pane of the app menu when people are still waiting on the link: three facts, side by side. {{uses}} is how much the link has been used, already worded; {{waiting}} is how many people have not got in yet, already worded, for example \"1 waiting\"; {{expiry}} is how long it still works, or why it no longer works, already worded. Keep the middle dots between them, or use the separator this language puts between short facts."
+  },
+  "appContext.invite.detail.ended.expired": {
+    "text": "expired",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: the link's end date has passed. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.ended.usedUp": {
+    "text": "ended",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: every use it allowed is taken. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.ended.revoked": {
+    "text": "turned off",
+    "description": "The last fact on a row of the list of invite links in the Invite pane of the app menu, in place of how long the link still works: somebody turned the link off. Lower case; it follows the first fact."
+  },
   "appContext.invite.title": {
     "text": "Invite people to {{project}}",
     "description": "Title of the Invite pane of the app menu. {{project}} is the project's (app's) name."
@@ -2321,7 +2345,7 @@
   },
   "appContext.invite.noLinks": {
     "text": "No live links.",
-    "description": "Shown under the heading of the invite links list in the Invite pane of the app menu when no invite link works any more (all expired, used up or turned off)."
+    "description": "Shown under the heading of the invite links list in the Invite pane of the app menu when no invite link was made or ended in the last 30 days, so the list has nothing to show."
   },
   "session.changeRow.waitingForApproval": {
     "text": "Waiting for approval",

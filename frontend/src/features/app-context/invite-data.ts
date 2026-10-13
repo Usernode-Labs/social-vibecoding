@@ -78,7 +78,7 @@ export function inviteLinksUrl(slug: string): string {
 
 /**
  * The pane's state. `makeIfNone` makes the viewer's first link when they may
- * and have none, which is what opening the pane does.
+ * and have none that still works, which is what opening the pane does.
  *
  * The new link goes on the front of the list the first read returned rather
  * than costing a second read: POST answers with the link exactly as GET lists
