@@ -781,8 +781,10 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
     assert.equal(row.checkpoint.build.sha, 'd'.repeat(40), 'a fix is not the build: nothing new kept');
-    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to record cut short');
-    assert.equal(row.checkpoint.handedBackAt, 3);
+    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to carry on');
+    assert.equal(row.checkpoint.recoveredFix.sha, 'e'.repeat(40), 'with what its fix did, which the review was waiting on');
+    assert.equal(row.checkpoint.recoveredFix.ok, true);
+    assert.equal(row.checkpoint.handedBackAt, 5, 'its spec, build and review, the review\'s round, and the fix');
     assert.deepEqual(outward, []);
   });
 
@@ -820,7 +822,8 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
     assert.equal(row.checkpoint.build.sha, 'd'.repeat(40), 'a fix is not the build: nothing new kept');
-    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to record cut short');
+    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to carry on');
+    assert.equal(row.checkpoint.recoveredFix.sha, 'e'.repeat(40), 'with what its fix did, as a live first version keeps it');
     assert.deepEqual(outward, []);
   });
 

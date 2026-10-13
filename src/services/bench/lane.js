@@ -683,13 +683,18 @@ async function saveCheckpoint(pool, trialId, part) {
 
 /**
  * How many of a trial's sub-steps its checkpoint holds: each is progress a
- * restart did not lose. A side build's review counts once it has begun: a
- * restart in it is recorded cut short, never run again
- * (runner.settleCutShortReview). Pure.
+ * restart did not lose. A review counts once it has begun, and then each
+ * step of it its state records (its first capture, each round's verdict and
+ * fix) and a fix turn recovery followed for it: a restart in a review
+ * carries it on from there (runner.goOnFromKept), so one that came after a
+ * step was saved loses nothing and costs no claim. Pure.
  */
 function stepsKept(checkpoint) {
   const cp = checkpoint || {};
-  return ['triage', 'spec', 'build', 'review'].filter((k) => cp[k]).length;
+  const parts = ['triage', 'spec', 'build', 'review'].filter((k) => cp[k]).length;
+  const rounds = Array.isArray(cp.review?.rounds) ? cp.review.rounds : [];
+  const reviewSteps = (cp.review?.round0 ? 1 : 0) + rounds.filter((r) => r && r.verdict).length + rounds.filter((r) => r && r.fix).length;
+  return parts + reviewSteps + (cp.recoveredFix ? 1 : 0);
 }
 
 /** The sessions whose work a trial's checkpoint keeps: its triage, spec, build and review. Pure. */
@@ -1466,18 +1471,29 @@ async function handBackTrial({ pool, row, session, activeTurn, result, timedOut,
     ? runner.sideTurnOf(row.checkpoint, activeTurn)
     : runner.firstVersionTurnOf(row.checkpoint, session.id, activeTurn);
   const kept = runner.recoverFirstVersionTurn({ checkpoint: row.checkpoint, session, activeTurn, result, timedOut, side });
+  // A review's fix turn keeps what it did when the review was waiting on it,
+  // for the next claim to carry the review on with (bot-review.js
+  // recoveredFixOf), as recovery keeps a live first version's.
+  let recoveredFix = null;
+  const review = row.checkpoint?.review;
+  if (step === 'fix' && require('../bot-review').awaitsFix(review, result)) {
+    const usage = await require('../homeroom-bot').fixTurnUsage(pool, session.id, review.inFlight?.at || activeTurn?.startedAt || null);
+    recoveredFix = require('../bot-review').recoveredFixOf({ result, timedOut, ...usage });
+  }
   // A fix turn's step began before the build turn did, so its looks cannot
   // be told from the build's: the checkpoint's are left as they are.
   const looks = recoveredLooks(row.checkpoint, step === 'fix' ? null : step, lines);
   // And the skills its turn reached for, which the next claim's watch starts from.
   const skills = watch ? watch.skills() : null;
   const seenSkills = skills && (skills.invoked.length || skills.read.length) ? { skills } : {};
-  if (kept || looks || seenSkills.skills) {
+  if (kept || looks || seenSkills.skills || recoveredFix) {
     await pool.query(
       `UPDATE bench_trials SET checkpoint = COALESCE(checkpoint, '{}'::jsonb) || $3::jsonb,
               recovered_at = CASE WHEN $4::boolean THEN NOW() ELSE recovered_at END
         WHERE id = $1 AND status = 'running' AND session_id = $2`,
-      [row.id, Number(session.id), JSON.stringify({ ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}), ...seenSkills }), !!kept],
+      [row.id, Number(session.id), JSON.stringify({
+        ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}), ...seenSkills, ...(recoveredFix ? { recoveredFix } : {}),
+      }), !!(kept || recoveredFix)],
     );
   }
   await pool.query(
@@ -1487,8 +1503,9 @@ async function handBackTrial({ pool, row, session, activeTurn, result, timedOut,
   const status = await releaseTrial(pool, {
     trialId: row.id, sessionId: session.id, deps,
     why: kept ? `its ${kept.step} finished after a restart and is kept`
-      : step === 'fix' ? 'its review\'s fix finished after a restart; the review is recorded cut short'
-        : 'its turn left nothing to keep',
+      : recoveredFix ? 'its review\'s fix finished after a restart and is kept; the review goes on from it'
+        : step === 'fix' ? 'its review\'s fix finished after a restart; the review goes on from its saved state'
+          : 'its turn left nothing to keep',
   });
   log.info('bench', side
     ? 'A side build\'s turn finished after a restart; it goes on from there'

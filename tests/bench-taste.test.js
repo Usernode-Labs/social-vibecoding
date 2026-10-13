@@ -1033,14 +1033,15 @@ test('a first version whose build a restart kept is reviewed now, as recovery re
   assert.deepEqual(require('../src/services/bench/speed').buildTurnIds(out.parsed), [BUILD_TURN], 'so its build\'s speed can be read');
 });
 
-test('a first version whose review a restart cut short is recorded interrupted, never reviewed again; its tip captured once', async (t) => {
+test('a first version whose review restarts cut short too often is recorded interrupted, never reviewed again; its tip captured once', async (t) => {
   spySideEffects(t);
   const checkpoint = await keptFirstVersion(t);
   const realReview = live.reviewLanded;
   live.reviewLanded = async () => { throw new Error('a review cut short is not run again'); };
   t.after(() => { live.reviewLanded = realReview; });
+  // Carried through MAX_REVIEW_RESUMES restarts already (bot-review.js canResume).
   const review = {
-    state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER,
+    state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER, resumes: 3,
     round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
     rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3, fix: { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1 } }],
     stop: null, finalSha: 'f'.repeat(40), finalCommits: 3, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,
@@ -1062,6 +1063,46 @@ test('a first version whose review a restart cut short is recorded interrupted, 
   assert.deepEqual(out.capture, { booted: true, shots: [{ id: 'phone-light-populated', artifactId: 'b'.repeat(32) }], checks: {}, tells: {} });
   assert.ok(Math.abs(out.review_cost_usd - 0.3) < 1e-9, 'the reviewer calls of the claim before, charged once, here');
   assert.equal(out.parsed.costParts.review_fixes.usd, 0.1, 'and its fix, from the review\'s state');
+});
+
+test('a first version whose review a restart cut short is carried on from its saved state, with the fix turn recovery followed, as a live one is', async (t) => {
+  spySideEffects(t);
+  const checkpoint = await keptFirstVersion(t);
+  const realReview = live.reviewLanded;
+  let args = null;
+  live.reviewLanded = async (a) => {
+    args = a;
+    return { state: 'done', stop: 'ship', finalSha: 'f'.repeat(40), finalCommits: 3, resumes: 1, round0: { sha: 'd'.repeat(40) },
+      rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.3, fix: { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1 } }, { round: 2, verdict: 'ship', reviewerCostUsd: 0.2 }] };
+  };
+  t.after(() => { live.reviewLanded = realReview; });
+  const review = {
+    state: 'reviewing', startedAt: '2026-10-13T18:40:00.000Z', reviewer: REVIEWER, resumes: 0,
+    round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
+    rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3 }],
+    inFlight: { step: 'fix', at: '2026-10-13T18:45:00.000Z' },
+    stop: null, finalSha: 'd'.repeat(40), finalCommits: 2, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,
+  };
+  const recoveredFix = { ok: true, sha: 'f'.repeat(40), commits: 3, costUsd: 0.1, ms: 90000 };
+  const h = ledgerHarness();
+  const out = await runner.runStage(ctx(h, 'first_version', FIRST, {
+    reviewer: REVIEWER, checkpoint: { ...checkpoint, review, recoveredFix },
+  }));
+  assert.equal(out.status, 'ok', out.error);
+  assert.deepEqual(h.calls.modes, [], 'its build is not run again');
+  assert.equal(args.resumeFrom, review, 'carried on from where it was cut');
+  assert.deepEqual(args.recoveredFix, recoveredFix, 'with the fix turn recovery followed, which it was waiting on');
+  assert.equal(out.parsed.review.stop, 'ship', 'it finished as it would have');
+  assert.equal(out.build_sha, 'f'.repeat(40));
+  assert.ok(Math.abs(out.review_cost_usd - 0.5) < 1e-9, 'every round\'s reviewer calls, once');
+
+  // A fix a round has already recorded is spent: not handed to it again.
+  const spentFix = await runner.runStage(ctx(ledgerHarness(), 'first_version', FIRST, {
+    reviewer: REVIEWER,
+    checkpoint: { ...checkpoint, review: { ...review, rounds: [{ ...review.rounds[0], fix: { ok: true, sha: 'f'.repeat(40) } }] }, recoveredFix },
+  }));
+  assert.equal(spentFix.status, 'ok', spentFix.error);
+  assert.equal(args.recoveredFix, null);
 });
 
 test('a first version\'s first claim keeps its build the moment it pushes, with what its spec and build cost, and its review as it goes', async (t) => {

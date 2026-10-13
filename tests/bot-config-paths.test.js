@@ -477,12 +477,13 @@ test('a side build that landed before its review began is reviewed now, as recov
   assert.deepEqual(out.session_ids, [6001, 7001]);
 });
 
-test('a side build whose review a restart cut short is not reviewed again: recorded interrupted, an unchecked fix captured once, put back only when it does not boot', async (t) => {
+test('a side build whose review restarts cut short too often is not reviewed again: recorded interrupted, an unchecked fix captured once, put back only when it does not boot', async (t) => {
   const realReview = live.reviewLanded;
   live.reviewLanded = async () => { throw new Error('a review cut short is not run again'); };
   t.after(() => { live.reviewLanded = realReview; });
+  // Carried through MAX_REVIEW_RESUMES restarts already (bot-review.js canResume).
   const review = {
-    state: 'reviewing', startedAt: '2026-10-07T22:00:00.000Z', reviewer: REVIEWER,
+    state: 'reviewing', startedAt: '2026-10-07T22:00:00.000Z', reviewer: REVIEWER, resumes: 3,
     round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
     rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3, fix: { ok: true, sha: 'e'.repeat(40), commits: 3 } }],
     stop: null, finalSha: 'e'.repeat(40), finalCommits: 3, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,

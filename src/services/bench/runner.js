@@ -844,7 +844,7 @@ async function buildSideNow(ctx, kept, { models, snapshot, budgets, reviewer = u
  * it could not start: a review fails open, and the build is captured as it
  * stands.
  */
-async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branch }) {
+async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branch, resumeFrom = null, recoveredFix = null }) {
   const live = require('../homeroom-bot-live');
   const botReview = require('../bot-review');
   const { pool, config, deps, repo, app, user, trial } = ctx;
@@ -862,7 +862,9 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
     const readsImages = typeof done.sight?.told === 'boolean'
       ? done.sight.told
       : await live.buildSeesImages({ pool, config, userId: user.id, model: models.build });
-    log.info('bench', 'Reviewing a build a restart caught before its review', { trialId: trial.id, sessionId: session.id });
+    log.info('bench', resumeFrom ? 'Carrying on a review a restart cut short' : 'Reviewing a build a restart caught before its review', {
+      trialId: trial.id, sessionId: session.id, resumes: Number(resumeFrom?.resumes) || 0, recoveredFix: !!recoveredFix,
+    });
     const review = await live.reviewLanded({
       pool, config, bot: user, app, repo, session, branchName: branch, seed: replay.texts.seed,
       spec: landed.specMd || done.spec?.specMd || null,
@@ -878,6 +880,9 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
         firstVersion: true, tweaks: ctx.tweaks || [],
       }),
       tweaks: ctx.tweaks || [],
+      // A review a restart cut short, carried on from its saved state, as a
+      // live first version's is (homeroom-bot.js resumeInterruptedReview).
+      ...(resumeFrom ? { resumeFrom, recoveredFix } : {}),
       turnBudgetMs: budgets.buildMs,
       readsImages,
       platformRepo: !!replay.extra?.platformRepo,
@@ -893,10 +898,11 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
 }
 
 /**
- * A side build's review a restart cut short (in a capture, a reviewer call
- * or a fix turn), settled the way restart recovery settles a live first
- * version's (homeroom-bot.js completeRecoveredLive, noteReviewInterrupted,
- * checkRecoveredFix): not run again, but recorded `interrupted` at the
+ * A build's review a restart cut short (in a capture, a reviewer call or a
+ * fix turn) once it cannot be carried on (bot-review.js canResume: done, or
+ * past MAX_REVIEW_RESUMES restarts), settled the way restart recovery
+ * settles a live first version's (homeroom-bot.js completeRecoveredLive,
+ * noteReviewInterrupted, checkRecoveredFix): not run again, but recorded `interrupted` at the
  * branch as it stands. A fix no capture saw boot is captured once
  * (`captureTip`, which resolves the screenshot step's answer and the session
  * it ran in): kept when it boots, that capture its final one; otherwise, or
@@ -977,8 +983,10 @@ async function keptCosts(pool, was, done, models) {
  * An earlier claim's build, gone on from (firstVersionStage, sideBuildStage),
  * as restart recovery goes on from a live first version's: one that landed
  * is reviewed now when its configuration has a reviewer and the restart
- * came before its review began (reviewKeptBuild), or its review recorded
- * cut short when the restart came during it (settleCutShortReview); then it
+ * came before its review began (reviewKeptBuild); a review the restart cut
+ * short is carried on from its saved state (`resumeFrom`, with the fix turn
+ * recovery followed: `recoveredFix`) until MAX_REVIEW_RESUMES restarts have
+ * caught it, then recorded cut short (settleCutShortReview); then it
  * is read as the live stage reads a build (buildResult), its stages' costs
  * the review's included (keptCosts, stageCosts.reviewParts). A build that
  * failed, or a spec that found the request impossible, is the trial's
@@ -994,8 +1002,21 @@ async function goOnFromKept(ctx, kept, { models, replay, budgets, base, branch }
   let reviewSession = null;
   let tipCapture = null;
   let reviewedNow = false;
+  const botReview = require('../bot-review');
   if (landed && ctx.reviewer) {
-    if (done.review) {
+    if (done.review && botReview.canResume(done.review)) {
+      // Cut short by a restart, and not yet carried through
+      // MAX_REVIEW_RESUMES of them: carried on from its saved state, with
+      // the fix turn recovery followed when the review was waiting on it.
+      try { ctx.onStep?.('build'); } catch { /* a watcher never stops a trial */ }
+      const recoveredFix = done.recoveredFix && botReview.awaitsFix(done.review, done.recoveredFix) ? done.recoveredFix : null;
+      ({ review: reviewed, sessionId: reviewSession } = await reviewKeptBuild(ctx, kept, {
+        models, replay, budgets, base, branch, resumeFrom: done.review, recoveredFix,
+      }));
+      reviewedNow = true;
+      // A resume that could not start leaves it cut short, as before.
+      if (!reviewed) reviewed = (await settleCutShortReview(ctx, { review: done.review, landed, branch })).review;
+    } else if (done.review) {
       const settled = await settleCutShortReview(ctx, {
         review: done.review, landed, branch,
         // The tip's one capture, on a session of its own at the branch:

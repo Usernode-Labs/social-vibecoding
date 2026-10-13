@@ -5912,17 +5912,10 @@ async function resumeInterruptedReview({ pool, config, bot, app, repo, session, 
       return null;
     }
     // The fix turn the review was waiting on, when recovery followed one to
-    // its end: its round has a `fix` verdict and no fix yet, and the turn
-    // was dispatched (its `inFlight` says so, or a review saved before
-    // `inFlight` existed was waiting on it). Not a commit a round already
-    // recorded: that one is spent.
-    const last = Array.isArray(state.rounds) && state.rounds.length ? state.rounds[state.rounds.length - 1] : null;
-    const awaitingFix = !!last && last.verdict === 'fix' && !last.fix
-      && (state.inFlight ? state.inFlight.step === 'fix' : true);
-    const spent = new Set([state.round0?.sha, ...(state.rounds || []).map((r) => r?.fix?.sha)].filter(Boolean));
+    // its end (bot-review.js awaitsFix): not a commit a round already
+    // recorded, which is spent.
     let recoveredFix = null;
-    if (awaitingFix && !plan.lost && plan.mode === BUILD_TURN.mode && plan.result
-      && !(plan.result.sha && spent.has(plan.result.sha))) {
+    if (!plan.lost && plan.mode === BUILD_TURN.mode && botReview().awaitsFix(state, plan.result)) {
       const usage = await fixTurnUsage(pool, session.id, state.inFlight?.at || null);
       recoveredFix = botReview().recoveredFixOf({ result: plan.result, timedOut: !!plan.timedOut, ...usage });
     }
@@ -12022,6 +12015,7 @@ module.exports = {
   RESTARTED_BUILD_NOTE,
   MAX_RESTARTED_BUILDS,
   restartAllowanceMs,
+  fixTurnUsage,
   RESTART_ALLOWANCE_MS,
   APP_AGAIN_REASON,
   CHECKS_REASON,
