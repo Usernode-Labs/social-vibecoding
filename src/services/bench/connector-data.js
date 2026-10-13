@@ -316,24 +316,24 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     // (why a queued build is waiting: the budget, a platform fault, …).
     // `queued` and `building` are the shadow lane's own; `live` is the live
     // builds (first versions among them) under way and waiting their turn,
-    // which never go through that lane (homeroom-bot.js buildsNow), and the
-    // live build loop's own last pass (`live.lastPass`: when it looked, how
-    // long it took, how many waited and how many it started). `lastPass`
-    // below is the shadow lane's timer, not the live loop's.
+    // which never go through that lane (homeroom-bot.js buildsNow). The
+    // top-level `lastPass` is the shadow lane's 60-second drain; the live
+    // builds are started by the bot's own loop, whose last pass is
+    // `live.lastPass` (when it began and how long it took) and whose pass
+    // under way began at `live.passRunningSince`. Run five (13 Oct 2026)
+    // first read the shadow lane's as the live loop's.
     buildLane: p.builds ? {
       queued: num(p.builds.queued) || 0,
       building: num(p.builds.building) || 0,
       live: p.builds.live ? {
         building: num(p.builds.live.building) || 0,
         waiting: num(p.builds.live.waiting) || 0,
-        lastPass: p.builds.live.lastPass ? {
-          startedAt: p.builds.live.lastPass.startedAt || null,
-          ms: num(p.builds.live.lastPass.ms),
-          slots: num(p.builds.live.lastPass.slots),
-          waiting: num(p.builds.live.lastPass.waiting),
-          started: num(p.builds.live.lastPass.started),
-          paused: CODE_RE.test(String(p.builds.live.lastPass.paused || '')) ? p.builds.live.lastPass.paused : null,
+        lastPass: p.loop ? {
+          startedAt: p.loop.startedAt || null, at: p.loop.at || null, ms: num(p.loop.ms),
+          refreshed: !!p.loop.refreshed, liveBuilds: num(p.loop.liveBuilds), dispatched: num(p.loop.dispatched),
+          paused: CODE_RE.test(String(p.loop.paused || '')) ? p.loop.paused : null,
         } : null,
+        passRunningSince: p.loop?.runningSince || null,
       } : null,
       lastPass: p.builds.lane ? {
         at: p.builds.lane.at || null, started: num(p.builds.lane.started), inFlight: num(p.builds.lane.inFlight),

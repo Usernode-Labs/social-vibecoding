@@ -183,6 +183,22 @@
     "text": "Live",
     "description": "Very short status under a new project's name on its Home screen icon: its first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.tile.phase.starting": {
+    "text": "Starting",
+    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is starting to build its first version. A verb in progress. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.phase.drawing": {
+    "text": "Drawing",
+    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is drawing pictures of the app's main screens, before it builds it. A verb in progress. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.phase.writing": {
+    "text": "Writing plan",
+    "description": "Very short status under a new project's name on its Home screen icon: Homeroom bot is writing the detailed plan its build follows, after it drew the screens. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.phase.checking": {
+    "text": "Checking",
+    "description": "Very short status under a new project's name on its Home screen icon: its first version is built and its screens are being looked at and fixed. A verb in progress. Must fit one short line under a small app icon."
+  },
   "buildLine.working": {
     "text": "Homeroom bot is working on it",
     "description": "One-line status on a new project's hub card while the welcome tour is running, in place of the line that asks the person to review the plan. \"it\" is the project. Homeroom bot is a name."
@@ -190,6 +206,10 @@
   "buildLine.withNote": {
     "text": "{{line}} · {{note}}",
     "description": "A project's build status followed by a short note, on one line, for example \"Building it · usually 10 to 25 min\". {{line}} is the status and {{note}} the note, both already translated; only the separator between them is translated."
+  },
+  "buildLine.phase.starting": {
+    "text": "Starting the build",
+    "description": "One-line status under a new project's card, on its hub and in the app's own tab while its first version is made: its plan is decided and the assistant called Homeroom bot is starting to build it, before it draws any screens."
   },
   "buildLine.phase.drawing": {
     "text": "Drawing the screens",
@@ -890,6 +910,10 @@
   "firstSession.made.inviteHint": {
     "text": "Invite people to use it and help improve it together.",
     "description": "Line above the buttons on the screen shown right after a project is made, before any invite has been sent. \"it\" is the new app."
+  },
+  "firstSession.made.checkingQuestions": {
+    "text": "Checking whether Homeroom bot needs to ask you anything first.",
+    "description": "Line on the screen shown right after a person makes a project, in place of the invite buttons for a few seconds, while the assistant called Homeroom bot works out whether it has questions to ask before it builds the app. Homeroom bot is a name."
   },
   "firstSession.made.noBotNote": {
     "text": "Your description is its first request. You or anyone you invite can build it from there.",

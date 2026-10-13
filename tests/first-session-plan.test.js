@@ -72,7 +72,7 @@ test('the made screen reads the project under `app`, past the service worker\'s 
     'the plain read is the boot lane\'s, served from cache first');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /fetch\(madeAppUrl\(made\.slug\), \{ credentials: 'same-origin', cache: 'no-store' \}\)/);
-  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setFv\(app\.firstVersion\);/);
+  assert.match(src, /const app = madeAppOf\(body\);\s+if \(live && app\) \{\s+setReadOnce\(true\);\s+setFv\(app\.firstVersion\);/);
   assert.ok(!/setFv\(app\.first_version/.test(src), 'never the top of the answer');
 });
 
@@ -172,8 +172,10 @@ test('the made screen has two ways on and nothing under them: no "look around Ho
   assert.match(read(`${DIR}/make.tsx`), /id="onboarding:firstSession\.make\.lookAround"\s+components=\{\[<button type="button" onClick=\{onLookAround\}/);
   assert.equal(message('onboarding:firstSession.make.lookAround'), 'Not sure yet? <0>Look around first</0>');
   assert.match(renderToHtml(createElement(loadTsx(`${DIR}/make.tsx`).MakeScreen, { who: '', onMade() {}, onLookAround() {} })), />Look around first<\/button>/);
+  // A project Homeroom bot does not build: its buttons from the start (one
+  // it builds checks for questions first, tests/first-version-early-plan.test.js).
   const html = renderToHtml(createElement(made.MadeScreen, {
-    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
+    made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: null },
     me: 'Maya', onContinue() {}, onOpenChat() {},
   }));
   assert.match(html, />Share invite<\/button>/);
@@ -215,7 +217,9 @@ test('the made screen renders with nothing read yet: no plan, the build\'s first
   assert.ok(!/data-first-session-plan/.test(html), 'no plan until one is read');
   assert.match(html, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
   assert.doesNotMatch(html, /Homeroom is making your app/, 'nothing under the thumbnail but the build line');
-  assert.match(html, /Invite people later/);
+  // Run five: no way past the questions before they could be read.
+  assert.match(html, /Checking whether Homeroom bot needs to ask you anything first\./);
+  assert.doesNotMatch(html, /Invite people later/);
 });
 
 test('the invite sheet: a small caps label over the invite as they will see it, and a note that names itself to a screen reader', () => {

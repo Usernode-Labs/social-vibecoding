@@ -501,6 +501,18 @@ test('the strict telemetry allowlist drops content and credentials', () => {
   });
 });
 
+test('the routed host is kept as a name, never as free text (run five)', () => {
+  const host = (servedProvider) => telemetry.normalizeDiagnostics({ servedProvider }).served_provider;
+  assert.equal(host('Together'), 'Together');
+  assert.equal(host('Google Vertex'), 'Google Vertex');
+  assert.equal(host('  CoreWeave '), 'CoreWeave');
+  for (const junk of ['<script>', 'a; DROP TABLE', 'line\nbreak', ' ', '-leading', null]) {
+    assert.equal(host(junk), undefined, JSON.stringify(junk));
+  }
+  assert.equal(host('x'.repeat(200)).length, 80, 'clipped');
+  assert.equal(Object.hasOwn(telemetry.normalizeDiagnostics({}), 'served_provider'), false, 'absent when unknown');
+});
+
 test('Anthropic errors are classified without persisting provider error details', async () => {
   await withTelemetrySink(async (rows) => {
     const error = Object.assign(new Error('sensitive provider message'), { status: 429 });

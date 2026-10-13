@@ -631,12 +631,22 @@ function specDesignBrief(firstVersion = false, starter = null) {
  * figure once it is in, so nothing is written twice
  * (services/first-version-screens.js). A screen the command did not save
  * is drawn in the figure in full, as before.
+ *
+ * Newcomer run five (13 October 2026): the spec saved nothing and drew both
+ * screens in its final answer, so the first look still came only at its end.
+ * This instruction sat after the long HTML contract and screens brief, and an
+ * earlier PLAN MODE line forbade creating anything. So it now comes straight
+ * after the plan and the PLAN MODE paragraph, and that paragraph names
+ * `usernode-screen` as its one exception (specHtmlPrompt). draftSpec counts
+ * every first version's spec and how soon its first screen was saved
+ * (BOT_SPEC_SCREENS) and warns when it saved none.
  */
 const FIRST_VERSION_SCREENS_FIRST = [
   'DRAW THE MAIN SCREEN FIRST. The people who asked for this app are waiting to see it. Read only what you need to',
   'draw it (the starter\'s main screen and the design kit, a few reads), then, BEFORE you write anything else of the',
   'spec, draw the main screen and save it with this command, the screen\'s whole <template data-screen> element',
-  'exactly as the screens figure would hold it, its <style> included:',
+  'exactly as the screens figure would hold it, its <style> included (the FIRST VERSION SCREENS rules below say how',
+  'to draw it). Do this within your first few minutes, and before your final answer:',
   '',
   'usernode-screen 1 <<\'SCREEN\'',
   '<template data-screen data-size="phone" data-height="...">...</template>',
@@ -720,6 +730,12 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     'group can read and that the build that follows will work from. You are running in PLAN MODE: read and search',
     'the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit,',
     'create, delete, commit, or push anything; anything this run changes in the repository is discarded when it ends.',
+    ...(firstVersion ? [
+      'The one exception is `usernode-screen`, below: it saves a screen you drew outside the repository, and you',
+      'must run it.',
+      '',
+      FIRST_VERSION_SCREENS_FIRST,
+    ] : []),
     '',
     'The spec must be:',
     '- Grounded in the real code: name actual files and describe current behaviour, not guesses.',
@@ -739,7 +755,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
-    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF, '', FIRST_VERSION_SCREENS_FIRST] : []),
+    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF] : []),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "user" section with an <h3>Assumptions</h3>',
@@ -2133,6 +2149,10 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'guidance\'s "no new colours" means none beyond them, and every token the spec defines is one of them. Then fill',
   'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the signature',
   'element, the type scale, and the one fixed look if the app keeps one. Every later change follows it.',
+  // Run five (13 Oct 2026, fix 7): Club Votes' header showed a blank
+  // lavender square where its icon belonged.
+  'If the app\'s header shows its own mark, show the project\'s icon there (the emoji in `dapp.json`\'s `icon` block),',
+  'or leave the mark out: never an empty tile, and never `brand/icon.png`, which the app does not serve.',
   // The first session's card (services/app-sketch.js). Until 5 October 2026
   // it was a mock of the main screen, and this said to build that screen.
   'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
@@ -2592,6 +2612,38 @@ async function fillSavedScreens({ fvScreens, screens, worker, containerName, res
   }
 }
 
+/**
+ * Newcomer run five: what a first version's spec saved with `usernode-screen`
+ * while it ran (FIRST_VERSION_SCREENS_FIRST), counted once it ends
+ * (events BOT_SPEC_SCREENS), and a warning when it saved none, since its
+ * first look then waits for the whole spec. `firstSavedMs` against `specMs`
+ * shows how early the first look came. Never throws.
+ */
+async function noteSavedScreens(pool, { screens, session, startedAt, model, ok, stopped }) {
+  if (!screens) return;
+  try {
+    await screens.idle();
+    const saved = screens.saved().size;
+    const firstAt = screens.firstSavedAt();
+    const metadata = {
+      saved,
+      firstSavedMs: firstAt == null ? null : Math.max(0, firstAt - startedAt),
+      specMs: Math.max(0, Date.now() - startedAt),
+      ok: !!ok, stopped: !!stopped, model: model || null,
+    };
+    if (saved === 0) {
+      log.warn('homeroom-bot', 'The first version\'s spec saved no screen; its first look waits for the whole spec', {
+        sessionId: session.id, specMs: metadata.specMs, ok: metadata.ok, stopped: metadata.stopped,
+      });
+    }
+    if (pool && typeof pool.query === 'function') {
+      await events.record(pool, {
+        type: events.EVENT_TYPES.BOT_SPEC_SCREENS, appId: session.app_id ?? null, sessionId: session.id, metadata,
+      });
+    }
+  } catch { /* a counter never stops a build */ }
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2630,6 +2682,7 @@ async function draftSpec({
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
+  const startedAt = Date.now();
   const prompt = specPrompt({
     seed, buildNote, firstVersion, guidance, starter, locale,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
@@ -2674,6 +2727,10 @@ async function draftSpec({
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
   }
+  // Only an HTML spec is asked to save its screens (specHtmlPrompt).
+  await noteSavedScreens(pool, {
+    screens: specHtml.htmlSpecsEnabledFor(config, session.app_slug) ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
+  });
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
   const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
@@ -3936,6 +3993,7 @@ module.exports = {
   draftSpec,
   fillSavedScreens,
   FIRST_VERSION_SCREENS_FIRST,
+  noteSavedScreens,
   specPrompt,
   specPlanLines,
   specScopeLines,

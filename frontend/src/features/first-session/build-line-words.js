@@ -76,6 +76,7 @@ export function buildLineTileClass(state) {
  * "Building it" while the line is `building`, with how long that stage has
  * run ("Drawing the screens · 2 min so far"). In English:
  *
+ *   starting   Starting the build
  *   drawing    Drawing the screens
  *   writing    Writing the plan
  *   building   Building it
@@ -84,6 +85,7 @@ export function buildLineTileClass(state) {
  *   testing    Testing it
  */
 export const PHASE_WORDS = Object.freeze({
+  starting: 'onboarding:buildLine.phase.starting',
   drawing: 'onboarding:buildLine.phase.drawing',
   writing: 'onboarding:buildLine.phase.writing',
   building: 'onboarding:buildLine.building',
@@ -91,6 +93,34 @@ export const PHASE_WORDS = Object.freeze({
   checking: 'onboarding:buildLine.phase.checking',
   testing: 'onboarding:buildLine.testing',
 });
+
+/**
+ * Run five (13 Oct 2026): the Home tile says the phase too, in its short
+ * word, so the tile, the hub card and the App tab name the same moment
+ * (the tile said "Building" while the App tab said "Drawing the screens").
+ * Message ids, one per PHASE_WORDS key.
+ */
+export const PHASE_TILE_WORDS = Object.freeze({
+  starting: 'onboarding:buildLine.tile.phase.starting',
+  drawing: 'onboarding:buildLine.tile.phase.drawing',
+  writing: 'onboarding:buildLine.tile.phase.writing',
+  building: 'onboarding:buildLine.tile.building',
+  built: 'onboarding:buildLine.tile.phase.checking',
+  checking: 'onboarding:buildLine.tile.phase.checking',
+  testing: 'onboarding:buildLine.tile.testing',
+});
+
+/** The phase a line is in, by key, or null: the answer's own, while the line says it is being built. */
+export function phaseKeyOf(line, value) {
+  const phase = line === 'building' ? phaseOf(value) : null;
+  return phase ? phase.key : null;
+}
+
+/** A Home tile's caption for a line and its phase: a message id (BUILD_LINE_TILE_WORDS, or PHASE_TILE_WORDS while it is built). */
+export function buildLineTileWordsOf(line, phase) {
+  const key = phaseKeyOf(line, phase);
+  return key ? PHASE_TILE_WORDS[key] : BUILD_LINE_TILE_WORDS[line];
+}
 
 /**
  * The phase in an answer (`first_version.phase`): { key, since, round,

@@ -197,17 +197,19 @@ function buildLineOf(stage, { forCreator = false, question = false } = {}) {
 // "Building it", and the build agent's last phrase ("Adding the ballot
 // bar") stayed up through 36 minutes of review.
 //
-//   drawing    its build waits its turn, starts, and its spec turn draws
-//              the screens (the first look is drawn first: the spec saves
-//              its main screen before it writes the rest, live.js
-//              FIRST_VERSION_SCREENS_FIRST)
+//   starting   its build waits its turn and its workspace starts: no
+//              spec turn yet, so nothing is drawn (run five, 13 Oct 2026:
+//              "Drawing the screens" showed before the build was picked up)
+//   drawing    its spec turn draws the screens (the first look is drawn
+//              first: the spec saves its main screen before it writes the
+//              rest, live.js FIRST_VERSION_SCREENS_FIRST)
 //   writing    the spec turn writes the rest of the plan, once the first
 //              look is drawn
 //   building   the build turn
 //   built      the build landed and its screens are captured for review
 //   checking   a review round, `round` of `rounds`
 //   testing    proposed, and its checks run (or are fixed)
-const FIRST_VERSION_PHASES = Object.freeze(['drawing', 'writing', 'building', 'built', 'checking', 'testing']);
+const FIRST_VERSION_PHASES = Object.freeze(['starting', 'drawing', 'writing', 'building', 'built', 'checking', 'testing']);
 
 /**
  * Pure: the phase of a first version whose plan is decided, from its stage
@@ -221,7 +223,7 @@ function firstVersionPhase(state, row = {}, { firstLookAt = null } = {}) {
   switch (stage) {
     case 'build_queued':
     case 'starting':
-      return { key: 'drawing', since: since(state.since || row.build_waiting_at || row.run_at) };
+      return { key: 'starting', since: since(state.since || row.build_waiting_at || row.run_at) };
     case 'planning':
       return firstLookAt
         ? { key: 'writing', since: since(firstLookAt) }
@@ -252,8 +254,15 @@ function firstVersionPhase(state, row = {}, { firstLookAt = null } = {}) {
 const FIRST_VERSION_STEP_KEYS = Object.freeze(['plan', 'screens', 'build', 'check', 'test', 'live']);
 
 const PHASE_STEP = Object.freeze({
-  drawing: 'screens', writing: 'build', building: 'build', built: 'check', checking: 'check', testing: 'test',
+  starting: 'screens', drawing: 'screens', writing: 'build', building: 'build', built: 'check', checking: 'check', testing: 'test',
+  // Run five (13 Oct 2026, fix 7): merged and not live yet (stage
+  // 'merging'). Never a phase a screen names: only the step list's place,
+  // so every step before Live stays done while it goes live.
+  live: 'live',
 });
+
+/** The step list's place while a first version goes live (firstVersionSteps). */
+const GOING_LIVE = Object.freeze({ key: 'live', since: null });
 
 /**
  * Pure: the App tab's step list for a first version still on its way:
@@ -264,7 +273,8 @@ const PHASE_STEP = Object.freeze({
  * `times` are when things happened: `made` (Make it), `decided` (its plan
  * went ahead), `firstLook`, `spec` (the plan for the build posted),
  * `review` (the review began) and `proposal`. `phase` is firstVersionPhase,
- * null while the plan is not decided yet.
+ * null while the plan is not decided yet, or GOING_LIVE once it merged and
+ * is not live yet: every step before Live done, Live under way.
  */
 function firstVersionSteps(phase, times = {}) {
   const at = phase ? FIRST_VERSION_STEP_KEYS.indexOf(PHASE_STEP[phase.key]) : 0;
@@ -1335,6 +1345,7 @@ module.exports = {
   FIRST_VERSION_STEP_KEYS,
   firstVersionPhase,
   firstVersionSteps,
+  GOING_LIVE,
   SETUP_PARTS,
   BUSY_STAGES,
   IN_FLIGHT_STAGES,

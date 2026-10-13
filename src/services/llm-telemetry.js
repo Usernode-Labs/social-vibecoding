@@ -135,6 +135,13 @@ function safeReason(value) {
   return text && /^[a-zA-Z0-9_.:-]+$/.test(text) ? text : null;
 }
 
+// A routed host's display name, as OpenRouter reports it ("Together",
+// "Google Vertex"): words, never free text.
+function safeHostName(value) {
+  const text = safeString(value, 80);
+  return text && /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(text) ? text : null;
+}
+
 function safeOpaqueId(value, max = 180) {
   const text = safeString(value, max);
   return text && /^[a-zA-Z0-9_.:-]+$/.test(text) ? text : null;
@@ -238,6 +245,9 @@ function normalizeDiagnostics(event = {}) {
     service_tier: enumOrNull(event.serviceTier, SERVICE_TIERS),
     requested_inference_region: safeReason(event.requestedInferenceRegion),
     inference_region: safeReason(event.inferenceRegion),
+    // The host OpenRouter routed the call to (its `provider`), which
+    // `provider` ('openrouter') cannot say (run five, 13 Oct 2026).
+    served_provider: safeHostName(event.servedProvider),
     reasoning_effort: enumOrNull(event.reasoningEffort, REASONING_EFFORTS),
     error_class: enumOrNull(event.errorClass, ERROR_CLASSES),
 
@@ -536,7 +546,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
 const CATEGORY_NAMES = Object.freeze([
   'request_mode', 'tool_choice_mode', 'output_format', 'thinking_mode',
   'requested_service_tier', 'service_tier', 'inference_region',
-  'requested_inference_region',
+  'requested_inference_region', 'served_provider',
   'reasoning_effort', 'error_class', 'usage_reset_detected',
   'turn_outcome', 'turn_error_code',
 ]);
