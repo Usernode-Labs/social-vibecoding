@@ -1008,7 +1008,7 @@ async function goOnFromKept(ctx, kept, { models, replay, budgets, base, branch }
       // Cut short by a restart, and not yet carried through
       // MAX_REVIEW_RESUMES of them: carried on from its saved state, with
       // the fix turn recovery followed when the review was waiting on it.
-      try { ctx.onStep?.('build'); } catch { /* a watcher never stops a trial */ }
+      try { ctx.onStep?.('review'); } catch { /* a watcher never stops a trial */ }
       const recoveredFix = done.recoveredFix && botReview.awaitsFix(done.review, done.recoveredFix) ? done.recoveredFix : null;
       ({ review: reviewed, sessionId: reviewSession } = await reviewKeptBuild(ctx, kept, {
         models, replay, budgets, base, branch, resumeFrom: done.review, recoveredFix,
@@ -1033,7 +1033,7 @@ async function goOnFromKept(ctx, kept, { models, replay, budgets, base, branch }
       }
       await kept.keep({ review: reviewed });
     } else {
-      try { ctx.onStep?.('build'); } catch { /* a watcher never stops a trial */ }
+      try { ctx.onStep?.('review'); } catch { /* a watcher never stops a trial */ }
       ({ review: reviewed, sessionId: reviewSession } = await reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branch }));
       reviewedNow = true;
     }

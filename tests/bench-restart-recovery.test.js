@@ -556,6 +556,14 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
       stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
       looks: { screenshots: 2, snapshots: 1, navigations: 2 },
     });
+    // What its transcript got before the restart: the turn's first two lines.
+    await pool.query(
+      `INSERT INTO bench_trial_lines (trial_id, at, step, kind, line) VALUES
+         ($1, NOW() - INTERVAL '1 hour', 'build', 'step', 'build'),
+         ($1, NOW() + INTERVAL '1 second', 'build', 'line', 'Using browser_navigate'),
+         ($1, NOW() + INTERVAL '2 seconds', 'build', 'line', 'Using mcp__playwright__browser_take_screenshot')`,
+      [fvb.id],
+    );
     // What the studio's watch showed when the platform went down.
     await pool.query('UPDATE bench_trials SET progress = $2::jsonb WHERE id = $1', [fvb.id, JSON.stringify({
       step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['OpenRouter request #3: still responding after 210s'],
@@ -587,6 +595,24 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(watched.lines[watched.lines.length - 1], 'Using mcp__playwright__browser_take_screenshot', 'its lines are the replay\'s');
     assert.deepEqual(watched.looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'counted on the step\'s opening counts');
     assert.deepEqual(row.checkpoint.skills, { invoked: [], read: ['frontend-design'] }, 'the skills it had reached for, kept for the next claim');
+    // Its transcript: the two lines it had, then the replay's other four, marked so.
+    const { rows: lines } = await pool.query('SELECT kind, line, replayed FROM bench_trial_lines WHERE trial_id = $1 ORDER BY id', [fvb.id]);
+    assert.deepEqual(lines.map((l) => [l.kind, l.replayed]), [
+      ['step', false], ['line', false], ['line', false], ['line', true], ['line', true], ['line', true], ['line', true],
+    ], 'none of the turn\'s lines twice, none lost');
+    assert.equal(lines[3].line, 'Using mcp__playwright__browser_take_screenshot');
+    const studio = require('../src/services/bench/studio');
+    const timeline = await studio.timelineOf(pool, fvb.id);
+    assert.equal(timeline.length, 1);
+    assert.deepEqual([timeline[0].step, timeline[0].lines, timeline[0].replayed], ['build', 6, 4]);
+    assert.ok(timeline[0].ms >= 3600_000, 'from its step\'s start to its last line');
+    const page = await studio.transcriptOf(pool, fvb.id, { limit: 4 });
+    assert.equal(page.total, 7);
+    assert.equal(page.lines.length, 4);
+    const rest = await studio.transcriptOf(pool, fvb.id, { after: page.next });
+    assert.equal(rest.lines.length, 3);
+    assert.equal(rest.next, null, 'the end');
+    assert.equal((await studio.transcriptOf(pool, fvb.id, { step: 'triage' })).lines.length, 0, 'one step\'s lines only');
     assert.ok(row.recovered_at);
     assert.deepEqual(outward, []);
   });

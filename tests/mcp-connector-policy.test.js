@@ -598,7 +598,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
 // refuses anybody who is not a full platform admin before it reads a thing.
 // They read builds, tasks and screenshots of every app, private ones
 // included, and a launch spends the platform's money.
-test('the studio\'s twenty-three connector routes are allowed, and every one is full-admin gated first', () => {
+test('the studio\'s twenty-four connector routes are allowed, and every one is full-admin gated first', () => {
   for (const [method, target] of [
     ['GET', '/api/bot-studio'],
     ['GET', '/api/bot-studio/gallery'],
@@ -619,6 +619,7 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
     ['POST', '/api/bot-studio/tasks/9/taste'],
     ['GET', '/api/bot-studio/runs/12/trials'],
     ['GET', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/trials/3/transcript'],
     ['GET', '/api/bot-studio/bot'],
     ['POST', '/api/bot-studio/bot/runs/5/rating'],
     ['GET', '/api/bot-studio/shots'],
@@ -642,7 +643,7 @@ test('the studio\'s twenty-three connector routes are allowed, and every one is 
   }
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
   const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
-  assert.equal(routes.length, 23);
+  assert.equal(routes.length, 24);
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }

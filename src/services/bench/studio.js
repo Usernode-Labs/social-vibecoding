@@ -633,6 +633,7 @@ function trialOut(row, { preview = null, grades = [], buildTurns = null } = {}) 
   const handBacks = Number(row.hand_backs) || 0;
   const firstStarted = row.first_started_at ? new Date(row.first_started_at).getTime() : null;
   const buildSpeed = Array.isArray(buildTurns) ? speed.buildSpeedOf(buildTurns, row) : undefined;
+  const planSpeed = Array.isArray(buildTurns) ? speed.planSpeedOf(buildTurns, row) : undefined;
   return {
     trialId: Number(row.id),
     runId: Number(row.run_id),
@@ -661,6 +662,8 @@ function trialOut(row, { preview = null, grades = [], buildTurns = null } = {}) 
     // recorded them) and what its review found, as numbers an arm's medians
     // are taken over (services/bench/speed.js).
     ...(buildSpeed !== undefined ? { buildSpeed } : {}),
+    // Its plan step (the spec turn) the same way, beside it.
+    ...(planSpeed !== undefined ? { planSpeed } : {}),
     reviewOutcome: speed.reviewOutcomeOf(parsed.review, { buildStartedAt: buildSpeed?.startedAt || null }),
     activity: Array.isArray(p.lines) ? p.lines.map((l) => clip(l, ACTIVITY_CHARS)) : [],
     skills: parsed.skills || p.skills || { invoked: [], read: [] },
@@ -1037,6 +1040,74 @@ async function trialRows(pool, runId) {
   };
 }
 
+// ── A trial's transcript ─────────────────────────────────────────────────
+
+const TRANSCRIPT_PAGE = 500;
+
+/**
+ * A trial's steps as its transcript recorded them (bench_trial_lines): each
+ * step it reached, in order, with when it began (its `step` row, or its
+ * first line), when its last line came, how long that was and how many lines
+ * it reported. A step reached again (a claim after a restart) is a second
+ * entry. Null for a trial with no transcript (one from before 13 Oct 2026).
+ */
+async function timelineOf(pool, trialId) {
+  const { rows } = await pool.query(
+    `SELECT step, kind, at, replayed FROM bench_trial_lines WHERE trial_id = $1 ORDER BY id`,
+    [Number(trialId)],
+  );
+  if (!rows.length) return null;
+  const out = [];
+  let cur = null;
+  for (const r of rows) {
+    const step = r.step || null;
+    if (!cur || r.kind === 'step' || step !== cur.step) {
+      cur = { step, from: iso(r.at), to: iso(r.at), lines: 0, replayed: 0 };
+      out.push(cur);
+    }
+    cur.to = iso(r.at);
+    if (r.kind === 'line') {
+      cur.lines += 1;
+      if (r.replayed) cur.replayed += 1;
+    }
+  }
+  return out.map((e, i) => {
+    // A step runs until the next one begins; the last, until its last line.
+    const end = out[i + 1] ? out[i + 1].from : e.to;
+    return { ...e, to: end, ms: Math.max(0, Date.parse(end) - Date.parse(e.from)) };
+  });
+}
+
+/**
+ * A page of a trial's transcript, oldest first: up to `limit` lines (500 at
+ * most) after the cursor `after` (a line's id), of one `step` when given,
+ * each { id, at, step, kind, line, replayed }; `next` is the cursor for the
+ * page after, null at the end; `total` the trial's lines in all.
+ */
+async function transcriptOf(pool, trialId, { step = null, after = null, limit = TRANSCRIPT_PAGE } = {}) {
+  const { rows: [trial] } = await pool.query('SELECT id FROM bench_trials WHERE id = $1', [Number(trialId)]);
+  if (!trial) return httpError(404, 'No such trial');
+  const n = Math.min(Math.max(Number(limit) || TRANSCRIPT_PAGE, 1), TRANSCRIPT_PAGE);
+  const from = Number.isSafeInteger(Number(after)) && Number(after) > 0 ? Number(after) : 0;
+  const stepName = typeof step === 'string' && /^[a-z_]{1,16}$/.test(step) ? step : null;
+  const { rows } = await pool.query(
+    `SELECT id::text AS id, at, step, kind, line, replayed FROM bench_trial_lines
+      WHERE trial_id = $1 AND id > $2::bigint AND ($3::text IS NULL OR step = $3::text)
+      ORDER BY id LIMIT $4`,
+    [Number(trialId), from, stepName, n + 1],
+  );
+  const { rows: [count] } = await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(trialId)]);
+  const page = rows.slice(0, n);
+  return {
+    ok: true,
+    trialId: Number(trialId),
+    step: stepName,
+    total: Number(count?.n) || 0,
+    lines: page.map((r) => ({ id: Number(r.id), at: iso(r.at), step: r.step || null, kind: r.kind, line: r.line, replayed: !!r.replayed })),
+    next: rows.length > n ? Number(page[page.length - 1].id) : null,
+  };
+}
+
 /**
  * One trial in full: its brief, arm, what the triage said and planned, its
  * spec (whole up to TRIAL_SPEC_CHARS, and its drawn screens' sizes), what
@@ -1106,6 +1177,10 @@ async function trialDetail(pool, trialId, { images = false } = {}) {
     changedFiles: Array.isArray(row.changed_files?.files) ? row.changed_files.files.slice(0, 200).map((f) => f.filename || f) : null,
     checks: row.capture ? grading.tasteSignals(row.capture) : null,
     bootError: row.capture && row.capture.booted === false ? clip(row.capture.error || 'did not boot', 400) : null,
+    // Its steps as its transcript recorded them, and how many lines that
+    // holds (transcriptOf pages through them).
+    timeline: await timelineOf(pool, row.id),
+    transcriptLines: Number((await pool.query('SELECT COUNT(*)::int AS n FROM bench_trial_lines WHERE trial_id = $1', [Number(row.id)])).rows[0]?.n) || 0,
   };
   if (images && row.capture) {
     const picked = capture.pickShots(row.capture).chosen;
@@ -1315,6 +1390,8 @@ async function listStudioRuns(pool, { limit = 20 } = {}) {
 }
 
 module.exports = {
+  timelineOf,
+  transcriptOf,
   SUITE_NAME,
   HOST_KEY,
   TODAY,
