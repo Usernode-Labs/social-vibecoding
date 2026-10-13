@@ -671,8 +671,9 @@ async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = 
  */
 function goesOnAfterRestart(row) {
   if (!row || row.reference_label) return false;
-  // A build's too, since 13 Oct 2026: its spec is kept (runner.replayBuildStage).
-  return row.stage === 'first_version' || row.stage === 'build';
+  // A build's too, since 13 Oct 2026: its spec is kept (runner.replayBuildStage);
+  // and a DM conversation's, each turn it finished (dm-sim.js dmStage).
+  return row.stage === 'first_version' || row.stage === 'build' || row.stage === 'dm';
 }
 
 /**
@@ -714,7 +715,7 @@ async function saveCheckpoint(pool, trialId, part) {
  */
 function stepsKept(checkpoint) {
   const cp = checkpoint || {};
-  const parts = ['triage', 'spec', 'build', 'review'].filter((k) => cp[k]).length;
+  const parts = ['triage', 'spec', 'build', 'review'].filter((k) => cp[k]).length + (Number(cp.dm?.turns) || 0);
   const rounds = Array.isArray(cp.review?.rounds) ? cp.review.rounds : [];
   const reviewSteps = (cp.review?.round0 ? 1 : 0) + rounds.filter((r) => r && r.verdict).length + rounds.filter((r) => r && r.fix).length;
   return parts + reviewSteps + (cp.recoveredFix ? 1 : 0);
@@ -723,7 +724,8 @@ function stepsKept(checkpoint) {
 /** The sessions whose work a trial's checkpoint keeps: its triage, spec, build and review. Pure. */
 function keptSessions(checkpoint) {
   const cp = checkpoint || {};
-  return new Set([cp.triage?.session_id, cp.spec?.sessionId, cp.build?.sessionId, cp.reviewSessionId].filter(Boolean).map(Number));
+  const dmSessions = Array.isArray(cp.dm?.sessionIds) ? cp.dm.sessionIds : [];
+  return new Set([cp.triage?.session_id, cp.spec?.sessionId, cp.build?.sessionId, cp.reviewSessionId, ...dmSessions].filter(Boolean).map(Number));
 }
 
 /**
