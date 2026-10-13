@@ -295,21 +295,13 @@ export function HomeScreen() {
           <AppsMore />
         </section>
         {/*
-            A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
-            link let them into their group's apps, and this is where they join
-            the waitlist to make their own. Nothing in the prerender; it draws
-            once the shell knows who is signed in. Their Home has no
-            Challenges (src/routes/home-panels.js leaves it out).
-        */}
-        <WaitlistCard />
-        {/*
-            "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
-            verified-identity rule holds to it adds a phone here, or links
-            GitHub and X. Nothing in the prerender, like the card above.
-        */}
-        <VerifyCard />
-        {/*
-            ── AREAS 2-3: DISCOVER, CHALLENGES ────────────────────────
+            ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
+
+            Discover moved up (#4937): it follows the launcher directly, so
+            the community cards are on the first screen instead of a scroll
+            below two cards that most viewers had already settled. The
+            launcher's cap (Home.APPS_VIEWPORT_FRACTION, now a half) leaves
+            the rail peeking under "Show all N apps".
 
             These were WIDGETS until THE UI OVERHAUL — draggable blocks
             placed on the launcher canvas alongside the app tiles, each with
@@ -347,6 +339,20 @@ export function HomeScreen() {
             the other.
         */}
         <DiscoverSection />
+        {/*
+            A PRIVATE MEMBER'S WAITLIST CARD (./waitlist-card.tsx): an invite
+            link let them into their group's apps, and this is where they join
+            the waitlist to make their own. Nothing in the prerender; it draws
+            once the shell knows who is signed in. Their Home has no
+            Challenges (src/routes/home-panels.js leaves it out).
+        */}
+        <WaitlistCard />
+        {/*
+            "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
+            verified-identity rule holds to it adds a phone here, or links
+            GitHub and X. Nothing in the prerender, like the card above.
+        */}
+        <VerifyCard />
         <ChallengesSection />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth

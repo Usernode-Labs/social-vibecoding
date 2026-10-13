@@ -789,15 +789,22 @@ const HomePanels = {
     if (app.icon_url) icon = { kind: 'image', src: app.icon_url };
     else if (app.icon_emoji) icon = { kind: 'emoji', emoji: app.icon_emoji };
     else icon = { kind: 'letter', letter: String(app.name || '?').charAt(0).toUpperCase() };
+    const blurb = HomePanels.appBlurb(app);
     return {
       slug: app.slug,
       name: String(app.name || ''),
       status: String(app.status || ''),
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
+      joined: !!(window.Home && Home.isJoined && Home.isJoined(app)),
       icon,
       illustration: app.featured_illustration || null,
-      blurb: HomePanels.appBlurb(app),
+      blurb,
+      // The facts line is the fallback for a missing description, never a
+      // second line under one — the sentence and the same facts again is
+      // noise on a 152px card.
+      meta: blurb ? null
+        : (window.Home && Home.discoverMetaLine && Home.discoverMetaLine(app)) || null,
       contributors: Number(app.contributor_count) || 0,
     };
   },
