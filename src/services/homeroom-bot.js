@@ -5813,10 +5813,11 @@ async function reviewRecoveredBuild({
         temporary: true, onProgress: () => {},
       });
     }
+    const tweaks = botConfigs().tweaksOf(recipe);
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
       deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)),
-      firstVersion: true,
+      firstVersion: true, tweaks,
     });
     log.info('homeroom-bot', resuming
       ? 'Carrying on a review a restart cut short'
@@ -5843,6 +5844,7 @@ async function reviewRecoveredBuild({
         }),
         onProgress: null,
         locale: requester?.locale || null,
+        tweaks,
         start: resuming ? {
           sha: resumeFrom.round0?.sha || resumeFrom.finalSha || null,
           commits: Number(resumeFrom.round0?.commits ?? resumeFrom.finalCommits) || 0,
@@ -9335,6 +9337,8 @@ async function buildLive({
         review,
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
+        // Build speed: the configuration's tweaks, a first version's only.
+        ...(firstVersion ? { tweaks: botConfigs().tweaksOf(recipe) } : {}),
       } : {}),
       // #4662: a kept plan's screens ride along whatever the build: a
       // recovered build publishes its plan whole, as a fresh one does.

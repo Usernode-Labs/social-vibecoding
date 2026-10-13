@@ -1062,6 +1062,18 @@ function noteCodingProviderImages(images, state) {
   state.imagePrunedCount = (state.imagePrunedCount || 0) + count(images.pruned);
 }
 
+// What one request under LEAN_TURNS cut of older browser and shell output
+// (claude-openrouter-request.js pruneStaleToolOutput): how many results it
+// shortened and how many characters it left out, summed over the turn's
+// requests the way images are. A turn without the tweak reports none, and
+// its fields stay null.
+function noteCodingProviderToolOutput(toolOutput, state) {
+  if (!toolOutput || typeof toolOutput !== 'object') return;
+  const count = (n, max) => (Number.isSafeInteger(n) && n >= 0 && n <= max ? n : 0);
+  state.toolOutputPrunedCount = (state.toolOutputPrunedCount || 0) + count(toolOutput.pruned, 100_000);
+  state.toolOutputPrunedChars = (state.toolOutputPrunedChars || 0) + count(toolOutput.chars, 1_000_000_000);
+}
+
 // The text blocks a Claude turn wrote since its last tool call, oldest
 // first: its final answer, when that answer came in more than one message.
 // Claude Code continues an answer cut at the output-token limit in a new
@@ -1348,6 +1360,7 @@ function observeCodingProviderResult(event, ordinal, onProgress, state) {
   }
   noteCodingProviderUsage(event.usage, state);
   noteCodingProviderImages(event.images, state);
+  noteCodingProviderToolOutput(event.toolOutput, state);
   const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
   if (!failed) return;
   state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
@@ -1408,10 +1421,11 @@ function observeCodingProviderTiming(event, onProgress, state) {
     const payloadBytes = codingProviderCount(event.payloadBytes, 64 * 1024 * 1024);
     const inputBytes = codingProviderCount(event.inputBytes, 64 * 1024 * 1024);
     const instructionBytes = codingProviderCount(event.instructionBytes, 64 * 1024 * 1024);
+    const toolBytes = codingProviderCount(event.toolBytes, 64 * 1024 * 1024);
     const inputItems = codingProviderCount(event.inputItems, 1_000_000);
     const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
     const linked = event.previousResponseLinked;
-    noteRequestSize(state, { payloadBytes, inputBytes, instructionBytes, inputItems });
+    noteRequestSize(state, { payloadBytes, inputBytes, instructionBytes, toolBytes, inputItems });
     if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
         && typeof linked === 'boolean') {
       const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
@@ -1480,6 +1494,8 @@ function noteRequestSize(state, size) {
   const kept = {
     payloadBytes: size.payloadBytes, inputBytes: size.inputBytes,
     instructionBytes: size.instructionBytes, inputItems: size.inputItems,
+    // A listener that does not say (Codex's, an older image) leaves it out.
+    ...(size.toolBytes != null ? { toolBytes: size.toolBytes } : {}),
   };
   if (!state.firstRequestSize) state.firstRequestSize = kept;
   state.lastRequestSize = kept;
@@ -1795,6 +1811,10 @@ function newWatchState() {
     imageMovedCount: null,
     imageOmittedCount: null,
     imagePrunedCount: null,
+    // Under a first version's lean_turns tweak only
+    // (noteCodingProviderToolOutput).
+    toolOutputPrunedCount: null,
+    toolOutputPrunedChars: null,
     // What the first and last model requests carried (noteRequestSize), and
     // the tools called in order (noteToolSequence): unknown until seen.
     firstRequestSize: null,
@@ -3354,6 +3374,13 @@ async function execInWorker(sessionId, {
   // narrowed to the platform conventions, no web or notebook tools. Anything
   // else is an ordinary build.
   buildProfile = null,
+  // A first version's build under its configuration's `lean_turns` tweak
+  // (bot-configs.js TWEAKS): run-cc.sh leaves out the tools such a build
+  // never needs, and Claude Code's request adapter cuts stale browser and
+  // shell output from what each model call re-sends
+  // (claude-openrouter-request.js pruneStaleToolOutput). LEAN_TURNS=1, for
+  // a first version's build that Claude Code runs, and nothing else.
+  leanTurns = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3765,6 +3792,7 @@ async function execInWorker(sessionId, {
     }
   }
   if (buildProfile === 'first_version' && mode === 'build') safeEnv.BUILD_PROFILE = 'first_version';
+  if (leanTurns === true && buildProfile === 'first_version' && mode === 'build' && runsClaude) safeEnv.LEAN_TURNS = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -4804,6 +4832,59 @@ async function keepPartialWork(sessionId, { branchName, commitMsg = 'Homeroom bo
   }
 }
 
+// Build speed item 2 (a first version's `starter_inline` tweak,
+// homeroom-bot-live.js starterLines): run four's build spent 3.8 minutes
+// before its first file change, 14 reads of 8 files among it, on a starter
+// it could have been handed. So the platform reads the build's checkout
+// once, before its turn: every tracked file's path, size and lines, and the
+// text of each small one, in one exec. The prompt chooses what to show.
+const REPO_SNAPSHOT_MAX_FILE_BYTES = 48 * 1024;
+const REPO_SNAPSHOT_MAX_TOTAL_BYTES = 384 * 1024;
+const REPO_SNAPSHOT_MAX_FILES = 400;
+
+// The node script run in the worker's checkout. It prints one JSON line:
+// { files: [{ path, bytes, lines, text? }] }, text only for a file at most
+// maxFile bytes that decodes as UTF-8 with no NUL, while the total stays
+// under maxTotal. Pure (a string).
+function repoSnapshotScript({ maxFile = REPO_SNAPSHOT_MAX_FILE_BYTES, maxTotal = REPO_SNAPSHOT_MAX_TOTAL_BYTES, maxFiles = REPO_SNAPSHOT_MAX_FILES } = {}) {
+  return [
+    "const fs = require('fs');",
+    "const { execFileSync } = require('child_process');",
+    "const paths = execFileSync('git', ['ls-files', '-z'], { maxBuffer: 8 * 1024 * 1024 }).toString('utf8').split('\\0').filter(Boolean);",
+    `const maxFile = ${Number(maxFile)}; const maxTotal = ${Number(maxTotal)};`,
+    // What no build reads, so its text never takes room from what it does.
+    "const skip = /(^|\\/)(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|LICENSE[^/]*)$|(^|\\/)vendor\\//i;",
+    'let total = 0; const files = [];',
+    `for (const p of paths.slice(0, ${Number(maxFiles)})) {`,
+    '  let buf; try { buf = fs.readFileSync(p); } catch { continue; }',
+    "  const f = { path: p, bytes: buf.length, lines: buf.length ? buf.toString('utf8').split('\\n').length : 0 };",
+    "  if (!skip.test(p) && buf.length <= maxFile && !buf.includes(0) && total + buf.length <= maxTotal) { f.text = buf.toString('utf8'); total += buf.length; }",
+    '  files.push(f);',
+    '}',
+    "process.stdout.write(JSON.stringify({ files, more: Math.max(0, paths.length - files.length) }) + '\\n');",
+  ].join('\n');
+}
+
+/**
+ * The build's checkout as it stands: { files: [{ path, bytes, lines, text? }],
+ * more } (repoSnapshotScript), or null when it could not be read. Outside any
+ * agent turn: nothing is written. Never throws.
+ */
+async function readRepoSnapshot(sessionId, { timeoutMs = 30000 } = {}) {
+  const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
+  try {
+    const { stdout } = await execWorkerCommand(containerName, [
+      'sh', '-c', `cd /home/node/workspace && exec node -e ${shellQuote(repoSnapshotScript())}`,
+    ], null, { timeoutMs, maxBuffer: 2 * REPO_SNAPSHOT_MAX_TOTAL_BYTES + 512 * 1024 });
+    const line = String(stdout || '').trim().split('\n').pop();
+    const parsed = JSON.parse(line);
+    return parsed && Array.isArray(parsed.files) ? parsed : null;
+  } catch (err) {
+    log.warn('worker', 'Could not read the build\'s checkout for its prompt', { sessionId, err: String(err.message || err).slice(0, 200) });
+    return null;
+  }
+}
+
 // #3737: the benchmark's screenshot step (services/bench/capture.js). The
 // platform's own script is written into the worker (never baked into its
 // image, so the step is the platform's current one) and run there with
@@ -5725,6 +5806,8 @@ module.exports = {
   unpushedCommit,
   rescueUnpushedCommit,
   keepPartialWork,
+  readRepoSnapshot,
+  repoSnapshotScript,
   buildPartialCommitScript,
   parsePartialCommit,
   mintWorkerJwt,

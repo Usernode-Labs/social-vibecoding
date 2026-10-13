@@ -334,6 +334,11 @@ function normalizeDiagnostics(event = {}) {
     image_moved_count: tokenCount(event.imageMovedCount),
     image_omitted_count: tokenCount(event.imageOmittedCount),
     image_pruned_count: tokenCount(event.imagePrunedCount),
+    // Under a first version's lean_turns tweak (worker.js
+    // noteCodingProviderToolOutput): the older browser and shell results its
+    // requests shortened, and the characters they left out.
+    tool_output_pruned_count: tokenCount(event.toolOutputPrunedCount),
+    tool_output_pruned_chars: tokenCount(event.toolOutputPrunedChars),
     // Where an OpenRouter coding turn's time went (worker.js
     // noteCodingRequestClock): the time a model request was open, the time
     // between requests split by the kind of tool that ran in it, and when
@@ -383,6 +388,8 @@ function requestSizeFields(prefix, size) {
     [`${prefix}_input_bytes`]: tokenCount(size.inputBytes),
     [`${prefix}_instruction_bytes`]: tokenCount(size.instructionBytes),
     [`${prefix}_input_items`]: tokenCount(size.inputItems),
+    // Claude Code's adapter says what the tool definitions weigh.
+    ...(size.toolBytes != null ? { [`${prefix}_tool_bytes`]: tokenCount(size.toolBytes) } : {}),
   };
 }
 

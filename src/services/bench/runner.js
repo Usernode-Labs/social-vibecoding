@@ -625,6 +625,8 @@ async function buildStage(ctx) {
     // studioContext): which CLI each model runs in, and its review.
     ...(ctx.harnessOf ? { harnessOf: ctx.harnessOf } : {}),
     ...(ctx.reviewer ? { review: { reviewer: ctx.reviewer, owner: { trialId: trial.id }, onState: ctx.onReviewState || null } } : {}),
+    // And its build-speed tweaks (bot-configs.js TWEAKS), a first version's.
+    ...(ctx.tweaks?.length ? { tweaks: ctx.tweaks } : {}),
   });
   if (ctx.onBuilt) {
     try { await ctx.onBuilt({ ...built, sight }); } catch { /* a checkpoint never stops a trial */ }
@@ -823,8 +825,9 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
       runBuildTurn: live.buildTurnRunner({
         pool, config, bot: user, session, model: models.build, branchName: branch, containerName, deps: turnDeps,
         harness: ctx.harnessOf ? ctx.harnessOf(models.build, config) : 'auto', telemetry: TELEMETRY, onProgress: ctx.onActivity || null,
-        firstVersion: true,
+        firstVersion: true, tweaks: ctx.tweaks || [],
       }),
+      tweaks: ctx.tweaks || [],
       turnBudgetMs: budgets.buildMs,
       readsImages,
       platformRepo: !!replay.extra?.platformRepo,
