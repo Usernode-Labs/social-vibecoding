@@ -312,7 +312,10 @@ test('a restart follows a side build\'s turns and its next claim goes on from wh
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version', bot_config_version_id: 13 }), true);
   assert.equal(lanes.goesOnAfterRestart({ stage: 'build', bot_config_version_id: 22 }), true, 'a later change\'s');
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version' }), true, 'a studio first version, as before');
-  assert.equal(lanes.goesOnAfterRestart({ stage: 'build' }), false, 'a benchmark build is finished from its last turn instead');
+  assert.equal(lanes.goesOnAfterRestart({ stage: 'build' }), true, 'a benchmark build keeps its spec too (since 13 Oct 2026)');
+  assert.equal(lanes.handsBack({ stage: 'build' }, { mode: 'scout' }), true, 'its spec turn is kept and the trial handed back');
+  assert.equal(lanes.handsBack({ stage: 'build' }, { mode: 'build' }), false, 'its build turn, its last, is finished from the turn');
+  assert.equal(lanes.handsBack({ stage: 'build', bot_config_version_id: 22 }, { mode: 'build' }), true, 'a side build\'s is kept');
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version', reference_label: 'cc' }), false, 'a reference build has no turns');
 
   // Which turn it is: a side build has no triage, so its one scout turn is

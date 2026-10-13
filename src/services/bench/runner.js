@@ -610,8 +610,8 @@ async function buildStage(ctx) {
       github: deps.github,
     },
     // Never proposed, never posted: no ceiling, no votes router, and no
-    // onSpec but a first version's or a side build's, which keeps the spec on
-    // its trial for a restart to go on from (firstVersionStage, buildSideNow).
+    // onSpec but the one that keeps the spec on its trial for a restart to go
+    // on from (keepAsItLands: a first version's, a side build's, a build's).
     propose: false,
     onSpec: ctx.onSpecWritten ? ({ sessionId: id, specMd, turnId }) => ctx.onSpecWritten({ sessionId: id, specMd, turnId }) : null,
     proposalCeiling: null,
@@ -1144,6 +1144,51 @@ async function sideBuildStage(ctx) {
 }
 
 /**
+ * A BUILD task's trial (a recorded build replayed on a candidate model): its
+ * spec and build turns (buildStage), each kept as it lands (keepAsItLands),
+ * so a restart in its spec turn goes on from the spec rather than writing
+ * it again, as a live build goes on from a kept plan (homeroom-bot.js
+ * resumeLiveBuildFromSpec). Until 13 Oct 2026 that turn was abandoned and
+ * the whole trial run again, a claim spent. Its build turn a restart caught
+ * is finished by recovery as before (lane.finishRecoveredTrial); a build
+ * that landed before a restart that came after it is read as it stands.
+ */
+async function replayBuildStage(ctx) {
+  const { pool, snapshot, deps, repo, trial } = ctx;
+  const kept = keptOf(ctx);
+  const { done } = kept;
+  const branch = branchFor(trial);
+  const models = { spec: ctx.specModel || ctx.model, build: ctx.model };
+  let built;
+  if (kept.wasBuilt || done.spec?.blocked) {
+    const was = await keptCosts(pool, kept.wasBuilt || blockedBuildOf(done.spec), done, models);
+    built = await buildResult({
+      built: was, base: snapshot.baseSha || null, branch, sessionId: was.sessionId, deps, repo, task: ctx.task, trial,
+    });
+    const sight = was.sight || done.sight;
+    if (sight) built.parsed = { ...(built.parsed || {}), sight };
+  } else {
+    if (done.spec) {
+      // An earlier claim's branch goes first, with anything a build the
+      // restart lost pushed to it: the build cuts it at its base again.
+      try {
+        await deps.github.deleteBenchBranch(repo.owner, repo.repo, branch);
+      } catch (err) {
+        return { status: 'infra_fail', error: `branch: ${err.message}` };
+      }
+    }
+    built = await buildStage({ ...ctx, presetSpec: done.spec?.specMd || null, ...keepAsItLands(ctx, kept) });
+  }
+  built = await withKeptSpecCost(pool, built, done, models.spec);
+  const ids = sideSessionIds(done, built.session_id);
+  return {
+    ...built,
+    ...(ids.length > 1 ? { session_ids: ids } : {}),
+    ...(Number(done.handBacks) > 0 ? { parsed: { ...(built.parsed || {}), resumedAfterRestart: Number(done.handBacks) } } : {}),
+  };
+}
+
+/**
  * A SIDE BUILD of a LATER change (services/bot-configs.js spawnSideBuilds,
  * scope `later`): one configuration's spec and build of the request the
  * bot's own build (live or shadow) is building, on the project's own
@@ -1165,7 +1210,9 @@ async function laterSideBuildStage(ctx) {
   const { done } = kept;
   let built;
   if (kept.wasBuilt || done.spec?.blocked) {
-    const was = kept.wasBuilt || blockedBuildOf(done.spec);
+    // With what its stages cost (keptCosts: a build turn recovery followed
+    // names none of its own).
+    const was = await keptCosts(pool, kept.wasBuilt || blockedBuildOf(done.spec), done, models);
     built = await buildResult({
       built: was, base: snapshot.baseSha, branch: branchFor(trial), sessionId: was.sessionId, deps, repo, task: ctx.task, trial,
     });
@@ -1595,8 +1642,9 @@ async function referenceStage(ctx) {
 const STAGE_RUNNERS = Object.freeze({
   triage: triageStage,
   spec: specStage,
-  // A side build of a later change replays its plan (laterSideBuildStage).
-  build: (ctx) => (ctx.sideBuild ? laterSideBuildStage(ctx) : buildStage(ctx)),
+  // A side build of a later change replays its plan (laterSideBuildStage);
+  // any other build keeps its spec for a restart to go on from.
+  build: (ctx) => (ctx.sideBuild ? laterSideBuildStage(ctx) : replayBuildStage(ctx)),
   followup: (ctx) => followupStage(ctx, 'followup'),
   checks_fix: (ctx) => followupStage(ctx, 'checks_fix'),
   // A DM task is a conversation of triage turns (services/bench/dm-sim.js).
@@ -1631,7 +1679,10 @@ function resumableTurn(stage, activeTurn, { reference = false, side = false } = 
   if (!activeTurn) return false;
   if (side) return (stage === 'first_version' || stage === 'build') && (activeTurn.mode === 'scout' || activeTurn.mode === 'build');
   if (stage === 'triage' || stage === 'followup' || stage === 'checks_fix') return true;
-  if (stage === 'build') return activeTurn.mode === 'build';
+  // A spec task's one turn; a build's spec turn too, kept for its next
+  // claim to build from (replayBuildStage), and its build turn finished.
+  if (stage === 'spec') return activeTurn.mode === 'scout';
+  if (stage === 'build') return activeTurn.mode === 'scout' || activeTurn.mode === 'build';
   if (stage === 'first_version') return !reference && (activeTurn.mode === 'scout' || activeTurn.mode === 'build');
   return false;
 }
@@ -1713,7 +1764,21 @@ async function recoverStage({
     const out = { session_id: session.id, base_sha: base, build_branch: br, ...turnFields(turn) };
     return followupResult({ turn, out, mode, base, branch: br, repo, deps });
   }
-  // The build turn. The spec turn before it stored its spec on the session.
+  if (stage === 'spec') {
+    // Read as specStage reads draftSpec's answer.
+    const out = { session_id: session.id, base_sha: baseSha || snapshot.baseSha || null, build_branch: br, cost_usd: null };
+    if (timedOut) return { ...out, status: 'timeout', error: `the spec ran past its time limit${RECOVERED_NOTE}` };
+    const live = require('../homeroom-bot-live');
+    const r = result || {};
+    const read = live.readSpec(r.lastResultText, { parts: r.answerParts });
+    if (read.ok) return { ...out, status: 'ok', raw_output: rawOf(read.specMd), parsed: { spec: read.specMd } };
+    if (read.blocked) return { ...out, status: 'ok', parsed: { blocked: read.blocked }, raw_output: rawOf(`BLOCKED: ${read.blocked}`) };
+    const failed = live.failedClaudeTurn(r);
+    return { ...out, status: 'model_fail', error: failed ? `the spec turn failed (${failed})${RECOVERED_NOTE}` : `no spec${RECOVERED_NOTE}` };
+  }
+  // The build turn. The spec turn before it stored its spec on the session;
+  // a build's spec turn itself is kept, not finished (lane.handBackTrial).
+  if (activeTurn.mode !== 'build') return null;
   if (!baseSha) throw new Error('the build has no base on record');
   const built = recoveredBuild({ session, result, timedOut });
   return buildResult({ built, base: baseSha, branch: br, sessionId: session.id, deps, repo, task, trial });
@@ -1883,6 +1948,7 @@ module.exports = {
   firstVersionStage,
   sideBuildStage,
   laterSideBuildStage,
+  replayBuildStage,
   settleCutShortReview,
   reviewerCost,
   firstVersionModels,

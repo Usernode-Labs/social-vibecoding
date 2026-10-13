@@ -671,8 +671,24 @@ async function noteSession(pool, trialId, sessionId, { baseSha = null, branch = 
  */
 function goesOnAfterRestart(row) {
   if (!row || row.reference_label) return false;
-  if (row.bot_config_version_id) return row.stage === 'first_version' || row.stage === 'build';
-  return row.stage === 'first_version';
+  // A build's too, since 13 Oct 2026: its spec is kept (runner.replayBuildStage).
+  return row.stage === 'first_version' || row.stage === 'build';
+}
+
+/**
+ * Whether a recovered turn is kept and its trial handed back to go on
+ * (handBackTrial), rather than finished here: any turn of a trial that goes
+ * on after a restart, but a plain build's build turn, which is its last
+ * and is finished as it always was (runner.recoverStage). Pure.
+ */
+function handsBack(row, activeTurn) {
+  if (!goesOnAfterRestart(row)) return false;
+  return !(row.stage === 'build' && !row.bot_config_version_id && activeTurn?.mode === 'build');
+}
+
+/** Whether a trial's turns are told apart as a side build's (runner.sideTurnOf: no triage). Pure. */
+function turnsAsSide(row) {
+  return !!row?.bot_config_version_id || row?.stage === 'build';
 }
 
 /**
@@ -1308,7 +1324,9 @@ async function turnDeadline(pool, config, session, activeTurn) {
   const settings = await bot.readSettings(pool);
   const app = { repo_url: plan.trial.repo_url, self_hosted: plan.trial.self_hosted };
   const budgets = runner.budgetsFor(settings, app, config, plan.trial.stage);
-  if (plan.trial.bot_config_version_id) return sideTurnDeadline(plan.trial, budgets, activeTurn, startedMs);
+  // A side build's, and a build's: its spec turn on the shorter of the
+  // build's and the spec's clocks (draftSpec), its build turn on the build's.
+  if (turnsAsSide(plan.trial)) return sideTurnDeadline(plan.trial, budgets, activeTurn, startedMs);
   if (plan.trial.stage === 'first_version') {
     // Each of its turns on the clock the live stage gave it: the triage a
     // turn's, the spec and the build a first version's (draftSpec takes
@@ -1322,7 +1340,9 @@ async function turnDeadline(pool, config, session, activeTurn) {
       : which === 'spec' ? Math.min(first.buildMs, first.specMs) : first.turnMs;
     return startedMs + ms;
   }
-  return startedMs + (plan.trial.stage === 'build' ? budgets.buildMs : budgets.turnMs);
+  // A spec task's turn on draftSpec's clock: the shorter of a turn's and the spec's.
+  if (plan.trial.stage === 'spec') return startedMs + Math.min(budgets.turnMs, budgets.specMs || budgets.turnMs);
+  return startedMs + budgets.turnMs;
 }
 
 /**
@@ -1416,8 +1436,19 @@ async function finishRecoveredTrial({
     }
     const row = plan.trial;
     if (!plan.resumable) throw new Error(`a ${row.stage} trial's ${activeTurn?.mode || 'unknown'} turn is not its last`);
-    if (goesOnAfterRestart(row)) return await handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines, watch, deps });
     const d = liveDeps(deps);
+    // A spec whose figure holds placeholders for the screens it saved gets
+    // them back off its worker, still running here, as the live path and
+    // live recovery do (homeroom-bot-live.js fillSavedScreens).
+    if (activeTurn?.mode === 'scout' && !timedOut) {
+      const worker = d.worker || require('../worker');
+      result = await require('../homeroom-bot-live').fillSavedScreens({
+        fvScreens: require('../first-version-screens'), screens: null, worker,
+        containerName: typeof worker.workerRuntimeName === 'function' ? worker.workerRuntimeName(Number(session.id)) : null,
+        result,
+      });
+    }
+    if (handsBack(row, activeTurn)) return await handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines, watch, deps });
     const bot = require('../homeroom-bot');
     const repo = bot.parseRepo(row.repo_url);
     if (!repo) throw new Error('the app has no GitHub repository');
@@ -1483,7 +1514,7 @@ function recoveredLooks(checkpoint, step, lines) {
  * when the trial was no longer on this session.
  */
 async function handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines = null, watch = null, deps }) {
-  const side = !!row.bot_config_version_id;
+  const side = turnsAsSide(row);
   const step = side
     ? runner.sideTurnOf(row.checkpoint, activeTurn)
     : runner.firstVersionTurnOf(row.checkpoint, session.id, activeTurn);
@@ -1830,6 +1861,7 @@ module.exports = {
   recordTrial,
   noteSession,
   goesOnAfterRestart,
+  handsBack,
   saveCheckpoint,
   stepsKept,
   keptSpend,

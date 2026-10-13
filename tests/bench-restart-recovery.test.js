@@ -303,21 +303,29 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row2.status, 'ok', 'recorded as the turn ended, not as a time-out');
   });
 
-  await t.test('a build\'s spec turn is abandoned and the trial is back in the queue at once, its spend charged', async () => {
+  await t.test('a build\'s spec turn is followed, its spec kept, and the trial handed back without spending a claim, its spend charged', async () => {
+    // Until 13 Oct 2026 it was stopped and abandoned, and the whole trial run again.
     reset();
     const { run, trials } = await launch(['build']);
     const trial = trials[0];
-    const sid = await newSession(turnOf('scout'));
+    const specTurn = turnOf('scout');
+    const sid = await newSession(specTurn);
     await claimAs(trial.id, sid);
     await spend(sid, 0.15);
+    journalTail = async () => ({ lastResultText: '# Pin the markers\n\nOne map with every marker on it.', exitCode: 0, resultSeen: true });
     await adopt(sid);
-    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'stopTurn', 'finishTurn', 'destroyWorker'],
-      'stopped and abandoned, never followed');
-    const row = await trialRow(trial.id);
-    assert.equal(row.status, 'pending');
+    assert.deepEqual(workerCalls.map((c) => c[0]), ['adoptWarmWorker', 'resume', 'finishTurn', 'destroyWorker'],
+      'followed to its end, never abandoned');
+    const { rows: [row] } = await pool.query(
+      'SELECT status, session_id, claims, checkpoint, interrupted_cost_usd::float8 AS interrupted FROM bench_trials WHERE id = $1', [trial.id],
+    );
+    assert.equal(row.status, 'pending', 'back in the queue, to build from its spec');
     assert.equal(row.session_id, null);
-    assert.equal(row.interrupted, 0.15);
-    assert.equal(await spent(run.id), 0.15);
+    assert.equal(row.claims, 0, 'the restart cost it no claim');
+    assert.equal(row.checkpoint.spec.specMd, '# Pin the markers\n\nOne map with every marker on it.');
+    assert.equal(row.checkpoint.spec.turnId, specTurn.turnId);
+    assert.equal(row.interrupted, 0, 'none of it thrown away');
+    assert.equal(await spent(run.id), 0.15, 'its spend charged to the run once');
     assert.deepEqual(debits, [15]);
     assert.equal((await sessionRow(sid)).status, 'archived');
     assert.deepEqual(outward, []);
@@ -327,6 +335,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     reset();
     const { trials } = await launch(['build']);
     const [twice, exited] = trials;
+    // Its spec turn followed, but nothing came of it to keep: the claim is spent.
     const s1 = await newSession(turnOf('scout'));
     await claimAs(twice.id, s1, { claims: 2 });
     await adopt(s1);
@@ -334,6 +343,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.status, 'infra_fail');
     assert.match(row.error, /restarted during it twice/);
 
+    workerCalls.length = 0;
     const s2 = await newSession(turnOf('build'));
     await claimAs(exited.id, s2);
     await adopt(s2, 'exited');
