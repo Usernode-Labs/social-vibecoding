@@ -798,6 +798,29 @@ const Home = {
     return layout;
   },
 
+  // THE DESKTOP STRIP'S PINNED PART (#4935): the apps in the layout's top
+  // row, in reading order, as display data the strip can draw without
+  // fetching anything. "Pinned" is the top row of My apps on purpose — the
+  // part people arrange and can see, favourites and own apps alike. Holes
+  // are skipped, and so is anything that is not on My apps (which covers the
+  // demo tiles: they are never favourites, so isYours drops them). Pure.
+  topRowApps(layout) {
+    const items = HomeLayout.canvasItems(layout || [])
+      .filter((it) => it && it.type === 'app' && it.row === 0);
+    const out = [];
+    for (const item of items) {
+      const app = (Home._apps || []).find((a) => a && a.slug === item.slug && Home.isYours(a));
+      if (!app) continue;
+      out.push({
+        slug: app.slug,
+        name: app.name || app.slug,
+        iconUrl: app.icon_url || null,
+        iconEmoji: app.icon_emoji || null,
+      });
+    }
+    return out;
+  },
+
   // One fetch per TTL, shared by concurrent callers — Home.load() runs from
   // a dozen WS/event paths and must not turn into a dozen requests.
   _ensureLayoutLoaded(opts) {
@@ -924,6 +947,20 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
+      // THE STRIP'S PINNED PART (#4935): every grid paint names the top row
+      // to the nav bridge, so the desktop strip leads with the same apps in
+      // the same order. Home is the one writer. A search render is a
+      // transient list of matches, not the shelf, so it publishes nothing —
+      // and neither do the offline and error states below. The bridge is
+      // optional (a vm test, a page before the nav island mounts): a missing
+      // or throwing one must not take the grid render down with it.
+      if (Home._appsLoaded) {
+        try {
+          window.UsernodeReact?.nav?.setPinnedApps?.(Home.topRowApps(layout));
+        } catch {
+          // The strip following Home is a convenience, never a dependency.
+        }
+      }
       // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
       // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
       // never on what a viewer may have or where they may put it: the canvas
