@@ -105,6 +105,13 @@ const DEFAULT_REPEATS = 3;
 // screenshots again.
 const SINGLE_ATTEMPT_STAGES = Object.freeze(['build', 'spec', 'capture']);
 const MAX_CLAIMS = 2;
+// A trial that goes on from its checkpoint may be put back this many times
+// by restarts that lost nothing (a capture, a review settled, a turn whose
+// worker was gone before it spent anything) without spending a claim, as a
+// live first version's review is carried on up to MAX_REVIEW_RESUMES times.
+// Until 13 Oct 2026 each spent one, so two restarts in its screenshot step
+// failed a trial whose build and review were kept.
+const MAX_FREE_RESTARTS = 3;
 const BRANCH_KEEP_DAYS = 7;
 // A side build's branch whose pair still waits for a pick is kept past
 // BRANCH_KEEP_DAYS, so the pair's compare link opens, but not for good: it
@@ -1086,11 +1093,12 @@ async function releaseStale(pool, settings) {
  * handBackRun): every session it opened is charged once, the part whose work
  * it keeps counted as its own and the rest as interrupted; the time this
  * claim ran is added to prior_ms; and a restart that cost it no kept work
- * (the checkpoint holds more sub-steps than at its last hand-back) does not
- * spend a claim, so only an interruption that loses work counts toward the
- * second that fails it.
+ * (the checkpoint holds more sub-steps than at its last hand-back), or that
+ * lost nothing at all (none of its spend thrown away: up to
+ * MAX_FREE_RESTARTS times), does not spend a claim, so only an interruption
+ * that loses work counts toward the second that fails it.
  */
-async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupted', deps = {} }) {
+async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupted', noTurnLost = false, deps = {} }) {
   const { rows: [held] } = await pool.query(
     `SELECT checkpoint FROM bench_trials
       WHERE id = $1 AND status = 'running' AND session_id IS NOT DISTINCT FROM $2::int`,
@@ -1106,10 +1114,18 @@ async function releaseTrial(pool, { trialId, sessionId = null, why = 'interrupte
     const spend = await unchargedSpend(pool, cp, { sessionIds: [sessionId] });
     ({ cost, interrupted } = spend);
     const kept = stepsKept(cp);
-    free = kept > (Number(cp.handedBackAt) || 0);
+    const progressed = kept > (Number(cp.handedBackAt) || 0);
+    // Nothing kept since, but nothing lost either: no turn thrown away (the
+    // caller knows: `noTurnLost`; a lost turn's spend may not be priced yet)
+    // and none of its spend. Free, a few times.
+    const lostNothing = !progressed && noTurnLost && !(interrupted > 0)
+      && (Number(cp.freeRestarts) || 0) < MAX_FREE_RESTARTS;
+    free = progressed || lostNothing;
     update = {
       charged: { ...(cp.charged || {}), ...spend.charged },
-      ...(free ? { handedBackAt: kept, handBacks: (Number(cp.handBacks) || 0) + 1 } : {}),
+      ...(progressed ? { handedBackAt: kept } : {}),
+      ...(lostNothing ? { freeRestarts: (Number(cp.freeRestarts) || 0) + 1 } : {}),
+      ...(free ? { handBacks: (Number(cp.handBacks) || 0) + 1 } : {}),
     };
   } else {
     const usage = sessionId ? await runner.sessionUsage(pool, sessionId).catch(() => null) : null;
@@ -1209,7 +1225,8 @@ async function releaseOrphaned(pool, deps = {}) {
   let n = 0;
   for (const r of rows) {
     // eslint-disable-next-line no-await-in-loop
-    if (await releaseTrial(pool, { trialId: r.id, sessionId: r.session_id, why: 'no process or turn holds it', deps })) n += 1;
+    // No turn left on its session: none was thrown away.
+    if (await releaseTrial(pool, { trialId: r.id, sessionId: r.session_id, why: 'no process or turn holds it', noTurnLost: true, deps })) n += 1;
   }
   return n;
 }
@@ -1501,7 +1518,8 @@ async function handBackTrial({ pool, row, session, activeTurn, result, timedOut,
     [Number(session.id)],
   ).catch(() => {});
   const status = await releaseTrial(pool, {
-    trialId: row.id, sessionId: session.id, deps,
+    // Its turn was followed to its end: lost only when it left nothing.
+    trialId: row.id, sessionId: session.id, deps, noTurnLost: !!(kept || recoveredFix),
     why: kept ? `its ${kept.step} finished after a restart and is kept`
       : recoveredFix ? 'its review\'s fix finished after a restart and is kept; the review goes on from it'
         : step === 'fix' ? 'its review\'s fix finished after a restart; the review goes on from its saved state'

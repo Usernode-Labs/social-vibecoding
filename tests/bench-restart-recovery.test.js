@@ -458,6 +458,40 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.ok(row.duration_ms >= 120000 + 359000, `its elapsed time counts every claim (${row.duration_ms})`);
   });
 
+  await t.test('a restart that lost nothing (its screenshot step, after a kept build and review) costs no claim, a few times over', async () => {
+    reset();
+    const fvc = await firstVersionTrial();
+    const triSid = await newSession(null);
+    const buildSid = await newSession(null);
+    await keep(fvc.id, {
+      triageSessionId: triSid, sessions: [triSid, buildSid],
+      triage: { status: 'ok', session_id: triSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+      spec: { sessionId: buildSid, specMd: SPEC },
+      build: { ok: true, sessionId: buildSid, sha: 'd'.repeat(40), commits: 2, specMd: SPEC },
+      handBacks: 1, handedBackAt: 3,
+    });
+    await spend(buildSid, 0.4);
+    for (let n = 1; n <= 4; n += 1) {
+      // Each claim only captures, on a session of its own that spends nothing.
+      // eslint-disable-next-line no-await-in-loop
+      const shotSid = await newSession(null);
+      // Its second claim each time.
+      // eslint-disable-next-line no-await-in-loop
+      await claimAs(fvc.id, shotSid, { claims: 2 });
+      // eslint-disable-next-line no-await-in-loop
+      await lane.releaseTrial(pool, { trialId: fvc.id, sessionId: shotSid, why: 'no process or turn holds it', noTurnLost: true });
+      // eslint-disable-next-line no-await-in-loop
+      const row = await fvRow(fvc.id);
+      if (n <= 3) {
+        assert.equal(row.status, 'pending', `restart ${n}: back to go on`);
+        assert.equal(row.claims, 1, `restart ${n}: nothing was lost, so the claim it took is given back`);
+        assert.equal(row.checkpoint.freeRestarts, n);
+      } else {
+        assert.equal(row.status, 'infra_fail', 'past MAX_FREE_RESTARTS a restart counts again, so one a run of them keeps catching ends');
+      }
+    }
+  });
+
   await t.test('a first version\'s triage turn is followed and its answer kept, on the triage\'s own clock', async () => {
     reset();
     const tri = await firstVersionTrial();
