@@ -308,6 +308,22 @@ function checkIssues(capture) {
 }
 
 /**
+ * What a capture's declared checks came to, as counts alone ({ total, ran,
+ * passed, failed }), or null for a capture that ran none. Round 0 keeps them
+ * beside its slim capture (slimCapture drops the checks), so whether a first
+ * build passed its own checks before any fix can be read back from a stored
+ * review (bench/speed.js reviewOutcomeOf). Pure.
+ */
+function checkCounts(capture) {
+  const d = capture?.declaredChecks;
+  if (!d || typeof d !== 'object') return null;
+  const ran = num(d.ran) || 0;
+  const passed = num(d.passed) || 0;
+  const listed = Array.isArray(d.failed) ? d.failed.length : 0;
+  return { total: num(d.total) || 0, ran, passed, failed: Math.max(listed, ran - passed) };
+}
+
+/**
  * The reviewer's answer with the capture's failing declared checks put first
  * (checkIssues): a `ship` with a failing check is a `fix`, and the reviewer's
  * own issues follow, MAX_ISSUES in all. Pure.
@@ -340,9 +356,8 @@ function issueLine(it, i) {
  * for six issues took twelve minutes, told to re-read the repository and to
  * make the build's whole visual sweep again. Pure.
  */
-function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
+function fixBrowserLines({ readsImages = false, issues = [], lean = false } = {}) {
   const live = require('./homeroom-bot-live');
-  const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
   const look = readsImages
     ? 'take a screenshot (`browser_take_screenshot`)'
     : 'walk it through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -352,7 +367,7 @@ function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
     '',
     'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
     'since your working tree is committed for you:',
-    IN_LOOP_BROWSER_GUIDANCE,
+    live.inLoopGuidance({ lean }),
     '- For you, in this fix turn, check ONLY what the issues name. Once your fixes are in, boot the app once and, for',
     `  each issue, open its screen at the size, look and state it names and ${look}. Fix what is still wrong there.`,
     '  Do not check other widths, looks or states, and do not run rounds of looking and polishing: the reviewer',
@@ -398,9 +413,13 @@ function fixPrompt({
   // L2: the runner holds the turn to the app's own declared checks
   // (homeroom-bot-live.js appChecksLines).
   appChecks = false,
+  // The configuration's build-speed tweaks (bot-configs.js TWEAKS): under
+  // `lean_turns` the checks are left to the gate here too.
+  tweaks = [],
 }) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
+  const lean = appChecks && Array.isArray(tweaks) && tweaks.includes('lean_turns');
   const list = issues.map(issueLine).join('\n');
   return [
     seed ? clip(seed, MAX_BRIEF_CHARS) : '',
@@ -428,8 +447,8 @@ function fixPrompt({
     buildContract.buildContractBlock({ heading: 'Make exactly these fixes, and nothing else:', commits: 'harness' }),
     ...live.requestRulesLines(),
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
-    ...fixBrowserLines({ readsImages, issues }),
-    ...(appChecks ? live.appChecksLines() : []),
+    ...fixBrowserLines({ readsImages, issues, lean }),
+    ...(appChecks ? live.appChecksLines({ lean }) : []),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
@@ -806,6 +825,7 @@ async function runReviewLoop({
       const sha0 = start.sha || state.finalSha || null;
       const first = await runCapture(0);
       const r0ms = num(first?.ms) || 0;
+      const r0checks = first?.ok ? checkCounts(first.capture) : null;
       state.round0 = {
         sha: sha0,
         commits: num(start.commits) ?? state.finalCommits ?? null,
@@ -814,6 +834,8 @@ async function runReviewLoop({
         captureError: first?.ok ? null : clip(first?.error || 'the capture failed', 300),
         costUsd: num(start.costUsd),
         activeMs: (num(start.activeMs) || 0) + r0ms,
+        // Whether the first build passed its own declared checks (checkCounts).
+        ...(r0checks ? { declaredChecks: r0checks } : {}),
       };
       if (!first?.ok) {
         stopWith(STOPS.captureError, first?.error);
@@ -1096,6 +1118,7 @@ module.exports = {
   parseReview,
   bootIssue,
   MAX_CHECK_ISSUES,
+  checkCounts,
   checkIssues,
   withCheckIssues,
   fixPrompt,

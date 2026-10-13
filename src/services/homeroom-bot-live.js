@@ -2006,7 +2006,12 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // took a median 36 minutes of a 40-minute clock, and one ran out of time
 // inside a browser check. So that build boots the app and does its main thing
 // once, at one width, and leaves the sweep to the review.
-function browserLines({ readsImages = false, clocked = false, reviewed = false } = {}) {
+//
+// Build speed item 1 (`oneLook`, a recipe's `one_look` tweak, bot-configs.js
+// TWEAKS): even so, the median build turn spent 40% of its time between its
+// first and last browser call, and the review still asked for fixes in 18 of
+// 21 runs. Under the tweak the build's check is one look, and it stops.
+function browserLines({ readsImages = false, clocked = false, reviewed = false, oneLook = false, lean = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -2018,8 +2023,8 @@ function browserLines({ readsImages = false, clocked = false, reviewed = false }
     'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
     'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
     'shows on:',
-    IN_LOOP_BROWSER_GUIDANCE,
-    ...(reviewed ? [
+    inLoopGuidance({ lean }),
+    ...(reviewed && oneLook ? oneLookLines({ readsImages }) : reviewed ? [
       '- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main',
       '  thing once (below), enough to know it runs and its main flow works, and fix what that shows is broken. Do not',
       '  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at',
@@ -2038,6 +2043,56 @@ function browserLines({ readsImages = false, clocked = false, reviewed = false }
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
     '  reload. Homeroom tries the same thing on its own copy before anybody is asked to approve the change.',
     ...DRAG_TEST_LINES,
+  ];
+}
+
+// The in-loop browser's own paragraph on running the declared checks by
+// hand (in-loop-browser.js), which a turn held to the checks gate under the
+// `lean_turns` tweak does not need: the gate runs them when it tries to end.
+const IN_LOOP_RUN_CHECKS_AT = '  - RUN THE DECLARED CHECKS IN-LOOP with';
+const LEAN_IN_LOOP_CHECKS = [
+  '  - THE DECLARED CHECKS run by themselves: when you try to finish, the platform boots a fresh copy of the app,',
+  '    signed in, runs every check `dapp.json` declares and sends you back with what failed. Do not run them by hand',
+  '    along the way.',
+].join('\n');
+
+/**
+ * The in-loop browser's guidance as a bot build reads it: as the dev chat
+ * has it, or under `lean_turns` without its paragraph on running the
+ * declared checks by hand (LEAN_IN_LOOP_CHECKS in its place). Throws if that
+ * paragraph is gone, so a rewrite of the guidance cannot silently keep it.
+ * Pure.
+ */
+function inLoopGuidance({ lean = false } = {}) {
+  if (!lean) return IN_LOOP_BROWSER_GUIDANCE;
+  const at = IN_LOOP_BROWSER_GUIDANCE.indexOf(IN_LOOP_RUN_CHECKS_AT);
+  if (at < 0) throw new Error('The in-loop browser guidance no longer has its paragraph on running the declared checks');
+  return `${IN_LOOP_BROWSER_GUIDANCE.slice(0, at)}${LEAN_IN_LOOP_CHECKS}`;
+}
+
+/**
+ * The build's own check under the `one_look` tweak: boot once, one look at
+ * each main screen at one width in one look, fix only what is broken, stop.
+ * Polish is the reviewer's, which captures every screen at both widths, in
+ * both looks and every state once the turn is over. Pure.
+ */
+function oneLookLines({ readsImages = false } = {}) {
+  const look = readsImages
+    ? 'take one screenshot (`browser_take_screenshot`) of each main screen the spec names'
+    : 'walk each main screen the spec names once through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
+  return [
+    '- For you, the Homeroom bot, the check is ONE LOOK, and it is EXPECTED: once everything the spec asks for is built,',
+    '  boot the app once and, at 390x844 in the light look only,',
+    `  ${look},`,
+    '  then do the main thing once (below). That is the whole check, and it takes the place of the design guidance\'s',
+    '  "Checking your work" further down.',
+    '- Fix only what that look shows is BROKEN: a blank or unstyled screen, an error on the page or in the console, a',
+    '  request that fails, or a main action that does nothing. After such a fix, look again at that screen alone. Then',
+    '  finish your turn.',
+    '- Do not take a second look at a screen that works, do not compare spacing, colours or wording, and do not check',
+    '  other widths, the dark look, or the empty and error states: a reviewer captures every screen at both widths, in',
+    '  both looks and in every state once your turn is over, and you fix what it finds then.',
+    '  Skip the look only when the app cannot boot promptly, and then say why in your summary.',
   ];
 }
 
@@ -2074,12 +2129,29 @@ function utcClock(ms) {
  * The TIME section of a build prompt, or [] without a clock. `startedAt` is
  * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
  */
-function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false } = {}) {
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false, oneLook = false } = {}) {
   if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
   const minutes = (ms) => Math.round(ms / 60000);
   const stopAt = utcClock(startedAt + budgetMs);
   const soft = Number(softMs) > 0 && softMs < budgetMs;
   const softAt = soft ? utcClock(startedAt + softMs) : null;
+  // The `one_look` tweak (browserLines): there is no step 4. A reviewer
+  // follows, so time left over is not spent on more testing or polish.
+  if (reviewed && oneLook) {
+    return [
+      '',
+      `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
+        + ` (${minutes(budgetMs)} minutes), and a build it stops is thrown away: nothing is proposed.`,
+      ...(soft ? [`Aim to be finished by ${softAt} UTC (${minutes(softMs)} minutes), sooner if you can.`] : []),
+      'Read the time only with a command you are running anyway: put `date -u +%H:%M;` in front of it.',
+      'Spend the time in this order, and finish as soon as step 3 is done:',
+      '1. Build everything the spec and the plan ask for. This is never what gets cut.',
+      '2. Boot the app once and take the one look the in-loop browser section below describes.',
+      '3. Fix only what that look shows is broken, check the app still boots, and finish your turn.',
+      'There is no step 4: do not spend time left over on more testing, other screens, sizes or looks, or polish. A',
+      'reviewer captures every screen once your turn is over, and you fix what it finds then.',
+    ];
+  }
   // With a reviewer, the sizes, looks and empty and error states are its.
   const rest = reviewed
     ? 'the spec\'s other screens, and polish (the reviewer checks sizes, looks, and empty and error states).'
@@ -2249,10 +2321,22 @@ function startingScreensLines(placed) {
  * the repository already is, and that its look, not its game, is placeholder.
  * Pure.
  */
-function firstVersionDesignLines(starter = null) {
+// The `one_look` tweak (browserLines): the drawn screens are still the
+// target, but the comparison is the reviewer's, not the build's own rounds.
+const ONE_LOOK_DESIGN_SWAP = Object.freeze([
+  [
+    'components rather than re-invented. In your look-and-fix rounds, compare your screenshots with the drawn screens and\nfix what differs.',
+    'components rather than re-invented, as you write them: there are no look-and-fix rounds, and the reviewer compares\nthe finished screens with the drawn ones.',
+  ],
+]);
+
+function firstVersionDesignLines(starter = null, { oneLook = false } = {}) {
   const s = starterOf(starter);
-  if (!s) return FIRST_VERSION_DESIGN_LINES;
-  const lines = swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), [[
+  const base = oneLook
+    ? swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), ONE_LOOK_DESIGN_SWAP).split('\n')
+    : FIRST_VERSION_DESIGN_LINES;
+  if (!s) return base;
+  const lines = swapWording(base.join('\n'), [[
     'the starter\'s screen and default colours are placeholder, not a look to copy.',
     'the game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
   ]]).split('\n');
@@ -2269,6 +2353,104 @@ function firstVersionDesignLines(starter = null) {
     '"## Design" which look is the scene\'s and which is the kit\'s.',
   ];
 }
+
+// Build speed item 2 (a first version's `starter_inline` tweak, bot-configs.js
+// TWEAKS): run four's build spent 3.8 minutes before its first file change,
+// 14 reads of 8 files among them, reading a starter every first version
+// reads. So the build is handed the repository as its turn starts
+// (worker.js readRepoSnapshot): every tracked file's path and lines, and the
+// text of the files a build reads, and is told not to read them again. The
+// prompt is longer, but it is the same on every call and cached.
+//
+// Left out: what no build reads (lockfiles, licences, vendored code, the
+// connector's .claude plumbing, the image's Dockerfile), and CLAUDE.md when
+// Claude Code runs the turn, which loads it already. The rest is shown
+// smallest first, until STARTER_INLINE_MAX_CHARS, with the design skill the
+// guidance asks for kept in.
+const STARTER_INLINE_MAX_CHARS = 72000;
+const STARTER_INLINE_MAX_FILE_CHARS = 32000;
+const STARTER_SKIP_RE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|LICENSE[^/]*|Dockerfile|\.dockerignore|\.gitignore|project\.toml)$|(^|\/)vendor\/|^\.claude\/(settings\.json|hooks\/|README\.md$|homeroom-canonical-repo$)/i;
+const STARTER_FIRST = Object.freeze(['.claude/skills/frontend-design/SKILL.md']);
+
+/**
+ * Which of a snapshot's files the build is shown in full: { shown, listed }.
+ * `shown` has the text, in the order they are printed; `listed` every
+ * tracked file with its lines. Pure.
+ */
+function starterInlineFiles(snapshot, { claudeMdLoaded = true, maxChars = STARTER_INLINE_MAX_CHARS } = {}) {
+  const files = Array.isArray(snapshot?.files) ? snapshot.files.filter((f) => f && typeof f.path === 'string') : [];
+  const wanted = files.filter((f) => typeof f.text === 'string' && f.text.length <= STARTER_INLINE_MAX_FILE_CHARS
+    && !STARTER_SKIP_RE.test(f.path) && !(claudeMdLoaded && f.path === 'CLAUDE.md'));
+  const rank = (f) => (STARTER_FIRST.includes(f.path) ? 0 : 1);
+  const ordered = [...wanted].sort((a, b) => rank(a) - rank(b) || a.text.length - b.text.length || a.path.localeCompare(b.path));
+  const shown = [];
+  let total = 0;
+  for (const f of ordered) {
+    if (total + f.text.length > maxChars) continue;
+    shown.push(f);
+    total += f.text.length;
+  }
+  // Printed in path order, as a person reads a tree.
+  shown.sort((a, b) => a.path.localeCompare(b.path));
+  return { shown, listed: files };
+}
+
+/**
+ * The REPOSITORY section of a first version's build prompt under
+ * `starter_inline`, or [] with no snapshot. Pure.
+ */
+function starterLines(snapshot, { claudeMdLoaded = true } = {}) {
+  const { shown, listed } = starterInlineFiles(snapshot, { claudeMdLoaded });
+  if (!listed.length) return [];
+  const inFull = new Set(shown.map((f) => f.path));
+  const note = (f) => {
+    if (inFull.has(f.path)) return ' (in full below)';
+    if (f.path === 'CLAUDE.md' && claudeMdLoaded) return ' (your project instructions, already loaded)';
+    return '';
+  };
+  const more = Number(snapshot.more) > 0 ? [`(and ${Number(snapshot.more)} more files)`] : [];
+  const skill = shown.some((f) => STARTER_FIRST.includes(f.path))
+    ? ['The frontend-design skill the guidance asks you to read is one of them: follow it from here.']
+    : [];
+  return [
+    '',
+    '==== THE REPOSITORY AS THIS BUILD STARTS (read for you once, just now) ====',
+    '',
+    'Every tracked file, with its lines:',
+    ...listed.map((f) => `- ${f.path} (${Number(f.lines) || 0} lines)${note(f)}`),
+    ...more,
+    '',
+    'The files marked "in full" are below exactly as they are now. Do not read them again: start building from here. Read',
+    'one only after you have changed it and need to see it again, and read the files not shown only when you need them.',
+    ...skill,
+    ...shown.flatMap((f) => ['', `---- ${f.path} ----`, f.text.replace(/\s+$/, ''), `---- end of ${f.path} ----`]),
+    '',
+    '==== END OF THE REPOSITORY ====',
+  ];
+}
+
+// Build speed item 3 (a first version's `one_go` tweak, bot-configs.js
+// TWEAKS): run four's build made 156 model calls of about 12 s each, each one
+// re-sending the conversation, and 95% of its time was the wait for them.
+// Under the tweak the build writes the whole first version from the spec
+// before it looks at anything, a few whole files per reply, from the
+// repository it is handed (starterLines), and the agent loop after that only
+// fixes. A reply is capped at the model's output limit, thinking included,
+// so the files are spread over a few replies rather than one.
+const ONE_GO_LINES = Object.freeze([
+  '',
+  'WRITE IT IN ONE GO. Every step you take is a model call that re-sends this whole conversation, and a build made',
+  'of a hundred small steps spends most of its time waiting on them. So build this first version in three parts:',
+  '1. Read nothing first: the repository is above, in full where it matters, and the spec says what to build.',
+  '2. Write the whole first version from the spec in as few replies as you can. Each reply writes several WHOLE files',
+  '   at once, one Write call per file (whole files, never a string of edits), at most about 600 lines in all per',
+  '   reply: the server, its routes and its tables first, then each screen, then the populated demo, then the checks',
+  '   in dapp.json and the "## Design" section of CLAUDE.md. Plan it all before the first Write, so nothing has to be',
+  '   rewritten.',
+  '3. Only once every file the spec needs is written, boot the app and check it as the in-loop browser section below',
+  '   says. From then on, fix only what does not boot, what is broken, and what a declared check fails, each fix an',
+  '   edit to the file it is in.',
+]);
 
 // L2: whether a bot build or fix turn is held to the app's own declared
 // checks: not in the platform's own repository, which the check script does
@@ -2288,8 +2470,21 @@ function detachedCaptureOn(env = process.env) {
 // L2: the app's own declared checks, run before a bot build or fix turn ends
 // (worker.js writeAppCheck, build-stop-hook.js's checks gate): how the
 // turn runs them itself, and that the platform runs them too.
-function appChecksLines() {
+function appChecksLines({ lean = false } = {}) {
   const { APP_CHECK_COMMAND_PATH } = require('./worker');
+  // The `lean_turns` tweak (bot-configs.js TWEAKS): the gate runs the checks
+  // once, when the turn tries to end (build-stop-hook.js), so the build does
+  // not run them by hand along the way as well. Each run is a model call and
+  // a fresh boot of the app, and its report stays in every later request.
+  if (lean) {
+    return [
+      '',
+      'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
+      'merge. Do not run them yourself along the way: when you try to finish, the platform runs every declared check on a',
+      'fresh copy of the app, signed in, and sends you back with what failed. Fix that in the app and finish again. To',
+      `confirm one fix before you finish, \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root runs them the same way.`,
+    ];
+  }
   return [
     '',
     'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
@@ -2341,11 +2536,22 @@ function buildPrompt({
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
+  // A first version's configuration's build-speed tweaks (bot-configs.js
+  // TWEAKS); [] is the build as every first version has it.
+  tweaks = [],
+  // Under `starter_inline`: the checkout as the build starts
+  // (worker.js readRepoSnapshot), and whether the CLI running the turn
+  // loads CLAUDE.md by itself (Claude Code does).
+  starterSnapshot = null, claudeMdLoaded = true,
   // Run five, item 8: the spec's screens, already written into the
   // repository (services/spec-screens-start.js startFromScreens), or null.
   startingScreens = null,
 }) {
-  const time = clock ? clockLines({ ...clock, reviewed }) : [];
+  const on = (t) => firstVersion && Array.isArray(tweaks) && tweaks.includes(t);
+  const oneLook = reviewed && on('one_look');
+  // Only a turn the checks gate holds can leave the checks to it.
+  const lean = appChecks && on('lean_turns');
+  const time = clock ? clockLines({ ...clock, reviewed, oneLook }) : [];
   const specBlock = spec
     ? [
       '',
@@ -2368,10 +2574,12 @@ function buildPrompt({
     '',
     planNoteText(buildNote, firstVersion),
     ...specBlock,
-    ...(firstVersion ? firstVersionDesignLines(starter) : []),
+    ...((on('starter_inline') || on('one_go')) && starterSnapshot ? starterLines(starterSnapshot, { claudeMdLoaded }) : []),
+    ...(firstVersion ? firstVersionDesignLines(starter, { oneLook }) : []),
     ...(firstVersion ? startingScreensLines(startingScreens) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
     ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
+    ...(on('one_go') ? ONE_GO_LINES : []),
     ...BATCH_STEPS_LINES,
     ...stageGuidanceLines('build', { firstVersion, guidance, reviewed }),
     '',
@@ -2384,8 +2592,8 @@ function buildPrompt({
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
-    ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
-    ...(appChecks ? appChecksLines() : []),
+    ...browserLines({ readsImages, clocked: time.length > 0, reviewed, oneLook, lean }),
+    ...(appChecks ? appChecksLines({ lean }) : []),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -3077,6 +3285,8 @@ function buildTurnRunner({
   // A first version's build and its review fixes: the worker loads only the
   // tools one uses (worker.js execInWorker buildProfile).
   firstVersion = false,
+  // Its configuration's build-speed tweaks (bot-configs.js TWEAKS).
+  tweaks = [],
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const runnerTelemetry = telemetry;
@@ -3155,6 +3365,9 @@ function buildTurnRunner({
           stopGuard: true,
           ...(gate ? { checksGate: gate } : {}),
           ...(firstVersion ? { buildProfile: 'first_version' } : {}),
+          // The `lean_turns` tweak: fewer tools and stale tool output cut
+          // from what each model call re-sends (worker.js LEAN_TURNS).
+          ...(firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_turns') ? { leanTurns: true } : {}),
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
@@ -3270,8 +3483,13 @@ async function buildAndPropose({
   // with (step, { sessionId, ...what the step left }) and awaited. Never a
   // reason the build stops.
   onStep = null,
+  // A first version's configuration's build-speed tweaks (bot-configs.js
+  // TWEAKS, recipe.tweaks), for its build turn, its nudge and its review's
+  // fix turns. [] (every other build) is the build as it always was.
+  tweaks = [],
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
+  const buildTweaks = firstVersion && Array.isArray(tweaks) ? tweaks : [];
   const buildStartedMs = Date.now();
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
   // A shadow build (`propose: false`) is the same build, on a session of the
@@ -3538,13 +3756,22 @@ async function buildAndPropose({
   const readsImages = typeof deps.seesImages === 'boolean'
     ? deps.seesImages
     : await buildSeesImages({ pool, config, userId: bot.id, model });
+  // Under `starter_inline`, the checkout as the build starts, read once
+  // (worker.js readRepoSnapshot); none read is the build as before.
+  const starterSnapshot = (buildTweaks.includes('starter_inline') || buildTweaks.includes('one_go'))
+    && typeof worker.readRepoSnapshot === 'function'
+    ? await worker.readRepoSnapshot(session.id)
+    : null;
 
   if (onStage) { try { await onStage('build'); } catch { /* a watcher never stops a build */ } }
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
+  // Claude Code loads the repository's CLAUDE.md into the turn itself.
+  const claudeMdLoaded = buildHarness === 'claude'
+    || (buildHarness === 'auto' && require('../agents/registry').openRouterHarnessForModel(model, config) === 'claude');
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo),
-    firstVersion,
+    firstVersion, tweaks: buildTweaks,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3556,6 +3783,8 @@ async function buildAndPropose({
     reviewed: Boolean(review?.reviewer),
     locale,
     appChecks: appChecksOn(platformRepo),
+    tweaks: buildTweaks,
+    starterSnapshot, claudeMdLoaded,
     startingScreens,
   });
   // What the build was last doing, so a turn stopped on its clock says what
@@ -3721,7 +3950,7 @@ async function buildAndPropose({
     reviewed = await reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
-      locale,
+      locale, tweaks: buildTweaks,
       start: {
         sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
@@ -3881,6 +4110,9 @@ async function reviewLanded({
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
   // #4645: the requester's locale, for the review prompts' language rule.
   locale = null,
+  // The configuration's build-speed tweaks (bot-configs.js TWEAKS), for the
+  // fix turns' prompts.
+  tweaks = [],
   // R5: a review a restart cut short, carried on from its saved state, and
   // the fix turn restart recovery followed to its end (bot-review.js
   // runReviewLoop's `resumeFrom` and `recoveredFix`).
@@ -3917,7 +4149,7 @@ async function reviewLanded({
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
-        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: appChecksOn(platformRepo),
+        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: appChecksOn(platformRepo), tweaks,
       }),
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
@@ -4063,6 +4295,12 @@ module.exports = {
   recipeSpecEffort,
   RECIPE_SPEC_EFFORT,
   browserLines,
+  oneLookLines,
+  inLoopGuidance,
+  starterLines,
+  starterInlineFiles,
+  ONE_GO_LINES,
+  STARTER_INLINE_MAX_CHARS,
   failedClaudeTurn,
   failureDetail,
   stampSessionModel,
