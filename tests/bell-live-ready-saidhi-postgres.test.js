@@ -16,10 +16,12 @@
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
 //   - #4778: a decided change's asks (the vote nudge, the re-confirm ask, a
-//     going-quiet warning, a digest of one) read as read off the change's
-//     status even when settleDecidedChange never ran; its "ready to try"
-//     row still waits for the settle; a change still up for approval asks
-//     as before.
+//     going-quiet warning, a digest of one) are settled live off the change's
+//     status even when settleDecidedChange never ran. On a merge they leave
+//     the list and stop counting with or without the settle, and read as
+//     read when one is opened from a push; on a close they stay listed,
+//     shown read. Its "ready to try" row still waits for the settle; a
+//     change still up for approval asks as before.
 //   - homeroom-bot-chat record() pushes the maker's row again once the first
 //     message is filed, and the rest of a small group's discussion rows
 //     about a message once it is filed (Mo's, the same day).
@@ -170,7 +172,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
   });
 
   // #4778: settleDecidedChange runs best-effort at every call site, so the
-  // bell also reads a decided change's asks as read off the change's status.
+  // bell also settles a decided change's asks live off the change's status.
   // Seeded WITHOUT calling it, the way a missed settle leaves the rows.
   const seedAsks = async (who, sessionId) => {
     const ids = [
@@ -194,15 +196,22 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     // The change merges; the best-effort settle never runs.
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [decided]);
 
+    // #4795: a merged change is decided, so its asks leave the list and stop
+    // counting with or without the settle. Nothing here wrote the news rows
+    // (pr_merged, voted_change_merged), so nothing about it counts at all.
     for (const id of ids) {
-      assert.notEqual((await listed(sam.id, id)).readAt, null, `${(await row(id)).kind} reads as read in the list`);
-      assert.notEqual((await exact(sam.id, id)).readAt, null, 'the exact lookup reads the same');
+      assert.equal(await listed(sam.id, id), null, `${(await row(id)).kind} is off the list`);
+    }
+    assert.equal(await listed(sam.id, ready), null, 'its "ready to try" row leaves too');
+    assert.equal(await notifications.countUnread(pool, sam.id), 0, 'nothing about a merged change asks anymore');
+
+    // Opening a row from a push still resolves it, and the live read shows it
+    // read off the merge (#4778), not as an unread ask about a decided page.
+    for (const id of ids) {
+      assert.notEqual((await exact(sam.id, id)).readAt, null, `${(await row(id)).kind} reads as read in the exact lookup`);
     }
     assert.ok((await notifications.hydrateNotification(pool, ids[0])).notification.readAt,
       'the live push read serializes a truthy readAt');
-    assert.equal(await notifications.countUnread(pool, sam.id), 1, 'only the ready row still counts');
-    assert.equal((await listed(sam.id, ready)).readAt, null,
-      'the ready row stays with settleDecidedChange: the Live news for whoever never voted');
     const { rows: stored } = await pool.query(
       'SELECT read_at FROM notifications WHERE id = ANY($1::int[])', [ids],
     );

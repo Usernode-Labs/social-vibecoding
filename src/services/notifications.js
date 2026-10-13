@@ -170,12 +170,14 @@ const { DECIDED_ASK_KINDS } = changeNotifications;
 // read once the change is decided, whether or not settleDecidedChange got to
 // it (routes/votes.js, included-changes.js, session-lifecycle.js and the
 // merge-followups workflow all run it best-effort, so a missed settle used
-// to leave a merged proposal sitting unread in the bell for hours).
-// change_ready is left to settleDecidedChange: its newest row is the Live
-// news for whoever never voted. The kinds come from the frozen constant
-// above, never from input, so interpolating them is safe; the EXISTS form
-// needs no join, so countUnread can use it as-is, and it rides the existing
-// chat_sessions primary key.
+// to leave a decided proposal sitting unread in the bell for hours).
+// #4795 already hides a MERGED change's asks from the list and its count
+// without the settle; this read covers what that does not: a CLOSED change's
+// asks stay listed, shown read here, and a push-opened row of either kind
+// resolves read. change_ready is left to settleDecidedChange. The kinds come
+// from the frozen constant above, never from input, so interpolating them is
+// safe; the EXISTS form needs no join, so countUnread can use it as-is, and
+// it rides the existing chat_sessions primary key.
 const DECIDED_ASK_SETTLED_SQL = `(n.kind IN (${DECIDED_ASK_KINDS.map((k) => `'${k}'`).join(', ')})
   AND n.session_id IS NOT NULL
   AND EXISTS (SELECT 1 FROM chat_sessions decided
