@@ -344,8 +344,11 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   });
   const html = renderToHtml(createElement(ExperimentalSection));
   assert.match(html,
-    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to comment on the page<\/span><\/label>/);
-  assert.match(html, /Suggest an improvement opens comment mode, and on a computer so does pressing C\./);
+    /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Comment on the page<\/span><\/label>/);
+  // Named for what it does on every device: on a phone there is no C key,
+  // and what the switch changes is where "Suggest an improvement" goes.
+  assert.match(html, /Suggest an improvement opens on a screenshot of the page\./);
+  assert.match(html, /On a computer, pressing C opens it too\./);
   assert.match(html, /The form is one switch away\./);
   assert.match(html, /Saved on this device only\./);
   assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),

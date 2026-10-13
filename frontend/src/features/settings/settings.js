@@ -619,7 +619,7 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // #4289: Press C to comment on the page. Kept on this device, not
+      // #4289: Comment on the page. Kept on this device, not
       // the account (features/improve/suggest-shortcut.ts), so there is no
       // request to fail: the change is the save.
       const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
