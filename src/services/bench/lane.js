@@ -612,6 +612,9 @@ async function studioContext(pool, config, row, settings) {
     out.harnessOf = require('../homeroom-bot-live').recipeHarness;
     out.configVersionId = version.id;
     if (botConfigs.reviews(recipe)) out.reviewer = recipe.reviewer;
+    // Its build-speed tweaks, which a first version's build applies.
+    const tweaks = botConfigs.tweaksOf(recipe);
+    if (tweaks.length) out.tweaks = tweaks;
     if (recipe.pack && !row.context_pack_id) {
       const packs = require('./packs');
       const pack = await packs.packRow(pool, recipe.pack);

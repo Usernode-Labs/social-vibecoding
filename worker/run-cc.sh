@@ -70,6 +70,12 @@
 #                              browser without visible_changes, the Homeroom
 #                              read tools narrowed to get_platform_conventions,
 #                              and no WebSearch, WebFetch or NotebookEdit
+#   LEAN_TURNS                 1: such a build under its configuration's
+#                              lean_turns tweak also leaves out the delegation,
+#                              planning and to-do tools and the browser tools
+#                              a build never uses, and the request adapter
+#                              cuts stale browser and shell output from what
+#                              each model call re-sends
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -387,6 +393,13 @@ if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
 elif [ -n "$FIRST_VERSION_BUILD" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools WebSearch WebFetch NotebookEdit"
+  # Build speed (L7, lean_turns): every model call re-sends every tool's
+  # definition. A first version's build has no use for a subagent, a plan
+  # mode or a to-do list (each a model call of its own), nor for installing
+  # a browser, uploading files, tabs or raw Playwright code.
+  if [ "${LEAN_TURNS:-}" = "1" ]; then
+    PERMISSION_FLAGS="$PERMISSION_FLAGS Task Agent TodoWrite ExitPlanMode mcp__playwright__browser_install mcp__playwright__browser_file_upload mcp__playwright__browser_tabs mcp__playwright__browser_run_code"
+  fi
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from

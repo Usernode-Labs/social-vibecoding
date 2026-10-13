@@ -340,9 +340,8 @@ function issueLine(it, i) {
  * for six issues took twelve minutes, told to re-read the repository and to
  * make the build's whole visual sweep again. Pure.
  */
-function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
+function fixBrowserLines({ readsImages = false, issues = [], lean = false } = {}) {
   const live = require('./homeroom-bot-live');
-  const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
   const look = readsImages
     ? 'take a screenshot (`browser_take_screenshot`)'
     : 'walk it through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -352,7 +351,7 @@ function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
     '',
     'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
     'since your working tree is committed for you:',
-    IN_LOOP_BROWSER_GUIDANCE,
+    live.inLoopGuidance({ lean }),
     '- For you, in this fix turn, check ONLY what the issues name. Once your fixes are in, boot the app once and, for',
     `  each issue, open its screen at the size, look and state it names and ${look}. Fix what is still wrong there.`,
     '  Do not check other widths, looks or states, and do not run rounds of looking and polishing: the reviewer',
@@ -398,9 +397,13 @@ function fixPrompt({
   // L2: the runner holds the turn to the app's own declared checks
   // (homeroom-bot-live.js appChecksLines).
   appChecks = false,
+  // The configuration's build-speed tweaks (bot-configs.js TWEAKS): under
+  // `lean_turns` the checks are left to the gate here too.
+  tweaks = [],
 }) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
+  const lean = appChecks && Array.isArray(tweaks) && tweaks.includes('lean_turns');
   const list = issues.map(issueLine).join('\n');
   return [
     seed ? clip(seed, MAX_BRIEF_CHARS) : '',
@@ -428,8 +431,8 @@ function fixPrompt({
     buildContract.buildContractBlock({ heading: 'Make exactly these fixes, and nothing else:', commits: 'harness' }),
     ...live.requestRulesLines(),
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
-    ...fixBrowserLines({ readsImages, issues }),
-    ...(appChecks ? live.appChecksLines() : []),
+    ...fixBrowserLines({ readsImages, issues, lean }),
+    ...(appChecks ? live.appChecksLines({ lean }) : []),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
