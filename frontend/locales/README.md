@@ -4,8 +4,9 @@ Homeroom's own screens are in English. This directory and
 `frontend/src/lib/i18n/` are what let them be shown in other languages: the
 English source, the runtime that loads a language on demand, and the build
 that turns catalogs into packs. `config.json` lists Homeroom's languages:
-English, Bahasa Indonesia, Español, Français, Português (Brasil) and Tiếng
-Việt. A language ships once Homeroom's translation step has filled it (see
+English, Bahasa Indonesia, Español, Français, Português (Brasil), Tiếng
+Việt, Türkçe, Русский, العربية, हिन्दी, 简体中文, 日本語 and 한국어.
+A language ships once Homeroom's translation step has filled it (see
 "Translations"). The shell's text is in the catalogs here, one
 namespace per surface (`core` and `shell` for what every screen has, then
 `auth`, `home`, `messages`, `project`, `settings` and the rest), so another
