@@ -1587,6 +1587,13 @@
     {
       "source": "src/services/ui-telemetry.js",
       "kind": "structural-template",
+      "fingerprint": "5861ef79c304546ae131",
+      "count": 1,
+      "preview": "`SELECT e.metadata->>'screen' AS screen, COUNT(*)::int AS loads, COUNT(DISTINCT e.user_id)::int AS people, ${percentiles} FROM events e JOIN users u ON u.id = e"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
       "fingerprint": "761676035dcde88d90e1",
       "count": 1,
       "preview": "`WITH ui AS ( SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${uiBase} ), attempts AS ( SE"
@@ -1604,6 +1611,13 @@
       "fingerprint": "b24b8d9d293e9c2acb9d",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS receipts, COUNT(DISTINCT e.user_id)::int AS reporting_users, COALESCE(SUM((e.metadata->>'submitted')::int), 0)::int AS submitted, COALE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "be5e3d50a0b82624cf7e",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS loads, COUNT(DISTINCT e.user_id)::int AS people, ${percentiles} FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui"
     },
     {
       "source": "src/services/ui-telemetry.js",

@@ -380,9 +380,37 @@ async function threadSummaries(db, user, rootIds) {
   }]));
 }
 
-async function hydrateMessages(db, user, rows) {
+/**
+ * The chat with the Homeroom bot draws the bot's news about a request as one
+ * short row (frontend/src/features/messages/bot-request.ts isBotNews, which
+ * this mirrors: keep the two in step), never the request's card under it;
+ * the card is drawn in the request's story, whose read fills it. So its main
+ * stream sends those rows without their cards: each one was a live GitHub
+ * read for a closed request, one after another, before the page could answer.
+ */
+const BOT_CONVERSATION_KINDS = new Set([
+  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
+  'hello_welcome', 'hello_tour', 'hello_joiner', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
+]);
+function isBotNewsRow(row) {
+  if (!row.sender_is_synthetic || row.msg_type === 'system' || row.deleted_at || row.moderation_hidden_at) return false;
+  const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata[BOT_METADATA_KEY] : null;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+  if (meta.moment === 'reply' || BOT_CONVERSATION_KINDS.has(meta.kind)) return false;
+  return Number(meta.issueNumber) > 0 || !!meta.firstVersion || meta.kind === 'activity';
+}
+
+/** The cards a main-stream page of this conversation carries: all of them, but in the chat with the bot. */
+async function mainStreamCards(db, membership) {
+  return membership.kind === 'direct' && (await threadsAllowed(db, membership)) ? (row) => !isBotNewsRow(row) : null;
+}
+
+// `cards`, when given, says which rows get their cards filled; the others
+// are sent with none (`mainStreamCards`).
+async function hydrateMessages(db, user, rows, { cards = null } = {}) {
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
+  const cardIds = cards ? rows.filter(cards).map((row) => row.id) : ids;
   const replyAuthors = [...new Set(rows.map((row) => row.reply_sender_id).filter(Boolean))];
   const rootIds = rows.filter((row) => row.thread_root_id == null).map((row) => row.id);
   const [reactionResult, attachmentResult, objects, savedIds, blockResult, threads] = await Promise.all([
@@ -403,7 +431,7 @@ async function hydrateMessages(db, user, rows) {
         ORDER BY created_at, id`,
       [ids]
     ),
-    sharedObjects.hydrateForMessages(db, user, ids),
+    sharedObjects.hydrateForMessages(db, user, cardIds),
     // Which of these the viewer has saved, so the row's bookmark renders
     // already filled rather than flashing empty and correcting itself. It
     // rides this Promise.all for the same reason the other three do — one
@@ -603,7 +631,7 @@ async function visibleMessageRef(db, user, conversationId, messageId) {
 // A thread reply is shown where its thread lives — the window centres on its
 // root and `focus.threadRootId` tells the client to open that thread. A reply
 // whose root the viewer cannot see is as invisible as the thread itself.
-async function messagesAround(db, user, conversationId, targetId, limit) {
+async function messagesAround(db, user, conversationId, targetId, limit, { cards = null } = {}) {
   const target = await visibleMessageRef(db, user, conversationId, targetId);
   if (!target) return null;
   const anchorId = target.thread_root_id || target.id;
@@ -622,7 +650,7 @@ async function messagesAround(db, user, conversationId, targetId, limit) {
   const olderPage = older.slice(0, olderCount).reverse();
   const newerPage = newer.slice(0, newerCount);
   const page = [...olderPage, ...anchor.rows, ...newerPage];
-  const messages = await hydrateMessages(db, user, page);
+  const messages = await hydrateMessages(db, user, page, { cards });
   return {
     messages,
     nextBefore: older.length > olderCount && page.length ? page[0].id : null,
@@ -637,20 +665,21 @@ async function listMessages(pool, user, conversationId, {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
   const safeLimit = pageLimit(limit);
-  if (around) return messagesAround(pool, user, conversationId, around, safeLimit);
+  const cards = await mainStreamCards(pool, membership);
+  if (around) return messagesAround(pool, user, conversationId, around, safeLimit, { cards });
   if (after) {
     // Catching up from a permalink window: ascending, oldest first.
     const rows = await mainStreamAfter(pool, user, conversationId, after, safeLimit + 1);
     const page = rows.slice(0, safeLimit);
     return {
-      messages: await hydrateMessages(pool, user, page),
+      messages: await hydrateMessages(pool, user, page, { cards }),
       nextAfter: rows.length > safeLimit && page.length ? page[page.length - 1].id : null,
     };
   }
   const rows = await mainStreamBefore(pool, user, conversationId, before, safeLimit + 1);
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit).reverse();
-  const messages = await hydrateMessages(pool, user, page);
+  const messages = await hydrateMessages(pool, user, page, { cards });
   return {
     messages,
     nextBefore: hasMore && page.length ? page[0].id : null,
@@ -2248,6 +2277,8 @@ module.exports = {
   publicMetadata,
   isHomeroomBotDirect,
   threadsAllowed,
+  isBotNewsRow,
+  BOT_CONVERSATION_KINDS,
   ALSO_IN_CHAT,
   BOT_METADATA_KEY,
   updateTitle,
