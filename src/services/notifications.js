@@ -44,6 +44,9 @@
 // approval" digest counts only what still waits, and a first message Homeroom
 // bot filed as a request says it asked for a change. A change that is
 // decided settles what the bell still asked about it (settleDecidedChange).
+// #4778: those asks also read as read LIVE off the change's own status
+// (DECIDED_ASK_SETTLED_SQL), so a settle that never ran cannot leave a
+// merged or closed proposal sitting unread in the bell for hours.
 // The same day, a group's discussion row about a message the bot filed as a
 // request said "@mo_t1006 in Page Turners" over it: it says they asked for a
 // change too (FILED_MESSAGE_JOIN_SQL).
@@ -155,6 +158,31 @@ const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
 // is spelled out). Reads `n` (the notification).
 const changeNotifications = require('../workflow/rules/change-notifications.ts');
 const { DIGEST_WAITING_SQL } = changeNotifications;
+
+// 5 October (Page Turners): the asks about a change that its decision
+// answers for everybody. Nobody is asked to vote on it, to say they still
+// back it, or to revive it once it is live or closed, and a digest that
+// named it alone has nothing left to count. "Ready to try" (change_ready) is
+// settled apart, because a change that went live makes it news.
+const { DECIDED_ASK_KINDS } = changeNotifications;
+
+// #4778 (Page Turners): a row that asked something about a change reads as
+// read once the change is decided, whether or not settleDecidedChange got to
+// it (routes/votes.js, included-changes.js, session-lifecycle.js and the
+// merge-followups workflow all run it best-effort, so a missed settle used
+// to leave a decided proposal sitting unread in the bell for hours).
+// #4795 already hides a MERGED change's asks from the list and its count
+// without the settle; this read covers what that does not: a CLOSED change's
+// asks stay listed, shown read here, and a push-opened row of either kind
+// resolves read. change_ready is left to settleDecidedChange. The kinds come
+// from the frozen constant above, never from input, so interpolating them is
+// safe; the EXISTS form needs no join, so countUnread can use it as-is, and
+// it rides the existing chat_sessions primary key.
+const DECIDED_ASK_SETTLED_SQL = `(n.kind IN (${DECIDED_ASK_KINDS.map((k) => `'${k}'`).join(', ')})
+  AND n.session_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM chat_sessions decided
+               WHERE decided.id = n.session_id
+                 AND decided.status IN ('merged', 'archived')))`;
 
 // The three things a row's subject has become since it was written, read
 // with it (5 October): the status of the change a "ready to try" asked about
@@ -1198,7 +1226,11 @@ async function hydrateAndPush(pool, row) {
 // its transaction and publishes the push itself.
 async function hydrateNotification(q, id) {
   const { rows } = await q.query(
-    `SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at,
+    `SELECT n.id, n.kind, n.user_id,
+            CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
+                 THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
+                 ELSE n.read_at END AS read_at,
+            n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             n.chat_message_id,
             cm.content AS message_content,
@@ -1597,7 +1629,11 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
   const { rows } = await pool.query(
-    `SELECT n.id, n.kind, n.read_at, n.created_at,
+    `SELECT n.id, n.kind,
+            CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
+                 THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
+                 ELSE n.read_at END AS read_at,
+            n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             n.chat_message_id,
             cm.content AS message_content,
@@ -1643,7 +1679,11 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
 // content is resolved here after the Social web session is authenticated.
 async function getForUser(pool, userId, id) {
   const { rows } = await pool.query(
-    `SELECT n.id, n.kind, n.read_at, n.created_at,
+    `SELECT n.id, n.kind,
+            CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
+                 THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
+                 ELSE n.read_at END AS read_at,
+            n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             n.chat_message_id,
             cm.content AS message_content,
@@ -1683,6 +1723,7 @@ async function countUnread(pool, userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
+        AND NOT ${DECIDED_ASK_SETTLED_SQL}
         AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
@@ -1800,7 +1841,7 @@ async function markReadForSession(pool, userId, sessionId) {
 // (src/workflow/rules/change-notifications.ts). The merge-followups machine
 // settles in its transaction and pushes what it touched itself; here,
 // `push` (the default) tells everyone whose bell changed.
-const { DECIDED_ASK_KINDS, settleVoteDigests } = changeNotifications;
+const { settleVoteDigests } = changeNotifications;
 
 // #4795: the kinds whose rows are about one change and ask something about
 // it, so once that change has MERGED the rows leave the bell's list instead
