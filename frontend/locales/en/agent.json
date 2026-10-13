@@ -2239,6 +2239,10 @@
     "text": "A restart failed · showing the last good screen",
     "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, when the app being built did not start again after its latest change, so the picture is from before it."
   },
+  "appFrame.live.pill.ended": {
+    "text": "Last screen from the build",
+    "description": "Small label over the picture area at the top of a project's card on the App tab, once the project's first version has been built, while it is reviewed, checked and tried: the picture is the app as it last looked while it was being built, kept there and no longer updating."
+  },
   "appFrame.live.pill.justUpdated": {
     "text": "Live · just updated",
     "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, when the picture of the running app changed within the last few seconds. \"Live\" is an adjective."
@@ -2266,6 +2270,10 @@
   "appFrame.live.frame.live": {
     "text": "{{project}}, live while it is built",
     "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen: it shows the app itself, updating as it is built. {{project}} is the project's name."
+  },
+  "appFrame.live.frame.ended": {
+    "text": "{{project}}, as it last looked while it was built",
+    "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab, once the project's first version has been built, while it is reviewed, checked and tried: it shows the app as it last looked while it was being built. {{project}} is the project's name."
   },
   "install.banner.getOnAppStore": {
     "text": "Get the app on the App Store",

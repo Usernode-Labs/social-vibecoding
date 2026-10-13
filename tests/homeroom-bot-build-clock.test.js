@@ -30,7 +30,7 @@ test('a first version\'s 40-minute build is told when it started, when it is sto
   const t = flat(live.clockLines({ startedAt: STARTED, budgetMs: 40 * MIN }));
   assert.match(t, /^\nTIME\. This build started at 19:41 UTC\. The platform stops it at 20:21 UTC \(40 minutes\), and a build it stops is thrown away: nothing is proposed\./);
   assert.match(t, /Aim to be finished by 20:11 UTC \(30 minutes\)\./);
-  assert.match(t, /Read the time with `date -u \+%H:%M` whenever you are about to start another round of testing or polish\./);
+  assert.match(t, /Read the time whenever you are about to start another round of testing or polish, but never as a step of its own:\nput `date -u \+%H:%M;` in front of a command you are running anyway/);
   assert.match(t, /1\. Build everything the spec and the plan ask for\. This is never what gets cut\./);
   assert.match(t, /2\. Boot the app and do its main thing once, as a person would\./);
   assert.match(t, /3\. Fix what that shows is broken\./);

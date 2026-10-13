@@ -239,6 +239,17 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     assert.ok(card.endedAt, 'when it went up');
     assert.equal(card.step, undefined, 'a card done says what it came to, not a step');
 
+    // D1: had it been the project's first version, it merges without a vote,
+    // so it is going live, not waiting for approval.
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number, filed_at)
+       VALUES ($1, $2, 'a seed swap', 'filed', 3, NOW())`,
+      [seeds.id, ada.id],
+    );
+    assert.equal((await byId(asAda, first.messageId)).outcome, 'going_live');
+    await pool.query('DELETE FROM homeroom_bot_first_versions WHERE app_id = $1', [seeds.id]);
+    assert.equal((await byId(asAda, first.messageId)).outcome, 'proposed');
+
     // #4227: being merged, not live yet: going live; then live.
     await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [build.id]);
     assert.equal((await byId(asAda, first.messageId)).outcome, 'going_live');

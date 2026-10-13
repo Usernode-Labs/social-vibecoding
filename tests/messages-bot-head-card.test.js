@@ -249,6 +249,36 @@ test('a project’s card opens its App tab, and a first version gone live with i
     'the words alone: the button is its way in');
 });
 
+// Run four (13 Oct 2026): the card for the maker's new app read "◆". It
+// wears the app's own icon, the tray's as the strip and the news lines draw
+// it, else the emoji the message carries; with neither, the glyph.
+test('a project’s card wears the project’s own icon when it is known', () => {
+  let work = null;
+  const iconic = loadTsx(HEAD, {
+    stubs: {
+      './link-cards': { useLinkCards: () => [] },
+      './bot-work': { useBotWork: () => ({ work }) },
+    },
+  });
+  const drawn = (meta = FIRST) => renderToHtml(createElement(iconic.BotHeadWords, {
+    head: iconic.botHead('**Todo List**, its first version\n\nBuilding the first version now.', meta), objects: [],
+  }));
+  const job = (patch) => ({ appSlug: 'todo-list-b91765', appName: 'Todo List', iconUrl: null, iconEmoji: null, ...patch });
+  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  assert.match(drawn(), /<span class="messages-object-icon overflow-hidden" data-object-icon="image"><img src="\/app-icons\/a1b2c3" alt="" class="h-full w-full object-cover" loading="lazy" draggable="false"\/><\/span>/);
+  assert.doesNotMatch(drawn(), /◆/);
+  work = { needsYou: [], now: [], history: [job({ iconEmoji: '🗳️' })] };
+  assert.match(drawn(), /<span class="messages-object-icon text-\[22px\] leading-none" data-object-icon="emoji" aria-hidden="true">🗳️<\/span>/);
+  // Not in the tray: the emoji the message carries, else the glyph.
+  work = { needsYou: [], now: [job({ appSlug: 'elsewhere', iconUrl: '/app-icons/zz' })], history: [] };
+  assert.match(drawn({ ...FIRST, appEmoji: '📚' }), /data-object-icon="emoji" aria-hidden="true">📚</);
+  assert.match(drawn(), /<span class="messages-object-icon">◆<\/span>/);
+  // A request's card keeps its number sign, whatever the tray says.
+  work = { needsYou: [], now: [job({ iconUrl: '/app-icons/a1b2c3' })], history: [] };
+  const request = renderToHtml(createElement(iconic.BotHeadWords, { head: iconic.botHead(`${LINE}\n\n${WORDS}`, META), objects: [] }));
+  assert.match(request, /<span class="messages-object-icon">#<\/span>/);
+});
+
 test('an offer draws the change it carries in its line’s place, or the request it would file, not filed yet', () => {
   answer = null;
   const offer = { kind: 'confirm', appSlug: 'plant-pal', appName: 'Plant pal' };

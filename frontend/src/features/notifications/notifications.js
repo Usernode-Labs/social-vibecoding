@@ -1166,6 +1166,13 @@ const Notifications = {
         'voted_change_merged',
       ]);
       const toProposals = proposalKinds.has(item.kind);
+      // Run four (13 Oct 2026): a row that asks for the reader's vote (the
+      // asks a vote clears, and the digest that names one change) opens the
+      // change at its Votes card, not at its title a screen and a half above
+      // it (dev-board/topic/votes-in-view.ts).
+      if (VOTE_ASK_KINDS.has(item.kind) && item.sessionId) {
+        window.UsernodeReact?.devBoard?.showVotes?.(Number(item.sessionId));
+      }
       // A new issue opens THAT ISSUE. `detail` is its number (the producer
       // has no issue column), and this row fell through to the app's general
       // chat, a screen that says nothing about the issue it announces.
@@ -1829,6 +1836,10 @@ function parsePlatformIncidentDetail(detail) {
 // same attention as one that finished, on the same channels (the tab title,
 // the chime, the OS notification; see handleIncoming).
 const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
+// The rows that ask for the reader's vote on one change: the asks a vote
+// clears (services/notifications.js, `vote_cast`), and the daily digest
+// when it names one change. Each opens the change at its Votes card.
+const VOTE_ASK_KINDS = new Set(['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready', 'vote_digest']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }

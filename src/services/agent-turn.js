@@ -293,6 +293,9 @@ async function resolveCodexRuntimeContext({
       ? null
       : requestedReasoningEffort,
     agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),
+    // The hosts this model's turn may use, when the platform overrides the
+    // worker listener's own shortlist (config.openrouterProviderShortlists).
+    agentProviderShortlist: config.openrouterProviderShortlists?.[resolvedModel] || null,
     openrouterApiKey,
     openrouterApiBase,
     resumeThreadId: resumeThreadDropped ? null : candidateThreadId,

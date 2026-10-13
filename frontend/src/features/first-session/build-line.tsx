@@ -29,16 +29,69 @@
  * leaves turning; with reduced motion it stands still.
  */
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import { CheckIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 // The words, once, as message ids (./build-line-words.js, plain JavaScript
 // so home.js and its classic-script tests read the same ones).
-import { BUILD_LINE_WORDS } from './build-line-words.js';
+import { BUILD_LINE_WORDS, PHASE_WORDS, minutesSince, phaseOf } from './build-line-words.js';
 
-export { BUILD_LINE_WORDS };
+export { BUILD_LINE_WORDS, PHASE_WORDS, minutesSince, phaseOf };
+
+/** N4: a first version's phase (`first_version.phase`), as ./build-line-words.js phaseOf cleans it. */
+export type FirstVersionPhase = { key: keyof typeof PHASE_WORDS; since: string | null; round: number | null; rounds: number | null };
+
+/**
+ * N4: the words for a phase, in the language on screen: "Drawing the
+ * screens", "Checking the screens · round 1 of 2". Null for none.
+ */
+export function phaseWords(phase: FirstVersionPhase | null): string | null {
+  if (!phase) return null;
+  if (phase.key === 'checking') {
+    return translate(PHASE_WORDS.checking, { round: phase.round || 1, rounds: phase.rounds || phase.round || 1 });
+  }
+  return translate(PHASE_WORDS[phase.key]);
+}
+
+/**
+ * N4: how long the phase has run, "7 min so far", at `now` (ms); null
+ * under a minute, or without a start: zero says nothing.
+ */
+export function soFarNote(since: string | null | undefined, now: number): string | null {
+  const minutes = minutesSince(since ?? null, now);
+  return minutes ? translate('onboarding:buildLine.soFar', { count: minutes }) : null;
+}
+
+/**
+ * N4: the line's words and note for a first version at `line`, with its
+ * phase: the phase's own words and how long it has run while the line says
+ * it is being built; else none, and the line says its own words. `caption`
+ * (the build's "Adding the tier rows") is the note while it builds, ahead of
+ * the time.
+ */
+export function phaseLine(line: BuildLineState | null, value: unknown, now: number, caption: string | null = null): { words: string | null; note: string | null } {
+  const phase = line === 'building' ? (phaseOf(value) as FirstVersionPhase | null) : null;
+  if (!phase) return { words: null, note: null };
+  const soFar = soFarNote(phase.since, now);
+  const adding = phase.key === 'building' && caption ? caption : null;
+  return {
+    words: phaseWords(phase),
+    note: adding && soFar ? translate('onboarding:buildLine.withNote', { line: adding, note: soFar }) : adding || soFar,
+  };
+}
+
+/** The time now, read again every `everyMs` (a minute by default), for the "so far" notes. */
+export function useNow(everyMs = 30000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), everyMs);
+    return () => window.clearInterval(t);
+  }, [everyMs]);
+  return now;
+}
 
 /**
  * One line the server never sends (so not in BUILD_LINE_WORDS, which match
@@ -54,7 +107,7 @@ export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
 export type BuildLineState = ServerBuildLine | 'working';
 
 /** The same lines on a Home tile (./build-line-words.js). */
-export { BUILD_LINE_TILE_CARD, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): ServerBuildLine | null {
@@ -76,12 +129,16 @@ export function buildLineDone(state: BuildLineState): boolean {
 /**
  * `note`, after the words: how long it usually takes, where a screen says so
  * (#4392, Homeroom bot's thanks: "Building it · usually 10 to 25 min").
+ * `words` (N4): the stage's own words in place of the line's, already in
+ * the language on screen ("Drawing the screens" while it is `building`).
  */
-export function BuildLine({ state, note = null, className = '' }: { state: BuildLineState; note?: string | null; className?: string }): ReactNode {
+export function BuildLine({ state, note = null, words: own = null, className = '' }: {
+  state: BuildLineState; note?: string | null; words?: string | null; className?: string;
+}): ReactNode {
   const t = useMessages('onboarding');
   const asks = buildLineAsks(state);
   const done = buildLineDone(state);
-  const words = t(state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]);
+  const words = own || t(state === 'working' ? WORKING_LINE_WORDS : BUILD_LINE_WORDS[state]);
   // A span, so it can sit in a row's text as well as in a card.
   return (
     <span

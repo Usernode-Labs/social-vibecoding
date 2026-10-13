@@ -80,6 +80,7 @@ const proposalTouches = require('../services/proposal-touches');
 const visualsService = require('../services/visuals');
 const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
+const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
@@ -147,6 +148,9 @@ const MY_GOVERNANCE_WHERE = `i.status = 'open'
        AND ${governanceKindsSql('i')}
        AND i.created_by = $1`;
 
+// 13 Oct 2026, D1: a project's first version is owed by nobody. It goes
+// live without a vote once it passes its checks (services/first-version-
+// rule.js), so it is no decision of anyone's to count or to list.
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        AND cs.user_id IS DISTINCT FROM $1
        AND NOT EXISTS (
@@ -154,7 +158,8 @@ const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
           WHERE pv.session_id = cs.id
             AND pv.user_id = $1
             AND ${currentVotePredicateSql('pv', 'cs')}
-       )`;
+       )
+       AND NOT ${firstVersionSql('cs')}`;
 
 const OWED_GOVERNANCE_WHERE = `i.status = 'open'
        AND ${governanceKindsSql('i')}
@@ -417,10 +422,11 @@ const NEEDS_FEED_SQL = `
 // `paying` is how many of a project's `waiting` the scorer's VOTE_CAST pays
 // (services/topochain/challenge-scorer.js VOTE_CAST_SQL, the same two
 // tests). Not a proposal the Homeroom bot built from a request the viewer
-// made, and nothing in a project only the viewer is in ("Just you"): the
-// bot's first version of their own solo app waits in their Needs you like
-// any other proposal, but voting on it is not judging somebody else's
-// change. The feed itself still lists them; `paying` skips them.
+// made, and nothing in a project only the viewer is in ("Just you"): a
+// change the bot made for them on their own solo app waits in their Needs
+// you like any other proposal, but voting on it is not judging somebody
+// else's change. The feed itself still lists them; `paying` skips them. (A
+// first version is owed by nobody: OWED_PROPOSALS_WHERE.)
 const OWED_BY_COMMUNITY_SQL = `
   WITH owed AS (
     SELECT cs.app_id,

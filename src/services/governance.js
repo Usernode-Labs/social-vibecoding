@@ -58,6 +58,10 @@ const { countedVotePredicateSql } = require('./pr-vote-revision');
 const gateRules = require('../workflow/rules/governance-gate.ts');
 const electorateRules = require('../workflow/rules/electorate.ts');
 const governanceRules = require('./governance-rules');
+// 13 Oct 2026, D1: whether a change is its project's first version, which
+// goes live without a vote (the gate's own rule is governance-gate.ts
+// applyFirstVersion).
+const { firstVersionSql, isFirstVersion } = require('./first-version-rule');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -329,6 +333,22 @@ async function proposalAuthorId(pool, kind, id) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Whether an author is an account the platform runs (users.is_synthetic:
+// Homeroom bot), whose proposing is nobody's yes on a rules project
+// (governance-rules.ts). A failed read answers true: the stricter reading,
+// which asks a person's yes of a change rather than counting one nobody gave.
+async function authorIsBot(pool, authorId) {
+  const id = parseInt(authorId, 10);
+  if (!Number.isFinite(id)) return false;
+  try {
+    const res = await pool.query('SELECT is_synthetic FROM users WHERE id = $1', [id]);
+    return !!(res && res.rows && res.rows[0] && res.rows[0].is_synthetic === true);
+  } catch (err) {
+    log.warn('governance', 'Could not read whether a proposal\'s author is a person; counting no yes for it', { authorId: id, err: err.message });
+    return true;
+  }
+}
+
 // Electorate resolution: who counts, and how many of them there are
 // (src/workflow/rules/electorate.ts). Exposed for serializers that
 // batch-count many rows. `appMeta` ({ selfHosted, collabPrivate }) is passed
@@ -468,6 +488,31 @@ async function voterSetsBatch(pool, kind, ids) {
   return out;
 }
 
+// The proposals of `ids` whose author is an account the platform runs
+// (Homeroom bot): a Set of ids. Their proposing is nobody's yes on a rules
+// project. A failed read counts every one as the bot's (authorIsBot above).
+async function botAuthoredBatch(pool, kind, ids) {
+  const list = (ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite);
+  if (!list.length) return new Set();
+  try {
+    const res = kind === 'issue'
+      ? await pool.query(
+        `SELECT i.id FROM issues i JOIN users u ON u.id = i.created_by
+          WHERE i.id = ANY($1::int[]) AND u.is_synthetic = TRUE`,
+        [list]
+      )
+      : await pool.query(
+        `SELECT cs.id FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = ANY($1::int[]) AND u.is_synthetic = TRUE`,
+        [list]
+      );
+    return new Set(((res && res.rows) || []).map((r) => parseInt(r.id, 10)));
+  } catch (err) {
+    log.warn('governance', 'Could not read which proposals Homeroom bot made; counting no author yes for any', { err: err.message });
+    return new Set(list);
+  }
+}
+
 /**
  * For a serializer that batch-counts many proposals on ONE app: what
  * computeGate needs to answer a rules project's gate, read once. Null for a
@@ -476,11 +521,12 @@ async function voterSetsBatch(pool, kind, ids) {
  */
 async function rulesContext(pool, appId, gov, kind, ids) {
   if (!gov || !gov.rules) return null;
-  const [facts, voters] = await Promise.all([
+  const [facts, voters, botAuthored] = await Promise.all([
     rulesFacts(pool, appId, gov),
     voterSetsBatch(pool, kind, ids),
+    botAuthoredBatch(pool, kind, ids),
   ]);
-  return { facts, voters };
+  return { facts, voters, botAuthored };
 }
 
 /** The computeGate options for one proposal out of a rulesContext. */
@@ -490,6 +536,7 @@ function rulesGateOpts(ctx, id, authorId, explicitReason) {
     rulesFacts: ctx.facts,
     voters: ctx.voters.get(parseInt(id, 10)) || { yes: new Set(), no: new Set() },
     authorId: authorId ?? null,
+    authorIsBot: !!(ctx.botAuthored && ctx.botAuthored.has(parseInt(id, 10))),
     memberCount: ctx.facts.memberCount,
     ...(explicitReason !== undefined ? { explicitReason } : {}),
   };
@@ -517,13 +564,22 @@ async function storedExplicitReason(pool, kind, id) {
 // deleted author), else it is read off the row. This is the path every
 // merge and apply decision takes, so the floor can never be skipped by a
 // caller that forgot to ask for it.
+//
+// The same goes for a project's first version (13 Oct 2026, D1): a change
+// is read for it here unless the caller says (`firstVersion`), and the gate
+// waives its vote (governance-gate.ts applyFirstVersion). An issue never is
+// one.
 async function governedGate(pool, appId, {
-  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason,
+  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason, firstVersion,
 } = {}) {
   const gov = await getGovernance(pool, appId);
+  const first = firstVersion !== undefined
+    ? !!firstVersion
+    : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
   if (gov.rules) {
     // #4666: a rules project reads who voted and what its groups are; the
-    // author always, because proposing counts as their yes.
+    // author always, because proposing counts as their yes, and whether they
+    // are a person, because only a person's proposing does.
     const [facts, voters, author] = await Promise.all([
       rulesFacts(pool, appId, gov),
       voterSets(pool, kind, id),
@@ -534,7 +590,9 @@ async function governedGate(pool, appId, {
       : null;
     return computeGate(gov, facts.membersActive, voters.yes.size, voters.no.size, openedAt, now, {
       explicitApproval, explicitReason: reason, authorId: author, voters,
+      authorIsBot: author != null ? await authorIsBot(pool, author) : false,
       rulesFacts: facts, memberCount: facts.memberCount,
+      firstVersion: first,
     });
   }
   const electorate = await getElectorate(pool, appId, gov);
@@ -555,7 +613,7 @@ async function governedGate(pool, appId, {
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge — and with it the member floor.
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, {
-    explicitApproval, otherYes, memberCount,
+    explicitApproval, otherYes, memberCount, firstVersion: first,
   });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
@@ -659,6 +717,11 @@ module.exports = {
   voterSetsBatch,
   rulesContext,
   rulesGateOpts,
+  botAuthoredBatch,
+  authorIsBot,
+  firstVersionSql,
+  isFirstVersion,
+  applyFirstVersion: gateRules.applyFirstVersion,
   rulesFromColumn,
   isWhoDecidesReason,
   electorateAtPromote,

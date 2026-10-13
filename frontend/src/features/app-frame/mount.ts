@@ -26,7 +26,7 @@
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
-import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { legacyPortalNode, mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { navStore } from '../nav/nav-store.js';
 import { appActivity } from './app-activity.js';
 import { appFrameBridge } from './app-frame-bridge.js';
@@ -61,6 +61,21 @@ export const appStatusBridge = {
   unmount(host: Element | null): void {
     appStatusStore.set({ view: null });
     unmountLegacyPortal(host);
+  },
+  /**
+   * N6: a new view for the placeholder already on `host`, re-rendered in
+   * place: nothing under it is unmounted, so a first version's card keeps
+   * its Live (AppView._repaintFirstVersion, on every 10 s recheck). False,
+   * and nothing done, unless this placeholder is still what `host` shows:
+   * its portal live there and a view published (`clear` and `unmount` drop
+   * it whenever something else takes the host over).
+   */
+  update(host: Element | null, view: AppStatusView): boolean {
+    if (!host || !host.isConnected || !appStatusStore.get().view) return false;
+    const shown = legacyPortalNode(host) as { type?: unknown } | null;
+    if (!shown || shown.type !== AppStatus) return false;
+    appStatusStore.set({ view });
+    return true;
   },
   /**
    * Forget the published placeholder without touching portals.

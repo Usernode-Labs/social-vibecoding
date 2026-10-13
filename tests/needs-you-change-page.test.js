@@ -155,6 +155,36 @@ test('a merged change was voted in: a full green Votes card that says where it i
   assert.equal(av._topicHeroView('proposal', { ...PR, status: 'merging' }).status, 'Going live');
 });
 
+// Club Votes, 12 to 13 Oct 2026 (D1): a project's first version goes live
+// without a vote once it passes its checks. Its page says so, in the Votes
+// card and the eyebrow, and offers no Vote button at all.
+test('D1: a first version\'s Votes card says it goes live without a vote, and asks for none', () => {
+  const av = context();
+  const first = {
+    ...PR, user_id: 99, username: 'homeroom_bot', first_version: true, yes_count: 0, votes_required: 0,
+    check_state: 'pending', mergeRequirements: undefined,
+  };
+  const { v, page } = render(av, first);
+  assert.deepEqual(plain(v.body.thread.votes), {
+    name: 'Votes', figure: 'No vote needed', tone: 'done', done: true,
+    segments: [{ weight: 1, pct: 100, state: 'done' }], label: 'Votes: no vote needed',
+    note: ['It’s the project’s first version, so it goes live without a vote once testing passes.'],
+  });
+  assert.equal(v.body.hero.status, 'Goes live without a vote');
+  assert.match(page, /data-change-gate="votes" data-done="true" data-tone="done"/);
+  assert.doesNotMatch(page, /dev-vote-btn|Waiting for (your )?approval|more yes/);
+  assert.deepEqual(plain(av._topicViewFor('proposal', { ...first, check_state: 'failing' }).body.thread.votes.note),
+    ['It’s the project’s first version, so it goes live without a vote once a fix passes testing.']);
+  assert.deepEqual(plain(av._topicViewFor('proposal', { ...first, check_state: 'passing' }).body.thread.votes.note),
+    ['It’s the project’s first version, so it goes live without a vote.']);
+  // Once it is live it reads as any merged change, and a later change of
+  // the bot's asks for its vote as before.
+  assert.equal(av._topicViewFor('proposal', { ...first, status: 'merged', merged_at: '2026-10-13T00:00:00Z' }).body.thread.votes.figure, 'Voted in');
+  const later = render(av, { ...first, first_version: false, votes_required: 1 });
+  assert.equal(later.v.body.thread.votes.figure, 'Needs 1 more yes');
+  assert.match(later.page, /dev-vote-btn/);
+});
+
 // Flat 4B Chores, 5 Oct 2026: the first version (PR 3) was up for a vote
 // when the bot built a fix on its branch (PR 8), and PR 8 merged with PR 3's
 // commit in it. PR 3 is marked merged as included in PR 8
@@ -1017,6 +1047,17 @@ test('#4455: the Votes card: one part per yes, the figure in the accent when the
   assert.equal(reached.figure, '2 of 2 yes');
   assert.equal(reached.done, true);
   assert.deepEqual(reached.note, ['jo and cilokman said yes.', 'It goes live once testing passes.']);
+  // Run four (13 Oct): the reader is "You", never their own username, and
+  // the others keep their names.
+  const yours = (names, item = { ...PR, yes_count: 2, check_state: 'passing' }) => votes(item, { yesNames: names, earlierYes: [], earlierNo: [], approvers: 0 }).note[0];
+  assert.equal(yours(['Builder', 'jo']), 'You and jo said yes.');
+  assert.equal(yours(['jo', 'Builder', 'cilokman']), 'You, jo and cilokman said yes.');
+  assert.equal(yours(['Builder'], { ...PR, status: 'merged' }), 'You said yes.');
+  assert.equal(yours(['jo'], { ...PR, status: 'merged' }), 'jo said yes.');
+  // A vote a newer push retired: the reader's own reads "Your".
+  const earlier = votes(PR, { yesNames: [], earlierYes: ['Builder', 'cilokman'], earlierNo: ['Builder'], approvers: 3 });
+  assert.deepEqual(earlier.note, ['Any of the 3 approvers can give it.', 'Your yes was on an earlier version.',
+    'cilokman’s yes was on an earlier version.', 'Your no was on an earlier version.']);
   assert.ok(v.body.thread.votes, 'every change page has its Votes card');
   // The roster keeps the names the card reads.
   const src = read('public/js/app-view.js');

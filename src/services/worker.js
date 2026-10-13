@@ -318,6 +318,14 @@ const HOMEROOM_READ_MODES = new Set(['build', 'scout']);
 // Bounded by the turn's own length; revocation normally ends it far sooner.
 const HOMEROOM_READ_TTL_SECONDS = 2 * 60 * 60;
 
+// The per-turn host shortlist override (config.openrouterProviderShortlists),
+// as the listener reads AGENT_PROVIDER_SHORTLIST: 'none', or provider slugs
+// joined by commas. Anything else is '' (the listener's own). Pure.
+function providerShortlistEnv(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^(?:none|[a-z0-9][a-z0-9._/-]{0,80}(?:,[a-z0-9][a-z0-9._/-]{0,80}){0,15})$/.test(text) ? text : '';
+}
+
 async function mintHomeroomReadGrant(sessionId, mode) {
   if (!HOMEROOM_READ_MODES.has(mode)) return null;
   const pool = _getPoolSafe();
@@ -697,6 +705,25 @@ function addObservedValue(set, value) {
 
 function noteToolName(state, name) {
   addObservedValue(state.telemetryToolNames, name);
+  noteToolSequence(state, name);
+}
+
+// The order a turn called its tools in, by name alone (run four, 13 Oct
+// 2026): what a 33-minute build spent its 71 commands and 34 browser calls
+// on was lost with its pod. A name is the tool's, never its input or output,
+// and only one the platform knows (llm-telemetry.js toolSequenceName: Bash,
+// Read, browser_take_screenshot, get_platform_conventions); any other is
+// `mcp` or `other`. Bounded: the first TOOL_SEQUENCE_MAX, then a count of
+// the rest (telemetry_metrics tool_sequence and tool_sequence_dropped).
+const TOOL_SEQUENCE_MAX = 400;
+function noteToolSequence(state, name) {
+  if (!state) return;
+  const seq = Array.isArray(state.toolSequence) ? state.toolSequence : (state.toolSequence = []);
+  if (seq.length >= TOOL_SEQUENCE_MAX) {
+    state.toolSequenceDropped = (state.toolSequenceDropped || 0) + 1;
+    return;
+  }
+  seq.push(llmTelemetry.toolSequenceName(name));
 }
 
 function noteFileRead(state, path) {
@@ -996,6 +1023,8 @@ function noteCodingProviderImages(images, state) {
   state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
   state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
   state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
+  // Older images left out to keep the request small (pruneOldImages).
+  state.imagePrunedCount = (state.imagePrunedCount || 0) + count(images.pruned);
 }
 
 // The text blocks a Claude turn wrote since its last tool call, oldest
@@ -1347,6 +1376,7 @@ function observeCodingProviderTiming(event, onProgress, state) {
     const inputItems = codingProviderCount(event.inputItems, 1_000_000);
     const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
     const linked = event.previousResponseLinked;
+    noteRequestSize(state, { payloadBytes, inputBytes, instructionBytes, inputItems });
     if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
         && typeof linked === 'boolean') {
       const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
@@ -1403,6 +1433,21 @@ function observeCodingProviderTiming(event, onProgress, state) {
       ? `, ${responseBytes} response bytes in ${chunkCount} chunks` : '';
     onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}${transfer}`);
   }
+}
+
+// What the turn's first and last model requests carried, in bytes of the
+// wire request (run four, 13 Oct 2026): a build's turn kept only counts, and
+// how its prompt grew, from a 68,577-character first request through four
+// compactions, could not be read back once its pod was gone. Sizes only,
+// never content (telemetry_metrics first_request_* and last_request_*).
+function noteRequestSize(state, size) {
+  if (!state || size.payloadBytes == null) return;
+  const kept = {
+    payloadBytes: size.payloadBytes, inputBytes: size.inputBytes,
+    instructionBytes: size.instructionBytes, inputItems: size.inputItems,
+  };
+  if (!state.firstRequestSize) state.firstRequestSize = kept;
+  state.lastRequestSize = kept;
 }
 
 function parseLine(line, onProgress, state) {
@@ -1711,6 +1756,13 @@ function newWatchState() {
     imageSentCount: null,
     imageMovedCount: null,
     imageOmittedCount: null,
+    imagePrunedCount: null,
+    // What the first and last model requests carried (noteRequestSize), and
+    // the tools called in order (noteToolSequence): unknown until seen.
+    firstRequestSize: null,
+    lastRequestSize: null,
+    toolSequence: null,
+    toolSequenceDropped: null,
     // Where an OpenRouter turn's time went, read off its request listener's
     // own clock (noteCodingRequestClock). All null when the listener sent
     // no clock: an Anthropic turn, or a worker image from before atMs.
@@ -3225,6 +3277,10 @@ async function execInWorker(sessionId, {
   agentModel = null,
   agentReasoningEffort = null,
   agentModelMetadata = null,
+  // The hosts an OpenRouter turn may use, when the platform overrides the
+  // listener's own per-model shortlist: 'slug,slug' or 'none' (agent-turn.js
+  // resolveCodexRuntimeContext). Null leaves the listener's.
+  agentProviderShortlist = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
   // A build whose agent failed (exited non-zero, or ended on an error result)
@@ -3240,6 +3296,13 @@ async function execInWorker(sessionId, {
   // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
   // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
   stopGuard = false,
+  // 'first_version': a build of a project's first version (the Homeroom
+  // bot's build and review fixes, homeroom-bot-live.js buildTurnRunner). Its
+  // runner loads only the tools one uses (run-cc.sh and run-codex-agent.sh
+  // BUILD_PROFILE): no visible_changes server, the Homeroom read tools
+  // narrowed to the platform conventions, no web or notebook tools. Anything
+  // else is an ordinary build.
+  buildProfile = null,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3608,6 +3671,7 @@ async function execInWorker(sessionId, {
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
+    safeEnv.AGENT_PROVIDER_SHORTLIST = providerShortlistEnv(agentProviderShortlist);
   }
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
@@ -3637,10 +3701,12 @@ async function execInWorker(sessionId, {
     // The operator-configured OpenRouter endpoint (plan 4): always forward
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+    safeEnv.AGENT_PROVIDER_SHORTLIST = providerShortlistEnv(agentProviderShortlist);
   }
   // Only a Claude Code build has the hook: a scout changes nothing by design,
   // and the Codex runner has no Stop hook to install.
   if (stopGuard === true && mode === 'build' && runsClaude) safeEnv.STOP_GUARD = '1';
+  if (buildProfile === 'first_version' && mode === 'build') safeEnv.BUILD_PROFILE = 'first_version';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -3904,7 +3970,16 @@ async function execInWorker(sessionId, {
       });
       await new Promise(() => {});
     }
-    if (consumeError) throw consumeError;
+    if (consumeError) {
+      // What the turn did before the journal could not be read on, for the
+      // ledger (sessions.js reads err.turnResult): its usage, its telemetry
+      // and the host OpenRouter routed it to, which a failed turn otherwise
+      // never recorded.
+      if (consumeError && typeof consumeError === 'object' && !consumeError.turnResult) {
+        try { consumeError.turnResult = finalizeHarnessResult(state); } catch { /* the error still goes up */ }
+      }
+      throw consumeError;
+    }
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed

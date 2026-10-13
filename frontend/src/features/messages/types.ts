@@ -459,6 +459,10 @@ export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   state?: string | null;
   author?: string | null;
   href?: string | null;
+  /** An app's or a community's own icon, `/app-icons/<id>`, when it has one: drawn in place of the glyph. */
+  iconUrl?: string | null;
+  /** An app's or a community's emoji icon, for one with no image. */
+  iconEmoji?: string | null;
 }
 
 export interface ConversationMessage {

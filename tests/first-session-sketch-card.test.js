@@ -108,22 +108,39 @@ test('the build line: the same words everywhere, a spinner that turns, one blue 
   assert.doesNotMatch(LINE_SRC, /className="[^"]*status-dot/);
 });
 
-test('the same lines on a Home tile: the build line\'s own words, blue still asks, the name gives up a line', () => {
-  // Owner, 7 Oct 2026: a new project's tile says the build line, in its own
-  // words (not a shorter set), not "Spinning up...".
-  // One set of words: build-line.tsx takes them from build-line-words.js.
-  assert.match(LINE_SRC, /import \{ BUILD_LINE_WORDS \} from '\.\/build-line-words\.js';/);
+test('the same lines on a Home tile, in short words that fit its one line; blue still asks', () => {
+  // Owner, 7 Oct 2026: a new project's tile says the build line, not
+  // "Spinning up...". Run four (13 Oct): the whole phrases were cut off on a
+  // phone ("Homeroom bot is...", "Your plan is ready to..."), so the tile says
+  // a short set and the screens with room keep the whole phrases.
+  // One set of words per surface: build-line.tsx takes the long ones from
+  // build-line-words.js, as the tile does its short ones. (N4, 13 Oct 2026:
+  // the stages' words beside them.)
+  assert.match(LINE_SRC, /import \{ BUILD_LINE_WORDS, PHASE_WORDS, minutesSince, phaseOf \} from '\.\/build-line-words\.js';/);
   assert.doesNotMatch(LINE_SRC, /BUILD_LINE_WORDS = /);
-  assert.equal(lineMod.BUILD_LINE_TILE_WORDS, undefined);
+  assert.deepEqual(Object.fromEntries(Object.entries(lineMod.BUILD_LINE_TILE_WORDS).map(([state, id]) => [state, message(id)])), {
+    planning: 'Planning',
+    plan: 'Plan ready',
+    'plan-member': 'Planning',
+    question: 'Question',
+    building: 'Building',
+    testing: 'Testing',
+    ready: 'Ready to try',
+    live: 'Live',
+  });
+  // A word for every state the server sends, in its order.
+  assert.deepEqual(Object.keys(lineMod.BUILD_LINE_TILE_WORDS), Object.keys(lineMod.BUILD_LINE_WORDS));
+  // Short enough for one 11px line under a 56px icon on a phone.
+  for (const id of Object.values(lineMod.BUILD_LINE_TILE_WORDS)) assert.ok(message(id).length <= 12, message(id));
   for (const state of ['plan', 'question']) {
-    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-2 font-semibold text-[color:var(--accent)]', state);
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-1 font-semibold text-[color:var(--accent)]', state);
   }
   for (const state of ['planning', 'plan-member', 'building', 'testing', 'ready', 'live']) {
-    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-2 text-zinc-500 dark:text-zinc-400', state);
+    assert.equal(lineMod.buildLineTileClass(state), 'app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400', state);
   }
-  // Two 12px caption lines and a one-line name fill the 38px the two-line
-  // name and one caption line do (app.css --home-cell-h), so the row holds.
-  assert.equal(lineMod.BUILD_LINE_TILE_CARD, '[&_.app-card-title]:line-clamp-1 [&_.app-card-title]:min-h-0');
+  // One caption line and the two-line name fill the tile's 38px (app.css
+  // --home-cell-h), so the name no longer gives up a line.
+  assert.equal(lineMod.BUILD_LINE_TILE_CARD, undefined);
   assert.equal(lineMod.buildLineTileOf('plan'), 'plan');
   assert.equal(lineMod.buildLineTileOf('Plan ready'), null);
 });
@@ -220,7 +237,7 @@ test('the small size, for a row: the tile on its colour, the name, and the line 
 test('the made screen draws the thumbnail with its line, its emoji is the screen\'s icon, and nothing is framed', () => {
   const made = read(`${DIR}/made.tsx`);
   assert.match(made, /import \{ SketchCard, showsCard, useSketch \} from '\.\/sketch-card';/);
-  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
+  assert.match(made, /\{card \? \(\n\s+<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
   assert.match(made, /const tile = sketch\.card\?\.emoji \|\| made\.emoji \|\| made\.name\.slice\(0, 1\);/);
   assert.match(made, /made=\{sketch\.card \? \{ \.\.\.made, emoji: sketch\.card\.emoji \} : made\}/, 'the invite sheet shows it too');
   // (The plain card of a project with no sketch, such as an import, keeps its

@@ -38,6 +38,7 @@
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
+const { firstVersionSql } = require('./first-version-rule');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
 const FIRST_SWEEP_DELAY_MS = 5 * 60_000; // let boot settle first
@@ -70,7 +71,9 @@ let timer = null;
  * Excluded: the proposal's own author, apps the person blocked, proposals
  * they already voted on, a change Homeroom bot built for a request they
  * asked for, a change they were told is ready to try in the last 24 hours,
- * and anyone who had a digest in the last MIN_GAP_HOURS.
+ * a project's first version (it goes live without a vote:
+ * services/first-version-rule.js), and anyone who had a digest in the last
+ * MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
  * the platform, and per-user round trips would make an hourly sweep a
@@ -89,6 +92,8 @@ const PENDING_SQL = `
     SELECT cs.id, cs.app_id, cs.user_id AS author_id
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
+       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
+       AND NOT ${firstVersionSql('cs')}
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a

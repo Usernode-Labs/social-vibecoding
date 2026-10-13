@@ -211,6 +211,9 @@ interface Run {
   build_cost_usd: number | null;
   build_at: string | null;
   build_queued_at: string | null;
+  // A live build's own session: linked when it starts, so a build with one
+  // and no outcome yet is building (its review included).
+  build_session_id?: number | null;
   // The spec the bot wrote before building, live or shadow.
   build_spec_md: string | null;
   // A build turn that changed nothing, and its nudge (NoChangeNote).
@@ -463,7 +466,13 @@ function ShadowBuild({ run }: { run: Run }) {
  * why it did not become a proposal, or why it worked without a spec.
  */
 function LiveBuild({ run }: { run: Run }) {
-  if (run.build_ok == null) return null;
+  if (run.build_ok == null) {
+    // Under way: linked to its session, no outcome yet. Run 1746, a first
+    // version, read as no build at all while it built and was reviewed.
+    return run.build_session_id
+      ? <p className={AdminUI.muted} data-live-build="building">Building now.</p>
+      : null;
+  }
   if (!run.build_ok) {
     const why = run.build_error || 'no reason recorded';
     // WP1: a build that was not needed (its request already had a proposal,

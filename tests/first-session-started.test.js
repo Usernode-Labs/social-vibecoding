@@ -78,7 +78,7 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   // Nothing else: no note under the card, no plan, no old invite heading.
   assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour/);
   // Invite people later starts the tour with nothing sent, once the app runs.
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} disabled=\{holds\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true, stage\)\} disabled=\{holds\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
 });
 
 // Evan, 10 Oct 2026, iPhone: a ready-made app was still being set up when
@@ -105,7 +105,9 @@ test('#4900: the way on is off until the app runs, for every first-session proje
   assert.equal(READY_WAIT_MS, 120000);
   // Read every two seconds while it is set up, every ten after.
   assert.match(CODE, /const waits = waitsToRun\(entry, readyMade\);\s+const settingUp = holdsContinue\(waits, appStatus, false\);/);
-  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp\]\);/);
+  // (And while its plan from Make it is written, 13 Oct 2026, and once more
+  // at once after Submit: `reread`.)
+  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \|\| planComing \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp, planComing, reread\]\);/);
   // The furthest step read, never back to the start on a read without one.
   assert.match(CODE, /setSetupStep\(\(was\) => Math\.max\(was, setupStepOf\(app\.phase\)\)\);/);
   // Slow after a minute, let go after two, counted again after Try again.
@@ -113,8 +115,8 @@ test('#4900: the way on is off until the app runs, for every first-session proje
   assert.match(CODE, /if \(res\.ok\) \{\s+setAppStatus\('creating'\);\s+setSetupStep\(0\);\s+setRound\(\(r\) => r \+ 1\);\s+\}/);
   assert.match(CODE, /const holds = holdsContinue\(waits, appStatus, waitedOut\);/);
   // Both ways on are off while it holds; Share invite and Share again never are.
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(false\)\} layout="full"[^>]*className="flex items-center justify-center disabled:opacity-60" disabled=\{holds\}>/);
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} disabled=\{holds\}/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(false, stage\)\} layout="full"[^>]*className="flex items-center justify-center disabled:opacity-60" disabled=\{holds\}>/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true, stage\)\} disabled=\{holds\}/);
   assert.doesNotMatch(CODE, /setWaiting|onLabel|aria-busy/, 'no press held any more');
   // Once it runs Home is read again, so the tour's tile can be tapped.
   assert.match(CODE, /if \(waits && appStatus === 'running'\) \(window as \{ Home\?: \{ load\?: \(\) => void \} \}\)\.Home\?\.load\?\.\(\);/);
@@ -222,7 +224,7 @@ test('C5: after sharing, the line says so, and the buttons keep their places: Sh
   assert.ok(shared.indexOf('data-first-session-share-again=""') < shared.indexOf('data-first-session-continue=""'));
   assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*\{t\('onboarding:firstSession\.made\.shareAgain'\)\}/);
   assert.equal(message('onboarding:firstSession.made.shareAgain'), 'Share again');
-  assert.match(CODE, /<Button type="button" data-first-session-continue="" onClick=\{\(\) => onContinue\(false\)\} layout="full" variant="pillAccent"/);
+  assert.match(CODE, /<Button type="button" data-first-session-continue="" onClick=\{\(\) => onContinue\(false, stage\)\} layout="full" variant="pillAccent"/);
   assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : t\(INVITE_HINT\)\}/);
   assert.match(CODE, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   // The logo bar stays behind the sheet and after sharing; Share invite is gone.
@@ -270,5 +272,5 @@ test('from Create there is no tour: its line and its way on say so', () => {
   const html = draw({ entry: 'create', underHeader: true });
   assert.doesNotMatch(html, /data-first-session-made-top/, 'under the platform header there is no logo bar');
   assert.equal(made.continueLabel('create', true, 'Plant Pal'), 'Go to Plant Pal');
-  assert.match(CODE, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
+  assert.match(CODE, /\{plan && !stalled && fromCreate && !asked \? <PlanWaitsCard/);
 });

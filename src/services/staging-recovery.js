@@ -320,15 +320,60 @@ function previewIsOfAnotherCommit(session, headSha) {
   return true;
 }
 
+// A proposal up for approval: its reviewed head is the head its votes and
+// the merge gate are about (routes/votes.js keeps it current on every head
+// move). Any other row's reviewed head may be left over from an earlier
+// review (unpromote keeps it), so it is not read as the head.
+const UP_FOR_APPROVAL = new Set(['promoted', 'merging']);
+
+// The head a proposal is up for approval on: an imported row's own PR head,
+// a native proposal's reviewed head; null for anything else, or none
+// recorded.
+function approvedHeadSha(session) {
+  if (!session) return null;
+  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  return UP_FOR_APPROVAL.has(session.status) ? (session.reviewed_head_sha || null) : null;
+}
+
 // The commit a recheck is about to judge, from the row's own pins: the
-// imported head for an imported row, otherwise the checks pin (which a clean
+// imported head for an imported row, the reviewed head for a proposal up
+// for approval (approvedHeadSha), otherwise the checks pin (which a clean
 // sync carries forward to the sync commit — exactly the case where the
 // preview is a commit behind). No GitHub read: the pin is what the votes and
 // the verdict describe, and a recheck is asked to judge that.
+//
+// The reviewed head comes before the checks pin: when the branch moved under
+// a run (restart recovery rolled Club Votes' head back from a review fix to
+// the commit before it, 12 October 2026), the pin is the run's old commit,
+// and judging it again, or collecting its run, says nothing about the head
+// people vote on. Its pass read as ready to try; its own head then failed.
 function recheckHeadSha(session) {
   if (!session) return null;
-  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  const approved = approvedHeadSha(session);
+  if (approved || session.source === 'imported') return approved;
   return session.checks_commit_sha || session.handoff_head_sha || session.reviewed_head_sha || null;
+}
+
+// The pins a recheck decides by, read now: a caller's row can predate a
+// promote (the promote route's own copy still says 'active') or a head move.
+// The caller's copy, with these, else the copy as it was.
+async function currentPins(pool, session) {
+  if (!session || !session.id || !pool) return session;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT id, status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+         FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    if (!row || Number(row.id) !== Number(session.id)) return session;
+    const { id, ...pins } = row;
+    return { ...session, ...pins };
+  } catch (err) {
+    log.warn('staging-recovery', 'Could not read the row before a recheck; deciding by the copy given', {
+      sessionId: session.id, err: err.message,
+    });
+    return session;
+  }
 }
 
 // Recovery's own `reason` strings name the CODE PATH; visuals.CHECK_TRIGGERS
@@ -394,7 +439,7 @@ const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
 // (broadcastGlobal session_event) AND the group-chat vote panel
 // (pushSessionUpdate) so the Preview button reappears on the PR card
 // without anyone needing to reload.
-async function rebuildSessionStaging({ config, pool, session, reason }) {
+async function rebuildSessionStaging({ config, pool, session, reason, headSha = null }) {
   const staging = require('./staging');
   const { broadcastGlobal, pushSessionUpdate } = require('./ws');
 
@@ -500,7 +545,15 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // imported_pr_head_sha (and every vote cast against it) still points at
   // the older commit. The head-change sweep is what advances that SHA, and
   // it clears the tally when it does; this path must not front-run it.
+  // The same for a native proposal up for approval: its reviewed head
+  // (approvedHeadSha, or the head a recheck read for it) is the commit its
+  // votes describe, and the one recheckHeadSha judges a preview by. A tip
+  // past it is a push its reconcile has not taken in yet, which moves the
+  // reviewed head and re-runs the checks itself. Building the tip here left
+  // a preview of another commit than the head, rebuilt again on every look.
   const commitHash = importedHead
+    || headSha
+    || approvedHeadSha(session)
     || compare.commits[compare.commits.length - 1]?.sha
     || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
@@ -964,6 +1017,15 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // (check-harvest's re-drive): the direct re-run asks for its slot as of then.
 // A rebuild is a new run and queues anew once its preview is up.
 async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null }) {
+  // The head is decided from the row as it stands now, never from a pin a
+  // run of an earlier commit left behind (recheckHeadSha).
+  session = await currentPins(pool, session);
+  const head = recheckHeadSha(session);
+  if (head && session.checks_commit_sha && head.toLowerCase() !== String(session.checks_commit_sha).toLowerCase()) {
+    log.info('staging-recovery', 'The head moved from the commit its checks were pinned to; checking the head', {
+      sessionId: session.id, reason, was: session.checks_commit_sha, head,
+    });
+  }
   const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
   // A run of this commit still on the cluster, running or finished but not
   // yet read, is the run a recheck asks for: the harvest collects it
@@ -971,9 +1033,12 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   // set a run that is testing back to "building", and before a rebuild,
   // which would replace the preview under it and take the lifecycle row its
   // harvest writes through. Its verdict, when stored, clears its manifest,
-  // and a recheck after that starts a fresh run as before.
+  // and a recheck after that starts a fresh run as before. Only a run of the
+  // HEAD is asked about: one of an earlier commit is not the run a recheck
+  // asks for, and the stamp below moves the pin off it, so its verdict is
+  // never stored (visuals.storeChecks writes only for the pinned commit).
   if (!replaceRun) {
-    const left = await require('./check-harvest').runToCollect(config, pool, session.id, session.checks_commit_sha || null);
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, head);
     if (left) {
       log.info('staging-recovery', 'A run of this commit is still on the cluster; leaving it to the harvest', {
         sessionId: session.id, reason, ...left,
@@ -988,26 +1053,29 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
   // re-stamps idempotently (same commit sha → failure streak preserved).
   {
     const visuals = require('./visuals');
-    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason))
+    await visuals.setChecksPending(pool, session.id, head, 'building', checkTriggerForReason(reason))
       .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason));
+    visuals.notifyChecksPending(session.id, head, 'building', checkTriggerForReason(reason));
   }
+  // The pin is the head now: what the paths below record against it.
+  if (head) session = { ...session, checks_commit_sha: head };
   // The head this run is about to judge rides along, so a preview that is
   // still of the pre-sync commit is rebuilt rather than tested against.
   if (await stagingNeedsRebuild(session, { config, headSha: recheckHeadSha(session) })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').
-    return rebuildSessionStaging({ config, pool, session, reason });
+    return rebuildSessionStaging({ config, pool, session, reason, headSha: approvedHeadSha(session) });
   }
   // Healthy preview: re-run the checks directly. captureForSession reaches
   // the staging container by name over the docker network, so it needs only
-  // the app descriptor + a commit to stamp (best-effort: the commit the
-  // prior verdict described). _inFlight-guarded internally.
+  // the app descriptor + a commit to stamp (the head). _inFlight-guarded
+  // internally, and a capture of an earlier commit still in flight is
+  // superseded by this one.
   const visuals = require('./visuals');
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-  visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
+  visuals.captureForSession(config, session, app, head, null, {
     send: null,
     trigger: checkTriggerForReason(reason),
     // A human pressing "Re-run checks" — or an agent correcting the capture
@@ -1040,6 +1108,8 @@ module.exports = {
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,
   recheckHeadSha,
+  approvedHeadSha,
+  currentPins,
   rebuildSessionStaging,
   recheckSessionChecks,
   // Exported for tests + so the client-facing wording has one owner.

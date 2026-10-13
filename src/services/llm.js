@@ -662,6 +662,10 @@ const HELPER_TIME_LIMIT_MS = Object.freeze({
   // The sketch card waits up to 15s for its model (app-sketch.js
   // MODEL_WAIT_MS); Haiku gets what is left.
   app_sketch: 8000,
+  // A first version's plan at Make it (first-version-plan.js): its maker
+  // waits on the made screen for its questions, while the project is set
+  // up (about 40 seconds), and it is a longer answer than the card's.
+  first_version_plan: 20000,
   // Nobody is waiting.
   session_title: 8000,
   progress_estimate: 10000,
@@ -1951,6 +1955,34 @@ async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, m
     schema,
     telemetryContext,
     defaults: { backend: 'helper', component: 'app_sketch' },
+    apiKey,
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return { text, usage: resp.usage, model: served };
+}
+
+// A new project's first version's plan, at Make it (services/first-version-
+// plan.js owns the prompt, the plan's schema and the parse): what the
+// triage of its first request would plan, from the description alone, so
+// its maker can answer its questions on the made screen while the project
+// is set up. One helper call; hands back the reply's text, the plan's JSON
+// whichever model answered. THROWS with no key or on a provider error; the
+// caller then leaves the plan to the triage, as before.
+async function generateFirstVersionPlan({ system, user, schema, model = HELPER_MODEL, maxTokens = 2000, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const { response: resp, model: served } = await helperMessage({
+    helper: 'first_version_plan',
+    activeClient,
+    model,
+    params: {
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: String(user || '') }],
+    },
+    schema,
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'first_version_plan' },
     apiKey,
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -3385,6 +3417,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription, generateAppSketch,
+  generateFirstVersionPlan,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).

@@ -444,7 +444,8 @@ test('a recovered fix that pushed is a revise run on the head it looked at, with
   assert.equal(calls.spend, 31, 'debited from the bot\'s allowance as a live turn is');
   assert.equal(calls.onProposal.length, 1);
   assert.equal(calls.onProposal[0].kind, 'checks_revise');
-  assert.match(calls.onProposal[0].text, /fixed the failing checks on this change: The text-size button now says "Text size"\./);
+  // N3: what was fixed, from what failed, in plain words; never the turn's own summary.
+  assert.equal(calls.onProposal[0].text, 'Homeroom bot fixed the check that was failing. Its checks run again on the new version.');
   assert.equal(calls.reconciled.length, 0, 'the person\'s tail reset the votes and rebuilt staging already');
   assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31), 'its queue row is spent');
   assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_queue SET wait_reason = NULL, wait_until = NULL WHERE app_id = \$1 AND issue_number = \$2/.test(q.s)));

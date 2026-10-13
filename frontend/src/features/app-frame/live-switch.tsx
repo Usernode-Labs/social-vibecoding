@@ -21,6 +21,11 @@ export interface FirstVersionLive {
   userKey: string;
   /** A screenshot state: a made-up recording, nothing fetched. */
   sample?: boolean;
+  /**
+   * N7: built (Testing it, Ready to try) with no real screens: the build's
+   * last frame stays on the card, with no switch.
+   */
+  last?: boolean;
 }
 
 const STORE_PREFIX = 'usernode.firstVersionLive.v1.';
@@ -38,24 +43,37 @@ export function writeChoice(userKey: string, choice: LiveChoice): void {
   try { localStorage.setItem(choiceKey(userKey), choice); } catch { /* private mode: this visit only */ }
 }
 
+/**
+ * The choice for `userKey` (null: Live is not offered, Preview). Read for
+ * whoever it is offered to, not once when the card first drew: N6 offers
+ * Live only once there is a frame to show, and the card stays mounted
+ * across the App tab's rechecks, so it is often offered after the card
+ * drew. A choice made here holds for the same person.
+ */
 export function useLiveChoice(userKey: string | null): [LiveChoice, (c: LiveChoice) => void] {
-  const [choice, setChoice] = useState<LiveChoice>(() => (userKey != null ? readChoice(userKey) : 'preview'));
+  const [picked, setPicked] = useState<{ key: string | null; choice: LiveChoice } | null>(null);
+  const choice: LiveChoice = picked && picked.key === userKey
+    ? picked.choice
+    : (userKey != null ? readChoice(userKey) : 'preview');
   const choose = useCallback((c: LiveChoice) => {
-    setChoice(c);
+    setPicked({ key: userKey, choice: c });
     if (userKey != null) writeChoice(userKey, c);
   }, [userKey]);
   return [choice, choose];
 }
 
-export type LivePhase = 'starting' | 'live' | 'failed';
+export type LivePhase = 'starting' | 'live' | 'failed' | 'ended';
 
 /**
  * The Live pill. "Starting the app…" until there is a good frame, then
- * "Live · just updated" / "Live · updated 12 s ago", and "A restart failed ·
- * showing the last good screen" while the newest restart did not load. Pure.
+ * "Live · just updated" / "Live · updated 12 s ago", "A restart failed ·
+ * showing the last good screen" while the newest restart did not load, and
+ * "Last screen from the build" once the build's watcher has stopped (N7:
+ * kept on the card while it is reviewed and tested). Pure.
  */
 export function livePill(phase: LivePhase, ageSeconds: number | null): string {
   if (phase === 'starting') return translate('agent:appFrame.live.pill.starting');
+  if (phase === 'ended') return translate('agent:appFrame.live.pill.ended');
   if (phase === 'failed') return translate('agent:appFrame.live.pill.failed');
   const age = ageSeconds == null || !Number.isFinite(ageSeconds) ? 0 : Math.max(0, Math.floor(ageSeconds));
   if (age < 5) return translate('agent:appFrame.live.pill.justUpdated');

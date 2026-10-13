@@ -789,6 +789,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "37b35c771c712907e554",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1', { fixParam: '$5' })}, stale_notified_at = NULL, approval_epoch "
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "448507211744003a43f6",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL WHERE id = $2 RETURNING pr_summary_s"
@@ -796,23 +803,9 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "550c9388ae5b8afbd707",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL, approval_epoch = approval_epoch + C"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "aaa0033cbfbd7442abc1",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/votes.js",
@@ -827,6 +820,13 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "f3ef64b0967fe84e5801",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1025,6 +1025,13 @@
       "preview": "`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN CREATE ROLE ${ROLE} LOGIN PASSWORD '${_roPassword}'; ELSE ALTER ROLE ${ROLE} WI"
     },
     {
+      "source": "src/services/first-version-rule.js",
+      "kind": "structural-template",
+      "fingerprint": "c140a8a07ed7396ca452",
+      "count": 1,
+      "preview": "`SELECT ${firstVersionSql('cs')} AS first_version FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
       "source": "src/services/governance.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1060,6 +1067,13 @@
       "preview": "`SELECT COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes, COUNT(*) FILTER (WHERE vote = '${noVal}') AS no${wantOther ? `, COUNT(*) FILTER (WHERE vote = '${yesV"
     },
     {
+      "source": "src/services/homeroom-bot-activity.js",
+      "kind": "structural-template",
+      "fingerprint": "0f0e957ffe84eb3a2597",
+      "count": 1,
+      "preview": "`WITH stamped AS ( SELECT d.message_id, d.app_id, d.issue_number, d.created_at, CASE WHEN m.metadata->'homeroomBot'->>'startedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    },
+    {
       "source": "src/services/homeroom-bot-dm.js",
       "kind": "structural-template",
       "fingerprint": "c913b1f251da2021e1da",
@@ -1093,6 +1107,13 @@
       "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
+    },
+    {
+      "source": "src/services/homeroom-bot-tray.js",
+      "kind": "structural-template",
+      "fingerprint": "ba43eae40ba166744523",
+      "count": 1,
+      "preview": "`SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at, r"
     },
     {
       "source": "src/services/homeroom-bot.js",
@@ -1146,7 +1167,7 @@
     {
       "source": "src/services/merge-queue.js",
       "kind": "structural-template",
-      "fingerprint": "493c3ca09dec042ca2c7",
+      "fingerprint": "8beaba6753a1b704d044",
       "count": 1,
       "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integrati"
     },
@@ -1233,6 +1254,13 @@
       "fingerprint": "ffedbadadf5a3cf89623",
       "count": 1,
       "preview": "`DELETE FROM notifications WHERE ${c.target_type === 'app_message' ? 'chat_message_id' : 'conversation_message_id'} = $1`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "43955023a1d61bb8b386",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
     },
     {
       "source": "src/services/notifications.js",
@@ -1625,6 +1653,13 @@
       "fingerprint": "952e769794c8bbcad405",
       "count": 1,
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
+    },
+    {
+      "source": "src/services/vote-digest.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "9d1082139d72c4cb203f",
+      "count": 1,
+      "preview": "PENDING_SQL"
     },
     {
       "source": "src/services/workshop-themes.js",

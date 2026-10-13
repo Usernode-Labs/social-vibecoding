@@ -143,6 +143,21 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
+// 13 Oct 2026 (D1): a project's first version goes live without a vote, so
+// once its tests pass it waits on nobody, and while they run the bot does
+// not say it is waiting for approval.
+test('D1: a first version up for testing waits on nobody\'s approval', () => {
+  const open = { proposal_status: 'promoted', proposal_at: ago(20), first_version: true };
+  assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
+    stage: 'vote', since: ago(20), doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two',
+  });
+  assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
+    'it goes live without a vote once its tests pass, and its tests are running: building the preview first');
+  const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] });
+  assert.equal(failing.doing, 'it goes live without a vote once its tests pass, and its tests failed (1 test did not pass)');
+  assert.equal(progress.inFlight({ stage: 'vote' }), false, 'nor is it the bot\'s work in flight');
+});
+
 test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {
   for (const name of ['setting_up', 'queued', 'reading', 'starting', 'planning', 'building', 'proposing',
     'followup_queued', 'revising', 'fix_queued', 'fixing', 'merging']) {

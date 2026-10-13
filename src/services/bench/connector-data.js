@@ -33,7 +33,8 @@ const PERSON_USER_SQL = 'SELECT id, username FROM users WHERE LOWER(username) = 
 const PERSON_RUNS_SQL = `
   SELECT r.id, a.slug AS app_slug, r.issue_number, r.mode, r.verdict, r.read_reason,
          r.cost_usd::float8 AS cost_usd, r.build_cost_usd::float8 AS build_cost_usd,
-         r.payer_user_id, r.build_ok, r.build_error, r.build_at, r.build_queued_at, r.build_branch, r.created_at
+         r.payer_user_id, r.build_ok, r.build_error, r.build_at, r.build_queued_at, r.build_branch, r.created_at,
+         r.build_session_id, r.live_build_waiting_at, r.awaiting_go_at
     FROM homeroom_bot_runs r
     JOIN apps a ON a.id = r.app_id
     LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
@@ -202,6 +203,8 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       // Whole, as the run keeps it (600 characters): a failed turn's reason
       // is followed by what it was last doing and its final message.
       error: r.build_error ? clipText(r.build_error, 600) : null, at: iso(r.build_at), queuedAt: iso(r.build_queued_at),
+      // A live build's own session, where its turns run.
+      sessionId: num(r.build_session_id),
     },
     rating: r.rating || null,
     ratingNote: r.rating_note ? clipText(r.rating_note, 300) : null,
@@ -311,9 +314,13 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     } : null,
     // The build lane: what is queued and building now, and its last pass
     // (why a queued build is waiting: the budget, a platform fault, …).
+    // `queued` and `building` are the shadow lane's own; `live` is the live
+    // builds (first versions among them) under way and waiting their turn,
+    // which never go through that lane (homeroom-bot.js buildsNow).
     buildLane: p.builds ? {
       queued: num(p.builds.queued) || 0,
       building: num(p.builds.building) || 0,
+      live: p.builds.live ? { building: num(p.builds.live.building) || 0, waiting: num(p.builds.live.waiting) || 0 } : null,
       lastPass: p.builds.lane ? {
         at: p.builds.lane.at || null, started: num(p.builds.lane.started), inFlight: num(p.builds.lane.inFlight),
         paused: CODE_RE.test(String(p.builds.lane.paused || '')) ? p.builds.lane.paused : null,
@@ -432,8 +439,13 @@ const READ_REASON_RE = /^[a-z][a-z0-9_]{0,63}(?::[a-z]{1,20})?$/;
  * Where a run's build got to: 'built', 'failed', 'building', 'queued',
  * 'superseded' (a later verdict on the same issue replaced it), 'not_built'
  * (skipped, with why in its error), 'started' (a branch and nothing else
- * yet), 'held' (a ready verdict a cap held), or null for a run with no
- * build at all.
+ * yet), 'held' (a ready verdict a cap held), 'awaiting_go' (a plan waiting
+ * for its creator's Build it), or null for a run with no build at all.
+ * A live build is 'building' from the moment its session is linked until
+ * its outcome is recorded, through its review, and 'queued' while it waits
+ * its turn: it fills none of the shadow lane's markers, and run 1746, a
+ * first version building for 33 minutes, read as no build at all (run
+ * four, 13 Oct 2026).
  * Pure.
  */
 function buildStateOf(r) {
@@ -442,6 +454,9 @@ function buildStateOf(r) {
   if (r.build_at) return 'building';
   if (r.build_queued_at) return 'queued';
   if (r.build_error) return /^superseded/.test(String(r.build_error)) ? 'superseded' : 'not_built';
+  if (r.mode === 'live' && r.awaiting_go_at) return 'awaiting_go';
+  if (r.mode === 'live' && r.build_session_id) return 'building';
+  if (r.mode === 'live' && r.live_build_waiting_at) return 'queued';
   if (r.build_branch) return 'started';
   // A ready verdict a cap held before any build: its build waits for room
   // (the run's `held` says which cap), rather than reading as no build.

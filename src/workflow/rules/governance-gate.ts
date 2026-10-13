@@ -527,6 +527,9 @@ export interface GovernedGate extends Gate {
   partial?: boolean;
   passedBy?: { group: string; kind: string; n: number | null } | null;
   rules?: Array<{ group: string; kind: string; n: number | null; size: number; yes: number; need: number | null; passed: boolean; empty: boolean }>;
+  // Set (true) only when the first-version rule let it through
+  // (applyFirstVersion); absent otherwise.
+  firstVersion?: boolean;
 }
 
 // The two rules computeGate dispatches to. services/governance.js passes
@@ -547,7 +550,55 @@ export interface GateOpts {
   explicitReason?: string | null;
   voters?: { yes: Iterable<number> | Set<number>; no: Iterable<number> | Set<number> } | null;
   authorId?: Count;
+  // The author is an account the platform runs (users.is_synthetic: Homeroom
+  // bot). On a rules project proposing is a person's yes; the bot's is none
+  // (governance-rules.ts, "Only a PERSON's proposing is a yes").
+  authorIsBot?: boolean;
   rulesFacts?: RulesFacts | null;
+  // The change is its project's first version (services/first-version-
+  // rule.js): applyFirstVersion below.
+  firstVersion?: boolean;
+}
+
+// THE FIRST VERSION (13 Oct 2026, D1). A project made from a description
+// has its first version built by Homeroom bot, and that version goes live
+// without a vote once it has passed its review and its checks, for every
+// audience (Just you, a private community, a public one). Run four's Club
+// Votes was ready at 22:54 and waited all night for its maker's own yes,
+// which nothing on the App tab let them give.
+//
+// So the vote is waived: the gate reads as approved (no yes needed, so the
+// threshold is met; no clock; nothing to take it down) whatever the votes
+// say, and `firstVersion` says why. `required` is 0, so every reader that
+// compares the yes votes with it (the requirements ledger, the ready card's
+// "how many more") sees nothing missing.
+//
+// It waives the VOTE and nothing else. Every gate checkAndMerge and the
+// merge queue apply after the approvals step (the checks, the before &
+// after shots, a locked app's admin yes, main's health, a conflict) still
+// applies to it, and so does the protected-settings rule: a first version
+// that changes who decides or the project's keys (`explicitApproval`) is
+// decided by that rule as before. Every later change, the bot's included,
+// goes to the vote.
+export function applyFirstVersion<G extends Gate>(gate: G, { explicitApproval = false }: { explicitApproval?: boolean } = {}): G {
+  if (explicitApproval) return gate;
+  return {
+    ...gate,
+    required: 0,
+    contested: false,
+    thresholdMet: true,
+    windowMs: 0,
+    windowEndsAt: null,
+    windowElapsed: true,
+    lazyArmed: false,
+    lazyWindowMs: null,
+    mergeable: true,
+    rejectionWindowMs: null,
+    rejectionArmed: false,
+    rejectionEndsAt: null,
+    rejectable: false,
+    firstVersion: true,
+  };
 }
 
 // Pure mode dispatch given already-resolved governance + counts.
@@ -560,12 +611,26 @@ export interface GateOpts {
 // `opts.memberCount` + `opts.otherYes` evaluate the member floor for a
 // flagged proposal (applyNoTimerMerge above); `memberFloor` on the result
 // is null when the proposal is not flagged or the floor was not evaluated.
+//
+// `opts.firstVersion` waives the vote for a project's first version, in
+// every regime (applyFirstVersion above).
 export function computeGate(
   gov: Governance, active: Count, yesCount: Count, noCount: Count, openedAt: Instant, now: Instant,
   opts: GateOpts = {},
   rules: GateRules = RULES,
 ): GovernedGate {
-  if (gov && gov.rules) return computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts, rules);
+  const gate = gov && gov.rules
+    ? computeRulesGate(gov, active, yesCount, noCount, openedAt, now, opts, rules)
+    : computeColumnsGate(gov, active, yesCount, noCount, openedAt, now, opts, rules);
+  return opts.firstVersion ? applyFirstVersion(gate, { explicitApproval: !!opts.explicitApproval }) : gate;
+}
+
+// The two columns' regimes (default, at least N), with the #788 modifier.
+function computeColumnsGate(
+  gov: Governance, active: Count, yesCount: Count, noCount: Count, openedAt: Instant, now: Instant,
+  opts: GateOpts,
+  rules: GateRules,
+): GovernedGate {
   const explicitApproval = !!opts.explicitApproval;
   const floor = explicitApproval ? memberFloor(opts) : null;
   const base = gov.approvalsRequired != null
@@ -625,6 +690,7 @@ export function computeRulesGate(
   } : null;
   const authorId = opts.authorId != null && Number.isFinite(int(opts.authorId))
     ? int(opts.authorId) : null;
+  const authorIsBot = !!opts.authorIsBot;
   // The member floor on the majority rules of a flagged proposal: a yes from
   // someone other than its author, once the community has more than one member.
   let floor: Floor | null = null;
@@ -640,6 +706,7 @@ export function computeRulesGate(
     voters,
     counts: { yes: Math.max(int(yesCount) || 0, 0), no: Math.max(int(noCount) || 0, 0) },
     authorId,
+    authorIsBot,
     openedAt,
     now,
     noTimers: explicitApproval,
@@ -651,7 +718,7 @@ export function computeRulesGate(
   const { gate, owner, shown, results, passedBy } = evaluated;
   const creatorYes = !!(facts.creatorId && voters
     && (voters.yes.has(facts.creatorId)
-      || (authorId === facts.creatorId && !voters.no.has(facts.creatorId))));
+      || (authorId === facts.creatorId && !authorIsBot && !voters.no.has(facts.creatorId))));
   return {
     ...gate,
     policy: 'anyone',

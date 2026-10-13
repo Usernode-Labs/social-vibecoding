@@ -76,6 +76,7 @@ import { AppContext } from '../app-context/app-context-controller.js';
 import { invalidateAppAllowance } from '../dialogs/app-allowance-store.js';
 import { swatchFor } from '../messages/format';
 import { cardPosition } from './card-placement';
+import { TourFirstLook } from './first-look';
 import { type Made, type MakeEntry, MakeScreen } from './make';
 import { FeaturedCard } from './sketch-card';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
@@ -833,6 +834,8 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
             <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
             <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
             <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
+            {/* N1: the maker's last card, the first look at what is made. */}
+            {step.firstLook ? <TourFirstLook slug={info.slug} name={info.name} /> : null}
             <div className="mt-3 flex items-center justify-between gap-3">
               {step.last ? <span /> : (
                 <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
@@ -855,7 +858,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
                   </button>
                 ) : (
                   <Button type="button" onClick={() => go(index + 1)} variant="pillAccent" size="sm" ink="solid" className="text-[15px] font-semibold">
-                    {step.last ? t('onboarding:firstSession.tour.gotIt') : t('onboarding:firstSession.tour.next')}
+                    {step.firstLook ? t('core:common.done') : step.last ? t('onboarding:firstSession.tour.gotIt') : t('onboarding:firstSession.tour.next')}
                   </Button>
                 )}
               </div>
@@ -1551,7 +1554,9 @@ export function FirstSession() {
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     if (mode.path === 'look') return lookAroundSteps();
-    const project = { slug: mode.info.slug, name: mode.info.name };
+    // N1, N8: where its first version stands shapes the cards that show the
+    // app and the maker's last one.
+    const project = { slug: mode.info.slug, name: mode.info.name, firstVersion: mode.info.firstVersion ?? null };
     if (mode.path === 'private') return privateSteps(project);
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode, t]);
@@ -1605,8 +1610,8 @@ export function FirstSession() {
         me={viewerName()}
         entry={mode.entry}
         underHeader={fromCreate && underHeader}
-        onContinue={() => {
-          const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId };
+        onContinue={(_skipped, firstVersion) => {
+          const info = { slug: made.slug, name: made.name, iconEmoji: made.emoji, conversationId: made.conversationId, firstVersion };
           markSeen(made.slug);
           rememberCommunity(made.slug);
           // From Create: the project's own hub, where its first change is

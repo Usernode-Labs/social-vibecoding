@@ -21,10 +21,11 @@
 //   - a pair whose two sides are one commit is left out as identical, never
 //     a tie; the live result's cost is the turn ledger's;
 //   - a restart that catches a first version in its review proposes its
-//     last committed state that booted and records the review as
-//     interrupted, its reviewer calls debited; past a day, even with a turn
-//     still on its session; and the sweep for lost live builds leaves it
-//     alone;
+//     last committed state, a fix nothing saw boot captured once first and
+//     kept when it boots (run four), and records the review as interrupted,
+//     for the run and as an admin incident, its reviewer calls debited;
+//     past a day, even with a turn still on its session; and the sweep for
+//     lost live builds leaves it alone;
 //   - a first version given up stops its side builds; two first versions
 //     starting at once never spend past the side builds' week; old review
 //     screenshots go unless a waiting pair shows them.
@@ -477,8 +478,10 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     const settled = await bot.settleAbandonedLiveBuilds(pool, await bot.readSettings(pool), deps);
     assert.equal(settled, 0);
 
-    // No turn on its session, nothing in this process: the review was cut short.
+    // No turn on its session, nothing in this process: the review was cut
+    // short. Finished in the background, its project's build slot held.
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1);
+    await bot._awaitStalledResumesForTests();
     assert.deepEqual(promoted, [s.id], 'proposed as it stands');
     const { rows: [after] } = await pool.query(
       `SELECT build_ok, build_sha, proposal_session_id, review_stop, review->>'state' AS st FROM homeroom_bot_runs WHERE id = $1`, [id],
@@ -493,6 +496,11 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
       'SELECT source, status, built, sha FROM bot_config_results WHERE bot_run_id = $1 ORDER BY source', [id],
     );
     assert.deepEqual(res.map((r) => [r.source, r.status, r.built, r.sha]), [['live', 'done', true, 'r1sha'], ['round0', 'done', true, 'r0sha']]);
+    // R1: kept where admins see it, as every build a restart interrupts is.
+    const { rows: incident } = await pool.query(
+      `SELECT metadata FROM events WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(id)],
+    );
+    assert.deepEqual(incident.map((e) => [e.metadata.kind, e.metadata.mode, e.metadata.outcome]), [['build_interrupted', 'review', 'proposed_as_it_stood']]);
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 0, 'once');
   });
 
@@ -582,13 +590,21 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     assert.deepEqual([stats.noScreenshots, stats.didntBoot], [1, 0]);
   });
 
-  await t.test('a restart caught a fix nobody saw boot: back to the last commit that did, its reviewer calls debited; past a day even with a turn on the session', async () => {
+  await t.test('a restart caught a fix nobody saw boot, and it does not boot: back to the last commit that did, its reviewer calls debited; past a day even with a turn on the session', async () => {
     bot._resetForTests();
     const moved = [];
     const spends = [];
     const promoted = [];
+    const captures = [];
     live.promoteAsBot = async ({ sessionId }) => { promoted.push(Number(sessionId)); return { status: 200, body: { ok: true, prNumber: 42 } }; };
     const deps = {
+      // R1: the fix is captured once before anything is decided: here it
+      // does not boot.
+      worker: { async ensureWorkerImage() {}, async ensureWorker(id) { return `w-${id}`; } },
+      async captureRound({ containerName, store }) {
+        captures.push({ containerName, stored: await store([]) });
+        return { ok: true, capture: { booted: false, shots: [] } };
+      },
       github: {
         isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
         async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, title: 'Plant Log', state: 'open' } }; },
@@ -622,13 +638,19 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     // Its build began two hours ago; its review last moved an hour ago.
     await pool.query("UPDATE chat_sessions SET created_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [s.id]);
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1, 'found despite the turn on its session');
+    await bot._awaitStalledResumesForTests();
+    assert.deepEqual(captures, [{ containerName: `w-${s.id}`, stored: {} }], 'captured once, in its own worker');
     assert.deepEqual(moved, [['usernode-bot', 'plant-log', 'dev/homeroom_bot-y', 'r0sha']], 'its own branch, back to the build that booted');
     assert.deepEqual(promoted, [s.id]);
     const { rows: [after] } = await pool.query(
       `SELECT build_sha, review_stop, review->'rolledBack' AS rb, review->>'finalSha' AS fin FROM homeroom_bot_runs WHERE id = $1`, [id],
     );
     assert.deepEqual([after.build_sha, after.review_stop, after.fin], ['r0sha', 'interrupted', 'r0sha']);
-    assert.deepEqual(after.rb, { from: 'r1sha', to: 'r0sha', why: 'not seen to boot before the restart' });
+    assert.deepEqual(after.rb, { from: 'r1sha', to: 'r0sha', why: 'did not boot after the restart' });
+    const { rows: [incident] } = await pool.query(
+      `SELECT metadata FROM events WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(id)],
+    );
+    assert.equal(incident.metadata.outcome, 'fix_rolled_back');
     assert.deepEqual(spends, [20], 'the reviewer call, which no turn ledger holds, is debited');
     const { rows: [res] } = await pool.query(
       "SELECT sha, cost_usd::float8 AS cost, active_ms::float8 AS ms FROM bot_config_results WHERE bot_run_id = $1 AND source = 'live'", [id],
@@ -639,6 +661,71 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     // an hour later: an hour, and the triage's 90 s.
     assert.ok(Math.abs(res.ms - (60 * 60_000 + 90_000)) < 60_000, `${res.ms} ms`);
     assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 0, 'once');
+  });
+
+  await t.test('run four: a restart during a review fix turn; recovery follows the fix to its end, captures it once, and it boots, so it is kept and proposed', async () => {
+    bot._resetForTests();
+    const moved = [];
+    const promoted = [];
+    const captures = [];
+    live.promoteAsBot = async ({ sessionId }) => { promoted.push(Number(sessionId)); return { status: 200, body: { ok: true, prNumber: 43 } }; };
+    const seen = { booted: true, shots: shots('fix') };
+    const deps = {
+      github: {
+        isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
+        async fetchPublicIssue(_o, _r, n) { return { issue: { number: n, title: 'Club Votes', state: 'open' } }; },
+        async fetchIssueComments() { return { comments: [] }; },
+        async forceBranchToSha(...a) { moved.push(a); return { updated: true }; },
+      },
+      worker: { async ensureWorkerImage() {}, async ensureWorker(id, opts) { captures.push(['worker', id, opts.branchName]); return `w-${id}`; } },
+      async captureRound({ containerName, store }) {
+        captures.push(['capture', containerName, await store([])]);
+        return { ok: true, capture: seen };
+      },
+      ws: {}, sessionLifecycle: {}, domain: 'app.onhomeroom.com', threadContext: { async loadIssueThread() { return { messages: [] }; } },
+      managedOpenRouter: { async usesIncludedKey() { return false; } }, limits: {}, dm: { async noteBuildRestarted() {} },
+    };
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues)
+       VALUES ($1, $2, 'dev/homeroom_bot-cv', 'paused', FALSE, ARRAY[17]) RETURNING id`,
+      [app.id, botUser.id],
+    );
+    const id = await runRow({ issue: 17 });
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2, bot_config_version_id = $3 WHERE id = $1', [id, s.id, current.id]);
+    // The reviewer flagged the broken post form; the fix turn was running
+    // when the platform restarted.
+    await bot.recordReviewState(pool, id, {
+      state: 'reviewing', reviewer: { model: OPUS, maxRounds: 2, budgetMinutes: 25 }, startedAt: new Date().toISOString(),
+      round0: { sha: 'r0sha', commits: 1, capture: { booted: true, shots: [] }, costUsd: 0.9, activeMs: 1_000_000 },
+      rounds: [{ round: 1, sha: 'r0sha', verdict: 'fix', issues: [{ what: 'the post form does not post' }], reviewerCostUsd: 0.2 }],
+      finalSha: 'r0sha', finalCommits: 1, lastBooted: { sha: 'r0sha', commits: 1 }, buildText: 'Built.',
+    });
+    // Recovery followed the fix turn to its end: it finished and pushed.
+    assert.equal(await bot.finishRecoveredTurn({
+      pool, session: { id: s.id }, activeTurn: { mode: 'build' },
+      result: { pushOk: true, ahead: 2, sha: 'r1sha', lastResultText: 'All six fixes are done and verified.' },
+    }), 'live_pending');
+    await bot.completeRecoveredLive({ pool, config: {}, sessionId: s.id, deps });
+
+    assert.deepEqual(captures, [['worker', s.id, 'dev/homeroom_bot-cv'], ['capture', `w-${s.id}`, {}]],
+      'one capture of the fix, in its own worker, as the round after its fix');
+    assert.deepEqual(moved, [], 'a fix seen to boot is not rolled back');
+    assert.deepEqual(promoted, [s.id]);
+    const { rows: [after] } = await pool.query(
+      `SELECT build_ok, build_sha, review_stop, review->'rolledBack' AS rb, review->'lastBooted' AS booted,
+              review->'finalCapture'->>'booted' AS cap
+         FROM homeroom_bot_runs WHERE id = $1`, [id],
+    );
+    assert.deepEqual([after.build_ok, after.build_sha, after.review_stop, after.rb, after.cap], [true, 'r1sha', 'interrupted', null, 'true']);
+    assert.deepEqual(after.booted, { sha: 'r1sha', commits: 2 }, 'the kept fix is the last commit seen to boot');
+    const { rows: [incident] } = await pool.query(
+      `SELECT metadata FROM events WHERE event_type = 'platform_incident' AND metadata->>'runId' = $1`, [String(id)],
+    );
+    assert.deepEqual([incident.metadata.kind, incident.metadata.mode, incident.metadata.outcome], ['build_interrupted', 'review', 'fix_kept']);
+    const { rows: [res] } = await pool.query(
+      "SELECT sha, booted FROM bot_config_results WHERE bot_run_id = $1 AND source = 'live'", [id],
+    );
+    assert.deepEqual([res.sha, res.booted], ['r1sha', true], 'its result is the state proposed, seen to boot');
   });
 
   await t.test('a first version given up stops its side builds; a side build the platform failed is skipped, not "didn\'t build"', async () => {

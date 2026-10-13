@@ -3844,6 +3844,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // from someone other than its author, so the header pill says
           // that rather than "merging shortly".
           const flagged = !!rows[0].requires_explicit_approval;
+          rows[0].first_version = await require('../services/first-version-rule').isFirstVersion(pool, rows[0].id);
           const q = electorate.approverIds
             ? await governanceSvc.qualifiedCounts(
               pool, 'pr', rows[0].id, electorate.approverIds,
@@ -3862,6 +3863,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 await governanceSvc.rulesContext(pool, rows[0].app_id, gov, 'pr', [rows[0].id]),
                 rows[0].id, rows[0].user_id ?? null, rows[0].explicit_approval_reason || null
               ) : {}),
+              // 13 Oct 2026, D1: a project's first version needs no vote.
+              firstVersion: rows[0].first_version,
             }
           );
           rows[0].votes_required = gate.required;

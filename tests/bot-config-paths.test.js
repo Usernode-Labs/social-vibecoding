@@ -477,7 +477,7 @@ test('a side build that landed before its review began is reviewed now, as recov
   assert.deepEqual(out.session_ids, [6001, 7001]);
 });
 
-test('a side build whose review a restart cut short is not reviewed again: recorded interrupted, an unchecked fix put back, then captured', async (t) => {
+test('a side build whose review a restart cut short is not reviewed again: recorded interrupted, an unchecked fix captured once, put back only when it does not boot', async (t) => {
   const realReview = live.reviewLanded;
   live.reviewLanded = async () => { throw new Error('a review cut short is not run again'); };
   t.after(() => { live.reviewLanded = realReview; });
@@ -489,7 +489,9 @@ test('a side build whose review a restart cut short is not reviewed again: recor
   };
   const landed = { ok: true, sessionId: 6001, sha: 'd'.repeat(40), commits: 2, specMd: '# Plant log' };
   const h = sideHarness();
-  // The fix landed before the restart, and no capture saw it.
+  // The fix landed before the restart, and no capture saw it. One capture
+  // of it now (R1, run four): it boots, so it is kept, and that capture is
+  // the build's final one.
   h.gh.tip = 'e'.repeat(40);
   const kept = [];
   const out = await sideStage(h, {
@@ -497,17 +499,49 @@ test('a side build whose review a restart cut short is not reviewed again: recor
     onCheckpoint: async (part) => { kept.push(part); },
   });
   assert.equal(out.status, 'ok', out.error);
-  assert.deepEqual(h.calls.reset, [{ branch: 'bench/r3-t48', sha: 'd'.repeat(40) }], 'put back on the last commit that booted, as the live path does');
-  assert.equal(out.build_sha, 'd'.repeat(40));
-  assert.equal(out.build_commits, 2);
+  assert.deepEqual(h.calls.reset, [], 'a fix seen to boot is not put back');
+  assert.equal(out.build_sha, 'e'.repeat(40));
+  assert.equal(out.build_commits, 3);
   assert.equal(out.parsed.review.state, 'done');
   assert.equal(out.parsed.review.stop, 'interrupted');
-  assert.deepEqual(out.parsed.review.rolledBack, { from: 'e'.repeat(40), to: 'd'.repeat(40), why: 'not seen to boot before the restart' });
+  assert.equal(out.parsed.review.rolledBack, undefined);
+  assert.deepEqual(out.parsed.review.lastBooted, { sha: 'e'.repeat(40), commits: 3 }, 'the kept fix is the last commit seen to boot');
   assert.equal(out.parsed.review.roundsUsed, 1);
   assert.ok(Math.abs(out.review_cost_usd - 0.3) < 1e-9, 'the reviewer calls of the claim before, charged once, here');
   assert.equal(kept.find((p) => p.review)?.review.stop, 'interrupted', 'settled on the checkpoint, so a restart in the capture does not settle it again');
-  assert.equal(h.calls.captured, 1, 'then captured as it stands');
+  assert.equal(h.calls.captured, 1, 'captured once: the look at the fix is the final capture');
+  assert.deepEqual(out.capture, { booted: true, shots: [] });
   assert.deepEqual(h.calls.modes, []);
+
+  // A fix that does not boot in that capture is put back on the last commit
+  // that booted, as before, and captured again there, on a fresh worker: the
+  // first one's checkout is the fix's.
+  const hb = sideHarness();
+  hb.gh.tip = 'e'.repeat(40);
+  const shots = [{ ok: true, capture: { booted: false, shots: [] } }, { ok: true, capture: { booted: true, shots: [] } }];
+  hb.deps.captureStep = async (args) => { hb.calls.captured += 1; hb.calls.captureSessions.push(args.containerName); return shots.shift(); };
+  const outB = await sideStage(hb, { reviewer: REVIEWER, checkpoint: { sessions: [6001], build: landed, review, handBacks: 2 } });
+  assert.equal(outB.status, 'ok', outB.error);
+  assert.deepEqual(hb.calls.reset, [{ branch: 'bench/r3-t48', sha: 'd'.repeat(40) }], 'put back on the last commit that booted, as the live path does');
+  assert.equal(outB.build_sha, 'd'.repeat(40));
+  assert.equal(outB.build_commits, 2);
+  assert.deepEqual(outB.parsed.review.rolledBack, { from: 'e'.repeat(40), to: 'd'.repeat(40), why: 'did not boot after the restart' });
+  assert.equal(hb.calls.captured, 2, 'then captured again where it went back to');
+  assert.notEqual(hb.calls.captureSessions[0], hb.calls.captureSessions[1], 'on a worker of its own');
+
+  // One that cannot be captured is put back too.
+  const hc = sideHarness();
+  hc.gh.tip = 'e'.repeat(40);
+  let first = true;
+  hc.deps.captureStep = async () => {
+    hc.calls.captured += 1;
+    if (first) { first = false; return { ok: false, error: 'the screenshot step did not run' }; }
+    return { ok: true, capture: { booted: true, shots: [] } };
+  };
+  const outC = await sideStage(hc, { reviewer: REVIEWER, checkpoint: { sessions: [6001], build: landed, review, handBacks: 2 } });
+  assert.equal(outC.status, 'ok', outC.error);
+  assert.equal(outC.parsed.review.rolledBack.why, 'could not be captured after the restart');
+  assert.equal(outC.build_sha, 'd'.repeat(40));
 
   // With no commit seen to boot, the branch is taken as the fix left it:
   // its tip, not the last state the review saved.

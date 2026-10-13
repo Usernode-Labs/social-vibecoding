@@ -10410,6 +10410,29 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 -- Every row before the column was one the bot builds, so the default is true.
 ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
+-- The plan written at Make it (services/first-version-plan.js), while the
+-- project is still being set up: one model call from the description, in
+-- the shape a first version's triage gives (`plan` bullets, up to two
+-- `questions` with the suggested answer first, the build note). When the
+-- bot comes to its request it builds from this plan rather than reading
+-- the request again (homeroom-bot.js planFromEarly). `early_plan_status`
+-- is pending while the call runs, ready with a plan, failed without one
+-- (then the triage plans it as before); null when none was asked for.
+-- `answers` are what its maker chose on the made screen, in question
+-- order, and `answered_at` when the plan was decided (Submit, Build it, or
+-- a plan with nothing to ask). Private, as the brief is.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS early_plan JSONB;
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS early_plan_status TEXT;
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS early_plan_at TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS early_plan_error TEXT;
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS answers JSONB;
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS answered_at TIMESTAMPTZ;
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_first_versions DROP CONSTRAINT IF EXISTS homeroom_bot_first_versions_early_plan_check;
+  ALTER TABLE homeroom_bot_first_versions ADD CONSTRAINT homeroom_bot_first_versions_early_plan_check
+    CHECK (early_plan_status IS NULL OR early_plan_status IN ('pending', 'ready', 'failed'));
+END $$;
 
 -- The first session's sketch (services/app-sketch.js): since 5 October 2026
 -- a featured card of the idea, made from its description a few seconds after

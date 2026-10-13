@@ -392,6 +392,15 @@ function normalizeCodexLine(line, state) {
 
   if (ev.type === 'usernode.openrouter.request') {
     state.providerRequest = sanitizeProviderRequest(ev.diagnostic);
+    // The host OpenRouter named for a request (a refusal's), kept as the
+    // turn's routed provider as the Claude Code listener's are (worker.js
+    // observeCodingProviderResult), so a failed Codex turn records one too.
+    const host = state.providerRequest?.providerName;
+    if (host) {
+      state.routedProvider = host;
+      const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+      if (!seen.includes(host) && seen.length < 8) seen.push(host);
+    }
     return [];
   }
   if (ev.type === 'usernode.openrouter.usage') {

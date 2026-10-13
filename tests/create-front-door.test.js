@@ -310,7 +310,8 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/retry`, \{ method: 'POST', credentials: 'same-origin' \}\)/);
   assert.match(src, /if \(res\.ok\) \{\s+setAppStatus\('creating'\);/);
   // And the plan's card is not drawn over it.
-  assert.match(src, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
+  // (Nor while the made screen asks the plan's questions itself, 13 Oct 2026.)
+  assert.match(src, /\{plan && !stalled && fromCreate && !asked \? <PlanWaitsCard/);
 });
 
 test('the server sketches the idea for both doors, and only the first session answers the join screen and counts in the Journey', () => {
@@ -336,7 +337,8 @@ test('a stopped setup is not "Ready to try", and a Just me sketch is shared with
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const stalled = stalledOf\(appStatus\);[\s\S]{0,500}const making = imported \|\| readyMade \? appStatus !== 'running' : \(!!stalled \|\| !\(building && !fv\)\);/);
   // #4053: no build line either: nothing is being made while it is stopped.
-  assert.match(src, /const line = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
+  // (13 Oct 2026: answered on the made screen, it says it is built.)
+  assert.match(src, /const served = madeLine\(fv, botBuilds, !making, stalled, imported\);/);
   const { madeLine } = loadTsx(`${DIR}/made.tsx`);
   assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'failed'), null);
   assert.equal(madeLine({ ready: true, line: 'ready' }, true, false, 'needs-secrets'), null);

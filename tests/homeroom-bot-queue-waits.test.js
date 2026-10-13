@@ -149,7 +149,7 @@ test('get_homeroom_bot: the queue, a held run, the mode, the week and the move o
   assert.deepEqual(out.queue.items[1].waiting, { reason: 'settling', until: '2026-10-12T12:00:10.000Z' });
   // A held ready verdict has a build state and says why.
   assert.deepEqual(out.runs[0].build, {
-    state: 'held', ok: undefined, branch: null, sha: null, commits: null, error: null, at: null, queuedAt: null,
+    state: 'held', ok: undefined, branch: null, sha: null, commits: null, error: null, at: null, queuedAt: null, sessionId: null,
   });
   assert.deepEqual(out.runs[0].held, { cap: 'proposals_per_app', limit: 5, why: 'held: 5 proposals open on this app' });
   assert.deepEqual(out.runs[1].held, { cap: 'question_tripwire', limit: 10, why: 'held: 10 questions asked on this app today' });

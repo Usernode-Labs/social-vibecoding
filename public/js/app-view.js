@@ -2870,10 +2870,11 @@ const AppView = {
   // and is not the routed app.
   //
   // `variant`: true or 'plan', its plan waiting for Build it (#4053: "Your
-  // plan is ready to review" on its thumbnail); 'ready', built and waiting
-  // for the viewer's approval in a group; 'approved', the same once the
-  // viewer approved it, waiting on the other member with the group's clock
-  // running. Their change id stands for no change, so Try it and See the
+  // plan is ready to review" on its thumbnail); 'ready', built and tested,
+  // as its maker reads it: it goes live without a vote (13 Oct 2026, D1);
+  // 'approved', one that still asks a Yes (a first version that changes
+  // protected settings) once the viewer approved it, waiting on the other
+  // member. Their change id stands for no change, so Try it and See the
   // change open nothing real. 'member' (#4396): being built, as a member
   // who is not its maker reads it, with "While you wait" (its plan and the
   // maker's note made up; Say hi to the group has no room behind it).
@@ -2918,14 +2919,14 @@ const AppView = {
       url: null,
       self_hosted: false,
       first_version: ready ? {
-        building: true, mine: variant === 'approved', step: 6, of: 7, line: 'ready',
-        creator: variant === 'approved' ? null : 'jordan', ready: true, question: false, conversationId: null,
+        building: true, mine: true, step: 6, of: 7, line: 'ready',
+        creator: null, ready: true, question: false, conversationId: null,
         approval: variant === 'approved' ? {
           sessionId: 990003, mustApprove: false, approved: true, waitingOn: ['sam'], more: 0, missing: 1,
-          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false, noVote: false,
         } : {
-          sessionId: 990003, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1,
-          goesLiveAt: new Date(Date.now() + 3 * 86400000).toISOString(), soon: false,
+          sessionId: 990003, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0,
+          goesLiveAt: null, soon: true,
         },
         screens: realScreens(12),
       } : variant === 'member' || variant === 'testing' || variant === 'live' ? {
@@ -3026,6 +3027,33 @@ const AppView = {
 
   _paintAppStatus(host, view) {
     AppView._reactAppStatus()?.mount(host, view);
+  },
+
+  /**
+   * N6: a first version still being built, whose screen is already what
+   * `#app-content` shows, gets its new answer in place: the App tab's
+   * placeholder (features/app-frame/app-status.tsx) is React's, and a new
+   * view through its store re-renders it without unmounting it, so its card
+   * and Live keep what they drew. `renderAppTab` tore the host down first on
+   * every 10 s recheck, and each remount started Live over. The bridge says
+   * whether its placeholder is still the one on that host
+   * (appStatusBridge.update); anything else that took the host over cleared
+   * it (_teardownDevRoots), and the full render runs. True when updated.
+   */
+  _repaintFirstVersion(content, appData) {
+    if (!content || !appData || appData.status !== 'running' || !appData.url) return false;
+    if (!AppView._firstVersionPending(appData) || !AppView._firstVersionTrusted(appData)) return false;
+    const bridge = AppView._reactAppStatus();
+    if (!bridge || typeof bridge.update !== 'function') return false;
+    if (!bridge.update(content, AppView._appStatusView(appData))) return false;
+    // What the full render's first-version branch does around its paint;
+    // each is a no-op when it already holds.
+    AppView._stopStatusPolling();
+    AppView._teardownLaunch();
+    AppView._unmountAppFrame();
+    AppView._setSurface('platform');
+    AppView._watchFirstVersion(appData);
+    return true;
   },
 
   /** The two placeholder buttons' openers, dispatched by name from the card. */
@@ -3214,6 +3242,11 @@ const AppView = {
     const caption = typeof fv.caption === 'string' && fv.caption.trim() ? fv.caption.trim().slice(0, 40) : null;
     const screens = AppView._firstVersionScreens(appData);
     const live = AppView._firstVersionLive(appData);
+    // N4: the stage by its own name, with when it began, and the steps the
+    // screen lists under the thumbnail (features/app-frame/
+    // first-version-steps.tsx), as the server says them.
+    const phase = fv.phase && typeof fv.phase === 'object' ? fv.phase : null;
+    const steps = Array.isArray(fv.steps) ? fv.steps : null;
     return {
       thumb: {
         name: appData.name || appData.slug,
@@ -3226,6 +3259,8 @@ const AppView = {
       ...(caption ? { buildNote: caption } : {}),
       ...(screens ? { screens } : {}),
       ...(live ? { live } : {}),
+      ...(phase ? { phase } : {}),
+      ...(steps ? { steps } : {}),
     };
   },
 
@@ -3235,12 +3270,19 @@ const AppView = {
    * while the Admin setting is on). Its "Preview | Live" switch remembers the
    * choice per person, so it carries who is reading. A screenshot state
    * plays a made-up recording and fetches nothing. Null: no switch.
+   *
+   * N6: the server offers it only once the watcher has a good frame. N7:
+   * at Testing it and Ready to try without real screens it says
+   * `liveLast`: the build's last frame stays on the card (`last`), with no
+   * switch, rather than the first look drawn from the plan.
    */
   _firstVersionLive(appData) {
     const fv = appData.first_version || {};
-    if (fv.live !== true || fv.line !== 'building' || !appData.slug) return null;
+    if (!appData.slug) return null;
+    const last = fv.liveLast === true && (fv.line === 'testing' || fv.line === 'ready');
+    if (!last && (fv.live !== true || fv.line !== 'building')) return null;
     const id = typeof App !== 'undefined' && App.user && App.user.id != null ? String(App.user.id) : 'guest';
-    return { slug: appData.slug, userKey: id, ...(appData.shot ? { sample: true } : {}) };
+    return { slug: appData.slug, userKey: id, ...(last ? { last: true } : {}), ...(appData.shot ? { sample: true } : {}) };
   },
 
   /**
@@ -3389,6 +3431,14 @@ const AppView = {
    * cast after the answer was read: they read "You approved it." and whom
    * it still waits on (_firstVersionApprovalSeen).
    *
+   * 13 Oct 2026, D1: a first version goes live without a vote
+   * (`approval.noVote`), so nobody reads that it waits for approval: "No
+   * vote needed. It goes live in a minute or two.", with Try it and See the
+   * change for its maker, and See the change for anyone else. Run four's
+   * Club Votes said "Waiting for your approval." all night, with no way to
+   * give it from here. The words above stay for the one first version that
+   * still asks a Yes: one that changes protected settings.
+   *
    * Without `approval` (a read that failed) its creator is pointed at their
    * chat, as before.
    */
@@ -3418,6 +3468,13 @@ const AppView = {
     }
     const tryIt = { key: 'tryChange', label: PlatformI18n.t('changes:firstVersion.tryIt'), slug, sessionId: approval.sessionId };
     const change = { key: 'seeChange', label: PlatformI18n.t('changes:firstVersion.seeChange'), slug, sessionId: approval.sessionId };
+    // No vote to wait for: it goes live on its own (D1).
+    if (approval.noVote) {
+      lines.push(AppView._firstVersionWaitLine(approval));
+      return fv.mine === true
+        ? { ...view, action: tryIt, alt: change }
+        : { ...view, action: change };
+    }
     // "Ready to try" stays on the thumbnail beside Try it (owner, 7 Oct):
     // with the title gone it is the one thing that says it is ready.
     if (approval.mustApprove) {
@@ -3437,8 +3494,16 @@ const AppView = {
    * anyway, in the reader's own time zone: "You approved it. Waiting for
    * @sam, or it goes live on Wednesday if nobody objects." Anyone else
    * reads "Waiting for approval." until no Yes is missing.
+   *
+   * A first version that needs no vote (`noVote`, D1) says so to everyone,
+   * and when it goes live: in a minute or two, or once it passes its checks.
    */
   _firstVersionWaitLine(approval, now = new Date(), locale) {
+    if (approval.noVote) {
+      return approval.soon
+        ? PlatformI18n.t('changes:firstVersion.noVote.soon')
+        : PlatformI18n.t('changes:firstVersion.noVote.onceTested');
+    }
     const day = approval.goesLiveAt ? AppView._liveDay(approval.goesLiveAt, now, locale) : null;
     const missing = Math.max(Number(approval.missing) || 0, 0);
     // The day's own name fills {{weekday}} or {{date}}; today and tomorrow
@@ -3529,8 +3594,19 @@ const AppView = {
 
   /** See the change: the first version's change page, where it is approved. */
   openFirstVersionChange(slug, sessionId) {
+    AppView.openChangeAtVotes(slug, sessionId);
+  },
+
+  /**
+   * A change's page, opened at its Votes card below the header rather than
+   * at its title: the door for a button that sends someone to vote on a
+   * change (run four, 13 Oct 2026: the Vote button sat a screen and a half
+   * down; frontend/src/features/dev-board/topic/votes-in-view.ts).
+   */
+  openChangeAtVotes(slug, sessionId) {
     const id = Number(sessionId);
     if (!slug || !Number.isInteger(id) || id <= 0) return;
+    AppView._reactDevBoard()?.showVotes?.(id);
     location.hash = `#app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 
@@ -3645,6 +3721,12 @@ const AppView = {
     // that keeps the frame a real case, so the clear moved down into the three
     // branches that don't keep it (both placeholder paths via
     // _unmountAppFrame, and the rebuild at the bottom).
+
+    // N6: the first version's screen, already up, is updated where it is
+    // (_repaintFirstVersion) rather than torn down and mounted again: its
+    // 10 s recheck lands here, and each remount started Live over
+    // ("Starting the app…", then the first look) every ten seconds.
+    if (AppView._repaintFirstVersion(content, appData)) return;
 
     // #1084 chunk G: every branch below replaces #app-content by hand, so
     // retire any interim React root that owns it first — see
@@ -6647,6 +6729,37 @@ const AppView = {
     return PlatformI18n.t('changes:page.votes.people.andLast', { names: PlatformI18n.listText(list.slice(0, -1)), last: list[list.length - 1] });
   },
 
+  // Who said yes, with the reader as "You" (run four, 13 Oct: the maker read
+  // their own username): "You said yes.", "You and maya said yes.",
+  // "evan and maya said yes."
+  _saidYesLine(names) {
+    const list = (names || []).filter(Boolean);
+    const me = App.user && App.user.username;
+    const others = me ? list.filter((name) => name !== me) : list;
+    if (others.length === list.length) {
+      return PlatformI18n.t('changes:page.votes.note.saidYes', { count: list.length, people: AppView._nameList(list) });
+    }
+    if (!others.length) return PlatformI18n.t('changes:page.votes.note.youSaidYes');
+    return PlatformI18n.t('changes:page.votes.note.youAndOthersSaidYes', {
+      people: AppView._nameList([PlatformI18n.t('changes:page.votes.people.you'), ...others]),
+    });
+  },
+
+  // A yes or a no a newer push retired, the reader's own first, as "Your":
+  // "Your yes was on an earlier version. maya’s yes was on an earlier version."
+  _earlierVoteLines(names, side) {
+    const list = (names || []).filter(Boolean);
+    const me = App.user && App.user.username;
+    const others = me ? list.filter((name) => name !== me) : list;
+    const lines = [];
+    if (others.length < list.length) lines.push(PlatformI18n.t(side === 'yes' ? 'changes:page.votes.note.yourEarlierYes' : 'changes:page.votes.note.yourEarlierNo'));
+    if (others.length) {
+      lines.push(PlatformI18n.t(side === 'yes' ? 'changes:page.votes.note.earlierYes' : 'changes:page.votes.note.earlierNo',
+        { count: others.length, people: AppView._nameList(others) }));
+    }
+    return lines;
+  },
+
   // A bar of `parts` equal parts, `filled` of them done: one part per yes a
   // vote needs, or one continuous bar past a dozen.
   _changeVoteSegments(filled, parts, state) {
@@ -6687,7 +6800,7 @@ const AppView = {
     const note = [];
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
-        ? PlatformI18n.t('changes:page.votes.note.saidYes', { count: ready.yesNames.length, people: AppView._nameList(ready.yesNames) }) : null;
+        ? AppView._saidYesLine(ready.yesNames) : null;
       if (said) note.push(said);
       // Where the rollout is, in the pill's own states.
       const LIVE = {
@@ -6706,6 +6819,10 @@ const AppView = {
         ...(release ? { release } : {}),
       };
     }
+    // 13 Oct 2026, D1: a project's first version goes live without a vote
+    // once it passes its checks (`first_version`, the gate waived it). The
+    // card says so rather than counting yeses nobody is asked for.
+    if (item.first_version === true && item.status === 'promoted') return AppView._firstVersionVotesView(item);
     const waitsOnMember = AppView._awaitingOtherMember(item);
     const reached = yes >= maj && !waitsOnMember;
     const canVote = !AppView.readOnly && !item.my_vote && item.status === 'promoted';
@@ -6721,7 +6838,7 @@ const AppView = {
     else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
-      note.push(PlatformI18n.t('changes:page.votes.note.saidYes', { count: ready.yesNames.length, people: AppView._nameList(ready.yesNames) }));
+      note.push(AppView._saidYesLine(ready.yesNames));
     } else if (!reached) {
       const approvers = ready && Number(ready.approvers) > 0 ? Number(ready.approvers) : 0;
       const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
@@ -6734,8 +6851,7 @@ const AppView = {
     else if (pill.key === 'contested') note.push(PlatformI18n.t('changes:page.votes.note.contested'));
     const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
     const earlierNo = ready && Array.isArray(ready.earlierNo) ? ready.earlierNo : [];
-    if (earlierYes.length) note.push(PlatformI18n.t('changes:page.votes.note.earlierYes', { count: earlierYes.length, people: AppView._nameList(earlierYes) }));
-    if (earlierNo.length) note.push(PlatformI18n.t('changes:page.votes.note.earlierNo', { count: earlierNo.length, people: AppView._nameList(earlierNo) }));
+    note.push(...AppView._earlierVoteLines(earlierYes, 'yes'), ...AppView._earlierVoteLines(earlierNo, 'no'));
     if (pill.awaitsOtherYes && !(yes >= maj && waitsOnMember)) note.push(PlatformI18n.t('changes:page.votes.note.needsOtherYes'));
     // The lock's own tooltip is a whole sentence (changes:explicit.lockTitle).
     else if (pill.lock && pill.lockTitle) note.push(pill.lockTitle);
@@ -6757,6 +6873,22 @@ const AppView = {
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
       label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
       note,
+    };
+  },
+
+  // The Votes card of a project's first version up for testing (D1): no vote
+  // is needed, so the step reads done, and the line says when it goes live:
+  // once it passes testing, once a fix does, or (tested) now.
+  _firstVersionVotesView(item) {
+    const cs = item.check_state;
+    const tested = cs === 'passing' || cs === 'skipped';
+    const line = tested ? 'changes:page.votes.note.firstVersion'
+      : cs === 'failing' ? 'changes:page.votes.note.firstVersionOnceFixed'
+        : 'changes:page.votes.note.firstVersionOnceTested';
+    return {
+      name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.noVote'), tone: 'done', done: true,
+      segments: [{ weight: 1, pct: 100, state: 'done' }], label: PlatformI18n.t('changes:page.votes.label.noVote'),
+      note: [PlatformI18n.t(line)],
     };
   },
 
@@ -10266,7 +10398,8 @@ const AppView = {
       const pill = AppView.statusPillState(it);
       return {
         ...out, stage: 'vote',
-        vote: pill ? { yes: pill.yes, need: pill.majority, ask: !it.my_vote && !AppView.readOnly } : null,
+        // A project's first version asks nobody's vote (D1).
+        vote: pill ? { yes: pill.yes, need: pill.majority, ask: !it.my_vote && !AppView.readOnly && it.first_version !== true } : null,
       };
     }
     const busy = AppView._sessionBusy(it);
@@ -13314,8 +13447,9 @@ const AppView = {
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
-        // Same condition as the card's pulsing "Vote" badge (isUnvoted).
-        if (!(it.status === 'promoted' && !it.my_vote)) return false;
+        // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
+        // project's first version needs nobody's vote (D1).
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {
@@ -15697,7 +15831,7 @@ const AppView = {
     // keeps only the data hook so the tiles' own scope resolution still
     // works when the detail view paints them.
     const attrs = { 'data-ref-pr': String(pr.pr_number || pr.id) };
-    if (pr.status === 'promoted' && !pr.my_vote) attrs['data-unvoted'] = '1';
+    if (pr.status === 'promoted' && !pr.my_vote && pr.first_version !== true) attrs['data-unvoted'] = '1';
     if (!noNav) {
       attrs['data-proposal-row'] = String(pr.id);
       attrs.title = PlatformI18n.t('changes:card.proposal.openTitle');
@@ -16178,8 +16312,10 @@ const AppView = {
   // votes, or a test account's uncounted vote keeps the vote as it is.
   _approveSolo(pr) {
     // #4747: an advisory vote does not decide either, so the one-tap
-    // "Approve" would promise what it cannot keep.
+    // "Approve" would promise what it cannot keep. Nor does any vote on a
+    // project's first version, which goes live without one (D1).
     if (AppView.appData?.audience !== 'solo' || !pr || pr.my_vote_uncounted === true || pr.my_vote_advisory === true) return false;
+    if (pr.first_version === true) return false;
     const needed = parseInt(pr.votes_required, 10);
     return !Number.isFinite(needed) || needed <= 1;
   },
@@ -16188,6 +16324,8 @@ const AppView = {
   // everywhere: "Waiting for approval", and on a project that is just you,
   // whose one Yes is yours, "Waiting for your approval".
   _waitingWords(pr) {
+    // A project's first version is not put to a vote (D1).
+    if (pr && pr.first_version === true) return PlatformI18n.t('changes:card.waiting.noVote');
     return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
   },
 
@@ -16202,6 +16340,8 @@ const AppView = {
   // silently disable that guard.
   _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
+    // A project's first version is not put to a vote (D1): no Yes or No.
+    if (pr.first_version === true) return [];
     // #2038: the vote carries the approval EPOCH the card was rendered with,
     // not the commit. A commit changes whenever the platform brings the
     // proposal up to date with main, and comparing commits made every one of
@@ -16258,6 +16398,8 @@ const AppView = {
   _yesPutsItLive(pr) {
     // #4747: an advisory vote never puts a change live, whatever the count.
     if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || pr.my_vote_advisory === true || AppView.readOnly) return false;
+    // A first version goes live without anybody's yes (D1).
+    if (pr.first_version === true) return false;
     if (AppView._approveSolo(pr)) return true;
     if (pr.approval_policy === 'invited') return false;
     const st = AppView.statusPillState(pr);
@@ -22836,6 +22978,12 @@ const AppView = {
     // enumerates them and the tooltip is where "and N more" is spelled out.
     const isCode = (o.kind || 'proposal') !== 'gov';
     const reasons = isCode ? AppView.blockReasons(p) : [];
+    // A project's first version (D1): not put to a vote, so the bar never
+    // asks for one. It goes live once it passes its checks.
+    if (p.status === 'promoted' && p.first_version === true) {
+      return { ...base, tier: 4, key: 'no_vote', label: PlatformI18n.t('changes:badge.pill.noVote'), tone: 'ok', fill: 'full-yes', reasons,
+        title: PlatformI18n.t('changes:badge.pill.noVoteTitle') };
+    }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
       return { ...base, tier: 3, key: 'contested', label: PlatformI18n.t('changes:badge.pill.contested', { yes, majority: maj }), tone: 'attention', fill: true, reasons,
