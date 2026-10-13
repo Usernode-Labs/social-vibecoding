@@ -2678,9 +2678,9 @@ async function draftSpec({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const startedAt = Date.now();
-  const html = specHtml.htmlSpecsEnabledFor(config, session.app_slug);
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter, locale, html,
+    seed, buildNote, firstVersion, guidance, starter, locale,
+    html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
   let routed;
@@ -2724,7 +2724,7 @@ async function draftSpec({
   }
   // Only an HTML spec is asked to save its screens (specHtmlPrompt).
   await noteSavedScreens(pool, {
-    screens: html ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
+    screens: specHtml.htmlSpecsEnabledFor(config, session.app_slug) ? savedScreens : null, session, startedAt, model, ok: !!(routed && !routed.error), stopped,
   });
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
