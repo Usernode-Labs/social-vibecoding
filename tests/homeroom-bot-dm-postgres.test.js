@@ -997,9 +997,14 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       pool, app, issueNumber: 5011, kind: 'question', postId: 50111, bot,
       dm: { question: 'Follow the system setting?', answers: ['Follow it', 'A toggle'] },
     });
+    // The reply's stamp reaches settleMirroredAsks as a JS Date, cut to the
+    // millisecond (ws.js hands it the chat_messages row's created_at). Reading
+    // the ask's own stamp back through the pool hands the same shape: this
+    // reply lands in the ask's own millisecond and must still settle it.
+    const askStamp = (await pool.query('SELECT created_at FROM homeroom_bot_dm_messages WHERE message_id = $1', [askedSam.messageId])).rows[0].created_at;
     const theirs = await dm.noteRequestReply(pool, {
       appId: app.id, issueNumber: 5011, userId: ada.id, chatMessageId: 99003,
-      content: 'A toggle, please', createdAt: new Date(),
+      content: 'A toggle, please', createdAt: askStamp,
     });
     assert.equal(theirs.settled.length, 1);
     const theirLine = await conversations.getMessage(pool, sam, askedSam.conversationId, theirs.line.messageId);

@@ -3419,7 +3419,10 @@ function mirroredText(content, { question = false } = {}) {
  * discussion has answered — the question still open in the DM, and a
  * blocked/empty/person note still showing its buttons. Only asks recorded
  * before the reply (`before`) settle, so news the bot sends after it stays
- * open. A question reads answered; the others closed, with `answeredOnRequest`
+ * open. The ask's stamp is kept in microseconds by Postgres, but a reply's
+ * stamp arrives as a JS Date, cut to the millisecond, so the comparison is
+ * made at the millisecond too: a reply in the same millisecond as an ask
+ * settles it. A question reads answered; the others closed, with `answeredOnRequest`
  * saying where the answer went. Resolves the rows settled (newest first),
  * each with its message's thread root for the line noteRequestReply writes.
  * Never throws.
@@ -3435,7 +3438,7 @@ async function settleMirroredAsks(pool, { userId, appId, issueNumber, before = n
          JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
         WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = $3
           AND d.kind = ANY($4::text[])
-          AND ($5::timestamptz IS NULL OR d.created_at < $5)
+          AND ($5::timestamptz IS NULL OR date_trunc('milliseconds', d.created_at) <= $5)
           AND (d.question_status = 'open'
             OR (d.question_status IS NULL AND m.metadata->'homeroomBot'->>'status' = 'open'))
         ORDER BY d.message_id DESC`,
