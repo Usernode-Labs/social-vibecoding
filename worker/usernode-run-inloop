@@ -28,6 +28,16 @@
 // The platform's own repository serves its own copies of those three trees
 // (its Ingress deliberately does not route them), so a checkout that carries
 // public/usernode-bridge/ gets them from the app, as it does in production.
+//
+// ONE LAUNCH PER PORT (App bench run 190, 13 Oct 2026). Five of six builds
+// relaunched their app after an edit, found the port still held by the launch
+// before ("cannot listen on 3100"), and wrote loops over /proc to kill it.
+// So each launch records itself (LAUNCH_DIR/<port>.json: this process and
+// the app it started), a new launch on the same port stops the one recorded
+// there first, and `usernode-run-inloop --stop` stops it on its own: run it
+// before a build's final message, or the server goes on holding the turn
+// open. Only a launch this command recorded is stopped, and only while it is
+// still this command (its command line says so).
 
 const fs = require('fs');
 const http = require('http');
@@ -50,6 +60,11 @@ const PLATFORM_ASSET_PREFIXES = Object.freeze(['/usernode-bridge/', '/usernode-n
 const FORWARDED_ASSET_HEADERS = Object.freeze(['accept', 'accept-encoding', 'if-none-match', 'if-modified-since', 'user-agent']);
 const RETURNED_ASSET_HEADERS = Object.freeze(['content-type', 'content-length', 'content-encoding', 'cache-control', 'etag', 'last-modified']);
 const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
+// Where each launch records itself, how long an earlier one is given to stop
+// after SIGTERM, and how often it is looked at meanwhile.
+const LAUNCH_DIR = '/tmp/usernode-inloop';
+const STOP_WAIT_MS = 5000;
+const STOP_POLL_MS = 100;
 
 function environmentForInLoop(manifest, workerEnv) {
   if (workerEnv.INLOOP_BROWSER !== '1' || workerEnv.INLOOP_ENV !== 'staging'
@@ -261,10 +276,86 @@ function runBuild(env, dir) {
   return { ok: true };
 }
 
+function launchFile(port, dir = LAUNCH_DIR) {
+  return path.join(dir, `${Number(port)}.json`);
+}
+
+/** The launch recorded on `port`, or null. Never throws. */
+function readLaunch(port, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
+  try {
+    const rec = JSON.parse(fsImpl.readFileSync(launchFile(port, dir), 'utf8'));
+    return rec && Number.isInteger(rec.pid) && rec.pid > 1 ? rec : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordLaunch(port, rec, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
+  try {
+    fsImpl.mkdirSync(dir, { recursive: true });
+    fsImpl.writeFileSync(launchFile(port, dir), JSON.stringify(rec));
+  } catch { /* an unrecorded launch is only one --stop cannot find */ }
+}
+
+function forgetLaunch(port, pid, { dir = LAUNCH_DIR, fsImpl = fs } = {}) {
+  try {
+    if (readLaunch(port, { dir, fsImpl })?.pid === pid) fsImpl.unlinkSync(launchFile(port, dir));
+  } catch { /* already gone */ }
+}
+
+// A process's command line, as one string, or null when it is gone.
+function commandLineOf(pid, fsImpl = fs) {
+  try { return fsImpl.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim(); } catch { return null; }
+}
+
+/**
+ * Stop the launch recorded on `port` (see ONE LAUNCH PER PORT): SIGTERM this
+ * command's process (it stops its app and exits), SIGKILL both if they are
+ * still there after `waitMs`. Resolves whether one was running. Never throws.
+ */
+async function stopLaunch(port, {
+  dir = LAUNCH_DIR, fsImpl = fs, kill = process.kill.bind(process), waitMs = STOP_WAIT_MS,
+  commandLine = (pid) => commandLineOf(pid, fsImpl), selfPid = process.pid,
+} = {}) {
+  try {
+    const rec = readLaunch(port, { dir, fsImpl });
+    if (!rec || rec.pid === selfPid) return false;
+    const alive = (pid) => { try { kill(pid, 0); return true; } catch { return false; } };
+    const launcher = alive(rec.pid) && /usernode-run-inloop/.test(commandLine(rec.pid) || '') ? rec.pid : null;
+    const app = Number.isInteger(rec.childPid) && rec.childPid > 1 && alive(rec.childPid)
+      && commandLine(rec.childPid) === rec.childCommand ? rec.childPid : null;
+    const pids = [launcher, app].filter(Boolean);
+    for (const pid of pids) { try { kill(pid, 'SIGTERM'); } catch { /* gone */ } }
+    for (let waited = 0; waited < waitMs && pids.some(alive); waited += STOP_POLL_MS) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, STOP_POLL_MS));
+    }
+    for (const pid of pids) if (alive(pid)) { try { kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+    try { fsImpl.unlinkSync(launchFile(port, dir)); } catch { /* already gone */ }
+    return pids.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const command = process.argv[2];
+  if (command === '--stop') {
+    const port = Number(process.env.INLOOP_PORT);
+    if (!Number.isInteger(port) || port <= 0) {
+      process.stderr.write('usernode-run-inloop: --stop needs a build turn with INLOOP_PORT\n');
+      process.exitCode = 2;
+      return;
+    }
+    const stopped = await stopLaunch(port);
+    process.stderr.write(stopped
+      ? `usernode-run-inloop: stopped the app it launched on ${port}.\n`
+      : `usernode-run-inloop: no app it launched is running on ${port}.\n`);
+    return;
+  }
   if (!command) {
-    process.stderr.write('usage: usernode-run-inloop <app command> [args...]\n');
+    process.stderr.write('usage: usernode-run-inloop <app command> [args...]\n'
+      + '       usernode-run-inloop --stop    (stops the app it launched on $INLOOP_PORT)\n');
     process.exitCode = 2;
     return;
   }
@@ -308,6 +399,11 @@ async function main() {
   const routeAssets = routesPlatformAssets(process.cwd(), env);
   const assetOrigin = platformAssetOrigin(env);
   const proxy = createFrontProxy({ appPort, assetOrigin, routeAssets });
+  // The launch before this one on the same port, stopped first: a relaunch
+  // after an edit is how an app is looked at again.
+  if (await stopLaunch(publicPort)) {
+    process.stderr.write(`usernode-run-inloop: stopped the app it launched earlier on ${publicPort}.\n`);
+  }
   // Bound before the app starts, so a port still held by an earlier launch
   // stops here instead of leaving an app running that nothing fronts.
   try {
@@ -317,7 +413,8 @@ async function main() {
     });
   } catch (err) {
     process.stderr.write(`usernode-run-inloop: cannot listen on ${publicPort}: ${err.message}`
-      + ' (is an earlier launch still running?)\n');
+      + ' (a process this command did not start holds it: an app started some other way. Stop that'
+      + ' process; this command stops the launches it made itself)\n');
     process.exitCode = 2;
     return;
   }
@@ -328,6 +425,14 @@ async function main() {
   const child = spawn(command, process.argv.slice(3), {
     env: { ...env, PORT: String(appPort) }, stdio: 'inherit',
   });
+  if (Number.isInteger(child.pid)) {
+    recordLaunch(publicPort, {
+      // Its argv as /proc shows it once it runs, which is how --stop knows
+      // the pid is still this app.
+      pid: process.pid, childPid: child.pid, childCommand: [command, ...process.argv.slice(3)].join(' '),
+      startedAt: new Date().toISOString(),
+    });
+  }
   const stop = (signal) => { try { child.kill(signal); } catch { /* already gone */ } };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
@@ -338,6 +443,7 @@ async function main() {
   });
   child.on('exit', (code, signal) => {
     process.exitCode = code == null ? (signal ? 128 : 2) : code;
+    forgetLaunch(publicPort, process.pid);
     proxy.close();
     // Keep-alive browser sockets would otherwise hold the process open.
     setTimeout(() => process.exit(), 200).unref();
@@ -357,4 +463,6 @@ module.exports = {
   isPlatformAssetPath,
   createFrontProxy,
   PLATFORM_ASSET_PREFIXES,
+  readLaunch,
+  stopLaunch,
 };

@@ -634,6 +634,31 @@ test('Claude coding-agent records reported run usage, failure reason, and mixed 
   });
 });
 
+// App bench run 190: a build that left a background task running went on
+// after its result when the task ended, and its second result (three model
+// calls) replaced the first one's usage (138 calls): $0.002 for 28 minutes.
+test('a Claude Code run that goes on after its result adds each later result\'s usage to the turn\'s', () => {
+  const state = worker.newWatchState();
+  state.telemetryDiagnosticsEnabled = true;
+  const result = (input, output, turns) => JSON.stringify({
+    type: 'result', is_error: false, result: 'done', num_turns: turns, duration_ms: 1000 * turns, duration_api_ms: 900 * turns,
+    usage: { input_tokens: input, cache_read_input_tokens: input * 10, output_tokens: output },
+  });
+  worker.parseLine(result(5000, 60000, 138), () => {}, state);
+  worker.parseLine(result(200, 700, 3), () => {}, state);
+  assert.equal(state.inputTokens, 5200);
+  assert.equal(state.cachedInputTokens, 52000);
+  assert.equal(state.outputTokens, 60700);
+  assert.equal(state.providerTurnCount, 141);
+  assert.equal(state.agentReportedDurationMs, 141000);
+  assert.equal(state.lastResultText, 'done');
+  // One result reads exactly as before.
+  const one = worker.newWatchState();
+  one.telemetryDiagnosticsEnabled = true;
+  worker.parseLine(result(200, 700, 3), () => {}, one);
+  assert.deepEqual([one.inputTokens, one.outputTokens, one.providerTurnCount], [200, 700, 3]);
+});
+
 test('Claude coding-agent telemetry captures run latency, turns, tool workload, and response shape', async () => {
   await withTelemetrySink(async (rows) => {
     const state = worker.newWatchState();

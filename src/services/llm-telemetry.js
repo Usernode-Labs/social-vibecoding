@@ -367,6 +367,10 @@ function normalizeDiagnostics(event = {}) {
     // guard (worker/build-stop-hook.js) sent the agent back to work after it
     // tried to end a turn that had changed nothing. Absent without the guard.
     stop_hook_blocks: tokenCount(event.stopHookBlocks),
+    // And how many servers it left running in its workspace that the guard
+    // stopped as its turn ended (a server left running held run 190's turn
+    // open nine minutes). Absent without the guard.
+    stop_hook_servers_stopped: tokenCount(event.stopHookServersStopped),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
     // What a coding turn's first and last model requests carried, in bytes of
     // the wire request, as its request listener measured them (worker.js
@@ -546,7 +550,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'image_sent_count', 'image_moved_count', 'image_omitted_count',
   'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
-  'last_browser_call_ms', 'stop_hook_blocks',
+  'last_browser_call_ms', 'stop_hook_blocks', 'stop_hook_servers_stopped',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 

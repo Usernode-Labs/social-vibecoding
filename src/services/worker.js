@@ -488,7 +488,9 @@ function notifyUsage(state) {
   }
 }
 
-function applyClaudeResultUsage(usage, state) {
+// `add`: a result after the first of the same run, whose usage is its own
+// query's and adds to the turn's (claudeResultsSeen).
+function applyClaudeResultUsage(usage, state, { add = false } = {}) {
   if (!usage || typeof usage !== 'object') return;
   const values = {
     inputTokens: usageToken(usage.input_tokens),
@@ -514,7 +516,7 @@ function applyClaudeResultUsage(usage, state) {
   if (!Object.values(values).some((value) => value != null) && !hasUsageMetadata) return;
   state.usageSeen = true;
   for (const [key, value] of Object.entries(values)) {
-    if (value != null) state[key] = value;
+    if (value != null) state[key] = add && Number.isFinite(state[key]) ? state[key] + value : value;
   }
   notifyUsage(state);
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
@@ -1268,7 +1270,14 @@ function applyStreamEvent(event, onProgress, state) {
     }
   } else if (event.type === 'result') {
     state.lastResultText = event.result || state.lastResultText;
-    applyClaudeResultUsage(event.usage, state);
+    // App bench run 190: a turn whose agent had left a background task
+    // running went on after its result (the task's end woke it), and its
+    // second result's usage, three model calls, replaced the first one's
+    // 138: the turn was priced at $0.002. Each result's usage is its own
+    // query's, so a later one adds to the turn's.
+    const laterResult = (state.claudeResultsSeen || 0) > 0;
+    state.claudeResultsSeen = (state.claudeResultsSeen || 0) + 1;
+    applyClaudeResultUsage(event.usage, state, { add: laterResult });
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
     emitShotsDiagnostic(state, {
@@ -1279,9 +1288,13 @@ function applyStreamEvent(event, onProgress, state) {
     const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
     const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
     const turns = observeDiagnostics ? usageToken(event.num_turns) : null;
-    if (reportedDuration != null) state.agentReportedDurationMs = reportedDuration;
-    if (providerDuration != null) state.providerDurationMs = providerDuration;
-    if (turns != null) state.providerTurnCount = turns;
+    const plus = (key, value) => {
+      if (value == null) return;
+      state[key] = laterResult && Number.isFinite(state[key]) ? state[key] + value : value;
+    };
+    plus('agentReportedDurationMs', reportedDuration);
+    plus('providerDurationMs', providerDuration);
+    plus('providerTurnCount', turns);
     const modelUsage = event.modelUsage && typeof event.modelUsage === 'object'
       && !Array.isArray(event.modelUsage)
       ? event.modelUsage
@@ -1566,6 +1579,9 @@ function parseLine(line, onProgress, state) {
       // L2: how many times its checks gate sent the agent back to fix a
       // failing declared check (run-cc.sh, STOP_GUARD_CHECKS only).
       else if (k === 'stop_hook_check_blocks') state.stopHookCheckBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      // Run 190: how many servers the agent left running that the stop guard
+      // stopped as the turn ended: telemetry_metrics.stop_hook_servers_stopped.
+      else if (k === 'stop_hook_servers_stopped') state.stopHookServersStopped = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1888,6 +1904,10 @@ function newWatchState() {
     // changed nothing (worker/build-stop-hook.js). Null for a turn without
     // the guard, so "none asked for" stays apart from "none needed".
     stopHookBlocks: null,
+    stopHookServersStopped: null,
+    // Claude Code result events seen this turn: a run that goes on after its
+    // first (a background task's end wakes it) adds each later one's usage.
+    claudeResultsSeen: 0,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
