@@ -781,9 +781,19 @@ const Home = {
     // widget list and would have persisted a repair that erased the viewer's
     // Challenges/Discover/Create cells. Nothing on the canvas depends on a
     // second endpoint any more, so a repair is always safe to keep.
+    //
+    // Only a repair that changes what the server would STORE is written.
+    // With more apps than the canvas has cells, repair() parks the rest on
+    // the overflow row and reports `changed` on every call; toWire() drops
+    // that row, the server keeps the same cells, its answer resets
+    // _layouts, and the next render repaired and wrote again: three PUTs
+    // every few seconds for as long as the home screen was open, each one
+    // queued on the server's per-user lock, until the browser's connections
+    // were all waiting on them.
     if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
-      Home._persistLayout(cols, layout);
+      const wire = (l) => JSON.stringify(HomeLayout.toWire(l));
+      if (wire(layout) !== wire(stored)) Home._persistLayout(cols, layout);
     }
     return layout;
   },
