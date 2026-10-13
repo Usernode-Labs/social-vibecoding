@@ -162,13 +162,75 @@ test('group-chat.js carries the change language from the mount to the shell and 
   assert.match(src, /change: fill && language === 'change',/);
   assert.match(src, /if \(closed\) return;\n\s+if \(!st\.loaded\) GroupChat\.loadThreadHistory\(type, ref\);/,
     'an unshared change\'s thread is not read');
-  assert.match(src, /\.\.\.\(language === 'change' \? \{ change: \{ loaded: !!\(st\.loaded \|\| a\.closed\), closed: a\.closed \|\| null \} \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(language === 'change' \? \{ change: \{ loaded: !!\(st\.loaded \|\| a\.closed\), closed: a\.closed \|\| null, issue: a\.issue \|\| null \} \} : \{\}\),/);
   // Notices are events on a change's page too, as they were in its Discussion.
   assert.match(src, /const chat = !!\(opts && \(opts\.language === 'chat' \|\| opts\.language === 'change'\)\);/);
   assert.match(src, /meta\.stagingBuild === 'started' \|\| meta\.stagingBuild === 'ready'/);
   const view = read('public/js/app-view.js');
   assert.match(view, /language: 'change',\n\s+placeholder: PlatformI18n\.t\('changes:page\.thread\.replyPlaceholder'\),/);
   assert.equal(require('./lib/platform-i18n').message('changes:page.thread.replyPlaceholder'), 'Reply…');
+});
+
+// #5007: a change built for a request points its replies at that request,
+// where the conversation about the change lives. The mount passes the first
+// linked request (the one the head's Built for row names first), and the
+// unshared notes say the conversation is on the request instead of inviting
+// a discussion that cannot start here.
+test('the mount points a change built for a request at that request, and only then', () => {
+  const src = read('public/js/group-chat.js');
+  assert.match(src, /const issue = language === 'change' && opts\.issue && Number\.isInteger\(opts\.issue\.n\)\n\s+&& typeof opts\.issue\.href === 'string' && opts\.issue\.href\.startsWith\('#app\/'\)\n\s+\? \{ n: opts\.issue\.n, href: opts\.issue\.href \} : null;/,
+    'only the change language takes an issue pointer, with the in-app href');
+  assert.match(src, /\.\.\.\(closed \? \{ closed \} : \{\}\), \.\.\.\(issue \? \{ issue \} : \{\}\)/, 'the pointer rides on activeThread');
+  const view = read('public/js/app-view.js');
+  assert.match(view, /const linked = AppView\._sanitizeIssueNumbers\(Array\.isArray\(item && item\.linked_issues\) \? item\.linked_issues : \[\]\);/);
+  assert.match(view, /const issue = linked\.length\n\s+\? \{ n: linked\[0\], href: `#app\/\$\{AppView\.appData\?\.slug \|\| App\.currentApp\}\/dev\/issues\/\$\{linked\[0\]\}` \}\n\s+: null;/);
+  assert.match(view, /\.\.\.\(issue \? \{ issue \} : \{\}\),/);
+  assert.match(view, /closed: issue\n\s+\? PlatformI18n\.t\('changes:page\.thread\.onlyYouLinked'\)\n\s+: PlatformI18n\.t\('changes:page\.thread\.onlyYou'\),/);
+  assert.match(view, /notice: issue\n\s+\? PlatformI18n\.t\('changes:page\.thread\.shareToDiscussLinked'\)\n\s+: PlatformI18n\.t\('changes:page\.thread\.shareToDiscuss'\),/);
+  assert.equal(message('project:topic.change.stream.conversationOn'), 'Conversation lives on <0>#{{number}}</0>');
+  assert.equal(message('project:topic.change.stream.moreConversationOn'), 'More of the conversation is on <0>#{{number}}</0>');
+  assert.equal(message('changes:page.thread.onlyYouLinked'), 'Only you can see this change. Its conversation so far is on the request.');
+  assert.equal(message('changes:page.thread.shareToDiscussLinked'), 'Share this change to discuss it here. Until then, reply on the request.');
+});
+
+test('ChangeRows: a change built for a request says the conversation lives on it', () => {
+  const issue = { n: 4856, href: '#app/homeroom/dev/issues/4856' };
+  // Closed (nobody else can see the change yet) with a request: the pointer
+  // row replaces "No replies yet", the note says the conversation is there.
+  const closed = renderComponent(TRANSCRIPT, 'ChangeRows', {
+    view: { lead: { language: 'change', change: { loaded: true, closed: 'Only you can see this change. Its conversation so far is on the request.', issue } }, messages: [] },
+  });
+  assert.match(closed, /<div class="messages-reply-count dev-change-issue-pointer" data-change-issue="4856"><span>Conversation lives on <a href="#app\/homeroom\/dev\/issues\/4856" class="dev-change-issue-link" data-issue-ref="4856">#4856<\/a><\/span><\/div>/);
+  assert.match(closed, /Its conversation so far is on the request\./);
+  assert.doesNotMatch(closed, /No replies yet/);
+  // Loaded, no replies of its own: the same pointer row, no closed note.
+  const empty = renderComponent(TRANSCRIPT, 'ChangeRows', {
+    view: { lead: { language: 'change', change: { loaded: true, closed: null, issue } }, messages: [] },
+  });
+  assert.match(empty, /data-change-issue="4856"[^>]*><span>Conversation lives on <a href="#app\/homeroom\/dev\/issues\/4856"/);
+  assert.doesNotMatch(empty, /dev-change-closed-note|No replies yet/);
+  // Replies of its own too: "More of the conversation" above the usual row.
+  const replied = renderComponent(TRANSCRIPT, 'ChangeRows', {
+    view: { lead: { language: 'change', change: { loaded: true, closed: null, issue } }, messages: [row({ id: 4, username: 'cilokman' })] },
+  });
+  assert.match(replied, /<p class="dev-change-issue-pointer" data-change-issue="4856"><span>More of the conversation is on <a href="#app\/homeroom\/dev\/issues\/4856" class="dev-change-issue-link" data-issue-ref="4856">#4856<\/a><\/span><\/p>/);
+  assert.match(replied, /class="messages-reply-count" data-change-replies="1"><span>1 reply<\/span>/);
+  // While the replies load, the line is "Loading replies…" as before.
+  const loading = renderComponent(TRANSCRIPT, 'ChangeRows', {
+    view: { lead: { language: 'change', change: { loaded: false, closed: null, issue } }, messages: [] },
+  });
+  assert.match(loading, /Loading replies…/);
+  assert.doesNotMatch(loading, /Conversation lives on/);
+});
+
+test('ChangeRows: a change built for no request keeps today\'s empty states', () => {
+  const closed = 'Only you can see this change. Share it with the group to start a discussion.';
+  const html = renderComponent(TRANSCRIPT, 'ChangeRows', {
+    view: { lead: { language: 'change', change: { loaded: true, closed } }, messages: [] },
+  });
+  assert.match(html, /<div class="messages-reply-count" data-change-replies="0"><span>No replies yet<\/span><\/div>/);
+  assert.match(html, /Share it with the group to start a discussion\./);
+  assert.doesNotMatch(html, /dev-change-issue-pointer|Conversation lives on/);
 });
 
 test('a moving bar is the lit ink, a finished one green with its check, and AGENTS.md says a finished bar may be green', () => {

@@ -1017,10 +1017,10 @@
       "expectText": "Re-run checks"
     },
     {
-      "name": "#4455: one row under the summary: \"Addresses\", then the request as a chip with its number bold and its title after it",
+      "name": "#4455: one row under the summary: \"Built for\", then the request as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
       "expectSelector": "#gc-thread-head .dev-change-root .dev-request-ask ~ .dev-change-addresses > .dev-change-chips > .dev-change-chips-lead + .dev-change-chips-first > a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
-      "expectText": "Addresses"
+      "expectText": "Built for"
     },
     {
       "name": "#4453: a request's page is one sheet, Messages' reply thread: the header names the request and its category, the request is the root post (its title, its words as a quote, where it stands, its spec), then \"N replies\" and the stream",

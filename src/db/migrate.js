@@ -104,6 +104,9 @@ async function migrate(config) {
   await seedStagingSessionOptions(pool, config);
   await seedStagingNoBranchSession(pool, config);
   await seedStagingSharedSession(pool, config);
+  // #5007: independent of the fixtures above — its two sessions are keyed
+  // on their own branch_name.
+  await seedStagingChangeBuiltForRequest(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
   await seedStagingDiscussionContext(pool, config);
@@ -11718,6 +11721,93 @@ async function seedStagingTopicScrollThreads(pool, config) {
 
   log.info('db', 'Staging topic-scroll threads seeded', {
     appId, issueRef, sessionRef, govRef, inserted: n1 + n2 + n3,
+  });
+}
+
+// #5007: a change built for a request points its reply thread at that
+// request — "Conversation lives on #N" where "No replies yet" used to be,
+// "More of the conversation is on #N" above the count, and the closed
+// notes say the conversation is on the request. Every session fixture
+// above has linked_issues = {}, so a fresh staging copy has no state that
+// shows any of it. Two changes owned by usernode-capture (the signed-in
+// capture identity), both built for mock issue #900001 — the one the
+// mock-issues fallback in routes/issues.js always serves in staging: one
+// unshared, for the closed notes and the pointer row, and one shared with
+// a single stored reply, for the "More of the conversation" line above the
+// count. Idempotent on branch_name; the reply on (thread_type, thread_ref,
+// content).
+async function seedStagingChangeBuiltForRequest(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging change-built-for-request fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: captureRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1',
+    ['usernode-capture']
+  );
+  const ownerId = captureRows[0]?.id;
+  if (!ownerId) {
+    log.warn('db', 'Staging change-built-for-request fixture skipped: capture user missing');
+    return;
+  }
+
+  // The stored reply's author: anyone but the owner, so the thread reads
+  // as a back-and-forth. Falls back to the owner when staging has one user.
+  const { rows: otherRows } = await pool.query(
+    'SELECT id FROM users WHERE id <> $1 ORDER BY is_admin DESC, id ASC LIMIT 1',
+    [ownerId]
+  );
+  const replyAuthorId = otherRows[0]?.id || ownerId;
+
+  const seedSession = async (branch, title, sharedMinutesAgo, createdMinutesAgo) => {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (existing.length) return existing[0].id;
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, linked_issues, shared_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, 'active', ARRAY[900001]::int[], $5,
+          NOW() - ($6 * INTERVAL '1 minute'))
+       RETURNING id`,
+      [appId, ownerId, branch, title,
+        sharedMinutesAgo == null ? null : new Date(Date.now() - sharedMinutesAgo * 60000),
+        createdMinutesAgo]
+    );
+    return rows[0].id;
+  };
+
+  const unsharedId = await seedSession('staging-fixture/change-built-for-request',
+    '[staging fixture] Change built for a request — only you can see it', null, 20);
+  const sharedId = await seedSession('staging-fixture/change-built-for-request-shared',
+    '[staging fixture] Change built for a request — shared, one reply', 10, 30);
+
+  const reply = '[staging fixture] This covers what the request asked for — replying here from now on.';
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1, $2, $3, 'message', 'session', $4, NOW() - INTERVAL '8 minutes'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.thread_type = 'session'
+           AND existing.thread_ref = $4 AND existing.content = $3
+      )`,
+    [appId, replyAuthorId, reply, sharedId]
+  );
+
+  log.info('db', 'Staging change-built-for-request fixtures seeded', {
+    appId, unsharedId, sharedId,
   });
 }
 

@@ -16672,6 +16672,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-shots-line { margin: 8px 0 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); }
 .dev-change-shots-tiles { margin-top: 8px; }
 .dev-change-closed-note { margin: 0; padding: 6px 16px 12px; font-size: 15px; color: var(--text-muted); }
+/* #5007: a change built for a request points its replies at the request
+   where its conversation lives. The `p` variant sits above the "N replies"
+   row; the `div` one replaces the "No replies yet" row and keeps that
+   row's hairline. Same spacing and type as the reply-count row. */
+p.dev-change-issue-pointer {
+  margin: 0;
+  padding: 2px 16px 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.dev-change-issue-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.dev-change-issue-link:hover { text-decoration: underline; }
 
 /* Shot details, in the Details sheet. */
 .dev-shot-details-claims { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
