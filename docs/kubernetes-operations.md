@@ -535,6 +535,15 @@ budget would prevent the intended check concurrency. Reserve platform CPU
 separately through the installation's `platform.resources.requests.cpu`, with
 namespace quota headroom for rolling-update overlap and migration.
 
+`CHECK_NODE_POOL` (default empty, chart `config.checkNodePool`) replaces that
+spread with a preference for a dedicated node pool, given as the pool nodes'
+label `key=value`. The pool's nodes carry the label and the same pair as a
+`NoSchedule` taint; check Pods tolerate the taint and prefer the label, and
+fall back to the other nodes when the pool is full or down. The worker
+namespace's CPU-request quota still bounds them wherever they run, so raise it
+with the pool's capacity. To see where checks ran:
+`kubectl -n social-workers get pods -l social.usernode.io/workload=check -o wide`.
+
 Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
 Docker or Kubernetes workloads, or read the parent's deployment status. Their
 status API reports `runtimeKind: preview` and `runtimeAvailable: false`; fleet

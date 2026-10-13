@@ -639,6 +639,11 @@ function load() {
       appGate: (process.env.APP_GATE || 'off').trim().toLowerCase() === 'on' ? 'on' : 'off',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
+      // The dedicated node pool check Jobs prefer, as the pool nodes' label
+      // `key=value` (for example `usernodelabs.org/node-pool=cpu-heavy`).
+      // Empty spreads checks over every node (services/kubernetes.js,
+      // checkPlacement).
+      checkNodePool: (process.env.CHECK_NODE_POOL || '').trim(),
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
       workerStorageSize: process.env.WORKER_STORAGE_SIZE || '5Gi',
       // Which builder produces app images (see services/kubernetes-buildkit.js

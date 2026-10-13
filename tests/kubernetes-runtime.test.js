@@ -770,6 +770,66 @@ for (const kind of ['Capture', 'UnitSuite']) {
   }
 }
 
+// CHECK_NODE_POOL (services/kubernetes.js checkPlacement): the Jobs both check
+// kinds create, with the pool set as `checkNodePool`.
+async function checkJobsWithNodePool(checkNodePool) {
+  const jobs = [];
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob({ body }) { jobs.push(body); },
+      async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+    },
+    core: {
+      async createNamespacedSecret() {},
+      async deleteNamespacedSecret() {},
+      async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+      async readNamespacedPodLog() { return 'passed'; },
+    },
+  });
+  const cfg = config();
+  cfg.kubernetes.checkNodePool = checkNodePool;
+  for (const [index, kind] of ['Capture', 'UnitSuite'].entries()) {
+    await kubernetes[`run${kind}Job`](cfg, { sessionId: 60 + index, env: {}, previewRunId: `pool-${index}` });
+  }
+  assert.equal(jobs.length, 2);
+  return jobs.map((job) => job.spec.template.spec);
+}
+
+test('checks tolerate and prefer a configured node pool, and drop the host spread', async () => {
+  for (const pod of await checkJobsWithNodePool('usernodelabs.org/node-pool=cpu-heavy')) {
+    assert.deepEqual(pod.tolerations, [{
+      key: 'usernodelabs.org/node-pool', operator: 'Equal', value: 'cpu-heavy', effect: 'NoSchedule',
+    }]);
+    assert.deepEqual(pod.affinity, { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+      weight: 100,
+      preference: { matchExpressions: [{ key: 'usernodelabs.org/node-pool', operator: 'In', values: ['cpu-heavy'] }] },
+    }] } });
+    assert.equal(pod.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined,
+      'a preference: checks still run elsewhere when the pool is full or down');
+    assert.equal(pod.nodeSelector, undefined);
+    assert.equal(pod.topologySpreadConstraints, undefined,
+      'the spread would push Pods off a pool of one large node');
+  }
+});
+
+test('an empty or malformed node pool leaves checks on the default spread', async () => {
+  for (const value of ['', '   ', 'cpu-heavy', 'usernodelabs.org/node-pool=', '=cpu-heavy',
+    'usernodelabs.org/node-pool=cpu heavy', 'a=b=c', 'Bad_Prefix/pool=x', `pool=${'x'.repeat(64)}`]) {
+    for (const pod of await checkJobsWithNodePool(value)) {
+      assert.equal(pod.tolerations, undefined, JSON.stringify(value));
+      assert.equal(pod.affinity, undefined, JSON.stringify(value));
+      assert.equal(pod.topologySpreadConstraints.length, 1, JSON.stringify(value));
+      assert.equal(pod.topologySpreadConstraints[0].topologyKey, 'kubernetes.io/hostname');
+    }
+  }
+});
+
+test('a node pool label without a prefix is accepted', async () => {
+  for (const pod of await checkJobsWithNodePool(' pool=checks_1.a ')) {
+    assert.deepEqual(pod.tolerations, [{ key: 'pool', operator: 'Equal', value: 'checks_1.a', effect: 'NoSchedule' }]);
+  }
+});
+
 test('check kinds and sessions share one spread group without including resident workers', async () => {
   const jobs = [];
   kubernetes._setClientsForTest({

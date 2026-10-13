@@ -2342,6 +2342,66 @@ function reconcileCheckOutput(observed, terminal) {
   return known;
 }
 
+// Kubernetes' syntax for a label key (an optional DNS-subdomain prefix, then
+// a name) and for a label value.
+const LABEL_NAME = '[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?';
+const NODE_POOL_PAIR = new RegExp(
+  `^((?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?${LABEL_NAME})=(${LABEL_NAME})$`);
+const warnedNodePools = new Set();
+
+// CHECK_NODE_POOL as { key, value }, or null when it is empty or is not a
+// valid label pair. An invalid one is said once and ignored: a Job the API
+// refuses for a malformed toleration is a check that cannot start, and
+// running where checks always ran is the better failure.
+function checkNodePool(cfg) {
+  const raw = String(cfg.checkNodePool || '').trim();
+  if (!raw) return null;
+  const match = NODE_POOL_PAIR.exec(raw);
+  if (!match) {
+    if (!warnedNodePools.has(raw)) {
+      warnedNodePools.add(raw);
+      log.warn('kubernetes', 'CHECK_NODE_POOL is not a label key=value; checks keep the default placement', { value: raw });
+    }
+    return null;
+  }
+  return { key: match[1], value: match[2] };
+}
+
+// Where a check Pod may run.
+//
+// Without a pool, checks prefer spare hosts and are never stranded when only
+// one host fits: a soft spread over every node, counted across all check
+// kinds and sessions.
+//
+// With a pool (CHECK_NODE_POOL), its nodes carry the label and the same pair
+// as a NoSchedule taint, so nothing else is scheduled on them. Checks
+// tolerate the taint and prefer the label. It stays a preference: with the
+// pool full or its nodes gone, checks run on the other nodes as before.
+//
+// The spread goes when there is a pool. Both are scoring preferences of the
+// same weight to the scheduler, and the spread counts check Pods per host, so
+// on a pool of one large node it would send every Pod after the first back to
+// the small nodes the pool is there to relieve.
+function checkPlacement(cfg, checkSelector) {
+  const pool = checkNodePool(cfg);
+  if (!pool) {
+    return {
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+    };
+  }
+  return {
+    tolerations: [{ key: pool.key, operator: 'Equal', value: pool.value, effect: 'NoSchedule' }],
+    affinity: { nodeAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+      weight: 100,
+      preference: { matchExpressions: [{ key: pool.key, operator: 'In', values: [pool.value] }] },
+    }] } },
+  };
+}
+
 // `namePrefix` names a Job outside the preview's own check Jobs: an early
 // unit suite (services/early-unit-suite.js) is `sv-unit-early-…`, which
 // cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
@@ -2417,12 +2477,7 @@ async function runCheckJob(config, {
     template: { metadata: { labels: { ...checkLabels } }, spec: {
       restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
       automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
-      // Prefer spare hosts without stranding checks when only one host fits.
-      topologySpreadConstraints: [{
-        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
-        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
-        labelSelector: { matchLabels: checkSelector },
-      }],
+      ...checkPlacement(cfg, checkSelector),
       containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
     } },
   } };
