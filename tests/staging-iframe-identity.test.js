@@ -313,6 +313,43 @@ test('a "Test this change" retarget navigates once, and only when the src differ
   assert.equal(bridge.frame(), iframe, 'same element');
 });
 
+test('#4917 a plain Preview opens on the page the change is about, with the panel closed', async () => {
+  const h = await makeHarness();
+  const { AppView, iframe, bridge } = h;
+
+  // The ensure answer's startPath (services/preview-start.js) reaches
+  // swapToStaging in opts; without it the open is unchanged (root, as the
+  // first test in this file pins).
+  await AppView.swapToStaging('https://preview.example', null, { verified: true, startPath: '/deep' });
+  assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/,
+    'the first load opened on the declared page, token and theme attached');
+  assert.equal(bridge.isTestPanelHidden(), true,
+    'a plain Preview still opens with the How to test panel closed');
+
+  // A start path that fails the client-side rule (starts with `//`) is
+  // ignored and the preview opens at the root.
+  await AppView.swapToStaging('https://preview.example', null, { verified: true, startPath: '//evil.example' });
+  assert.match(iframe.src, /^https:\/\/preview\.example\/\?token=tok-1&un-theme=dark$/,
+    'an unsafe start path lands at the root');
+  assert.equal(bridge.isTestPanelHidden(), true);
+
+  // The panel rule is untouched: jump (Test this change) still retargets to
+  // the testing path and auto-opens, even when the preview already sits on
+  // the same page — the retarget must not reload what the user is testing.
+  await AppView.swapToStaging(
+    'https://preview.example', { md: 'do the thing', path: '/deep' },
+    { verified: true, startPath: '/deep', jump: true }
+  );
+  assert.equal(iframe.loads, 3, 'the jump landed on the testing path');
+  assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/,
+    'the testing deep link wins for Test this change');
+  assert.equal(bridge.isTestPanelHidden(), false, 'the panel auto-opened for the jump');
+  const afterJump = iframe.contentWindow;
+  AppView._renderTestingControls((p) => `https://preview.example${p || '/'}?token=tok-1`, { src: iframe.src }, false);
+  assert.equal(iframe.loads, 3, 'no reload when the start path already equals the testing path');
+  assert.equal(iframe.contentWindow, afterJump, 'same document');
+});
+
 test('the visual-compare overlay opens over the preview without disturbing it', async () => {
   const h = await makeHarness();
   const { AppView, iframe, bridge } = h;

@@ -26217,6 +26217,9 @@ const AppView = {
         // The moment a time-dependent change declared (services/preview-
         // clock.js); swapToStaging opens the preview at it.
         ...(data.previewAt ? { previewAt: data.previewAt } : {}),
+        // The page the change is about (services/preview-start.js);
+        // swapToStaging opens the preview there instead of the first screen.
+        ...(typeof data.startPath === 'string' ? { startPath: data.startPath } : {}),
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
@@ -26378,6 +26381,11 @@ const AppView = {
     // leave the staging origin.
     const rawPath = testing && typeof testing.path === 'string' ? testing.path : null;
     const safePath = rawPath && rawPath.startsWith('/') && !rawPath.startsWith('//') ? rawPath : null;
+    // #4917: the page the change is about (`opts.startPath`, from the ensure
+    // answer, already validated server-side by preview-start). Same rule as
+    // `safePath` above; null opens at the root as always.
+    const rawStart = opts && typeof opts.startPath === 'string' ? opts.startPath : null;
+    const safeStart = rawStart && rawStart.startsWith('/') && !rawStart.startsWith('//') ? rawStart : null;
     const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
     AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
 
@@ -26440,14 +26448,15 @@ const AppView = {
         if (url.origin !== new URL(resolved).origin) url = new URL('/', resolved);
       } catch { return null; }
       // #2691: the self-app's staging database is deliberately sparse, and
-      // its review fixtures are request-time data gated on `?demo=1`.  The
-      // ordinary Preview action opens the root (rather than the optional
-      // testing deep link), so without this flag a reviewer can see an empty
-      // production-shaped screen and conclude that the submitted UI did not
-      // land.  Keep this self-app-only: apps built on the platform own their
-      // own query-string semantics and must receive their preview URL with
-      // nothing added but the platform's own namespaced parameters (`token`,
-      // and `un-theme` below). The URL API preserves an existing path/hash/query.
+      // its review fixtures are request-time data gated on `?demo=1`.  A
+      // preview still opens the root only when the change named no page
+      // (#4917 opens the declared one), so without this flag a reviewer can
+      // see an empty production-shaped screen and conclude that the
+      // submitted UI did not land.  Keep this self-app-only: apps built on
+      // the platform own their own query-string semantics and must receive
+      // their preview URL with nothing added but the platform's own
+      // namespaced parameters (`token`, and `un-theme` below). The URL API
+      // preserves an existing path/hash/query.
       if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
       // #3257: namespaced, like `token`, so it cannot collide with a query
@@ -26462,9 +26471,10 @@ const AppView = {
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
-    // Mutable so a "Test this change" click during the readiness poll
-    // retargets the pending load instead of being clobbered by it.
-    const pending = { src: buildSrc(jump ? safePath : null) };
+    // #4917: the first load opens on the page the change is about when it
+    // named one (`safeStart`), else the root. `jump` (Test this change)
+    // still wins, and its panel rule below is untouched.
+    const pending = { src: buildSrc(jump ? safePath : safeStart) };
 
     // "See it as now" and back: the same address with `un-now` dropped or
     // put back, so a deep link the preview was opened at survives. Before the

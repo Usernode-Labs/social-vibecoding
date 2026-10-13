@@ -13,6 +13,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const previewClock = require('../services/preview-clock');
+const previewStart = require('../services/preview-start');
 const proposalDescription = require('../services/proposal-description');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
@@ -6345,6 +6346,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // it at (services/preview-clock.js). Try it opens the preview there and
       // the bar says so. Absent when nothing is declared.
       ...previewClock.previewAnswer(session),
+      // The page the change is about (services/preview-start.js): the first
+      // declared shots start path, else the testing deep link. Try it opens
+      // the preview there instead of the first screen. Absent when neither
+      // names one, so those answers stay byte-identical.
+      ...previewStart.previewAnswer(session),
     };
   }
 
