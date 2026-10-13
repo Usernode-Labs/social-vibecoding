@@ -248,6 +248,41 @@ test('the sheet prerenders as an empty, hidden root', () => {
   assert.doesNotMatch(html, /data-who-screen/, 'nothing inside until it is opened');
 });
 
+test('#4960: competing access changes are allowed, with a warning in the summary', () => {
+  const sheet = read('frontend/src/features/dialogs/who-decides.tsx');
+  // No top note and no separate waiting branch: the warning lives in the
+  // propose branch, where the person is looking.
+  assert.doesNotMatch(sheet, /data-who-waiting=""/);
+  assert.doesNotMatch(sheet, /waiting && changes\.length/);
+  assert.doesNotMatch(sheet, /!!waiting/);
+  // The propose branch warns when a change is waiting, and Propose stays
+  // enabled: greyed only on `busy`.
+  const propose = sheet.indexOf('data-who-propose=""');
+  const branch = sheet.slice(sheet.lastIndexOf('changes.length ? (', propose), sheet.indexOf('</>', propose));
+  for (const needle of [
+    "waiting ? t('dialogs:whoDecides.waitingTitle')",
+    'dialogs:whoDecides.waitingSub',
+    'data-who-waiting-warning=""',
+    'changeHref(slug, waiting.session_id)',
+    'disabled={busy}',
+  ]) {
+    assert.ok(branch.includes(needle), `${needle} inside the propose branch`);
+  }
+  // The words are in the English catalog, as the sheet asks for them.
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('dialogs:whoDecides.waitingTitle'), 'Another change is up for a vote too');
+  assert.equal(message('dialogs:whoDecides.waitingSub'),
+    'A change to who can see and change it is already up for a vote. If both pass, the later one may overwrite the earlier.');
+  // The sheet still reads the open change off the community record.
+  const routes = read('src/routes/apps.js');
+  assert.match(routes, /who_decides_change/, 'the community read still returns the waiting change');
+  // And this route no longer refuses a second one while it is up for a
+  // vote. (visibility-pr and the others keep their own in-flight guards,
+  // so the refusal is checked inside this route alone.)
+  const route = routes.slice(routes.indexOf("'/api/apps/:slug/who-decides-pr'"), routes.indexOf("'/api/apps/:slug/admins'"));
+  assert.doesNotMatch(route, /already waiting for approval/);
+});
+
 test('every way in opens the one sheet', () => {
   const card = read(CARD);
   assert.match(card, /data-ws-rules-edit=""[\s\S]{0,200}onClick=\{\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)\}/);
