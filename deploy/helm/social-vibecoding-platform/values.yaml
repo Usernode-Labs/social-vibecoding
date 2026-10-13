@@ -150,6 +150,12 @@ config:
   # built. Main-watch's run of main has one slot besides these. 0 turns the
   # queue off. See the chart README.
   checksMaxConcurrentRuns: 4
+  # A dedicated node pool for check Jobs, as the pool nodes' label key=value
+  # (for example "usernodelabs.org/node-pool=cpu-heavy"). Checks tolerate a
+  # NoSchedule taint with the same pair and prefer those nodes, falling back
+  # to the others when the pool is full or down. Empty keeps the default
+  # spread over every node. See the chart README.
+  checkNodePool: ""
   # Match application defaults here; each cluster declares its own capacity.
   dbPoolMax: 10
   maxGlobalSessions: 25

@@ -436,6 +436,18 @@ run) leave room in the worker namespace's ResourceQuota for coding workers,
 and so the previews under test do not saturate the shared Postgres primary.
 `0` turns the queue off.
 
+`config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
+node pool for check Jobs as the pool nodes' label `key=value`, for example
+`usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
+and taint them with the same pair and `NoSchedule`, so nothing else is
+scheduled there. Capture and unit-suite Jobs then tolerate the taint and
+prefer those nodes. It is a preference, so checks still run on the other nodes
+when the pool is full or down. With a pool set, checks drop their hostname
+spread: on a pool of one large node it would push Pods back onto the small
+nodes. A value that is not a valid label pair is logged once and ignored.
+Coding workers, builds, apps and previews are not affected. Changes apply to
+newly created check Jobs.
+
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker
 namespace DNS and egress must reach these ingress endpoints with valid TLS;
