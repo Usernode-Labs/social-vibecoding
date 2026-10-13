@@ -15,6 +15,14 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
 
+// What a staging fixture's password is hashed at. Each is a literal written
+// in this file, or random bytes nobody keeps, for an account that exists
+// only in a preview, so a slow hash protects nothing, and at the cost real
+// passwords get (12) the three of them were 0.6 seconds of every preview's
+// start. bcrypt.compare reads the cost from the hash, so signing in with
+// them works as before. Never used for anything a person chose.
+const STAGING_FIXTURE_BCRYPT_COST = 4;
+
 async function migrate(config) {
   const startedAt = Date.now();
   const timings = {};
@@ -961,26 +969,37 @@ async function backfillVotesRequired(pool) {
     candidates: sessions.length,
   });
 
+  // Every merge announcement of the apps concerned, newest first, read ONCE.
+  // This used to be one search of the app's chat per merged row; a preview
+  // starts with nine merged fixtures that have no announcement at all, and
+  // the nine searches of Homeroom's copied chat were 0.8 seconds of each
+  // start. The two LIKEs restrict to merge/force-merge lines (promote /
+  // vote / revert messages also mention the PR ref but carry neither
+  // phrase).
+  let announcements;
+  try {
+    ({ rows: announcements } = await pool.query(
+      `SELECT app_id, content FROM chat_messages
+        WHERE app_id = ANY($1::int[]) AND msg_type = 'system'
+          AND (content LIKE '%merged and deployed!%'
+               OR content LIKE '%force-merged by admin%')
+        ORDER BY created_at DESC`,
+      [[...new Set(sessions.map((s) => s.app_id))]]
+    ));
+  } catch (err) {
+    log.warn('db', 'votes_required backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+
   let filled = 0;
   for (const s of sessions) {
     // The announcement label uses `pr_number || session.id` as the PR ref.
     const ref = s.pr_number || s.id;
     try {
-      // Find the merge announcement for this PR. The word-boundary regex
-      // (`(^|[^0-9])PR #<ref>([^0-9]|$)`) stops "PR #1" from matching
-      // "PR #12", and the two LIKEs restrict to merge/force-merge lines
-      // (promote / vote / revert messages also mention the PR ref but
-      // carry neither phrase).
-      const { rows: msgs } = await pool.query(
-        `SELECT content FROM chat_messages
-          WHERE app_id = $1 AND msg_type = 'system'
-            AND content ~ $2
-            AND (content LIKE '%merged and deployed!%'
-                 OR content LIKE '%force-merged by admin%')
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [s.app_id, `(^|[^0-9])PR #${ref}([^0-9]|$)`]
-      );
+      // The newest announcement for this PR. The word-boundary pattern
+      // stops "PR #1" from matching "PR #12".
+      const mentionsPr = new RegExp(`(^|[^0-9])PR #${Number(ref)}([^0-9]|$)`);
+      const msgs = announcements.filter((a) => a.app_id === s.app_id && mentionsPr.test(a.content)).slice(0, 1);
       if (!msgs.length) continue;
 
       const m = /\((\d+)\s*\/\s*(\d+)\s+vote/.exec(msgs[0].content);
@@ -1761,10 +1780,11 @@ async function seedStagingEmailCodeAccounts(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    const knownHash = await bcrypt.hash('staging-code-password', 12);
+    const knownHash = await bcrypt.hash('staging-code-password', STAGING_FIXTURE_BCRYPT_COST);
+    // Nobody knows what this one hashes: 32 random bytes, thrown away.
     const unusableHash = await bcrypt.hash(
       crypto.randomBytes(32).toString('hex'),
-      12
+      STAGING_FIXTURE_BCRYPT_COST
     );
 
     await pool.query(
@@ -12075,7 +12095,7 @@ async function seedStagingTopochain(pool, config) {
     // Participant 8 is also the one row with `accept_logs = FALSE` (the
     // column defaults to TRUE), so the users screen shows both values of
     // the flag instead of a column that is the same all the way down.
-    const realHash = await bcrypt.hash('staging-demo-topochain-password', 12);
+    const realHash = await bcrypt.hash('staging-demo-topochain-password', STAGING_FIXTURE_BCRYPT_COST);
     await pool.query(
       `INSERT INTO users
          (id, username, password, email, exclude_podium, accept_logs,
@@ -13942,7 +13962,7 @@ module.exports = {
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
-  backfillProposalIssuerAssignments,
+  backfillProposalIssuerAssignments, backfillVotesRequired,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed,
