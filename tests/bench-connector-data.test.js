@@ -89,8 +89,16 @@ test('a ready verdict that was never built says where it got to and why; a run s
           queued: 2, building: 1, built: 40, failed: 3,
           lane: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
           fault: null,
+          // The live builds beside the lane (homeroom-bot.js buildsNow).
+          live: { building: 1, waiting: 2 },
         },
         runs: [
+          // Run four (13 Oct 2026): a first version building, its review
+          // included, read as no build at all (`build: null`).
+          run({ id: 10, mode: 'live', build_session_id: 1746 }),
+          run({ id: 9, mode: 'live', live_build_waiting_at: '2026-10-09T09:00:00Z' }),
+          run({ id: 8, mode: 'live', awaiting_go_at: '2026-10-09T09:00:00Z' }),
+          run({ id: 7, mode: 'shadow', build_session_id: 5 }),
           run({ id: 6, build_error: "skipped: the platform's own repository is left out", read_reason: 'changed:github' }),
           run({ id: 5, build_error: 'superseded: a later verdict on the same issue', read_reason: 'new' }),
           run({ id: 4, build_queued_at: '2026-10-09T09:00:00Z', read_reason: 'retry_failed' }),
@@ -101,14 +109,18 @@ test('a ready verdict that was never built says where it got to and why; a run s
       };
     },
   };
-  const out = await data.botOverview(null, {}, {}, { bot });
+  const all = await data.botOverview(null, {}, {}, { bot });
+  assert.deepEqual(all.runs.slice(0, 4).map((r) => r.build && r.build.state), ['building', 'queued', 'awaiting_go', null],
+    'a live build from its session to its outcome, waiting its turn, or its plan waiting for Build it; a shadow run is the lane\'s');
+  assert.equal(all.runs[0].build.sessionId, 1746);
+  const out = { ...all, runs: all.runs.slice(4) };
   assert.deepEqual(out.runs.map((r) => r.build && r.build.state), ['not_built', 'superseded', 'queued', 'building', 'failed', null]);
   assert.match(out.runs[0].build.error, /platform's own repository/);
   assert.equal(out.runs[2].build.queuedAt, '2026-10-09T09:00:00.000Z');
   assert.deepEqual(out.runs.map((r) => r.readReason), ['changed:github', 'new', 'retry_failed', null, null, null],
     'fixed-shape reasons only');
   assert.deepEqual(out.buildLane, {
-    queued: 2, building: 1,
+    queued: 2, building: 1, live: { building: 1, waiting: 2 },
     lastPass: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
     fault: null,
   });

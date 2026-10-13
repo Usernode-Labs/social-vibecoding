@@ -338,6 +338,9 @@ function normalizeObject(input: unknown): SharedObjectCard {
     state: text(pick(row, 'state', 'status')) || null,
     author: text(pick(row, 'author', 'username')) || null,
     href: text(pick(row, 'href', 'url', 'webPath', 'web_path')) || null,
+    // An app's or a community's own icon (services/shared-objects.js appIcon).
+    iconUrl: appIconUrl(pick(row, 'iconUrl')),
+    iconEmoji: text(pick(row, 'iconEmoji')) || null,
   };
 }
 

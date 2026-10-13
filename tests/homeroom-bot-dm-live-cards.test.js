@@ -415,37 +415,37 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       [alex.id],
     );
     assert.ok(sent?.meta?.ready, 'Alex has his ready card');
-    const needed = sent.meta.ready.needed;
-    assert.ok(needed >= 2, 'a group of three needs more than his Yes');
+    // 13 Oct 2026 (D1): a project's first version goes live without a vote,
+    // whoever is in it. Page Turners' needed two of its three members' Yes
+    // on 5 October; now it needs none, and nobody is waited on.
+    assert.equal(sent.meta.ready.needed, 0, 'a group of three needs no Yes for its first version');
+    assert.deepEqual(sent.meta.actions.map((a) => a.id), ['try', 'change'], 'no Approve');
     const ready = async (who = alex) => dm.readyStates(pool, { user: { id: who.id } });
     const yes = (who) => pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [first.id, who.id]);
 
-    await t.test('up for approval: who it waits on, as it stands', async () => {
+    await t.test('ready to try: it waits on nobody, as it stands', async () => {
       const [now] = await ready();
       assert.equal(now.messageId, Number(sent.id));
       assert.equal(now.state, 'open');
-      assert.deepEqual([now.approval.missing, now.approval.needed, now.approval.approved], [needed, needed, false]);
-      assert.deepEqual(now.approval.waitingOn.sort(), [mo.username, priya.username]);
-      assert.equal('goesLive' in now, false, 'nothing about what happens next before his Yes');
+      assert.deepEqual([now.approval.missing, now.approval.needed, now.approval.approved, now.approval.last], [0, 0, false, false]);
+      assert.deepEqual(now.approval.waitingOn, []);
+      assert.equal('goesLive' in now, false, 'nothing about what happens next without a Yes of his');
     });
 
-    await t.test('after his Yes, and then Priya\'s: what happens next moves with them', async () => {
+    await t.test('a Yes anyway, his and then Priya\'s: it goes live in a minute or two, and his DM still hears of it', async () => {
       await yes(alex);
-      await dm.noteApproved(pool, first.id, alex.id);
+      assert.deepEqual(await dm.noteApproved(pool, first.id, alex.id), { soon: true });
       const [mine] = await ready();
       assert.equal(mine.approval.approved, true);
-      assert.equal(mine.approval.missing, needed - 1);
-      assert.equal(mine.goesLive.soon, false);
-      assert.equal(mine.goesLive.missing, needed - 1);
-      // Priya says Yes elsewhere: Alex's DM is told to read again, and his card says so.
+      assert.equal(mine.approval.missing, 0);
+      assert.deepEqual(mine.goesLive, { soon: true });
+      // Priya says Yes elsewhere: Alex's DM is told to read again.
       pushedTo.length = 0;
       await yes(priya);
       assert.equal(await dm.noteVoted(pool, first.id), alex.id, 'whoever asked for it');
       assert.deepEqual(pushedTo, [[alex.id, 'homeroom_bot_work_changed']]);
       const [after] = await ready();
-      if (needed === 2) assert.ok(after.goesLive.soon || after.goesLive.missing === 0, 'two of three: it has the approvals it needs');
-      else assert.equal(after.goesLive.missing, needed - 2);
-      assert.equal(after.approval.missing, Math.max(needed - 2, 0));
+      assert.deepEqual([after.approval.missing, after.approval.waitingOn], [0, []]);
       assert.equal(await dm.noteVoted(pool, 999999), null, 'one indexed read for a change that is not the bot\'s');
     });
 

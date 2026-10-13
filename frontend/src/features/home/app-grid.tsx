@@ -69,7 +69,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
-import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
+import { buildLineTileClass } from '../first-session/build-line-words.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -207,7 +207,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
         app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
           : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
-      }${app.buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}`}
+      }`}
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}

@@ -627,35 +627,32 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
 
-This app runs on **Homeroom**. If you're Claude Code
-editing this repo, read the platform conventions before making
-changes:
+This app runs on **Homeroom**. The platform conventions are the single
+source of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
+public/private tables, "don't \`git push\`", etc.):
 
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-Fetch that URL at the start of each session — it's the single source
-of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
-public/private tables, "don't \`git push\`", etc.). The hosted copy is
+**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+fetch that URL: what applies to your change is already in your
+instructions, and the \`homeroom\` MCP server's
+\`get_platform_conventions\` reads any one section of the conventions
+when you need it. The two sections below are for working outside
+Homeroom; skip them there.
+
+**Anywhere else** (Claude Code run against this repo locally, or another
+harness), fetch it at the start of each session. The hosted copy is
 updated in place when platform rules change, so fetching it gives you
 today's rules, not a stale snapshot.
 
-When running inside Homeroom's dev-chat, those same conventions are
-already injected into your system prompt, so the fetch is a no-op in
-that path — but it's the right reflex when someone runs Claude Code
-against this repo locally or from another harness.
-
-## Connector permission prompts
+## Connector permission prompts (outside Homeroom)
 
 This repo ships \`.claude/settings.json\`, which allows the **read-only**
 Homeroom connector calls (\`mcp__${CONNECTOR_SERVER_NAME}__get_*\`,
-\`…__list_*\`, \`…__whoami\`) so they stop prompting one at a time. Everything
-that acts — filing a request, opening or advancing a proposal — still asks.
-Claude Code applies those rules only after you accept the
-workspace trust dialog, which lists them for review. See \`.claude/README.md\`
-for the whole story, including what to do if you are still being prompted
-(usually: your connector is registered under a different name than the rules
-assume).
+\`…__list_*\`, \`…__whoami\`) once you accept the workspace trust dialog.
+See \`.claude/README.md\` for the whole story, including what to do if you
+are still being prompted.
 
 ## Check that this checkout is current
 
@@ -682,8 +679,9 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom's dev-chat
-the platform fixes the base commit, and none of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (its dev
+chat, and Homeroom bot's builds) the platform fixes the base commit, and none
+of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 

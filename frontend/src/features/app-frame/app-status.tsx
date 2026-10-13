@@ -42,11 +42,13 @@ import { Suspense, lazy, useCallback, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { type BuildLineState, buildLineOf } from '../first-session/build-line';
+import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../first-session/build-line';
+import { stepsOf } from '../first-session/build-line-words.js';
 import { useTourRunning } from '../first-session/tour-running';
 import { FeaturedCard, sketching, useSketch } from '../first-session/sketch-card';
 import { appStatusStore } from './app-status-store.js';
 import { type FirstVersionScreens, ScreensBand, hasScreens } from './first-version-screens';
+import { FirstVersionSteps } from './first-version-steps';
 import { type FirstVersionLive, LiveSwitch, useLiveChoice } from './live-switch';
 import { type FirstVersionWaiting, WaitingCard, lineNote } from './waiting-card';
 
@@ -83,10 +85,20 @@ export interface AppStatusView {
    */
   screens?: FirstVersionScreens | null;
   /**
-   * #4449: Live, offered to a member while it is built ("Building it"):
-   * the band's "Preview | Live" switch (./live-switch.tsx).
+   * #4449: Live, offered to a member while it is built ("Building it"),
+   * once its watcher has a frame to show (N6): the band's "Preview | Live"
+   * switch (./live-switch.tsx). N7: with `last`, at "Testing it" and
+   * "Ready to try" without real screens, the build's last frame, no switch.
    */
   live?: FirstVersionLive | null;
+  /**
+   * N4: the stage it is at by its own name, with when it began
+   * (`first_version.phase`), said on the build line while it is built
+   * ("Drawing the screens · 2 min so far").
+   */
+  phase?: unknown;
+  /** N4: every step, done, under way or to come (./first-version-steps.tsx). */
+  steps?: unknown;
   /**
    * The lines say what a first-session tour card can say over this screen
    * ("It opens here when it’s ready."), so they hide while a card that says
@@ -139,13 +151,20 @@ export interface FirstVersionThumb {
  * (GET /api/apps/:slug/sketch, as the made screen reads it), else its
  * description.
  */
-function FirstVersionCard({ thumb, line, note = null, screens = null, live = null }: {
+function FirstVersionCard({ thumb, line, note = null, screens = null, live = null, phase = null, listed = false }: {
   thumb: FirstVersionThumb;
   line: BuildLineState | null;
   note?: string | null;
   screens?: FirstVersionScreens | null;
   live?: FirstVersionLive | null;
+  /** N4: the stage by its own name (`first_version.phase`). */
+  phase?: unknown;
+  /** N4: the steps are listed under it, the build's phrase with them. */
+  listed?: boolean;
 }): ReactNode {
+  // N4: "Drawing the screens · 2 min so far", in place of "Building it".
+  const now = useNow();
+  const named = phaseLine(line, phase, now, listed ? null : note);
   const sketch = useSketch(thumb.sketch === false ? null : thumb.slug);
   const card = sketch.card;
   // Pictures that would not load leave the thumbnail as it was, until there
@@ -155,10 +174,14 @@ function FirstVersionCard({ thumb, line, note = null, screens = null, live = nul
   const onEmpty = useCallback(() => setEmptyKey(shownKey), [shownKey]);
   const shows = hasScreens(screens) && emptyKey !== shownKey ? screens : null;
   // #4449: while it is built, Preview (the above) or Live, as this person
-  // last chose. At "Testing it" the switch goes, and the real screens show.
-  const liveOffered = !!live && line === 'building';
+  // last chose. At "Testing it" the switch goes, and the real screens show;
+  // N7: without them, the build's last frame stays (`live.last`), rather
+  // than the first look drawn from the plan. The same LiveBand stays
+  // mounted from one to the other, so the frame does not start over.
+  const lastFrame = !!live && !!live.last && (line === 'testing' || line === 'ready');
+  const liveOffered = !!live && !live.last && line === 'building';
   const [choice, choose] = useLiveChoice(liveOffered ? live.userKey : null);
-  const watching = liveOffered && choice === 'live';
+  const watching = (liveOffered && choice === 'live') || lastFrame;
   const preview = shows ? <ScreensBand key={shownKey} screens={shows} name={thumb.name} onEmpty={onEmpty} /> : null;
   const band = watching && live ? (
     <Suspense fallback={preview}>
@@ -175,7 +198,8 @@ function FirstVersionCard({ thumb, line, note = null, screens = null, live = nul
         description={thumb.description}
         sketching={!card && !thumb.description && sketching(sketch.state)}
         line={line}
-        lineNote={note}
+        lineNote={named.words ? named.note : note}
+        lineWords={named.words}
         band={band}
         bandCorner={liveOffered ? <LiveSwitch value={choice} onChange={choose} /> : null}
       />
@@ -250,6 +274,8 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
   const thumb = view.thumb || null;
   const line = view.buildLine === 'working' ? 'working' : buildLineOf(view.buildLine);
   const waiting = thumb && view.waiting ? view.waiting : null;
+  // N4: the steps, while it is made (never once it is ready to try).
+  const steps = thumb && line !== 'ready' && line !== 'live' && stepsOf(view.steps).length ? view.steps : null;
   const body = (
     <>
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
@@ -261,11 +287,14 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
           note={(line === 'building' && view.buildNote) || (waiting ? lineNote(line) : null)}
           screens={view.screens || null}
           live={view.live || null}
+          phase={view.phase || null}
+          listed={!!steps}
         />
       ) : (
         <p className={titled ? 'max-w-sm text-base font-semibold text-zinc-900 dark:text-zinc-100' : 'text-sm'}>{view.message}</p>
       )}
       {action && action.underCard ? actionButton(action) : null}
+      {steps ? <FirstVersionSteps steps={steps} phase={view.phase || null} caption={line === 'building' ? view.buildNote || null : null} /> : null}
       {waiting ? <WaitingCard waiting={waiting} line={line} /> : null}
       {titled ? view.lines!.map((line) => (
         <p
@@ -288,8 +317,9 @@ export function AppStatusView_({ view: answered }: { view: AppStatusView }): Rea
     </>
   );
   // With the card the screen can be taller than the frame: it scrolls, and
-  // is centred while it fits (my-auto on the column inside).
-  if (waiting) {
+  // is centred while it fits (my-auto on the column inside). So with the
+  // steps listed.
+  if (waiting || steps) {
     return (
       <div className="flex flex-col items-center h-full overflow-y-auto text-zinc-500 dark:text-zinc-400 p-4 text-center">
         <div className="my-auto flex w-full flex-col items-center gap-2">{body}</div>

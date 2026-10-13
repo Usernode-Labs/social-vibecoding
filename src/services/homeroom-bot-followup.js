@@ -739,20 +739,71 @@ function checksFixPrompt({
   ].join('\n');
 }
 
-function checksRevisedText({ summary, reply, link, broken = false, failing = true, skipped = false }) {
+// A check's or a declared change's own name, as the people voting read it,
+// or null when it is not words: a check named by its file
+// (tests/votes.test.js) or by an identifier (pollForm, submit_vote) says
+// nothing to them. A trailing issue reference ("(#1841)") goes; a closing
+// full stop goes, as the note quotes it.
+const CODE_LIKE = /[\\/`{}<>=;]|::|\(\)|\.(?:m?[jt]sx?|json|css|html|py|rb|go|sql|sh)\b|\b[a-z]+[A-Z]\w*|\b\w+_\w+\b/;
+function plainName(value) {
+  const words = String(value || '').replace(/\s*\(#\d+[^)]*\)\s*$/, '').replace(/[.!]+$/, '').trim();
+  if (!words || words.length > 160 || !/\s/.test(words) || CODE_LIKE.test(words)) return null;
+  return words;
+}
+
+// '"a"', '"a" and "b"', '"a", "b" and "c"'.
+function quotedList(names) {
+  const q = names.map((name) => `"${name}"`);
+  return q.length <= 1 ? q.join('') : `${q.slice(0, -1).join(', ')} and ${q[q.length - 1]}`;
+}
+
+// What was fixed, from what failed: by their names, up to three, else how
+// many. `one` and `many` say it without names ("{n}" is how many).
+function fixedWhat(items, nameOf, { one, many }) {
+  const named = items.map(nameOf).filter(Boolean);
+  const n = items.length;
+  const head = n === 1 ? one : many.replace('{n}', String(n));
+  if (!named.length) return head;
+  if (named.length === n && n <= 3) return `${head}: ${quotedList(named)}`;
+  return `${head}, among them ${quotedList(named.slice(0, 2))}`;
+}
+
+/**
+ * Run four (13 Oct 2026): the note a fix round leaves on the change. It
+ * said the bot's own build note ("…pass the form as contentEl and call
+ * dismiss()…") and a bare link to the page it was on. It says what was
+ * fixed in the people's words, from what failed (the checks' names, what
+ * Homeroom tried), then what happens next: two plain sentences, no code, no
+ * address. The bot's summary stays on its run's record.
+ * `failing`, `broken` and `skipped` are the round's lists (homeroom-bot.js
+ * runChecksFix); `true` counts as one that is not named.
+ */
+function checksRevisedText({ failing = [], broken = [], skipped = [] } = {}) {
+  const list = (v) => (Array.isArray(v) ? v : (v ? [{}] : []));
+  const checks = list(failing);
+  const tried = list(broken);
+  const seeded = list(skipped);
   // Only shots that could not reach a change: the change worked all along.
-  const onlyShots = skipped && !broken && !failing;
-  const what = onlyShots ? 'added what this change\'s before and after screens need'
-    : broken && !failing ? 'fixed what didn\'t work on this change' : 'fixed the failing checks on this change';
-  const lines = [`Homeroom bot ${what}: ${clipText(summary || reply, 600)}`];
-  // That earlier votes were cleared is the platform's line to say.
-  lines.push('', onlyShots
-    ? 'Its before and after screens are taken again on the new version.'
-    : broken && !failing
-      ? 'Homeroom tries it again on the new version.'
-      : 'Its checks run again on the new version.');
-  if (link) lines.push(link);
-  return lines.join('\n');
+  if (seeded.length && !tried.length && !checks.length) {
+    const named = seeded.length === 1 ? plainName(seeded[0] && seeded[0].claim) : null;
+    return `${named
+      ? `Homeroom bot added sample data so this change's before and after screens can show "${named}"`
+      : 'Homeroom bot added the sample data this change\'s before and after screens need'}. `
+      + 'They are taken again on the new version.';
+  }
+  const fixedChecks = fixedWhat(checks, (x) => plainName(x && x.name), {
+    one: 'the check that was failing', many: 'the {n} checks that were failing',
+  });
+  const fixedTried = fixedWhat(tried, (x) => plainName(x && x.claim), {
+    one: 'what didn\'t work when Homeroom tried it', many: 'the {n} things that didn\'t work when Homeroom tried them',
+  });
+  // Both at once: without the names, to stay one sentence.
+  if (checks.length && tried.length) {
+    return `Homeroom bot fixed ${checks.length === 1 ? 'the check that was failing' : `the ${checks.length} checks that were failing`}`
+      + ' and what didn\'t work when Homeroom tried it. Its checks run again on the new version.';
+  }
+  if (tried.length) return `Homeroom bot fixed ${fixedTried}. Homeroom tries it again on the new version.`;
+  return `Homeroom bot fixed ${checks.length ? fixedChecks : 'the checks that were failing'}. Its checks run again on the new version.`;
 }
 
 // #4572: a fix that ran out of time is tried once more before a person is

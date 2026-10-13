@@ -95,8 +95,9 @@ test('it is reached exactly when there is no card for that slug', () => {
 test('the tile already has the words for a building app', () => {
   // This change puts the card there; the label was never the missing part.
   // A project whose first version Homeroom bot makes says its build line
-  // first (#4053); "Spinning up..." is left for one it does not.
-  assert.match(HOME, /const statusLabel = buildLine \? message\(BUILD_LINE_WORDS\[buildLine\]\)\s*: isRunning \? ''\s*: app\.status === 'creating' \? message\('home:grid\.tile\.status\.creating'\)/);
+  // first (#4053), in the tile's short words; "Spinning up..." is left for
+  // one it does not.
+  assert.match(HOME, /const statusLabel = buildLine \? message\(BUILD_LINE_TILE_WORDS\[buildLine\]\)\s*: isRunning \? ''\s*: app\.status === 'creating' \? message\('home:grid\.tile\.status\.creating'\)/);
   assert.equal(message('home:grid.tile.status.creating'), 'Spinning up...');
 });
 

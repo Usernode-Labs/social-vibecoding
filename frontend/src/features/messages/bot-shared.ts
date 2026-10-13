@@ -1,5 +1,5 @@
 import { t } from '../../lib/i18n/runtime';
-import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob, HomeroomBotMeta } from './types';
+import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob, HomeroomBotMeta, HomeroomBotWork } from './types';
 
 /*
  * What the Homeroom bot's activity tray (./bot-work.tsx), its activity cards
@@ -315,4 +315,22 @@ export function changeBlocks(
   }
   close();
   return blocks;
+}
+
+/**
+ * Pure: the project's icon as the strip has it. A bot message names its
+ * project but carries no artwork, so a line (./bot-news-line.tsx) and a
+ * project's card at the head of a message (./bot-head-card.tsx) take the
+ * tray's, and the strip and the chat show the same icon; with none, a line
+ * draws the project's initial and a card its glyph.
+ */
+export function newsIcon(work: HomeroomBotWork | null, slug: string | null | undefined, name: string | null | undefined = null): { iconUrl: string | null; iconEmoji: string | null } {
+  if (work && (slug || name)) {
+    for (const job of [...work.needsYou, ...work.now, ...work.history]) {
+      // A project with no slug (the staging demo's) is known by its name.
+      const same = slug ? job.appSlug === slug : !job.appSlug && job.appName === name;
+      if (same && (job.iconUrl || job.iconEmoji)) return { iconUrl: job.iconUrl, iconEmoji: job.iconEmoji };
+    }
+  }
+  return { iconUrl: null, iconEmoji: null };
 }

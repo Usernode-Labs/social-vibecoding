@@ -406,16 +406,31 @@ async function firstVersionShowcaseFields(pool, appId, viewerId, { mine = false,
 
 /**
  * #4449: whether a MEMBER's App tab offers Live while the first version is
- * built (services/first-version-live.js): `{ live: true }` at "Building it"
- * while the Admin setting is on, for the maker and the project's members,
- * the readers of its first look; else `{}`.
+ * built (services/first-version-live.js), while the Admin setting is on, for
+ * the maker and the project's members, the readers of its first look:
+ *
+ *   { live: true }      at "Building it" (its screens reviewed too), once
+ *                       the watcher has a good frame to show (N6: offered
+ *                       before that, it was "Starting the app…" over an
+ *                       empty phone for minutes; the first look, or the
+ *                       sketch, shows until then)
+ *   { liveLast: true }  N7: at "Testing it" and "Ready to try" with no real
+ *                       screens (`realScreens`, which say more), the build's
+ *                       last good frame, kept on the card rather than going
+ *                       back to the first look drawn from the plan
+ *
+ * else `{}`.
  */
-async function firstVersionLiveFields(pool, appId, viewerId, { mine = false, line = null } = {}) {
-  if (viewerId == null || line !== 'building') return {};
+async function firstVersionLiveFields(pool, appId, viewerId, { mine = false, line = null, realScreens = false } = {}) {
+  if (viewerId == null) return {};
+  const held = line === 'testing' || line === 'ready';
+  if (line !== 'building' && !(held && !realScreens)) return {};
   const fvLive = require('../services/first-version-live');
   if (!(await fvLive.liveEnabled(pool))) return {};
+  const status = await fvLive.liveStatusOf(pool, appId);
+  if (!status?.good) return {};
   if (!mine && !(await communities.isMember(pool, appId, viewerId))) return {};
-  return { live: true };
+  return held ? { liveLast: true } : { live: true };
 }
 
 /**
@@ -1506,6 +1521,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         try {
           homeroomBot = await homeroomBotDm.startFirstVersion(pool, config, {
             app: appRow, user: req.user, brief: req.body.brief,
+            // Its plan is written now, for the made screen to ask its
+            // questions while the project is set up (first-version-plan.js).
+            earlyPlan: MAKE_ORIGINS.has(req.body.from),
           });
         } catch (err) {
           log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
@@ -1773,8 +1791,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             const showcase = await firstVersionShowcaseFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
               .catch(() => ({}));
             // #4449: and whether they can watch it take shape (Live).
-            const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, { mine, line: state.line || null })
-              .catch(() => ({}));
+            const liveFields = await firstVersionLiveFields(pool, appRow.id, req.user?.id, {
+              mine, line: state.line || null, realScreens: showcase.screens?.kind === 'real',
+            }).catch(() => ({}));
             firstVersion = {
               building: true,
               mine,
@@ -1788,6 +1807,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
               conversationId: mine ? state.conversationId : null,
               // B6: the plan it waits on, for its creator to build from here.
               ...(mine && state.plan ? { plan: state.plan } : {}),
+              // 13 Oct 2026: its plan from Make it, for its creator's made
+              // screen to ask its questions (first-version-plan.js).
+              ...(mine && state.early ? { early: state.early } : {}),
+              // N4: the stage named, with when it began, and the steps.
+              ...(state.phase ? { phase: state.phase } : {}),
+              ...(Array.isArray(state.steps) ? { steps: state.steps } : {}),
               // #4396: for a member who is not its maker, while it is not
               // ready, what the App tab's "While you wait" card offers.
               ...(!mine && !state.ready ? await waitingMemberFields(pool, appRow.id, req.user?.id, state).catch(() => ({ member: false })) : {}),
@@ -1947,6 +1972,31 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.send(Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || ''));
     } catch (err) {
       log.error('apps', 'Failed to read a first version screen', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // 13 Oct 2026: the made screen's Submit, its maker's answers to their
+  // first version's questions (homeroom-bot-dm.js answerFirstVersion): kept
+  // once, and the build goes ahead with them, now or the moment its plan is
+  // made. Only its maker answers (403 for anyone else); answering is taking
+  // part, so it is a member's (requireAppMembership, AGENTS.md). A second
+  // Submit changes nothing.
+  router.post('/api/apps/:slug/first-version/answers', sameOriginBrowserOnly, communities.requireAppMembership(pool), async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Sign in first' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const raw = Array.isArray(req.body?.answers) ? req.body.answers : [];
+      const answers = raw.slice(0, 2).map((a) => (typeof a === 'string' ? a.slice(0, 200) : null));
+      const done = await require('../services/homeroom-bot-dm').answerFirstVersion(pool, {
+        user: req.user, appId: app.id, answers,
+      });
+      if (!done.ok) return res.status(done.status || 409).json({ error: done.error });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, building: done.building, answers: done.answers });
+    } catch (err) {
+      log.error('apps', 'Failed to record a first version\'s answers', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

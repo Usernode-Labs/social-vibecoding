@@ -65,6 +65,15 @@
  * own" and You or the group "you ship on your own". The majority rule counts
  * votes as they are cast, so Group vote is today's default to the vote.
  *
+ * Only a PERSON's proposing is a yes. A change Homeroom bot made from
+ * somebody's suggestion has the bot as its author (an account the platform
+ * runs, users.is_synthetic; `authorIsBot`), and nobody has said yes to it
+ * yet: on every rule it needs a person's yes like any other vote (13 Oct
+ * 2026, D2: on Open floor the bot's change used to go live as soon as its
+ * checks passed, with nobody asked). The one change that skips the vote is a
+ * project's first version, and that is the gate's rule, not this one
+ * (governance-gate.ts applyFirstVersion).
+ *
  * ── Changes to who decides ─────────────────────────────────────────────
  *
  * A change to who can see the project, its admins, its groups or this rule
@@ -411,6 +420,9 @@ export interface EvalContext {
   voters: Voters | null;
   counts: { yes: number; no: number };
   authorId: number | null;
+  // The author is an account the platform runs (Homeroom bot): proposing is
+  // not a person's yes, so it counts for nothing (see the header).
+  authorIsBot?: boolean;
   openedAt: unknown;
   now: unknown;
   noTimers: boolean;
@@ -437,10 +449,10 @@ export function evaluateRule(rule: Rule, ctx: EvalContext): RuleResult {
   const tally = groupTally(rule.group, ctx);
   let yes = tally.yes;
   // Proposing counts as a yes on the counted rules (see the header), unless
-  // the author voted No, or already said yes.
+  // the author voted No, or already said yes, or is not a person.
   const counted = rule.kind !== 'majority';
   let authorYes = false;
-  if (counted && ctx.voters && authorIn(rule.group, tally, ctx.authorId)
+  if (counted && ctx.voters && !ctx.authorIsBot && authorIn(rule.group, tally, ctx.authorId)
     && !ctx.voters.yes.has(ctx.authorId!) && !ctx.voters.no.has(ctx.authorId!)) {
     yes += 1;
     authorYes = true;

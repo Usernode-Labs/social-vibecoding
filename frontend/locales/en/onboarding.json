@@ -151,6 +151,38 @@
     "text": "Live",
     "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
   },
+  "buildLine.tile.planning": {
+    "text": "Planning",
+    "description": "Very short status under a new project's name on its Home screen icon while its first version is being made: the assistant called Homeroom bot is writing the plan for it. Must fit one short line under a small app icon, so keep it to one or two short words."
+  },
+  "buildLine.tile.plan": {
+    "text": "Plan ready",
+    "description": "Very short status under a new project's name on its Home screen icon, shown to the person who started the project: Homeroom bot's plan for it is waiting for them to read and approve. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.planMember": {
+    "text": "Planning",
+    "description": "Very short status under a new project's name on its Home screen icon, shown to other members while the plan waits for the person who started the project. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.question": {
+    "text": "Question",
+    "description": "Very short status under a new project's name on its Home screen icon, shown to the person who started the project: Homeroom bot asked them a question and waits for the answer. A noun. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.building": {
+    "text": "Building",
+    "description": "Very short status under a new project's name on its Home screen icon while its first version is being built. A verb in progress: the project is being built, nobody is asked to build anything. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.testing": {
+    "text": "Testing",
+    "description": "Very short status under a new project's name on its Home screen icon: its first version is built and is being tested. A verb in progress. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.ready": {
+    "text": "Ready to try",
+    "description": "Very short status under a new project's name on its Home screen icon: its first version is finished and can be opened and tried, before it goes live. Must fit one short line under a small app icon."
+  },
+  "buildLine.tile.live": {
+    "text": "Live",
+    "description": "Very short status under a new project's name on its Home screen icon: its first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
+  },
   "buildLine.working": {
     "text": "Homeroom bot is working on it",
     "description": "One-line status on a new project's hub card while the welcome tour is running, in place of the line that asks the person to review the plan. \"it\" is the project. Homeroom bot is a name."
@@ -158,6 +190,70 @@
   "buildLine.withNote": {
     "text": "{{line}} · {{note}}",
     "description": "A project's build status followed by a short note, on one line, for example \"Building it · usually 10 to 25 min\". {{line}} is the status and {{note}} the note, both already translated; only the separator between them is translated."
+  },
+  "buildLine.phase.drawing": {
+    "text": "Drawing the screens",
+    "description": "One-line status under a new project's card while its first version is made: the assistant called Homeroom bot is drawing pictures of the app's main screens, before it builds it. \"Drawing\" is a verb in progress."
+  },
+  "buildLine.phase.writing": {
+    "text": "Writing the plan",
+    "description": "One-line status under a new project's card while its first version is made: the assistant called Homeroom bot is writing the detailed plan the build follows, after it drew the screens."
+  },
+  "buildLine.phase.built": {
+    "text": "Built. Checking the screens…",
+    "description": "One-line status under a new project's card while its first version is made: the first version is built, and its screens are being looked at to find what to fix, before anyone tries it."
+  },
+  "buildLine.phase.checking": {
+    "text": "Checking the screens · round {{round}} of {{rounds}}",
+    "description": "One-line status under a new project's card while its first version is made: its screens are being looked at and fixed, in rounds. {{round}} is this round's number and {{rounds}} how many rounds there are at most, for example \"round 1 of 2\"."
+  },
+  "buildLine.soFar_one": {
+    "text": "{{count}} min so far",
+    "description": "After a status line under a new project's card: how long the current stage of making its first version has run, in whole minutes, for example \"7 min so far\". {{count}} is the number of minutes; \"min\" is short for minutes."
+  },
+  "buildLine.soFar_other": {
+    "text": "{{count}} min so far",
+    "description": "After a status line under a new project's card: how long the current stage of making its first version has run, in whole minutes, for example \"7 min so far\". {{count}} is the number of minutes; \"min\" is short for minutes."
+  },
+  "buildLine.stepsLabel": {
+    "text": "How it's going",
+    "description": "Small heading over the list of steps of making a new project's first version, on the project's App tab while it is made."
+  },
+  "buildLine.step.plan": {
+    "text": "Plan written",
+    "description": "A row in the list of steps of making a new project's first version: the plan for it is written. Past tense once done; the row stays the same while it is under way."
+  },
+  "buildLine.step.screens": {
+    "text": "Screens drawn",
+    "description": "A row in the list of steps of making a new project's first version: pictures of the app's main screens are drawn, before it is built."
+  },
+  "buildLine.step.build": {
+    "text": "Building",
+    "description": "A row in the list of steps of making a new project's first version: the app itself is being built."
+  },
+  "buildLine.step.check": {
+    "text": "Checking the screens",
+    "description": "A row in the list of steps of making a new project's first version: the built app's screens are looked at and fixed."
+  },
+  "buildLine.step.test": {
+    "text": "Testing",
+    "description": "A row in the list of steps of making a new project's first version: the built app's tests run."
+  },
+  "buildLine.step.live": {
+    "text": "Live",
+    "description": "The last row in the list of steps of making a new project's first version: the app is published for everyone. An adjective, not the verb \"to live\"."
+  },
+  "buildLine.step.took_one": {
+    "text": "{{count}} min",
+    "description": "Under a finished row in the list of steps of making a new project's first version: how long that step took, in whole minutes, for example \"3 min\". \"min\" is short for minutes."
+  },
+  "buildLine.step.took_other": {
+    "text": "{{count}} min",
+    "description": "Under a finished row in the list of steps of making a new project's first version: how long that step took, in whole minutes, for example \"3 min\". \"min\" is short for minutes."
+  },
+  "buildLine.step.round": {
+    "text": "Round {{round}} of {{rounds}}",
+    "description": "Under the row \"Checking the screens\" in the list of steps of making a new project's first version: which round of looking and fixing it is in. {{round}} is the round and {{rounds}} how many rounds there are at most."
   },
   "firstSession.template.tier.title": {
     "text": "A tier list",
@@ -899,6 +995,26 @@
     "text": "Go to chat",
     "description": "Button on the card that says Homeroom bot has a plan: opens the maker's chat with Homeroom bot, where the plan is answered."
   },
+  "firstSession.made.questions.titleOne": {
+    "text": "One quick question",
+    "description": "Heading on the screen shown right after a person makes a project, over one question the assistant called Homeroom bot asks before it builds the app, with answers to pick from."
+  },
+  "firstSession.made.questions.titleTwo": {
+    "text": "Two quick questions",
+    "description": "Heading on the screen shown right after a person makes a project, over two questions the assistant called Homeroom bot asks before it builds the app, each with answers to pick from."
+  },
+  "firstSession.made.questions.line": {
+    "text": "Homeroom bot builds {{project}} from your answers.",
+    "description": "Line under the heading over Homeroom bot's questions, on the screen shown right after a person makes a project. {{project}} is the project's name; Homeroom bot is a name."
+  },
+  "firstSession.made.questions.submit": {
+    "text": "Submit",
+    "description": "Button under Homeroom bot's questions, on the screen shown right after a person makes a project: sends the answers picked, and the app is built from them."
+  },
+  "firstSession.made.questions.error": {
+    "text": "Your answers didn't go through. Try again.",
+    "description": "Shown under Homeroom bot's questions after a person makes a project, when sending their answers failed."
+  },
   "firstSession.made.stalled.failed": {
     "text": "Setup stopped before it was running",
     "description": "Title of the card on the screen shown right after a project is made when setting the project up failed. \"it\" is the app."
@@ -1091,6 +1207,14 @@
     "text": "This is the app your community makes together.",
     "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title that says the app opens here."
   },
+  "firstSession.tour.opensBuilding.title": {
+    "text": "{{app}} will open here",
+    "description": "Card of the short tour a new member is walked through after making or joining a project, title, while the app is still being built: this is where the app will be once it is ready. {{app}} is the project's name."
+  },
+  "firstSession.tour.opensBuilding.text": {
+    "text": "Homeroom bot is building it now. When it's ready, this is where you'll use it.",
+    "description": "Card of the short tour a new member is walked through, text under the title that says the app will open here, while the assistant called Homeroom bot is still building it. \"it\" is the app."
+  },
   "firstSession.tour.wait.title": {
     "text": "Getting {{app}} ready…",
     "description": "Card of the short tour a new member is walked through after making or joining a project, title shown in place of a card that points at the app while the app is still being set up or is still opening. {{app}} is the project's name."
@@ -1202,6 +1326,22 @@
   "firstSession.tour.maker.hub.tap": {
     "text": "Tap Open app",
     "description": "Card of the short tour a new member is walked through after making a project, link on the last card: asks the person to tap the hub's Open app button, and taps it for them when pressed, which opens their app and ends the tour. Open app is the button's name."
+  },
+  "firstSession.tour.firstLook.title": {
+    "text": "Here's what Homeroom bot is making",
+    "description": "Card of the short tour a person is walked through after making a project, title of its last card, over a picture of the app's main screen that the assistant called Homeroom bot drew before building it."
+  },
+  "firstSession.tour.firstLook.text": {
+    "text": "Drawn from your answers. The working app follows, and we'll message you when it's live.",
+    "description": "Card of the short tour a person is walked through after making a project, text of its last card, under the picture of the app's main screen: the picture was drawn from the answers they gave, the real app is still being built, and they will get a message once it is published."
+  },
+  "firstSession.tour.firstLook.drawing": {
+    "text": "Drawing your screens…",
+    "description": "Card of the short tour a person is walked through after making a project: shown on its last card in place of the picture of the app's main screen while that picture is still being drawn."
+  },
+  "firstSession.tour.firstLook.alt": {
+    "text": "The first look at {{app}}'s main screen",
+    "description": "Description, for screen readers, of the picture on the last card of the tour after making a project: a drawing of the app's main screen. {{app}} is the project's name."
   },
   "firstSession.tour.look.make.title": {
     "text": "Make something any time",

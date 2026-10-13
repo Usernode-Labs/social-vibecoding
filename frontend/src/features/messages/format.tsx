@@ -220,6 +220,27 @@ function objectGlyph(type: SharedObjectCard['type']): string {
   return '#';
 }
 
+/**
+ * The tile itself. An app and its community wear the app's own icon when the
+ * card knows it (its image, else its emoji), as its Home tile does; run four
+ * (13 Oct 2026): the bot's card for the maker's new app read "◆". Without
+ * one, the glyph.
+ */
+function ObjectIcon({ object }: { object: SharedObjectCard }) {
+  const app = object.type === 'app' || object.type === 'hub';
+  if (app && object.iconUrl) {
+    return (
+      <span className="messages-object-icon overflow-hidden" data-object-icon="image">
+        <img src={object.iconUrl} alt="" className="h-full w-full object-cover" loading="lazy" draggable="false" />
+      </span>
+    );
+  }
+  if (app && object.iconEmoji) {
+    return <span className="messages-object-icon text-[22px] leading-none" data-object-icon="emoji" aria-hidden="true">{object.iconEmoji}</span>;
+  }
+  return <span className="messages-object-icon">{objectGlyph(object.type)}</span>;
+}
+
 // #3103: a shared card that opens a Workshop topic or a dev session records
 // the conversation it was tapped in, so that page's back returns here rather
 // than to the app's Workshop. The Improve store's own "where from" is the last
@@ -276,7 +297,7 @@ export function ObjectCard({ object, compact = false, inboxOnly = false }: {
   }
   const body = (
     <>
-      <span className="messages-object-icon">{objectGlyph(object.type)}</span>
+      <ObjectIcon object={object} />
       <div className="min-w-0 flex-1">
         <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{objectEyebrow(object)}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">{object.title || t('messages:object.untitled')}</div>

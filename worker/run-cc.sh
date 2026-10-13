@@ -64,6 +64,12 @@
 #                              line then carries stop_hook_check_blocks
 #   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
 #                              the checks are not started with too little left
+#   BUILD_PROFILE              first_version: a build of a project's first
+#                              version (the Homeroom bot's build and review
+#                              fixes) loads only the tools one uses: the
+#                              browser without visible_changes, the Homeroom
+#                              read tools narrowed to get_platform_conventions,
+#                              and no WebSearch, WebFetch or NotebookEdit
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -112,6 +118,8 @@ fi
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
+: "${BROWSER_ONLY_MCP_CONFIG:=/home/node/.usernode-mcp-browser.json}"
+: "${BUILD_PROFILE:=}"
 : "${SHOTS_JWT:=}"
 : "${SHOTS_RUN_ID:=}"
 : "${SHOTS_BASE_ORIGIN:=}"
@@ -365,8 +373,20 @@ fi
 # Net effect: scout has full read-only Bash + WebFetch (so it can run
 # `git submodule update --init`, `gh api`, etc.) but cannot escape the
 # worker container even if CC misbehaves.
+# A first version's build (BUILD_PROFILE=first_version, run four, 13 Oct
+# 2026): every tool loaded is sent with every one of its model requests (52
+# definitions on that build's 156), so the ones a brand-new app's build never
+# uses are left out. Bash, Read, Edit, Write, Glob, Grep, Skill and the
+# browser's tools stay: the in-loop browser guidance and the design skill use
+# them.
+FIRST_VERSION_BUILD=""
+if [ "$MODE" = "build" ] && [ "$BUILD_PROFILE" = "first_version" ]; then
+  FIRST_VERSION_BUILD=1
+fi
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
+elif [ -n "$FIRST_VERSION_BUILD" ]; then
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools WebSearch WebFetch NotebookEdit"
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
@@ -389,6 +409,12 @@ fi
 # before. The MCP server only spawns on claude startup; Chromium launches
 # lazily on the first browser tool call, so a build turn that never reaches
 # for it pays nothing.
+# A first version declares no visible changes (homeroom-bot-live.js
+# buildPrompt): its build loads the browser alone, when the bootstrap wrote
+# that config (worker-run.sh).
+if [ -n "$FIRST_VERSION_BUILD" ] && [ -f "$BROWSER_ONLY_MCP_CONFIG" ]; then
+  BROWSER_MCP_CONFIG="$BROWSER_ONLY_MCP_CONFIG"
+fi
 BROWSER_MCP_FLAGS=""
 if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
@@ -401,6 +427,14 @@ fi
 # browser config; a scout loads it alone, so it stays browser-free. Still
 # --strict-mcp-config either way.
 HOMEROOM_MCP_CONFIG="${HOMEROOM_MCP_CONFIG:-/usr/local/share/usernode/homeroom-mcp.json}"
+# A brand-new app has no requests, proposals or changes to read: a first
+# version's bridge offers the platform conventions alone
+# (homeroom-read-mcp.js HOMEROOM_READ_TOOLS), which its prompt and CLAUDE.md
+# send it to instead of fetching the whole hosted copy.
+if [ -n "$FIRST_VERSION_BUILD" ]; then
+  HOMEROOM_READ_TOOLS=get_platform_conventions
+  export HOMEROOM_READ_TOOLS
+fi
 if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   if [ "$MODE" = "build" ] && [ -n "$BROWSER_MCP_FLAGS" ]; then
     BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG $HOMEROOM_MCP_CONFIG --strict-mcp-config"

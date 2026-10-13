@@ -32,10 +32,12 @@ const proposalTouches = require('../services/proposal-touches');
 const shotsState = require('../services/shots-state');
 const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
+const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const { botRequestedBySql } = require('../services/bot-requested-by');
+const { firstVersionSql, isFirstVersion } = require('../services/first-version-rule');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1976,19 +1978,32 @@ async function reconcileNativeReviewedHead({
   // tested, so its checks are always re-run below.
   const keepsApprovals = move.kind === 'mechanical' || move.kind === 'resolved';
 
+  // Run four (13 Oct 2026): who made the move, and whether it was only one of
+  // the bot's fix rounds, read from the commits it added
+  // (services/homeroom-commits.js). Decided here, by whichever caller claims
+  // the move, rather than by the dozen callers each passing `madeBy`: one
+  // that passed none used to say a bot's push "was updated on GitHub". An
+  // unreadable answer is neither, which says what this said before.
+  let made = { madeByHomeroom: false, fixOnly: false };
+  try {
+    made = homeroomCommits.classify(await mirror.commitsBetween(dir, oldHead, liveHead));
+  } catch (_) { /* fail open: a person's update, as before */ }
+
   // One statement. If the epoch bump and the head install could land
   // separately, a crash between them would leave a row whose approvals
-  // describe neither the old code nor the new.
+  // describe neither the old code nor the new. A fix round leaves the
+  // description as it stands: it changes how the change works, not what it
+  // does (summary-freshness.js).
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET reviewed_head_sha = $1,
-            ${summaryFreshness.invalidateHeadMoveSql('$1')},
+            ${summaryFreshness.invalidateHeadMoveSql('$1', { fixParam: '$5' })},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
       WHERE id = $2
         AND reviewed_head_sha IS NOT DISTINCT FROM $4::varchar
       RETURNING approval_epoch, pr_summary_stale`,
-    [liveHead, session.id, keepsApprovals, oldHead]
+    [liveHead, session.id, keepsApprovals, oldHead, made.fixOnly]
   );
 
   if (!claimed.length) {
@@ -2017,7 +2032,7 @@ async function reconcileNativeReviewedHead({
   session.approval_epoch = epoch;
   session.pr_summary_stale = typeof claimed[0].pr_summary_stale === 'boolean'
     ? claimed[0].pr_summary_stale
-    : (session.pr_summary_stale || !!session.pr_summary_md);
+    : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
   if (session.shots_state || session.shots_detail) {
     await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
       log.warn('votes', 'Before & after shots invalidation after head move failed', {
@@ -2099,10 +2114,11 @@ async function reconcileNativeReviewedHead({
         ? `${label} was brought up to date with main and ${move.conflictPaths?.length || 'its'} conflicting file${move.conflictPaths?.length === 1 ? '' : 's'} were resolved automatically. The votes still stand; its checks are re-running against the merged code and it will merge on its own once they pass.`
         : move.kind === 'unknown'
           ? `${label} moved to a commit the platform could not verify (${move.reason}). Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
-          // An update Homeroom made (the bot's, or one sent through Homeroom,
-          // `madeBy`) is said in the change's own discussion in one line, the
-          // only note about its votes: no "on GitHub", no pull request number.
-          : madeBy
+          // An update Homeroom made (the bot's, or one sent through Homeroom:
+          // its caller's `madeBy`, else its own commits say so) is said in the
+          // change's own discussion in one line, the only note about its
+          // votes: no "on GitHub", no pull request number.
+          : madeBy || made.madeByHomeroom
             ? 'Updated. Earlier votes were cleared, so take another look.'
             : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
     await sendSystemMessage(
@@ -2115,6 +2131,7 @@ async function reconcileNativeReviewedHead({
   log.info('votes', 'Proposal revision reconciled', {
     sessionId: session.id, oldHead, newHead: liveHead,
     moveKind: move.kind, keepsApprovals, epoch, checksReset: needsChecks,
+    madeByHomeroom: made.madeByHomeroom, fixOnly: made.fixOnly,
   });
 
   return {
@@ -4504,6 +4521,10 @@ function voteRoutes(config) {
            -- The bot stays the row's author; this only says whose ask it
            -- was (the shared fragment, services/bot-requested-by.js).
            COALESCE(${botRequestedBySql('cs', '$2')}, FALSE) AS requested_by_me,
+           -- 13 Oct 2026, D1: the project's first version, which goes live
+           -- without a vote once it passes its checks (the gate waives the
+           -- vote below; the card says so instead of asking for one).
+           ${firstVersionSql('cs')} AS first_version,
            -- Test accounts (D1): the viewer is a test account and a real
            -- person made this app, so their vote is recorded and shown but
            -- not counted. The vote picker says so in one line.
@@ -4706,6 +4727,7 @@ function voteRoutes(config) {
             otherYes: q.otherYes,
             memberCount,
             ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, row.id, row.user_id ?? null, row.explicit_approval_reason || null) : {}),
+            firstVersion: row.first_version === true,
           }
         );
         row.votes_required = gate.required;
@@ -5326,6 +5348,9 @@ function voteRoutes(config) {
             flagged ? { authorId: proposal.user_id ?? null } : undefined
           )
           : { yes: proposal.yes_count, no: proposal.no_count, otherYes: proposal.other_yes_count };
+        // 13 Oct 2026, D1: the project's first version, whose vote the gate
+        // waives; the change page says it goes live without one.
+        proposal.first_version = await isFirstVersion(pool, proposal.id);
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
           proposal.promoted_at || proposal.created_at, null,
@@ -5339,6 +5364,7 @@ function voteRoutes(config) {
               rulesCtx,
               proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
             ) : {}),
+            firstVersion: proposal.first_version,
           }
         );
         proposal.votes_required = gate.required;
@@ -6580,18 +6606,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
     }
     dstep({
       phase: 'gate:majority',
-      message: gate.mode === 'at_least'
-        ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
-        : gate.thresholdMet
-          ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
-          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition, so silence is consent.`,
-      detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy },
+      // 13 Oct 2026, D1: a project's first version goes live without a vote
+      // (governance-gate.ts applyFirstVersion); every gate below still holds.
+      message: gate.firstVersion
+        ? `First version of the project: no vote needed (${yesCount} yes, ${noCount} no so far). The gates after this one still apply.`
+        : gate.mode === 'at_least'
+          ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
+          : gate.thresholdMet
+            ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
+            : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition, so silence is consent.`,
+      detail: {
+        yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy,
+        ...(gate.firstVersion ? { firstVersion: true } : {}),
+      },
     });
     gateTrace.context({
       explicitApproval,
       memberFloor: explicitApproval ? !!gate.memberFloor?.applies : null,
     })
-      .pass('approvals', { yesCount, required, note: `${yesCount} of ${required}` });
+      .pass('approvals', {
+        yesCount, required,
+        note: gate.firstVersion ? 'first version, no vote needed' : `${yesCount} of ${required}`,
+        ...(gate.firstVersion ? { firstVersion: true } : {}),
+      });
     if (explicitApproval) {
       gateTrace.pass('explicit', {
         source: explicitApprovalSource,
@@ -6864,7 +6901,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
                 : "couldn't run its tests")
           : checksQueued ? 'is waiting for a checks slot' : 'is still running its tests';
-      const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass.`;
+      // A first version had no vote to reach (governance-gate.ts
+      // applyFirstVersion): it says what it does wait for.
+      const blockMsg = gate.firstVersion
+        ? `${label} is the project's first version, which goes live without a vote, but ${reason}. It goes live once its checks pass.`
+        : `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass.`;
       // Said once. This gate runs on every vote and every check re-run, and
       // it used to post the same sentence each time — eight copies on one
       // topic thread. If the latest system line in this proposal's thread

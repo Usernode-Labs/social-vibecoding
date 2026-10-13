@@ -176,15 +176,18 @@ test('the fix turn is told what was skipped, as data, and to seed it on the afte
 });
 
 test('what the bot says about it is about the shots, not about checks or a broken change', () => {
-  const revised = followup.checksRevisedText({ summary: 'A staging change now has an advisory vote.', failing: false, broken: false, skipped: true });
+  const revised = followup.checksRevisedText({ failing: [], broken: [], skipped: [{ claim: 'A staging change now has an advisory vote.' }] });
   // "Before and after screens", as the request page says it; the cleared
-  // votes are the platform's line to say (one note per update).
-  assert.equal(revised, 'Homeroom bot added what this change\'s before and after screens need: A staging change now has an advisory vote.\n\n'
-    + 'Its before and after screens are taken again on the new version.');
+  // votes are the platform's line to say (one note per update). Run four
+  // (13 Oct): in the words of the change it could not show, not the turn's.
+  assert.equal(revised, 'Homeroom bot added sample data so this change\'s before and after screens can show "A staging change now has an advisory vote". '
+    + 'They are taken again on the new version.');
+  assert.equal(followup.checksRevisedText({ skipped: [{ claim: 'a' }, { claim: 'b' }] }),
+    'Homeroom bot added the sample data this change\'s before and after screens need. They are taken again on the new version.');
   assert.equal(followup.checksRetryText({ failing: false, broken: false, skipped: true }),
     'Homeroom bot ran out of time adding what this change\'s before and after screens need. It is trying once more.');
   // With a failing check as well, it is the checks' round, said as before.
-  assert.match(followup.checksRevisedText({ summary: 'x', failing: true, skipped: true }), /fixed the failing checks on this change/);
+  assert.match(followup.checksRevisedText({ failing: [{ name: 'votes' }], skipped: true }), /fixed the check that was failing\. Its checks run again/);
   assert.match(followup.checksRetryText({ broken: true, failing: false, skipped: true }), /what didn't work on this change/);
   for (const t of [revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
 });

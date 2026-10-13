@@ -150,8 +150,8 @@ test('the checks hand-off says why in whole sentences, in the first person', () 
 
 test('one note per update: the bot\'s own notes leave the cleared votes to the platform\'s line', () => {
   assert.doesNotMatch(followup.revisedText({ summary: 'Moved the bar.' }), /approvals|votes/i);
-  for (const opts of [{}, { broken: true, failing: false }, { skipped: true, failing: false }]) {
-    assert.doesNotMatch(followup.checksRevisedText({ summary: 'Fixed it.', ...opts }), /approvals|votes/i);
+  for (const opts of [{ failing: true }, { broken: true }, { skipped: true }]) {
+    assert.doesNotMatch(followup.checksRevisedText(opts), /approvals|votes/i);
   }
   const voice = require('../src/services/homeroom-bot-voice');
   assert.deepEqual(voice.mustSay({ action: 'revise', moved: true }), []);

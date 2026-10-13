@@ -13,8 +13,11 @@
  * new glows briefly (./live-glow.ts).
  *
  * The pill says where it is: "Starting the app…" (the first look stays under
- * it), "Live · just updated" / "Live · updated N s ago", or "A restart
- * failed · showing the last good screen".
+ * it), "Live · just updated" / "Live · updated N s ago", "A restart failed ·
+ * showing the last good screen", or, once the build's watcher has stopped,
+ * "Last screen from the build" (N7: the card keeps that frame while the
+ * build is reviewed and tested, and asks only now and then whether a new
+ * build has begun).
  *
  * Measured (events.js): Live opened, and the time watched, sent when it is
  * closed or the page is hidden.
@@ -30,6 +33,9 @@ import { type FirstVersionLive, type LivePhase, livePill } from './live-switch';
 
 const POLL_MS = 2000;
 const RETRY_MS = 6000;
+// Once the watcher has stopped nothing more comes from it; a new build of
+// the first version (a new run) is all there is to ask about.
+const ENDED_POLL_MS = 30000;
 // The recording's own size (the watcher's viewport) and the frame's.
 const REC = { width: 390, height: 760 };
 const FRAME = { width: 125, height: 270 };
@@ -41,16 +47,19 @@ const FAR_AHEAD = 10 * 365 * 86400000;
 
 interface LiveAnswer {
   runId: number;
-  state: LivePhase | 'stopped';
+  state: Exclude<LivePhase, 'ended'> | 'stopped';
   seq: number;
   reset: boolean;
   events: unknown[];
   age: number | null;
+  /** N7: the build's watcher has stopped: nothing more will come. */
+  ended?: boolean;
 }
 
-/** The pill's phase from the server's state and whether a frame was drawn. Pure. */
-export function phaseOf(state: LiveAnswer['state'] | null, drawn: boolean): LivePhase {
+/** The pill's phase from the server's state, whether a frame was drawn, and whether the watcher has stopped. Pure. */
+export function phaseOf(state: LiveAnswer['state'] | null, drawn: boolean, ended = false): LivePhase {
   if (!drawn) return 'starting';
+  if (ended) return 'ended';
   return state === 'failed' ? 'failed' : 'live';
 }
 
@@ -74,6 +83,7 @@ export default function LiveBand({ live, firstLook, name }: {
   const host = useRef<HTMLDivElement | null>(null);
   const [drawn, setDrawn] = useState(false);
   const [state, setState] = useState<LiveAnswer['state'] | null>(null);
+  const [ended, setEnded] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -137,14 +147,24 @@ export default function LiveBand({ live, firstLook, name }: {
         if (!res.ok) throw new Error(String(res.status));
         const answer = await res.json() as LiveAnswer;
         if (disposed) return;
+        if (runId != null && Number.isInteger(answer.runId) && answer.runId !== runId) {
+          // A new build of it: its recording counts from its own start, so
+          // ask again from there (its first answer starts the player over).
+          runId = answer.runId;
+          seq = 0;
+          timer = window.setTimeout(poll, 0);
+          return;
+        }
         if (runId == null && Number.isInteger(answer.runId)) {
           runId = answer.runId;
           post(live.slug, { kind: 'opened', runId });
         }
         seq = Number.isInteger(answer.seq) ? answer.seq : seq;
         setState(answer.state);
+        setEnded(answer.ended === true);
         if (answer.age != null) setUpdatedAt(Date.now() - answer.age * 1000);
         play(Array.isArray(answer.events) ? answer.events : []);
+        if (answer.ended === true && goodFrame) wait = ENDED_POLL_MS;
       } catch {
         wait = RETRY_MS;
       }
@@ -183,7 +203,7 @@ export default function LiveBand({ live, firstLook, name }: {
     };
   }, [live.slug, live.sample]);
 
-  const phase = phaseOf(state, drawn);
+  const phase = phaseOf(state, drawn, ended);
   const age = updatedAt == null ? null : (now - updatedAt) / 1000;
   const look = firstLook && firstLook.kind === 'first_look' ? firstLook.images[0] : null;
   return (
@@ -193,7 +213,9 @@ export default function LiveBand({ live, firstLook, name }: {
           className="relative h-[270px] w-[125px] shrink-0 overflow-hidden rounded-[22px] bg-white shadow-[0_10px_28px_rgba(0,0,0,0.22),0_0_0_4px_rgba(17,17,20,0.9)]"
           aria-label={phase === 'starting'
             ? t('agent:appFrame.live.frame.starting', { project: name })
-            : t('agent:appFrame.live.frame.live', { project: name })}
+            : phase === 'ended'
+              ? t('agent:appFrame.live.frame.ended', { project: name })
+              : t('agent:appFrame.live.frame.live', { project: name })}
           role="img"
         >
           {look && !drawn ? (

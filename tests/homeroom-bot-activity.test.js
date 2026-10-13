@@ -56,6 +56,10 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   // #4242: not "waiting for approval" until its news (the ready card) went out.
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false })), 'checking');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: true })), 'proposed');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: true, first_version: true })), 'going_live',
+    'D1: a first version merges without a vote, so it is never waiting for approval');
+  assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false, first_version: true })), 'checking',
+    'until its news goes out it is still being checked');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'promoted', told: false, needs_look: true })), 'needs_look',
     'nothing will offer it without a person, and its requester was told so');
   assert.equal(activity.outcomeOf(run({ verdict: 'ready', proposal_session_id: 4, proposal_status: 'merged' })), 'live');

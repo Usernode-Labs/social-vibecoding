@@ -199,6 +199,159 @@ async function renderFirstLook({ pool, worker, containerName, runId, specHtml, t
   }
 }
 
+// ── The first look, drawn first (newcomer run four, 13 Oct 2026) ─────────
+//
+// The spec turn used to draw its two screens inside a spec of 40,000
+// characters, five and a half minutes long, and the first look was drawn
+// only once the whole spec was in. Now the spec draws its main screen
+// FIRST (homeroom-bot-live.js FIRST_VERSION_SCREENS_FIRST) and saves it
+// with `usernode-screen 1` (worker/usernode-screen: the screen on stdin,
+// written whole to SAVED_DIR, nothing else), then writes the rest. The
+// platform sees the command in the turn's own stream (savedScreenOf, as
+// the build's "Adding" phrases are seen), reads the saved screen off the
+// worker (readSavedScreen) and draws the first look from it at once, while
+// the spec goes on: about a minute into the spec rather than at its end.
+//
+// The screens are written once. In the spec's screens figure a saved
+// screen is an empty placeholder, <template data-screen data-from="1">
+// </template>, and the platform puts the saved screen in its place once
+// the spec is in (spliceSavedScreens), so the spec, its markdown copy and
+// the build read it whole, as before. A screen that was not saved (an older
+// worker without the command, or a spec that did not use it) is drawn in
+// the figure in full, as before, and its first look is drawn from the spec
+// when it is in.
+
+const SAVED_DIR = '/tmp/usernode-screens';
+const SAVED_MAX_CHARS = 200 * 1000;
+// The command as the stream labels it ("$ usernode-screen 1 <<'SCREEN'"),
+// in either harness's line, and the command's own answer under it.
+const SAVE_COMMAND_RE = /(?:^|[\s;&|('"])usernode-screen\s+([12])(?![\w.-])/;
+const SAVED_RE = /\bSaved screen ([12])\b/;
+// A placeholder for a saved screen in the spec's figure.
+const PLACEHOLDER_RE = /<template\b[^>]*?\bdata-from\s*=\s*["']?([12])["']?[^>]*>\s*<\/template\s*>/gi;
+
+/**
+ * Which screen a progress line shows the spec saving, 1 or 2, or null: the
+ * command itself ("$ usernode-screen 1 …") or its answer ("⎿ Bash: Saved
+ * screen 1 …"). Pure.
+ */
+function savedScreenOf(line) {
+  const text = String(line || '');
+  if (text.startsWith('$ ')) {
+    const m = SAVE_COMMAND_RE.exec(text.slice(2));
+    return m ? Number(m[1]) : null;
+  }
+  if (/^\s*⎿/.test(text)) {
+    const m = SAVED_RE.exec(text);
+    return m ? Number(m[1]) : null;
+  }
+  return null;
+}
+
+/**
+ * The first <template data-screen> element in `text`, whole (its tags
+ * included), or null when it holds none. What a saved file must be. Pure.
+ */
+function savedTemplateOf(text) {
+  const src = String(text || '').slice(0, SAVED_MAX_CHARS);
+  const re = /<template\b([^>]*)>/gi;
+  let m;
+  while ((m = re.exec(src))) {
+    if (!/\bdata-screen\b/i.test(m[1]) || /\bdata-from\b/i.test(m[1])) continue;
+    const end = src.toLowerCase().indexOf('</template', m.index + m[0].length);
+    if (end === -1) return null;
+    const close = src.indexOf('>', end);
+    if (close === -1) return null;
+    const whole = src.slice(m.index, close + 1);
+    return whole.slice(m[0].length, end - m.index).trim() ? whole : null;
+  }
+  return null;
+}
+
+/**
+ * One saved screen, read off the spec's worker: its <template> element, or
+ * null when it is not there (or not one). Never throws.
+ */
+async function readSavedScreen(worker, containerName, n) {
+  try {
+    if (!worker || typeof worker.runLiveScript !== 'function' || !containerName || ![1, 2].includes(Number(n))) return null;
+    const out = await worker.runLiveScript(containerName, 'cat "$1" 2>/dev/null || true', {
+      args: [`${SAVED_DIR}/${Number(n)}.html`], timeoutMs: 15000, maxBuffer: 2 * SAVED_MAX_CHARS,
+    });
+    return savedTemplateOf(out);
+  } catch (err) {
+    log.info('first-version-screens', 'Could not read a saved screen', { n, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * The spec with each placeholder for a saved screen replaced by that
+ * screen, whole. A placeholder whose screen is not in `saved` is left. Pure.
+ */
+function spliceSavedScreens(text, saved) {
+  if (typeof text !== 'string' || !saved || !saved.size) return text;
+  return text.replace(PLACEHOLDER_RE, (whole, n) => saved.get(Number(n)) || whole);
+}
+
+/**
+ * Watches a spec turn's progress for the screens it saves: each one is read
+ * off the worker (`read(n)`, tried again a few times a moment apart, since
+ * the command may still be running when its line is seen) and handed to
+ * `onScreen({ n, markup })`, once per change. `idle()` resolves once no
+ * read is in flight. A watcher never stops a turn.
+ */
+function screenWatcher({ read, onScreen = null, delayMs = 1500, tries = 4 } = {}) {
+  const last = new Map();
+  const reading = new Set();
+  const inFlight = new Set();
+  const look = (n, attempt = 0) => {
+    const job = new Promise((resolve) => setTimeout(resolve, delayMs))
+      .then(() => read(n))
+      .then((markup) => {
+        if (!markup) {
+          if (attempt + 1 < tries) look(n, attempt + 1);
+          return;
+        }
+        if (last.get(n) === markup) return;
+        last.set(n, markup);
+        if (onScreen) {
+          try { onScreen({ n, markup }); } catch { /* a watcher never stops a turn */ }
+        }
+      })
+      .catch(() => {})
+      .finally(() => { inFlight.delete(job); reading.delete(n); });
+    reading.add(n);
+    inFlight.add(job);
+  };
+  const watch = (line) => {
+    const n = savedScreenOf(line);
+    if (n && !reading.has(n)) look(n);
+  };
+  watch.idle = async () => {
+    while (inFlight.size) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all([...inFlight]);
+    }
+  };
+  watch.saved = () => new Map(last);
+  return watch;
+}
+
+/** A saved screen as a spec document (one figure), for mainScreenOf. Pure. */
+function screenDocument(markup) {
+  return `<article data-spec><h1>First look</h1><figure data-screens>${String(markup || '')}</figure></article>`;
+}
+
+/**
+ * Draw a saved main screen as the run's first look, in the spec's own
+ * worker, while the spec goes on (renderFirstLook). Never throws.
+ */
+async function renderSavedFirstLook({ pool, worker, containerName, runId, markup, timeoutMs = RENDER_TIMEOUT_MS }) {
+  if (!savedTemplateOf(markup)) return false;
+  return renderFirstLook({ pool, worker, containerName, runId, specHtml: screenDocument(markup), timeoutMs });
+}
+
 // ── The real screens ─────────────────────────────────────────────────────
 
 /** The stored artifact ids of the real screens worth keeping from a capture, at most three, none twice. Pure. */
@@ -263,11 +416,16 @@ async function storeScreens(pool, runId, kind, images) {
 
 // ── What the App tab reads ───────────────────────────────────────────────
 
-// The newest run of the project's first version: the one being built.
+// The newest build of the project's first version: its newest live run
+// that went ahead to be built, the one being built. N7: never a follow-up
+// on its proposal (a fix of its failing checks is a run of its own,
+// verdict 'revise', with no screens), so the card keeps the build's screens
+// through it.
 const RUN_SQL = `SELECT r.id, r.build_caption
                    FROM homeroom_bot_first_versions f
                    JOIN homeroom_bot_runs r ON r.app_id = f.app_id AND r.issue_number = f.issue_number
                   WHERE f.app_id = $1 AND f.bot_builds = TRUE
+                    AND r.mode = 'live' AND r.verdict = 'ready'
                   ORDER BY r.id DESC
                   LIMIT 1`;
 
@@ -337,6 +495,15 @@ module.exports = {
   firstLookDocument,
   readRendered,
   renderFirstLook,
+  // 13 Oct 2026: the first look, drawn first.
+  SAVED_DIR,
+  savedScreenOf,
+  savedTemplateOf,
+  readSavedScreen,
+  spliceSavedScreens,
+  screenWatcher,
+  screenDocument,
+  renderSavedFirstLook,
   realShotsOf,
   keepRealScreens,
   storeScreens,

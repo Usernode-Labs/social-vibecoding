@@ -143,6 +143,8 @@ export interface BotRequestState {
   more?: number;
   missing?: number;
   needed?: number;
+  /** A project's first version, which goes live without a vote (13 Oct 2026, D1). */
+  noVote?: boolean;
   /**
    * `approved`, on a merge of the platform's own app that is not live yet:
    * when the platform's next release carries it (services/release-watch.js),

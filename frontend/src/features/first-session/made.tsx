@@ -24,13 +24,18 @@
  *             (`app.first_version`), read again every ten seconds, past the
  *             service worker's cache (madeAppOf, madeAppUrl). When the plan
  *             waits, only that line changes ("Your plan is ready to review",
- *             in blue), as it does on every screen. Nothing here asks for an
- *             answer: the plan waits until the tour ends, and the "Needs you"
- *             card that asked for it before anyone was invited is gone from
- *             the first session (Evan's test, 6 October 2026). From Create,
- *             which has no tour, the card stays (PlanWaitsCard). A project Homeroom bot does not
- *             build has no line, and one quiet note under the card says who
- *             builds it (NO_BOT_NOTE).
+ *             in blue), as it does on every screen. The "Needs you" card
+ *             that asked for it before anyone was invited is gone from the
+ *             first session (Evan's test, 6 October 2026). From Create, the
+ *             card stays for a plan with nothing to ask (PlanWaitsCard). A
+ *             project Homeroom bot does not build has no line, and one quiet
+ *             note under the card says who builds it (NO_BOT_NOTE).
+ *   asks      QUICK QUESTIONS (newcomer run four, 13 October 2026): its plan
+ *             is written at Make it, while the project is set up
+ *             (services/first-version-plan.js), and when it has questions
+ *             they take the invite line's place, each with its suggested
+ *             answer chosen, with Submit, which starts the build. Then the
+ *             screen is as below, its line saying the bot builds it.
  *   invite    One quiet line, "Invite people to use it and help improve it
  *             together.", over Share invite and Invite people later. Once the
  *             link has gone out the line says so ("Invite shared. Next, a
@@ -94,7 +99,7 @@
  * says how far its setup has got (SetupProgress, below).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
@@ -105,11 +110,13 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { usePageLock } from '../../lib/page-lock';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
+import { PlanChoices } from '../messages/bot-plan-view';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
-import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf } from './build-line';
+import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf, phaseLine, useNow } from './build-line';
 import { copyText, inviteText } from './copy-invite';
 import type { Made, MakeEntry } from './make';
+import type { FirstVersionStage } from './tour-steps';
 import { type Person, PeopleRow } from './people-row';
 import { SketchCard, showsCard, useSketch } from './sketch-card';
 
@@ -122,12 +129,28 @@ export type WaitingPlan = {
   conversationId: number | null;
 };
 
+/**
+ * 13 Oct 2026: the plan written at Make it (services/first-version-plan.js),
+ * for its creator: being written, or written, with its questions and
+ * whether they are answered.
+ */
+export type EarlyPlan = {
+  status?: 'pending' | 'ready';
+  bullets?: string[];
+  questions?: HomeroomBotPlanQuestion[];
+  answered?: boolean;
+} | null;
+
 type FirstVersion = {
   step?: number; of?: number; ready?: boolean;
   /** #4053: its build line for this reader (homeroom-bot-progress.js buildLineOf). */
   line?: string | null;
   /** B6: the plan waiting for Build it, for its creator (GET /api/apps/:slug). */
   plan?: Partial<WaitingPlan> | null;
+  /** 13 Oct 2026: its plan from Make it, for its creator. */
+  early?: EarlyPlan;
+  /** N4: the stage named, with when it began (homeroom-bot-progress.js firstVersionPhase). */
+  phase?: unknown;
 } | null;
 
 /**
@@ -175,6 +198,92 @@ export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
     messageId: Number.isInteger(plan.messageId) ? Number(plan.messageId) : null,
     conversationId: Number.isInteger(plan.conversationId) ? Number(plan.conversationId) : null,
   };
+}
+
+/**
+ * QUICK QUESTIONS (newcomer run four, 13 Oct 2026). Its plan is written the
+ * moment Make it is pressed, while the project is set up
+ * (services/first-version-plan.js), and when it has questions this screen
+ * asks them: each with its suggested answer chosen, and Submit, which keeps
+ * the answers and starts the build (POST /api/apps/:slug/first-version/
+ * answers). The questions are the plan's waiting for Build it when there is
+ * one (the chat's card, the same plan), else the plan from Make it while it
+ * is not answered; none for a plan that asks nothing. They slot in when they
+ * arrive: until then, and once they are answered, the screen is as it was,
+ * its line saying the bot builds it.
+ */
+export function askedQuestions(fv: FirstVersion): HomeroomBotPlanQuestion[] | null {
+  const waiting = waitingPlan(fv);
+  if (waiting) return waiting.questions.length ? waiting.questions : null;
+  const early = fv && !fv.ready ? fv.early : null;
+  if (!early || early.status !== 'ready' || early.answered || !Array.isArray(early.questions)) return null;
+  const questions = early.questions.filter((q) => q && typeof q.question === 'string' && Array.isArray(q.answers) && q.answers.length >= 2);
+  return questions.length ? questions.slice(0, 2) : null;
+}
+
+/**
+ * N1: where a project's first version stands as the made screen hands on to
+ * the tour: on its way ('building'), built and waiting to be tried
+ * ('ready'), or none (null: Homeroom bot builds nothing, or it is live
+ * already), which the tour's last card follows (./tour-steps.ts makerSteps).
+ */
+export function madeStage(fv: FirstVersion, botBuilds: boolean, live = false): FirstVersionStage {
+  if (!botBuilds || live) return null;
+  return fv && fv.ready ? 'ready' : 'building';
+}
+
+/** Where Submit sends the answers. */
+export function answersUrl(slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}/first-version/answers`;
+}
+
+/** The heading over the questions: "One quick question" or "Two quick questions". */
+export function questionsTitle(count: number): string {
+  return count === 1 ? translate('onboarding:firstSession.made.questions.titleOne') : translate('onboarding:firstSession.made.questions.titleTwo');
+}
+
+/**
+ * The made screen's questions, with Submit, in place of the invite line and
+ * its buttons until they are answered: the heading, "Homeroom bot builds
+ * <project> from your answers.", then each question on the plane's card
+ * (the plan card's own choices, ../messages/bot-plan-view.tsx PlanChoices),
+ * its suggested answer chosen.
+ */
+export function QuickQuestions({ name, questions, busy = false, error = null, onSubmit }: {
+  name: string;
+  questions: HomeroomBotPlanQuestion[];
+  busy?: boolean;
+  error?: string | null;
+  /** Submit, with the answer picked for each question (null for one left alone). */
+  onSubmit: (answers: Array<string | null>) => void;
+}) {
+  const t = useMessages('onboarding');
+  const uid = useId();
+  const [picked, setPicked] = useState<Array<string | null>>(() => questions.map(() => null));
+  const pick = (index: number, answer: string) => setPicked((now) => questions.map((_, i) => (i === index ? answer : now[i] ?? null)));
+  return (
+    <section data-first-session-questions={questions.length} aria-labelledby={`${uid}-title`} className="flex flex-col">
+      <h2 id={`${uid}-title`} className="text-center text-[17px] font-semibold leading-snug">{questionsTitle(questions.length)}</h2>
+      <p className="mt-1 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.questions.line', { project: name })}</p>
+      <div className="mt-3 rounded-[20px] bg-white px-4 pb-1.5 text-left shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <PlanChoices questions={questions} picked={picked} onPick={pick} idBase={uid} top="plain" />
+      </div>
+      {error ? <p role="alert" className="mt-2 text-center text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
+      <Button
+        type="button"
+        data-first-session-questions-submit=""
+        onClick={() => onSubmit(questions.map((_, i) => picked[i] ?? null))}
+        disabled={busy}
+        layout="full"
+        variant="pillAccent"
+        size="pillLg"
+        ink="solidLate"
+        className="mt-[18px] flex items-center justify-center disabled:opacity-60"
+      >
+        {t('onboarding:firstSession.made.questions.submit')}
+      </Button>
+    </section>
+  );
 }
 
 /** Over the plan's card: it is the one thing on the screen that waits on them. A message id, as the labels below are. */
@@ -907,8 +1016,12 @@ export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bot
 export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
-  /** "Invite people later" / "Start the tour" / "Go to …" (continueLabel): `skipped` when nothing went out. */
-  onContinue: (skipped: boolean) => void;
+  /**
+   * "Invite people later" / "Start the tour" / "Go to …" (continueLabel):
+   * `skipped` when nothing went out; `firstVersion`, where its first
+   * version stands for the tour (madeStage).
+   */
+  onContinue: (skipped: boolean, firstVersion: FirstVersionStage) => void;
   /** Go to chat, on the plan's card (from Create only): the chat with Homeroom bot, where the plan is answered. */
   onOpenChat: (conversationId: number | null) => void;
   entry?: MakeEntry;
@@ -947,6 +1060,11 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const [setupShown, setSetupShown] = useState(false);
   useEffect(() => { if (settingUp) setSetupShown(true); }, [settingUp]);
 
+  // Its plan from Make it is being written: read as often as the setup is,
+  // so its questions slot in the moment they are there.
+  const planComing = !!fv && !!fv.early && fv.early.status === 'pending';
+  // Read again at once after Submit (`reread`), so the line moves on.
+  const [reread, setReread] = useState(0);
   useEffect(() => {
     let live = true;
     const read = () => fetch(madeAppUrl(made.slug), { credentials: 'same-origin', cache: 'no-store' })
@@ -962,9 +1080,36 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       })
       .catch(() => {});
     read();
-    const t = window.setInterval(read, settingUp ? READY_POLL_MS : 10000);
+    const t = window.setInterval(read, settingUp || planComing ? READY_POLL_MS : 10000);
     return () => { live = false; window.clearInterval(t); };
-  }, [made.slug, settingUp]);
+  }, [made.slug, settingUp, planComing, reread]);
+
+  // QUICK QUESTIONS: Submit keeps the answers and starts the build. Once
+  // pressed here the questions go at once, whatever the next read says.
+  const [answered, setAnswered] = useState(false);
+  const [answering, setAnswering] = useState(false);
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  const submitAnswers = useCallback(async (answers: Array<string | null>) => {
+    if (answering) return;
+    setAnswering(true);
+    setAnswerError(null);
+    try {
+      const res = await fetch(answersUrl(made.slug), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ answers }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setAnswered(true);
+      setReread((n) => n + 1);
+    } catch {
+      setAnswerError(translate('onboarding:firstSession.made.questions.error'));
+    } finally {
+      setAnswering(false);
+    }
+  }, [answering, made.slug]);
+  const asked = answered ? null : askedQuestions(fv);
 
   // How long it has waited, from the screen's opening or the last Try again
   // (`round`): longer than usual (`slow`), then long enough to let them on
@@ -1025,14 +1170,20 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // An import or a ready-made app is never sketched: its plain card, not the
   // sketch's frame while the (absent) sketch is read.
   const card = !imported && !readyMade && showsCard(sketch.state);
-  const line = madeLine(fv, botBuilds, !making, stalled, imported);
+  const served = madeLine(fv, botBuilds, !making, stalled, imported);
+  // Answered here: built from now on, never planned again, until the next
+  // read says where it is.
+  const line: BuildLineState | null = answered && (served === 'planning' || served === 'plan') ? 'building' : served;
+  // N4: the stage by its own name while it is built, and for how long.
+  const now = useNow();
+  const named = phaseLine(line, fv?.phase, now);
   // The thumbnail says only what the build line does not: a quiet note when
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.
   const note = card
     ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : t(NO_BOT_NOTE))
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
-  const plainLine = buildLine(fv, appStatus, botBuilds, imported, readyMade);
+  const plainLine = named.words || (answered && line === 'building' ? translate(BUILD_LINE_WORDS.building) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup that stopped: then
   // nothing is).
@@ -1040,6 +1191,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // Its setup's card, once it has run: in place, saying what the plain card would.
   const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
+  // Where its first version stands, for the tour that follows (N1).
+  const stage = madeStage(fv, botBuilds && !imported && !readyMade, !making);
   return (
     <div
       ref={rootRef}
@@ -1066,7 +1219,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
             <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{t(COMMUNITY_LABEL)}</h1>
           </div>
           {card ? (
-            <SketchCard made={made} sketch={sketch} line={line} note={note} />
+            <SketchCard made={made} sketch={sketch} line={line} note={note} lineWords={named.words} lineNote={named.note} />
           ) : (
             <div className="flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
               <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
@@ -1091,8 +1244,14 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {/* The first session asks for no answer yet: the plan waits until the
               tour ends. From Create there is no tour, so its card is the way
               to the chat where the plan is answered. */}
-          {plan && !stalled && fromCreate ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
+          {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
+        {/* QUICK QUESTIONS: in place of the invite line and its buttons
+            until they are answered. */}
+        {asked && !stalled ? (
+          <QuickQuestions key={asked.map((q) => q.question).join('|')} name={made.name} questions={asked} busy={answering} error={answerError} onSubmit={(answers) => { void submitAnswers(answers); }} />
+        ) : (
+        <>
         <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
           {sentHow ? sharedLine(sentHow, !fromCreate) : t(INVITE_HINT)}
         </p>
@@ -1111,15 +1270,17 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
             </Button>
           )}
           {sent ? (
-            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60" disabled={holds}>
+            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false, stage)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60" disabled={holds}>
               {continueLabel(entry, true, made.name)}
             </Button>
           ) : (
-            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} disabled={holds} className={SECONDARY}>
+            <button type="button" data-first-session-continue="" onClick={() => onContinue(true, stage)} disabled={holds} className={SECONDARY}>
               {continueLabel(entry, false, made.name)}
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
       {inviting ? (
         <InviteSheet

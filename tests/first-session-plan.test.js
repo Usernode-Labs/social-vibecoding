@@ -98,7 +98,9 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
   // (Not over a setup that stopped: its own card is the one thing to do then.)
   // The first session draws none (the plan waits until the tour ends, #4041);
   // from Create, which has no tour, it is the way to the chat.
-  const card = src.indexOf('{plan && !stalled && fromCreate ? <PlanWaitsCard');
+  // 13 Oct 2026: not while the made screen asks the plan's questions itself
+  // (tests/first-version-early-plan.test.js).
+  const card = src.indexOf('{plan && !stalled && fromCreate && !asked ? <PlanWaitsCard');
   assert.ok(card > src.indexOf('<SketchCard made='), 'after the project card');
   assert.ok(card < src.indexOf('data-first-session-hint='), 'before the invite line');
   assert.match(src, /onOpenChat=\{\(\) => onOpenChat\(plan\.conversationId \?\? made\.conversationId\)\}/);
@@ -113,7 +115,8 @@ test('while the plan waits, the build\'s note says so instead of promising a mes
   // Under the card of the idea (./sketch-card.tsx) only when it has something
   // to say, and always in the plain card without one. The sketch's caption
   // calling it the real app is gone.
-  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} \/>/);
+  // N4 (13 Oct 2026): with the stage's own words and how long it has run.
+  assert.match(src, /<SketchCard made=\{made\} sketch=\{sketch\} line=\{line\} note=\{note\} lineWords=\{named\.words\} lineNote=\{named\.note\} \/>/);
   // (A little lower while the setup's card stands in for its status line, #4900.)
   assert.match(src, /<p className=\{settingUp \|\| ranInPlace \? 'mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-\[13px\] text-zinc-500 dark:text-zinc-400'\}>\{note\}<\/p>/);
   assert.doesNotMatch(src, /sketchCaption/);

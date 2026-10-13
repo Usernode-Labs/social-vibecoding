@@ -823,6 +823,7 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
       runBuildTurn: live.buildTurnRunner({
         pool, config, bot: user, session, model: models.build, branchName: branch, containerName, deps: turnDeps,
         harness: ctx.harnessOf ? ctx.harnessOf(models.build, config) : 'auto', telemetry: TELEMETRY, onProgress: ctx.onActivity || null,
+        firstVersion: true,
       }),
       turnBudgetMs: budgets.buildMs,
       readsImages,
@@ -841,15 +842,20 @@ async function reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branc
 /**
  * A side build's review a restart cut short (in a capture, a reviewer call
  * or a fix turn), settled the way restart recovery settles a live first
- * version's (homeroom-bot.js completeRecoveredLive, noteReviewInterrupted):
- * not run again, but recorded `interrupted` at the branch as it stands, and a
- * fix no capture saw boot put back on the last commit one did. The branch is
- * read rather than the kept state trusted, since a fix that landed just
- * before the restart may not have been saved. A review that had finished is
- * taken as it is. Never throws.
+ * version's (homeroom-bot.js completeRecoveredLive, noteReviewInterrupted,
+ * checkRecoveredFix): not run again, but recorded `interrupted` at the
+ * branch as it stands. A fix no capture saw boot is captured once
+ * (`captureTip`, which resolves the screenshot step's answer and the session
+ * it ran in): kept when it boots, that capture its final one; otherwise, or
+ * when it cannot be captured, put back on the last commit that booted. The
+ * branch is read rather than the kept state trusted, since a fix that landed
+ * just before the restart may not have been saved. A review that had
+ * finished is taken as it is. Resolves the settled review, and `tipShot`
+ * ({ capture, sessionId }) when a capture saw the kept fix boot. Never
+ * throws.
  */
-async function settleCutShortReview(ctx, { review, landed, branch }) {
-  if (!review || review.state === 'done') return review || null;
+async function settleCutShortReview(ctx, { review, landed, branch, captureTip = null }) {
+  if (!review || review.state === 'done') return { review: review || null, tipShot: null };
   const { deps, repo } = ctx;
   const tip = await Promise.resolve()
     .then(() => deps.github.getBranchSha(repo.owner, repo.repo, branch))
@@ -857,29 +863,41 @@ async function settleCutShortReview(ctx, { review, landed, branch }) {
   let finalSha = tip || review.finalSha || landed.sha || null;
   let finalCommits = review.finalCommits ?? landed.commits ?? null;
   let rolledBack = null;
+  let tipShot = null;
   const booted = review.lastBooted?.sha || null;
   if (booted && finalSha && finalSha !== booted) {
-    try {
-      await require('../homeroom-bot-live').rollbackReviewBranch({ github: deps.github, repo, branchName: branch, sha: booted });
-      rolledBack = { from: finalSha, to: booted, why: 'not seen to boot before the restart' };
-      finalSha = booted;
-      if (review.lastBooted.commits != null) finalCommits = review.lastBooted.commits;
-    } catch (err) {
-      log.warn('bench', 'Could not roll an unchecked review fix back; capturing it as it stands', {
-        trialId: ctx.trial?.id, err: err.message,
-      });
+    const shot = captureTip ? await Promise.resolve().then(captureTip).catch((err) => ({ ok: false, error: err.message })) : null;
+    if (shot?.ok && shot.capture?.booted === true) {
+      tipShot = { capture: shot.capture, sessionId: shot.sessionId ?? null };
+    } else {
+      try {
+        await require('../homeroom-bot-live').rollbackReviewBranch({ github: deps.github, repo, branchName: branch, sha: booted });
+        rolledBack = {
+          from: finalSha, to: booted, why: shot?.ok ? 'did not boot after the restart' : 'could not be captured after the restart',
+        };
+        finalSha = booted;
+        if (review.lastBooted.commits != null) finalCommits = review.lastBooted.commits;
+      } catch (err) {
+        log.warn('bench', 'Could not roll an unchecked review fix back; capturing it as it stands', {
+          trialId: ctx.trial?.id, err: err.message,
+        });
+      }
     }
   }
   return {
-    ...review,
-    state: 'done',
-    stop: 'interrupted',
-    stopDetail: 'the platform restarted during the review',
-    finalSha,
-    finalCommits,
-    finishedAt: new Date().toISOString(),
-    roundsUsed: (Array.isArray(review.rounds) ? review.rounds : []).filter((r) => r && r.verdict).length,
-    ...(rolledBack ? { rolledBack } : {}),
+    review: {
+      ...review,
+      state: 'done',
+      stop: 'interrupted',
+      stopDetail: 'the platform restarted during the review',
+      finalSha,
+      finalCommits,
+      finishedAt: new Date().toISOString(),
+      roundsUsed: (Array.isArray(review.rounds) ? review.rounds : []).filter((r) => r && r.verdict).length,
+      ...(rolledBack ? { rolledBack } : {}),
+      ...(tipShot ? { lastBooted: { sha: finalSha, commits: finalCommits }, fixCheckedAfterRestart: true } : {}),
+    },
+    tipShot,
   };
 }
 
@@ -931,7 +949,20 @@ async function sideBuildStage(ctx) {
     let reviewed = null;
     if (landed && ctx.reviewer) {
       if (done.review) {
-        reviewed = await settleCutShortReview(ctx, { review: done.review, landed, branch });
+        const settled = await settleCutShortReview(ctx, {
+          review: done.review, landed, branch,
+          // The tip's one capture, on a session of its own at the branch:
+          // when it boots, its screenshots are the build's final ones.
+          captureTip: async () => {
+            const s = await openKeptSession(ctx, kept, { model: models.build, base, branch });
+            return { ...(await screenshotStep(ctx, Number(s.id))), sessionId: Number(s.id) };
+          },
+        });
+        reviewed = settled.review;
+        if (settled.tipShot) {
+          reviewedCapture = settled.tipShot.capture;
+          reviewSession = settled.tipShot.sessionId;
+        }
         await kept.keep({ review: reviewed });
       } else {
         ({ review: reviewed, sessionId: reviewSession } = await reviewKeptBuild(ctx, kept, { models, replay, budgets, base, branch }));

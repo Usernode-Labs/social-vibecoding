@@ -119,6 +119,14 @@
     "text": "Waiting for your approval.",
     "description": "Line on a new project's App tab when the first version cannot go live until the person reading approves it."
   },
+  "firstVersion.noVote.soon": {
+    "text": "No vote needed. It goes live in a minute or two.",
+    "description": "Line on a new project's App tab when its first version is ready: a project's first version goes live without a vote once it passes its checks, and it has, so it is about to be released. \"It\" is the first version of the app."
+  },
+  "firstVersion.noVote.onceTested": {
+    "text": "No vote needed. It goes live once it passes its checks.",
+    "description": "Line on a new project's App tab when its first version is ready to try: a project's first version goes live without a vote, and it is released as soon as its automated checks pass. \"It\" is the first version of the app."
+  },
   "firstVersion.wait.soon": {
     "text": "It goes live in a minute or two.",
     "description": "Line on a new project's App tab when its first version has been approved and is about to be released. \"It\" is the first version of the app."
@@ -446,6 +454,10 @@
   "card.waiting.approval": {
     "text": "Waiting for approval",
     "description": "Status of a proposal that has been put up for the group's vote and is not approved yet."
+  },
+  "card.waiting.noVote": {
+    "text": "Goes live without a vote",
+    "description": "Status of a proposal that is a project's first version: it is not put to a vote, and goes live once its automated checks pass."
   },
   "board.plusMenu.settingsTitle": {
     "text": "Settings & rules",
@@ -5431,6 +5443,14 @@
     "text": "Approve it, and it goes live",
     "description": "Tooltip of the status pill on a change's card when it reads \"Waiting for your approval\"."
   },
+  "badge.pill.noVote": {
+    "text": "No vote needed",
+    "description": "Label of the status pill on a change's card (the rounded bar that shows the vote) for a project's first version, which goes live without a vote once it passes its checks."
+  },
+  "badge.pill.noVoteTitle": {
+    "text": "A project’s first version goes live without a vote once testing passes.",
+    "description": "Tooltip of the status pill on a change's card when it reads \"No vote needed\"."
+  },
   "badge.pill.needsYourYes": {
     "text": "Needs your Yes · {{yes}}/{{majority}}",
     "description": "Label of the status pill on a change's card (the rounded bar that shows the vote): the change has enough Yes votes but still needs one from a member other than its author, and the viewer's would be it. {{yes}} is the number of Yes votes that count and {{majority}} the number needed."
@@ -8251,6 +8271,26 @@
     "text": "{{people}} said yes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page: who voted Yes. {{people}} is one username or a list of them and {{count}} how many people that is."
   },
+  "page.votes.note.youSaidYes": {
+    "text": "You said yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page, shown to the person reading it when they are the only one who voted Yes."
+  },
+  "page.votes.note.youAndOthersSaidYes": {
+    "text": "{{people}} said yes.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page, when the person reading it voted Yes along with others. {{people}} is a list of two or more people that starts with the word for \"You\" (the reader), for example \"You and maya\" or \"You, maya and ash\", so the verb is plural."
+  },
+  "page.votes.people.you": {
+    "text": "You",
+    "description": "The person reading, as the first name in a list of people who voted on a change, for example \"You and maya said yes.\" Capitalized because it starts the sentence."
+  },
+  "page.votes.note.yourEarlierYes": {
+    "text": "Your yes was on an earlier version.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the reader's own Yes vote no longer counts because the change was updated after it."
+  },
+  "page.votes.note.yourEarlierNo": {
+    "text": "Your no was on an earlier version.",
+    "description": "One sentence of the line under the figure on the Votes card of a change's page: the reader's own No vote no longer counts because the change was updated after it."
+  },
   "page.votes.note.live": {
     "text": "It’s live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page once the approved change is applied to the running app."
@@ -8334,6 +8374,26 @@
   "page.votes.note.liveOnceTested": {
     "text": "It goes live once testing passes.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs and its automated checks have not passed yet."
+  },
+  "page.votes.figure.noVote": {
+    "text": "No vote needed",
+    "description": "The large figure on the Votes card of a change's page when the change is a project's first version, which goes live without a vote."
+  },
+  "page.votes.label.noVote": {
+    "text": "Votes: no vote needed",
+    "description": "Accessible description of the progress bar on the Votes card of a change's page when the change is a project's first version, which goes live without a vote."
+  },
+  "page.votes.note.firstVersion": {
+    "text": "It’s the project’s first version, so it goes live without a vote.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks have passed. \"It\" is the change."
+  },
+  "page.votes.note.firstVersionOnceTested": {
+    "text": "It’s the project’s first version, so it goes live without a vote once testing passes.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks have not passed yet. \"It\" is the change."
+  },
+  "page.votes.note.firstVersionOnceFixed": {
+    "text": "It’s the project’s first version, so it goes live without a vote once a fix passes testing.",
+    "description": "The line under the figure on the Votes card of a change's page when the change is a project's first version and its automated checks are failing. \"It\" is the change."
   },
   "page.testing.name.testing": {
     "text": "Testing",

@@ -86,6 +86,7 @@ const log = require('./logger');
 const appAccess = require('./app-access');
 const { HOMEROOM_BOT_CARDS_LOCK } = require('./advisory-locks');
 const { changeHref } = require('./change-destination');
+const { firstVersionSql } = require('./first-version-rule');
 
 const KIND = 'activity';
 // The most cards one read answers for, newest first. An older card keeps
@@ -514,7 +515,9 @@ function outcomeOf(row) {
         // reads as closed, never as still up for a vote.
         if (row.proposal_status === 'closed' || row.proposal_status === 'archived') return 'closed';
         if (row.told === false) return row.needs_look ? 'needs_look' : 'checking';
-        return 'proposed';
+        // D1: a project's first version goes live without a vote once its
+        // checks pass, so it is never waiting for anyone's approval.
+        return row.first_version === true ? 'going_live' : 'proposed';
       }
       // Built, with no proposal recorded (yet): never "waiting for approval".
       if (row.build_ok === true) return row.needs_look ? 'needs_look' : 'checking';
@@ -804,7 +807,9 @@ async function cardRows(pool, userId, limit = MAX_CARDS) {
               SELECT 1 FROM homeroom_bot_dm_messages t
                WHERE t.user_id = $1 AND t.app_id = c.app_id AND t.issue_number = c.issue_number
                  AND t.kind = 'needs_look' AND t.created_at >= c.began
-            ) AS needs_look
+            ) AS needs_look,
+            -- D1: the project's first version merges without a vote.
+            CASE WHEN cs.id IS NOT NULL THEN ${firstVersionSql('cs')} ELSE FALSE END AS first_version
        FROM cards c
        JOIN apps a ON a.id = c.app_id
        LEFT JOIN LATERAL (

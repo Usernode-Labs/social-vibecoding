@@ -270,6 +270,16 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(pin.links.request, '#app/note-board/dev/issues/5');
     assert.ok(Date.parse(pin.at) > Date.parse(dark.at));
 
+    // D1: had it been the project's first version, it merges without a
+    // vote: being tested until then, never waiting for approval.
+    await pool.query(
+      `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, status, issue_number, filed_at)
+       VALUES ($1, $2, 'Notes to pin', 'filed', 5, NOW())`,
+      [notes.id, ada.id],
+    );
+    assert.equal((await tray.workFor(pool, { user: asAda })).history[0].outcome, 'checking');
+    await pool.query('DELETE FROM homeroom_bot_first_versions WHERE app_id = $1', [notes.id]);
+
     // The bot came back to it: still one entry, its build folded in as an earlier run.
     const { rows: [answer] } = await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, created_at)
