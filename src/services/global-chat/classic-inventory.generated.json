@@ -1354,6 +1354,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "GET",
+      "path": "/api/admin/apps-usage",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.apps.usage.e449c167",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
       "path": "/api/admin/limits",
       "expression": null,
       "status": "mapped",
