@@ -35,7 +35,11 @@
  * The model is the current first-version configuration's triage model
  * (services/bot-configs.js; GLM 5.3 Flash), asked through the helper path
  * the sketch uses (llm.js helperMessage, with its Haiku fallback). What it
- * cost is recorded against its maker, as the sketch's is.
+ * cost is recorded against its maker, as the sketch's is. A GLM answer this
+ * module's parse cannot read is no answer (usableAnswer), so Haiku is asked
+ * (newcomer run five: GLM's plan was refused in 1.9 seconds and Haiku never
+ * asked), and a reply still unreadable is logged by its shape, never its
+ * words (replyShape).
  */
 
 const log = require('./logger');
@@ -58,11 +62,14 @@ const READ_WAIT_MS = PLAN_WAIT_MS + 5 * 1000;
 const PLAN_MAX_TOKENS = 2000;
 const BRIEF_MAX = 4000;
 
+// The bounds are GLM's guidance (OpenRouter does not hold a tool call to
+// them); Haiku's structured output is sent the schema without them
+// (llm.js structuredOutputSchema), and parsePlanReply decides either way.
 const PLAN_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
   properties: {
-    plan: { type: 'array', items: { type: 'string' } },
+    plan: { type: 'array', items: { type: 'string' }, minItems: 3 },
     choices: {
       type: 'array',
       items: {
@@ -75,7 +82,7 @@ const PLAN_SCHEMA = Object.freeze({
         required: ['question', 'answers'],
       },
     },
-    build_note: { type: 'string' },
+    build_note: { type: 'string', minLength: 40 },
     assumptions: { type: 'array', items: { type: 'string' } },
   },
   required: ['plan', 'choices', 'build_note', 'assumptions'],
@@ -143,29 +150,54 @@ function planUserPrompt({ name, brief, starter = null, maker = null, members = n
   ].filter(Boolean).join('\n\n');
 }
 
-/**
- * The reply as a plan: { bullets, questions, buildNote, assumptions }, or
- * null when it has no plan line or no build note. Cut and cleaned as a
- * triage verdict's plan is (homeroom-bot.js planBullets, planQuestions),
- * with no em dashes in anything people read. Pure.
- */
-function parsePlanReply(text) {
+/** Pure: the JSON object a reply holds, or null. */
+function replyObject(text) {
   const out = String(text || '');
   const first = out.indexOf('{');
   const last = out.lastIndexOf('}');
   if (first === -1 || last <= first) return null;
   let obj;
   try { obj = JSON.parse(out.slice(first, last + 1)); } catch { return null; }
-  if (!obj || typeof obj !== 'object') return null;
+  return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+}
+
+/**
+ * The reply as a plan: { bullets, questions, buildNote, assumptions }, or
+ * null when it has no plan line or no build note. Cut and cleaned as a
+ * triage verdict's plan is (homeroom-bot.js planBullets, planQuestions),
+ * with no em dashes in anything people read. Forgives the two shapes a
+ * model sends for "a few lines" (run five): the plan as one string, one
+ * line a bullet, and the build note as a list of lines. Pure.
+ */
+function parsePlanReply(text) {
+  const obj = replyObject(text);
+  if (!obj) return null;
   const bot = require('./homeroom-bot');
   const plain = (t) => withoutEmDashes(t);
-  const bullets = bot.planBullets(obj.plan).map(plain);
+  const lines = typeof obj.plan === 'string'
+    ? obj.plan.split(/\r?\n/).map((line) => line.replace(/^\s*\d+[.)]\s+/, ''))
+    : obj.plan;
+  const bullets = bot.planBullets(lines).map(plain);
   const questions = bot.planQuestions(obj.choices)
     .map((q) => ({ question: plain(q.question), answers: q.answers.map(plain) }));
   const assumptions = bot.parseAssumptions(obj.assumptions);
-  const note = typeof obj.build_note === 'string' ? obj.build_note.trim().slice(0, 4000) : '';
+  const rawNote = Array.isArray(obj.build_note)
+    ? obj.build_note.filter((line) => typeof line === 'string').join('\n')
+    : obj.build_note;
+  const note = typeof rawNote === 'string' ? rawNote.trim().slice(0, 4000) : '';
   if (!bullets.length || !note) return null;
   return { bullets, questions, buildNote: bot.noteWithAssumptions(note, assumptions), assumptions };
+}
+
+/** Pure: whether the helper's answer (an object) is a plan parsePlanReply can read. */
+function usableAnswer(answer) {
+  return parsePlanReply(JSON.stringify(answer)) !== null;
+}
+
+/** Pure: what a reply looked like, never what it said (llm.js answerShape), for the log. */
+function replyShape(text) {
+  const obj = replyObject(text);
+  return obj ? require('./llm').answerShape(obj) : { reply: `no JSON object, ${String(text || '').length} characters` };
 }
 
 /**
@@ -237,6 +269,7 @@ async function makePlan(pool, { app, user, brief, deps = {} }) {
       user: planUserPrompt({ name: app.name || app.slug, brief, starter, maker, members, locale: maker.locale }),
       model,
       schema: PLAN_SCHEMA,
+      validate: usableAnswer,
       maxTokens: PLAN_MAX_TOKENS,
       telemetryContext: { pool, appId: app.id },
     });
@@ -249,7 +282,7 @@ async function makePlan(pool, { app, user, brief, deps = {} }) {
     await recordSpend(reply);
     model = reply.model || model;
     const plan = parsePlanReply(reply.text);
-    return plan ? { plan, model, error: null } : { plan: null, model, error: 'unusable_reply' };
+    return plan ? { plan, model, error: null } : { plan: null, model, error: 'unusable_reply', shape: replyShape(reply.text) };
   } catch (err) {
     return { plan: null, model, error: String(err && err.message || 'failed').slice(0, 200) };
   }
@@ -298,7 +331,9 @@ async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
             appId: app.id, questions: made.plan.questions.length, model: made.model,
           });
         } else {
-          log.warn('first-version-plan', 'No plan at Make it; the triage plans it', { appId: app.id, error: made.error });
+          log.warn('first-version-plan', 'No plan at Make it; the triage plans it', {
+            appId: app.id, error: made.error, model: made.model, ...(made.shape ? { shape: made.shape } : {}),
+          });
         }
         return made;
       })
@@ -452,6 +487,8 @@ module.exports = {
   PLAN_SYSTEM,
   planUserPrompt,
   parsePlanReply,
+  usableAnswer,
+  replyShape,
   planModel,
   makePlan,
   startEarlyPlan,
