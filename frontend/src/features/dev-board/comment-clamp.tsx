@@ -33,6 +33,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } fr
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /**
  * How many lines a long comment shows before it is expanded.
  *
@@ -53,6 +55,9 @@ export const CLAMP_CLASS = 'line-clamp-4';
  * screen. The 1px slack is for sub-pixel line heights: a body of exactly
  * four lines can measure a fraction over, and a control that says "Show
  * more" and then reveals nothing is worse than no control.
+ *
+ * The agent chat's long messages are measured with this too, at their own
+ * eight lines (#3558, features/agent-session/user-message.tsx).
  */
 export function overflowsClamp(el: { scrollHeight: number; clientHeight: number }): boolean {
   return el.scrollHeight - el.clientHeight > 1;
@@ -84,6 +89,7 @@ export function ClampedCommentBody({
   html?: { __html: string };
   children?: ReactNode;
 }) {
+  const t = useMessages('project');
   return (
     <>
       <div
@@ -109,7 +115,7 @@ export function ClampedCommentBody({
           // stopping here keeps that true of any host this lands in next.
           onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
         >
-          {expanded ? 'Show less' : 'Show more'}
+          {expanded ? t('project:clamp.showLess') : t('project:clamp.showMore')}
         </Button>
       ) : null}
     </>

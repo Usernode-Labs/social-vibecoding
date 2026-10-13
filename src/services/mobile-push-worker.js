@@ -13,6 +13,11 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_reply',
   'conversation_reaction',
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's build moments (services/notifications.js).
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ]);
 
 const DEFAULTS = Object.freeze({
@@ -244,11 +249,13 @@ class MobilePushWorker {
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at, n.detail, n.conversation_id, n.chat_message_id,
+              EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = n.user_id AND b.app_id = n.app_id) AS app_blocked,
               a.name AS app_name,
               a.self_hosted AS app_self_hosted,
               c.title AS conversation_title,
               c.status AS conversation_status,
               su.username AS source_username,
+              su.is_synthetic AS source_is_synthetic,
               cm.content AS message_content,
               conversation_message.content AS conversation_message_content,
               conversation_member.status AS conversation_member_status,
@@ -310,6 +317,7 @@ class MobilePushWorker {
 
   invalidReason(row) {
     if (row.read_at) return 'notification_read';
+    if (row.app_blocked) return 'app_blocked';
     const isConversationKind = CONVERSATION_NOTIFICATION_KINDS.has(row.kind);
     // Schema references are nullable for legacy kinds, so enforce the domain
     // pairing at send time: a conversation kind needs a conversation ref and
@@ -498,6 +506,7 @@ class MobilePushWorker {
           appSelfHosted: row.app_self_hosted === true,
           conversationTitle: row.conversation_title,
           sourceUsername: row.source_username,
+          sourceIsSynthetic: row.source_is_synthetic === true,
           messageContent: row.conversation_message_content ?? row.message_content,
           sessionTitle: row.session_title,
           prTitle: row.pr_title,

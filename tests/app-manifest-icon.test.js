@@ -46,7 +46,7 @@ const FAKE_JPEG = Buffer.concat([
 
 test('valid emoji passes through', () => {
   withManifest({ secrets: [], icon: { emoji: '🎮' } }, (m) => {
-    assert.deepEqual(m.icon, { emoji: '🎮', image: null });
+    assert.deepEqual(m.icon, { emoji: '🎮', image: null, color: null });
   });
 });
 
@@ -82,13 +82,13 @@ test('non-string emoji is rejected', () => {
 
 test('valid image path passes through', () => {
   withManifest({ icon: { image: 'public/icon.png' } }, (m) => {
-    assert.deepEqual(m.icon, { emoji: null, image: 'public/icon.png' });
+    assert.deepEqual(m.icon, { emoji: null, image: 'public/icon.png', color: null });
   });
 });
 
 test('both keys are retained (image wins at reconcile time)', () => {
   withManifest({ icon: { emoji: '🎮', image: 'icon.png' } }, (m) => {
-    assert.deepEqual(m.icon, { emoji: '🎮', image: 'icon.png' });
+    assert.deepEqual(m.icon, { emoji: '🎮', image: 'icon.png', color: null });
   });
 });
 
@@ -118,6 +118,30 @@ test('absent / null / non-object icon block resolves to null', () => {
   withManifest({ icon: {} }, (m) => assert.equal(m.icon, null));
 });
 
+// icon.color: the community's colour, beside the artwork (#852). A hex
+// colour, lower-cased and widened to six digits; anything else is ignored
+// with a warning, and a colour alone is still an icon block.
+test('icon.color is normalised to #rrggbb, alone or beside the artwork', () => {
+  withManifest({ icon: { image: 'public/icon.png', color: '#37477B' } }, (m) => {
+    assert.deepEqual(m.icon, { emoji: null, image: 'public/icon.png', color: '#37477b' });
+  });
+  withManifest({ icon: { emoji: '🧩', color: '#2a6' } }, (m) => {
+    assert.equal(m.icon.color, '#22aa66');
+  });
+  withManifest({ icon: { color: '#c0532f' } }, (m) => {
+    assert.deepEqual(m.icon, { emoji: null, image: null, color: '#c0532f' });
+  });
+});
+
+test('an invalid icon.color is ignored, and leaves the rest of the block', () => {
+  for (const bad of ['red', '#12345', '#gggggg', 'rgb(0,0,0)', 42, '', '37477b']) {
+    withManifest({ icon: { emoji: '🎮', color: bad } }, (m) => {
+      assert.deepEqual(m.icon, { emoji: '🎮', image: null, color: null }, `expected ${JSON.stringify(bad)} ignored`);
+    });
+  }
+  withManifest({ icon: { color: 'red' } }, (m) => assert.equal(m.icon, null));
+});
+
 test('missing / unparseable manifest resolves icon to null', () => {
   withManifest(null, (m) => assert.equal(m.icon, null));
   withManifest('{nope', (m) => assert.equal(m.icon, null));
@@ -135,7 +159,7 @@ function mockPool({ appRow, iconRow } = {}) {
     calls,
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/SELECT icon_emoji, icon_image_id FROM apps/.test(sql)) {
+      if (/SELECT icon_emoji, icon_image_id, icon_color FROM apps/.test(sql)) {
         return { rows: appRow ? [appRow] : [] };
       }
       if (/SELECT id, sha256 FROM app_icons/.test(sql)) {
@@ -172,7 +196,7 @@ test('reconcile: emoji applies to apps.icon_emoji', async () => {
   );
   assert.equal(changed, true);
   assert.equal(updates(pool).length, 1);
-  assert.deepEqual(updates(pool)[0].params, ['🎮', null, APP.id]);
+  assert.deepEqual(updates(pool)[0].params, ['🎮', null, null, APP.id]);
   assert.equal(inserts(pool).length, 0);
 });
 
@@ -190,7 +214,7 @@ test('reconcile: absent block clears a stored icon', async () => {
   const changed = await appManifest.reconcileAppIcon(pool, APP, { icon: null }, null);
   assert.equal(changed, true);
   assert.equal(deletes(pool).length, 1);
-  assert.deepEqual(updates(pool)[0].params, [null, null, APP.id]);
+  assert.deepEqual(updates(pool)[0].params, [null, null, null, APP.id]);
 });
 
 test('reconcile: absent block with no stored icon is a no-op', async () => {
@@ -215,7 +239,7 @@ test('reconcile: image stores bytes into app_icons and points the app at it', as
     assert.ok(Buffer.isBuffer(data) && data.equals(FAKE_PNG));
     assert.equal(sha, crypto.createHash('sha256').update(FAKE_PNG).digest('hex'));
     // The apps row points at the freshly inserted id.
-    assert.deepEqual(updates(pool)[0].params, [null, id, APP.id]);
+    assert.deepEqual(updates(pool)[0].params, [null, id, null, APP.id]);
   });
 });
 
@@ -252,7 +276,7 @@ test('reconcile: changed image bytes rotate to a fresh id', async () => {
     assert.equal(inserts(pool).length, 1);
     const newId = inserts(pool)[0].params[0];
     assert.notEqual(newId, existingId);
-    assert.deepEqual(updates(pool)[0].params, [null, newId, APP.id]);
+    assert.deepEqual(updates(pool)[0].params, [null, newId, null, APP.id]);
   });
 });
 
@@ -263,7 +287,7 @@ test('reconcile: missing image file falls back to the declared emoji', async () 
       pool, APP, { icon: { emoji: '🎮', image: 'nope.png' } }, dir
     );
     assert.equal(changed, true);
-    assert.deepEqual(updates(pool)[0].params, ['🎮', null, APP.id]);
+    assert.deepEqual(updates(pool)[0].params, ['🎮', null, null, APP.id]);
     assert.equal(inserts(pool).length, 0);
   });
 });
@@ -275,7 +299,7 @@ test('reconcile: invalid image with no emoji clears the icon', async () => {
       pool, APP, { icon: { emoji: null, image: 'notes.txt' } }, dir
     );
     assert.equal(changed, true);
-    assert.deepEqual(updates(pool)[0].params, [null, null, APP.id]);
+    assert.deepEqual(updates(pool)[0].params, [null, null, null, APP.id]);
   });
 });
 
@@ -317,4 +341,11 @@ test('reconcile: missing app row is a no-op', async () => {
   );
   assert.equal(changed, false);
   assert.equal(updates(pool).length, 0);
+});
+
+test('the dapp.json colour is persisted by reconcileAppIcon', async () => {
+  const pool = mockPool({ appRow: { icon_emoji: '🎮', icon_image_id: null, icon_color: null } });
+  const changed = await appManifest.reconcileAppIcon(pool, APP, { icon: { emoji: '🎮', image: null, color: '#37477b' } }, null);
+  assert.equal(changed, true);
+  assert.deepEqual(updates(pool)[0].params, ['🎮', null, '#37477b', APP.id]);
 });

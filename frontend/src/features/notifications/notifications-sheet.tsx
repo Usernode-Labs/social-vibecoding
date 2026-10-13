@@ -11,8 +11,9 @@
  * is opening it on the answer to a question nobody asked: you tapped the bell
  * BECAUSE it had a count, and the count is the unread. So Unread is first in
  * the strip and is the initial tab, and All is the archive you step sideways
- * into — which is what the footer link at the bottom of a filtered tab now
- * does, rather than paging more rows into a filter you are trying to empty.
+ * into — which is what the Messages footer link still does, rather than paging
+ * more rows into a filter you are trying to empty. Unread shows its older rows
+ * in place instead (#4700).
  *
  * All is LAST for the same reason it is not first. The strip reads as a
  * narrowing: the count you came for, then the one conversation kind you answer
@@ -101,7 +102,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -109,6 +110,7 @@ import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/ico
 
 import { swatchFor } from '../messages/format';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -121,6 +123,8 @@ import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
+  /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
+  timeTitle?: string;
   createdAtMs: number;
   who: string;
   appLine: string;
@@ -157,6 +161,10 @@ type MessagesEntry =
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
+}
+
+function kit(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
 /** Local-midnight boundary — rows at or after it are "Today". */
@@ -213,6 +221,12 @@ function RowActions({ view, actions }: {
   view: { id: number };
   actions: { key: string; label: string; primary?: boolean }[];
 }): ReactNode {
+  // #3984: "Still yes" on its way. It is a vote, and on a slow network
+  // nothing showed until the server answered, so a second press looked like
+  // the thing to do. It reads "Sending…" and takes no press until then; the
+  // other row actions are not votes and keep their own behaviour.
+  const [busy, setBusy] = useState(false);
+  const t = useMessages('notifications');
   const buttons = actions.map((a) => (
     // The widget language's filled pill, through the shell's <Button>:
     // the accent one for the row's primary act, the neutral one beside it.
@@ -224,19 +238,138 @@ function RowActions({ view, actions }: {
       size="default"
       ink={a.primary ? 'solid' : 'neutral'}
       className="shrink-0"
+      disabled={a.key === 'still_yes' && busy}
+      aria-busy={a.key === 'still_yes' && busy ? 'true' : undefined}
       onClick={(event) => {
         event.stopPropagation();
-        controller()?._onRowAction(view.id, a.key);
+        if (a.key !== 'still_yes') { controller()?._onRowAction(view.id, a.key); return; }
+        if (busy) return;
+        setBusy(true);
+        Promise.resolve(controller()?._onRowAction(view.id, a.key))
+          .catch(() => false)
+          .then(() => setBusy(false));
       }}
     >
-      {a.label}
+      {a.key === 'still_yes' && busy ? t('notifications:row.sending') : a.label}
     </Button>
   ));
   if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
   return <>{buttons}</>;
 }
 
-function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
+/**
+ * The row after `id` in the sheet (or before it, at the end of the list),
+ * read off the document before a clear changes the list under it (#3538).
+ */
+function neighbourRowId(sheet: Element, id: number): string | null {
+  const rows = Array.from(sheet.querySelectorAll('[data-notif-id]'));
+  const at = rows.findIndex((row) => row.getAttribute('data-notif-id') === String(id));
+  if (at < 0) return null;
+  const next = rows[at + 1] || rows[at - 1] || null;
+  return next ? next.getAttribute('data-notif-id') : null;
+}
+
+/**
+ * Where focus goes after the × clears a row from the keyboard (#3538). The ×
+ * goes with what it cleared (on Unread the whole row leaves; elsewhere the
+ * row stays and stops being clearable), and a focused node that leaves the
+ * document drops focus on <body>, outside the dialog. So focus moves to the
+ * row itself while it is still there, else to its neighbour, else to the
+ * sheet's close disc.
+ */
+function refocusAfterClear(sheet: Element, id: number, neighbourId: string | null): void {
+  const focusable = (row: Element | null): HTMLElement | null => {
+    if (!row) return null;
+    return (row.matches('button') ? row : row.querySelector('button')) as HTMLElement | null;
+  };
+  const target = focusable(sheet.querySelector(`[data-notif-id="${id}"]`))
+    || (neighbourId ? focusable(sheet.querySelector(`[data-notif-id="${neighbourId}"]`)) : null)
+    || (sheet.querySelector('#notifications-sheet-close') as HTMLElement | null);
+  target?.focus();
+}
+
+type ScreenRowProps = {
+  view: ScreenRowView;
+  /** PlatformUI.isTouch() at render time: the swipe on touch, else the ×. */
+  touch: boolean;
+  /** True on Unread, the one tab a cleared row leaves. */
+  removes: boolean;
+};
+
+/**
+ * One notification row, in a SLOT of its own (#3538).
+ *
+ * CLEARING. An unread row can be cleared without opening it. Clearing is
+ * marking read (clearNotification in ./notifications.js), so the row leaves
+ * Unread and stays in All without its dot; a read row has nothing to clear
+ * and offers nothing. There are two ways to do it, one per kind of hand,
+ * each the way the system the request pointed at does it:
+ *
+ *   - ON A PHONE, the swipe. iOS clears a notification with a swipe to the
+ *     left, and a long swipe clears it outright. The swipe is the kit's
+ *     (PlatformUI.swipeActions), wired the way the Saved and Invite rows in
+ *     ./notifications-list.tsx wire theirs: on touch only, from an effect,
+ *     after mount. The kit gives the row `touch-action: pan-y` and puts its
+ *     drag through the gesture arbiter, so an up-and-down drag on a row
+ *     still scrolls the list, and the kit sheet still pulls down from its
+ *     grabber as it did; the row takes only a drag that reads as sideways.
+ *     The sheet has no sideways gesture of its own (its tabs are tapped), so
+ *     nothing else wants that one.
+ *
+ *     On Unread the long swipe COMMITS, because there the row leaves: it
+ *     slides out and collapses, as on the lock screen. On Messages and All
+ *     the row stays, so the swipe reveals Clear and a tap on it clears. A
+ *     row that slid away and then came straight back without its dot would
+ *     say two different things in half a second. The button is the kit's
+ *     neutral grey on every tab, not the red of its destructive action,
+ *     because clearing deletes nothing.
+ *
+ *   - AT A DESK, the ×. macOS Notification Center puts a small round × on a
+ *     notification's corner while the pointer is over it, and this is that:
+ *     the sheet's own white close disc in miniature, on the corner of the
+ *     row's tile, drawn on hover. It is a real button BESIDE the row, never
+ *     inside it (the row is a button), so it is its own tab stop right after
+ *     the row, drawn while either of them has keyboard focus, and named
+ *     "Clear notification". It is not rendered on touch at all: there is no
+ *     hover there, and an invisible target on a tile's corner is an
+ *     accidental clear waiting to happen.
+ *
+ * WHY THE SLOT. The kit wraps the element it is handed: it moves it into a
+ * `.un-swipe` container it inserts in its place, beside the action tray, and
+ * a full swipe takes that container out of the document before its handler
+ * runs. So the row cannot be a node React places among its siblings, or
+ * React would go on removing it from a parent it is no longer in. That is
+ * why app-context-sheet.tsx's session rows sit in a <div> of their own
+ * (#3515), and it is the same answer here; the × needs a positioned box to
+ * sit in anyway. The slot is KEYED on what decides the kit's hold on the
+ * row, its read state and its shape, so a row that changes either is a new
+ * slot and React drops the old one whole instead of swapping out an element
+ * the kit may still be holding. The hairline between rows follows the
+ * slot's place in the list rather than the row's (app.css).
+ */
+function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
+  const t = useMessages('notifications');
+  const clearable = view.unread;
+  const shape = view.actions && view.actions.length ? 'actions' : 'plain';
+  const rowRef = useRef<HTMLElement | null>(null);
+  const setRow = useCallback((el: HTMLElement | null) => { rowRef.current = el; }, []);
+  useEffect(() => {
+    const el = rowRef.current;
+    const ui = kit();
+    if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
+      actions: [{
+        label: t('notifications:row.clear'),
+        // The kit's full swipe belongs to its destructive action, and it
+        // takes the row out of the document; only Unread wants that.
+        destructive: removes,
+        color: 'var(--un-action-neutral)',
+        handler: () => { void controller()?.clearNotification(view.id); },
+      }],
+    });
+    return () => swipe.detach();
+  }, [clearable, touch, removes, shape, view.id, t]);
+
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
   const body = (
@@ -275,6 +408,13 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             </span>
           )) : view.label}
         </span>
+        {/* #3227: what this kind of row means, for the one kind that needs
+            saying (kudos). It wraps: a truncated explanation explains nothing. */}
+        {view.note ? (
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+            {view.note}
+          </span>
+        ) : null}
         {/* WHERE · WHO · WHEN. Everything the copy used to repeat inside a
             sentence lives on this line instead, which is what let the row
             spend its other two lines on the kind and the subject — see
@@ -286,13 +426,31 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
               in `title` (#1808) — the rest of the line is plain text, and the
               separator rides inside it rather than as a whitespace-only
               child, same rule as everywhere else on this row. */}
-          {[view.appLine, view.by ? `by @${view.by}` : null].filter(Boolean)
-            .map((part, index) => (index ? ` · ${part}` : part)).join('')}
           {view.time ? (
-            <time title={view.timeTitle}>
-              {[view.appLine, view.by].some(Boolean) ? ` · ${view.time}` : view.time}
-            </time>
-          ) : null}
+            /* One message per shape of the line: where from, who, when. The
+               time keeps its own element, separator included, as a tag. */
+            view.appLine && view.by ? (
+              <RichMessage
+                id="notifications:row.meta.sourceByWhen"
+                values={{ source: view.appLine, username: view.by, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : view.appLine ? (
+              <RichMessage
+                id="notifications:row.meta.sourceWhen"
+                values={{ source: view.appLine, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : view.by ? (
+              <RichMessage
+                id="notifications:row.meta.byWhen"
+                values={{ username: view.by, when: view.time }}
+                components={[<time title={view.timeTitle} />]}
+              />
+            ) : <time title={view.timeTitle}>{view.time}</time>
+          ) : view.appLine && view.by
+            ? t('notifications:row.meta.sourceBy', { source: view.appLine, username: view.by })
+            : view.by ? t('notifications:row.meta.by', { username: view.by }) : view.appLine}
         </span>
       </span>
       {/*
@@ -308,13 +466,13 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             + (view.unread
               ? 'bg-violet-600 text-white'
               : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
-          aria-label={`${view.count} notifications`}
+          aria-label={t('notifications:row.runCount', { count: view.count })}
         >
           {view.count > 99 ? '99+' : view.count}
         </span>
       ) : null}
       {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread">
+        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label={t('notifications:row.unreadDot')}>
         </span>
       ) : null}
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
@@ -324,31 +482,30 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
   const actions = view.actions || [];
-  if (actions.length) {
-    return (
-      <div
-        data-notif-id={view.id}
-        // #2386: two actions (a friend request's Accept and Decline) stack
-        // under the text; see RowActions.
-        className={actions.length > 1
-          ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
-          : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+  const row = actions.length ? (
+    <div
+      ref={setRow}
+      data-notif-id={view.id}
+      // #2386: two actions (a friend request's Accept and Decline) stack
+      // under the text; see RowActions.
+      className={actions.length > 1
+        ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
+        : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+    >
+      <button
+        className="min-w-0 flex-1 text-left flex items-center gap-4"
+        onClick={(event) => {
+          event.stopPropagation();
+          controller()?._onItemClick(view.id);
+        }}
       >
-        <button
-          className="min-w-0 flex-1 text-left flex items-center gap-4"
-          onClick={(event) => {
-            event.stopPropagation();
-            controller()?._onItemClick(view.id);
-          }}
-        >
-          {body}
-        </button>
-        <RowActions view={view} actions={actions} />
-      </div>
-    );
-  }
-  return (
+        {body}
+      </button>
+      <RowActions view={view} actions={actions} />
+    </div>
+  ) : (
     <button
+      ref={setRow}
       data-notif-id={view.id}
       className={'notifications-row w-full text-left px-4 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
@@ -359,6 +516,46 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
     >
       {body}
     </button>
+  );
+  return (
+    <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
+      {row}
+      {clearable && !touch ? (
+        <button
+          type="button"
+          data-notification-clear={view.id}
+          aria-label={t('notifications:row.clearLabel')}
+          // Hidden until the pointer is over the slot or something in it has
+          // keyboard focus, and untouchable while hidden, so a click on the
+          // tile's corner opens the row as it always did.
+          className={'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full '
+            + 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/10 hover:bg-zinc-50 '
+            + 'dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800 '
+            + 'pointer-events-none opacity-0 transition-opacity '
+            + 'group-hover/notif:pointer-events-auto group-hover/notif:opacity-100 '
+            + 'group-has-[:focus-visible]/notif:pointer-events-auto group-has-[:focus-visible]/notif:opacity-100 '
+            + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+          onClick={(event) => {
+            // Stopped for the reason every handler in this sheet stops its
+            // click: the re-render takes this node out of the document before
+            // the event finishes bubbling, and an outside-click listener
+            // would then dismiss the sheet under the viewer. The row's own
+            // click is not in the way at all; the × is beside it, not in it.
+            event.stopPropagation();
+            const sheet = event.currentTarget.closest('#notifications-sheet');
+            // `detail` is 0 for a click the keyboard made (Enter or Space).
+            const fromKeyboard = event.detail === 0;
+            const neighbourId = sheet ? neighbourRowId(sheet, view.id) : null;
+            void controller()?.clearNotification(view.id);
+            if (fromKeyboard && sheet) {
+              requestAnimationFrame(() => refocusAfterClear(sheet, view.id, neighbourId));
+            }
+          }}
+        >
+          <XIcon aria-hidden="true" className="h-3 w-3" strokeWidth="2.5" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -374,9 +571,21 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
+    messagesCanLoadMore?: boolean;
+    loadingOlderMessages?: boolean;
+    /** #3538: the rows' clear is a swipe on touch and a × everywhere else. */
+    touch?: boolean;
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // The Unread tab's own reveal (#4700): "See older notifications" shows the
+  // older, mostly read rows IN PLACE instead of jumping to All, and turns
+  // into "Hide older notifications" while they are showing. It is a per-visit
+  // state, not a preference — an effect below collapses it when the sheet
+  // closes or the tab changes, so coming back to Unread starts collapsed
+  // again. It starts false, so the prerendered markup is unchanged.
+  const [olderShown, setOlderShown] = useState(false);
+  const t = useMessages('notifications');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
@@ -396,6 +605,14 @@ export function NotificationsSheetView() {
     if (shot === 'notifications-messages') setTab('messages');
   }, []);
 
+  // The expanded Unread view is forgotten when the sheet closes or you leave
+  // the tab, so each visit to Unread starts collapsed again (see the state
+  // above). An effect, not the initial state, for the hydration reason the
+  // deep link above spells out.
+  useEffect(() => {
+    if (!open || tab !== 'unread') setOlderShown(false);
+  }, [open, tab]);
+
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
   const messages = all.filter((view) => view.conversation || view.agent);
@@ -413,6 +630,11 @@ export function NotificationsSheetView() {
   const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
     : tab === 'messages' ? messages : all;
+  // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
+  // ones already in hand, plus any further page the server still has — show
+  // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
+  // the footer's conditions and counts read it, and the list is `shown`.
+  const shown = tab === 'unread' && olderShown ? all : rows;
   // #2815: the Messages tab interleaves the sessions with its notification
   // rows by time, one list, newest first — the order the Messages screen's
   // chats section keeps. Stable sort, so a tie keeps notifications first.
@@ -431,7 +653,7 @@ export function NotificationsSheetView() {
   const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
-    : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+    : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
@@ -445,7 +667,14 @@ export function NotificationsSheetView() {
       showApp
       onNavigate={() => { NotificationsSheet.close?.(); }}
     />
-  ) : <ScreenRow key={entry.key} view={entry.view} />);
+  ) : (
+    <ScreenRow
+      key={entry.key}
+      view={entry.view}
+      touch={!!snap.touch}
+      removes={tab === 'unread'}
+    />
+  ));
 
   // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
   // row inside a phone-width sheet, so the count wrapped onto a second line
@@ -474,7 +703,7 @@ export function NotificationsSheetView() {
       <div
         id="notifications-sheet"
         role="dialog"
-        aria-label="Notifications"
+        aria-label={t('notifications:sheet.title')}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className={'fixed z-50 flex flex-col dc-lift dc-lift-panel nav-sheet-transition'}
@@ -501,7 +730,7 @@ export function NotificationsSheetView() {
       */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0">
         <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          Notifications
+          {t('notifications:sheet.title')}
         </h2>
         {tab === 'unread' ? (
           <button
@@ -513,7 +742,7 @@ export function NotificationsSheetView() {
             disabled={!unread.length}
             onClick={() => controller()?.markAllRead()}
           >
-            Mark all read
+            {t('notifications:sheet.markAllRead')}
           </button>
         ) : null}
         <button
@@ -521,7 +750,7 @@ export function NotificationsSheetView() {
           type="button"
           className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
             + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           onClick={() => NotificationsSheet.close()}
         >
           <XIcon className="w-5 h-5" />
@@ -532,7 +761,7 @@ export function NotificationsSheetView() {
         className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
           + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
         role="tablist"
-        aria-label="Notification filters"
+        aria-label={t('notifications:sheet.filters')}
       >
         <button
           id="notifications-tab-unread"
@@ -541,7 +770,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
+          {unreadCount ? t('notifications:sheet.tab.unreadCount', { count: unreadCount }) : t('notifications:sheet.tab.unread')}
         </button>
         {/*
             Messages, SECOND. One place to catch up on conversations regardless
@@ -560,7 +789,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'messages')}
           onClick={() => setTab('messages')}
         >
-          Messages
+          {t('notifications:sheet.tab.messages')}
         </button>
         <button
           id="notifications-tab-all"
@@ -569,7 +798,7 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'all')}
           onClick={() => setTab('all')}
         >
-          All
+          {t('notifications:sheet.tab.all')}
         </button>
       </div>
       {/* The sheet's own scroller. The screen root used to be the scroller;
@@ -629,7 +858,7 @@ export function NotificationsSheetView() {
         >
           <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
           <span className="flex-1 min-w-0">
-            All messages
+            {t('notifications:sheet.allMessages')}
           </span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
         </button>
@@ -639,7 +868,7 @@ export function NotificationsSheetView() {
       {today.length ? (
         <>
           <SectionHead>
-            Today
+            {t('notifications:sheet.today')}
           </SectionHead>
           {today.map(renderEntry)}
         </>
@@ -647,14 +876,14 @@ export function NotificationsSheetView() {
       {earlier.length ? (
         <>
           <SectionHead>
-            Earlier
+            {t('notifications:sheet.earlier')}
           </SectionHead>
           {earlier.map(renderEntry)}
         </>
       ) : null}
       {!entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
+          {tab === 'unread' ? t('notifications:sheet.empty.unread') : t('notifications:sheet.empty.other')}
         </p>
       ) : null}
       {/*
@@ -669,10 +898,16 @@ export function NotificationsSheetView() {
           now pages itself on its own cursor. See
           Notifications.loadOlderMessages for why that cursor is separate.
 
-          On UNREAD it is still the All tab, and for the reason above that has
-          not changed: paging Unread means asking for more of the thing you are
-          trying to get to zero, and the older rows are mostly read. What you
-          want from the bottom of that list is the unfiltered one.
+          On UNREAD it shows the older rows IN PLACE (#4700), where it used to
+          be the All tab. Paging Unread still cannot mean "more of the thing
+          you are trying to get to zero" — the older rows are mostly read, and
+          that is exactly why they now show UNDER the unread ones instead of
+          somewhere else. The collapsed footer reveals them, walking the same
+          loadOlder cursor the All tab's pager uses (a no-op on its own when
+          every loaded row is already in hand); once they are showing the
+          button reads "Hide older notifications" and collapses the list back
+          to just the unread ones, and a further page offers the ordinary
+          pager above it.
 
           On ALL it is the loader it always was.
 
@@ -690,10 +925,10 @@ export function NotificationsSheetView() {
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
-            {snap.loadingOlderMessages ? 'Loading…' : 'See older message notifications'}
+            {snap.loadingOlderMessages ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.messages')}
           </button>
         </div>
-      ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
+      ) : tab === 'messages' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older"
@@ -701,9 +936,50 @@ export function NotificationsSheetView() {
             className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
             onClick={() => setTab('all')}
           >
-            See older notifications
+            {t('notifications:sheet.older.showAll')}
           </button>
         </div>
+      ) : tab === 'unread' && !olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <div className="px-4 py-3">
+          <button
+            id="notifications-see-older"
+            type="button"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            disabled={snap.loadingMore}
+            onClick={() => {
+              setOlderShown(true);
+              controller()?.loadOlder();
+            }}
+          >
+            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.reveal')}
+          </button>
+        </div>
+      ) : tab === 'unread' && olderShown && (all.length > unread.length || snap.screenCanLoadMore) ? (
+        <>
+          {snap.screenCanLoadMore ? (
+            <div className="px-4 py-3">
+              <button
+                id="notifications-load-older"
+                type="button"
+                className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+                disabled={snap.loadingMore}
+                onClick={() => controller()?.loadOlder()}
+              >
+                {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
+              </button>
+            </div>
+          ) : null}
+          <div className="px-4 py-3">
+            <button
+              id="notifications-hide-older"
+              type="button"
+              className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
+              onClick={() => setOlderShown(false)}
+            >
+              {t('notifications:sheet.older.hide')}
+            </button>
+          </div>
+        </>
       ) : tab === 'all' && snap.screenCanLoadMore ? (
         <div className="px-4 py-3">
           <button
@@ -713,7 +989,7 @@ export function NotificationsSheetView() {
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >
-            {snap.loadingMore ? 'Loading…' : 'See older notifications'}
+            {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
           </button>
         </div>
       ) : null}

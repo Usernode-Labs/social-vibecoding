@@ -99,7 +99,9 @@ test('home PTR routes through _refreshOrReload', () => {
     appJs.indexOf('_wirePullToRefresh() {'),
     appJs.indexOf('bindEvents() {')
   );
-  assert.match(fn, /pullToRefresh\(home,\s*\n?\s*\(\) => App\._refreshOrReload\(\(\) => Home\.load\(\)\)\)/);
+  // #3985: the pull also reads Home's Challenges block again, fresh, before
+  // Home.load() joins that read.
+  assert.match(fn, /pullToRefresh\(home,\s*\n?\s*\(\) => App\._refreshOrReload\(\(\) => Promise\.all\(\[\s*window\.HomePanels\?\.ensureLoaded\?\.\(\{ force: true, fresh: true \}\),\s*Home\.load\(\),\s*\]\)\)\)/);
 });
 
 test('landing PTR routes through _refreshOrReload', () => {

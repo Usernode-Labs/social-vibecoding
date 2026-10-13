@@ -3,7 +3,8 @@
 //   - GET /api/public/apps — view-public apps with embedded contributors.
 //   - GET /api/public/apps/:slug/contributors — one app's contributors.
 //   - the include_wallets opt-out.
-//   - 404 (non-disclosure) for view-private / self-hosted / unknown slugs.
+//   - 404 (non-disclosure) for view-private / self-hosted / suspended /
+//     hidden-status / unknown slugs.
 //   - GET /api/public/waitlist/options — the survey definitions plus the
 //     configured marketing waitlist URL.
 //
@@ -82,9 +83,15 @@ const APPS = [
 
 // Per-slug resolve table for the contributors route.
 const APP_BY_SLUG = {
-  'app-one': { id: 1, slug: 'app-one', self_hosted: false, view_visibility: 'public' },
-  'secret-app': { id: 9, slug: 'secret-app', self_hosted: false, view_visibility: 'private' },
-  'self-app': { id: 10, slug: 'self-app', self_hosted: true, view_visibility: 'public' },
+  'app-one': { id: 1, slug: 'app-one', self_hosted: false, view_visibility: 'public', status: 'running', moderation_suspended_at: null },
+  'secret-app': { id: 9, slug: 'secret-app', self_hosted: false, view_visibility: 'private', status: 'running', moderation_suspended_at: null },
+  'self-app': { id: 10, slug: 'self-app', self_hosted: true, view_visibility: 'public', status: 'running', moderation_suspended_at: null },
+  // View-public but left out of the public directory: suspended by
+  // moderators, or in one of the hidden statuses.
+  'suspended-app': { id: 11, slug: 'suspended-app', self_hosted: false, view_visibility: 'public', status: 'running', moderation_suspended_at: '2026-09-01T00:00:00.000Z' },
+  'error-app': { id: 12, slug: 'error-app', self_hosted: false, view_visibility: 'public', status: 'error', moderation_suspended_at: null },
+  'creating-app': { id: 13, slug: 'creating-app', self_hosted: false, view_visibility: 'public', status: 'creating', moderation_suspended_at: null },
+  'secrets-app': { id: 14, slug: 'secrets-app', self_hosted: false, view_visibility: 'public', status: 'awaiting_secrets', moderation_suspended_at: null },
 };
 
 function makeMockPool() {
@@ -268,6 +275,38 @@ test('contributors: 404 for a self-hosted app', async () => {
   } finally { await srv.close(); }
 });
 
+test('contributors: 404 for an app moderators suspended', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/apps/suspended-app/contributors');
+    assert.equal(status, 404);
+    assert.deepEqual(body, { error: 'App not found' });
+  } finally { await srv.close(); }
+});
+
+test('contributors: 404 for every hidden app status, same body as unknown', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const unknown = await get(srv.baseUrl, '/api/public/apps/nope/contributors');
+    for (const slug of ['error-app', 'creating-app', 'secrets-app']) {
+      const { status, body } = await get(srv.baseUrl, `/api/public/apps/${slug}/contributors`);
+      assert.equal(status, 404, slug);
+      assert.deepEqual(body, unknown.body, slug);
+    }
+  } finally { await srv.close(); }
+});
+
+test('contributors: the per-slug read and the directory share one hidden-status list', () => {
+  const route = withMockPool(makeMockPool(), () => require('../src/routes/public-api'));
+  const directory = require('../src/services/public-app-directory');
+  assert.equal(route.HIDDEN_APP_STATUSES, directory.HIDDEN_APP_STATUSES);
+  for (const status of directory.HIDDEN_APP_STATUSES) {
+    assert.equal(directory.isPublicDirectoryApp({ ...APP_BY_SLUG['app-one'], status }), false, status);
+  }
+  assert.equal(directory.isPublicDirectoryApp(APP_BY_SLUG['app-one']), true);
+  assert.equal(directory.isPublicDirectoryApp(undefined), false);
+});
+
 test('contributors: 404 for an unknown slug', async () => {
   const srv = await startTestServer(makeMockPool());
   try {
@@ -365,7 +404,7 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'marketing_url', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live

@@ -37,17 +37,21 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
+import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
+import { useDismissibleOpen } from '../../lib/back-stack';
+import { HeaderPlace } from '../dev-board/workshop/place-bar';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -205,6 +209,7 @@ function appRouteUpHref(
 }
 
 export function PlatformHeader() {
+  const t = useMessages();
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -214,6 +219,8 @@ export function PlatformHeader() {
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+  // Inside a project, the bar wears its community's colour (./community-tint.ts).
+  useCommunityHeaderTint();
 
   // The back slot's state (see ./back-button-store.js): App.setBackIcon
   // publishes here rather than writing `hidden` into React-owned DOM.
@@ -227,7 +234,7 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView, topicOrigin,
+    sessionOrigin, boardView, topicOrigin, name: appName,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
@@ -273,12 +280,12 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  const dialogOpen = useDismissibleOpen();
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
-    paneHref: paneBack,
+    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen,
   }));
 
   return (
@@ -499,7 +506,7 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
+            aria-label={backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home')}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -532,6 +539,18 @@ export function PlatformHeader() {
               className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
           </a>
+          {/*
+              #4703: THE MERGED HEADER'S PLACES BUTTON, on a phone. A project
+              page under 768px carries its place bar's contents here — this
+              button, then the place's name after the switcher — and the
+              second coloured row is gone. The page owns the tray and
+              published the toggle (place-store.ts); this only draws the
+              button and calls it. Nothing renders until the phone flag is
+              settled in an effect and a page for this project is mounted, so
+              the prerender and the first client render are untouched, and on
+              a wide window the bar draws none at all.
+          */}
+          <HeaderPlace slug={backSlug} name={appName || ''} />
         </div>
         {/*
             The screen's only h1 — a NAME, not a control, since #2718. It was
@@ -685,7 +704,7 @@ export function PlatformHeader() {
             id="notifications-btn"
             href="#notifications"
             className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
-            aria-label="Notifications"
+            aria-label={t('core:header.notifications')}
             aria-haspopup="dialog"
             onClick={(event) => {
               if ((window as any).NavLink?.isNativeClick?.(event)) return;
@@ -707,7 +726,7 @@ export function PlatformHeader() {
               */
               data-session-done="0"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread notifications"
+              aria-label={t('core:header.unreadNotifications')}
             >
             </span>
           </a>

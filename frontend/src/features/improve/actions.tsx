@@ -1,6 +1,7 @@
 /**
- * The two ACTIONS and the update NOTICE, which is all that outlived the
- * Improve panel (#2718 review).
+ * The ACTION and the update NOTICE, which is all that outlived the Improve
+ * panel (#2718 review). There were two actions until the UI overhaul; see
+ * ImproveQuickActions.
  *
  * The panel was a drawer you opened from a row in the mark's menu to reach
  * two buttons, a list of sessions and a notice. The sessions are the
@@ -17,22 +18,20 @@
 import { type ReactNode } from 'react';
 
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
 /**
- * `flex-1 basis-0` so the two share the row evenly, which is what "next to
- * each other" asks for and what the panel's own well did.
+ * `flex-1` so the one action spans the menu's width, which is what the
+ * design draws: a single filled button over the list, not two sharing a row.
  *
- * Every id is the one it has always had: `#improve-row-feedback` is what the
- * outbox dot's writer selects and `#improve-row-new-session` has named
- * Improve.startSession() since the panel existed. Both are ids, so both can
- * exist exactly once — which is why the panel had to go rather than sit
- * behind the menu carrying a second copy.
+ * The id is the one it has always had: `#improve-row-feedback` is what the
+ * outbox dot's writer selects, and an id can exist exactly once.
  */
 const ACTION_BASE =
-  'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-9 px-3 '
+  'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-10 px-3 '
   + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
 
 const ACTION_FILL =
@@ -56,20 +55,31 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Give feedback, then New change.
+ * Suggest an improvement: ONE BUTTON, where there were two (UI overhaul).
  *
- * FEEDBACK LEADS, because it is the one action that needs nothing of the
- * viewer — no collaborator bit, no session, no repo — and New change is
- * hidden outright for a viewer who may not write. "Give feedback", not
- * "Feedback": both are things you DO, and a bare noun beside the verb phrase
- * read as a category label sitting next to an action.
+ * The menu offered "Give feedback" and "New change" side by side, and people
+ * found both confusing: feedback read as a note to nobody in particular, and
+ * New change started an agent session without saying so. The two did the
+ * same thing from where the viewer stands, asking for something to change,
+ * and differed in who does the work. So the button asks for the change (the
+ * same dialog, headed "Suggest an improvement", which posts a request members
+ * can see, vote on and pick up), and building it yourself is "Build it
+ * now", Messages' "+" choice, in the Agents list that is agent chats' one
+ * home (#4729: it also led the Homeroom menu's Agent chats section, which
+ * has since left the menu whole). Until then this button is the menu's one
+ * way to change the app, which is the point for a first-time user.
+ *
+ * It said "Ask for a change" until the first-session run-through (5 Oct
+ * 2026), which asked for words a first-time user would use.
+ *
+ * It needs nothing of the viewer (no collaborator bit, no session, no repo),
+ * so it is always shown.
  *
  * ON THE PLATFORM TOO. The panel's target could be the platform's own
- * self-hosted row (#1367), and so can this: on Home these act on Homeroom
- * itself, which is what "that also shows up on the platform" asks for.
+ * self-hosted row (#1367), and so can this: on Home it asks Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
-  const state = useStoreState(improveStore);
+  const t = useMessages('agent');
   return (
     <div
       id="improve-quick-actions"
@@ -77,16 +87,9 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Give feedback"
+        label={t('agent:menu.suggestImprovement')}
         onClick={() => Improve.giveFeedback()}
       />
-      {state.readOnly ? null : (
-        <QuickAction
-          id="improve-row-new-session"
-          label="New change"
-          onClick={() => Improve.startSession()}
-        />
-      )}
     </div>
   );
 }
@@ -123,6 +126,7 @@ export function ImproveQuickActions(): ReactNode {
  * the wording.
  */
 function UpdateStatus(): ReactNode {
+  const t = useMessages('agent');
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   const platformBusy = versionState === 'deploying' || versionState === 'downloading';
   const ready = versionState === 'ready' || versionState === 'failed';
@@ -139,7 +143,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          There is a new version available. Click here to get the new version.
+          {t('agent:menu.update.platformReady')}
         </span>
       </button>
     );
@@ -157,7 +161,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          This app has a new version. Click here to reload it.
+          {t('agent:menu.update.appReady')}
         </span>
       </button>
     );
@@ -168,9 +172,9 @@ function UpdateStatus(): ReactNode {
     // says the more surprising of the two.
     const line = platformBusy
       ? (versionState === 'downloading'
-        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
-        : 'A new version of the platform is being built.')
-      : 'A new version of this app is being built.';
+        ? t('agent:menu.update.platformDownloading')
+        : t('agent:menu.update.platformBuilding'))
+      : t('agent:menu.update.appBuilding');
     return (
       <div
         id="improve-update-note"

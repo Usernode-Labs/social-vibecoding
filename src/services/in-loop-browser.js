@@ -63,9 +63,11 @@ function browserEnvForMode(mode) {
 
 // Injected into the build prompt's INSTRUCTIONS. Optional + encouraged, with
 // the hooks that make the agent likely to actually reach for it: reuse the
-// TESTING-block `path:` routes it already reasons about, the "blank page may
-// mean missing seed data, not a bug" reminder, and a tight verify-fix budget
-// so it can't loop. Phrased so it's clearly NOT a forced gate.
+// TESTING-block `path:` routes it already reasons about, the order in which
+// to read a blank page (the page's own console and assets first — the launch
+// serves them as production does — and only then missing seed data), and a
+// tight verify-fix budget so it can't loop. Phrased so it's clearly NOT a
+// forced gate.
 const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT required): a headless browser is
   available to you on build turns via the Playwright MCP tools
   (\`browser_navigate\`, \`browser_console_messages\`, \`browser_take_screenshot\`,
@@ -83,7 +85,12 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     \`DATABASE_URL=$INLOOP_DATABASE_URL\`, and applies only the manifest's
     committed \`staging_default\` / \`default\` values. If a required value
     has no committed local fallback, it reports the missing key and stops;
-    do not invent one. Then point the
+    do not invent one. It also serves the app the way production does: it
+    runs the app's \`npm run build\` first (a failing build stops the
+    launch — the image would fail the same way), and on
+    \`$INLOOP_PORT\` it answers \`/usernode-bridge/\`, \`/usernode-native/\`
+    and \`/usernode-tailwind/\` from the platform, as the production edge
+    does, while the app itself listens on an internal port. Then point the
     browser at \`http://127.0.0.1:$INLOOP_PORT\` joined with the SAME route(s)
     you put in the TESTING block's \`path:\` lines. The app boots in staging
     mode against a FRESH, EMPTY local database — a real Postgres runs in
@@ -91,8 +98,16 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     so seed any data your route needs in this same commit per the "Staging
     mock data" convention. A protected route also needs an existing local
     test sign-in; a login screen is not evidence that the changed route works.
-  - A BLANK or empty-looking page usually means MISSING SEED DATA, not a bug —
-    the local DB starts empty. Check the app's existing staging fixtures or
+  - A BLANK, unstyled or broken-looking page is a BUG until you have ruled
+    the page itself out: read \`browser_console_messages\` and confirm every
+    stylesheet and script loaded. Because this launch builds and serves the
+    app as production does, a failed or empty asset here fails for users
+    too. NEVER make the app answer a hosted-asset path or its own built
+    stylesheet (e.g. \`/tailwind.css\`) with an empty or 204 response to
+    quiet a console error — an app that did exactly that shipped a blank
+    production page for days. Only once the page itself is sound, suspect
+    MISSING SEED DATA, not a bug — the local DB starts empty. Check the
+    app's existing staging fixtures or
     \`?demo=1\` route first. A sign-in screen means the browser is signed out.
     Use the app's already documented fake staging account through its normal
     sign-in flow if one exists. Do not edit product authentication or create a
@@ -159,6 +174,9 @@ const HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE = `- Follow the complete "In-loop b
   "Staging mock data", and screenshot-state rules supplied in the authoritative
   system instructions. The browser remains optional for ordinary work and is
   expected when verifying a screenshot-state deep link added this turn.
+  - \`usernode-run-inloop\` builds the app and serves the platform's hosted
+    assets as production does, so a blank page or a failed stylesheet or
+    script there is a real bug. Never silence one with an empty response.
   - If you changed \`dapp.json\` tests, try to boot the app and run
     \`usernode-run-checks --changed\`. If you changed a screen covered by an
     unchanged check, use \`usernode-run-checks --filter <distinctive name or path>\`;

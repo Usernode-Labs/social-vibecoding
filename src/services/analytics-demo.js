@@ -175,7 +175,7 @@ function funnels() {
   const producedPr = step(started, 6011, 30);
   const promoted = step(producedPr, 6012, 20);
   const receivedVote = step(promoted, 6013, 12);
-  const mergedS = step(receivedVote, 6014, 6);
+  const mergedS = step(promoted, 6014, 6);
 
   const uStarted = 118;
   const uProduced = step(uStarted, 6021, 20);
@@ -189,6 +189,26 @@ function funnels() {
       returned, returned_admin: 4,
       engaged, engaged_admin: 3,
       creators, creators_admin: 2,
+      coverage: {
+        status: 'observed_receipts', startsAt: `${isoDay(120)}T00:00:00.000Z`,
+        observationWindowDays: 30, cohort_size: 430, cohort_size_admin: 8,
+        eligible: signedUp, eligible_admin: 6, maturing: 18, maturing_admin: 2,
+        unknown_coverage: 0, unknown_coverage_admin: 0,
+      },
+      provisional: {
+        signed_up_provisional: 18, signed_up_provisional_admin: 2,
+        opened_dapp_provisional: 12, opened_dapp_provisional_admin: 1,
+        returned_provisional: 7, returned_provisional_admin: 1,
+        engaged_provisional: 4, engaged_provisional_admin: 0,
+        creators_provisional: 2, creators_provisional_admin: 0,
+      },
+    },
+    dappReach: {
+      signed_up: signedUp, signed_up_admin: 6,
+      opened_dapp: openedDapp, opened_dapp_admin: 5,
+      returned, returned_admin: 4,
+      engaged: Math.min(signedUp, engaged + 45), engaged_admin: 4,
+      creators: Math.min(signedUp, creators + 24), creators_admin: 3,
     },
     prSessions: {
       started, started_admin: 12,
@@ -196,11 +216,27 @@ function funnels() {
       promoted, promoted_admin: 7,
       received_vote: receivedVote, received_vote_admin: 5,
       merged: mergedS, merged_admin: 4,
+      merged_without_vote: Math.max(0, mergedS - receivedVote), merged_without_vote_admin: 1,
+      coverage: {
+        status: 'observed_receipts', startsAt: `${isoDay(180)}T00:00:00.000Z`,
+        observationWindowDays: 30, cohort_size: 310, cohort_size_admin: 15,
+        eligible: started, eligible_admin: 12, maturing: 19, maturing_admin: 2,
+        unknown_coverage: 0, unknown_coverage_admin: 0,
+        excluded: 5, excluded_admin: 1,
+      },
+      provisional: {
+        started_provisional: 19, started_provisional_admin: 2,
+        produced_pr_provisional: 11, produced_pr_provisional_admin: 1,
+        promoted_provisional: 6, promoted_provisional_admin: 1,
+        received_vote_provisional: 3, received_vote_provisional_admin: 0,
+        merged_provisional: 2, merged_provisional_admin: 0,
+      },
     },
     prUsers: {
       started: uStarted, started_admin: 5,
       produced_pr: uProduced, produced_pr_admin: 4,
       promoted: uPromoted, promoted_admin: 3,
+      received_vote: step(uStarted, 6024, 10), received_vote_admin: 2,
       merged: uMerged, merged_admin: 2,
     },
   };

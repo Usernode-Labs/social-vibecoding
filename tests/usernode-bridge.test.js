@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const unversionedBridgePath = path.join(root, 'public', 'usernode-bridge.js');
@@ -245,46 +246,48 @@ test('the LLM relay answers every frame the shell owns, and always answers', () 
   // recognised must never be left to time out as "there is no shell here".
   assert.ok(relay.indexOf("__usernode_llm: 'ack'") < relay.indexOf('appSlugForFrame'),
     'the ack precedes the slug resolution');
-  assert.match(relay, /reply\(null, 'This app could not be identified[^']*'\)/);
-  assert.match(relay, /Sign in to Homeroom to give an app access to AI/);
+  assert.match(relay, /reply\(null, PlatformI18n\.t\('changes:bridge\.appNotIdentified'\)\)/);
+  assert.equal(message('changes:bridge.appNotIdentified'), 'This app could not be identified. Reopen it and try again.');
+  assert.match(relay, /PlatformI18n\.t\('changes:bridge\.llmSignedOut'\)/);
+  assert.equal(message('changes:bridge.llmSignedOut'), 'Sign in to Homeroom to give an app access to AI.');
   // Session-authenticated, same-origin — the bridge holds no credential.
   assert.match(relay, /credentials: 'same-origin'/);
 });
 
-// Floating Homeroom mark on chromeless share views — additive within v1.
-// Shown only on a production app subdomain (<label>.<platformHost>, no
-// "--" in the label), top frame, no native channel, not the platform's
-// own document; links back to the in-chrome App tab. Persistent, with no
-// dismiss control (#2705) — the affordance is an icon rather than a
-// labelled pill precisely so it can afford to stay.
+// The Homeroom button on an app opened at its own address (#3657, which
+// replaced #2705's bottom-left mark). Shown only on a production app host
+// (one clean label under the deployment's apps domain), top frame, no native
+// channel, not the platform's own document. Persistent, small, and drawn in
+// a closed shadow root.
 //
 // These are source-text assertions, which is exactly what let the
-// original defect through: every one of them passed while the pill
-// rendered on nothing. The BEHAVIOUR — which hostnames draw a mark and
-// which do not — is pinned in tests/bridge-platform-mark.test.js, which
-// runs this block against a fake DOM.
-test('hosted bridge injects the back-to-platform mark on share views', () => {
+// original pill's defect through. The BEHAVIOUR (which hostnames draw a
+// button, what the panel holds, where it links) is pinned in
+// tests/bridge-platform-mark.test.js, which runs the block against a fake
+// DOM.
+test('hosted bridge draws the Homeroom button on an app opened at its own address', () => {
   const bridge = readBridge(versionedBridgePath);
 
   assert.match(bridge, /__un-platform-link/);
-  // Canonical App-tab deep link: https://<platformHost>/app/<slug>.
-  assert.match(bridge, /"\/app\/" \+ label/);
-  // Staging previews (<slug>--s<id>) must not get the mark.
+  // Where the platform is comes from the platform's own document on this
+  // origin, never from the hostname alone or from the app.
+  assert.match(bridge, /"\/usernode-bridge\/v1\/platform\.json"/);
+  // Open in Homeroom: https://<platform>/#app/<slug>.
+  assert.match(bridge, /"\/#app\/" \+ slug/);
+  // Staging previews (<slug>--s<id>) must not get the button.
   assert.match(bridge, /label\.indexOf\("--"\) !== -1/);
   // Never inside the platform iframe or the Flutter WebView.
   assert.match(bridge, /_inIframe \|\| _hasNativeChannel/);
-  // Nor on the platform's own top-frame document, which loads this same
-  // bridge from the apex and says so (frontend/src/head.html).
+  // Nor on the platform's own top-frame document (frontend/src/head.html).
   assert.match(bridge, /window\.__usernodePlatformShell/);
-  // Nothing about the mark is remembered between loads, dismissal least
-  // of all — there is no dismiss control to remember.
+  // Out of the app's reach.
+  assert.match(bridge, /attachShadow\(\{ mode: "closed" \}\)/);
+  // Nothing about it is remembered between loads.
   assert.doesNotMatch(bridge, /__un_platform_link_dismissed/);
   assert.doesNotMatch(bridge, /sessionStorage[^\n]*platform_link/i);
-  // An app that still names a host in its tag gets that name checked
-  // against the one its subdomain implies, rather than ignored.
+  // An app that still names a host in its tag gets that name checked.
   assert.match(bridge, /document\.currentScript/);
-  // The mark rides the centrally hosted asset prefixes, so it resolves
-  // on the app's own origin and no app carries a platform hostname.
+  // The mark rides the centrally hosted asset prefixes.
   assert.match(bridge, /"\/usernode-bridge\/v1\/mark\.svg"/);
 });
 

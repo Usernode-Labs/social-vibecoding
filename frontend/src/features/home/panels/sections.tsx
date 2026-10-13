@@ -33,6 +33,7 @@
 
 import type { ReactNode } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
@@ -93,11 +94,15 @@ function Section({
  * bundle's own store through a hook cannot be handed a sandbox's state.
  */
 export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
+  const t = useMessages('home');
   return (
     <Section
       id="home-discover-section"
       slot="discover"
-      label="Discover"
+      // #4184: the section names what its cards are. Only this heading: the
+      // tab bar's "Discover", "Browse all apps" and the panel registry's
+      // title keep their words. At 320px it ellipsises beside the link.
+      label={t('home:discover.heading')}
       // CONSTANT, like the label: both are rendered in the prerender and by
       // the first client render, so neither can disagree with the document
       // the shell ships. Nothing here reads the view model — the ⋮ names its
@@ -117,11 +122,12 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
 // COMPOSITION and are selected on the article itself, which is where the
 // string renderer put them too.
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
+  const t = useMessages('home');
   return (
     <Section
       id="home-challenges-section"
       slot="challenges"
-      label="Challenges"
+      label={t('home:challenges.heading')}
       // NO TRAILING COUNTER. "· 1 of 6 · 3,900 pts left" rode here, shrunk to
       // 12px because at the label's own size it pushed "Challenges" into an
       // ellipsis on a phone — a fix that left a heading carrying the area's

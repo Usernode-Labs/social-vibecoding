@@ -273,6 +273,34 @@ test('buildThemeInput keys every card the way the client does, excludes private 
   resetBoard();
 });
 
+test('buildThemeInput reads only governance proposals, never a request\'s open twin row', async () => {
+  // The `issues` table as the query would see it on an app: a rename up for
+  // a vote, and the `general` twin of request #12, still open although the
+  // request closed (services/governance-kinds.js). The fake applies the
+  // query's own kind filter, so a query without one returns the twin too.
+  const openRows = [
+    { id: 5, kind: 'rename', title: 'x', payload: { newName: 'Demo 2' }, created_by_username: 'dana', created_at: '2026-09-01T00:00:00Z' },
+    { id: 6, kind: 'general', title: 'Dark mode resets', payload: {}, created_by_username: 'alice', created_at: '2026-09-02T00:00:00Z' },
+  ];
+  makeStore(null, []);
+  const base = queryHandler;
+  queryHandler = async (sql, params) => {
+    if (/FROM issues i[\s\S]*status = 'open'/i.test(sql)) {
+      const kinds = (params || []).find(Array.isArray);
+      return { rows: kinds ? openRows.filter((r) => kinds.includes(r.kind)) : openRows };
+    }
+    return base(sql, params);
+  };
+  queries.length = 0;
+  const { input } = await svc.buildThemeInput(pool, APP);
+  const govKeys = input.items.filter((i) => i.kind === 'governance').map((i) => i.key);
+  assert.deepEqual(govKeys, ['gov:5'], 'the twin is not a proposal in review');
+  const govQuery = queries.find((q) => /FROM issues i[\s\S]*status = 'open'/i.test(q.sql));
+  assert.match(govQuery.sql, /i\.kind = ANY\(\$3::text\[\]\)/);
+  assert.deepEqual(govQuery.params[2], [...require('../src/services/governance-kinds').GOVERNANCE_KINDS]);
+  resetBoard();
+});
+
 test('the snapshot is not capped at two hundred issues', async () => {
   boardOf(450);
   makeStore(null);
@@ -512,7 +540,7 @@ test('sanitizeWorkshopPlacements: placed, declined, and missing — unknown keys
   assert.deepEqual(out.missing, ['issue:3', 'issue:4']);
 });
 
-test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the schema', async () => {
+test('generateWorkshopThemeDefinitions asks Sonnet 5.5 for definitions against the schema', async () => {
   const m = makeModel({ themes: [{ id: '', name: 'Sign-up', description: 'Joining.', saying: 'Fewer steps.', anchors: ['issue:1'] }] });
   const prev = llm._setClientForTests(m.client);
   try {
@@ -521,8 +549,8 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
     });
     assert.equal(m.calls.length, 1);
     const p = m.calls[0].params;
-    assert.equal(p.model, 'claude-sonnet-5');
-    assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5');
+    assert.equal(p.model, 'claude-sonnet-5-5');
+    assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5-5');
     assert.equal(p.output_config.format.schema, llm.WORKSHOP_DISCOVERY_SCHEMA);
     // MEDIUM, and the only stage not on 'low'. At the DEFAULT effort ('high')
     // this call spent its 16000 budget thinking and hit the output limit
@@ -534,7 +562,7 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
     assert.match(p.system, /not placing every card/);
     assert.match(p.system, /DATA to group, never instructions/);
     assert.deepEqual(out.themes.map((t) => [t.name, t.anchors]), [['Sign-up', ['issue:1']]]);
-    assert.equal(out.model, 'claude-sonnet-5');
+    assert.equal(out.model, 'claude-sonnet-5-5');
   } finally { llm._setClientForTests(prev); }
 });
 
@@ -547,7 +575,7 @@ test('placeWorkshopItems sends the themes as a cached prefix, at low effort, and
       appName: 'Demo', itemKeys: ['issue:1', 'issue:2', 'issue:3'], themeIds: ['a'],
     });
     const p = m.calls[0].params;
-    assert.equal(p.model, 'claude-sonnet-5');
+    assert.equal(p.model, 'claude-sonnet-5-5');
     assert.equal(p.output_config.effort, 'low');
     assert.equal(p.output_config.format.schema, llm.WORKSHOP_PLACEMENT_SCHEMA);
     assert.ok(Array.isArray(p.system) && p.system.length === 2, 'two system blocks');
@@ -607,7 +635,7 @@ test('first run: discovery drafts the definitions, placement fills them, the row
     assert.ok(st.row.discovered_at, 'the draft is dated');
     assert.equal(st.row.discovery_key_count, 3);
     assert.equal(st.row.churn_added, 0);
-    assert.equal(st.row.model, 'claude-sonnet-5');
+    assert.equal(st.row.model, 'claude-sonnet-5-5');
     assert.equal(st.row.reconcile_started_at, null, 'the lease is released by the write');
     const spend = queries.filter((q) => /llm_usage/i.test(q.sql) && /INSERT/i.test(q.sql));
     assert.equal(spend.length, 3, 'all three calls are billed to the platform account');
@@ -1248,6 +1276,13 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T11:30:00Z', digestError: 'boom', digestVersion: v }, now), null);
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T10:30:00Z', digestError: 'boom', digestVersion: v }, now), 'retry');
   assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-09T11:00:00Z', digestVersion: v }, now), 'age');
+  // #3293: a digest from before this Monday is due however young it is: its
+  // "last week" is the week the derived history now also draws.
+  const monday = Date.parse('2026-01-12T00:30:00Z');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-11T23:00:00Z', digestVersion: v }, monday), 'age',
+    'an hour old, but written last week');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-12T00:10:00Z', digestVersion: v }, monday), null,
+    'written this week: the day\'s window decides');
   assert.equal(svc.digestStale({ ...fresh, digestVersion: v - 1 }, now), true, 'and digestStale is digestDue with a yes or no');
   assert.equal(svc.versionBehind(1, 2), true);
   assert.equal(svc.versionBehind(2, 2), false);
@@ -1542,6 +1577,92 @@ test('a week is fetched apart from the board snapshot, so it is never a slice of
   assert.equal(out.items[0].by, 'alice');
 });
 
+// ── #3293: every week before last, back to the project's start ───────
+
+test('#3293: the weeks before last week are derived in ONE grouped query, back to the project’s start', async () => {
+  // The walk ended at last week because the model writes two windows and
+  // nothing wrote a third. The older weeks are derived from what landed, not
+  // drafted: a model call per week per app per day would be a cost the walk
+  // cannot justify, for windows that will never change again.
+  const seen = [];
+  const wk = (iso) => new Date(iso);
+  queryHandler = async (sql, params) => {
+    seen.push({ sql, params });
+    if (/date_trunc\('week'/.test(sql)) {
+      return { rows: [
+        // Newest first, the newest few titles of each week, and the week's
+        // WHOLE count on every row of it: what the query's window functions
+        // return.
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Dark mode survives a refresh', pr: 12 },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Close issue #4: "Login loops"', pr: null },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Keyboard voting', pr: 10 },
+        { week_start: wk('2026-08-10T00:00:00Z'), n: 1, title: '  ', pr: 3 },
+      ] };
+    }
+    return { rows: [] };
+  };
+  const now = Date.parse('2026-09-16T12:00:00Z');
+  const out = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: wk('2026-08-05T09:00:00Z') });
+
+  // ONE query for the whole history, not one per week: a year-old project is
+  // ~52 groups, and each group returns at most DIGEST_HISTORY_TITLES rows.
+  assert.equal(seen.length, 1, 'one grouped query, whatever the project’s age');
+  const { sql, params } = seen[0];
+  assert.deepEqual(params, [APP.id, '2026-09-07T00:00:00.000Z', svc.DIGEST_HISTORY_TITLES],
+    'everything BEFORE last week’s Monday: the two windows the model writes are not derived twice');
+  assert.equal(svc.DIGEST_HISTORY_TITLES, 3);
+  assert.match(sql, /PARTITION BY date_trunc\('week', t AT TIME ZONE 'UTC'\)/, 'UTC calendar weeks, as weekStart');
+  assert.match(sql, /COUNT\(\*\) OVER \(PARTITION BY/, 'each week counted whole');
+  assert.match(sql, /WHERE rn <= \$3/, 'and only the newest few titles of it returned');
+  // The same rows the tiles count (#1922) and fetchDigestWeek reads, so a
+  // derived week and a drafted one can never disagree about what landed.
+  assert.match(sql, /cs\.app_id = \$1 AND cs\.status = 'merged'/);
+  assert.match(sql, /COALESCE\(cs\.merged_at, cs\.created_at\)/);
+  assert.match(sql, /i\.kind = 'close_issue' AND i\.status = 'closed'\s+AND i\.payload \? 'appliedAt'/);
+  assert.ok(!/LIMIT/i.test(sql), 'no horizon: the history is complete, which is what lets it name the start');
+
+  assert.deepEqual(out.older, [
+    {
+      start: '2026-08-31T00:00:00.000Z', closed: 5,
+      line: 'Dark mode survives a refresh; Close issue #4: "Login loops"; Keyboard voting; and 2 more.',
+    },
+    // A title-less merge still says something rather than dropping its week.
+    { start: '2026-08-10T00:00:00.000Z', closed: 1, line: 'PR #3.' },
+  ], 'newest first, one entry per week that held anything, and none for the weeks between');
+  // The Monday of the week the project was CREATED, which is earlier than
+  // anything landed: its first week held nothing, so it has no card, but it
+  // is still where the walk ends.
+  assert.equal(out.firstWeek, '2026-08-03T00:00:00.000Z');
+
+  // An import's history can predate the app row: the floor is whichever is
+  // older, so it never sits above a card the walk can reach.
+  const imported = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-15T10:00:00Z' });
+  assert.equal(imported.firstWeek, '2026-08-10T00:00:00.000Z');
+
+  // A brand-new project: nothing before last week, so no older windows, but
+  // its first week is still known and the walk can say so.
+  queryHandler = async () => ({ rows: [] });
+  const fresh = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-08T10:00:00Z' });
+  assert.deepEqual(fresh, { older: [], firstWeek: '2026-09-07T00:00:00.000Z' });
+  // And with no creation date and nothing landed there is no floor to name.
+  assert.deepEqual(await svc.fetchDigestHistory(pool, APP.id, { now }), { older: [], firstWeek: null });
+});
+
+test('#3293: a derived week names what landed, and counts the rest', () => {
+  // The card's own figure carries the count, so the line owes the reader
+  // only what the figure cannot say: what the changes were.
+  assert.equal(svc.historyLine(['Dark mode'], 1), 'Dark mode.');
+  assert.equal(svc.historyLine(['Dark mode survives a refresh.'], 1), 'Dark mode survives a refresh.',
+    'no doubled full stop');
+  assert.equal(svc.historyLine(['A', 'B', 'C'], 9), 'A; B; C; and 6 more.');
+  assert.equal(svc.historyLine(['A', 'B'], 2), 'A; B.');
+  assert.equal(svc.historyLine([], 1), 'One change landed.');
+  assert.equal(svc.historyLine([], 4), '4 changes landed.');
+  for (const line of [svc.historyLine(['A', 'B', 'C'], 9), svc.historyLine([], 4)]) {
+    assert.ok(!line.includes(String.fromCharCode(0x2014)), 'no em dash in what the reader sees');
+  }
+});
+
 test('the three lines flatten to the paragraph a pre-cards row still holds', () => {
   // digest_text is not a second rendering of the feature — the lander reads
   // the fields. It keeps a row readable to anything that only knows the
@@ -1637,6 +1758,56 @@ test('GET workshop-themes 404s on an unknown app', async () => {
   } finally { server.close(); }
 });
 
+test('#3293: GET workshop-themes carries the derived weeks and the project’s first week beside the cards', async () => {
+  await settle();
+  boardOf(1);
+  const drafted = { lastWeek: 'The vote counter was rebuilt.', thisWeek: '', open: 'Preview reliability, mostly.' };
+  const history = [
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Keyboard voting', pr: 10 },
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Dark mode', pr: 9 },
+  ];
+  const row = () => freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    digest_json: drafted,
+  });
+  const created = { ...appRow, created_at: '2026-07-01T12:00:00Z' };
+  const prev = llm._setClientForTests(null);
+  const server = await startServer();
+  const get = async () => (await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/workshop-themes`)).json();
+  try {
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const body = await get();
+    assert.deepEqual(body.digestCards, {
+      ...drafted,
+      older: [{ start: '2026-08-24T00:00:00.000Z', closed: 2, line: 'Keyboard voting; Dark mode.' }],
+      firstWeek: '2026-06-29T00:00:00.000Z',
+    }, 'the model’s lines untouched, and the weeks behind them back to the Monday the project was created');
+
+    // A history that cannot be read costs the cards nothing: the walk ends
+    // at last week and says that is as far as the summary goes, which is
+    // what it did before there was a history at all.
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]]]);
+    const inner = queryHandler;
+    queryHandler = async (sql, params) => {
+      if (/date_trunc\('week'/.test(sql)) throw new Error('history boom');
+      return inner(sql, params);
+    };
+    const failed = await get();
+    assert.deepEqual(failed.digestCards, drafted, 'the cards alone, with no floor claimed');
+
+    // No card set, no walk to extend, and no query spent on one.
+    queries.length = 0;
+    makeStore(freshRow({
+      themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+      placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    }), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const bare = await get();
+    assert.equal(bare.digestCards, null);
+    assert.ok(!queries.some((q) => /date_trunc\('week'/.test(q.sql)), 'the history is read only for a walk');
+  } finally { server.close(); llm._setClientForTests(prev); resetBoard(); }
+});
+
 test('the staging demo themes name only mock keys', () => {
   for (const t of stagingDemoThemes()) {
     assert.match(t.name, /^\[Mock\]/);
@@ -1692,4 +1863,119 @@ test('a pass with no standing vocabulary writes nothing to the registry', async 
     assert.deepEqual(registryWrites, []);
     assert.deepEqual(registryRetires, [], 'and nothing is retired');
   } finally { llm._setClientForTests(prev); }
+});
+
+// ── #4417: topics are fixed definitions ──────────────────────────────
+//
+// A project's topics are categories dapp.json owns. Discovery is handed
+// them and drafts around them, and whatever it answers the standing list
+// leads with every live topic, in dapp.json's order, under its own name; a
+// retired topic is in no list. Placement is offered the topics first,
+// marked. A topic added or retired since the draft re-places every card.
+
+const TOPIC_ROWS = [
+  { value: 'onboarding', label: 'Onboarding', custom: true, description: 'Signing up and the first week',
+    icon: '\u{1F6AA}', origin: 'topic', pinned: true, topic: { handle: 'onboarding', order: 0 } },
+  { value: 'infra', label: 'Infra', custom: true, description: 'Builds and deploys',
+    icon: '\u{1F6E0}️', origin: 'topic', pinned: true, topic: { handle: 'infra', order: 1 } },
+];
+
+test('#4417 fixTopics: the topics lead in their order under their own names; the draft\'s saying and anchors stay; a retired key goes', () => {
+  // registryCategories' shape.
+  const reg = [
+    { id: 'infra', name: 'Infra', description: 'Builds', icon: 'X', pinned: true, origin: 'topic', topic: { handle: 'infra', order: 1 } },
+    { id: 'onboarding', name: 'Onboarding', description: 'First week', icon: 'Y', pinned: true, origin: 'topic', topic: { handle: 'onboarding', order: 0 } },
+    { id: 'voting', name: 'Voting', description: 'v', icon: '', pinned: false, origin: 'ai' },
+  ];
+  const drafted = [
+    { id: 'voting', name: 'Voting', description: 'v', saying: 'sv', anchors: ['issue:3'] },
+    { id: 'infra', name: 'Infrastructure (renamed by the model)', description: 'm', saying: 'si', anchors: ['issue:2'] },
+    { id: 'old-things', name: 'Old things', description: 'o', saying: null, anchors: [] },
+  ];
+  const fixed = svc.fixTopics(drafted, reg, ['old-things']);
+  assert.deepEqual(fixed.map((t) => t.id), ['onboarding', 'infra', 'voting'], 'topics first, in order; the retired one gone; the missing one added');
+  assert.equal(fixed[1].name, 'Infra', 'never the model\'s name');
+  assert.equal(fixed[1].description, 'Builds', 'dapp.json\'s about');
+  assert.equal(fixed[1].saying, 'si', 'the model\'s saying is kept');
+  assert.deepEqual(fixed[1].anchors, ['issue:2']);
+  assert.deepEqual(fixed[0].anchors, [], 'a topic the model dropped comes back with none');
+  assert.deepEqual(svc.fixTopics(drafted, [], []).map((t) => t.id), ['voting', 'infra', 'old-things'], 'no topics: the draft as it was');
+});
+
+test('#4417 discovery is handed the topics and the draft keeps them whatever the model says; placement sees them first, marked', async () => {
+  boardOf(3);
+  themeRegistry = TOPIC_ROWS.slice();
+  const st = makeStore(null);
+  let board = null;
+  const m = makeModel({
+    themes: (params) => {
+      board = JSON.parse(params.messages[0].content.split('BOARD (JSON):\n')[1]);
+      // The model renames one topic and drops the other.
+      return [
+        { id: 'onboarding', name: 'Getting in', description: 'm', saying: 's', anchors: ['issue:1'] },
+        { id: '', name: 'Voting', description: 'v', saying: 's', anchors: ['issue:2'] },
+      ];
+    },
+    place: placeAllInto('infra'),
+  });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'get' });
+    assert.equal(out.discovered, true);
+    assert.deepEqual(board.topics, [
+      { id: 'onboarding', name: 'Onboarding', description: 'Signing up and the first week' },
+      { id: 'infra', name: 'Infra', description: 'Builds and deploys' },
+    ], 'the topics ride the snapshot, in order');
+    assert.ok(!board.previousCategories.some((p) => p.id === 'onboarding' || p.id === 'infra'),
+      'and are not offered again as previous categories the model may redraw');
+    assert.deepEqual(st.row.themes_json.map((t) => [t.id, t.name]),
+      [['onboarding', 'Onboarding'], ['infra', 'Infra'], ['voting', 'Voting']]);
+    const placement = m.calls.find((c) => c.kind === 'placement');
+    const offered = JSON.parse(placement.params.system[1].text.replace('CATEGORIES (JSON):\n', ''));
+    assert.deepEqual(offered.map((t) => [t.id, !!t.topic]), [['onboarding', true], ['infra', true], ['voting', false]]);
+  } finally { llm._setClientForTests(prev); themeRegistry = []; resetBoard(); }
+});
+
+test('#4417 a topic added since the draft re-places every card against the standing list, with no new draft', async () => {
+  boardOf(3);
+  themeRegistry = TOPIC_ROWS.slice(0, 1);
+  const st = makeStore(freshRow({
+    themes_json: [{ id: 'voting', name: 'Voting', description: 'v', saying: 's', anchors: ['issue:1'] }],
+    placements_json: { 'issue:1': 'voting', 'issue:2': 'voting', 'issue:3': 'voting' },
+    discovered_at: ago(60 * 1000), discovery_key_count: 3,
+  }));
+  const m = makeModel({ place: placeAllInto('onboarding') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'change' });
+    assert.equal(out.discovered, false);
+    assert.equal(out.replaced, true);
+    assert.deepEqual(out.outdated, ['topics']);
+    assert.deepEqual(m.calls.map((c) => c.kind), ['placement']);
+    assert.deepEqual(m.calls[0].cards.map((c) => c.key), ['issue:2', 'issue:3'], 'everything but the anchor');
+    assert.deepEqual(st.row.themes_json.map((t) => t.id), ['onboarding', 'voting']);
+    assert.deepEqual(st.row.placements_json, { 'issue:1': 'voting', 'issue:2': 'onboarding', 'issue:3': 'onboarding' });
+  } finally { llm._setClientForTests(prev); themeRegistry = []; resetBoard(); }
+});
+
+test('#4417 the views name each topic and its channel; the no-model grouping draws every topic first, even empty', () => {
+  const reg = TOPIC_ROWS.map((r) => ({
+    id: r.value, name: r.label, description: r.description, icon: r.icon, pinned: true, origin: 'topic', topic: r.topic,
+  }));
+  const row = { themes: [{ id: 'onboarding', name: 'Onboarding', description: 'x' }, { id: 'voting', name: 'Voting' }], placements: { 'issue:1': 'onboarding', 'issue:2': 'voting' } };
+  const themes = svc.themesWithItems(row, ['issue:1', 'issue:2'], row.placements, {}, reg);
+  assert.deepEqual(themes.find((t) => t.id === 'onboarding').topic, { key: 'onboarding', handle: 'onboarding' });
+  assert.equal(themes.find((t) => t.id === 'voting').topic, undefined);
+  assert.deepEqual(themes.find((t) => t.id === 'infra').items, [], 'a topic with nothing in it is still drawn');
+
+  const fallback = svc.fallbackThemes({ items: [
+    { key: 'issue:1', category: 'bug' }, { key: 'issue:2', category: 'bug' }, { key: 'issue:3', category: 'infra' },
+  ] }, reg);
+  assert.deepEqual(fallback.map((t) => [t.id, t.name, t.items.length, t.topic ? t.topic.handle : null]), [
+    ['category-onboarding', 'Onboarding', 0, 'onboarding'],
+    ['category-infra', 'Infra', 1, 'infra'],
+    ['category-bug', 'Bugs', 2, null],
+  ]);
+  const demo = svc.stagingDemoGrouping({ items: [{ key: 'issue:1' }, { key: 'issue:2' }, { key: 'issue:3' }] }, reg);
+  assert.deepEqual(demo.slice(0, 2).map((t) => t.topic && t.topic.handle), ['onboarding', 'infra'], 'a preview leads with the real topics');
 });

@@ -36,6 +36,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard } from '@/components/ui/dialog';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { permissionConsentModalStore } from './modals-store';
 import type { PermissionConsentModalView } from './model';
@@ -46,6 +47,7 @@ function call(fn: string, ...args: unknown[]): void {
 }
 
 export function PermissionConsentCard({ view }: { view: PermissionConsentModalView }): ReactNode {
+  const t = useMessages('project');
   return (
     <DialogCard size="md" relative>
       <p className="inline-flex items-center rounded-full bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-700 mb-3 dark:text-violet-300">
@@ -55,7 +57,7 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
         {view.title}
       </h2>
       {view.reason ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{`“${view.reason}”`}</p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{t('project:modals.permission.reasonQuote', { reason: view.reason })}</p>
       ) : null}
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{view.note}</p>
       <div className="flex justify-end gap-2 mt-5">
@@ -66,7 +68,7 @@ export function PermissionConsentCard({ view }: { view: PermissionConsentModalVi
           ink="neutral"
           onClick={() => call('_permissionConsentDecline')}
         >
-          Not now
+          {t('project:modals.permission.notNow')}
         </Button>
         <Button
           type="button"

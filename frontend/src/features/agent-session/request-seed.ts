@@ -11,6 +11,7 @@
 // ./api.ts drops the title), and the Mayor reads the request in full itself,
 // which is why the seed names it rather than pasting its description.
 
+import { t } from '../../lib/i18n/runtime';
 import type { AgentHint } from './api';
 
 /** The request an unsent conversation was started from. */
@@ -42,6 +43,21 @@ export function requestSeed(hint: AgentHint | null | undefined): string {
   const request = draftRequest(hint);
   if (!request) return '';
   return request.title
-    ? `Work on request #${request.number}: "${request.title}"`
-    : `Work on request #${request.number}`;
+    ? t('agent:session.requestSeed.titled', { number: request.number, title: request.title })
+    : t('agent:session.requestSeed.untitled', { number: request.number });
+}
+
+// A handed-over message is the user's own request (Global Chat's task) or
+// one the platform wrote (Explore's), so it is kept whole, up to the length
+// a turn accepts (MAX_MESSAGE_CHARS in src/routes/agent-sessions.js).
+const MESSAGE_MAX = 20000;
+
+/**
+ * The first message an unsent conversation offers: the one its entry point
+ * handed over (the hint's `message`), else a request's (requestSeed), else ''.
+ */
+export function draftSeed(hint: AgentHint | null | undefined): string {
+  const message = typeof hint?.message === 'string' ? hint.message.trim() : '';
+  if (message) return message.length > MESSAGE_MAX ? message.slice(0, MESSAGE_MAX) : message;
+  return requestSeed(hint);
 }

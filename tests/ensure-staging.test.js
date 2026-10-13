@@ -284,11 +284,83 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
     const body = await res.json();
     assert.deepEqual(body, {
       status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
     });
     assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild when already live');
     assert.equal(loaded.edgeProbes.length, 1, 'public edge verified before ready');
     assert.equal(loaded.rebuildChecks[0][1].headSha, 'submitted-head',
       'the stored runtime is checked against the submitted revision');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('a change that declares a preview moment is answered with it, on both routes', async () => {
+  // services/preview-clock.js: a time-dependent change (a Thursday-evening
+  // reminder) names the moment its preview should open at, and Try it opens
+  // there. The answer carries it; one without a declaration is unchanged
+  // (the deepEqual cases around this one).
+  const declared = {
+    ...OWNED_ACTIVE, status: 'promoted',
+    testing_md: '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->\n1. Open the rota.',
+  };
+  const loaded = loadSessions({ pool: makePool(declared), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const expected = {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
+      previewAt: { at: '2026-10-08T18:00:00.000Z', label: 'Thursday 8 Oct, 7 pm', zone: 'Europe/London' },
+    };
+    const ensured = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await ensured.json(), expected);
+    const status = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await status.json(), expected, 'a read-only reviewer sees it at the same moment');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#4917 the ready answer carries the page the change is about, on both routes', async () => {
+  // services/preview-start.js: the first declared shots story start path
+  // that is not `/` (else the testing deep link) is the page a preview
+  // opens on. It reaches Try it through the same ensure/status answer the
+  // preview moment does; a change that names no page keeps the answer
+  // without the key (the deepEqual cases around this one).
+  const declared = {
+    ...OWNED_ACTIVE, status: 'promoted',
+    shots_detail: {
+      version: 1,
+      intent: {
+        impact: 'ui', stories: [{ id: 's1', claim: 'It works', persona: 'member',
+          intent: { startPath: '/settings' } }],
+      },
+    },
+  };
+  const loaded = loadSessions({ pool: makePool(declared), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const expected = {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App', startPath: '/settings',
+    };
+    const ensured = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await ensured.json(), expected);
+    const status = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await status.json(), expected, 'a read-only reviewer opens on the same page');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#4917 the testing deep link starts the preview when nothing is declared', async () => {
+  // A change with no shots declaration but a recorded testing path: the
+  // preview opens there instead of the first screen.
+  const tested = {
+    ...OWNED_ACTIVE, status: 'promoted', shots_detail: null, testing_path: '/rota?week=2',
+  };
+  const loaded = loadSessions({ pool: makePool(tested), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const ensured = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await ensured.json(), {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App', startPath: '/rota?week=2',
+    });
   } finally { await srv.close(); loaded.restore(); }
 });
 
@@ -303,6 +375,7 @@ test('#2328 preview-status gives read-only reviewers the same verified readiness
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), {
       status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+      appName: 'My App',
     });
     assert.equal(loaded.getRebuildCalls(), 0, 'the GET route never changes preview state');
     assert.equal(loaded.healthProbes.length, 1);

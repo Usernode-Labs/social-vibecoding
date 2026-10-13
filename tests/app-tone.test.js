@@ -379,23 +379,38 @@ test('the scaffold every new app starts from loads the bridge', () => {
     'the bridge is centrally hosted and must never be vendored into a new app');
 });
 
-test('the scaffold\'s own page colour resolves to the dark tone', async () => {
-  const { toneOf, toneForState, publishAppTone } = await loadTone();
+// #3688: the scaffold used to be a dark page whatever the viewer's theme, so
+// a viewer on the light shell opening a brand-new app got a dark bar. It
+// now follows the viewer's Homeroom theme (tests/new-app-theme.test.js), so
+// its ground, and with it the bar's tone, is the viewer's own in both.
+test('the scaffold\'s own page colour resolves to the viewer\'s tone, light or dark', async () => {
+  const { toneOf, toneForState, publishAppTone, TONE_GROUND } = await loadTone();
   const { getTemplateFiles } = require('../src/services/template');
   const html = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret')
     .find((f) => f.path === 'public/index.html').content;
-  // <html> paints nothing, so the bridge reads the body — the colour below is
-  // what `bg-zinc-950` compiles to, and the ground a new app actually shows.
-  assert.match(html, /<html lang="en" class="dark">/);
-  assert.match(html, /<body class="bg-zinc-950 /);
-  const GROUND = '#09090b'; // zinc-950
-  assert.equal(toneOf(GROUND), 'dark', 'the scaffold\'s page is a dark page');
-  // End to end through the real store shape and the real publisher: a viewer
-  // on the LIGHT shell opening a brand-new app gets a dark bar.
-  const state = { slug: 'my-app-123', active: true, background: GROUND };
-  assert.equal(toneForState(state), 'dark');
-  const doc = fakeDocument();
-  assert.equal(publishAppTone(doc, state, {}), 'dark');
-  assert.equal(doc.attrs.get('data-app-tone'), 'dark');
-  assert.equal(doc.metaAttrs.get('content'), '#0b0d1b');
+  // <html> paints nothing, so the bridge reads the body: its `bg-ground` is
+  // the design kit's ground token (#3737), and the colours below are that
+  // token's light and dark values, the grounds a new app actually shows in
+  // each theme.
+  assert.match(html, /<html lang="en">/);
+  assert.match(html, /<body class="min-h-screen bg-ground text-fg">/);
+  const css = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret')
+    .find((f) => f.path === 'styles/tailwind-input.css').content;
+  const groundIn = (selector) => {
+    const block = new RegExp(`\\n\\s*${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(css);
+    const [r, g, b] = /--ground:\s*(\d+) (\d+) (\d+);/.exec(block[1]).slice(1).map(Number);
+    return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+  };
+  const grounds = [['light', groundIn(':root')], ['dark', groundIn('.dark')]];
+  assert.deepEqual(grounds, [['light', '#fafaf9'], ['dark', '#0c0a09']]);
+  for (const [theme, ground] of grounds) {
+    assert.equal(toneOf(ground), theme, `the scaffold's ${theme} page is a ${theme} page`);
+    // End to end through the real store shape and the real publisher.
+    const state = { slug: 'my-app-123', active: true, background: ground };
+    assert.equal(toneForState(state), theme);
+    const doc = fakeDocument();
+    assert.equal(publishAppTone(doc, state, {}), theme);
+    assert.equal(doc.attrs.get('data-app-tone'), theme);
+    assert.equal(doc.metaAttrs.get('content'), TONE_GROUND[theme]);
+  }
 });

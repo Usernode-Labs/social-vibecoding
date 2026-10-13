@@ -16,9 +16,9 @@
 //   still decides whether you may be here at all, and this decides whether
 //   you have joined.
 //
-//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Group)
-//   or 'open' (Community). Derived from the app, never stored — see
-//   audienceSql.
+//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Private
+//   community) or 'open' (Public community). Derived from the app, never
+//   stored — see audienceSql.
 //
 // The vote THRESHOLD counts active MEMBERS: services/active-users.js
 // intersects its activity rule with this table, so the people a proposal
@@ -26,6 +26,7 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const { positiveId } = require('./row-id');
 
 // The three audiences, in the order the Workshop lists them.
 const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
@@ -33,8 +34,8 @@ const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
 // What each audience is called on screen. Internal names stay internal:
 // "community" is the container, and people see it as one of these.
 const AUDIENCE_LABELS = Object.freeze({
-  open: 'Community',
-  invited: 'Group',
+  open: 'Public community',
+  invited: 'Private community',
   solo: 'Just you',
 });
 
@@ -162,6 +163,69 @@ async function leave(pool, app, userId) {
 // visibility guards answer with: by the time this runs the app is one the
 // caller may see, so there is nothing to hide, and the client needs the
 // code to offer Join in place of a dead end.
+/**
+ * A PRIVATE MEMBER's vote on a PUBLIC app (view_visibility 'public'), which
+ * is refused: they use public apps, and vote in their own private groups,
+ * even when a public community's link is what brought them in. Read from
+ * the rows, not req.user, so every caller is held to it. Returns the refusal
+ * body, or null when the vote may go ahead. schema.sql's
+ * counts_toward_outcome keeps such a vote out of every tally and
+ * denominator as well.
+ */
+async function privateVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM users u, apps a
+      WHERE u.id = $2 AND a.id = $1
+        AND u.private_member_since IS NOT NULL
+        AND NOT u.has_platform_access AND NOT u.is_admin
+        AND a.view_visibility = 'public'`,
+    [appId, userId]
+  );
+  if (!rows.length) return null;
+  return {
+    error: 'You can use public apps, but voting on them opens once you are let in off the waitlist.',
+    code: 'private_member_public_vote',
+  };
+}
+
+/**
+ * A vote on a PUBLIC app from an account the verified-identity rule holds
+ * (schema.sql public_vote_needs_identity: the rule is on, and the voter is
+ * neither verified, by a phone, GitHub and X, or zkPassport, nor let in
+ * before it was switched on). Refused before anything is recorded, so the
+ * Vote button can offer the verification instead of a vote that would not
+ * count; counts_toward_outcome leaves such a vote out of every tally too.
+ * Returns the refusal body, or null when the vote may go ahead.
+ */
+async function identityVoteRefusal(pool, appId, userId) {
+  if (!appId || !userId) return null;
+  const { rows } = await pool.query(
+    'SELECT public_vote_needs_identity($1, $2) AS needs',
+    [userId, appId]
+  );
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Votes on public apps count from verified accounts. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
+// #4378: making a project PUBLIC needs a verified owner, so each person
+// counts once on the public side. The same predicate the vote routes'
+// refusal rests on (identity_needed, inside public_vote_needs_identity): a
+// verified account, one let in before the rule, or the rule off all pass.
+// The same response shape, so the client opens the same verify sheet.
+async function identityPublicRefusal(pool, userId) {
+  if (!userId) return null;
+  const { rows } = await pool.query('SELECT identity_needed($1) AS needs', [userId]);
+  if (rows[0]?.needs !== true) return null;
+  return {
+    error: 'Public projects need a verified owner. Verify your phone number, or link both GitHub and X in Settings.',
+    code: 'identity_required',
+  };
+}
+
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
@@ -222,13 +286,27 @@ function requireAppMembership(pool) {
 function requireIssueMembership(pool) {
   return gate(pool, async (req) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return null;
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return null;
     const { rows } = await pool.query(
       `SELECT ${GATE_COLUMNS} FROM issues i JOIN apps a ON a.id = i.app_id WHERE i.id = $1`,
       [id, req.user?.id || null]
     );
     return rows[0] || null;
   }, 'issue');
+}
+
+// B8: Suggest an improvement (POST /api/feedback) files a request on the app its
+// body names rather than one in the path: the same gate, by slug. Returns the
+// join_required body to answer with, or null to let it through.
+async function appNeedsJoin(pool, slug, user) {
+  if (!slug || user?.isAdmin) return null;
+  const { rows } = await pool.query(
+    `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.slug = $1`,
+    [slug, user?.id || null]
+  );
+  const app = rows[0];
+  return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
 }
 
 // The WebSocket chat write (src/services/ws.js, a 'chat' message). Returns
@@ -301,8 +379,10 @@ const CHANNEL_MOVED = 'This discussion is read-only now: Homeroom\'s channel is 
 // already ran.
 function requireSessionMembership(pool) {
   return gate(pool, async (req) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return null;
+    // A malformed id falls through without a query: every mount answers it
+    // with 404 (the collab guard, or the handoff route's own id check).
+    const id = positiveId(req.params.id);
+    if (!id) return null;
     const { rows } = await pool.query(
       `SELECT ${GATE_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
       [id, req.user?.id || null]
@@ -462,9 +542,12 @@ async function generalChannelSummary(pool, userId) {
   };
 }
 
-// Members & activity on the hub: how many people did something here this
-// week (said something in the channel, started a change, or voted on one),
-// and how many changes shipped in the last thirty days.
+// The hub's people row: how many people did something here this week (said
+// something in the channel, started a change, or voted on one) and up to
+// five of them by name; also each of the last fourteen days, and how many
+// changes shipped in the last thirty days. People only: a synthetic account
+// (the Homeroom bot, which opens changes and, since #3288, posts ordinary
+// messages) is never counted or named as somebody active here.
 async function activitySummary(pool, appId) {
   // THE TREND: people active on each of the last fourteen days, oldest
   // first, the same three kinds of taking part as the week's count. Days
@@ -472,7 +555,7 @@ async function activitySummary(pool, appId) {
   const { rows: days } = await pool.query(
     `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COUNT(DISTINCT who.user_id)::int AS n
        FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, INTERVAL '1 day') AS d(day)
-       LEFT JOIN (
+       LEFT JOIN (SELECT w.user_id, w.day FROM (
          SELECT m.user_id, m.created_at::date AS day FROM chat_messages m
           WHERE m.app_id = $1 AND m.user_id IS NOT NULL
             AND m.created_at >= CURRENT_DATE - 13
@@ -485,6 +568,7 @@ async function activitySummary(pool, appId) {
            JOIN chat_sessions s ON s.id = v.session_id
           WHERE s.app_id = $1 AND v.user_id IS NOT NULL
             AND v.created_at >= CURRENT_DATE - 13
+       ) w JOIN users u ON u.id = w.user_id AND u.is_synthetic IS NOT TRUE
        ) who ON who.day = d.day::date
       GROUP BY d.day
       ORDER BY d.day`,
@@ -505,20 +589,115 @@ async function activitySummary(pool, appId) {
             JOIN chat_sessions s ON s.id = v.session_id
            WHERE s.app_id = $1 AND v.user_id IS NOT NULL
              AND v.created_at > NOW() - INTERVAL '7 days'
-        ) who) AS active_week,
+        ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE) AS active_week,
        (SELECT COUNT(*)::int FROM chat_sessions s
          WHERE s.app_id = $1 AND s.status = 'merged'
            AND COALESCE(s.merged_at, s.created_at) > NOW() - INTERVAL '30 days') AS shipped_month`,
     [appId]
   );
+  // WHO, BY NAME: the hub's faces row ("evan, talha, zura and 35 more"),
+  // up to five of the people the week's count counts, the most recently
+  // active first. The same three kinds of taking part over the same seven
+  // days, and the same people-only join, so a name here is always one of
+  // `active_week`.
+  const { rows: people } = await pool.query(
+    `SELECT u.id, u.username, u.display_name
+       FROM (
+         SELECT m.user_id, m.created_at AS at FROM chat_messages m
+          WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+            AND m.created_at > NOW() - INTERVAL '7 days'
+         UNION ALL
+         SELECT s.user_id, s.created_at FROM chat_sessions s
+          WHERE s.app_id = $1 AND s.user_id IS NOT NULL
+            AND s.created_at > NOW() - INTERVAL '7 days'
+         UNION ALL
+         SELECT v.user_id, v.created_at FROM pr_votes v
+           JOIN chat_sessions s ON s.id = v.session_id
+          WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+            AND v.created_at > NOW() - INTERVAL '7 days'
+       ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE
+      GROUP BY u.id, u.username, u.display_name
+      ORDER BY MAX(who.at) DESC, u.id
+      LIMIT $2`,
+    [appId, ACTIVE_PEOPLE_SHOWN]
+  );
   return {
     active_week: rows[0]?.active_week || 0,
     shipped_month: rows[0]?.shipped_month || 0,
     daily: days.map((d) => ({ day: d.day, n: d.n })),
+    active_people: people.map((p) => ({ id: p.id, username: p.username, display_name: p.display_name || null })),
   };
 }
 
+// How many of the week's people the hub names (its faces row).
+const ACTIVE_PEOPLE_SHOWN = 5;
+
+// UNCHOSEN COMMUNITIES: the ones whose votes do not put a number on the
+// Communities tab for this viewer (5 Oct 2026).
+//
+// Every account with platform access is put in the platform's own
+// community, Homeroom, the moment it is let in (`source = 'auto'`, the
+// users_join_platform_community trigger in schema.sql), and every change
+// proposed to the platform is a vote it owes from then on. So a brand-new
+// account that had joined nothing and been asked nothing opened its first
+// session under an accent "5" or "8" on the Communities tab: a number that
+// asked for it, about a community it never chose, competing with "What do
+// you want to make?".
+//
+// A community is UNCHOSEN when the viewer is in it only that way, by
+// 'auto', and has not yet TAKEN PART in it: no vote on one of its changes
+// or decisions, no change of their own there, no request or decision they
+// filed, no message in its channel (Homeroom's is #general; its old
+// project discussion counts too), and no pin of it on Home. The first of
+// any of those is the person choosing it, and from then on its votes count
+// on the tab like any other community's. The membership source alone is
+// not enough: the one-time backfill wrote 'auto' for every existing account
+// it had no other reason for, people who had voted there long before
+// included.
+//
+// A pin is the stake the bell already reads for Homeroom: its "come and
+// vote" ping and the daily vote digest go to the platform's creator and
+// pinners only (services/notifications.js createPrProposedNotifications,
+// services/vote-digest.js), so a newcomer's bell never carried these votes
+// and the tab now agrees with it.
+//
+// Joining by hand (Join, an invite link) writes 'joined', never 'auto', and
+// creating, collaborating and pinning write their own sources, so a
+// community somebody chose is never unchosen; leaving Homeroom and joining
+// it again is choosing it too. This changes ONLY the tab's count
+// (frontend/src/features/workshop/community-scope.ts `tabVotes`): the votes
+// stay in Needs you, on the Communities list, in the switcher and on the
+// community's own page, where the person goes to look.
+const UNCHOSEN_COMMUNITIES_SQL = `
+  SELECT a.slug
+    FROM community_members m
+    JOIN apps a ON a.community_id = m.community_id
+   WHERE m.user_id = $1
+     AND m.source = 'auto'
+     AND NOT EXISTS (SELECT 1 FROM pr_votes v JOIN chat_sessions s ON s.id = v.session_id
+                      WHERE v.user_id = $1 AND s.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM issue_votes v JOIN issues i ON i.id = v.issue_id
+                      WHERE v.user_id = $1 AND i.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM chat_sessions s WHERE s.user_id = $1 AND s.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.created_by = $1 AND i.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM chat_messages c WHERE c.user_id = $1 AND c.app_id = a.id)
+     AND NOT EXISTS (SELECT 1 FROM app_favorites f
+                      WHERE f.user_id = $1 AND f.app_id = a.id AND NOT f.hidden)
+     AND NOT (a.self_hosted AND EXISTS (
+           SELECT 1 FROM conversations g
+             JOIN conversation_messages gm ON gm.conversation_id = g.id
+            WHERE g.kind = 'channel' AND g.channel_key = 'general' AND gm.sender_id = $1))
+`;
+
+/** The slugs of the viewer's unchosen communities (UNCHOSEN_COMMUNITIES_SQL), as a Set. */
+async function unchosenCommunities(pool, userId) {
+  if (!userId) return new Set();
+  const { rows } = await pool.query(UNCHOSEN_COMMUNITIES_SQL, [userId]);
+  return new Set(rows.map((row) => row.slug));
+}
+
 module.exports = {
+  appNeedsJoin,
   channelSummary,
   generalChannelSummary,
   activitySummary,
@@ -527,6 +706,9 @@ module.exports = {
   CHANNEL_MOVED,
   AUDIENCES,
   AUDIENCE_LABELS,
+  privateVoteRefusal,
+  identityVoteRefusal,
+  identityPublicRefusal,
   audienceSql,
   isMember,
   getMembership,
@@ -538,4 +720,6 @@ module.exports = {
   requireIssueMembership,
   chatNeedsJoin,
   listMembers,
+  UNCHOSEN_COMMUNITIES_SQL,
+  unchosenCommunities,
 };

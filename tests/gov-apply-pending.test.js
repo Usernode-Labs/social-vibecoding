@@ -88,6 +88,7 @@ function makeSandbox({ fetchImpl } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -633,15 +634,15 @@ function stagingMocks() {
   };
 }
 
-test('?demo=1 mock 9100005 renders the spinner state the staging check asserts', () => {
+test('?demo=1 mock 9100074 renders the spinner state the staging check asserts', () => {
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: false };
-  const row = gov.find((g) => g.id === 9100005);
+  const row = gov.find((g) => g.id === 9100074);
   assert.ok(row, 'the mock governance row exists');
 
   const html = govCardHtml(h.AppView, row);
-  assert.match(html, /data-gov-row="9100005"/);
+  assert.match(html, /data-gov-row="9100074"/);
   assert.match(html, /gc-merging-badge/);
   assert.match(html, /dc-status-spinner-arc/);
   assert.match(html, /Closing issue #900011/);
@@ -654,16 +655,16 @@ test('?demo=1 apply mocks stay reviewable when the cloned self-app is locked', (
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: true };
-  const row = gov.find((g) => g.id === 9100005);
+  const row = gov.find((g) => g.id === 9100074);
   assert.equal(row.demo, true);
   assert.match(govCardHtml(h.AppView, row), /dc-status-spinner-arc/);
 });
 
-test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
+test('?demo=1 mock 9100075 renders the retry copy with no spinner', () => {
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: false };
-  const row = gov.find((g) => g.id === 9100006);
+  const row = gov.find((g) => g.id === 9100075);
   assert.ok(row, 'the mock governance row exists');
 
   const html = govCardHtml(h.AppView, row);
@@ -672,11 +673,11 @@ test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
   assert.ok(!/dc-status-spinner-arc/.test(html), 'a long-stalled apply must not spin');
 });
 
-test('?demo=1 mock 9100003 (still voting) is untouched by the new states', () => {
+test('?demo=1 mock 9100072 (still voting) is untouched by the new states', () => {
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: false };
-  const html = govCardHtml(h.AppView, gov.find((g) => g.id === 9100003));
+  const html = govCardHtml(h.AppView, gov.find((g) => g.id === 9100072));
   assert.ok(!/gc-merging-badge/.test(html), 'an open vote shows no applying badge');
   assert.ok(!/disabled/.test(html), 'and its controls stay live');
 });
@@ -692,7 +693,7 @@ test('?demo=1 target issue rows pair with their close proposals', () => {
   assert.match(applying, /Closing…/);
   assert.match(applying, /dc-status-spinner-arc/);
 
-  // 900001's proposal (9100003) is still in its voting window.
+  // 900001's proposal (9100072) is still in its voting window.
   const voting = issueCardHtml(h.AppView, issues.find((i) => i.number === 900001));
   assert.match(voting, /Close proposed/);
 });
@@ -735,7 +736,7 @@ test('a locked app with no ?demo=1 still suppresses the derived states', () => {
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: true };
-  const { demo, ...realRow } = gov.find((g) => g.id === 9100005);
+  const { demo, ...realRow } = gov.find((g) => g.id === 9100074);
   const html = govCardHtml(h.AppView, realRow);
   assert.ok(!/dc-status-spinner-arc/.test(html),
     'a locked app is waiting on an admin Yes, not applying');

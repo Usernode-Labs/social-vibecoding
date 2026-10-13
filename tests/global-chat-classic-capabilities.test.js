@@ -297,7 +297,7 @@ test('generic input parsing never silently truncates or repairs a write body', (
   }), '#app/demo%2Fother');
 });
 
-test('development handoff creates a session without letting the global model choose its agent', async () => {
+test('development handoff opens an unsent agent session with the task, creating nothing (#2779)', async () => {
   const startRoute = inventory.routes.find((item) => (
     item.method === 'POST' && item.path === '/api/apps/:slug/sessions'
   ));
@@ -305,49 +305,50 @@ test('development handoff creates a session without letting the global model cho
   const registry = new CapabilityRegistry(classicCapabilityDefinitions());
   const definition = registry.get(startRoute.capabilityId);
   assert.equal(definition.title, 'Start development work');
-  assert.match(definition.summary, /configured Development AI profile/);
+  assert.match(definition.summary, /agent session/);
   assert.deepEqual(Object.keys(definition.inputSchema.properties).sort(), [
     'appSlug', 'issueNumber', 'task',
   ]);
   assert.deepEqual([...definition.inputSchema.required].sort(), [
     'appSlug', 'issueNumber', 'task',
   ]);
+  // The confirmation card's "Open in Classic" goes to the app: the bare
+  // unsent-conversation address would drop the task and the app.
+  assert.equal(definition.classicPath({ input: { appSlug: 'demo' } }), '#app/demo/workshop');
 
-  let invoked;
+  // Classic sessions are no longer created, so the capability never calls
+  // the create route: the Mayor's start_change is the only caller it takes.
+  let invoked = false;
   const execution = context({
     classicApi: {
       route: () => ({}),
-      async invoke(id, input) {
-        invoked = { id, input };
-        return {
-          ok: true,
-          status: 201,
-          authoritativeResult: {
-            session: {
-              id: 44, app_slug: 'demo', status: 'active',
-              agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash',
-              agent_reasoning_effort: 'high',
-            },
-          },
-          modelResult: { ok: true, status: 201, data: {} },
-        };
-      },
+      async invoke() { invoked = true; return { ok: true, status: 201, authoritativeResult: {} }; },
     },
   });
   const result = await registry.execute(startRoute.capabilityId, {
     appSlug: 'demo', task: 'Implement the compact global-chat cards.', issueNumber: 2377,
   }, execution);
-  assert.equal(invoked.id, startRoute.capabilityId);
-  assert.deepEqual(invoked.input, {
-    pathParameters: { slug: 'demo' }, query: [], body: { issueNumber: 2377 },
-  });
-  assert.equal(Object.hasOwn(invoked.input.body, 'backend'), false);
-  assert.equal(result.classicPath, '#app/demo/dev/sessions/44');
+  assert.equal(invoked, false);
+  assert.equal(result.classicPath, '#messages/agent/new');
   assert.equal(result.authoritativeResult.data.state, 'client_action_required');
-  assert.deepEqual(result.authoritativeResult.data.action.input.body, {
+  assert.deepEqual(result.authoritativeResult.data.action, {
+    transport: 'agent_session_handoff',
+    hint: { slug: 'demo', issueNumber: 2377, entry: 'global-chat' },
     message: 'Implement the compact global-chat cards.',
+    classicPath: '#messages/agent/new',
   });
-  assert.equal(result.modelResult.data.session.agentModel, 'z-ai/glm-5.3-flash');
+  assert.equal(Object.hasOwn(result.authoritativeResult.data.action.hint, 'backend'), false,
+    'the conversation follows the user\'s own model choice; the global model never picks one');
+  assert.equal(result.modelResult.data.handoffReady, true);
+
+  const noIssue = await registry.execute(startRoute.capabilityId, {
+    appSlug: 'demo', task: 'Tidy the footer.', issueNumber: null,
+  }, execution);
+  assert.deepEqual(noIssue.authoritativeResult.data.action.hint, { slug: 'demo', entry: 'global-chat' });
+
+  await assert.rejects(registry.execute(startRoute.capabilityId, {
+    appSlug: 'Demo_App', task: 'x', issueNumber: null,
+  }, execution), /app slug is unavailable/, 'a slug the agent-session hint would refuse');
 });
 
 test('development continuation validates the owned session then queues its pinned agent turn', async () => {
@@ -386,6 +387,51 @@ test('development continuation validates the owned session then queues its pinne
   assert.equal(result.authoritativeResult.data.action.pathTemplate, '/api/sessions/:id/chat');
   assert.equal(result.authoritativeResult.data.action.transport, 'development_handoff');
   assert.equal(result.classicPath, '#app/demo/dev/sessions/44');
+});
+
+test('development continuation refuses an older session instead of handing off a turn (#4268)', async () => {
+  // #3976 made a classic session read-only: POST /chat answers it with
+  // `classic_session_read_only`. Handing the browser that turn could only
+  // end there, so the capability answers with the same refusal itself.
+  const turnRoute = inventory.routes.find((item) => (
+    item.method === 'POST' && item.path === '/api/sessions/:id/chat'
+  ));
+  const registry = new CapabilityRegistry(classicCapabilityDefinitions());
+  const definition = registry.get(turnRoute.capabilityId);
+  assert.match(definition.summary, /Older sessions are read-only/,
+    'the model is told not to offer it for one');
+  const detail = (session) => context({
+    classicApi: {
+      route: () => ({}),
+      async invoke() {
+        return {
+          ok: true, status: 200,
+          authoritativeResult: { session },
+          modelResult: { ok: true, status: 200, data: {} },
+        };
+      },
+    },
+  });
+  const classicSessions = require('../src/services/classic-sessions');
+
+  const refused = await registry.execute(turnRoute.capabilityId, {
+    sessionId: '45', task: 'Keep going.',
+  }, detail({ id: 45, app_slug: 'demo', status: 'active', classic_read_only: true }));
+  assert.equal(refused.authoritativeResult.ok, false);
+  assert.equal(refused.authoritativeResult.status, 409);
+  assert.deepEqual(refused.authoritativeResult.data, classicSessions.refusal(),
+    'the message the session\'s own route refuses with');
+  assert.equal(Object.hasOwn(refused.authoritativeResult.data, 'action'), false,
+    'and no turn is handed to the browser');
+  assert.equal(refused.modelResult.ok, false);
+  assert.equal(refused.modelResult.data.code, 'classic_session_read_only');
+  assert.equal(refused.classicPath, '#app/demo/dev/sessions/45', 'reading it stays open');
+
+  // A CLI hand-off still continues in its dev chat on the web.
+  const handoff = await registry.execute(turnRoute.capabilityId, {
+    sessionId: '46', task: 'Fix the failing check.',
+  }, detail({ id: 46, app_slug: 'demo', status: 'active', source: 'cli_handoff', classic_read_only: false }));
+  assert.equal(handoff.authoritativeResult.data.action.transport, 'development_handoff');
 });
 
 test('generic mutation confirmations show bounded details without secret values', () => {

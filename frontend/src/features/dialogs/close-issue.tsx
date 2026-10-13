@@ -33,10 +33,12 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
 export function CloseIssueDialog() {
+  const t = useMessages('dialogs');
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<number | string | null>(null);
@@ -88,11 +90,11 @@ export function CloseIssueDialog() {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        setError(data.error || `Proposal failed (HTTP ${resp.status}).`);
+        setError(data.error || t('dialogs:closeIssue.error.http', { status: resp.status }));
         return;
       }
     } catch (fetchErr) {
-      setError(`Proposal failed: ${(fetchErr as Error).message}`);
+      setError(t('dialogs:closeIssue.error.detail', { reason: (fetchErr as Error).message }));
       return;
     } finally {
       setBusy(false);
@@ -123,14 +125,14 @@ export function CloseIssueDialog() {
     >
       <DialogCard size="sm">
         <h2 className="text-lg font-bold mb-1">
-          Propose closing issue
-          <span id="close-issue-number" className="font-mono">
-            {`#${issueNumber}`}
-          </span>
-          ?
+          <RichMessage
+            id="dialogs:closeIssue.title"
+            values={{ number: issueNumber }}
+            components={[<span id="close-issue-number" className="font-mono" />]}
+          />
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          This opens a group vote. If it passes, the issue is closed here and on GitHub.
+          {t('dialogs:closeIssue.explanation')}
         </p>
         <form id="close-issue-form" className="space-y-4" onSubmit={submit}>
           <div>
@@ -138,10 +140,7 @@ export function CloseIssueDialog() {
               htmlFor="close-issue-reason"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              Why should this issue be closed?
-              <span className="font-normal">
-                (optional)
-              </span>
+              <RichMessage id="dialogs:closeIssue.reason.label" components={[<span className="font-normal" />]} />
             </label>
             <Textarea
               id="close-issue-reason"
@@ -151,12 +150,12 @@ export function CloseIssueDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="e.g. obsolete, duplicate, already fixed…"
+              placeholder={t('dialogs:closeIssue.reason.placeholder')}
               onKeyDown={onReasonKeyDown}
             >
             </Textarea>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Posted publicly on the GitHub issue when the vote passes.
+              {t('dialogs:closeIssue.reason.hint')}
             </p>
           </div>
           <div id="close-issue-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
@@ -169,7 +168,7 @@ export function CloseIssueDialog() {
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
-              Cancel
+              {t('core:common.cancel')}
             </button>
             <Button
               type="submit"
@@ -177,7 +176,7 @@ export function CloseIssueDialog() {
               layout="flex"
               disabled={busy}
             >
-              Propose close
+              {t('dialogs:closeIssue.submit')}
             </Button>
           </div>
         </form>

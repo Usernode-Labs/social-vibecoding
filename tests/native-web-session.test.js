@@ -25,7 +25,7 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
       CREATE TABLE users (id bigint PRIMARY KEY, username text DEFAULT 'alice',
         is_admin boolean, admin_readonly boolean, app_quota integer,
         ai_progress_estimate text, agent_sessions_enabled boolean, session_bridge_enabled boolean,
-        locale text, has_platform_access boolean, is_synthetic boolean);
+        locale text, has_platform_access boolean, private_member_since timestamptz, is_synthetic boolean);
       CREATE TABLE native_session_attempts (attempt_id text PRIMARY KEY);
       CREATE TABLE mobile_auth_tokens (id bigint PRIMARY KEY, user_id bigint, ability text, expires_at timestamptz, token_hash text);
       CREATE TABLE native_session_credentials (

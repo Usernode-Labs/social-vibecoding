@@ -5,7 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const visuals = require('../services/visuals');
 const galleryDemo = require('../services/gallery-demo');
-const visualEvidenceView = require('../services/visual-evidence-view');
+const shotsView = require('../services/shots-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 // Admin gallery API — read-only, behind an isAdmin guard (any admin, full
@@ -24,7 +24,7 @@ const { visualHeadForSession } = require('../services/pr-vote-revision');
 // fell-back caption and the no-artifacts branch.
 //
 // The image BYTES are not served from here. Historical tiles retain their
-// existing public /visuals/:id URLs for backwards compatibility; evidence-v2
+// existing public /visuals/:id URLs for backwards compatibility; shots-v2
 // artifacts are serialized through their authenticated proposal-scoped route
 // and are never exposed through that legacy path.
 
@@ -74,23 +74,23 @@ const PROBLEM_FILTERS = {
     relaxVisuals: true,
   },
   relevance_failure: {
-    sql: `cs.visual_evidence_state = 'failed'
-          AND cs.visual_evidence_detail->>'failureCode' = 'irrelevant_visual_evidence'`,
+    sql: `cs.shots_state = 'failed'
+          AND cs.shots_detail->>'failureCode' IN ('irrelevant_shots', 'irrelevant_visual_evidence')`,
     relaxVisuals: true,
   },
   replay_failure: {
-    sql: `cs.visual_evidence_state = 'failed'
-          AND COALESCE(cs.visual_evidence_detail->>'failureCode', '') NOT IN
-              ('irrelevant_visual_evidence', 'unsupported_agent')`,
+    sql: `cs.shots_state = 'failed'
+          AND COALESCE(cs.shots_detail->>'failureCode', '') NOT IN
+              ('irrelevant_shots', 'irrelevant_visual_evidence', 'unsupported_agent')`,
     relaxVisuals: true,
   },
   unsupported_agent: {
-    sql: `cs.visual_evidence_state = 'failed'
-          AND cs.visual_evidence_detail->>'failureCode' = 'unsupported_agent'`,
+    sql: `cs.shots_state = 'failed'
+          AND cs.shots_detail->>'failureCode' = 'unsupported_agent'`,
     relaxVisuals: true,
   },
   override: {
-    sql: `cs.visual_evidence_state = 'overridden'`,
+    sql: `cs.shots_state = 'overridden'`,
     relaxVisuals: true,
   },
 };
@@ -101,7 +101,7 @@ const PROBLEM_FILTERS = {
 // sessions carrying visuals have a merged_at, so this excludes nothing real.
 const BASE_WHERE = `cs.status = 'merged' AND cs.merged_at IS NOT NULL`;
 const HAS_VISUALS = `EXISTS (SELECT 1 FROM session_visuals v WHERE v.session_id = cs.id)`;
-const HAS_REVIEW_EVIDENCE = `(${HAS_VISUALS} OR cs.visual_evidence_detail IS NOT NULL)`;
+const HAS_REVIEW_SHOTS = `(${HAS_VISUALS} OR cs.shots_detail IS NOT NULL)`;
 
 // Clamp a client-supplied page size. Page size is bounded by PAGE WEIGHT,
 // not query cost: production averages ~503 KB of PNG per proposal (p90
@@ -148,7 +148,7 @@ function buildWhere({ app, problem, cursor }) {
   const pf = problem ? PROBLEM_FILTERS[problem] : null;
   // The artifact precondition is relaxed only for failed_or_skipped, whose
   // whole point is proposals that stored nothing.
-  if (!pf) where.push(HAS_REVIEW_EVIDENCE);
+  if (!pf) where.push(HAS_REVIEW_SHOTS);
   else if (!pf.relaxVisuals) where.push(HAS_VISUALS);
   if (pf) where.push(pf.sql);
 
@@ -158,6 +158,241 @@ function buildWhere({ app, problem, cursor }) {
   }
 
   return { whereSql: where.join(' AND '), params };
+}
+
+// Merged proposals + their capture groups, newest first, keyset-paged on
+// (merged_at, id). Selects artifact METADATA only — never session_visuals.data
+// — so no image bytes cross this read. Shared by the console's route below
+// and the admin connector's (routes/bench-studio.js).
+async function listProposals(pool, query = {}) {
+  const limit = resolveLimit(query.limit);
+  const problem = resolveProblem(query.problem);
+  const cursor = resolveCursor(query.before, query.before_id);
+  const { whereSql, params } = buildWhere({ app: query.app, problem, cursor });
+
+  params.push(limit + 1);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
+            cs.capture_state, cs.capture_detail, cs.captured_at,
+            cs.shots_state, cs.shots_run_id,
+            cs.shots_detail, cs.shots_updated_at,
+            cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
+            cs.checks_commit_sha, cs.handoff_head_sha,
+            cs.app_id, a.slug AS app_slug, a.name AS app_name,
+            (SELECT jsonb_agg(jsonb_build_object(
+                      'id', v.id, 'kind', v.kind, 'media', v.media,
+                      'capture_index', v.capture_index,
+                      'captured_path', v.captured_path,
+                      'captured_viewport', v.captured_viewport,
+                      'commit_hash', v.commit_hash,
+                      'scenario_id', v.scenario_id,
+                      'scenario_fingerprint', v.scenario_fingerprint,
+                      'before_fell_back', v.before_fell_back,
+                      'shot_status', v.shot_status)
+                    ORDER BY v.capture_index, v.kind, v.media)
+               FROM session_visuals v WHERE v.session_id = cs.id) AS artifacts
+       FROM chat_sessions cs
+       LEFT JOIN apps a ON a.id = cs.app_id
+      WHERE ${whereSql}
+      ORDER BY cs.merged_at DESC, cs.id DESC
+      LIMIT $${params.length}`,
+    params
+  );
+
+  let hasMore = false;
+  if (rows.length > limit) { hasMore = true; rows.length = limit; }
+  const shotsBySession = await shotsView.getForSessions(pool, rows);
+
+  // Group each row's flat artifact list through services/visuals.js's
+  // groupRows — the SAME implementation the proposal cards and PR bodies
+  // use — so the client just renders and nothing can drift.
+  const proposals = rows.map((r) => {
+    const grouped = visuals.groupRows(
+      Array.isArray(r.artifacts) ? r.artifacts : [], visualHeadForSession(r)
+    );
+    return {
+      id: r.id,
+      mergedAt: r.merged_at,
+      prNumber: r.pr_number,
+      prUrl: r.pr_url,
+      title: r.session_title || r.pr_title || null,
+      appId: r.app_id,
+      appSlug: r.app_slug,
+      appName: r.app_name,
+      captureState: r.capture_state || null,
+      captureReason: (r.capture_detail && r.capture_detail.reason) || null,
+      captureDetail: r.capture_detail || null,
+      capturedAt: r.captured_at,
+      visuals: grouped,
+      shots: shotsBySession.get(Number(r.id)) || null,
+    };
+  });
+
+  // Staging demo rows (?demo=1) — first page only, prepended, so paging
+  // through real rows afterwards still behaves. Same shape/stance as
+  // routes/debug.js's stagingMockMergeRuns.
+  const demo = galleryDemo.IS_STAGING && query.demo === '1' && !cursor
+    ? galleryDemo.demoProposals()
+    : [];
+
+  const last = rows[rows.length - 1];
+  return {
+    proposals: demo.concat(proposals),
+    hasMore,
+    nextCursor: hasMore && last ? { before: last.merged_at, before_id: last.id } : null,
+  };
+}
+
+// Counters for the current filter — the "is capture still failing?"
+// scoreboard. Same predicate set as the list, minus the cursor and the
+// artifact aggregate.
+async function galleryStats(pool, query = {}) {
+  const problem = resolveProblem(query.problem);
+  const { whereSql, params } = buildWhere({ app: query.app, problem, cursor: null });
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_before.sql})::int AS missing_before,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.before_fell_back.sql})::int AS before_fell_back,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.root_only.sql})::int AS root_only,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.failed_or_skipped.sql})::int AS failed_or_skipped,
+            COUNT(*) FILTER (WHERE cs.capture_state = 'captured')::int AS complete,
+            COUNT(*) FILTER (WHERE cs.shots_state = 'verified')::int AS shots_verified,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.relevance_failure.sql})::int AS relevance_failure,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.replay_failure.sql})::int AS replay_failure,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.unsupported_agent.sql})::int AS unsupported_agent,
+            COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.override.sql})::int AS override,
+            COUNT(*) FILTER (WHERE cs.capture_state IS NULL)::int AS unknown_state
+       FROM chat_sessions cs
+       LEFT JOIN apps a ON a.id = cs.app_id
+      WHERE ${whereSql}`,
+    params
+  );
+  // Staging demo (?demo=1): the injected list rows aren't in the DB, so
+  // add their counts on top of the real ones.
+  if (galleryDemo.IS_STAGING && query.demo === '1') {
+    const real = rows[0] || {};
+    const demo = galleryDemo.demoStats();
+    const merged = { ...real };
+    for (const [k, v] of Object.entries(demo)) {
+      merged[k] = (Number(real[k]) || 0) + v;
+    }
+    return { stats: merged, demo: true };
+  }
+  return { stats: rows[0] || {} };
+}
+
+// ── The current shots, over a recent window ─────────────────────────────
+//
+// The counters above are the console strip's: the retired route-capture
+// pipeline's problems (missing_recording, root_only, unknown_state, …) over
+// every merged proposal there has ever been, so they say nothing about the
+// before & after shots today. These are what the admin connector's
+// list_recent_shots reports instead: for proposals merged in the last `days`
+// days (one app, or all), how each one's shots ended (chat_sessions'
+// shots slot), how its current run's declared changes came out (that run's
+// verdict, an unchanged change apart from a ready one, as
+// shots-files.resultStatus reads it), whether the problems the shots agent
+// noted are also on the before build, and why failed runs failed.
+// Only a verified run, or one failed because a change failed, keeps a
+// verdict; a run that stopped before it saved anything has none to count.
+const DEFAULT_STATS_DAYS = 7;
+const MAX_STATS_DAYS = 90;
+const SHOTS_STATS_SQL = `
+  WITH recent AS (
+    SELECT cs.shots_state AS state,
+           cs.shots_detail->>'failureCode' AS failure_code,
+           CASE WHEN jsonb_typeof(cs.shots_detail->'claims') = 'array'
+                THEN jsonb_array_length(cs.shots_detail->'claims') ELSE 0 END AS declared,
+           r.state AS run_state,
+           CASE WHEN r.state IN ('verified', 'failed') AND r.hard_verdict->>'mode' = 'shots'
+                THEN r.hard_verdict END AS verdict
+      FROM chat_sessions cs
+      LEFT JOIN apps a ON a.id = cs.app_id
+      LEFT JOIN shot_runs r ON r.id = cs.shots_run_id
+     WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
+       AND cs.merged_at >= $1::timestamptz
+       AND ($2::int IS NULL OR cs.app_id = $2::int)
+       AND ($3::text IS NULL OR a.slug = $3::text)
+  ), results AS (
+    SELECT CASE WHEN s.story->>'status' = 'ready' AND s.story->>'unchanged' = 'true' THEN 'unchanged'
+                WHEN s.story->>'status' IN ('ready', 'failed') THEN s.story->>'status'
+                ELSE 'skipped' END AS status
+      FROM recent
+     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(recent.verdict->'stories') = 'array'
+                                                  THEN recent.verdict->'stories' ELSE '[]'::jsonb END) AS s(story)
+  ), notices AS (
+    SELECT CASE WHEN n.notice->>'alsoBefore' IN ('true', 'false') THEN n.notice->>'alsoBefore'
+                ELSE 'unknown' END AS also_before
+      FROM recent
+     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN recent.run_state = 'verified'
+                                                       AND jsonb_typeof(recent.verdict->'notices') = 'array'
+                                                  THEN recent.verdict->'notices' ELSE '[]'::jsonb END) AS n(notice)
+  )
+  SELECT (SELECT COUNT(*) FROM recent)::int AS proposals,
+         (SELECT COALESCE(SUM(declared), 0) FROM recent)::int AS declared,
+         (SELECT COALESCE(jsonb_object_agg(state, n), '{}'::jsonb)
+            FROM (SELECT COALESCE(state, 'none') AS state, COUNT(*)::int AS n
+                    FROM recent GROUP BY 1) states) AS states,
+         (SELECT COALESCE(jsonb_object_agg(status, n), '{}'::jsonb)
+            FROM (SELECT status, COUNT(*)::int AS n FROM results GROUP BY 1) statuses) AS results,
+         (SELECT COALESCE(jsonb_object_agg(also_before, n), '{}'::jsonb)
+            FROM (SELECT also_before, COUNT(*)::int AS n FROM notices GROUP BY 1) seen) AS notices,
+         (SELECT COALESCE(jsonb_object_agg(failure_code, n), '{}'::jsonb)
+            FROM (SELECT failure_code, COUNT(*)::int AS n FROM recent
+                   WHERE state = 'failed' AND failure_code IS NOT NULL
+                   GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10) codes) AS failure_codes`;
+const IN_FLIGHT_SHOTS = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'];
+
+// The window in whole days: the default for anything that is not a positive
+// number, clamped to MAX_STATS_DAYS.
+function resolveDays(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_STATS_DAYS;
+  return Math.min(n, MAX_STATS_DAYS);
+}
+
+async function shotsStats(pool, query = {}, { now = Date.now() } = {}) {
+  const days = resolveDays(query.days);
+  const since = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
+  // The same app filter as buildWhere: a numeric id or a slug.
+  const app = query.app == null ? '' : String(query.app);
+  const appId = /^\d+$/.test(app) ? parseInt(app, 10) : null;
+  const appSlug = app && appId == null ? app : null;
+  const { rows: [row = {}] } = await pool.query(SHOTS_STATS_SQL, [since, appId, appSlug]);
+  const count = (map, key) => (map && Number.isFinite(Number(map[key])) ? Number(map[key]) : 0);
+  const states = row.states || {};
+  const results = row.results || {};
+  const seen = row.notices || {};
+  return {
+    window: { days, since },
+    proposals: Number(row.proposals) || 0,
+    // How each merged proposal's shots ended. `none`: it never had any.
+    shots: {
+      verified: count(states, 'verified'),
+      failed: count(states, 'failed'),
+      notRequired: count(states, 'not_required'),
+      overridden: count(states, 'overridden'),
+      cancelled: count(states, 'cancelled'),
+      stale: count(states, 'stale'),
+      inFlight: IN_FLIGHT_SHOTS.reduce((sum, state) => sum + count(states, state), 0),
+      none: count(states, 'none'),
+    },
+    changes: {
+      declared: Number(row.declared) || 0,
+      ready: count(results, 'ready'),
+      unchanged: count(results, 'unchanged'),
+      skipped: count(results, 'skipped'),
+      failed: count(results, 'failed'),
+    },
+    notices: {
+      total: count(seen, 'true') + count(seen, 'false') + count(seen, 'unknown'),
+      alsoBefore: count(seen, 'true'),
+      notBefore: count(seen, 'false'),
+      unknown: count(seen, 'unknown'),
+    },
+    failureCodes: row.failure_codes && typeof row.failure_codes === 'object' ? row.failure_codes : {},
+  };
 }
 
 function galleryRoutes(config) {
@@ -179,82 +414,7 @@ function galleryRoutes(config) {
   // — so no image bytes cross this endpoint.
   router.get('/api/gallery/proposals', async (req, res) => {
     try {
-      const limit = resolveLimit(req.query.limit);
-      const problem = resolveProblem(req.query.problem);
-      const cursor = resolveCursor(req.query.before, req.query.before_id);
-      const { whereSql, params } = buildWhere({ app: req.query.app, problem, cursor });
-
-      params.push(limit + 1);
-      const { rows } = await pool.query(
-        `SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title,
-                cs.capture_state, cs.capture_detail, cs.captured_at,
-                cs.visual_evidence_state, cs.visual_evidence_run_id,
-                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
-                cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
-                cs.checks_commit_sha, cs.handoff_head_sha,
-                cs.app_id, a.slug AS app_slug, a.name AS app_name,
-                (SELECT jsonb_agg(jsonb_build_object(
-                          'id', v.id, 'kind', v.kind, 'media', v.media,
-                          'capture_index', v.capture_index,
-                          'captured_path', v.captured_path,
-                          'captured_viewport', v.captured_viewport,
-                          'commit_hash', v.commit_hash,
-                          'scenario_id', v.scenario_id,
-                          'scenario_fingerprint', v.scenario_fingerprint,
-                          'before_fell_back', v.before_fell_back,
-                          'shot_status', v.shot_status)
-                        ORDER BY v.capture_index, v.kind, v.media)
-                   FROM session_visuals v WHERE v.session_id = cs.id) AS artifacts
-           FROM chat_sessions cs
-           LEFT JOIN apps a ON a.id = cs.app_id
-          WHERE ${whereSql}
-          ORDER BY cs.merged_at DESC, cs.id DESC
-          LIMIT $${params.length}`,
-        params
-      );
-
-      let hasMore = false;
-      if (rows.length > limit) { hasMore = true; rows.length = limit; }
-      const evidenceBySession = await visualEvidenceView.getForSessions(pool, rows);
-
-      // Group each row's flat artifact list through services/visuals.js's
-      // groupRows — the SAME implementation the proposal cards and PR bodies
-      // use — so the client just renders and nothing can drift.
-      const proposals = rows.map((r) => {
-        const grouped = visuals.groupRows(
-          Array.isArray(r.artifacts) ? r.artifacts : [], visualHeadForSession(r)
-        );
-        return {
-          id: r.id,
-          mergedAt: r.merged_at,
-          prNumber: r.pr_number,
-          prUrl: r.pr_url,
-          title: r.session_title || r.pr_title || null,
-          appId: r.app_id,
-          appSlug: r.app_slug,
-          appName: r.app_name,
-          captureState: r.capture_state || null,
-          captureReason: (r.capture_detail && r.capture_detail.reason) || null,
-          captureDetail: r.capture_detail || null,
-          capturedAt: r.captured_at,
-          visuals: grouped,
-          visualEvidence: evidenceBySession.get(Number(r.id)) || null,
-        };
-      });
-
-      // Staging demo rows (?demo=1) — first page only, prepended, so paging
-      // through real rows afterwards still behaves. Same shape/stance as
-      // routes/debug.js's stagingMockMergeRuns.
-      const demo = galleryDemo.IS_STAGING && req.query.demo === '1' && !cursor
-        ? galleryDemo.demoProposals()
-        : [];
-
-      const last = rows[rows.length - 1];
-      res.json({
-        proposals: demo.concat(proposals),
-        hasMore,
-        nextCursor: hasMore && last ? { before: last.merged_at, before_id: last.id } : null,
-      });
+      res.json(await listProposals(pool, req.query || {}));
     } catch (err) {
       log.error('gallery', 'List gallery proposals failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -269,7 +429,7 @@ function galleryRoutes(config) {
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
           WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
-            AND (${HAS_REVIEW_EVIDENCE})
+            AND (${HAS_REVIEW_SHOTS})
           GROUP BY a.id, a.slug, a.name
           ORDER BY a.name ASC`
       );
@@ -291,39 +451,7 @@ function galleryRoutes(config) {
   // artifact aggregate.
   router.get('/api/gallery/stats', async (req, res) => {
     try {
-      const problem = resolveProblem(req.query.problem);
-      const { whereSql, params } = buildWhere({ app: req.query.app, problem, cursor: null });
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_before.sql})::int AS missing_before,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.before_fell_back.sql})::int AS before_fell_back,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.root_only.sql})::int AS root_only,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.failed_or_skipped.sql})::int AS failed_or_skipped,
-                COUNT(*) FILTER (WHERE cs.capture_state = 'captured')::int AS complete,
-                COUNT(*) FILTER (WHERE cs.visual_evidence_state = 'verified')::int AS evidence_verified,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.relevance_failure.sql})::int AS relevance_failure,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.replay_failure.sql})::int AS replay_failure,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.unsupported_agent.sql})::int AS unsupported_agent,
-                COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.override.sql})::int AS override,
-                COUNT(*) FILTER (WHERE cs.capture_state IS NULL)::int AS unknown_state
-           FROM chat_sessions cs
-           LEFT JOIN apps a ON a.id = cs.app_id
-          WHERE ${whereSql}`,
-        params
-      );
-      // Staging demo (?demo=1): the injected list rows aren't in the DB, so
-      // add their counts on top of the real ones.
-      if (galleryDemo.IS_STAGING && req.query.demo === '1') {
-        const real = rows[0] || {};
-        const demo = galleryDemo.demoStats();
-        const merged = { ...real };
-        for (const [k, v] of Object.entries(demo)) {
-          merged[k] = (Number(real[k]) || 0) + v;
-        }
-        return res.json({ stats: merged, demo: true });
-      }
-      res.json({ stats: rows[0] || {} });
+      res.json(await galleryStats(pool, req.query || {}));
     } catch (err) {
       log.error('gallery', 'Gallery stats failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -335,12 +463,18 @@ function galleryRoutes(config) {
 
 module.exports = {
   galleryRoutes,
+  listProposals,
+  galleryStats,
+  shotsStats,
   // Exported for unit tests (pure helpers, no DB).
   resolveLimit,
   resolveCursor,
   resolveProblem,
+  resolveDays,
   buildWhere,
   PROBLEM_FILTERS,
   DEFAULT_LIMIT,
   MAX_LIMIT,
+  DEFAULT_STATS_DAYS,
+  MAX_STATS_DAYS,
 };

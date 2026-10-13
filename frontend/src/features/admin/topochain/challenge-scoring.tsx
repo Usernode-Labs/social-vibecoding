@@ -42,6 +42,9 @@ type Measure = {
   label: string;
   summary: string;
   phrase: string;
+  // For a target of exactly one ("Try an app", #3570); null when `phrase`
+  // already reads right there.
+  phrase_one: string | null;
   payout: string;
   target_unit: string | null;
   needs_target: boolean;
@@ -456,11 +459,20 @@ function payoutClause({ measure, points, target }: {
 }): string | null {
   if (!measure) return null;
   const n = target && target > 0 ? target : null;
-  const phrase = (measure.phrase || '').replace('{target}', n == null ? 'enough' : String(n));
+  // A count of one reads as the thing itself: "Try an app" (#3570) is
+  // TRY_APPS with a target of 1, and "opens 1 different apps. Nothing before
+  // that." describes a rule nobody wrote.
+  const one = n === 1;
+  const phrase = one && measure.phrase_one
+    ? measure.phrase_one
+    : (measure.phrase || '').replace('{target}', n == null ? 'enough' : String(n));
   if (points == null) {
     return 'nothing yet: the reward is not a plain number, so fill in Points.';
   }
   const pts = (v: number) => `${Math.round(v).toLocaleString()} pts`;
+  if (one && (measure.payout === 'on_target' || measure.payout === 'per_unit')) {
+    return `credits ${pts(points)} when someone ${phrase}.`;
+  }
   const share = n ? Math.floor(points / n) : points;
   switch (measure.payout) {
     case 'per_unit':

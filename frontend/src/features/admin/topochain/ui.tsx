@@ -489,6 +489,31 @@ export function FormActions(
   );
 }
 
+// "Download CSV" of the whole programme — every challenge in every event, a
+// row per scoring rule, then the templates no challenge uses — offered on the
+// Season events and Challenge templates screens alike, so it is drawn once.
+//
+// A real anchor rather than a button that sets window.location: the browser
+// saves the server's attachment itself, and `download` keeps it a download
+// even if the response were ever served inline. The href is a FIXED,
+// same-origin literal. That is what keeps it inside the rule the screens are
+// held to (no admin- or API-supplied URL is ever rendered as a link): no part
+// of it comes from data. Not canWrite()-gated: it is a read, and the route
+// sits behind the read gate, so a view-only admin is served the file too.
+export function ProgrammeCsvLink({ id }: { id: string }) {
+  return (
+    <a
+      id={id}
+      href="/api/v4/admin/programme/export.csv"
+      download
+      className={BTN.secondarySm}
+      title="Every challenge in every event, its scoring rules, and the unused templates, as one spreadsheet"
+    >
+      Download CSV
+    </a>
+  );
+}
+
 // Formats an ISO timestamp for a table cell. Mirrors AdminTopochain._fmt.
 export function fmt(iso?: string | null): string {
   if (!iso) return '—';

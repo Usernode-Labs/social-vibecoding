@@ -31,6 +31,90 @@ const HOP_HEADERS = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
 ]);
 
+// Which of a model's hosts OpenRouter tries first (provider routing). Left
+// to itself it balances by price, and its prompt-cache stickiness then keeps
+// a turn on whichever host the turn's first request landed on. A GLM build on
+// 2026-10-06 landed on a host averaging 44 s a request, against 7 s on the
+// host that served the same build again, and ran out its 40 minutes before
+// it ever opened the in-loop browser. These preferences only reorder: a host
+// whose time to first token is over 15 s at p90, or whose median output is
+// under 30 tokens a second, over OpenRouter's last few minutes, is tried after
+// the hosts that meet them, never excluded, and price still decides among
+// the rest. Kept in step with the other OpenRouter listener (tests pin it).
+const PROVIDER_PREFERENCES = Object.freeze({
+  preferred_max_latency: Object.freeze({ p90: 15 }),
+  preferred_min_throughput: Object.freeze({ p50: 30 }),
+});
+
+// Which hosts a model's coding turns may use, per model (13 Oct 2026). The
+// preferences above only reorder, and OpenRouter's default then weighs the
+// rest by 1/price², so GLM 5.3 Flash builds mostly landed on its cheapest
+// host: run four's 33-minute first version spent 31 of them waiting on
+// InferenceNet at 12 s a call. Over the 14 days to 13 Oct, seconds per model
+// call on GLM build-sized turns were Relace 1.6, Fireworks 2.7, Parasail 3.1,
+// Together 3.2 and Baseten 4.4, against InferenceNet's 6.6; Wafer and
+// GMICloud finished only 70% and 78% of their builds. So a GLM turn names
+// that shortlist (`only`, OpenRouter's base slugs, each matching every one
+// of the host's endpoints: `parasail` is parasail/fp4 and parasail/fast,
+// `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
+// turns off price balancing), and may fall back within it. Every other model
+// is routed as before.
+//
+// The shortlist can never leave a request with no host: it is not sent with
+// a request that brings routing of its own (`only`, `order`, `ignore`,
+// `sort` or `require_parameters`, whose filter it could intersect to nothing,
+// the parallel_tool_calls trap of tests/openrouter-parallel-tool-calls.test.js),
+// and a request it refuses (no host left: 404, or every host on it busy or
+// failing: 429, 502, 503) is sent once more with the plain preferences above,
+// to every host (sendRouted). AGENT_PROVIDER_SHORTLIST, set per turn by the
+// platform (config.openrouterProviderShortlists, env
+// OPENROUTER_PROVIDER_SHORTLISTS), replaces the list for the turn's model, and
+// `none` turns it off. Kept in step with the other OpenRouter listener (tests
+// pin it).
+const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
+  'z-ai/glm-5.3-flash': Object.freeze({
+    only: Object.freeze(['relace', 'fireworks', 'parasail', 'together', 'baseten']),
+    sort: 'throughput',
+  }),
+});
+const PROVIDER_SLUG = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MAX_SHORTLIST = 16;
+const ROUTING_FIELDS = ['only', 'order', 'ignore', 'sort', 'require_parameters'];
+const SHORTLIST_FALLBACK_STATUSES = new Set([404, 429, 502, 503]);
+
+// The shortlist override as the platform sent it: a list of slugs, [] for
+// `none`, or null for none sent (or one that names no valid slug).
+function parseShortlist(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.trim().toLowerCase() === 'none') return [];
+  const slugs = [...new Set(value.split(',').map(s => s.trim().toLowerCase()).filter(s => PROVIDER_SLUG.test(s)))];
+  return slugs.length ? slugs.slice(0, MAX_SHORTLIST) : null;
+}
+
+// What a request asks of OpenRouter's routing: the preferences above, the
+// model's shortlist when it has one and the request brings no routing of its
+// own, then the request's own preferences. Pure. `shortlist` is
+// parseShortlist's answer for the turn.
+function providerRoutingFor(model, asked = {}, { shortlist = null } = {}) {
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  const base = PROVIDER_ROUTING_BY_MODEL[String(model || '')] || null;
+  const only = shortlist != null ? shortlist : (base ? [...base.only] : []);
+  const brings = ROUTING_FIELDS.some(field => own[field] != null);
+  const routed = only.length && !brings
+    ? { only: [...only], sort: base?.sort || 'throughput', allow_fallbacks: true }
+    : {};
+  return { ...PROVIDER_PREFERENCES, ...routed, ...own };
+}
+
+// The same request without the shortlist: the plain preferences and the
+// request's own, for every host. Null when there was no shortlist to drop.
+function withoutShortlist(provider, asked = {}) {
+  if (!provider || !Array.isArray(provider.only)) return null;
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  if (own.only != null) return null;
+  return { ...PROVIDER_PREFERENCES, ...own };
+}
+
 async function readBounded(stream, limit) {
   const chunks = [];
   let bytes = 0;
@@ -170,7 +254,8 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
 }
 
 async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
-  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
+  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000,
+  fetchImpl = fetch, providerShortlist = null }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -181,6 +266,11 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
   let requestOrdinal = 0;
+  // Each request's start and end also carry atMs, ms since this listener
+  // (and so the turn's Codex process) started: the journal is read again
+  // after a platform restart, so only the turn's own clock says when a
+  // request ran (worker.js noteCodingRequestClock).
+  const listenerStartedAt = performance.now();
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -220,6 +310,11 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
+      // Prefer hosts that answer promptly, on the model's shortlist when it
+      // has one; any preference Codex sent is kept.
+      const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
+        ? { ...body.provider } : {};
+      body.provider = providerRoutingFor(model, askedProvider, { shortlist: providerShortlist });
       const serializedBody = JSON.stringify(body);
       const payloadBytes = Buffer.byteLength(serializedBody);
       const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
@@ -239,6 +334,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
+          atMs: Math.max(0, Math.round(startedAt - listenerStartedAt)),
           payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
           maxOutputTokens: body.max_output_tokens });
         timing.interval = setInterval(() => emitTiming({
@@ -257,9 +353,21 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       }
       headers['content-type'] = 'application/json';
       headers['accept-encoding'] = 'identity';
-      const response = await fetchImpl(`${upstreamBase}/responses`, {
+      let response = await fetchImpl(`${upstreamBase}/responses`, {
         method: 'POST', headers, body: serializedBody, redirect: 'error', signal: controller.signal,
       });
+      // The shortlist's safety net (PROVIDER_ROUTING_BY_MODEL): a request it
+      // refuses is sent once more without it, to every host.
+      const plain = withoutShortlist(body.provider, askedProvider);
+      let shortlistFallback = false;
+      if (plain && SHORTLIST_FALLBACK_STATUSES.has(response.status)) {
+        try { await response.body?.cancel(); } catch { /* the refusal is not forwarded */ }
+        body.provider = plain;
+        shortlistFallback = true;
+        response = await fetchImpl(`${upstreamBase}/responses`, {
+          method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
+        });
+      }
       if (timing) {
         timing.status = response.status;
         timing.stage = 'await_first_byte';
@@ -274,6 +382,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
+        ...(shortlistFallback ? { shortlistFallback: true } : {}),
       };
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter && /^\d+$/.test(retryAfter) && Number.isSafeInteger(Number(retryAfter))) {
@@ -288,7 +397,16 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         const limitSource = ['openrouter_credits', 'openrouter_key_limit', 'openrouter_in_flight_budget']
           .includes(metadata?.limit_source) ? metadata.limit_source : null;
         const paymentError = response.status === 402 || Number(error.code) === 402 || limitSource;
-        if (!paymentError) return;
+        if (!paymentError) {
+          // The host a refusal came from, for the turn's ledger row (run four,
+          // 13 Oct 2026: a failed turn recorded no host at all).
+          const host = metadata?.provider_name;
+          if (typeof host === 'string' && /^[a-zA-Z0-9 ._:/()-]{1,80}$/.test(host) && !diagnostic.providerName) {
+            diagnostic.providerName = host;
+            onRequest({ ...diagnostic });
+          }
+          return;
+        }
         diagnostic.providerErrorStatus = 402;
         if (limitSource) diagnostic.limitSource = limitSource;
         if (['in_flight_budget_exhausted', 'weight_exceeds_budget'].includes(metadata?.reason)) {
@@ -314,7 +432,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         const isEventStream = response.headers.get('content-type')?.includes('text/event-stream');
         const bodyStream = isEventStream
           ? Readable.from(observeEventStream(response.body, recordError, onUsage))
-          : response.status === 402
+          : response.status >= 400
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
         if (timing) {
@@ -341,10 +459,12 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
     } finally {
       if (timing) {
         clearInterval(timing.interval);
+        const endedAt = performance.now();
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
+          atMs: Math.max(0, Math.round(endedAt - listenerStartedAt)),
           outcome: timing.outcome, stage: timing.stage,
           ...(timing.status != null ? { httpStatus: timing.status } : {}),
-          durationMs: Math.max(0, Math.round(performance.now() - timing.startedAt)),
+          durationMs: Math.max(0, Math.round(endedAt - timing.startedAt)),
           responseBytes: Math.min(timing.responseBytes, 10_000_000),
           chunkCount: Math.min(timing.chunks, 1000),
         });
@@ -375,17 +495,16 @@ async function runCodex(args, env = process.env) {
     apiKey: env.OPENROUTER_API_KEY,
     model: env.AGENT_MODEL,
     maxOutputTokens: selected?.max_output_tokens,
+    providerShortlist: parseShortlist(env.AGENT_PROVIDER_SHORTLIST),
     onRequest: diagnostic => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.request', diagnostic })}\n`),
     // #3038: each request's usage the moment it finishes, not once at the
     // end of the turn. Codex reports usage only at turn.completed, so a turn
     // stopped mid-flight used to leave no record of what it had spent; these
     // lines reach the journal as they happen and survive the kill.
     onUsage: usage => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.usage', usage })}\n`),
-    // Evidence retains its structured run diagnostics. Ordinary coding turns
-    // need the same content-free request timing so a quiet model call can be
+    // Content-free request timing, so a quiet model call can be
     // distinguished from a runner that never sent a request.
-    onTiming: diagnostic => process.stdout.write(
-      `${env.MODE === 'evidence' ? '__USERNODE_EVIDENCE_PROVIDER__' : '__USERNODE_CODING_PROVIDER__'} ${JSON.stringify(diagnostic)}\n`),
+    onTiming: diagnostic => process.stdout.write(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(diagnostic)}\n`),
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.
@@ -407,7 +526,7 @@ async function runCodex(args, env = process.env) {
   // A quiet Codex process with zero provider requests is a different failure
   // boundary from an in-flight provider request. Record that fact at most once
   // a minute, without inspecting the model's input or output.
-  const idleHeartbeat = env.MODE === 'evidence' ? null : setInterval(() => {
+  const idleHeartbeat = setInterval(() => {
     const idleMs = Math.max(0, Math.round(performance.now() - lastCodexOutputAt));
     if (idleMs < 60_000 || (lastIdleReportAt != null && idleMs - lastIdleReportAt < 60_000)) return;
     lastIdleReportAt = idleMs;
@@ -415,7 +534,7 @@ async function runCodex(args, env = process.env) {
       kind: 'codex_output_idle', durationMs: idleMs, activeRequests: adapter.activeRequestCount(),
     })}\n`);
   }, 15_000);
-  idleHeartbeat?.unref();
+  idleHeartbeat.unref();
   let killTimer;
   const stop = signal => {
     child.kill(signal);
@@ -434,7 +553,7 @@ async function runCodex(args, env = process.env) {
     process.removeListener('SIGTERM', onTerm);
     process.removeListener('SIGINT', onInt);
     clearTimeout(killTimer);
-    if (idleHeartbeat) clearInterval(idleHeartbeat);
+    clearInterval(idleHeartbeat);
     await adapter.close();
   }
 }
@@ -446,4 +565,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startRequestAdapter, runCodex };
+module.exports = {
+  startRequestAdapter, runCodex, PROVIDER_PREFERENCES, PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist,
+  parseShortlist, SHORTLIST_FALLBACK_STATUSES,
+};

@@ -7,4 +7,4 @@
  */
 
 export { AppViewIsland } from './app-view-island';
-export { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from './live-apps';
+export { liveAppLabel, LiveAppDot, useLiveAppSlugs } from './live-apps';

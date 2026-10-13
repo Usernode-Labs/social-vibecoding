@@ -26,17 +26,27 @@
 //
 // ── Windowed measures vs state measures ────────────────────────────────
 //
-// Five measures score ACTIONS and count only what happened inside the
+// Eight measures score ACTIONS and count only what happened inside the
 // challenge's own window. Without that rule, opening a season would
 // retroactively pay everyone who had ever promoted a proposal, and the first
 // tick would hand the onboarding points to people who never saw the
 // challenge.
 //
-// Two score a STATE instead — "is your GitHub linked", "is block production
-// on" — and deliberately do NOT filter by window. A state has no date to
+// Four score a STATE instead — "is your GitHub linked", "is block production
+// on", "are you in a community", "have you made an app for one" — and
+// deliberately do NOT filter by window. A state has no date to
 // compare: somebody who linked their account last month still has it linked,
 // and a persistent challenge that refused to see that would be telling them
 // to do something they have already done.
+//
+// A vote and a report are actions, not states (#3569, #3568). The test that
+// sorts a measure into one pile or the other is "are you still in it": you
+// are still in a community you joined last month, but a vote cast last month
+// is something you did then, exactly like an app you tried then — and
+// counting all time would pay every existing voter the whole reward on the
+// first pass after the rule is created, which is the retroactive payout this
+// rule exists to prevent. So VOTE_CAST and FEEDBACK_SENT are windowed, the
+// way TRY_APPS and PROPOSAL_SENT always were.
 'use strict';
 
 // ── Rewards ────────────────────────────────────────────────────────────
@@ -64,6 +74,23 @@ function parseRewardPoints(reward) {
   return Number.isFinite(n) ? n : null;
 }
 
+// ── The floor for having tried an app ──────────────────────────────────
+//
+// A day's worth of app use is one row per (user, app, day), so the
+// "did they actually open it" floor is in seconds.
+//
+// 10, down from 30 (#3570). "Try an app" is the first thing a newcomer is
+// asked to do with an app, and half a minute was long enough that somebody
+// who opened one, looked around and came back to Home found it still "Not
+// started". Ten seconds is still more than an accidental tap; and since the
+// heartbeat now scores the moment a person crosses it
+// (./challenge-scorer.js scoreOnAppTime), the card ticks while they are
+// still in the app. Lowering it pays nobody twice and takes nothing back: on
+// the first pass after it ships, an app somebody spent 10–29 seconds in
+// inside a live TRY_APPS window becomes a credit it was not before, which
+// can complete an existing member's count and pay its reward then.
+const TRY_APPS_MIN_SECONDS = 10;
+
 // ── The measures ───────────────────────────────────────────────────────
 //
 // `payout` is the one thing that genuinely differs between counted measures,
@@ -90,11 +117,22 @@ function parseRewardPoints(reward) {
 // an operator to type a target it never reads made the rule report itself as
 // misconfigured. A counted measure always needs one (it is the cap); beyond
 // that, only a measure whose own query reads the number says so here.
+//
+// `phraseOne` is the phrase for a target of exactly one, where it has one.
+// "Try an app" is TRY_APPS with a target of 1 (#3570), and "opens 1
+// different apps" is not something a person would write.
+//
+// `screened` puts the measure's candidates through the deterministic junk
+// filter (./challenge-grader.js preFilter) before anything is planned: too
+// short to act on, or a copy of what the same person already sent. It is
+// its own flag, not "graded", because FEEDBACK_SENT is screened and never
+// sent to a model.
 const MEASURES = {
   TRY_APPS: {
     label: 'Tried different apps',
     phrase: 'opens {target} different apps',
-    summary: 'Opened this many different apps and spent at least half a minute in each. Apps they made themselves do not count.',
+    phraseOne: 'opens an app they did not make',
+    summary: `Opened this many different apps and spent at least ${TRY_APPS_MIN_SECONDS} seconds in each. Apps they made themselves do not count, except on a First challenge, which is paid once.`,
     unit: 'app',
     targetUnit: 'apps',
     counted: true,
@@ -139,13 +177,14 @@ const MEASURES = {
   USEFUL_FEEDBACK: {
     label: 'Sent useful feedback',
     phrase: 'sends a report worth acting on',
-    summary: 'Filed a report through the feedback dialog inside the window. Each one is graded on how easy it is to act on.',
+    summary: 'Filed a report through the feedback dialog inside the window, about the platform or somebody else\'s project. A report on a project they made, or one only they can see, does not count, except on a First challenge, which is paid once. Each one is graded on how easy it is to act on.',
     unit: 'report',
     targetUnit: 'reports',
     counted: true,
     payout: 'graded',
     windowed: true,
     graded: true,
+    screened: true,
   },
   CONNECT_ACCOUNTS: {
     label: 'Connected accounts',
@@ -169,13 +208,123 @@ const MEASURES = {
     windowed: false,
     graded: false,
   },
+  // The three community measures (Season 2's "Find people to build with",
+  // "Build for your community" and "Invite 3 people"). "In a community"
+  // means what the Workshop labels Public or Private community — the
+  // audience rule in services/communities.js — never "Just you", and never
+  // the platform's own project, which every account is put in without
+  // choosing it.
+  COMMUNITY_JOINED: {
+    label: 'Joined a community',
+    phrase: 'joins a community',
+    summary: 'Is in a public or private community: joined one, took an invite, or started one. The platform\'s own project and a project only they can see do not count. Counts memberships from before the season too.',
+    unit: 'state',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: false,
+    graded: false,
+  },
+  COMMUNITY_APP_CREATED: {
+    label: 'Created an app for a community',
+    phrase: 'creates an app for a community',
+    summary: 'Made a project whose community is public or private, not "Just you". A private project counts once somebody else is in it or invited. Counts projects from before the season too.',
+    unit: 'state',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: false,
+    graded: false,
+  },
+  INVITES_JOINED: {
+    label: 'People who joined by their invite',
+    phrase: 'brings in {target} people by invite',
+    summary: 'People who joined through their invite link, or accepted their invite by username or email, inside the window. Each person counts once, for the first invite they took, so a ring of accounts cannot pay each other.',
+    unit: 'person',
+    targetUnit: 'people',
+    counted: true,
+    payout: 'per_unit',
+    windowed: true,
+    graded: false,
+  },
+  // Two of the First challenges, as single completions the moment the thing
+  // is done (#3569 "Vote on a change", #3568 "Suggest an improvement").
+  // Both are actions, so both are windowed (see the top of this file).
+  //
+  // A vote on your OWN proposal or request does not count. Every measure
+  // here that could pay for self-dealing leaves it out — apps you made are
+  // not apps you tried, an invite you took yourself is not somebody you
+  // brought in — and "Vote on a change" is about judging somebody else's
+  // change: an author voting Yes on what they just put up has not done that.
+  // It also keeps the demo partner (which votes on its own demo proposal)
+  // out of the measure without a special case.
+  //
+  // Nor does a vote on what the Homeroom bot built from your own request, or
+  // any vote in a project only you are in ("Just you"), and a report on a
+  // project you made, or one only you are in, is not feedback to anybody
+  // (first-session test, 2026-10-03). The bot is the author of the proposal
+  // it writes for a request, so "not your own proposal" let the requester's
+  // vote on their own app's first version through, and the in-app "Ask for
+  // a change" on that app paid both feedback measures.
+  //
+  // THE ONE EXCEPTION (evan, #4602 and #4603, 9 Oct 2026): on the First
+  // challenges, which are paid once in a life, time in an app you made
+  // counts for "Try an app" and a report on your own project counts for
+  // "Send feedback". A newcomer's first app is usually the one they just
+  // made, and the list is there to show them how each thing works. Every
+  // repeatable and weekly challenge keeps leaving your own projects out, so
+  // they cannot be farmed (challenge-scorer.js RULE_CHALLENGES_SQL's
+  // `first_challenge`). Join and Vote are unchanged.
+  //
+  // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
+  // 2026-10-01): a newcomer whose communities had nothing waiting could not
+  // vote, so the Getting started card's Vote step sent them to the Workshop
+  // instead, and the server recorded that visit only when nothing was
+  // waiting. It counts like a vote, the same window and the same one credit,
+  // so the First challenge needs no second rule. #4635 retired the card, so
+  // nothing records a visit now; one recorded before still counts.
+  VOTE_CAST: {
+    label: 'Voted on a change, or looked at the Workshop when nothing was up for a vote',
+    phrase: 'votes on somebody else\'s change, or looks at the Workshop when nothing is up for a vote',
+    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card (retired since; a look recorded before still counts). Votes on their own proposals and requests do not count, nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
+    unit: 'vote',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: true,
+    graded: false,
+  },
+  // The same reports USEFUL_FEEDBACK reads, through the same junk filter,
+  // but one is enough and nothing is graded: the First challenge is about
+  // sending feedback at all, and a model's opinion of a newcomer's first
+  // report is not something they should wait on or be marked down by. The
+  // weekly graded challenge stays on USEFUL_FEEDBACK.
+  FEEDBACK_SENT: {
+    label: 'Sent feedback',
+    phrase: 'sends a report',
+    summary: 'Sent a report through the feedback dialog inside the window, and it reached GitHub. A report too short to act on, a copy of one they already sent, or a report on a project they made or one only they can see does not count, except on a First challenge, which is paid once. One is enough, and it is not graded.',
+    unit: 'report',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: true,
+    graded: false,
+    screened: true,
+  },
 };
 
 const MEASURE_KEYS = Object.keys(MEASURES);
 
-// A day's worth of app use is one row per (user, app, day), so the
-// "did they actually open it" floor is in seconds.
-const TRY_APPS_MIN_SECONDS = 30;
+// Whether one heartbeat took somebody's time in an app across the floor:
+// below it before the heartbeat, at or past it after. The heartbeat route
+// asks this so that it runs a scoring pass on the crossing, once in a
+// person's life per app, and never on the heartbeats either side of it.
+function crossedTryAppsFloor({ before, after }) {
+  const was = Number(before);
+  const now = Number(after);
+  return Number.isFinite(was) && Number.isFinite(now)
+    && was < TRY_APPS_MIN_SECONDS && now >= TRY_APPS_MIN_SECONDS;
+}
 
 // Grace after a window closes. A weekly challenge ending Sunday 23:59 must
 // still pay for something done at 23:55, and the tick that would have caught
@@ -202,6 +351,45 @@ function resolveWindow(row, { now = Date.now(), graceMs = WINDOW_GRACE_MS } = {}
   const started = startMs == null || startMs <= now;
   const ended = endMs != null && endMs + graceMs < now;
   return { startMs, endMs, open: started && !ended };
+}
+
+// ── Weekly challenges ──────────────────────────────────────────────────
+//
+// A challenge in the WEEKLY category says "up to 2 count each week", and the
+// cap is per week, not per challenge row. Season 2 runs each weekly challenge
+// as ONE row for the whole season (22 Sep to 31 Dec), so a cap counted over
+// the row meant "up to 2 this season", and the pre-season test week's credits
+// blocked people for the rest of it. A week is Monday 00:00 to Sunday 23:59
+// UTC, the same for everyone whatever their time zone.
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isWeekly(row) {
+  const category = (row && (row.category || row.t_category)) || '';
+  return String(category).trim().toUpperCase() === 'WEEKLY';
+}
+
+// The Monday 00:00 UTC that starts the week `ms` falls in.
+function weekStartMs(ms) {
+  const d = new Date(ms);
+  const sinceMonday = (d.getUTCDay() + 6) % 7;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday);
+}
+
+// The weeks a run scores a weekly challenge over: this week, and last week
+// too for WINDOW_GRACE_MS after it closed, so a Sunday-night action is still
+// paid by the run that comes after midnight. Each is clipped to the
+// challenge's own window; a week wholly outside it is left out.
+function weeklyWindows(window, { now = Date.now(), graceMs = WINDOW_GRACE_MS } = {}) {
+  const current = weekStartMs(now);
+  const starts = now - current < graceMs ? [current - WEEK_MS, current] : [current];
+  const out = [];
+  for (const start of starts) {
+    const end = start + WEEK_MS - 1;
+    const from = window.startMs == null ? start : Math.max(start, window.startMs);
+    const to = window.endMs == null ? end : Math.min(end, window.endMs);
+    if (from <= to) out.push({ startMs: from, endMs: to, open: window.open, weekStartMs: start });
+  }
+  return out;
 }
 
 // The effective target and points for one rule over one challenge. The rule's
@@ -251,7 +439,11 @@ function skipReason(rule, row, { now = Date.now() } = {}) {
   if (effectivePoints(rule, row) == null) {
     return 'no points: the reward is not a plain number, so set Points on the rule';
   }
-  if (spec.counted && !(effectiveTarget(rule, row) > 1)) {
+  // A count of one is a real target: "Try an app" is TRY_APPS with a target
+  // of 1 (#3570), and it used to be refused here as "no target" — the rule
+  // would have reported itself misconfigured and paid nobody. What a counted
+  // measure cannot do without is A target, blank or zero being the mistake.
+  if (spec.counted && !(effectiveTarget(rule, row) >= 1)) {
     return 'no target: this measure counts, so set Target on the rule';
   }
   if (spec.needsTarget && !(effectiveTarget(rule, row) > 0)) {
@@ -295,8 +487,14 @@ function unitPoints({ payout, points, target, index }) {
 // `candidates` are in arrival order per person (oldest first) and each names
 // itself with a `sourceKey`. `credited` says what the ledger already holds
 // for this challenge: the keys already paid for, and how many credits each
-// person has. Both are what make the scorer safe to run every ten minutes —
-// the plan for a person already fully credited is empty.
+// person has, in all and per week (`weeks`, keyed by weekStartMs). Both are
+// what make the scorer safe to run every ten minutes — the plan for a person
+// already fully credited is empty.
+//
+// On a WEEKLY challenge the cap is counted inside the candidate's own week,
+// and a single-completion measure is not marked as THE completion: the
+// database allows one completion per person per challenge, and a weekly
+// challenge is completed again every week.
 //
 // A graded measure returns credits marked `needsGrade`, with `points` as the
 // ceiling; the caller grades them and drops any the grader could not score.
@@ -308,21 +506,31 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
   const points = effectivePoints(rule, row);
   if (points == null) return [];
   const target = spec.counted ? effectiveTarget(rule, row) : 1;
-  if (spec.counted && !(target > 1)) return [];
+  if (spec.counted && !(target >= 1)) return [];
 
   const window = resolveWindow(row, { now });
+  const weekly = isWeekly(row);
   const out = [];
   // How many credits each person will have once this run's own plan is
   // applied — without it, two candidates in the same run would both be
-  // "the second account" and the challenge would overpay.
+  // "the second account" and the challenge would overpay. On a weekly
+  // challenge the tally is per person per week.
   const running = new Map();
 
   for (const c of candidates) {
     const userId = Number(c.userId);
     if (!Number.isFinite(userId)) continue;
-    const state = credited.get(userId) || { keys: new Set(), count: 0 };
+    const state = credited.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
     if (state.keys.has(c.sourceKey)) continue;
-    const already = state.count + (running.get(userId) || 0);
+    let slot = userId;
+    let held = state.count;
+    if (weekly) {
+      const at = c.activityAt != null ? Date.parse(c.activityAt) : NaN;
+      const week = weekStartMs(Number.isFinite(at) ? at : now);
+      slot = `${userId}:${week}`;
+      held = (state.weeks && state.weeks.get(week)) || 0;
+    }
+    const already = held + (running.get(slot) || 0);
     if (already >= target) continue;
     // A windowed measure's SQL already filters by window; this is the belt to
     // that braces, and the only guard for a candidate list handed in by a
@@ -336,11 +544,11 @@ function planCredits(rule, row, { candidates = [], credited = new Map(), now = D
       points: unitPoints({ payout: spec.payout, points, target, index: already }),
       activityAt: c.activityAt,
       description: c.description || null,
-      completion: !spec.counted,
+      completion: !spec.counted && !weekly,
       needsGrade: spec.graded === true,
       gradeInput: c.gradeInput || null,
     });
-    running.set(userId, (running.get(userId) || 0) + 1);
+    running.set(slot, (running.get(slot) || 0) + 1);
   }
   return out;
 }
@@ -437,6 +645,26 @@ function cadenceOf(ruleList, row, { now = Date.now(), defaultMinutes } = {}) {
   return { intervalMinutes: minutes, lastScoredAt: last };
 }
 
+// What a participant's page says about how a challenge is counted (#3253,
+// #3248): the measure of the rule that scores it right now, and, for a
+// measure that counts, the target past which nothing more is credited (the
+// `already >= target` cap in planCredits). Unlike cadenceOf it does not wait
+// for a first run: what counts is known before anything has been counted.
+// Only a rule the scheduler would run (skipReason null, a schedule) speaks,
+// so a page never explains a rule that is not going to score it. The first
+// such rule wins; `measure` is always a MEASURES key, never free text.
+//
+// null when nothing scores it.
+function countedByOf(ruleList, row, { now = Date.now(), defaultMinutes } = {}) {
+  for (const rule of ruleList || []) {
+    if (skipReason(rule, row, { now })) continue;
+    if (effectiveInterval(rule, defaultMinutes) == null) continue;
+    const spec = MEASURES[rule.measure];
+    return { measure: rule.measure, target: spec.counted ? effectiveTarget(rule, row) : null };
+  }
+  return null;
+}
+
 // The order one run takes its rules in. Two things ride on it:
 //
 //   Cheap before expensive. A graded rule can spend most of a minute on
@@ -460,9 +688,14 @@ module.exports = {
   MEASURES,
   MEASURE_KEYS,
   TRY_APPS_MIN_SECONDS,
+  crossedTryAppsFloor,
   WINDOW_GRACE_MS,
   parseRewardPoints,
   resolveWindow,
+  WEEK_MS,
+  isWeekly,
+  weekStartMs,
+  weeklyWindows,
   skipReason,
   effectiveTarget,
   effectivePoints,
@@ -476,5 +709,6 @@ module.exports = {
   isDue,
   nextDueAt,
   cadenceOf,
+  countedByOf,
   runOrder,
 };

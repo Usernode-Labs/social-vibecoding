@@ -21,6 +21,8 @@ const COMPONENTS = new Set([
   'mayor_phase_1',
   'mayor_data_iteration',
   'mayor_phase_2',
+  // The one extra Mayor round asked for when a turn ended with no reply text.
+  'mayor_empty_retry',
   'headless_decision',
   'headless_wrapup',
   'quick_replies',
@@ -38,6 +40,34 @@ const COMPONENTS = new Set([
   'homeroom_bot_triage',
   // #3146: its build turn on a live app, for a request it judged ready.
   'homeroom_bot_build',
+  // The one more turn a build turn that changed nothing is sent
+  // (homeroom-bot-live.js buildNudgePrompt), on the build's own clock.
+  'homeroom_bot_build_nudge',
+  // Its spec turn, just before that build (live and shadow alike).
+  'homeroom_bot_spec',
+  // The reviewer's look at a first version's screenshots (services/bot-review.js).
+  'homeroom_bot_review',
+  // #3654: a benchmark trial of one of its stages, on a candidate model.
+  'homeroom_bench',
+  // The hub's since-your-last-visit line (services/since-summary.js).
+  'since_summary',
+  // The watch-only small-change tag's one call per head (services/small-change.js).
+  'small_change',
+  // Helpers that moved to GLM 5.3 Flash with a Haiku fallback (llm.js
+  // helperMessage), each named so its speed and fallback rate read on their own.
+  'short_description',
+  'app_sketch',
+  // A first version's plan at Make it (services/first-version-plan.js).
+  'first_version_plan',
+  'challenge_grade',
+  'challenge_grade_feedback',
+  'challenge_grade_proposal',
+  'chat_ask',
+  'workshop_ask',
+  'content_review',
+  // The translation step's catalog requests (services/language-sync.js), sent
+  // one by one or as a Message Batch.
+  'language_sync',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
@@ -179,7 +209,9 @@ function normalizeEvent(event = {}) {
 }
 
 // Complete content-free diagnostic contract. Every value below is either a
-// bounded number, a strict enum, a model/region slug, or a boolean. Free-form
+// bounded number, a strict enum, a model/region slug, a boolean, or (one
+// field, tool_sequence) a bounded list of names from a closed set
+// (toolSequenceName). Free-form
 // request/response/error data is never accepted, and unknown optional values
 // are omitted so old/new provider shapes remain distinguishable from zero.
 // Exported for agent_turns, whose OpenRouter rows are the authoritative ledger
@@ -274,8 +306,91 @@ function normalizeDiagnostics(event = {}) {
     subagent_call_count: tokenCount(event.subagentCallCount),
     web_tool_call_count: tokenCount(event.webToolCallCount),
     tool_search_count: tokenCount(event.toolSearchCount),
+    // Claude Code over OpenRouter (worker.js noteCodingProviderImages): the
+    // images its requests sent, moved out of tool results, or left out.
+    image_sent_count: tokenCount(event.imageSentCount),
+    image_moved_count: tokenCount(event.imageMovedCount),
+    image_omitted_count: tokenCount(event.imageOmittedCount),
+    image_pruned_count: tokenCount(event.imagePrunedCount),
+    // Where an OpenRouter coding turn's time went (worker.js
+    // noteCodingRequestClock): the time a model request was open, the time
+    // between requests split by the kind of tool that ran in it, and when
+    // the first edit, the first app boot and the browser calls happened, in
+    // ms since the agent started. Absent when the listener sent no clock.
+    model_request_ms: finiteNonnegative(event.modelRequestMs),
+    browser_tool_ms: finiteNonnegative(event.browserToolMs),
+    shell_tool_ms: finiteNonnegative(event.shellToolMs),
+    edit_tool_ms: finiteNonnegative(event.editToolMs),
+    read_tool_ms: finiteNonnegative(event.readToolMs),
+    other_tool_ms: finiteNonnegative(event.otherToolMs),
+    first_file_change_ms: finiteNonnegative(event.firstFileChangeMs),
+    first_app_boot_ms: finiteNonnegative(event.firstAppBootMs),
+    first_browser_call_ms: finiteNonnegative(event.firstBrowserCallMs),
+    last_browser_call_ms: finiteNonnegative(event.lastBrowserCallMs),
+    // The Homeroom bot's build turns in Claude Code: how many times the stop
+    // guard (worker/build-stop-hook.js) sent the agent back to work after it
+    // tried to end a turn that had changed nothing. Absent without the guard.
+    stop_hook_blocks: tokenCount(event.stopHookBlocks),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
+    // What a coding turn's first and last model requests carried, in bytes of
+    // the wire request, as its request listener measured them (worker.js
+    // noteRequestSize): the whole payload, the conversation, the
+    // instructions, and how many conversation items. Sizes only.
+    ...requestSizeFields('first_request', event.firstRequestSize),
+    ...requestSizeFields('last_request', event.lastRequestSize),
+    // The tools a coding turn called, in order, by name alone (worker.js
+    // noteToolSequence), and how many past its bound were not kept.
+    tool_sequence: toolSequence(event.toolSequence),
+    tool_sequence_dropped: tokenCount(event.toolSequenceDropped),
   });
+}
+
+function requestSizeFields(prefix, size) {
+  if (!size || typeof size !== 'object') return {};
+  return {
+    [`${prefix}_payload_bytes`]: tokenCount(size.payloadBytes),
+    [`${prefix}_input_bytes`]: tokenCount(size.inputBytes),
+    [`${prefix}_instruction_bytes`]: tokenCount(size.instructionBytes),
+    [`${prefix}_input_items`]: tokenCount(size.inputItems),
+  };
+}
+
+// A tool-name list, at most TOOL_SEQUENCE_MAX of them, each one the
+// platform knows (toolSequenceName); null for none.
+const TOOL_SEQUENCE_MAX = 400;
+function toolSequence(value) {
+  if (!Array.isArray(value) || !value.length) return null;
+  return value.slice(0, TOOL_SEQUENCE_MAX).map(toolSequenceName);
+}
+
+// The names a tool sequence may hold: the coding agents' own tools, and the
+// tools of the MCP servers the platform itself gives a turn (the in-loop
+// browser's browser_*, the Homeroom read tools, visible_changes), each by its
+// bare tool name. Anything else, a repository's or a person's own MCP server
+// above all, is `mcp` or `other`: its name is theirs, and this ledger is
+// content-free (no server name, no path, no command).
+const SEQUENCE_TOOL_NAMES = new Set([
+  'Bash', 'BashOutput', 'KillShell', 'KillBash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'LS',
+  'NotebookEdit', 'NotebookRead', 'TodoWrite', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch',
+  'ExitPlanMode',
+  // Codex's own items (src/agents/codex-openrouter.js).
+  'command', 'file_change', 'file_read',
+  'get_platform_conventions', 'get_app', 'list_requests', 'get_request', 'get_proposal', 'get_change',
+  'declare_visible_changes', 'declare_diagram',
+  'mcp', 'other',
+]);
+const PLATFORM_MCP_SERVER_RE = /^(?:playwright|homeroom|visible_changes|browser_[a-z_]{1,40})$/;
+const PLATFORM_BROWSER_TOOL_RE = /^browser_[a-z_]{1,40}$/;
+function toolSequenceName(name) {
+  const n = typeof name === 'string' ? name : '';
+  const known = (t) => SEQUENCE_TOOL_NAMES.has(t) || PLATFORM_BROWSER_TOOL_RE.test(t);
+  if (n.startsWith('mcp__')) {
+    const at = n.lastIndexOf('__');
+    const server = n.slice(5, at);
+    const tool = n.slice(at + 2);
+    return PLATFORM_MCP_SERVER_RE.test(server) && known(tool) ? tool : 'mcp';
+  }
+  return known(n) ? n : 'other';
 }
 
 function resolvePool(poolOrConfig) {
@@ -390,6 +505,10 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'file_read_count', 'distinct_file_read_count', 'file_search_count',
   'file_change_count', 'distinct_file_change_count', 'mcp_call_count',
   'subagent_call_count', 'web_tool_call_count', 'tool_search_count',
+  'image_sent_count', 'image_moved_count', 'image_omitted_count',
+  'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
+  'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
+  'last_browser_call_ms', 'stop_hook_blocks',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
@@ -1025,6 +1144,7 @@ function collectionComponent(value, fallback = null) {
 }
 
 module.exports = {
+  toolSequenceName,
   EVENT_TYPE,
   MAX_REPORT_DAYS,
   init,

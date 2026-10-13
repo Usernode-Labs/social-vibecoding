@@ -31,6 +31,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 
 /**
  * The Dev screen's board, as an href, in the LAYOUT named.
@@ -95,11 +96,48 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * conversation, and a chip reading "Workshop" there would promise the wrong
  * screen.
  *
+ * #4486: and an item opened from All items (a row's tap on a phone, or "Open
+ * as a page" from the panel beside the board) goes back to All items, which
+ * is the page the project's Workshop route reopens on (`workshopTab`, the
+ * tab AppView._workshopTab remembers), so the chip says so.
+ *
  * @param {string|null} href
- * @returns {'Messages'|'Workshop'}
+ * @param {string|null} [workshopTab]
+ * @returns {string} "Messages", "Workshop" or "All items", in the language on screen
  */
-export function topicBackLabel(href) {
-  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
+export function topicBackLabel(href, workshopTab = null) {
+  if (backsToMessages(href)) return t('agent:topicBack.messages');
+  return workshopTab === 'all' && typeof href === 'string' && /\/workshop$/.test(href)
+    ? t('agent:topicBack.allItems')
+    : t('agent:topicBack.workshop');
+}
+
+/** Whether `href` goes back to a Messages conversation rather than a board. */
+function backsToMessages(href) {
+  return typeof href === 'string' && href.startsWith('#messages');
+}
+
+/**
+ * The Workshop chip a topic opened from Messages carries BESIDE its back
+ * chip (#3691), or null where there is none.
+ *
+ * #3103 sent such a card's one chip back to the conversation, which is
+ * right, and left the project the card belongs to with no way in from its
+ * page. So the page offers both: "‹ Messages", the way back, and
+ * "‹ Workshop", the board the chip would have gone to had the card been
+ * opened there. A topic opened from the Workshop has one chip, and it is
+ * already this one.
+ *
+ * The header and the native back-swipe keep reading `topicBackHref`: back
+ * from the card is still the conversation.
+ *
+ * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string, topicOrigin?: string|null }} route
+ * @returns {string|null}
+ */
+export function topicWorkshopHref(route) {
+  const back = topicBackHref(route);
+  if (!back || !backsToMessages(back)) return null;
+  return boardHref(route.slug, route.boardView);
 }
 
 /**
@@ -150,11 +188,13 @@ export function topicBackLabel(href) {
  * @property {string|null} repoUrl
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
+ * @property {string|null} iconColor  the colour dapp.json sets beside the icon, if any
  * @property {string|null} version
  * @property {boolean} deploying
  * @property {boolean} readOnly
  * @property {boolean} showTerminal
  * @property {boolean} canShare
+ * @property {boolean} canReport
  * @property {string|null} sessionOrigin
  * @property {string|null} topicOrigin
  * @property {'app'|'dev'|'other'} tab
@@ -244,6 +284,9 @@ const INITIAL = {
       app that set an emoji must not fall through to its initial. */
   iconUrl: null,
   iconEmoji: null,
+  /** The project's colour when its dapp.json sets one (`icon.color`); null
+      means the page derives one from the icon (lib/community-color.ts). */
+  iconColor: null,
   /** Short commit sha for the version row, or null while unknown. */
   version: null,
   /** Whether a deploy is in flight for the target — renders as a pill. */
@@ -254,6 +297,8 @@ const INITIAL = {
   showTerminal: false,
   /** Whether the target is running and has a URL, i.e. whether Share works. */
   canShare: false,
+  /** Report eligibility from the app API; unknown targets cannot be reported. */
+  canReport: false,
   /** Active sessions belonging to `slug`. */
   sessions: [],
   /** Active sessions on every OTHER app — the overflow area. */

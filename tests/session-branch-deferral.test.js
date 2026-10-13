@@ -28,6 +28,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -154,6 +158,37 @@ test('ensureSessionBranch prefers the caller-supplied username', async () => {
   assert.match(out.branchName, /^dev\/ada-\d+$/);
 });
 
+test('#3229: ensureSessionBranch names the branch after the caller-supplied label', async () => {
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan', session_title: null, repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({
+    pool: fakePool(rows), sessionId: 7, label: 'Add a dark mode toggle',
+  });
+  assert.match(out.branchName, /^dev\/evan-add-a-dark-mode-toggle-\d+$/);
+});
+
+test('#3229: ensureSessionBranch falls back to the stored session title', async () => {
+  // The bot's build sessions and the dispatch backstop pass no label; the
+  // row's title is what they are about.
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'homeroom_bot',
+    session_title: '#3229 · Session branch names', repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  assert.match(out.branchName, /^dev\/homeroom_bot-3229-session-branch-names-\d+$/);
+});
+
+test('#3229: the first turn hands its deterministic title to the mint', () => {
+  const src = read('src/routes/sessions.js');
+  const chat = src.indexOf("router.post('/api/sessions/:id/chat'");
+  const ensure = src.indexOf('await sessionLifecycle.ensureSessionBranch(', chat);
+  const call = src.slice(ensure, src.indexOf('});', ensure));
+  assert.match(call, /label: session\.session_title \|\| sessionTitles\.deterministicTitle\(message/);
+});
+
 test('ensureSessionBranch still produces a valid name with no username at all', async () => {
   const lifecycle = loadLifecycle();
   const branchNames = require('../src/services/branch-names');
@@ -243,26 +278,27 @@ test('the chat route ensures the branch before it dispatches a turn', () => {
 
 test('the headless creation paths still mint up front, and say why', () => {
   const src = read('src/routes/sessions.js');
-  // Three of them: an auto-issue run, a clone-headless run, and a fork.
-  // None has a human on the other end to send a first message, so there is
-  // nothing to defer to.
+  // Two of them: an auto-issue run and a clone-headless run (the fork was
+  // the third, retired with classic sessions in #2779). Neither has a human
+  // on the other end to send a first message, so there is nothing to defer
+  // to.
   const mints = src.match(/const branchName = [^;]+;/g) || [];
-  assert.equal(mints.length, 3, 'expected exactly the three headless mints');
+  assert.equal(mints.length, 2, 'expected exactly the two headless mints');
   const carveouts = src.match(/#1350 carve-out:/g) || [];
   assert.equal(
-    carveouts.length, 3,
+    carveouts.length, 2,
     'each retained mint must carry the comment explaining why it is not deferred'
   );
 });
 
-test('the fork paths never ask GitHub for heads/null', () => {
+test('the clone path never asks GitHub for heads/null', () => {
   // github.createBranch(owner, repo, name, fromBranch = 'main') defaults
   // only on undefined, so a NULL source branch_name would reach the API as
   // the literal string "null". Reachable now that a source session can be
   // branchless.
   const src = read('src/routes/sessions.js');
   const inherits = src.match(/createBranch\([^)]*src\.branch_name[^)]*\)/g) || [];
-  assert.equal(inherits.length, 2, 'expected the clone and fork inheritance sites');
+  assert.equal(inherits.length, 1, 'expected the clone inheritance site (the fork is retired, #2779)');
   for (const use of inherits) {
     assert.match(use, /\|\| 'main'/, `unguarded branch inheritance: ${use}`);
   }
@@ -444,20 +480,17 @@ test('staging seeds a branchless session, and it is the only branchless fixture'
   assert.match(body, /\[staging fixture\]/, 'seeded rows must be obviously fake');
 });
 
-test('the deep links for both banner states are declared as checks', () => {
+test('the launchpad banner states are no longer declared checks (#3976)', () => {
+  // Both resume-banner states were checked through the launchpad shot link
+  // on classic sessions (990401, and this branchless 990411). Classic
+  // sessions are read-only now and are handed to no venue, so the launchpad
+  // never shows there and those checks were retired with the chat. The
+  // fixture stays until the classic dev chat itself is removed.
   const dapp = JSON.parse(read('dapp.json'));
   const paths = (dapp.tests || []).map((t) => String(t.path || ''));
-  assert.ok(
-    paths.some((p) => p.includes('/dev/sessions/990411')),
-    'the branchless fixture needs a check, or nothing renders that state'
-  );
-  const resume = (dapp.tests || []).filter((t) =>
-    String(t.expectSelector || '').includes('data-launchpad-resume'));
-  assert.ok(resume.length >= 2, 'both banner states must be checked');
-  for (const t of resume) {
-    assert.match(t.path, /^\/\?shot=launchpad&venue=/,
-      'the banner is only reachable through the launchpad shot link');
-  }
+  assert.ok(!paths.some((p) => p.includes('/dev/sessions/990411')));
+  assert.ok(!(dapp.tests || []).some((t) =>
+    String(t.expectSelector || '').includes('data-launchpad-resume')));
 });
 
 // ── the copy rule ───────────────────────────────────────────────────────

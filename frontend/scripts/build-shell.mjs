@@ -23,6 +23,23 @@
 // self-check probe and the native.css → app.css → tailwind.css link order all
 // survive untouched. Nothing rewrites them, so nothing can silently reorder
 // them.
+//
+// ── Modes ──────────────────────────────────────────────────────────────
+//
+//   (no flag)          both passes, the document for this GIT_SHA and the
+//                      stamped bundle. Every local flow runs this.
+//   --keep-prerender   the same, but leaves the pass-2 bundle (frontend/.ssr)
+//                      in place for a later --document run.
+//   --document         no Vite at all: renders again with the kept pass-2
+//                      bundle and rewrites public/index.html only.
+//
+// The last two exist for Dockerfile.kubernetes. A commit id reaches this
+// script in exactly one place, the document (its <meta name="platform-build">
+// and the /b/<sha>/ prefix on every asset URL); neither Vite pass reads it. So
+// that image runs `--keep-prerender` and Tailwind BEFORE it declares GIT_SHA,
+// and `--document` after. BuildKit can then answer the two Vite passes and the
+// Tailwind compile from its layer cache for any commit that left their inputs
+// alone, where a GIT_SHA above them made every commit rebuild all three.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -36,7 +53,7 @@ const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
 const {
-  expectedStamp, formatHtmlStamp, formatJsStamp, formatBuildMeta, normalizeBuildSha,
+  expectedStamp, formatHtmlStamp, formatJsStamp, readJsStamp, formatBuildMeta, normalizeBuildSha,
   buildScopedAssetUrl, prefixShellAssetUrls,
   HTML_OUTPUT, JS_OUTPUT,
 } = require(path.join(ROOT, 'scripts', 'shell-stamp.js'));
@@ -59,48 +76,80 @@ function resolveViteCli() {
   return path.join(path.dirname(pkgJson), binRel);
 }
 
-const vite = resolveViteCli();
+const FLAGS = ['--keep-prerender', '--document'];
+const unknownArgs = process.argv.slice(2).filter((arg) => !FLAGS.includes(arg));
+// A misspelt --document would otherwise run both Vite passes again and pass.
+if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes ${FLAGS.join(' and ')}`);
+const keepPrerender = process.argv.includes('--keep-prerender');
+const documentOnly = process.argv.includes('--document');
+
+// The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
+// hashed language packs are inputs of the bundle below. Only a mistake in the
+// English source can fail this; a translation never does. See
+// frontend/locales/README.md. A --document run builds no bundle: the
+// --keep-prerender run before it built the packs from these same sources, in
+// the same image stage, and the stamp check below refuses a bundle that did
+// not see them.
+if (!documentOnly) require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
 
 function runVite(args) {
   try {
-    execFileSync(process.execPath, [vite, ...args], { cwd: FRONTEND, stdio: ['ignore', 'inherit', 'inherit'] });
+    execFileSync(process.execPath, [resolveViteCli(), ...args], { cwd: FRONTEND, stdio: ['ignore', 'inherit', 'inherit'] });
   } catch (err) {
     fail(`vite ${args.join(' ')} failed: ${err.message}`);
   }
 }
 
-// ── Pass 1: the browser bundle ─────────────────────────────────────────
-console.log('[build-shell] pass 1/2 — client bundle');
-runVite(['build']);
-
 const jsPath = path.join(ROOT, JS_OUTPUT);
-if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);
-
-// Nothing in the shell tree imports CSS today (shadcn components are Tailwind
-// classes in TSX and the shell's stylesheet is the existing compiled v3
-// build). An emitted stylesheet therefore means something pulled in CSS of
-// its own and the document would need a FOURTH <link> — which would land
-// after /css/tailwind.css and break the cascade contract the head asserts.
-// Fail loudly rather than ship a silently restyled shell.
-const emittedAssets = fs.readdirSync(path.join(ROOT, 'public', 'shell', 'assets'));
-const strayCss = emittedAssets.filter((f) => f.endsWith('.css'));
-if (strayCss.length) {
-  fail(
-    `the client build emitted a stylesheet (${strayCss.join(', ')}). The shell gets ALL of its `
-    + 'CSS from the existing compiled /css/tailwind.css; something under frontend/ now imports '
-    + 'its own CSS. Remove that import rather than adding a fourth <link> — see the cascade '
-    + 'note in frontend/src/head.html.',
-  );
-}
-
-// ── Pass 2: prerender the shell tree ───────────────────────────────────
-console.log('[build-shell] pass 2/2 — SSG prerender');
 const ssrDir = path.join(FRONTEND, '.ssr');
-fs.rmSync(ssrDir, { recursive: true, force: true });
-runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
-
 const ssrEntry = path.join(ssrDir, 'prerender.js');
-if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
+const { stamp, files } = expectedStamp();
+
+if (documentOnly) {
+  // The bundle and the pass-2 module this run renders with were built by an
+  // earlier --keep-prerender run. The stamp says whether that run saw these
+  // sources; without it a stale bundle would be shipped under a fresh document.
+  console.log('[build-shell] document only: rendering with the kept prerender bundle');
+  const builtStamp = fs.existsSync(jsPath) ? readJsStamp(fs.readFileSync(jsPath, 'utf8')) : null;
+  if (builtStamp !== stamp) {
+    fail(`--document needs ${JS_OUTPUT} built from these sources `
+      + `(${builtStamp ? 'it carries another stamp' : 'it is missing or unstamped'}). `
+      + 'Run this script with --keep-prerender first.');
+  }
+  if (!fs.existsSync(ssrEntry)) {
+    fail(`--document needs ${path.relative(ROOT, ssrEntry)}. Run this script with --keep-prerender first.`);
+  }
+} else {
+  // ── Pass 1: the browser bundle ───────────────────────────────────────
+  console.log('[build-shell] pass 1/2 — client bundle');
+  runVite(['build']);
+
+  if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);
+
+  // Nothing in the shell tree imports CSS today (shadcn components are Tailwind
+  // classes in TSX and the shell's stylesheet is the existing compiled v3
+  // build). An emitted stylesheet therefore means something pulled in CSS of
+  // its own and the document would need a FOURTH <link> — which would land
+  // after /css/tailwind.css and break the cascade contract the head asserts.
+  // Fail loudly rather than ship a silently restyled shell.
+  const emittedAssets = fs.readdirSync(path.join(ROOT, 'public', 'shell', 'assets'));
+  const strayCss = emittedAssets.filter((f) => f.endsWith('.css'));
+  if (strayCss.length) {
+    fail(
+      `the client build emitted a stylesheet (${strayCss.join(', ')}). The shell gets ALL of its `
+      + 'CSS from the existing compiled /css/tailwind.css; something under frontend/ now imports '
+      + 'its own CSS. Remove that import rather than adding a fourth <link> — see the cascade '
+      + 'note in frontend/src/head.html.',
+    );
+  }
+
+  // ── Pass 2: prerender the shell tree ─────────────────────────────────
+  console.log('[build-shell] pass 2/2 — SSG prerender');
+  fs.rmSync(ssrDir, { recursive: true, force: true });
+  runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
+
+  if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
+}
 
 const { renderShell, renderShellWithSeparators } = await import(pathToFileURL(ssrEntry).href);
 const markup = renderShell();
@@ -153,8 +202,6 @@ const head = fs.readFileSync(path.join(FRONTEND, 'src', 'head.html'), 'utf8');
 // call sites. Dark mode already had a distinct ground and is unchanged in ROLE
 // (only its hex moved, in tailwind.config.js).
 const BODY_ATTRS = 'class="bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh"';
-
-const { stamp, files } = expectedStamp();
 
 // Which platform build this document IS, baked in at generation time. Read
 // back by public/js/app.js as its boot baseline — see the header over
@@ -216,13 +263,17 @@ ${prefixShellAssetUrls(head, buildSha).replace(/\s*$/, '\n')}${entryTag}</head>
 
 fs.writeFileSync(path.join(ROOT, HTML_OUTPUT), html);
 
-// Stamp the JS too so a running image can identify the exact source set that
-// produced it. The image copies HTML and JS from this same builder invocation.
-const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
-fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
+if (documentOnly) {
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes); ${JS_OUTPUT} is the bundle already built`);
+} else {
+  // Stamp the JS too so a running image can identify the exact source set that
+  // produced it. The image copies HTML and JS from this same builder invocation.
+  const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
+  fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
+  console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
+}
 
-fs.rmSync(ssrDir, { recursive: true, force: true });
+if (!keepPrerender) fs.rmSync(ssrDir, { recursive: true, force: true });
 
-console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
 console.log(`[build-shell] platform build id: ${buildSha}${buildSha === 'dev' ? ' (plain asset paths)' : ' (assets scoped under /b/<sha>/)'}`);

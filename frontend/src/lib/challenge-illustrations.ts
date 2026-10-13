@@ -64,6 +64,8 @@ export const ILLUSTRATIONS: Record<string, IllustrationEntry> = {
   'network-participation': { label: 'Turn on network participation', tone: 'orange' },
   'identity-level-one': { label: 'Prove who you are: level one', tone: 'blue' },
   'identity-level-two': { label: 'Prove who you are: level two', tone: 'orange' },
+  'connect-participants': { label: 'Connect with other participants', tone: 'mint' },
+  'invite-to-network': { label: 'Invite someone to the network', tone: 'blue' },
 };
 
 export interface ResolvedIllustration {

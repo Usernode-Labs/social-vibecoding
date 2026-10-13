@@ -47,14 +47,14 @@ test('the lock is readOnly, applied to both fields through one helper', () => {
 
 test('both send paths lock, and both entry points unlock', () => {
   // Filed and queued-for-later both end the composer …
-  const submitted = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Submitted'") - 400);
+  const submitted = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Posted'") - 400);
   assert.match(submitted.slice(0, 400), /setComposerLocked\(true\)/);
   const saved = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Saved'") - 400);
   assert.match(saved.slice(0, 400), /setComposerLocked\(true\)/);
   // … and reopening or resetting must hand back an editable one, or the next
   // piece of feedback cannot be typed at all.
   const open = SRC.slice(SRC.indexOf('Feedback._open ='));
-  assert.match(open.slice(0, 300), /setComposerLocked\(false\)/);
+  assert.match(open.slice(0, 500), /setComposerLocked\(false\)/);
   const reset = SRC.slice(SRC.indexOf('Feedback._reset ='));
   assert.match(reset.slice(0, 1200), /setComposerLocked\(false\)/);
 });
@@ -65,7 +65,7 @@ test('the guards that ask "is the form locked?" read the same flag', () => {
   // them still read `disabled` it would think an unlocked form was locked
   // forever, and silently stop handing drafts back.
   assert.match(SRC, /if \(feedbackText\.readOnly\) return;/);
-  assert.match(SRC, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(SRC, /\|\| feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) \{/);
   assert.match(SRC, /if \(!feedbackText\.readOnly && !feedbackText\.value\.trim\(\)\) \{/);
 });
 

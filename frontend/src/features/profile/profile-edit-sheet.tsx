@@ -87,9 +87,20 @@
  * same status line. They act IMMEDIATELY, as they always did (the switch is a
  * PATCH of its own, not part of Save). #2787 folded them into one switch row —
  * see PublicPage below.
+ *
+ * ── A new photo is positioned before it is used (#3525) ───────────────
+ *
+ * Change photo used to stage the file's centred square the moment it was
+ * picked. Now a picked file opens "Position your photo"
+ * (./avatar-crop-dialog.tsx) over this card, and nothing is staged until its
+ * Use photo. The Photo row's second line says where a photo change stands:
+ * before a pick, that you choose the part that shows; after Use photo or
+ * Remove photo, that it waits for Save. The step renders as the last child of
+ * the root and this card is `inert` while it is up; the dialog's header says
+ * why both.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -97,8 +108,13 @@ import { ChevronDownIcon } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
+import { returnKeyHandler } from '../../lib/return-to-next';
+import type { CropRect } from './avatar-crop';
+import { AvatarCropDialog, type CropSource } from './avatar-crop-dialog';
 import { Profile } from './profile.js';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -147,6 +163,16 @@ function Avatar({ url, initial }: { url: string | null; initial: string }): Reac
       {initial}
     </div>
   );
+}
+
+/**
+ * The Photo row's second line: what choosing does, and then where a change
+ * stands, because nothing about a staged photo is saved until Save (#3525).
+ */
+function photoNote(pending: 'new' | 'removed' | null): string {
+  if (pending === 'new') return translate('profile:edit.photo.noteNew');
+  if (pending === 'removed') return translate('profile:edit.photo.noteRemoved');
+  return translate('profile:edit.photo.note');
 }
 
 /** The section heading + card pair every group is made of. */
@@ -202,15 +228,16 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
   previewOpen: boolean;
 }): ReactNode {
   const published = !!controls.published;
+  const t = useMessages('profile');
   return (
     <section id="public-profile-controls" className="mb-4">
-      <Group title="Public page">
+      <Group title={t('profile:edit.public.group')}>
         <label
           htmlFor="public-profile-publish"
           className="un-group-row flex items-center gap-3 px-4 py-2 min-h-[44px] cursor-pointer select-none"
         >
           <span className="flex-1 min-w-0">
-            <span className={`block ${ROW_LABEL_CLASS}`}>Public profile</span>
+            <span className={`block ${ROW_LABEL_CLASS}`}>{t('profile:edit.public.label')}</span>
             <span id="public-profile-visibility" className={`block text-xs ${controls.visibilityClass}`}>
               {controls.visibility}
             </span>
@@ -230,7 +257,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
             className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
             onClick={() => Profile._dismissSheet()}
           >
-            Open public page
+            {t('profile:edit.public.open')}
           </a>
         ) : null}
         {published ? (
@@ -239,7 +266,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
             className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
             onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
           >
-            Copy public link
+            {t('profile:edit.public.copy')}
           </button>
         ) : null}
         <button
@@ -250,7 +277,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
           className={`${ROW_ACTION_CLASS} gap-3 text-zinc-900 dark:text-zinc-100`}
           onClick={() => Profile.togglePreview()}
         >
-          <span className="flex-1 text-left font-normal">What&apos;s on it</span>
+          <span className="flex-1 text-left font-normal">{t('profile:edit.public.whatsOnIt')}</span>
           <ChevronDownIcon
             aria-hidden="true"
             className={previewOpen
@@ -261,7 +288,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
       </Group>
       {controls.moderationDisabled ? (
         <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400">
-          You can keep editing or turn it off, but the public page stays unavailable.
+          {t('profile:edit.public.moderationNote')}
         </p>
       ) : null}
       <p className={status ? FOOTNOTE_CLASS : 'px-4 text-xs text-zinc-500 dark:text-zinc-400'} role="status" aria-live="polite">{status}</p>
@@ -269,10 +296,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
         {previewOpen ? (
           <>
             <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
-              Only your username, display name, bio, Homeroom-hosted photo and
-              verified social accounts. Never your email, wallet, roles,
-              memberships, unverified handles or private activity. Changes take
-              effect at once, and nobody can search for the page.
+              {t('profile:edit.public.previewNote')}
             </p>
             <PublicProfileCard profile={controls.profile} allowReport={false} />
           </>
@@ -289,6 +313,8 @@ export function ProfileEditSheet({
   publicStatus = '',
   publishing = false,
   previewOpen = false,
+  cropSource = null,
+  pendingPhoto = null,
 }: {
   avatarUrl: string | null;
   initial: string;
@@ -296,13 +322,19 @@ export function ProfileEditSheet({
   publicStatus?: string;
   publishing?: boolean;
   previewOpen?: boolean;
+  /** The chosen photo while "Position your photo" is up (#3525). */
+  cropSource?: CropSource | null;
+  /** A staged photo change that Save has not written yet. */
+  pendingPhoto?: 'new' | 'removed' | null;
 }): ReactNode {
+  const t = useMessages('profile');
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const chooseRef = useRef<HTMLButtonElement | null>(null);
 
   // What Back left behind the last time, if anything (QA 2026-09-24 Q16):
   // see Profile._draft. Taken once, by the opening render.
@@ -369,6 +401,22 @@ export function ProfileEditSheet({
   // through _dismissSheet, which calls it. So there is nothing for this
   // component to tear down beyond the kit adoption above.
 
+  // While the positioning step is up this card is `inert` (see the dialog's
+  // header), which takes focus off anything inside it. When the step closes,
+  // focus comes back to Change photo, where the viewer left it.
+  const cropping = !!cropSource;
+  const wasCropping = useRef(cropping);
+  useEffect(() => {
+    if (wasCropping.current && !cropping) chooseRef.current?.focus({ preventScroll: true });
+    wasCropping.current = cropping;
+  }, [cropping]);
+
+  const photoFailed = (err: unknown): void => {
+    setPhotoError((err instanceof Error && err.message)
+      || t('profile:edit.photo.unusable'));
+  };
+
+  // A picked file opens the positioning step; nothing is staged yet (#3525).
   const onFile = async (): Promise<void> => {
     const input = fileRef.current;
     const chosen = input && input.files && input.files[0];
@@ -376,11 +424,19 @@ export function ProfileEditSheet({
     if (!chosen) return;
     setPhotoError(null);
     try {
-      await Profile.stageAvatar(chosen);
-      setShowRemove(true);
+      await Profile.beginAvatarCrop(chosen);
     } catch (err) {
-      setPhotoError((err && (err as Error).message)
-        || 'That image could not be used. Try a PNG, JPEG or WebP.');
+      photoFailed(err);
+    }
+  };
+
+  // Use photo: the square the viewer chose is cut, downscaled and staged.
+  const onCropAccept = async (crop: CropRect): Promise<void> => {
+    setPhotoError(null);
+    try {
+      if (await Profile.acceptAvatarCrop(crop)) setShowRemove(true);
+    } catch (err) {
+      photoFailed(err);
     }
   };
 
@@ -393,14 +449,16 @@ export function ProfileEditSheet({
     });
     if (result.ok) return;
     if (result.fieldErrors) setFieldErrors(result.fieldErrors);
-    else setFormError(result.error || 'Could not save your profile.');
+    else setFormError(result.error || t('profile:edit.saveFailed'));
     setSaving(false);
   };
 
   return (
     <div id="profile-edit-root" ref={rootRef} className={ROOT_CLASS}>
-      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS}>
-        <div className="text-lg font-bold pt-3 pb-4">Edit profile</div>
+      {/* Return in the name goes on to the bio, where it is a new line
+          (#3907: the iOS keyboard's chevrons are gone). */}
+      <div id="profile-edit-sheet" ref={panelRef} className={CARD_CLASS} inert={cropping} onKeyDown={returnKeyHandler()}>
+        <div className="text-lg font-bold pt-3 pb-4">{t('profile:edit.title')}</div>
 
         {/*
             The file input lives OUTSIDE .un-group on purpose: it is a real
@@ -417,24 +475,25 @@ export function ProfileEditSheet({
         />
 
         <section className="mb-4">
-          <Group title="Photo">
+          <Group title={t('profile:edit.photo.group')}>
             <div className="un-group-row flex items-center gap-3 px-4 py-2.5">
               <div id="profile-edit-preview" className="shrink-0">
                 <Avatar url={avatarUrl} initial={initial} />
               </div>
               <div className="min-w-0">
-                <div className={ROW_LABEL_CLASS}>Profile photo</div>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  PNG, JPEG or WebP.
+                <div className={ROW_LABEL_CLASS}>{t('profile:edit.photo.label')}</div>
+                <p id="profile-edit-photo-note" className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
+                  {photoNote(pendingPhoto)}
                 </p>
               </div>
             </div>
             <button
               id="profile-edit-choose"
+              ref={chooseRef}
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => fileRef.current?.click()}
             >
-              Change photo
+              {t('profile:edit.photo.change')}
             </button>
             <button
               id="profile-edit-remove"
@@ -445,7 +504,7 @@ export function ProfileEditSheet({
               }
               onClick={() => { Profile.stageAvatarRemoval(); setShowRemove(false); }}
             >
-              Remove photo
+              {t('profile:edit.photo.remove')}
             </button>
           </Group>
           <p
@@ -459,11 +518,11 @@ export function ProfileEditSheet({
         </section>
 
         <section className="mb-4">
-          <Group title="Your name">
+          <Group title={t('profile:edit.name.group')}>
             <div className={ROW_CLASS}>
               <div className="flex items-baseline gap-2">
                 <Label htmlFor="profile-edit-name" className={`${ROW_LABEL_CLASS} flex-1`}>
-                  Display name
+                  {t('profile:edit.name.label')}
                 </Label>
                 <span className={COUNTER_CLASS}>
                   {`${name.length}/${Profile.MAX_DISPLAY_NAME}`}
@@ -472,6 +531,7 @@ export function ProfileEditSheet({
               <Input
                 id="profile-edit-name"
                 type="text"
+                enterKeyHint="next"
                 box="groupRow"
                 ring={false}
                 value={name}
@@ -481,17 +541,17 @@ export function ProfileEditSheet({
             </div>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            The name other people see. Leave it empty to show your @handle.
+            {t('profile:edit.name.note')}
           </p>
           <FieldError message={fieldErrors.displayName} />
         </section>
 
         <section className="mb-4">
-          <Group title="About">
+          <Group title={t('profile:edit.about.group')}>
             <div className={ROW_CLASS}>
               <div className="flex items-baseline gap-2">
                 <Label htmlFor="profile-edit-bio" className={`${ROW_LABEL_CLASS} flex-1`}>
-                  Bio
+                  {t('profile:edit.about.bio')}
                 </Label>
                 <span className={COUNTER_CLASS}>
                   {`${bio.length}/${Profile.MAX_BIO}`}
@@ -522,20 +582,20 @@ export function ProfileEditSheet({
         ) : null}
 
         <section className="mb-4">
-          <Group title="Verified social accounts">
+          <Group title={t('profile:edit.social.group')}>
             <div id="profile-edit-github" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
               <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>GitHub</span>
               {links.github ? (
                 <span className="text-right min-w-0">
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
-                    Verified
+                    {t('profile:edit.social.verified')}
                   </span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
                     {String(links.github)}
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('profile:edit.social.notShown')}</span>
               )}
             </div>
             <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
@@ -543,26 +603,26 @@ export function ProfileEditSheet({
               {links.x ? (
                 <span className="text-right min-w-0">
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
-                    Verified
+                    {t('profile:edit.social.verified')}
                   </span>
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
                     {`@${String(links.x)}`}
                   </span>
                 </span>
               ) : (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('profile:edit.social.notShown')}</span>
               )}
             </div>
             <a
-              href="#settings/connectors"
+              href="#settings/linked-accounts"
               className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => Profile._dismissSheet()}
             >
-              Connect or change social accounts
+              {t('profile:edit.social.manage')}
             </a>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            Provider verification and public visibility are managed separately in Settings.
+            {t('profile:edit.social.note')}
           </p>
         </section>
 
@@ -578,10 +638,10 @@ export function ProfileEditSheet({
             a refusal.
         */}
         <section className="mb-4">
-          <Group title="Username">
+          <Group title={t('profile:edit.username.group')}>
             <div className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
               <Label htmlFor="profile-edit-username" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                Username
+                {t('profile:edit.username.label')}
               </Label>
               <Input
                 id="profile-edit-username"
@@ -597,19 +657,20 @@ export function ProfileEditSheet({
             </div>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            {'Your @handle is your sign-in name and your public page address. To change it, go to '}
-            <a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">Settings → Username</a>
-            {'. To change only how your name appears, set a display name above.'}
+            <RichMessage
+              id="profile:edit.username.note"
+              components={[<a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400" />]}
+            />
           </p>
         </section>
 
         <section className="mb-4">
-          <Group title="Account email">
+          <Group title={t('profile:edit.email.group')}>
             <a href="#settings/email" className={ROW_ACTION_CLASS} onClick={() => Profile._dismissSheet()}>
-              Email &amp; recovery
+              {t('profile:edit.email.link')}
             </a>
           </Group>
-          <p className={FOOTNOTE_CLASS}>Add or verify a private email address in Settings.</p>
+          <p className={FOOTNOTE_CLASS}>{t('profile:edit.email.note')}</p>
         </section>
 
         <p
@@ -629,15 +690,29 @@ export function ProfileEditSheet({
           disabled={saving}
           onClick={() => { void onSave(); }}
         >
-          Save
+          {t('core:common.save')}
         </Button>
         <button
           className="w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400"
           onClick={() => Profile._dismissSheet()}
         >
-          Cancel
+          {t('core:common.cancel')}
         </button>
       </div>
+      {/*
+          LAST, after the card: the card has been lifted into the kit and a
+          comment holds its place, so a sibling rendered before it would be
+          inserted against a node that is not there. Keyed by the photo, so a
+          second pick starts from its own centred square.
+      */}
+      {cropSource ? (
+        <AvatarCropDialog
+          key={cropSource.url}
+          source={cropSource}
+          onAccept={onCropAccept}
+          onCancel={() => Profile.cancelAvatarCrop()}
+        />
+      ) : null}
     </div>
   );
 }

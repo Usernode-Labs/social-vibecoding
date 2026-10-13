@@ -62,9 +62,22 @@ const RULES = {
   // for it: a few a day, spaced out, whoever sends them. The creator's own
   // bound is the create limiter and twenty people a project.
   project_invite: { minGapMs: 10 * 60 * 1000, perWindow: 3, windowMs: DAY_MS },
+  // WP-E: activity mail (services/activity-mail.js), the stand-in for a push.
+  // A few builds a day can be ready; more than six emails about them in a day
+  // is a reason to set up the phone, not a seventh email.
+  build_ready: { minGapMs: 5 * 60 * 1000, perWindow: 6, windowMs: DAY_MS },
+  // The first of each kind of invite news a day per project already folds the
+  // rest (services/invite-activity.js); this bounds it across projects.
+  invite_activity: { minGapMs: 60 * 1000, perWindow: 4, windowMs: DAY_MS },
 };
 
 const DEFAULT_MAX_PER_HOUR = 300;
+
+// WP-E: activity mail spends its OWN hourly budget, counted apart from every
+// other kind. The global cap above is shared with sign-in codes, and a busy
+// hour of "it's ready" mail must never be what stops somebody signing in.
+const ACTIVITY_KINDS = new Set(['build_ready', 'invite_activity']);
+const ACTIVITY_MAX_PER_HOUR = 100;
 
 // Only these statuses count toward a window. A `failed`,
 // `suppressed_rate_limit` or `no_transport` row consumed no provider quota
@@ -143,4 +156,5 @@ function decide({
 
 module.exports = {
   decide, RULES, DEFAULT_MAX_PER_HOUR, COUNTED_STATUSES, HOUR_MS, DAY_MS,
+  ACTIVITY_KINDS, ACTIVITY_MAX_PER_HOUR,
 };

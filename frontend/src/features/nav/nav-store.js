@@ -74,6 +74,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
   'leaderboard-screen': 'me',
   'settings-screen': 'me',
   'admin-screen': 'me',
+  'profile-proposals-screen': 'me',
 });
 
 /**
@@ -104,16 +105,25 @@ export const TAB_FOR_SCREEN = Object.freeze({
 
 /**
  * @typedef {object} PeekState
- * @property {boolean} peek  The rail is showing OVER an open app because the
- *   pointer is at the window's left edge (#2718, desktop only). It is not the
- *   same fact as `platform-tabs` visibility and must not be folded into it:
- *   the bar is HIDDEN here — the router says so, and the screens reserve no
- *   band for it — and this is a temporary overlay on top of that answer.
+ * @property {boolean} peek  The FOLDED rail is showing over the page because
+ *   the pointer is at the window's left edge or on #sidebar-toggle (#2718,
+ *   #2764, desktop only; never over a running app, #3138). It is not the
+ *   same fact as `platform-tabs` visibility or `railOpen` and must not be
+ *   folded into either: the screens reserve no band for it, and this is a
+ *   temporary overlay on top of that answer.
  * @property {boolean} peekOut  The peeked rail is FADING AWAY (#2795): the
  *   pointer left and the grace period ran out, and `peek` stays true for
  *   the ~200ms of the fade so the element is still there to fade. Only ever
  *   true while `peek` is; ./rail-peek.ts sets and clears it.
  * @property {boolean} railOpen  The viewer has the desktop rail expanded.
+ * @property {boolean} identityNeeded  The verified-identity rule holds the
+ *   viewer to it (GET /api/auth/me `identityNeeded`): Home's "Verify your
+ *   account" card reads it (../home/verify-card.tsx). FALSE is the
+ *   prerender; App._syncViewer publishes it after boot.
+ * @property {boolean} privateMember  The viewer is a private member (an invite
+ *   link let them in before they were let in off the waitlist): the mark menu
+ *   and Home read it (../app-context, ../home/waitlist-card.tsx). FALSE is
+ *   the prerender; App._syncViewer publishes it after boot.
  *   True is the prerender; see the note on INITIAL for why this is separate
  *   from the visibility store and why it is not remembered across loads.
  */
@@ -125,6 +135,8 @@ const INITIAL = {
   messages: 0,
   communities: 0,
   viewer: null,
+  privateMember: false,
+  identityNeeded: false,
   peek: false,
   peekOut: false,
   /*

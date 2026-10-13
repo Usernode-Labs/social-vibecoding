@@ -4,19 +4,23 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
-const { dbExportLimiter, mailTestLimiter } = require('../middleware/rate-limits');
+const { dbExportLimiter, mailTestLimiter, smsTestLimiter, smsTestNumberLimiter } = require('../middleware/rate-limits');
 const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 const limits = require('../services/limits');
 const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
+const adminAppsUsage = require('../services/admin-apps-usage');
 const events = require('../services/events');
 const llmTelemetry = require('../services/llm-telemetry');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
+const phoneAuth = require('../services/firebase-phone-auth');
+const phoneFailureLog = require('../services/phone-failure-log');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
@@ -24,9 +28,17 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
+const githubBudget = require('../services/github-budget');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const smallChange = require('../services/small-change');
+const shotsExport = require('../services/shots-export');
+const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
+const journeyLeftOut = require('../services/journey-left-out');
+const journey = require('../services/journey');
+const journeyDemoData = require('../services/journey-demo');
+const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
 const { csvField } = require('./topochain/helpers');
@@ -228,24 +240,27 @@ function adminRoutes(config) {
   //
   // #851: staleness is now detected automatically (an env-fingerprint label,
   // services/staging-env.js) and swept on a background pass, so this button
-  // is no longer the only remedy — it is the BIGGER HAMMER: it tears down
-  // every preview it can enumerate, stale or not, without waiting out the
-  // pass's interval. The GET reports the automatic pass's last run so an
-  // admin can tell whether pressing it is even necessary.
+  // is no longer the only remedy. It takes what that pass would take (out of
+  // date, or abandoned by a merged, archived or deleted session; never a
+  // preview backing a live vote), all at once instead of a few per interval.
+  // The GET reports the automatic pass's last run so an admin can tell
+  // whether pressing it is even necessary.
 
   router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
     try {
-      // This fleet-wide inventory sweep is Docker-specific. Kubernetes
-      // previews are managed through their runtime records instead of a
-      // Docker socket, so do not report a misleading successful no-op.
-      if (stagingReap.isStagingEnv() || applicationRuntime.mode(config) !== 'docker') {
+      // A staging preview cannot see the fleet it would sweep, so refuse
+      // rather than report an empty inventory as a successful sweep. Both
+      // production runtimes enumerate their previews (Docker containers,
+      // Kubernetes Deployments).
+      if (stagingReap.isStagingEnv()) {
         return res.status(400).json({
-          error: 'Stale-preview administration is not implemented for this runtime.',
+          error: 'The stale-preview sweep is unavailable in staging previews.',
         });
       }
       const { started, job } = stagingReap.start(config, {
         userId: req.user.id,
         username: req.user.username,
+        isInFlight: isSessionBusy,
       });
       if (!started) {
         return res.status(409).json({ error: 'Sweep already in progress', job });
@@ -286,21 +301,23 @@ function adminRoutes(config) {
           concurrency: stagingReap.concurrency(),
         });
       }
-      // `open` is every preview the manual button would shut down; `stale` is
-      // the subset the automatic pass (#851) considers out of date. Both come
-      // from one docker call. `stale` is kept as the legacy field name the
-      // console's confirm dialog already reads — see the note below.
-      const counts = await stagingReap.previewCounts(config).catch(() => ({ open: null, stale: null }));
+      // `open` is every preview; `stale` is the out-of-date subset and
+      // `abandoned` the further ones whose session finished. The button (and
+      // the automatic pass) takes `stale` + `abandoned`. All come from one
+      // inventory call.
+      const counts = await stagingReap.previewCounts(config)
+        .catch(() => ({ open: null, stale: null, abandoned: null }));
       res.json({
         job: stagingReap.read(),
         open: counts.open,
         stale: counts.stale,
+        abandoned: counts.abandoned,
         expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
         automatic: stagingReap.readAutomatic(),
         staging,
         runtimeKind,
-        available: !staging && runtimeKind === 'docker',
-        unavailableReason: staging ? 'staging' : (runtimeKind === 'kubernetes' ? 'kubernetes' : null),
+        available: !staging,
+        unavailableReason: staging ? 'staging' : null,
         concurrency: stagingReap.concurrency(),
       });
     } catch (err) {
@@ -319,6 +336,10 @@ function adminRoutes(config) {
       const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                -- #3938: the podium flag the list's inline switch reads and
+                -- flips; the same column the v4 toggle-exclude-podium route
+                -- updates.
+                u.exclude_podium,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
@@ -337,6 +358,10 @@ function adminRoutes(config) {
                   SELECT 1 FROM user_activities zk
                    WHERE zk.user_id = u.id AND zk.source = 'zkpassport'
                 ) AS has_zkpassport,
+                EXISTS (
+                  SELECT 1 FROM user_phone_identities ph WHERE ph.user_id = u.id
+                ) AS has_phone,
+                identity_rule_exempt(u.id) AS identity_exempt,
                 managed.id AS openrouter_key_id,
                 managed.status AS openrouter_key_status,
                 managed.remote_key_hash AS openrouter_key_hash,
@@ -590,7 +615,7 @@ function adminRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly, participation_restricted_at FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
@@ -598,10 +623,10 @@ function adminRoutes(config) {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly;
+      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly && !existing[0].participation_restricted_at;
       if (wasFullAdmin) {
         const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE AND participation_restricted_at IS NULL'
         );
         if (countRows[0].n <= 1) {
           await client.query('ROLLBACK');
@@ -628,6 +653,81 @@ function adminRoutes(config) {
       res.status(500).json({ error: 'Internal server error' });
     } finally {
       client.release();
+    }
+  });
+
+  // Admin-issued rename (issue tracked in the header of routes/profile.js,
+  // which used to say this was unimplemented). Moving someone else's handle
+  // is a moderation action, so it skips the self-service route's password
+  // check and its 30-day cooldown: those two protections exist to stop a
+  // hijacked SESSION from walking the namespace, a threat model that does
+  // not apply to a full admin acting through their own gate. Format,
+  // reserved-prefix and service-identity protection, and the
+  // live-plus-retired-history uniqueness check all still run unchanged,
+  // through the same src/services/usernames.js the self-service route uses,
+  // so the two paths can never disagree about what a valid rename is.
+  router.put('/api/admin/users/:id/username', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const check = usernames.validateUsername(req.body?.username);
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    const next = check.value;
+
+    try {
+      const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const current = rows[0].username;
+
+      // Seeded service accounts (usernode-capture and friends) are found BY
+      // NAME at runtime; renaming one breaks a subsystem rather than moving
+      // an identity. See usernames.isServiceIdentity's own comment.
+      if (usernames.isServiceIdentity(current)) {
+        return res.status(403).json({ error: 'This account cannot be renamed.' });
+      }
+
+      // An exact no-op is a success, not an error. A case-only change falls
+      // through: renameUser treats it as a re-case, which retires nothing.
+      if (current === next) {
+        return res.json({ ok: true, username: current, retired: null, unchanged: true });
+      }
+      const recase = current.toLowerCase() === next.toLowerCase();
+
+      const free = await usernames.checkAvailability(pool, next, userId);
+      if (!free.available) {
+        return res.status(409).json({ error: free.error });
+      }
+
+      const result = await usernames.renameUser(pool, userId, next);
+      if (!result) return res.status(404).json({ error: 'User not found' });
+
+      log.info('admin', 'Username changed', {
+        id: userId, from: current, to: result.username, recase, by: req.user.username,
+      });
+      if (!recase) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.USERNAME_CHANGED,
+            userId,
+            metadata: { from: current, to: result.username, admin: true, by: req.user.username },
+          });
+        } catch (err) {
+          log.warn('admin', 'Username event record failed', { err: err.message });
+        }
+      }
+
+      return res.json({ ok: true, username: result.username, retired: result.retired });
+    } catch (err) {
+      // The unique indexes on users.username and username_history are the
+      // backstop behind the availability check above; a race with someone
+      // else claiming the same handle lands here.
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That username is taken.' });
+      }
+      log.error('admin', 'Username change failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -686,8 +786,8 @@ function adminRoutes(config) {
   });
 
   // "Reset first run" (communities, stage 5): the account's next load shows
-  // the join screen, the tour and the Getting started card again, as for a
-  // new account. For trying onboarding on a test account, or on yourself.
+  // the join screen again, with the tour not done, as for a new account. For
+  // trying onboarding on a test account, or on yourself.
   // Nothing the account owns is touched (services/onboarding.js
   // resetFirstRun), so any full admin may do it, to anyone, like a password
   // reset.
@@ -704,6 +804,182 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Journey: people left out (#3369) ──────────────────────
+  //
+  // Test accounts, and people who objected to being recorded, kept out of
+  // the Journey page's numbers (services/journey-left-out.js). Any admin can
+  // read the list; only a full admin changes it. Adding someone as
+  // "objected" erases their UI telemetry and stops it being collected.
+
+  const leftOutFail = (res, err, what) => {
+    if (err instanceof journeyLeftOut.LeftOutError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    log.error('admin', `Journey left-out ${what} failed`, { message: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  };
+
+  // ── Journey readings (#3369) ───────────────────────────────
+  //
+  // Read-only, any admin. Under staging with ?demo=1 each one answers a
+  // whole, labelled demo payload (services/journey-demo.js): a staging
+  // clone mixes emptied private tables with reseeded fixtures, and half-real
+  // numbers would be worse than invented ones that say so.
+  const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
+  // `cohort` narrows a reading to one admit cohort: an admit day, or
+  // other_way. Absent means everyone; anything else is refused.
+  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, or other_way.' };
+  const journeyCohort = (req) => {
+    const raw = req.query.cohort;
+    if (raw == null || raw === '') return { day: null };
+    const day = raw === 'other_way' ? 'other_way' : journey.parseDay(raw);
+    return day ? { day } : null;
+  };
+  const journeyMembers = async (day, ctx) => {
+    if (!day) return null;
+    const mile = await journey.firstMile(pool, { day, ...ctx });
+    return new Set(mile.people.filter((p) => p.userId).map((p) => Number(p.userId)));
+  };
+  const journeyRead = (what, demo, handler) => async (req, res) => {
+    try {
+      if (journeyDemo(req)) {
+        const scope = journeyCohort(req);
+        if (!scope) return res.status(400).json({ error: badCohort.error });
+        return res.json(demo(req, scope.day));
+      }
+      const leftOutIds = await journeyLeftOut.leftOutIds(pool);
+      const result = await handler(req, { leftOutIds, now: new Date() });
+      if (result && result.status) return res.status(result.status).json({ error: result.error });
+      return res.json(result);
+    } catch (err) {
+      log.error('admin', `Journey ${what} failed`, { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+  // `week=all` is the page's "all time" for the readings that have one.
+  const journeyWeek = (req, now, { all = false } = {}) => {
+    if (all && req.query.week === 'all') return journey.allTime(now);
+    const week = journey.parseWeek(req.query.week, now);
+    return week || null;
+  };
+  const badWeek = { status: 400, error: 'week must be a Monday in YYYY-MM-DD, not in the future, or all.' };
+  // The window and the cohort of a reading, or the 400 to answer.
+  const journeyScope = async (req, ctx, opts) => {
+    const week = journeyWeek(req, ctx.now, opts);
+    if (!week) return { error: badWeek };
+    const scope = journeyCohort(req);
+    if (!scope) return { error: badCohort };
+    return { week, memberIds: await journeyMembers(scope.day, ctx) };
+  };
+
+  // The North Star is a weekly number, so "all time" keeps the last finished
+  // week as the headline and returns every week as its trend.
+  router.get('/api/admin/journey/summary', journeyRead('summary', (req, day) => journeyDemoData.summary(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const allTime = req.query.week === 'all';
+      const scope = await journeyScope(allTime ? { ...req, query: { ...req.query, week: undefined } } : req, ctx);
+      if (scope.error) return scope.error;
+      return journey.summary(pool, { week: scope.week, memberIds: scope.memberIds, trendAll: allTime, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/cohorts', journeyRead('cohorts', () => journeyDemoData.cohorts(),
+    async (req, ctx) => journey.cohorts(pool, ctx)));
+
+  router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
+    async (req, ctx) => {
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      return journey.firstMile(pool, { day, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/stages', journeyRead('stages', (req, day) => journeyDemoData.stages(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.stages(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/loops', journeyRead('loops', (req, day) => journeyDemoData.loops(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      const opts = { week: scope.week, memberIds: scope.memberIds, ...ctx };
+      const [change, invite] = await Promise.all([journey.changeLoop(pool, opts), journey.inviteLoop(pool, opts)]);
+      return { change, invite };
+    }));
+
+  // The creation path and the pairs follow the page's filters like the
+  // stages and loops: a week or all time, everyone or one admit cohort.
+  router.get('/api/admin/journey/creation', journeyRead('creation path', (req, day) => journeyDemoData.creation(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.creationPath(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  // The first-session plan's measures (journey.firstSession).
+  router.get('/api/admin/journey/first-session', journeyRead('first session', (req, day) => journeyDemoData.firstSession(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.firstSession(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/pairs', journeyRead('pairs', (req, day) => journeyDemoData.pairs(day, req.query.week === 'all'),
+    async (req, ctx) => {
+      const scope = await journeyScope(req, ctx, { all: true });
+      if (scope.error) return scope.error;
+      return journey.pairs(pool, { week: scope.week, memberIds: scope.memberIds, ...ctx });
+    }));
+
+  router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
+    async (req, ctx) => {
+      if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
+      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      const mile = await journey.firstMile(pool, { day, ...ctx });
+      const to = ctx.now;
+      const from = new Date(to.getTime() - journey.NEWCOMER_DAYS * journey.DAY_MS);
+      return journey.nextStepCounts(pool, { from, to, userIds: mile.people.filter((p) => p.userId).map((p) => p.userId) });
+    }));
+
+  router.get('/api/admin/journey/people/:id', journeyRead('person', (req) => journeyDemoData.person(req.params.id),
+    async (req, ctx) => {
+      const found = await journey.person(pool, { userId: req.params.id, now: ctx.now });
+      return found || { status: 404, error: 'There is no such person.' };
+    }));
+
+  router.get('/api/admin/journey/left-out', async (req, res) => {
+    if (journeyDemo(req)) return res.json(journeyDemoData.leftOut());
+    try {
+      res.json({ people: await journeyLeftOut.list(pool) });
+    } catch (err) {
+      leftOutFail(res, err, 'read');
+    }
+  });
+
+  router.post('/api/admin/journey/left-out', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await journeyLeftOut.add(pool, req.body || {}, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry saved', {
+        userId: result.entry.userId, reason: result.entry.reason, erased: result.erased, by: req.user.username,
+      });
+      res.json({ ok: true, entry: result.entry, erased: result.erased });
+    } catch (err) {
+      leftOutFail(res, err, 'add');
+    }
+  });
+
+  router.delete('/api/admin/journey/left-out/:userId', requireAdminWrite, async (req, res) => {
+    try {
+      await journeyLeftOut.remove(pool, req.params.userId, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry removed', { userId: Number(req.params.userId), by: req.user.username });
+      res.json({ ok: true });
+    } catch (err) {
+      leftOutFail(res, err, 'remove');
     }
   });
 
@@ -770,10 +1046,16 @@ function adminRoutes(config) {
   // offers the field, and the weekly cap is the account's only limit.
   // limits.resolveCaps owns the interaction.
 
-  // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
-  // is the unverified tier (the base); the social and zkPassport keys are
-  // null when unset, meaning "same as the base", and a PUT of null clears
+  // #838: the weekly cap comes in identity tiers. `user_weekly_limit_cents`
+  // is the unverified tier (the base); the phone, social and zkPassport keys
+  // are null when unset, meaning "same as the base", and a PUT of null clears
   // one back to that.
+  //
+  // The verified-identity rule (`identityRule`, schema.sql identity_rule_since):
+  // on, a vote on a public app counts only from a verified account (phone,
+  // GitHub and X, or zkPassport), and accounts let in before it was switched
+  // on are exempt from it and from the verified tiers' allowance. Switching
+  // it on records the time once; off removes it.
   async function readLimitsPayload() {
     const userCents = await limits.getDefaultUserLimitCents(pool);
     const globalCents = await limits.getGlobalLimitCents(pool);
@@ -781,15 +1063,54 @@ function adminRoutes(config) {
     const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
     const weeklySocial = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_SOCIAL);
     const weeklyZk = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_ZK);
+    const weeklyPhone = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_PHONE);
+    const identityRuleSince = await limits.identityRuleSince(pool);
     return {
       user_daily_limit_cents: userCents,
       user_weekly_limit_cents: weeklyCents,
       user_weekly_limit_social_cents: weeklySocial,
       user_weekly_limit_zk_cents: weeklyZk,
+      user_weekly_limit_phone_cents: weeklyPhone,
+      identity_rule_since: identityRuleSince,
       global_daily_limit_cents: globalCents,
       system_tokens_daily_limit_cents: systemCents,
     };
   }
+
+  // #4296: the Unexpected events section. Read-only, so view-only admins see
+  // it too; the alerts it describes go to full admins only.
+  router.get('/api/admin/incidents', async (req, res) => {
+    // Required here, not at the top: platform-incidents reads the events
+    // type table when it loads, which route tests stub without.
+    const platformIncidents = require('../services/platform-incidents');
+    const platformIncidentAlerts = require('../services/platform-incident-alerts');
+    const q = req.query || {};
+    const listed = await platformIncidents.list(pool, {
+      days: q.days,
+      kind: typeof q.kind === 'string' && q.kind ? q.kind : null,
+      app: typeof q.app === 'string' && q.app ? q.app : null,
+    });
+    if (!listed) return res.status(500).json({ error: 'Could not read unexpected events' });
+    res.json({
+      ...listed,
+      alerts: {
+        hourlyThreshold: platformIncidentAlerts.HOURLY_THRESHOLD,
+        digestHourUtc: platformIncidentAlerts.DIGEST_HOUR_UTC,
+      },
+    });
+  });
+
+  // Apps & usage: every app with its members, contributors and activity
+  // over a 7/30/90-day window (services/admin-apps-usage.js). Read-only, so
+  // view-only admins see it too.
+  router.get('/api/admin/apps-usage', async (req, res) => {
+    try {
+      res.json(await adminAppsUsage.adminPayload(pool, { days: (req.query || {}).days }));
+    } catch (err) {
+      log.error('admin', 'Read apps & usage failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read apps & usage' });
+    }
+  });
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
@@ -801,7 +1122,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, weekly, global, system, weeklySocial, weeklyZk } = req.body || {};
+    const { user, weekly, global, system, weeklySocial, weeklyZk, weeklyPhone, identityRule } = req.body || {};
     const updates = [];
     const clears = [];
     const validate = (label, v) => {
@@ -830,10 +1151,15 @@ function adminRoutes(config) {
     if (typeof socialN === 'string' && socialN !== 'clear') return res.status(400).json({ error: socialN });
     const zkN = validateOptional('weeklyZk', weeklyZk);
     if (typeof zkN === 'string' && zkN !== 'clear') return res.status(400).json({ error: zkN });
+    const phoneN = validateOptional('weeklyPhone', weeklyPhone);
+    if (typeof phoneN === 'string' && phoneN !== 'clear') return res.status(400).json({ error: phoneN });
+    if (identityRule !== undefined && typeof identityRule !== 'boolean') {
+      return res.status(400).json({ error: 'identityRule must be true or false' });
+    }
     if (userN === null && globalN === null && systemN === null && weeklyN === null
-        && socialN === null && zkN === null) {
+        && socialN === null && zkN === null && phoneN === null && identityRule === undefined) {
       return res.status(400).json({
-        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, global, system',
+        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, weeklyPhone, identityRule, global, system',
       });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
@@ -842,6 +1168,9 @@ function adminRoutes(config) {
     else if (socialN !== null) updates.push([limits.KEY_WEEKLY_SOCIAL, String(socialN)]);
     if (zkN === 'clear') clears.push(limits.KEY_WEEKLY_ZK);
     else if (zkN !== null) updates.push([limits.KEY_WEEKLY_ZK, String(zkN)]);
+    if (phoneN === 'clear') clears.push(limits.KEY_WEEKLY_PHONE);
+    else if (phoneN !== null) updates.push([limits.KEY_WEEKLY_PHONE, String(phoneN)]);
+    if (identityRule === false) clears.push(limits.KEY_IDENTITY_RULE_SINCE);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -858,13 +1187,24 @@ function adminRoutes(config) {
       for (const key of clears) {
         await pool.query('DELETE FROM platform_settings WHERE key = $1', [key]);
       }
+      // On: the time it was switched on, kept if it already is (the date
+      // decides who is exempt, so a second "on" must not move it).
+      if (identityRule === true) {
+        await pool.query(
+          `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+           VALUES ($1, $2, NOW(), $3)
+           ON CONFLICT (key) DO NOTHING`,
+          [limits.KEY_IDENTITY_RULE_SINCE, new Date().toISOString(), req.user.id]
+        );
+      }
       // Hot-flip the cache so new limits apply on the very next request
       // instead of waiting up to 10s for the TTL to expire.
       limits.invalidate(...updates.map(([k]) => k), ...clears);
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
         user: userN, weekly: weeklyN, global: globalN, system: systemN,
-        weeklySocial: socialN, weeklyZk: zkN,
+        weeklySocial: socialN, weeklyZk: zkN, weeklyPhone: phoneN,
+        identityRule: identityRule === undefined ? null : identityRule,
       });
       res.json(await readLimitsPayload());
     } catch (err) {
@@ -894,6 +1234,31 @@ function adminRoutes(config) {
     }
   });
 
+  // ── GitHub requests ─────────────────────────────────────────
+  //
+  // GitHub's hourly REST budget per credential, as the last response with
+  // each one reported it (services/github-budget.js). Read-only, any admin,
+  // like /limits: Admin, Limits shows it beside the app limit, and the
+  // GitHub platform-limit alert opens there. In memory on this process, so
+  // empty until the first GitHub response after a restart.
+  //
+  // A platform preview boots with no GitHub token (GITHUB_BOT_TOKEN's
+  // staging_default is empty), so it would only ever show the empty state.
+  // There it answers fixed, labelled sample figures instead, the same
+  // request-time demo injection routes/apps.js resolveActionsSecrets uses.
+  // Strictly a no-op outside staging.
+  router.get('/api/admin/github-budget', (_req, res) => {
+    const snap = githubBudget.snapshot();
+    const configured = {
+      botToken: !!process.env.GITHUB_BOT_TOKEN,
+      app: !!(config && config.githubAppId && config.githubPrivateKey),
+    };
+    if (IS_STAGING && !snap.credentials.length) {
+      return res.json({ ...githubBudget.demoSnapshot(), configured, demo: true });
+    }
+    res.json({ ...snap, configured });
+  });
+
   router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
     const body = req.body || {};
     if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
@@ -916,6 +1281,47 @@ function adminRoutes(config) {
       res.json(await appLimit.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Welcome messages (#admin/welcome-dm) ──────────────────
+  //
+  // Who greets somebody just let in, in a group with them, and what the
+  // first message says (services/welcome-dm.js). Read open to view-only
+  // admins; the write is requireAdminWrite. `members` is a list of
+  // usernames in order — the first sends the message and owns the group.
+  router.get('/api/admin/welcome-dm', async (_req, res) => {
+    try {
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read welcome messages failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The typeahead behind each "People in the group" row. Only accounts the
+  // PUT below would accept are suggested. Admin-only and debounced by the
+  // client, like /api/admin/support/search.
+  router.get('/api/admin/welcome-dm/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Welcome messages people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/welcome-dm', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await welcomeDm.writeSettings(pool, req.body || {}, req.user.id);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      log.info('admin', 'Welcome messages updated', {
+        by: req.user.username, patch: Object.keys(req.body || {}),
+      });
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Update welcome messages failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1050,6 +1456,19 @@ function adminRoutes(config) {
     }
   });
 
+  // The watch-only small-change tag (services/small-change.js): its latest
+  // verdicts with their proposal, and the last week's totals. Read-only, so
+  // it stays on the plain adminMiddleware gate. `reason` is model-written
+  // text about a change, served as JSON data for admins.
+  router.get('/api/admin/small-change-tags', async (req, res) => {
+    try {
+      res.json(await smallChange.adminPayload(pool, { limit: req.query.limit }));
+    } catch (err) {
+      log.error('admin', 'Read small-change tags failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/homeroom-bot/settings', requireAdminWrite, async (req, res) => {
     try {
       const result = await homeroomBot.writeSettings(pool, req.body || {}, req.user.id, config);
@@ -1064,11 +1483,19 @@ function adminRoutes(config) {
     }
   });
 
+  // #3654: each field is changed only when the body carries it, so the
+  // table's one-tap Yes/No (a rating alone) no longer erases a note, and the
+  // verdict a labeller says was right rides beside them.
   router.post('/api/admin/homeroom-bot/runs/:id/rating', requireAdminWrite, async (req, res) => {
     try {
-      const { rating = null, note = null } = req.body || {};
+      const body = req.body || {};
+      const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
       const result = await homeroomBot.rateRun(pool, {
-        id: req.params.id, rating, note, actorId: req.user.id,
+        id: req.params.id,
+        rating: has('rating') ? body.rating : undefined,
+        note: has('note') ? body.note : undefined,
+        labelVerdict: has('labelVerdict') ? body.labelVerdict : undefined,
+        actorId: req.user.id,
       });
       if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
       res.json({ run: result.run });
@@ -1088,10 +1515,102 @@ function adminRoutes(config) {
       log.info('admin', 'Homeroom bot run requested', {
         by: req.user.username, slug, issueNumber: Number(issueNumber),
       });
-      res.status(202).json({ item: result.item });
+      res.status(202).json({ item: result.item, ...(result.running ? { running: true } : {}) });
     } catch (err) {
       log.error('admin', 'Homeroom bot run request failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // An ask to stop tagging that the bot misread: the person is tagged again
+  // on that issue.
+  router.post('/api/admin/homeroom-bot/mention-optouts/remove', requireAdminWrite, async (req, res) => {
+    try {
+      const { slug, issueNumber, username } = req.body || {};
+      const result = await homeroomBot.removeMentionOptOut(pool, { slug, issueNumber, username });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot mention opt-out removed', { by: req.user.username, slug, issueNumber: Number(issueNumber), username });
+      res.json({ ok: true, mentionOptOuts: await homeroomBot.mentionOptOutList(pool) });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot mention opt-out removal failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Triage this app again" (#3480): every open issue on a live app goes in
+  // its queue, oldest first, and the loop takes them one at a time.
+  router.post('/api/admin/homeroom-bot/retriage-app', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const result = await homeroomBot.retriageApp(pool, { slug: req.body?.slug, actorId: req.user.id });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot app re-triaged', { by: req.user.username, slug: req.body?.slug, queued: result.queued });
+      res.status(202).json(result);
+    } catch (err) {
+      log.error('admin', 'Homeroom bot app re-triage failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Before & after shots runs export ───────────────────────
+  //
+  // Every shots run as one CSV, for debugging successes and failures in
+  // bulk: the per-proposal diagnostics answer one run at a time, and the
+  // admin gallery lists merged proposals only. services/shots-export.js
+  // owns the query, the filters and the columns; this layer only gates and
+  // streams.
+  //
+  // PERMISSIONS: requireAdminWrite, like the Homeroom bot's export above and
+  // for the same reason: a bulk downloadable artifact is the exposure class
+  // the other CSV exports and the database export already put behind the
+  // write gate. The agent's final responses are not in the file at all.
+  //
+  // Streamed, not buffered, and every value goes through `csvField`: the
+  // declared changes, titles and failure text are author- and model-written,
+  // which is the case the formula-injection guard exists for.
+  router.get('/api/admin/shots/export.csv', requireAdminWrite, async (req, res) => {
+    const parsed = shotsExport.parseFilters(req.query || {});
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const { filters } = parsed;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="shots-runs-${shotsExport.exportScope(filters)}-${day}.csv"`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.write(`${shotsExport.EXPORT_COLUMNS.join(',')}\n`);
+      // A row carries JSON trace columns, so a slow client could otherwise
+      // let whole pages pile up in this process's write buffer. Wait for the
+      // socket to drain between pages, and stop querying once the download
+      // is abandoned.
+      const drained = () => new Promise((resolve) => {
+        const done = () => { res.off('drain', done); res.off('close', done); resolve(); };
+        res.on('drain', done);
+        res.on('close', done);
+      });
+      let rows = 0;
+      for await (const chunk of shotsExport.iterateRunsForExport(pool, filters)) {
+        for (const row of chunk) {
+          res.write(`${shotsExport.exportRow(row).map(csvField).join(',')}\n`);
+        }
+        rows += chunk.length;
+        if (res.writableNeedDrain) await drained();
+        if (res.destroyed) {
+          log.info('admin', 'Shots runs export abandoned by the client', { by: req.user.username, rows });
+          return undefined;
+        }
+      }
+      log.info('admin', 'Shots runs exported', { by: req.user.username, rows, ...filters });
+      return res.end();
+    } catch (err) {
+      log.error('admin', 'Shots runs CSV export failed', { message: err.message });
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      // Past the first chunk the status line and part of the file are
+      // already on the wire. Destroy the socket rather than ending it: a
+      // clean end closes the chunked body normally and the browser saves a
+      // truncated file as though it were complete; an aborted one is reported
+      // as a failed download.
+      return res.destroy();
     }
   });
 
@@ -1181,6 +1700,69 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Custom domains (#4405) ─────────────────────────────────
+  //
+  // Every custom domain with its project and where it stands. The read is
+  // open to view-only admins; the levers (check again, disable, enable,
+  // remove) change what the edge serves, so they requireAdminWrite. Disable
+  // takes the host out of service without touching the project: its Homeroom
+  // address keeps working, and Enable verifies the claim again from the
+  // start.
+  const appDomains = require('../services/app-domains');
+
+  function adminDomainRow(row) {
+    return {
+      id: row.id,
+      appSlug: row.app_slug,
+      appName: row.app_name,
+      createdBy: row.created_by_username || null,
+      ...appDomains.publicRow(row),
+      disabledAt: row.disabled_at ? new Date(row.disabled_at).toISOString() : null,
+      failureCount: row.failure_count,
+    };
+  }
+
+  router.get('/api/admin/domains', async (req, res) => {
+    try {
+      const rows = await appDomains.adminList(pool);
+      res.json({ domains: rows.map(adminDomainRow), sweep: appDomains.getStatus() });
+    } catch (err) {
+      log.error('admin', 'Read custom domains failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  async function adminDomainAction(req, res, act) {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid domain id' });
+    try {
+      const row = await appDomains.byId(pool, id);
+      if (!row) return res.status(404).json({ error: 'Domain not found' });
+      const result = await act(row);
+      log.info('admin', 'Custom domain action', { by: req.user.username, id, hostname: row.hostname, action: req.path.split('/').pop() });
+      if (result === null) return res.status(204).end();
+      const rows = await appDomains.adminList(pool);
+      const fresh = rows.find((r) => r.id === id);
+      res.json({ domain: fresh ? adminDomainRow(fresh) : null });
+    } catch (err) {
+      log.error('admin', 'Custom domain action failed', { id, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  router.post('/api/admin/domains/:id/check', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.checkNow(pool, config, row))));
+  router.post('/api/admin/domains/:id/disable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? row : appDomains.disable(pool, config, row, req.user))));
+  router.post('/api/admin/domains/:id/enable', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    (row) => (row.status === 'disabled' ? appDomains.enable(pool, row, req.user) : row)));
+  router.delete('/api/admin/domains/:id', requireAdminWrite, (req, res) => adminDomainAction(req, res,
+    async (row) => {
+      const { rows } = await pool.query('SELECT id, slug FROM apps WHERE id = $1', [row.app_id]);
+      await appDomains.remove(pool, config, rows[0] || { id: row.app_id }, row, req.user);
+      return null;
+    }));
+
   // ── Featured apps ──────────────────────────────────────────
   //
   // The admin-curated row under "Find more apps" on every user's home
@@ -1203,7 +1785,7 @@ function adminRoutes(config) {
     try {
       const { rows: featured } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
@@ -1212,7 +1794,7 @@ function adminRoutes(config) {
       );
       const { rows: available } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM apps a
           WHERE NOT a.self_hosted
@@ -1228,6 +1810,10 @@ function adminRoutes(config) {
         icon_emoji: r.icon_emoji || null,
         icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
         sort_order: r.sort_order ?? null,
+        // Whether the Discover card has its own art (#2615). Without one it
+        // draws the app icon, and the section flags that so the gap is
+        // visible. A boolean, not the record: the list has no use for framing.
+        has_illustration: !!(r.featured_illustration && r.featured_illustration.url),
         main_sha: r.main_sha || null,
         last_deploy_at: r.last_deploy_at || null,
         directory_review_status: r.directory_review_status || 'unreviewed',
@@ -2210,7 +2796,7 @@ function adminRoutes(config) {
         ? req.query.kind.trim().slice(0, 64)
         : null;
 
-      const [recent, totals] = await Promise.all([
+      const [recent, totals, reports] = await Promise.all([
         pool.query(
           `SELECT id, kind, recipient, provider, status, error, created_at
              FROM mail_deliveries
@@ -2227,12 +2813,15 @@ function adminRoutes(config) {
             GROUP BY status`,
           [kind]
         ),
+        require('../services/mail/reports').readReports(pool, {
+          provider: (config && (config.mailProvider || config.mailTransport?.provider)) || null,
+        }),
       ]);
 
       const last24h = {};
       for (const row of totals.rows) last24h[row.status] = row.n;
 
-      res.json({ deliveries: recent.rows, last24h, kind, limit });
+      res.json({ deliveries: recent.rows, last24h, kind, limit, reports });
     } catch (err) {
       log.error('admin', 'mail activity failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2275,6 +2864,94 @@ function adminRoutes(config) {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+  // ── SMS delivery (Admin → SMS delivery) ──────────────────────────────
+  //
+  // Texts go out only through Firebase Phone Auth, as sign-in codes
+  // (services/firebase-phone-auth.js), so the test send is exactly that
+  // send. The status read names the platform variables that are missing,
+  // never what any of them hold, and is open to any admin.
+  router.get('/api/admin/sms/status', (req, res) => {
+    const missing = [];
+    if (config.firebasePhoneAuthEnabled !== true) missing.push('FIREBASE_PHONE_AUTH_ENABLED');
+    if (!config.firebaseWebApiKey) missing.push('FIREBASE_WEB_API_KEY');
+    if (!config.firebaseProjectId) missing.push('FIREBASE_PROJECT_ID');
+    if (!config.firebaseServiceAccountJsonB64) missing.push('FIREBASE_SERVICE_ACCOUNT_JSON_B64');
+    res.json({
+      offered: phoneAuth.offered(config),
+      // Texts go out only through Firebase; test numbers (PHONE_TEST_CODE,
+      // never in production) sign in without one.
+      texts: phoneAuth.firebaseOffered(config),
+      testNumbers: phoneAuth.testNumbersOn(config),
+      enabled: config.firebasePhoneAuthEnabled === true,
+      projectId: config.firebaseProjectId || null,
+      missing,
+      canSendTest: !!req.user?.canAdminWrite,
+    });
+  });
+
+  // Send one diagnostic text. Full admins only (it is a real, billed text
+  // to a number of the operator's choosing) and rate-limited per admin and
+  // per number. 200 for every answer Firebase gave — `refused` and
+  // `unreachable` are answers to the operator's question, the way the mail
+  // test's `failed` is. A malformed number is 400 and nothing is sent; an
+  // unconfigured platform is 409 and nothing is sent.
+  router.post('/api/admin/sms/test', requireAdminWrite, smsTestLimiter, smsTestNumberLimiter,
+    async (req, res) => {
+      try {
+        const body = req.body || {};
+        let outcome;
+        try {
+          outcome = await phoneAuth.sendTestCode(config, body.phoneNumber, body.recaptchaToken);
+        } catch (err) {
+          if (err instanceof phoneAuth.PhoneAuthError) {
+            return res.status(err.status).json({ error: err.message, code: err.code });
+          }
+          throw err;
+        }
+        if (outcome.status === 'not_offered') {
+          return res.status(409).json({
+            error: 'SMS is not set up, so there is no text to test.',
+            code: 'not_offered',
+          });
+        }
+
+        const phoneLast4 = outcome.phoneNumber.slice(-4);
+        events.record(pool, {
+          type: events.EVENT_TYPES.SMS_TEST_SENT,
+          userId: req.user.id,
+          metadata: { status: outcome.status, providerCode: outcome.providerCode, phoneLast4 },
+        });
+
+        log.warn('admin', 'Admin sent a test SMS', {
+          by: req.user.username,
+          status: outcome.status,
+          providerCode: outcome.providerCode,
+          phone: `…${phoneLast4}`,
+        });
+
+        res.json({ outcome: { ...outcome, sentAt: new Date().toISOString() } });
+      } catch (err) {
+        log.error('admin', 'sms test failed', { message: err.message });
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+  // The failure log the test send cannot answer on its own: every failed
+  // phone code request, verification and link attempt real callers made
+  // (routes/phone-auth.js fail()), newest first, with the account name and
+  // Firebase's own code beside this API's. Any admin: it holds what the
+  // users table already shows them plus error codes, never a phone number
+  // (its last four digits only) and never session material.
+  router.get('/api/admin/sms/failures', async (req, res) => {
+    try {
+      const { failures, total7d } = await phoneFailureLog.recentFailures(pool, 50);
+      return res.json({ failures, total7d });
+    } catch (err) {
+      log.error('admin', 'sms failures read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   return router;
 }

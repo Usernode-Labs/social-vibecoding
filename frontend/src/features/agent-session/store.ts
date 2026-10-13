@@ -3,12 +3,26 @@
 // controller published on window.UsernodeReact.agentSession for the classic
 // router (public/js/app.js) and the entry points that start a conversation.
 //
-// Two sources of truth, deliberately kept apart:
-//   - what the server has persisted (the session, its rows, its cards),
-//     which is re-read after anything that changes it;
-//   - what a turn is doing right now (streamed text, the tool it is running,
-//     the coding agent's latest progress line), which only lives until the
-//     turn's rows are persisted.
+// The server is the one source of truth, and the screen converges on it:
+//   - What the server has persisted (the session, whether the Mayor is
+//     working, the rows, the cards) is read in ONE consistent snapshot
+//     (GET .../state, `sync`) whenever this screen may be behind: when the
+//     conversation opens or is routed to again, when the server announces a
+//     newer version of it (the database's own notice, on every pod), when a
+//     turn's events say it moved, when the page comes back to the
+//     foreground or the network or socket returns, and every few seconds
+//     while the Mayor works. Reads never overlap, and a read never publishes
+//     over a newer one.
+//   - What a turn is doing right now (streamed text, the tool it is running,
+//     the coding agent's latest progress line) is drawn from its events, and
+//     stays on screen until the read that brings in the saved rows replaces
+//     it, in one publish, so nothing flashes away and back.
+//   - What this screen sent and the server has not shown back yet is the
+//     outbox (./outbox.ts): drawn at once, replaced in place by the server's
+//     row, and marked Not sent, with Retry, if the server never took it.
+// Whether the Mayor is working is the server's answer, never this screen's
+// guess: a stale guess is what used to turn Send into Save with nobody
+// working.
 //
 // A conversation New change opens is UNSENT (`draft`, addressed `new`): no
 // row exists until its first message, so opening and leaving it leaves
@@ -18,8 +32,10 @@
 
 import { useRef, useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
@@ -30,11 +46,15 @@ import type {
   AgentMessage,
   AgentSession,
   AgentTurnEvent,
+  AgentTurnState,
   ModelCatalog,
   SavedDraft,
 } from './api';
 import { sameChoice } from './model-choice';
-import { requestSeed } from './request-seed';
+import {
+  markStranded, mergeRows, newClientId, readOutbox, withoutLanded, writeOutbox, type OutboxItem,
+} from './outbox';
+import { draftSeed } from './request-seed';
 import { toolActivity } from './transcript';
 import { writeUnsent } from './unsent';
 
@@ -55,18 +75,26 @@ export interface LiveTurn {
   running: boolean;
   phase: 'mayor' | 'cc' | 'mayor2' | null;
   stopping: boolean;
+  stopRequestedAt: number | null;
+  stopToken: string | null;
+  stopPending: boolean;
+  stopError: string | null;
   streamText: string;
   activity: string;
   progress: string;
   startedAt: number | null;
   cards: AgentCard[];
-  pendingUserText: string | null;
   /**
-   * The newest message id on screen when the pending text was sent. The
-   * saved row is the first user message after it; once a refresh brings it
-   * in, the pending bubble goes (settlePending).
+   * The running turn's id, as the server gave it (the lease a read returns,
+   * or this screen's own send's `accepted`). Events of any other turn are
+   * not drawn: a buffer's tail from an earlier turn cannot restart the dots.
    */
-  pendingAfterId: number | null;
+  turnId: string | null;
+  /**
+   * The saved row the streamed words stand in for (`mayor_reasoning`'s
+   * messageId): they stay on screen until a read brings that row in.
+   */
+  settleOn: number | null;
 }
 
 /** The spec viewer over the conversation: one change's spec, one version. */
@@ -76,6 +104,8 @@ export interface SpecSheetState {
   version: number | null;
   versions: number[];
   text: string;
+  /** The version's HTML document when it was written as one (#3699); `text` is then its markdown copy. */
+  html: string | null;
   phase: 'loading' | 'ready' | 'error';
   error: string;
   /**
@@ -134,6 +164,13 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /**
+   * The viewer has had an agent session, archived ones included: they have
+   * built something themselves. Messages' Agents list shows its "Show
+   * archived" group only then (useAgentChatsShown). Set by the list's read
+   * and by the first message of a new one, and never cleared in this document.
+   */
+  sessionsStarted: boolean;
   /** The picker's options, read once per page. */
   catalog: ModelCatalog | null;
   /** A pick on its way to the server. */
@@ -166,19 +203,27 @@ export interface AgentSessionState {
   drafts: SavedDraft[];
   /** Files in the tray above the box, sent with the next message (./attachments.ts). */
   attachments: PendingFile[];
+  /** What this screen sent that the server has not shown back yet (./outbox.ts). */
+  outbox: OutboxItem[];
+  /** The conversation's version the screen last read (null before the first read). */
+  version: number | null;
 }
 
 const IDLE_TURN: LiveTurn = {
   running: false,
   phase: null,
   stopping: false,
+  stopRequestedAt: null,
+  stopToken: null,
+  stopPending: false,
+  stopError: null,
   streamText: '',
   activity: '',
   progress: '',
   startedAt: null,
   cards: [],
-  pendingUserText: null,
-  pendingAfterId: null,
+  turnId: null,
+  settleOn: null,
 };
 
 export const INITIAL_STATE: AgentSessionState = {
@@ -196,6 +241,7 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  sessionsStarted: false,
   catalog: null,
   choosing: false,
   returnedText: null,
@@ -208,6 +254,8 @@ export const INITIAL_STATE: AgentSessionState = {
   attachments: [],
   credits: null,
   handoff: null,
+  outbox: [],
+  version: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -215,11 +263,13 @@ const listeners = new Set<() => void>();
 let navigation = 0;
 let turnAbort: AbortController | null = null;
 let events: EventSource | null = null;
-let eventFilter: string | null = null;
 const seen = new Set<string>();
 // The hint the next `new` open starts from: undefined when nothing has been
 // prepared (a reload of `#agent/new`, or the same draft routed again).
 let pendingHint: AgentHint | null | undefined;
+// The hand-off a shared `?flow=claude-code|codex` link asked for (#4312): the
+// next conversation opened, sent or not, opens "Build with" on that tab.
+let pendingHandoff: HandoffAgent | null = null;
 let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
@@ -347,6 +397,22 @@ export function useAgentSessions(): AgentSession[] {
   return useAgentSessionSelector((current) => current.sessions);
 }
 
+/**
+ * Whether the viewer has had an agent session, from any door (the hub's ⋯,
+ * a request's Build it now, Messages' new chat, the filed request's link):
+ * Messages' Agents list shows its "Show archived" group only then, so a
+ * first-time user's list has no quiet tail that would always be empty.
+ * A listed session counts at once, so the group is there from the moment
+ * the first one exists.
+ */
+export function agentChatsShown(current: Pick<AgentSessionState, 'sessionsStarted' | 'sessions'>): boolean {
+  return current.sessionsStarted || current.sessions.length > 0;
+}
+
+export function useAgentChatsShown(): boolean {
+  return useAgentSessionSelector(agentChatsShown);
+}
+
 export function getAgentSessionState() {
   return state;
 }
@@ -355,27 +421,17 @@ function errorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/**
- * Whether new work starts in an agent session for this viewer (#2779): the
- * per-user experimental flag, as /api/auth/me reported it. Only STARTING
- * reads it; a conversation that already exists opens either way.
- */
-export function agentSessionsEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.App?.user?.agentSessionsEnabled === true;
-}
-
 export function composerId(host: AgentSessionHost) {
   return host === 'messages' ? 'agent-session-pane-composer' : 'agent-session-composer';
 }
 
 function syncTitle() {
   if (!state.open || state.host !== 'screen') return;
-  const title = state.session?.title || 'New session';
+  const title = state.session?.title || t('agent:session.newSessionTitle');
   try { window.App?.setHeaderTitle?.(title); } catch { /* the bar keeps its last title */ }
 }
 
-// ── Reading ────────────────────────────────────────────────────────────
+// ── Reading: one consistent snapshot, whenever the screen may be behind ──
 
 /**
  * The lists (Recents, the mark's menu, Messages) read the same session as
@@ -386,194 +442,289 @@ function withListed(current: AgentSessionState, session: AgentSession): AgentSes
   return current.sessions.map((s) => (s.id === session.id ? session : s));
 }
 
-async function refreshSession(id: number) {
-  const { session } = await api.getSession(id);
-  if (state.id !== id) return;
-  publish((current) => ({ session, sessions: withListed(current, session) }));
-  syncTitle();
+// Where the open conversation's screen stands: the version and rev it last
+// read, so the next read asks only for what moved. Reset whenever another
+// conversation opens.
+let cursor: { id: number; version: number | null; rev: number | null } | null = null;
+// One read at a time. A trigger that arrives while one is running asks for
+// one more after it (never a second one alongside it), so the last read
+// always starts after the last trigger, and an older answer can never be
+// published over a newer one.
+let syncing: { id: number; promise: Promise<void> } | null = null;
+let syncAgain = false;
+let syncWhole = false;
+// When this screen's own send was last accepted. A read that started before
+// it cannot know the turn it started, so its "not working" is not believed.
+let acceptedAt = 0;
+// The sends this page is waiting on the server to accept: client id to the
+// conversation it was sent to. While one of a conversation's is out, its
+// screen stays "working" whatever a read says.
+const awaiting = new Map<string, number>();
+
+function sendingIn(id: number): boolean {
+  for (const conversation of awaiting.values()) if (conversation === id) return true;
+  return false;
+}
+// Sends the server accepted whose row this screen has not read yet: in
+// flight still, never "Not sent".
+const accepted = new Set<string>();
+
+function inFlight(): Set<string> {
+  return new Set([...awaiting.keys(), ...accepted]);
 }
 
-async function refreshMessages(id: number) {
-  const all: AgentMessage[] = [];
-  let after = 0;
-  // A conversation can outgrow one page; follow the cursor to the end.
-  for (let page = 0; page < 20; page += 1) {
-    const { messages, nextAfter } = await api.getMessages(id, after);
-    all.push(...messages);
-    if (!nextAfter) break;
-    after = nextAfter;
+// Message ids: why a message of the person's was not sent, read when it is marked.
+const NOT_SENT_TEXT = 'agent:session.outbox.notSentUnreachable';
+const BUSY_REFUSED_TEXT = 'agent:session.outbox.notSentBusy';
+const STRANDED_TEXT = 'agent:session.outbox.notSent';
+
+/**
+ * Bring the open conversation up to date with the server. Resolves once the
+ * screen holds a read that started after this call.
+ */
+export function requestSync(id: number | null = state.id, { whole = false }: { whole?: boolean } = {}): Promise<void> {
+  if (!id || state.id !== id || !state.open) return Promise.resolve();
+  if (whole) syncWhole = true;
+  if (syncing && syncing.id === id) {
+    syncAgain = true;
+    return syncing.promise;
   }
+  const run = (async () => {
+    do {
+      syncAgain = false;
+      const all = syncWhole;
+      syncWhole = false;
+      // eslint-disable-next-line no-await-in-loop
+      await syncOnce(id, all).catch((error) => syncFailed(id, error));
+    } while (syncAgain && state.id === id && state.open);
+  })().finally(() => {
+    if (syncing && syncing.id === id) syncing = null;
+  });
+  syncing = { id, promise: run };
+  return run;
+}
+
+function syncFailed(id: number, error: unknown) {
   if (state.id !== id) return;
-  publish((current) => ({ messages: all, turn: settlePending(current.turn, all) }));
+  // The first read of a conversation is the screen: say what went wrong.
+  // Any later one only missed a beat; the next trigger or poll reads again.
+  if (state.phase === 'loading') {
+    publish({ phase: 'error', error: errorText(error, t('agent:session.error.loadFailed')) });
+  }
+}
+
+async function syncOnce(id: number, whole: boolean) {
+  const held = !whole && cursor && cursor.id === id ? cursor : null;
+  const startedAt = Date.now();
+  const answer = await api.getState(id, held ? { version: held.version, rev: held.rev } : {});
+  if (state.id !== id || !state.open) return;
+  if (answer.unchanged) {
+    // Nothing was written, but a lease can go stale with no write (its
+    // process died): when the server's "working" differs from what it last
+    // said, or the screen thinks a turn runs that the server does not know,
+    // read it all.
+    const working = !!answer.busy;
+    if (working !== !!state.session?.busy || (working && !state.turn.running)) {
+      syncWhole = true;
+      syncAgain = true;
+      return;
+    }
+    // The screen's own guess (a send it started, refused since) settles on
+    // the server's word: not working, and nothing of this screen's waiting
+    // to be accepted, is not working.
+    const stale = startedAt < acceptedAt;
+    if (!working && state.turn.running && !sendingIn(id) && !stale) {
+      publish({ turn: IDLE_TURN });
+      following(id);
+    } else if (working) {
+      // A job's stop stamp and the force-stop deadline can change without
+      // a conversation revision. Reconnects and other devices still need it.
+      publish({ turn: settleTurn(state.turn, { busy: true, turn: answer.turn, messages: state.messages, sending: sendingIn(id) }) });
+    }
+    return;
+  }
+  let messages: AgentMessage[];
+  if (answer.full) {
+    messages = [...answer.messages];
+    let after = answer.nextAfter;
+    // A conversation can outgrow one page; follow the cursor to the end.
+    for (let page = 0; after && page < 20; page += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const next = await api.getMessages(id, after);
+      if (state.id !== id) return;
+      messages.push(...next.messages);
+      after = next.nextAfter;
+    }
+  } else {
+    messages = mergeRows(state.messages, answer.messages);
+  }
+  cursor = {
+    id,
+    version: typeof answer.version === 'number' ? answer.version : null,
+    rev: typeof answer.rev === 'number' ? answer.rev : null,
+  };
+  const session = answer.busy && !answer.session.busy ? { ...answer.session, busy: true } : answer.session;
+  // A read from before this screen's own send was accepted says "not
+  // working" about a turn it could not see: keep the screen's, and read again.
+  const stale = !answer.busy && startedAt < acceptedAt;
+  if (stale) syncAgain = true;
+  publish((current) => {
+    const outbox = markStranded(withoutLanded(current.outbox, messages), inFlight(), t(STRANDED_TEXT));
+    for (const clientId of accepted) {
+      if (!outbox.some((item) => item.clientId === clientId)) accepted.delete(clientId);
+    }
+    return {
+      session,
+      sessions: withListed(current, session),
+      messages,
+      actions: Array.isArray(answer.actions) ? answer.actions : current.actions,
+      outbox,
+      version: cursor ? cursor.version : null,
+      phase: 'ready',
+      turn: settleTurn(current.turn, {
+        busy: !!answer.busy || stale, turn: answer.turn, messages, sending: sendingIn(id),
+      }),
+    };
+  });
+  storeOutbox(id);
+  syncTitle();
+  following(id);
 }
 
 /**
- * A progress line as the build card shows it. The runner's phase markers
- * arrive as "[codex (resume <thread>, mode build)]"; the dev chat labels
- * them through cc-progress-summary.js's ccPhaseLabel ("Coding agent is
- * working"), and so does this, rather than printing the marker.
+ * The live turn as the server's read leaves it. Working: the turn the server
+ * names, with the streamed words kept until their saved row is in. Not
+ * working (and no send of this screen's still waiting to be accepted): the
+ * turn is over, and everything it streamed is in `messages` by now, so the
+ * words go in the same publish that brings their row.
  */
-export function progressLine(text: string): string {
-  const marker = /^\[([^\]]+)\]$/.exec(text);
-  if (!marker) return text;
-  const label = typeof window !== 'undefined'
-    && typeof (window as unknown as { ccPhaseLabel?: (phase: string) => string }).ccPhaseLabel === 'function'
-    ? (window as unknown as { ccPhaseLabel: (phase: string) => string }).ccPhaseLabel(marker[1])
-    : '';
-  return label && label !== marker[1].trim() ? label : 'The coding agent is working';
+export function settleTurn(turn: LiveTurn, read: {
+  busy: boolean;
+  turn: AgentTurnState | null | undefined;
+  messages: AgentMessage[];
+  sending: boolean;
+}): LiveTurn {
+  if (!read.busy) return read.sending ? { ...turn, running: true } : (turn === IDLE_TURN ? turn : IDLE_TURN);
+  const server = read.turn || null;
+  let next: LiveTurn = { ...turn, running: true };
+  if (server && ((server.id && turn.turnId && server.id !== turn.turnId)
+    || (server.stopToken && turn.stopToken && server.stopToken !== turn.stopToken))) {
+    // Another turn than the one drawn (started on another device, or the
+    // follow-up after a card): start its drawing afresh.
+    next = { ...IDLE_TURN, running: true };
+  }
+  if (server) {
+    if (server.id) next.turnId = server.id;
+    if (!next.phase || server.phase !== 'mayor') next.phase = server.phase;
+    if (typeof server.startedAt === 'number' && server.startedAt > 0) next.startedAt = server.startedAt;
+    next.stopping = next.stopPending || !!server.stopping;
+    next.stopRequestedAt = server.stopRequestedAt || null;
+    next.stopToken = server.stopToken || null;
+  }
+  if (!next.phase) next.phase = 'mayor';
+  if (!next.startedAt) next.startedAt = Date.now();
+  if (next.settleOn != null && read.messages.some((row) => row.id === next.settleOn)) {
+    next = { ...next, streamText: '', cards: [], settleOn: null };
+  }
+  return next;
 }
 
-function newestMessageId(messages: AgentMessage[]): number {
-  return messages.reduce((max, message) => (message.id > max ? message.id : max), 0);
-}
-
-/**
- * The pending bubble stands in for the message until its saved row is on
- * screen, and not a moment longer. It used to wait for the Mayor's first
- * reply, but a turn that goes straight to a build says nothing until the
- * build's wrap-up: the refresh a build's progress triggers brought the saved
- * row in above the run card while the bubble stayed under it, so the message
- * showed twice until the turn ended or the page was reloaded.
- */
-export function settlePending(turn: LiveTurn, messages: AgentMessage[]): LiveTurn {
-  if (!turn.pendingUserText) return turn;
-  const after = turn.pendingAfterId || 0;
-  const landed = messages.some((message) => message.role === 'user' && message.id > after);
-  return landed ? { ...turn, pendingUserText: null, pendingAfterId: null } : turn;
-}
-
-async function refreshActions(id: number) {
-  const actions = await api.getActions(id);
-  if (state.id !== id) return;
-  publish({ actions });
-}
-
-async function refreshAll(id: number) {
-  await Promise.all([refreshSession(id), refreshMessages(id), refreshActions(id)]);
-}
-
-// ── The live stream ────────────────────────────────────────────────────
+// ── Following a turn, and the polls that catch what events miss ────────
 
 function closeEvents() {
   if (events) {
     try { events.close(); } catch { /* already closed */ }
   }
   events = null;
-  eventFilter = null;
-  stopBusyPoll();
 }
 
 /**
- * Follow the conversation's bus (GET .../events) — for a turn this tab did
- * not start: one already running when the screen opened, or the Mayor's
- * follow-up after a confirmed card. `turnId` narrows it to that turn's
- * events, so the tail of an earlier turn still in the buffer is ignored.
+ * Draw a turn this screen is not streaming itself (one already running when
+ * it opened, the follow-up after a card, one started on another device)
+ * from the conversation's bus (GET .../events), which replays what the
+ * running turn has said so far. Events only animate: a read settles it.
  */
-function followEvents(id: number, turnId: string | null = null) {
+function followEvents(id: number) {
   closeEvents();
   if (typeof EventSource === 'undefined') return;
-  eventFilter = turnId ? `${turnId.slice(0, 8)}-` : null;
   const source = new EventSource(`/api/agent-sessions/${id}/events`, { withCredentials: true });
   events = source;
   source.onmessage = (message) => {
     try {
-      const event = JSON.parse(message.data) as AgentTurnEvent;
-      if (eventFilter && typeof event._seq === 'string' && !event._seq.startsWith(eventFilter)) return;
-      handleEvent(id, event);
+      handleEvent(id, JSON.parse(message.data) as AgentTurnEvent);
     } catch { /* malformed frame */ }
+  };
+  // The browser reconnects by itself (with Last-Event-Id); what happened
+  // meanwhile is read. One that gave up is dropped, to be opened again by
+  // the next read that finds the turn still running.
+  source.onerror = () => {
+    if (events === source && source.readyState === 2) events = null;
+    void requestSync(id);
   };
 }
 
-// ── A turn whose stream broke ──────────────────────────────────────────
-//
-// The turn's own stream (POST .../turns) can break while the server still
-// has the message: a dropped connection, or the platform restarting mid-turn,
-// which every deploy does because it replaces the platform's one pod. The
-// browser then throws its own raw words (WebKit's "Error in input stream",
-// Chrome's "network error"), which say nothing about the message: the turn
-// usually carries on, or has already finished, on the server. So read where
-// it stands rather than report a refusal and hand back a message that was
-// sent. The event bus is each pod's own memory, so a new pod's
-// GET .../events never hears a turn the old one is still finishing: a turn
-// followed this way is also re-read until the server says it has ended.
-
-const RESUME_ATTEMPTS = 4;
-const RESUME_RETRY_MS = 1000;
-const BUSY_POLL_MS = 5000;
-const NOT_SENT_TEXT = 'Could not reach Homeroom, so your message was not sent. Try again.';
-const LOST_TEXT = 'The connection dropped while the Mayor was answering. Reload to see where it stands.';
-let busyPoll: ReturnType<typeof setTimeout> | null = null;
-
-function stopBusyPoll() {
-  if (busyPoll) clearTimeout(busyPoll);
-  busyPoll = null;
+/** Follow the running turn when nothing else is drawing it; let go once it ends. */
+function following(id: number) {
+  if (state.id !== id || !state.open) return;
+  if (state.turn.running && !turnAbort && !events) followEvents(id);
+  else if (!state.turn.running && events) closeEvents();
+  schedulePoll();
 }
 
-function wait(ms: number) {
-  return new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+// While the Mayor works the screen re-reads every few seconds (almost always
+// "unchanged", a one-row read): an event lost between pods, or a turn that
+// died with its process, cannot leave it spinning. Otherwise now and then,
+// in case the socket that carries the server's notices is down.
+const BUSY_POLL_MS = 4000;
+const IDLE_POLL_MS = 30000;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function stopPoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
 }
 
-/** The server's own answer (api.ts's json() carries its status); anything else is the connection. */
-function refusedByServer(error: unknown): boolean {
-  return typeof (error as { status?: unknown } | null)?.status === 'number';
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
 }
 
-function pollWhileBusy(id: number) {
-  stopBusyPoll();
-  busyPoll = setTimeout(async () => {
-    busyPoll = null;
-    if (state.id !== id || !state.turn.running) return;
-    try {
-      const { session } = await api.getSession(id);
-      if (state.id !== id || !state.turn.running) return;
-      if (!session.busy) {
-        publish({ turn: IDLE_TURN });
-        closeEvents();
-        void refreshAll(id).catch(() => {});
-        return;
-      }
-    } catch { /* the next read */ }
-    if (state.id === id && state.turn.running) pollWhileBusy(id);
-  }, BUSY_POLL_MS);
+function schedulePoll() {
+  stopPoll();
+  const id = state.id;
+  if (!id || !state.open) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    if (state.id !== id || !state.open) return;
+    if (pageHidden()) { schedulePoll(); return; }
+    void requestSync(id).finally(() => { if (!pollTimer) schedulePoll(); });
+  }, state.turn.running ? BUSY_POLL_MS : IDLE_POLL_MS);
+  (pollTimer as unknown as { unref?: () => void }).unref?.();
 }
 
-/**
- * Settle a turn whose stream ended before its `done`, from what the server
- * says. `sentAfter` is the newest message before this one: a user row past it
- * means the server took the message, as it had once the stream carried any
- * event (`accepted`).
- */
-async function resumeTurn(id: number, { message, sentAfter, accepted }: {
-  message: string;
-  sentAfter: number;
-  accepted: boolean;
-}) {
-  for (let attempt = 0; attempt < RESUME_ATTEMPTS; attempt += 1) {
-    // A restarting platform answers again within seconds.
-    // eslint-disable-next-line no-await-in-loop
-    if (attempt) await wait(RESUME_RETRY_MS * attempt);
-    if (state.id !== id) return;
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const [{ session, turn }] = await Promise.all([api.getSession(id), refreshMessages(id)]);
-      if (state.id !== id) return;
-      publish((current) => ({ session, sessions: withListed(current, session) }));
-      if (session.busy) {
-        patchTurn({
-          running: true,
-          ...(turn ? { phase: turn.phase, startedAt: turn.startedAt || state.turn.startedAt || Date.now() } : {}),
-        });
-        followEvents(id);
-        pollWhileBusy(id);
-        return;
-      }
-      const taken = accepted || state.messages.some((row) => row.role === 'user' && row.id > sentAfter);
-      publish({ turn: IDLE_TURN, ...(taken ? {} : { error: NOT_SENT_TEXT, returnedText: message }) });
-      return;
-    } catch { /* not answering yet: try again */ }
+// The page coming back (a phone unlocking, a tab refocused) and the network
+// returning are the moments a screen is most likely behind.
+let lifecycleBound = false;
+function bindLifecycle() {
+  if (lifecycleBound || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  lifecycleBound = true;
+  const wake = () => {
+    if (state.open && state.id && !pageHidden()) void requestSync(state.id);
+  };
+  window.addEventListener('online', wake);
+  window.addEventListener('pageshow', wake);
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', wake);
   }
-  if (state.id !== id) return;
-  publish({ turn: IDLE_TURN, error: accepted ? LOST_TEXT : NOT_SENT_TEXT, ...(accepted ? {} : { returnedText: message }) });
+}
+
+/** The socket that carries the server's notices came back (app.js resyncCurrentView): read what it missed. */
+export function resyncAgentSession() {
+  if (state.open && state.id) void requestSync(state.id);
+}
+
+/** The turn's id prefix its events carry (`_seq` is `<first 8 of the id>-<n>`). */
+function turnPrefix(turnId: string | null): string | null {
+  return turnId ? `${turnId.slice(0, 8)}-` : null;
 }
 
 export function handleEvent(id: number, event: AgentTurnEvent) {
@@ -583,17 +734,31 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
     seen.add(event._seq);
   }
   const fromChange = event.changeId != null;
+  // An event of another turn than the one drawn (an earlier turn's tail in
+  // the bus, a hand-back's `done`) only says something moved: read it.
+  const prefix = turnPrefix(state.turn.turnId);
+  if (!fromChange && event.type !== 'accepted' && prefix && typeof event._seq === 'string' && !event._seq.startsWith(prefix)) {
+    void requestSync(id);
+    return;
+  }
   // Anything but the Mayor's own words lands after the words before it; the
   // cases below also read `state.turn` to build their patches.
   if (event.type !== 'token' || fromChange) flushStream();
   switch (event.type) {
+    case 'accepted': {
+      acceptedAt = Date.now();
+      const turnId = typeof event.turnId === 'string' ? event.turnId : null;
+      if (turnId && turnId !== state.turn.turnId) patchTurn({ turnId });
+      void requestSync(id);
+      break;
+    }
     case 'phase': {
       const phase = event.phase === 'cc' || event.phase === 'mayor2' ? event.phase : 'mayor';
       patchTurn({
         running: true,
         phase,
         streamText: phase === 'mayor2' ? '' : state.turn.streamText,
-        activity: phase === 'cc' ? 'The coding agent is working' : '',
+        activity: phase === 'cc' ? t('agent:session.activity.codingAgentWorking') : '',
         startedAt: phase === 'cc'
           ? (typeof event.startedAt === 'number' ? event.startedAt : Date.now())
           : (state.turn.startedAt || Date.now()),
@@ -618,7 +783,7 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
     case 'status':
     case 'cc_progress':
       if (typeof event.text === 'string' && event.text.trim()) patchTurn({ progress: progressLine(event.text.trim()) });
-      if (event.type === 'status' && fromChange) void refreshMessages(id).catch(() => {});
+      if (event.type === 'status' && fromChange) void requestSync(id);
       break;
     case 'staging_ready':
     case 'staging_failed':
@@ -643,34 +808,59 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
     case 'checks_ready':
     case 'active_change':
     case 'focus_app':
-      void refreshSession(id).catch(() => {});
-      if (fromChange) void refreshMessages(id).catch(() => {});
+      void requestSync(id);
       break;
     case 'mayor_reasoning':
-      patchTurn({ streamText: '', cards: [], pendingUserText: null });
-      void Promise.all([refreshMessages(id), refreshActions(id)]).catch(() => {});
+      // The reply is saved. Its words stay where they are until the read
+      // that brings the saved row replaces them (settleTurn).
+      patchTurn({ settleOn: typeof event.messageId === 'number' ? event.messageId : state.turn.settleOn });
+      void requestSync(id);
       break;
     case 'stopping':
       patchTurn({ stopping: true });
       break;
     case 'stopped':
-      if (!fromChange) patchTurn({ stopping: false });
+      if (!fromChange) {
+        patchTurn({ stopping: false });
+        void requestSync(id);
+      }
       break;
     case 'error':
       if (!fromChange) {
-        publish({ error: typeof event.error === 'string' ? event.error : 'The Mayor could not finish this turn.' });
-        patchTurn({ pendingUserText: null });
+        publish({ error: typeof event.error === 'string' ? event.error : t('agent:session.error.turnFailed') });
+        void requestSync(id);
       }
       break;
     case 'done':
+      // The turn is over on the server. The read that says so, and brings
+      // in what it saved, settles the screen in one publish.
       if (fromChange) break;
-      publish({ turn: IDLE_TURN });
-      closeEvents();
-      void refreshAll(id).catch(() => {});
+      void requestSync(id);
       break;
     default:
       break;
   }
+}
+
+/**
+ * A progress line as the build card shows it. The runner's phase markers
+ * arrive as "[codex (resume <thread>, mode build)]"; the dev chat labels
+ * them through cc-progress-summary.js's ccPhaseLabel ("Coding agent is
+ * working"), and so does this, rather than printing the marker.
+ */
+export function progressLine(text: string): string {
+  const marker = /^\[([^\]]+)\]$/.exec(text);
+  if (!marker) return text;
+  const label = typeof window !== 'undefined'
+    && typeof (window as unknown as { ccPhaseLabel?: (phase: string) => string }).ccPhaseLabel === 'function'
+    ? (window as unknown as { ccPhaseLabel: (phase: string) => string }).ccPhaseLabel(marker[1])
+    : '';
+  return label && label !== marker[1].trim() ? label : t('agent:session.run.progress.working');
+}
+
+/** Keep the open conversation's outbox where a reload finds it. */
+function storeOutbox(id: number) {
+  if (state.id === id) writeOutbox(id, state.outbox);
 }
 
 // ── Opening and closing ────────────────────────────────────────────────
@@ -680,6 +870,9 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   host?: AgentSessionHost;
   drawer?: boolean;
 }) {
+  // Every route into a conversation, the same one again included, asks for
+  // any part of the model catalog that did not answer (loadModelCatalog).
+  void loadModelCatalog();
   if (id === 'new') return openDraft(host);
   // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
   // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
@@ -689,14 +882,21 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // the full screen blank, with no "Agent session not found" and no spinner,
   // while the Messages pane, opened once, said so. It also used to clear the
   // error it would never set again.
+  //
+  // It is also the moment a screen is most likely behind (the user tapped
+  // the conversation again, or came back to it): read it.
   if (state.id === id && state.open) {
-    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    const handoff = takeHandoff();
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen, ...(handoff ? { handoff } : {}) });
     syncTitle();
     applyCarriedPane();
+    // Still loading: that read is this one's too.
+    if (state.phase !== 'loading') void requestSync(id);
     return;
   }
   const version = ++navigation;
   overPreview = null;
+  cursor = null;
   publish({
     open: true,
     host,
@@ -705,27 +905,17 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     error: '',
     drawerOpen: drawer,
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
-    credits: null, handoff: null, attachments: dropAllAttachments(),
+    credits: null, handoff: takeHandoff(), attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
   });
   syncTitle();
   seen.clear();
   closeEvents();
-  try {
-    const [{ session, turn }] = await Promise.all([api.getSession(id), refreshMessages(id), refreshActions(id)]);
-    if (version !== navigation) return;
-    publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
-    syncTitle();
-    applyCarriedPane();
-    void loadDrafts(id);
-    refreshCredits();
-    if (session.busy) {
-      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: (turn && turn.startedAt) || Date.now() });
-      followEvents(id);
-    }
-  } catch (error) {
-    if (version !== navigation) return;
-    publish({ phase: 'error', error: errorText(error, 'Could not load this agent session.') });
-  }
+  bindLifecycle();
+  await requestSync(id, { whole: true });
+  if (version !== navigation || state.id !== id || state.phase !== 'ready') return;
+  applyCarriedPane();
+  void loadDrafts(id);
+  refreshCredits();
 }
 
 /**
@@ -735,6 +925,27 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
  */
 export function prepareAgentDraft(hint: AgentHint | null | undefined) {
   pendingHint = hint || null;
+}
+
+/** A `?flow=` value as a hand-off agent, or null for anything else. */
+export function handoffFromFlow(value: unknown): HandoffAgent | null {
+  return value === 'claude-code' || value === 'codex' ? value : null;
+}
+
+/**
+ * A shared link's `?flow=claude-code|codex` (#4312, app.js's router): the
+ * next conversation opened, whichever address and host it is drawn at, opens
+ * its "Build with" sheet on that agent's tab, as the in-app doors do.
+ * Unknown values are ignored.
+ */
+export function prepareHandoff(flow: unknown) {
+  pendingHandoff = handoffFromFlow(flow);
+}
+
+function takeHandoff(): HandoffAgent | null {
+  const agent = pendingHandoff;
+  pendingHandoff = null;
+  return agent;
 }
 
 /**
@@ -750,19 +961,24 @@ function openDraft(host: AgentSessionHost) {
   // call's preview then still lands, and the bar names the app instead of
   // staying on "Any app".
   if (!fresh && state.open && state.id === null && state.draft) {
-    publish({ host });
+    const handoff = takeHandoff();
+    publish({ host, ...(handoff ? { handoff } : {}) });
     syncTitle();
     return;
   }
   const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
-  // Started from a request (Start work): the box offers that request's first
-  // message (the composer reads it off the hint, ./request-seed.ts), not the
-  // text an earlier unsent conversation left behind.
-  if (requestSeed(hint)) writeUnsent('new', '');
+  const linked = takeHandoff();
+  // Started from a request (Start work), or handed a message (Global Chat,
+  // Explore): the box offers that first message (the composer reads it off
+  // the hint, ./request-seed.ts), not the text an earlier unsent
+  // conversation left behind.
+  if (draftSeed(hint)) writeUnsent('new', '');
   seen.clear();
   closeEvents();
+  stopPoll();
+  cursor = null;
   const draft: AgentDraft = {
     hint,
     focusApp: null,
@@ -785,7 +1001,12 @@ function openDraft(host: AgentSessionHost) {
     drafts: [],
     attachments: dropAllAttachments(),
     credits: null,
-    handoff: null,
+    // The out-of-credits card's "Use Claude Code" / "Use Codex" opens the
+    // conversation on its "Build with" tab (AppView.createProposal), and so
+    // does a shared `?flow=` link (prepareHandoff).
+    handoff: linked || handoffFromFlow(hint?.handoff),
+    outbox: [],
+    version: null,
   });
   syncTitle();
   refreshCredits();
@@ -800,12 +1021,16 @@ function openDraft(host: AgentSessionHost) {
   }).catch(() => {});
 }
 
-/** The screen or pane stopped showing this conversation. A running turn goes on server-side. */
+/**
+ * The screen or pane stopped showing this conversation. A running turn goes
+ * on server-side, and so does a send still on its way: it is not aborted,
+ * so the server gets the message and this page learns whether it did.
+ */
 export function deactivateAgentSession() {
   navigation += 1;
   overPreview = null;
   closeEvents();
-  if (turnAbort) turnAbort.abort();
+  stopPoll();
   turnAbort = null;
   if (state.preview) closePreview();
   publish({ open: false, drawerOpen: false, specSheet: null, preview: null, turn: IDLE_TURN, handoff: null });
@@ -898,9 +1123,20 @@ export function closeAgentSession() {
  * stays as it was).
  */
 async function createFromDraft(draft: AgentDraft): Promise<number | null> {
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('change_workspace');
+  const attemptId = telemetry?.attempt?.('change_create', {
+    screen: 'change_workspace', timeoutMs: 15_000, abandonOnHide: true,
+  });
   try {
     const session = await api.createSession(draft.hint, draft.agent);
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    telemetry?.outcome?.(attemptId, 'success');
+    // `sessionsStarted`: Messages' Agents list is theirs from now, archived
+    // ones included.
+    publish((current) => ({
+      sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)],
+      sessionsStarted: true,
+    }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
     if (state.open && state.draft === draft) {
@@ -910,7 +1146,12 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
     }
     return session.id;
   } catch (error) {
-    if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
+    const status = (error as { status?: number })?.status;
+    telemetry?.outcome?.(attemptId, 'failure', {
+      errorCode: status ? telemetry?.errorCodeFor?.(status)
+        : (navigator.onLine === false ? 'offline' : 'network'),
+    });
+    if (state.draft === draft) publish({ error: errorText(error, t('agent:session.error.startFailed')) });
     return null;
   }
 }
@@ -962,7 +1203,7 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
   } catch (error) {
     if (state.id === id) {
       dropAttachments([key]);
-      toast(errorText(error, `Could not attach ${item.name}.`));
+      toast(errorText(error, t('agent:session.error.attachFailed', { file: item.name })));
     }
     return false;
   }
@@ -971,8 +1212,8 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
 /** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
 export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
   if (state.session?.status === 'archived') return;
-  const { accepted, error } = acceptFiles(state.attachments.length, files);
-  if (error) toast(error);
+  const { accepted, error, refusedCount } = acceptFiles(state.attachments.length, files);
+  if (error) toast(refusalSummary(error, refusedCount - 1));
   if (!accepted.length) return;
   const id = state.id;
   const added: PendingFile[] = accepted.map((file) => {
@@ -1004,89 +1245,238 @@ export function removeAttachment(index: number) {
   dropAttachments([item.key]);
 }
 
-export async function sendAgentMessage(text: string) {
+// ── Sending ────────────────────────────────────────────────────────────
+//
+// A message is drawn at once, as the outbox's row (./outbox.ts), and posted
+// with the screen's own id for it. The server writes it together with the
+// turn that answers it and says `accepted`; from then on it is the server's,
+// and the read that brings its row in replaces the outbox row in place. A
+// send the server did not take stays in the conversation, Not sent, with
+// Retry; nothing is dropped, and nothing is quietly handed back to the box.
+
+// How long a send may wait for the server to take it. A connection that has
+// said nothing by then (a phone waking on a weak signal) is given up on, and
+// the server asked, by a read, whether the message got there.
+const ACCEPT_TIMEOUT_MS = 20_000;
+// A server that is restarting (a deploy) answers 503 for a few seconds, and
+// a dropped connection says nothing at all: the same message is sent again,
+// with the same id, which the server recognises if it had it after all.
+const SEND_RETRY_MS = [1500, 4000];
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+}
+
+/** The server's own answer (api.ts's json() carries its status); anything else is the connection. */
+function refusedByServer(error: unknown): boolean {
+  return typeof (error as { status?: unknown } | null)?.status === 'number';
+}
+
+function restarting(error: unknown): boolean {
+  return (error as { status?: unknown } | null)?.status === 503
+    && /restarting/i.test(String((error as { message?: unknown }).message || ''));
+}
+
+/** Change (or with `null`, drop) one of a conversation's outbox rows, on screen and in storage. */
+function updateOutbox(id: number, clientId: string, patch: Partial<OutboxItem> | null) {
+  const apply = (items: OutboxItem[]) => (patch === null
+    ? items.filter((item) => item.clientId !== clientId)
+    : items.map((item) => (item.clientId === clientId ? { ...item, ...patch } : item)));
+  if (state.id === id && state.open) {
+    publish((current) => ({ outbox: apply(current.outbox) }));
+    storeOutbox(id);
+  } else {
+    writeOutbox(id, apply(readOutbox(id)));
+  }
+}
+
+/**
+ * Send a message, or (with `retryOf`) send an outbox row that was not sent
+ * again, under the same id. Refused while the Mayor is working: the
+ * composer saves a draft instead (saveComposerDraft).
+ */
+export async function sendAgentMessage(text: string, { retryOf = null }: { retryOf?: OutboxItem | null } = {}) {
   const draft = state.id ? null : state.draft;
-  const message = text.trim();
-  const files = state.attachments;
+  const message = (retryOf ? retryOf.message : text).trim();
+  const files = retryOf
+    ? state.attachments.filter((item) => retryOf.attachmentKeys.includes(item.key))
+    : state.attachments;
   if ((!state.id && !draft) || (!message && !files.length) || state.turn.running) return;
   // The button waits for uploads in flight; Enter must too.
   if (files.some((item) => item.status === 'uploading')) return;
-  publish({ error: '', credits: null });
-  const shown = message || (files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
-  const sentAfter = newestMessageId(state.messages);
-  patchTurn({
-    running: true, phase: 'mayor', pendingUserText: shown, pendingAfterId: sentAfter,
-    startedAt: Date.now(), streamText: '', cards: [],
-  });
+  const item: OutboxItem = retryOf
+    ? { ...retryOf, status: 'sending', error: '', attachmentKeys: files.map((file) => file.key) }
+    : {
+      clientId: newClientId(),
+      message,
+      shown: message || (files.length === 1 ? t('agent:session.outbox.attachedFile', { file: files[0].name }) : t('agent:session.outbox.attachedFiles', { count: files.length })),
+      status: 'sending',
+      error: '',
+      createdAt: Date.now(),
+      attachmentKeys: files.map((file) => file.key),
+    };
+  // An unsent conversation has no id yet: its send is keyed to 0 until the
+  // conversation it creates has one.
+  awaiting.set(item.clientId, state.id ?? 0);
+  publish((current) => ({
+    error: '',
+    credits: null,
+    outbox: [...current.outbox.filter((entry) => entry.clientId !== item.clientId), item],
+    turn: { ...IDLE_TURN, running: true, phase: 'mayor', startedAt: Date.now() },
+  }));
   const id = draft ? await createFromDraft(draft) : state.id;
   if (!id) {
-    if (draft && state.draft === draft) publish({ turn: IDLE_TURN, returnedText: message });
+    awaiting.delete(item.clientId);
+    // Refused before the conversation existed (said on screen): the unsent
+    // conversation keeps its words in the box, as it always has.
+    if (draft && state.draft === draft) publish({ outbox: [], turn: IDLE_TURN, returnedText: message });
     return;
   }
+  awaiting.set(item.clientId, id);
+  storeOutbox(id);
+  const fail = (error: string) => {
+    awaiting.delete(item.clientId);
+    updateOutbox(id, item.clientId, { status: 'failed', error });
+  };
   // The files an unsent conversation held: they upload now that it exists.
-  for (const item of state.attachments.filter((entry) => entry.status === 'local')) {
+  for (const file of state.attachments.filter((entry) => entry.status === 'local' && item.attachmentKeys.includes(entry.key))) {
     // eslint-disable-next-line no-await-in-loop
-    if (!await uploadPending(id, item.key)) {
-      if (state.id === id) publish({ turn: IDLE_TURN, returnedText: message });
+    if (!await uploadPending(id, file.key)) {
+      fail(t('agent:session.outbox.attachFailedNotSent', { file: file.name }));
+      if (state.id === id) publish({ turn: IDLE_TURN });
       return;
     }
   }
-  const sending = state.attachments.filter((item) => item.status === 'ready' && item.id);
-  const attachmentIds = sending.map((item) => item.id as string);
-  // The tray empties once the server has taken the message (its first
-  // event), not before: a refused message keeps its files for the retry.
-  let accepted = false;
-  // No answer from the server, only a broken connection (resumeTurn).
-  let streamBroke = false;
-  const abort = new AbortController();
-  // A conversation the viewer left while it was being created still gets its
-  // message, but its stream is not this screen's to stop.
-  if (state.id === id) turnAbort = abort;
-  try {
-    await api.sendTurn(id, message, {
-      signal: abort.signal,
-      attachmentIds,
-      onEvent: (event) => {
-        if (!accepted) {
-          accepted = true;
-          if (sending.length && state.id === id) dropAttachments(sending.map((item) => item.key));
+  const sending = state.attachments.filter((entry) => item.attachmentKeys.includes(entry.key) && entry.status === 'ready' && entry.id);
+  const attachmentIds = sending.map((entry) => entry.id as string);
+  let taken = false;
+  const took = () => {
+    if (taken) return;
+    taken = true;
+    accepted.add(item.clientId);
+    awaiting.delete(item.clientId);
+    // The tray empties once the server has the message, not before: a
+    // refused message keeps its files for the retry.
+    if (sending.length && state.id === id) dropAttachments(sending.map((entry) => entry.key));
+  };
+  for (let attempt = 0; ; attempt += 1) {
+    const abort = new AbortController();
+    if (state.id === id) turnAbort = abort;
+    const giveUp = setTimeout(() => { if (!taken) abort.abort(); }, ACCEPT_TIMEOUT_MS);
+    let retryable = false;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const answer = await api.sendTurn(id, message, {
+        signal: abort.signal,
+        attachmentIds,
+        clientMessageId: item.clientId,
+        onEvent: (event) => {
+          took();
+          handleEvent(id, event);
+        },
+      });
+      // The server already had it: an earlier try got there.
+      if (answer.duplicate) took();
+    } catch (error) {
+      if (!taken && refusedByServer(error)) {
+        if (restarting(error) && attempt < SEND_RETRY_MS.length) {
+          retryable = true;
+        } else {
+          const refused = creditsRefusal(error);
+          if (refused) {
+            // Out of platform credits: the card that says how to keep
+            // building, and the message kept to send once there is a way.
+            publish({ credits: refused });
+            refreshCredits(true);
+            fail(t('agent:session.outbox.notSentNoCredits'));
+          } else if ((error as { body?: { busy?: boolean } }).body?.busy) {
+            fail(t(BUSY_REFUSED_TEXT));
+          } else {
+            fail(errorText(error, t('agent:session.error.turnRefusedNotSent')));
+          }
         }
+      } else if (!taken) {
+        // No answer at all (a dropped connection, a stalled one given up
+        // on): the same message again, with the same id, is safe.
+        retryable = attempt < SEND_RETRY_MS.length;
+      }
+      // Accepted, then the stream broke (a deploy, a network change): the
+      // turn goes on, or has ended, on the server. The read below says which.
+    } finally {
+      clearTimeout(giveUp);
+      if (turnAbort === abort) turnAbort = null;
+    }
+    if (!retryable) break;
+    // eslint-disable-next-line no-await-in-loop
+    await wait(SEND_RETRY_MS[attempt]);
+  }
+  // No answer after every try: Not sent, with Retry. Where the message
+  // stands is still the server's answer: the read below removes the row
+  // if the message got there after all.
+  if (!taken && awaiting.has(item.clientId)) fail(t(NOT_SENT_TEXT));
+  await requestSync(id);
+}
+
+/** An outbox row's Retry: the same message, under the same id. */
+export function retryOutbox(clientId: string) {
+  const item = state.outbox.find((entry) => entry.clientId === clientId);
+  if (!item || item.status !== 'failed' || state.turn.running) return;
+  void sendAgentMessage('', { retryOf: item });
+}
+
+/** An outbox row's Edit: its words go back to the box, and the row goes. Returns them for the composer. */
+export function editOutbox(clientId: string): string | null {
+  const id = state.id;
+  const item = state.outbox.find((entry) => entry.clientId === clientId);
+  if (!id || !item || item.status !== 'failed') return null;
+  updateOutbox(id, clientId, null);
+  return item.message;
+}
+
+/** An outbox row's Discard. */
+export function discardOutbox(clientId: string) {
+  const id = state.id;
+  if (!id || !state.outbox.some((entry) => entry.clientId === clientId && entry.status === 'failed')) return;
+  updateOutbox(id, clientId, null);
+}
+
+/**
+ * Retry a turn that did not finish (interrupted by a platform update, or
+ * failed part way): the Mayor answers the conversation as it stands, with
+ * no new message (POST .../turns { retry: true }).
+ */
+export async function retryTurn() {
+  const id = state.id;
+  if (!id || state.turn.running || state.session?.status === 'archived') return;
+  const key = `retry-${Date.now().toString(36)}`;
+  awaiting.set(key, id);
+  publish({ error: '', turn: { ...IDLE_TURN, running: true, phase: 'mayor', startedAt: Date.now() } });
+  const abort = new AbortController();
+  turnAbort = abort;
+  try {
+    await api.sendTurn(id, '', {
+      retry: true,
+      signal: abort.signal,
+      onEvent: (event) => {
+        awaiting.delete(key);
         handleEvent(id, event);
       },
     });
   } catch (error) {
-    if (abort.signal.aborted) return;
-    if (!refusedByServer(error)) {
-      streamBroke = true;
-      return;
+    if (refusedByServer(error)) {
+      const refused = creditsRefusal(error);
+      if (refused) {
+        publish({ credits: refused });
+        refreshCredits(true);
+      } else {
+        publish({ error: errorText(error, t('agent:session.error.retryFailed')) });
+      }
     }
-    const refused = creditsRefusal(error);
-    if (refused) {
-      // Out of platform credits: the card that says how to keep building,
-      // and the text back in the box to send once there is a way.
-      publish({ credits: refused, turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
-      refreshCredits(true);
-      return;
-    }
-    const busy = (error as { body?: { busy?: boolean } }).body?.busy;
-    publish({ error: busy ? 'The Mayor is already answering in this conversation.' : errorText(error, 'The Mayor could not take that message.') });
-    // Refused before it was recorded: the text goes back to the composer
-    // rather than vanishing with the pending bubble.
-    publish({ turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
-    if (busy) followEvents(id);
   } finally {
+    awaiting.delete(key);
     if (turnAbort === abort) turnAbort = null;
-    // The stream can end without a `done`, cleanly or with a network error
-    // (a dropped connection, a platform restart): settle from where the
-    // server says the turn stands. A stop the viewer asked for follows the
-    // bus for its `stopped`.
-    if (state.id === id && !abort.signal.aborted && (streamBroke || (state.turn.running && !events))) {
-      await resumeTurn(id, { message, sentAfter, accepted });
-    } else if (state.id === id && state.turn.running && !events) {
-      followEvents(id);
-    }
-    void refreshAll(id).catch(() => {});
   }
+  await requestSync(id);
 }
 
 /**
@@ -1145,8 +1535,9 @@ export function clearComposerFill() {
  * newest the user sent. The composer takes it only when it is empty, so a
  * half-typed follow-up is never overwritten (the dev chat's rule).
  */
-export function stoppedText(current: Pick<AgentSessionState, 'turn' | 'messages'>): string | null {
-  if (current.turn.pendingUserText) return current.turn.pendingUserText;
+export function stoppedText(current: Pick<AgentSessionState, 'messages'> & { outbox?: OutboxItem[] }): string | null {
+  const waiting = (current.outbox || []).filter((item) => item.status === 'sending' && item.message);
+  if (waiting.length) return waiting[waiting.length - 1].message;
   for (let i = current.messages.length - 1; i >= 0; i -= 1) {
     const row = current.messages[i];
     if (row.role === 'user' && typeof row.content === 'string' && row.content.trim()) return row.content;
@@ -1156,35 +1547,37 @@ export function stoppedText(current: Pick<AgentSessionState, 'turn' | 'messages'
 
 export async function stopAgentTurn() {
   const id = state.id;
-  if (!id || !state.turn.running) return;
+  if (!id || !state.turn.running || state.turn.stopPending) return;
+  const token = state.turn.stopToken;
+  const turnId = state.turn.turnId;
+  const sameTurn = () => state.id === id && state.turn.running
+    && state.turn.stopToken === token && state.turn.turnId === turnId;
   // Back in the box to edit and send again, as the dev chat's Stop does. The
   // sent bubble stays: that turn really ran. Stopping first, so the box
   // filling up never turns the button under this click into Save.
   const text = stoppedText(state);
-  patchTurn({ stopping: true });
+  patchTurn({ stopping: true, stopPending: true, stopError: null });
   if (text) publish({ returnedText: text });
   try {
-    const answer = await api.stopTurn(id);
+    const answer = await api.stopTurn(id, { token });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false });
+    if (answer.stopRequestedAt) patchTurn({ stopRequestedAt: answer.stopRequestedAt });
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
     if (!answer.stopped && answer.reason === 'no_active_turn') {
       // Nothing is running here to send a `done`: settle from the server.
       patchTurn({ stopping: false });
-      const { session } = await api.getSession(id);
-      if (state.id !== id) return;
-      publish((current) => ({ session, sessions: withListed(current, session) }));
-      if (!session.busy && !turnAbort) {
-        publish({ turn: IDLE_TURN });
-        closeEvents();
-        void refreshAll(id).catch(() => {});
-      }
+      await requestSync(id);
     }
+    if (answer.stopped) await requestSync(id);
   } catch (error) {
-    patchTurn({ stopping: false });
-    publish({ error: errorText(error, 'Could not stop the Mayor.') });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false, stopError: errorText(error, t('agent:session.error.stopFailed')) });
+    await requestSync(id);
   }
 }
 
-/** Stop the active change's visual change preview; the conversation re-reads to drop it. */
+/** Stop the active change's before/after shots; the conversation re-reads to drop them. */
 export async function stopPreviewCapture() {
   const id = state.id;
   const change = state.session?.activeChange;
@@ -1192,9 +1585,9 @@ export async function stopPreviewCapture() {
   try {
     await api.stopPreviewCapture(change.appSlug, change.id);
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not stop capturing previews.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.stopCaptureFailed')) });
   }
-  if (state.id === id) await refreshSession(id).catch(() => {});
+  if (state.id === id) await requestSync(id);
 }
 
 export async function decideCard(actionId: string, decision: 'confirm' | 'dismiss') {
@@ -1204,18 +1597,19 @@ export async function decideCard(actionId: string, decision: 'confirm' | 'dismis
   try {
     if (decision === 'confirm') {
       const outcome = await api.confirmAction(id, actionId);
+      // The Mayor's follow-up turn (the server's to run): the read below
+      // finds it working and follows it.
       if (outcome.followUp && outcome.followUp.turnId) {
-        patchTurn({ running: true, phase: 'mayor', startedAt: Date.now() });
-        followEvents(id, outcome.followUp.turnId);
+        patchTurn({ running: true, phase: 'mayor', startedAt: Date.now(), turnId: outcome.followUp.turnId });
       }
     } else {
       await api.dismissAction(id, actionId);
     }
   } catch (error) {
-    publish({ error: errorText(error, 'That did not go through.') });
+    publish({ error: errorText(error, t('agent:session.error.actionFailed')) });
   } finally {
     publish({ deciding: null });
-    void refreshAll(id).catch(() => {});
+    void requestSync(id);
   }
 }
 
@@ -1225,9 +1619,9 @@ export async function switchActiveChange(changeId: number) {
   try {
     const session = await api.switchChange(id, changeId);
     publish({ session, drawerOpen: false });
-    void refreshMessages(id).catch(() => {});
+    void requestSync(id);
   } catch (error) {
-    publish({ error: errorText(error, 'Could not switch to that change.') });
+    publish({ error: errorText(error, t('agent:session.error.switchFailed')) });
   }
 }
 
@@ -1243,10 +1637,10 @@ export async function renameCurrentSession() {
   const session = state.session;
   if (!id || !session) return;
   const title = await window.PlatformUI?.prompt?.({
-    title: 'Rename this session',
+    title: t('agent:session.rename.title'),
     value: session.title || '',
-    placeholder: 'What this conversation is about',
-    confirmLabel: 'Rename',
+    placeholder: t('agent:session.rename.placeholder'),
+    confirmLabel: t('agent:session.rename.confirm'),
   });
   if (title == null || !title.trim() || title.trim() === session.title || state.id !== id) return;
   try {
@@ -1255,8 +1649,22 @@ export async function renameCurrentSession() {
     publish((current) => ({ session: renamed, sessions: withListed(current, renamed) }));
     syncTitle();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not rename this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.renameFailed')) });
   }
+}
+
+/**
+ * The one question archiving asks, wherever it is asked from: the bar's ⋯
+ * and a swipe on a row of the Homeroom menu's Agent sessions (#3515) do the
+ * same thing to the same session, so they say the same words. Resolves
+ * false, never undefined, when there is no kit to ask with.
+ */
+async function confirmArchive(): Promise<boolean> {
+  return !!(await window.PlatformUI?.confirm?.({
+    title: t('agent:session.archive.title'),
+    message: t('agent:session.archive.message'),
+    confirmLabel: t('agent:session.archive.confirm'),
+  }));
 }
 
 /**
@@ -1267,11 +1675,7 @@ export async function renameCurrentSession() {
 export async function archiveCurrentSession() {
   const id = state.id;
   if (!id || state.session?.status === 'archived') return;
-  const ok = await window.PlatformUI?.confirm?.({
-    title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
-    confirmLabel: 'Archive',
-  });
+  const ok = await confirmArchive();
   if (!ok || state.id !== id) return;
   try {
     const session = await api.archiveSession(id);
@@ -1279,7 +1683,7 @@ export async function archiveCurrentSession() {
     publish((current) => ({ session, sessions: current.sessions.filter((s) => s.id !== id) }));
     void loadAgentSessions();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.archiveFailed')) });
   }
 }
 
@@ -1292,7 +1696,7 @@ export async function unarchiveCurrentSession() {
     publish({ session });
     void loadAgentSessions();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not unarchive this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.unarchiveFailed')) });
   }
 }
 
@@ -1325,7 +1729,7 @@ export async function recheckChange(changeId: number) {
     await cast.call(window.AppView, changeId);
   } finally {
     if (actionOn(changeId, 'recheck')) publish({ changeAction: null });
-    if (state.id === id) void refreshSession(id).catch(() => {});
+    if (state.id === id) void requestSync(id);
   }
 }
 
@@ -1366,7 +1770,7 @@ async function parkDraft(id: number, text: string): Promise<boolean> {
   } catch (error) {
     if (state.id === id) {
       publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draft.id) }));
-      toast(errorText(error, 'Could not save that draft.'));
+      toast(errorText(error, t('agent:session.error.draftSaveFailed')));
     }
     return false;
   }
@@ -1383,13 +1787,13 @@ export function saveComposerDraft(text: string): boolean {
   const body = text.trim();
   if (!id || !body || !state.turn.running) return false;
   if (state.drafts.length >= MAX_SAVED_DRAFTS) {
-    toast(`That's ${MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+    toast(t('agent:session.drafts.full', { count: MAX_SAVED_DRAFTS }));
     return false;
   }
   void parkDraft(id, body).then((saved) => {
     if (!saved && state.id === id) publish({ returnedText: body });
   });
-  toast("Draft saved. Send it whenever you're ready");
+  toast(t('agent:session.drafts.saved'));
   return true;
 }
 
@@ -1400,7 +1804,7 @@ async function dropDraft(id: number, draftId: string) {
     if (state.id === id) publish({ drafts });
   } catch (error) {
     if (state.id === id) {
-      toast(errorText(error, 'Could not delete that draft.'));
+      toast(errorText(error, t('agent:session.error.draftDeleteFailed')));
       void loadDrafts(id);
     }
   }
@@ -1420,7 +1824,7 @@ export async function sendSavedDraft(draftId: string, typed = '') {
   void dropDraft(id, draftId);
   if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) {
     void parkDraft(id, parked);
-    toast('Kept what you had typed as another draft');
+    toast(t('agent:session.drafts.keptTyped'));
   }
   await sendAgentMessage(draft.text);
 }
@@ -1461,22 +1865,24 @@ export async function openSpec(changeId: number, version: number | null = null) 
   publish({
     drawerOpen: false,
     paneTab: 'spec',
-    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', html: null, phase: 'loading', error: '', tab },
   });
   try {
-    const { spec, versions } = await api.getSpec(changeId);
+    const { spec, html: latestHtml, versions } = await api.getSpec(changeId);
     const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
     const newest = numbers.length ? Math.max(...numbers) : null;
-    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    const { text, html } = version != null && version !== newest
+      ? await api.getSpecVersionDoc(changeId, version)
+      : { text: spec, html: latestHtml };
     if (ticket !== specRequest) return;
     publish((current) => ({
-      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, html, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
     }));
   } catch (error) {
     if (ticket !== specRequest) return;
     publish((current) => ({
       specSheet: current.specSheet
-        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, t('agent:session.error.specFailed')) }
         : null,
     }));
   }
@@ -1642,15 +2048,21 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
  * confirmation is the card's own panel under the button (#3032,
  * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
  * reads "In vote" from the refreshed change.
+ *
+ * `title` is a title the person typed in that panel (#3251), passed only when
+ * it differs from the change's own. It is saved first, so the proposal goes
+ * to the vote under it; if saving fails, nothing is proposed.
  */
-export async function proposeChange(changeId: number) {
+export async function proposeChange(changeId: number, title?: string | null) {
   if (state.changeAction) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
+    const rename = (title || '').replace(/\s+/g, ' ').trim();
+    if (rename) await api.renameChange(changeId, rename);
     await api.promoteChange(changeId);
-    if (state.id != null) await refreshSession(state.id).catch(() => {});
+    if (state.id != null) await requestSync(state.id);
   } catch (error) {
-    toast(errorText(error, 'Could not put this change up for the vote.'));
+    toast(errorText(error, t('agent:session.error.proposeFailed')));
   } finally {
     if (actionOn(changeId)) publish({ changeAction: null });
   }
@@ -1675,16 +2087,16 @@ export async function retryStaging(changeId: number) {
         const action: AgentSessionState['changeAction'] = state.changeAction;
         if (action && action.changeId === changeId && action.kind === 'retry') {
           publish({ changeAction: null });
-          toast('The rebuild is still running. Its result will appear in this conversation.');
+          toast(t('agent:session.rebuild.stillRunning'));
         }
       }, RETRY_GIVE_UP_MS) as unknown as { unref?: () => void };
       timer.unref?.();
       return;
     }
-    if (result.status === 'unavailable') toast('This preview can\'t be rebuilt right now. Ask the agent to look at the build.');
-    if (state.id != null) await refreshMessages(state.id).catch(() => {});
+    if (result.status === 'unavailable') toast(t('agent:session.rebuild.unavailable'));
+    if (state.id != null) await requestSync(state.id);
   } catch (error) {
-    toast(errorText(error, 'Could not rebuild the preview.'));
+    toast(errorText(error, t('agent:session.error.rebuildFailed')));
   }
   if (actionOn(changeId)) publish({ changeAction: null });
 }
@@ -1700,15 +2112,23 @@ export function setSpecTab(tab: SpecTab) {
 // ── The model ──────────────────────────────────────────────────────────
 
 /**
- * Read the picker's options once per page; a failed read is retried on the next open.
+ * Read the picker's options once per page. Whatever answered is published at
+ * once, so the model pill appears; a part that did not answer (a failure, an
+ * error, or a read that ran out of time: ./api.ts) is read again on the next
+ * call, which comes when a conversation is opened or routed to
+ * (openAgentSession), when the page comes back to the foreground and when the
+ * network returns (the composer, ./index.tsx). A complete catalog is never
+ * read again.
  *
  * Member-only, so it waits for a viewer the endpoint answers (QA 2026-09-24
  * Q35, ../../lib/platform-viewer.ts) instead of spending a 401 or 403 on a
  * signed-out or waitlisted document; `sv:authed` asks again.
  */
 let catalogDeferred = false;
+// null until the first read; then the parts still owed.
+let catalogMissing: api.CatalogPart[] | null = null;
 export function loadModelCatalog(): Promise<void> {
-  if (state.catalog) return Promise.resolve();
+  if (state.catalog && catalogMissing && !catalogMissing.length) return Promise.resolve();
   if (!hasPlatformViewer()) {
     if (!catalogDeferred) {
       catalogDeferred = true;
@@ -1717,8 +2137,11 @@ export function loadModelCatalog(): Promise<void> {
     return Promise.resolve();
   }
   if (!catalogRequest) {
-    catalogRequest = api.loadModelCatalog()
-      .then((catalog) => { publish({ catalog }); })
+    catalogRequest = api.loadModelCatalog(state.catalog, catalogMissing)
+      .then(({ catalog, missing }) => {
+        catalogMissing = missing;
+        publish({ catalog });
+      })
       .catch(() => {})
       .finally(() => { catalogRequest = null; });
   }
@@ -1743,7 +2166,7 @@ export async function chooseAgent(choice: AgentChoice) {
     const session = await api.setAgentChoice(id, choice);
     if (state.id === id) publish({ session });
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not change the model.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.modelFailed')) });
   } finally {
     publish({ choosing: false });
   }
@@ -1751,20 +2174,19 @@ export async function chooseAgent(choice: AgentChoice) {
 
 // ── The list, for Messages ─────────────────────────────────────────────
 
-// One of the user's conversations started or finished a turn, or was read in
-// another tab (the server's `agent_session_changed`, routed by app.js). The
+// One of the user's conversations changed (the server's
+// `agent_session_changed`, routed by app.js): the database announces every
+// write a screen draws, with the conversation's new version, on every pod;
+// a turn starting or ending, or a read in another tab, says so too. The
 // lists redraw their marks from a fresh read; a burst of events is one read.
 let listTimer: ReturnType<typeof setTimeout> | null = null;
-let openTimer: ReturnType<typeof setTimeout> | null = null;
-export function agentSessionListChanged(event?: { agentSessionId?: unknown } | null) {
-  // The conversation on screen changed outside a turn (its change's preview
-  // started capturing, or settled): it re-reads itself too.
+export function agentSessionListChanged(event?: { agentSessionId?: unknown; version?: unknown } | null) {
+  // The conversation on screen: read it, unless this screen already holds
+  // that version (its own read got there first).
   const openId = state.id;
-  if (openId && event && Number(event.agentSessionId) === openId && !state.turn.running && !openTimer) {
-    openTimer = setTimeout(() => {
-      openTimer = null;
-      if (state.id === openId && !state.turn.running) void refreshSession(openId).catch(() => {});
-    }, 250);
+  if (openId && state.open && event && Number(event.agentSessionId) === openId) {
+    const announced = typeof event.version === 'number' ? event.version : null;
+    if (announced == null || state.version == null || announced > state.version) void requestSync(openId);
   }
   if (listTimer) return;
   listTimer = setTimeout(() => {
@@ -1797,9 +2219,9 @@ export async function loadAgentSessions() {
   }
   const read = ++listRead;
   try {
-    const sessions = await api.listSessions();
+    const { sessions, started } = await api.listSessions();
     if (read !== listRead) return;
-    publish({ sessions, sessionsLoaded: true });
+    publish((current) => ({ sessions, sessionsLoaded: true, sessionsStarted: current.sessionsStarted || started }));
   } catch {
     if (read !== listRead) return;
     publish({ sessionsLoaded: true });
@@ -1811,12 +2233,15 @@ export const agentSessionController = {
   route: (id: AgentSessionTarget, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
   start: (hint: AgentHint | null = null) => startAgentSession(hint),
   prepareDraft: prepareAgentDraft,
+  prepareHandoff,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
   /** The conversation on screen: its id, `new` while it is unsent, or null. */
   currentId: (): AgentSessionTarget | null => (state.id ?? (state.draft ? 'new' : null)),
   refreshList: loadAgentSessions,
   listChanged: agentSessionListChanged,
+  /** The notices' socket came back (app.js resyncCurrentView): read what it missed. */
+  resync: resyncAgentSession,
   draftsChanged: agentSessionDraftsChanged,
   /** The side panel's Expand: what this document's conversation has open, and taking it in the other. */
   paneToCarry,

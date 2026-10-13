@@ -2,9 +2,14 @@
 
 // A new account's first run (communities, stage 5), against the REAL schema
 // in a throwaway PostgreSQL database: what "What communities do you want to
-// join?" lists and what answering it does, and the Getting started card's
-// three steps ticking off from what the person did. Driven through the
-// routes (src/routes/onboarding.js) so the HTTP shapes are pinned too.
+// join?" lists and what answering it does, and what a NEW account
+// (`getting_started_gate`) finds in Home's Challenges area. Until #4635 that
+// was a Getting started card on top of Home and a gate over the rest of the
+// season; now the season's First challenges are ordinary cards beside every
+// other challenge, for a new account, an existing member and a signed-out
+// visitor alike. Driven through the routes (src/routes/onboarding.js,
+// src/routes/home-panels.js, src/routes/topochain/public.js) so the HTTP
+// shapes are pinned too.
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is
 // set, like tests/communities-postgres.test.js.
 //
@@ -21,7 +26,7 @@ const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-test('the first run: join screen and Getting started, against the full schema', { timeout: 180000 }, async (t) => {
+test('the first run: join screen and First challenges, against the full schema', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -42,10 +47,13 @@ test('the first run: join screen and Getting started, against the full schema', 
   require('../src/services/events').record = async () => {};
   const { onboardingRoutes } = require('../src/routes/onboarding');
 
+  // The two newcomers carry both sign-up flags, as every sign-up path writes
+  // them; grace and old_hand are accounts from before the one list
+  // (2026-10-01), with neither.
   const { rows: people } = await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, needs_communities_choice) VALUES
-       ('newbie', 'x', TRUE, TRUE), ('grace', 'x', TRUE, FALSE), ('old_hand', 'x', TRUE, FALSE),
-       ('skipper', 'x', TRUE, TRUE)
+    `INSERT INTO users (username, password, has_platform_access, needs_communities_choice, getting_started_gate) VALUES
+       ('newbie', 'x', TRUE, TRUE, TRUE), ('grace', 'x', TRUE, FALSE, FALSE), ('old_hand', 'x', TRUE, FALSE, FALSE),
+       ('skipper', 'x', TRUE, TRUE, TRUE)
      RETURNING id, username`
   );
   const [newbie, grace, oldHand, skipper] = people;
@@ -131,9 +139,14 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.ok(!hidden.some((c) => c.self_hosted));
   });
 
-  await t.test('the Getting started card waits for the join screen', async () => {
-    const res = await call('GET', '/api/me/getting-started');
-    assert.equal(res.data.show, false);
+  await t.test('the Getting started card\'s routes are gone (#4635)', async () => {
+    for (const [method, path] of [['GET', '/api/me/getting-started'], ['POST', '/api/me/getting-started/close'],
+      ['POST', '/api/me/getting-started/workshop-visit'], ['POST', '/api/me/getting-started/seen']]) {
+      const res = await fetch(`${base}${path}`, {
+        method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined,
+      });
+      assert.equal(res.status, 404, `${method} ${path}`);
+    }
   });
 
   await t.test('answering joins what was ticked, accepts the invite, and leaves an unticked Homeroom', async () => {
@@ -151,6 +164,10 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal(await inCommunity(club, newbie.id), true);
     const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [garden.id, newbie.id]);
     assert.equal(pin.rows[0]?.hidden, false, 'joining puts it on Home');
+    // The accepted invite too: the vote digest finds a member through this
+    // pin, so a join with no pin would never be told a vote waits on them.
+    const invitedPin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [club.id, newbie.id]);
+    assert.equal(invitedPin.rows[0]?.hidden, false, 'accepting the invite here puts it on Home, as an invite link does');
     const u = (await pool.query(
       'SELECT needs_communities_choice, communities_onboarded_at FROM users WHERE id = $1', [newbie.id])).rows[0];
     assert.equal(u.needs_communities_choice, false);
@@ -188,61 +205,134 @@ test('the first run: join screen and Getting started, against the full schema', 
     viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
   });
 
-  await t.test('the card is about the first community joined, and ticks off from what was done', async () => {
-    let card = (await call('GET', '/api/me/getting-started')).data;
-    assert.equal(card.show, true);
-    assert.equal(card.community.slug, 'book-club', 'the first one joined on the screen, in its order');
-    // The tour first (#3240): the card is where it is offered now.
-    assert.deepEqual(card.steps.map((s) => s.id), ['tour', 'say-hi', 'vote', 'explore']);
-    assert.deepEqual(card.steps[0], {
-      id: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', done: false, href: null,
-    });
-    assert.equal(card.steps[1].title, 'Say hi in Book club');
-    assert.equal(card.steps[1].href, '#messages/app/book-club');
-    assert.equal(card.steps[2].title, 'Look around the Workshop', 'nothing is waiting on a vote yet');
-    assert.equal(card.steps[3].title, 'Open Book club and try it');
-    assert.equal(card.done, 0);
-    assert.equal(card.total, 4);
+  // ── The First challenges are ordinary challenges (#4635) ─────────────
+  //
+  // A running season set up the way evan sets production's up: four First
+  // challenges in his order (their names are data), and two more. Until
+  // #4635 a new account saw only the four, on a Getting started card on top
+  // of Home, until they and the tour were done.
+  const { rows: [season] } = await pool.query(
+    `INSERT INTO seasons (name, starts_at, ends_at, is_active)
+     VALUES ('Season 2', NOW() - INTERVAL '3 days', NOW() + INTERVAL '60 days', TRUE) RETURNING id`);
+  const { rows: [event] } = await pool.query(
+    `INSERT INTO season_events (name, starts_at, ends_at, is_active, scoring_formula, season_id, type)
+     VALUES ('Season 2', NOW() - INTERVAL '3 days', NOW() + INTERVAL '60 days', TRUE, '{}'::jsonb, $1, 'season')
+     RETURNING id`, [season.id]);
+  const { rows: templates } = await pool.query(
+    `INSERT INTO challenge_templates (category, goal, task, reward, cta_link) VALUES
+       ('ONBOARDING', 'Join a community', 'Find people to build with.', '500 pts', NULL),
+       ('ONBOARDING', 'Try an app', 'Open an app and try it.', '500 pts', NULL),
+       ('ONBOARDING', 'Vote on a change', 'Help decide what ships next.', '250', '#communities'),
+       ('ONBOARDING', 'Suggest an improvement', 'Tell a community what would make it better.', '250 pts', NULL),
+       ('PERSISTENT', 'Make your first proposal', 'Propose a change.', '1,000 pts', NULL),
+       ('WEEKLY', 'Test three apps this week', 'Leave a note on each.', '600 pts', NULL)
+     RETURNING id, goal`);
+  const tplOf = (goal) => templates.find((r) => r.goal === goal).id;
+  const { rows: challengeRows } = await pool.query(
+    `INSERT INTO challenges (season_event_id, challenge_template_id, display_order)
+     SELECT $1, id, id FROM challenge_templates WHERE id = ANY($2::bigint[]) ORDER BY id
+     RETURNING id, challenge_template_id`, [event.id, templates.map((r) => r.id)]);
+  const challengeOf = (goal) => Number(challengeRows.find((r) => Number(r.challenge_template_id) === Number(tplOf(goal))).id);
+  await pool.query(
+    `INSERT INTO challenge_scoring_rules (name, measure, challenge_template_id) VALUES
+       ('Join', 'COMMUNITY_JOINED', $1), ('Try', 'TRY_APPS', $2), ('Suggest', 'USEFUL_FEEDBACK', $3)`,
+    [tplOf('Join a community'), tplOf('Try an app'), tplOf('Suggest an improvement')]);
+  // A credit as an admin (or the scorer) writes one.
+  const credit = (userId, goal, points) => pool.query(
+    `INSERT INTO user_activities (user_id, season_event_id, activity_type, points, metadata, activity_at, challenge_id)
+     VALUES ($1, $2, 'challenge_completion', $3, '{"kind":"challenge_completion"}'::jsonb, NOW(), $4)`,
+    [userId, event.id, points, challengeOf(goal)]);
+  const { homePanelRoutes } = require('../src/routes/home-panels');
+  server.use(homePanelRoutes());
+  server.use(require('../src/routes/topochain/public').topochainPublicRoutes({}));
+  const homePanel = async () => (await call('GET', '/api/home-panels')).data.panels.find((p) => p.key === 'challenges');
+  const eventList = async () => (await call('GET', `/api/v4/season-events/${event.id}/challenges`)).data;
+  const { loadOnboarding } = require('../src/services/topochain/challenge-onboarding');
+  const FIRST = ['Join a community', 'Try an app', 'Vote on a change', 'Suggest an improvement'];
+  const ALL = [...FIRST, 'Make your first proposal', 'Test three apps this week'];
+  const byId = (a, b) => a - b;
 
-    // Something waiting on a vote changes the second step's words.
-    const { rows: s } = await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'promoted') RETURNING id`, [club.id, grace.id]);
-    card = (await call('GET', '/api/me/getting-started')).data;
-    assert.equal(card.steps[2].title, 'Vote on what needs you');
-    assert.equal(card.steps[2].detail, '1 waiting in Book club');
-
-    await pool.query(`INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, 'hi all')`, [club.id, newbie.id]);
-    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, newbie.id]);
-    await pool.query(`INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 30)`, [club.id, newbie.id]);
-    card = (await call('GET', '/api/me/getting-started')).data;
-    assert.deepEqual(card.steps.map((x) => x.done), [false, true, true, true]);
-    assert.equal(card.done, 3);
-
-    // The tour row ticks from the account's own "done" (#3237), on any
-    // device. Put back afterwards: the tour's own test below starts from an
-    // account that has never finished it.
-    await pool.query('UPDATE users SET tour_done_at = NOW() WHERE id = $1', [newbie.id]);
-    card = (await call('GET', '/api/me/getting-started')).data;
-    assert.equal(card.steps[0].done, true);
-    assert.equal(card.done, 4);
-    await pool.query('UPDATE users SET tour_done_at = NULL WHERE id = $1', [newbie.id]);
+  await t.test('a getting_started_gate account receives every challenge, its First challenges as ordinary ones, with no onboarding summary', async () => {
+    // From zero: whatever the join answer scored is taken back, so every
+    // challenge's state below is the credits this test writes.
+    await pool.query('DELETE FROM user_activities WHERE user_id = $1', [newbie.id]);
+    assert.equal((await pool.query('SELECT getting_started_gate FROM users WHERE id = $1', [newbie.id])).rows[0]
+      .getting_started_gate, true, 'a new account, as every sign-up writes it');
+    const panel = await homePanel();
+    assert.equal('onboarding' in panel, false, 'no gate summary');
+    assert.equal('hidden_count' in panel, false);
+    assert.deepEqual(panel.challenges.map((c) => c.id).sort(byId), ALL.map(challengeOf).sort(byId),
+      'the whole season, not the four alone');
+    assert.deepEqual([panel.total, panel.all_total, panel.done], [6, 6, 0]);
+    // The four keep their group, which Home heads "First challenges", and the
+    // admin's words and order; the rest keep theirs.
+    const label = (goal) => panel.challenges.find((c) => c.id === challengeOf(goal)).label;
+    assert.deepEqual(FIRST.map(label), ['ONBOARDING', 'ONBOARDING', 'ONBOARDING', 'ONBOARDING']);
+    assert.deepEqual([label('Make your first proposal'), label('Test three apps this week')], ['PERSISTENT', 'WEEKLY']);
+    const join = panel.challenges.find((c) => c.id === challengeOf('Join a community'));
+    assert.deepEqual([join.goal, join.task, join.reward, join.display_order],
+      ['Join a community', 'Find people to build with.', '500 pts', Number(tplOf('Join a community'))]);
+    // The Challenges tab's list is the whole event too.
+    const list = await eventList();
+    assert.equal('onboarding' in list, false);
+    assert.deepEqual(list.data.map((c) => c.id).sort(byId), ALL.map(challengeOf).sort(byId));
   });
 
-  await t.test('a visit the card asked for is recorded, and only while it shows', async () => {
-    const onboarding = require('../src/services/onboarding');
-    const seen = await call('POST', '/api/me/getting-started/seen', { step: 'workshop' });
-    assert.equal(seen.status, 200);
-    const u = (await pool.query('SELECT getting_started_seen FROM users WHERE id = $1', [newbie.id])).rows[0];
-    assert.ok(u.getting_started_seen.workshop);
-    assert.equal((await call('POST', '/api/me/getting-started/seen', { step: 'admin' })).status, 400);
-    await onboarding.markSeen(pool, oldHand.id, 'discover');
-    const other = (await pool.query('SELECT getting_started_seen FROM users WHERE id = $1', [oldHand.id])).rows[0];
-    assert.equal(other.getting_started_seen, null, 'no card, nothing recorded');
+  await t.test('a First challenge ticks from its credit, with what it paid', async () => {
+    await credit(newbie.id, 'Join a community', 500);
+    const panel = await homePanel();
+    const join = panel.challenges.find((c) => c.id === challengeOf('Join a community'));
+    assert.equal(join.progress.done, true);
+    assert.equal(join.earned_points, 500);
+    assert.equal(panel.done, 1);
+    assert.equal(panel.challenges.find((c) => c.id === challengeOf('Try an app')).progress.done, false);
   });
 
-  await t.test('closing the card ends it for good', async () => {
-    assert.equal((await call('POST', '/api/me/getting-started/close')).status, 200);
-    assert.equal((await call('GET', '/api/me/getting-started')).data.show, false);
+  await t.test('an existing member and a signed-out visitor see the same season', async () => {
+    for (const who of [grace, oldHand]) {
+      viewer = { id: who.id, username: who.username, isAdmin: false };
+      const open = await homePanel();
+      assert.equal(open.onboarding, undefined, `${who.username}: no gate summary`);
+      assert.equal(open.challenges.length, 6, `${who.username}: every challenge`);
+    }
+    viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
+    // A signed-out read resolves the same four, and writes nothing.
+    const anon = await loadOnboarding(pool, null, { seasonId: season.id });
+    assert.deepEqual(anon.ids, FIRST.map(challengeOf));
+  });
+
+  await t.test('every First challenge done, tour or no tour: nothing opens because nothing was shut', async () => {
+    await credit(newbie.id, 'Try an app', 500);
+    await credit(newbie.id, 'Vote on a change', 250);
+    await credit(newbie.id, 'Suggest an improvement', 250);
+    const panel = await homePanel();
+    assert.equal(panel.onboarding, undefined);
+    assert.equal(panel.challenges.length, 6);
+    assert.equal(panel.done, 4);
+    assert.ok(FIRST.every((goal) => panel.challenges.find((c) => c.id === challengeOf(goal)).progress.done));
+    // Nothing records an unlock any more.
+    const u = (await pool.query('SELECT getting_started_unlocked_at, tour_done_at FROM users WHERE id = $1', [newbie.id])).rows[0];
+    assert.equal(u.tour_done_at, null, 'the tour was never taken');
+    assert.equal(u.getting_started_unlocked_at, null, 'and there is no gate to record as open');
+    // Me counts the four the way Home does (profile.js viewerDoneRule).
+    const { readChallengeTotals } = require('../src/routes/profile');
+    assert.deepEqual(await readChallengeTotals(pool, newbie.id, season.id), { total: 6, done: 4 });
+  });
+
+  await t.test('an ONBOARDING challenge an admin adds first becomes a First challenge, to do', async () => {
+    const { rows: [later] } = await pool.query(
+      `INSERT INTO challenge_templates (category, goal, task, reward)
+       VALUES ('ONBOARDING', 'Say hi in a chat', 'Post in a community chat.', '100 pts') RETURNING id`);
+    const { rows: [added] } = await pool.query(
+      `INSERT INTO challenges (season_event_id, challenge_template_id, display_order) VALUES ($1, $2, 0) RETURNING id`,
+      [event.id, later.id]);
+    const panel = await homePanel();
+    assert.equal(panel.onboarding, undefined);
+    assert.equal(panel.challenges.length, 7);
+    const hi = panel.challenges.find((c) => c.id === Number(added.id));
+    assert.deepEqual([hi.label, hi.progress.done], ['ONBOARDING', false]);
+    // The fourth of the old four is an ordinary always-open challenge now.
+    assert.equal(panel.challenges.find((c) => c.id === challengeOf('Suggest an improvement')).label, 'PERSISTENT');
   });
 
   // The welcome tour's "done", on the account rather than per browser
@@ -277,7 +367,7 @@ test('the first run: join screen and Getting started, against the full schema', 
         assert.equal((await markDone(session)).status, 401, `no session (${session}), no write`);
       }
       assert.equal(await doneAt(), null, 'nothing was recorded by the refused calls');
-      assert.equal((await me()).tourDone, false, 'never finished anywhere: the card offers it');
+      assert.equal((await me()).tourDone, false, 'never finished anywhere');
 
       const res = await markDone(token);
       assert.equal(res.status, 200);
@@ -298,8 +388,7 @@ test('the first run: join screen and Getting started, against the full schema', 
   });
 
   // An admin's "Reset first run" (Admin → Users → ⋯). Continues from the
-  // newcomer above, who has answered, visited, closed the card, joined and
-  // finished the tour.
+  // newcomer above, who has answered, joined and finished the tour.
   await t.test('Reset first run brings the first run back and touches nothing the account owns', async () => {
     const onboarding = require('../src/services/onboarding');
     const membershipsBefore = (await pool.query(
@@ -312,12 +401,15 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.deepEqual(await onboarding.resetFirstRun(pool, newbie.id), { id: newbie.id, username: 'newbie' });
     const u = (await pool.query(
       `SELECT needs_communities_choice, communities_onboarded_at, getting_started_closed_at, getting_started_seen,
-              tour_done_at
+              tour_done_at, getting_started_gate, getting_started_unlocked_at
          FROM users WHERE id = $1`, [newbie.id])).rows[0];
     assert.deepEqual(u, {
       needs_communities_choice: true, communities_onboarded_at: null,
       getting_started_closed_at: null, getting_started_seen: null,
       tour_done_at: null,
+      // Marked as a new account again (2026-10-01), the flag Admin › Journey
+      // reads: how an admin tries the first run on any account.
+      getting_started_gate: true, getting_started_unlocked_at: null,
     }, 'exactly a new account\'s first-run state: the tour follows the join screen again, on every device');
     assert.deepEqual((await pool.query(
       'SELECT community_id FROM community_members WHERE user_id = $1 ORDER BY community_id', [newbie.id])).rows,
@@ -327,13 +419,14 @@ test('the first run: join screen and Getting started, against the full schema', 
     pinsBefore, 'its Home tiles stay');
 
     // The join screen shows what it is already in, ticked, and can be
-    // answered again; the card comes back after it.
+    // answered again. Its First challenges stay ticked: credits are kept.
     const list = (await call('GET', '/api/me/join-suggestions')).data.communities;
     assert.equal(list.find((c) => c.slug === 'city-garden').checked, true);
-    assert.equal((await call('GET', '/api/me/getting-started')).data.show, false, 'no card before the screen');
     const again = await call('POST', '/api/me/communities', { join: ['city-garden'] });
     assert.equal(again.status, 200, JSON.stringify(again.data));
-    assert.equal((await call('GET', '/api/me/getting-started')).data.show, true);
+    const panel = await homePanel();
+    assert.equal(panel.onboarding, undefined, 'a reset account is not gated either');
+    assert.equal(panel.challenges.find((c) => c.id === challengeOf('Try an app')).progress.done, true);
     assert.equal(await onboarding.resetFirstRun(pool, 987654321), null, 'no such account');
   });
 });

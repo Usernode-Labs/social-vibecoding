@@ -4,14 +4,20 @@
  * Communities, stage 5: a new account's first run.
  *
  *   sign in → username → terms → "What communities do you want to join?"
- *           → Home, with a Getting started card on top, whose first row
- *             offers the tour (#3240).
+ *           → Home.
  *
  * The first two steps were already there (frontend/src/features/auth/
  * username-first-run.js, frontend/src/features/settings/terms-first-run.js).
- * This module is the server half of the other two: which communities the
- * join screen offers and what answering it does, and the four first steps
- * the card on Home ticks off.
+ * This module is the server half of the join screen: which communities it
+ * offers and what answering it does. It also keeps whether the account has
+ * finished the welcome tour, and an admin's "Reset first run".
+ *
+ * Home used to open on a Getting started card here too: the tour, then the
+ * season's First challenges, with the rest of the season locked until both
+ * were done. #4635 retired it: every new account gets a tour, and the First
+ * challenges are ordinary cards in Home's Challenges area
+ * (services/topochain/challenge-onboarding.js), so nothing here draws or
+ * ticks a list any more.
  *
  * ── Who is asked ────────────────────────────────────────────────────────
  *
@@ -38,31 +44,10 @@
  * "Skip for now" is an answer too: it joins and leaves nothing, and the
  * screen does not come back. Discover is where to join later.
  *
- * ── The card ───────────────────────────────────────────────────────────
- *
- * The tour, then three steps in ONE community, the first one the person
- * joined on that screen (or Homeroom when that is all they picked), each of
- * which ticks off from something the person actually did rather than from a
- * checkbox:
- *
- *   tour     the welcome tour finished or skipped, on any device
- *            (`users.tour_done_at`, #3237). It used to start by itself after
- *            the join screen; since #3240 this row is where it is offered;
- *   say-hi   a message of theirs in its chat;
- *   vote     a vote of theirs on a change or a request, or, when nothing
- *            there is waiting on one, a visit to the Workshop;
- *   explore  a visit to the app (app_activity), or for Homeroom, which has
- *            no app of its own to open, joining a second community or a
- *            visit to Discover.
- *
- * The two visits leave no row of their own, so the card records them
- * (`users.getting_started_seen`) while it is showing, and only then.
- *
  * ── The tour ───────────────────────────────────────────────────────────
  *
- * Only whether it is done (`users.tour_done_at`), which ticks the card's
- * first row on every device. The tour itself is all client
- * (frontend/src/features/home/tour).
+ * Only whether it is done (`users.tour_done_at`), on every device. The tour
+ * itself is all client (frontend/src/features/home/tour).
  */
 
 const communities = require('./communities');
@@ -73,8 +58,6 @@ const SUGGESTION_LIMIT = 8;
 // The most the screen can join in one answer. It lists eight; the cap is
 // only there so the endpoint is not a bulk-join API.
 const MAX_JOIN = 20;
-// The two visits the card records.
-const SEEN_KEYS = new Set(['workshop', 'discover']);
 
 function iconUrl(row) {
   return row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null;
@@ -108,7 +91,10 @@ const STARTER_DETAILS = Object.freeze({
 // community sets and changes by a voted change like any other line there.
 // Without one, its starter line if it has one, else nothing at all.
 // "Community · N members" was the same words on every row, and the count
-// said little about what the thing is.
+// said little about what the thing is. The count is back since, as a figure
+// of its own at the row's end (`member_count`, drawn by
+// frontend/src/features/auth/communities-first-run.js): beside these words,
+// never instead of them.
 function suggestionDetail(row) {
   if (row.self_hosted) return 'Contribute to the Homeroom platform';
   if (row.invited_by) return `Invited by @${row.invited_by}`;
@@ -192,6 +178,12 @@ function parseJoin(raw) {
  * `acceptInvite(appId)` is injected: the invite path lives with the
  * collaborator routes (services/collab-invites.js) and needs the caller.
  *
+ * Every community joined here ends up pinned to Home, whichever branch
+ * joins it: communities.join pins Homeroom and an open community, and the
+ * accepted invite pins its project inside acceptInvite, as an invite link
+ * does. The pin is how the vote digest and a proposal's notification find
+ * a member, so an invite accepted here must not be the one join without it.
+ *
  * `{ skip: true }` is "Skip for now": the answer is recorded and nothing is
  * joined or left.
  *
@@ -222,8 +214,7 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
     [parsed.slugs]
   ) : { rows: [] };
 
-  // In the order the screen listed them: the first one joined is the one the
-  // Getting started card is about (focusCommunity reads joined_at).
+  // In the order the screen listed them.
   found.sort((a, b) => parsed.slugs.indexOf(a.slug) - parsed.slugs.indexOf(b.slug));
   const joined = [];
   const left = [];
@@ -235,6 +226,7 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
       await communities.join(pool, app, user.id);
       joined.push(app.slug);
     } else if (listed && listed.invited_by && typeof acceptInvite === 'function') {
+      // The same accept as the notification's, Home pin included.
       const result = await acceptInvite(app);
       if (result && result.ok) joined.push(app.slug);
     } else if (app.status === 'running' && app.view_visibility === 'public') {
@@ -256,162 +248,37 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
     }
   }
 
+  // Joined or skipped is kept for the admin Journey page (#3369): the
+  // memberships alone cannot tell "Skip for now" from a Join that kept only
+  // what was already ticked.
   await pool.query(
     `UPDATE users
-        SET needs_communities_choice = FALSE, communities_onboarded_at = NOW()
+        SET needs_communities_choice = FALSE, communities_onboarded_at = NOW(),
+            getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                   || jsonb_build_object('join_answer', $2::text)
       WHERE id = $1 AND needs_communities_choice = TRUE`,
-    [user.id]
+    [user.id, skip ? 'skipped' : 'joined']
   );
   return { ok: true, joined, left };
 }
 
 /**
- * The one community the card's three steps are about: the first the person
- * joined on the join screen, else the first they joined at all, else
- * Homeroom. Their own projects are not it: "say hi" in something you
- * started alone is not a first step.
- */
-async function focusCommunity(pool, userId, { showSelfHosted = false } = {}) {
-  const { rows } = await pool.query(
-    `SELECT a.id, a.slug, a.name, a.self_hosted
-       FROM community_members m
-       JOIN apps a ON a.community_id = m.community_id
-      WHERE m.user_id = $1
-        AND (a.created_by IS NULL OR a.created_by <> $1)
-        AND (NOT a.self_hosted OR $2::boolean)
-      ORDER BY a.self_hosted ASC,
-               (m.source IN ('joined', 'collaborator')) DESC,
-               m.joined_at ASC, a.id ASC
-      LIMIT 1`,
-    [userId, !!showSelfHosted]
-  );
-  return rows[0] || null;
-}
-
-/**
- * The card: `{ show, community, steps, done, total }`. `show` is false once
- * the card is closed, and for an account that never came through the join
- * screen; the client draws nothing then.
- */
-async function gettingStarted(pool, userId, { showSelfHosted = false } = {}) {
-  const { rows: userRows } = await pool.query(
-    `SELECT communities_onboarded_at, getting_started_closed_at, getting_started_seen,
-            tour_done_at
-       FROM users WHERE id = $1`,
-    [userId]
-  );
-  const u = userRows[0];
-  const show = !!(u && u.communities_onboarded_at && !u.getting_started_closed_at);
-  const seen = (u && u.getting_started_seen && typeof u.getting_started_seen === 'object')
-    ? u.getting_started_seen : {};
-  const focus = await focusCommunity(pool, userId, { showSelfHosted });
-  const appId = focus ? focus.id : null;
-
-  const { rows: facts } = await pool.query(
-    `SELECT
-       EXISTS (SELECT 1 FROM chat_messages m
-                WHERE m.app_id = $2 AND m.user_id = $1
-                  AND m.msg_type = 'message' AND m.deleted_at IS NULL) AS said_hi,
-       (EXISTS (SELECT 1 FROM pr_votes v WHERE v.user_id = $1)
-        OR EXISTS (SELECT 1 FROM issue_votes v WHERE v.user_id = $1)) AS voted,
-       (SELECT COUNT(*)::int FROM chat_sessions cs
-         WHERE cs.app_id = $2 AND cs.status = 'promoted'
-           AND NOT EXISTS (SELECT 1 FROM pr_votes v
-                            WHERE v.session_id = cs.id AND v.user_id = $1)) AS waiting,
-       EXISTS (SELECT 1 FROM app_activity x WHERE x.app_id = $2 AND x.user_id = $1) AS opened,
-       EXISTS (SELECT 1 FROM community_members m JOIN apps a ON a.community_id = m.community_id
-                WHERE m.user_id = $1 AND NOT a.self_hosted) AS in_another`,
-    [userId, appId]
-  );
-  const f = facts[0] || {};
-  const name = focus ? focus.name : 'Homeroom';
-  const slug = focus ? focus.slug : null;
-  const waiting = Number(f.waiting) || 0;
-
-  const steps = [
-    {
-      // The client draws this row with a Start button and asks for the tour
-      // itself; there is nowhere to navigate, so no href.
-      id: 'tour',
-      title: 'Take the 1-minute tour',
-      detail: 'See how Homeroom works.',
-      done: !!(u && u.tour_done_at),
-      href: null,
-    },
-    {
-      id: 'say-hi',
-      title: `Say hi in ${name}`,
-      detail: 'Post in its chat.',
-      done: !!f.said_hi,
-      href: slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages',
-    },
-    waiting > 0
-      ? {
-        id: 'vote',
-        title: 'Vote on what needs you',
-        detail: `${waiting} waiting in ${name}`,
-        done: !!f.voted,
-        href: '#workshop',
-      }
-      : {
-        id: 'vote',
-        title: 'Look around the Workshop',
-        detail: 'See what people are building.',
-        done: !!f.voted || !!seen.workshop,
-        href: '#workshop',
-      },
-    focus && !focus.self_hosted
-      ? {
-        id: 'explore',
-        title: `Open ${name} and try it`,
-        detail: 'Changes voted in ship here.',
-        done: !!f.opened,
-        href: null,
-        slug,
-      }
-      : {
-        id: 'explore',
-        title: 'Find another community',
-        detail: 'Join one in Discover.',
-        done: !!f.in_another || !!seen.discover,
-        href: '#apps',
-      },
-  ];
-  return {
-    show,
-    community: focus ? { slug: focus.slug, name: focus.name, self_hosted: !!focus.self_hosted } : null,
-    steps,
-    done: steps.filter((s) => s.done).length,
-    total: steps.length,
-  };
-}
-
-/** Record a visit the card asked for. Only while the card is showing. */
-async function markSeen(pool, userId, what) {
-  if (!SEEN_KEYS.has(what)) return { ok: false, status: 400, error: 'Unknown step' };
-  await pool.query(
-    `UPDATE users
-        SET getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
-                                   || jsonb_build_object($2::text, NOW())
-      WHERE id = $1
-        AND communities_onboarded_at IS NOT NULL
-        AND getting_started_closed_at IS NULL`,
-    [userId, what]
-  );
-  return { ok: true };
-}
-
-/**
  * An admin's "Reset first run" (Admin → Users → ⋯): put an account back to a
- * new account's first run, so its next load shows the join screen, then the
- * tour, then the Getting started card. The tour's "done" is cleared here too
- * (`tour_done_at`), so it follows the join screen on every device, not just
- * in the browser that shows the screen (frontend/src/features/home/tour).
+ * new account's first run, so its next load shows the join screen again. The
+ * tour's "done" is cleared here too (`tour_done_at`), so it is not done on
+ * any device, not just in the browser that shows the screen
+ * (frontend/src/features/home/tour).
  *
  * It resets the first run and nothing the account owns: its communities,
  * Home tiles, username and terms answer stay as they are. The join screen
  * shows what it is already in, ticked. Returns `{ id, username }`, or null
  * when there is no such account.
+ *
+ * It also marks the account as a NEW one again (`getting_started_gate`, with
+ * `_closed_at` and `_unlocked_at` cleared), the flag Admin › Journey reads to
+ * follow a newcomer's first run (services/journey.js). Since #4635 that flag
+ * locks nothing and draws no card. Credits the account already earned stay:
+ * a First challenge it has done is still ticked.
  */
 async function resetFirstRun(pool, userId) {
   const { rows } = await pool.query(
@@ -420,22 +287,14 @@ async function resetFirstRun(pool, userId) {
             communities_onboarded_at = NULL,
             getting_started_closed_at = NULL,
             getting_started_seen = NULL,
-            tour_done_at = NULL
+            tour_done_at = NULL,
+            getting_started_gate = TRUE,
+            getting_started_unlocked_at = NULL
       WHERE id = $1
       RETURNING id, username`,
     [userId]
   );
   return rows[0] || null;
-}
-
-/** The card's close button. */
-async function closeCard(pool, userId) {
-  await pool.query(
-    `UPDATE users SET getting_started_closed_at = NOW()
-      WHERE id = $1 AND getting_started_closed_at IS NULL`,
-    [userId]
-  );
-  return { ok: true };
 }
 
 /**
@@ -444,12 +303,37 @@ async function closeCard(pool, userId) {
  * first finish is the one recorded, and a replay finished later changes
  * nothing.
  */
-async function markTourDone(pool, userId) {
-  await pool.query(
-    `UPDATE users SET tour_done_at = NOW()
+// How the tour ended, for the admin Journey page (#3369): Next on the last
+// step, Skip, or a browser copying an older local "done" onto the account.
+// Kept with the furthest step, the first time only, beside tour_done_at.
+const TOUR_ENDS = Object.freeze(new Set(['finish', 'skip', 'backfill']));
+const TOUR_MAX_STEP = 20;
+
+function parseTourEnd(body) {
+  const ended = body && TOUR_ENDS.has(body.ended) ? body.ended : null;
+  const step = body && Number.isInteger(body.step) && body.step >= 0 && body.step <= TOUR_MAX_STEP
+    ? body.step : null;
+  return { ended, step };
+}
+
+async function markTourDone(pool, userId, body) {
+  const { ended, step } = parseTourEnd(body);
+  const marked = await pool.query(
+    `UPDATE users
+        SET tour_done_at = NOW(),
+            getting_started_seen = CASE WHEN $2::text IS NULL THEN getting_started_seen
+              ELSE COALESCE(getting_started_seen, '{}'::jsonb)
+                   || jsonb_build_object('tour_ended', $2::text, 'tour_step', $3::int) END
       WHERE id = $1 AND tour_done_at IS NULL`,
-    [userId]
+    [userId, ended, step]
   );
+  // #4604: the tour's last stop but one points at Messages, where Homeroom
+  // bot says hello, once. Only on the first end (a replay greets nobody),
+  // and not on a backfill, which is a browser reporting a tour ended long
+  // ago. greetTourFinisher keeps the once-ever rule and never throws.
+  if (marked && marked.rowCount > 0 && ended !== 'backfill') {
+    void require('./homeroom-bot-dm').greetTourFinisher(pool, { userId });
+  }
   return { ok: true };
 }
 
@@ -461,10 +345,6 @@ module.exports = {
   suggestionDetail,
   parseJoin,
   answerJoin,
-  focusCommunity,
-  gettingStarted,
-  markSeen,
-  closeCard,
   markTourDone,
   resetFirstRun,
 };

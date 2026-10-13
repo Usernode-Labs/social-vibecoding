@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
+const uiTelemetry = require('../services/ui-telemetry');
 
 // Retry-delay phrase for throttle messages: minutes rounded up, with
 // anything ≤ 60s collapsing to "in under a minute".
@@ -31,7 +32,7 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null, v4Envelope = false }) {
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false }) {
   const options = {
     windowMs,
     max,
@@ -103,6 +104,12 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
     },
   };
   if (exemptAdmins) options.skip = (req) => !!req.user?.canAdminWrite;
+  if (skip) {
+    // An extra exclusion composes with the explicit admin exemption; it
+    // never enables that exemption for a limiter that did not request it.
+    const skipAdmin = options.skip;
+    options.skip = (req, res) => !!skipAdmin?.(req, res) || !!skip(req, res);
+  }
   return rateLimit(options);
 }
 
@@ -237,10 +244,64 @@ const otpRequestEmailLimiter = makeLimiter({
 // code in the database, so this only has to bound working through codes;
 // 15 leaves an honest fumbler (a mistyped code, a resend, another try)
 // far from the ceiling.
+// Apple and Google sign-in's start and callback (routes/sign-in-providers.js).
+// Its own budget, not the email code's: a person who tries Google, comes
+// back, and then asks for a code should not run out of either. Each trip is
+// two requests, and the provider's own page is the real rate limit.
+const oauthSignInLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 30,
+  name: 'oauth-sign-in',
+  message: (s) => `Too many sign-in attempts. Try again ${retryPhrase(s)}.`,
+});
+
 const otpVerifyLimiter = makeLimiter({
   windowMs: AUTH_WINDOW_MS,
   max: 15,
   name: 'otp-verify',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// The release mail's one-time sign-in link (#4594, POST
+// /api/auth/release-link). 256 random bits leave nothing to guess, so the
+// budget bounds scanning and lookup work; failures only, so a real
+// recipient's one spend never counts.
+const releaseLinkLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'release-link',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many sign-in link attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// Phone code requests (routes/phone-auth.js), the email code's pair:
+// requesting SENDS A TEXT, so a success is the cost and refunding it would
+// be the bug. Per source and per recipient, mounted together, the same
+// shape the email request above uses.
+const phoneOtpRequestLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'phone-otp-request',
+  message: (s) => `Too many code requests. Try again ${retryPhrase(s)}.`,
+});
+
+const phoneOtpRequestPhoneLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 5,
+  name: 'phone-otp-request-phone',
+  key: (req) => identifierKey('phone', req.body?.phoneNumber),
+  message: (s) => `A code was just sent to that number. Try again ${retryPhrase(s)}.`,
+});
+
+// Verifying a phone code, or spending the ID token a client SDK earned.
+// Firebase caps attempts per code server-side already, so — like the email
+// code's verify — this only has to bound working through codes, and a
+// confirmed sign-in is refunded.
+const phoneVerifyLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 15,
+  name: 'phone-verify',
   skipSuccessfulRequests: true,
   message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
 });
@@ -590,6 +651,73 @@ const partnerActivityLimiter = makeLimiter({
   message: (s) => `Too many activity submissions. Try again ${retryPhrase(s)}.`,
 });
 
+// #3654: the Homeroom bot benchmark's grading writes (routes/homeroom-bench.js),
+// reached by an admin's Claude session through the connector. A session
+// grades one item at a time; 120 a minute per person is far above that and
+// stops a loop that went wrong. Admins are NOT exempt: only admins can call
+// these at all, so an exemption would switch the limiter off.
+const benchGradingLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'bench-grading',
+  keyByUser: true,
+  message: (s) => `Too many benchmark grades at once. Try again ${retryPhrase(s)}.`,
+});
+
+// #3654: launching and cancelling benchmark runs through the connector
+// (routes/homeroom-bench.js /api/bot-bench/runs). A launch spends the
+// platform's money up to its cap, so a session that loops on it is stopped
+// well before many runs are queued. A refused launch spends nothing, so only
+// the ones that went through count. Admins are NOT exempt, for the reason
+// given above.
+const benchRunLimiter = makeLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  name: 'bench-runs',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Too many benchmark launches or cancels at once. Try again ${retryPhrase(s)}.`,
+});
+
+// The App bench studio's writes through the connector (routes/bench-studio.js):
+// a session drives a run by hand (references handed in, a trial run again,
+// a build kept or previewed, a pack saved), so they come in bursts a launch
+// limit would refuse. A launch through the studio spends money and is held
+// to benchRunLimiter as well.
+const benchStudioLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'bench-studio',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Too many benchmark studio changes at once. Try again ${retryPhrase(s)}.`,
+});
+
+// Test accounts (routes/test-accounts.js /api/test-accounts), reached by a
+// full admin's connector session. Each admin gets 10 creates, 10 one-time
+// phone sign-ins, 10 test release emails and 10 retires an hour, counted
+// apart so retiring
+// yesterday's accounts never spends today's creates; the list is a read and
+// gets more room. Only requests that went
+// through count (the live cap's own refusal is a 429 that spends nothing).
+// Admins are NOT exempt, for the reason given above: only full admins can
+// call these at all.
+function testAccountAction(req) {
+  if (req.method === 'GET') return 'list';
+  if (/\/phone-sign-ins\/?$/.test(req.path || '')) return 'phone';
+  if (/\/release-emails\/?$/.test(req.path || '')) return 'release';
+  return /\/retire\/?$/.test(req.path || '') ? 'retire' : 'create';
+}
+const testAccountLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: (req) => (req.method === 'GET' ? 120 : 10),
+  name: 'test-accounts',
+  keyByUser: true,
+  key: (req) => (req.user?.id ? `user:${req.user.id}:test-accounts:${testAccountAction(req)}` : null),
+  skipFailedRequests: true,
+  message: (s) => `Too many test-account requests. Try again ${retryPhrase(s)}.`,
+});
+
 // Separate from provisioning so asking for slots never consumes a create attempt.
 const appAllowanceRequestLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
@@ -610,6 +738,37 @@ const issueCreateLimiter = makeLimiter({
   skipFailedRequests: true,
   exemptAdmins: true,
   message: (s) => `Rate limit reached: up to 20 issues and proposals per hour. You can try again ${retryPhrase(s)}.`,
+});
+
+// Invite links (services/community-invites.js). Making one: 20 / hour /
+// user, successes only, since each is a way into a project and the per-
+// project cap of live links already bounds what is held at once. Following
+// one: 30 / 15 min / user, failures counted too, because a stream of
+// refused tokens is the thing worth slowing. Reading the public preview:
+// 60 / minute / address, since it answers without a session.
+const inviteLinkCreateLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'invite-link-create',
+  keyByUser: true,
+  skipFailedRequests: true,
+  exemptAdmins: true,
+  message: (s) => `You have made a lot of invite links. You can try again ${retryPhrase(s)}.`,
+});
+
+const inviteRedeemLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  name: 'invite-redeem',
+  keyByUser: true,
+  message: 'Too many invite links followed, slow down for a few minutes',
+});
+
+const invitePreviewLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'invite-preview',
+  message: 'Too many invite lookups, slow down for a minute',
 });
 
 // Close-issue proposals (#522): own 20 / hour / user bucket, so proposing
@@ -791,15 +950,6 @@ const friendshipLimiter = makeLimiter({
   message: 'Too many friend changes. Slow down and try again.',
 });
 
-const contentReportLimiter = makeLimiter({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
-  name: 'content-report',
-  keyByUser: true,
-  skipFailedRequests: true,
-  message: 'Too many reports. Try again later.',
-});
-
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -845,12 +995,37 @@ const appFileUploadLimiter = makeLimiter({
 // honest use is one per filed issue, so 10 / 10 min never bites, while a
 // scripted loop trying to balloon the DB bounces off quickly (orphans are
 // additionally GC'd after 24h). Per-user keyed for shared-NAT fairness.
+// A spec posted on a request (routes/request-specs.js). Each post stores a
+// document of up to 600,000 characters, writes a version, a thread card and a
+// GitHub comment, so it is bounded per user like the screenshot uploads: a
+// review round is one post, and 20 an hour is many rounds.
+const requestSpecLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'request-spec-post',
+  keyByUser: true,
+  message: 'Too many plans posted. Try again later this hour.',
+});
+
 const issueScreenshotLimiter = makeLimiter({
   windowMs: 10 * 60 * 1000,
   max: 10,
   name: 'issue-screenshot-upload',
   keyByUser: true,
   message: 'Too many screenshot uploads. Slow down for a few minutes.',
+});
+
+// #3940: feedback-modal video uploads. Each is a ≤50 MB bytea INSERT —
+// 50× a screenshot — so the budget is the same 10 / 10 min as the
+// screenshot limiter: honest use is one clip per filed issue, and a
+// scripted loop trying to balloon the DB bounces off quickly (orphans are
+// additionally GC'd after 24h). Per-user keyed for shared-NAT fairness.
+const feedbackVideoLimiter = makeLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  name: 'feedback-video-upload',
+  keyByUser: true,
+  message: 'Too many video uploads. Slow down for a few minutes.',
 });
 
 // #2520: feedback submissions (POST /api/feedback). The route's two
@@ -1305,6 +1480,35 @@ const mailTestLimiter = makeLimiter({
   message: (s) => `Rate limit reached: up to 10 test emails per hour. You can try again ${retryPhrase(s)}.`,
 });
 
+// Admin "send a test SMS" (Admin → SMS delivery): each one is a real text
+// Firebase bills for, aimed at a number of the operator's choosing. Two
+// buckets, the mail test's shape: 5 / hour / full admin bounds how many
+// numbers one admin works through, and 1 / minute / number keeps a run of
+// clicks from tripping Firebase's own per-number throttle (which would
+// lock that number out of real sign-in for a while too). Neither exempts
+// admins: the route is full-admin-only, so that would disable them.
+// skipFailedRequests refunds the 400 a malformed number earns.
+const smsTestLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  name: 'sms-test',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Rate limit reached: up to 5 test texts per hour. You can try again ${retryPhrase(s)}.`,
+});
+
+// Punctuation stripped before hashing, so `+44 7700 900123` and
+// `+447700900123` are the one number they are.
+const smsTestNumberLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 1,
+  name: 'sms-test-number',
+  skipFailedRequests: true,
+  key: (req) => identifierKey('sms-test',
+    typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.replace(/[^\d+]/g, '') : ''),
+  message: (s) => `A test text was just sent to that number. You can try again ${retryPhrase(s)}.`,
+});
+
 // AI progress report generation (Reporting tab): each click is a paid LLM
 // call debited to the clicking user, and report-ai.js already serializes
 // real work per app — this only stops a stuck client from hammering the
@@ -1315,6 +1519,25 @@ const reportAiLimiter = makeLimiter({
   name: 'report-ai',
   keyByUser: true,
   message: 'Please wait a minute before regenerating the report.',
+});
+
+// UI-experience telemetry arrives in batches of at most 25 observations.
+// Sixty batches a minute leaves ample room for retries and several active
+// tabs while bounding authenticated accounts that manufacture traffic. Failed
+// validation/refused requests are refunded so a client fixing its payload is
+// not locked out. The collector treats a 429 as delivery failure and retries
+// later; telemetry never blocks the user journey it describes.
+const uiTelemetryLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'ui-telemetry',
+  keyByUser: true,
+  // The collector discards these fixed browser-check identities, so do not
+  // throttle data we intentionally throw away. Every retained human account,
+  // including human admins, keeps the exact same per-user limit.
+  skip: (req) => !!req.user?.id && !uiTelemetry.isEligibleUser(req.user),
+  skipFailedRequests: true,
+  message: 'Telemetry is arriving too quickly. It will retry shortly.',
 });
 
 // The Needs-you deck's ask box (services/workshop-ask.js): 12 / minute /
@@ -1357,4 +1580,17 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { FEEDBACK_SUBMITS_PER_HOUR, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, contentReportLimiter, messageBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, mailTestLimiter };
+// #3660: the cards Homeroom links in a message stand for (POST
+// /api/link-cards). A transcript asks once for the links on screen, ten to a
+// request, and keeps the answers, so scrolling a busy discussion is a
+// handful of requests a minute; the ceiling is for a client gone wrong.
+// Per user: every reader asks for their own view.
+const linkCardLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'link-cards',
+  keyByUser: true,
+  message: 'Too many link previews. Please slow down.',
+});
+
+module.exports = { FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, smsTestLimiter, smsTestNumberLimiter, mailTestLimiter };

@@ -247,7 +247,6 @@ async function unpromoteSession({ pool, sessionId, userId, actorUsername = null 
   const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
   try {
     const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system');
     await sendSystemMessage(pool, session.app_id, content, 'system', null,
       { type: 'session', ref: session.id }).catch(() => {});
   } catch (err) {
@@ -361,6 +360,49 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
 // session of theirs is in the middle of a turn.
 const USER_SLOTS_BUSY = 'Your other sessions are all busy finishing turns. Try again in a moment.';
 
+// What anybody is told when the platform-wide cap is full and nothing idle
+// could be paused to make room.
+const PLATFORM_AT_CAPACITY = 'Platform is at capacity right now. Try again in a few minutes.';
+
+/**
+ * Somebody was turned away by a session cap: `cap` 'global' (the
+ * platform-wide one) or 'user' (their own), `path` where they asked. One
+ * event each (events.SESSION_CAPACITY_REFUSED), which the infra topic's
+ * "Turned away at a session cap" figure counts: the admins' alert samples
+ * the count every few minutes, so it shows how often a cap was full, not
+ * how many people met it. Fire-and-forget, never throws.
+ */
+function recordCapacityRefusal(pool, { cap, path, userId = null, appId = null } = {}) {
+  const events = require('./events');
+  log.info('session-lifecycle', 'Turned away at a session cap', { cap, path, userId });
+  return events.record(pool, {
+    type: events.EVENT_TYPES.SESSION_CAPACITY_REFUSED, userId, appId, metadata: { cap, path },
+  });
+}
+
+/**
+ * The platform-wide gate every start, resume and reopen passes: under
+ * config.maxGlobalSessions (session-caps.countGlobalSessions), or at it with
+ * an idle session paused to make room (freeGlobalSlot). `discount` is a slot
+ * the request gives back (a replaced session). Answers { ok } and, when not,
+ * records the refusal; the caller answers 429 with PLATFORM_AT_CAPACITY.
+ */
+async function claimGlobalSlot({
+  pool, config, path, userId = null, appId = null, excludeSessionId = null, discount = 0,
+}) {
+  const { countGlobalSessions } = require('./session-caps');
+  const cap = config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100;
+  if ((await countGlobalSessions(pool)) - discount < cap) return { ok: true };
+  // Through the exports, as the routes called it before this gate existed,
+  // so a test's stand-in applies here too.
+  const { freed } = await module.exports.freeGlobalSlot({
+    pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId,
+  });
+  if (freed) return { ok: true };
+  await recordCapacityRefusal(pool, { cap: 'global', path, userId, appId });
+  return { ok: false };
+}
+
 // Tear down a session's staging preview (container + cloned DB + Caddy
 // route) WITHOUT changing the session's status. This is the staging GC
 // path — pausing no longer does it, so a separate, longer-horizon
@@ -414,7 +456,9 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 // Params:
 //   pool, sessionId
 //   userId  - optional owner scope (HTTP authz). Omit for system actions.
-//   reason  - 'manual' | 'stale-pr' | ...
+//   reason  - 'manual' | 'stale-pr' | ... The Homeroom bot's own proposals
+//             (#11, WP3) close with 'withdrawn' (asked for in its DM) or
+//             'superseded' (another proposal for the same request covers it).
 //   purgeCc - destroy the CC volume immediately (skip retention). Default
 //             false. The activeWorkers in-flight set (routes/sessions.js)
 //             is cleared by the HTTP handler, not here.
@@ -525,18 +569,21 @@ async function finalizeArchivedSession({
     // outcome: the close is best-effort and the PR leaves the vote
     // panel either way. Own catch so a chat failure never fails the
     // archive itself.
-    const label = session.pr_title
-      ? `PR #${session.pr_number}: ${session.pr_title}`
-      : `PR #${session.pr_number}`;
+    // Named by its title, in Homeroom's words: a change, never "PR #n".
+    const label = session.pr_title ? `“${session.pr_title}”` : 'This change';
     // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
     // correctly: the group voted it down rather than it just going quiet.
     const content = reason === 'auto-rejected'
-      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it)`
+      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it).`
       : reason === 'proposal-replaced' && userId != null && session.owner_username
-        ? `${session.owner_username} replaced ${label} with a new proposal`
+        ? `${session.owner_username} replaced ${session.pr_title ? label : 'this change'} with a new one.`
+      : reason === 'superseded'
+        ? `${label} was withdrawn: another change for the same request covers it.`
+      : reason === 'withdrawn'
+        ? `${label} was withdrawn.`
       : userId != null && session.owner_username
-        ? `${session.owner_username} withdrew ${label}`
-        : `${label} went quiet and was set aside. It can always come back as a new proposal`;
+        ? `${session.owner_username} withdrew ${session.pr_title ? label : 'this change'}.`
+        : `${label} went quiet and was set aside. It can always come back as a new change.`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(pool, session.app_id, content, 'system', null, { type: 'session', ref: session.id });
@@ -568,6 +615,16 @@ async function finalizeArchivedSession({
 
   const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
   pushSessionUpdate({ action: 'archived', sessionId, appSlug });
+  // #8 (WP3): one of the Homeroom bot's proposals closed, by any of the
+  // paths above: the activity tray of whoever asked for it reads again.
+  // Never throws, and finds nobody for anybody else's session.
+  await require('./homeroom-bot-dm').noteProposalChanged(pool, sessionId);
+  // 5 October (Page Turners): a closed change asks nobody anything: its
+  // "ready to try" rows, vote nudges and digests are settled
+  // (notifications.settleDecidedChange). Best-effort like the rest.
+  await require('./notifications').settleDecidedChange(pool, sessionId).catch((err) => {
+    log.warn('session-lifecycle', 'Settling the bell for a closed change failed', { sessionId, err: err.message });
+  });
   // Issues this session's dispatches declared lose their contribution to
   // the derived "In progress" chip the moment the row leaves the live
   // statuses — tell open Dev panels to refetch. This one hook covers every
@@ -710,18 +767,22 @@ async function purgeArchivedCc({ pool, sessionId }) {
 //   sessionId - numeric session id
 //   username  - optional; the branch's owner segment. Defaults to the
 //               session owner's stored username.
+//   label     - optional; words for what the session is about (#3229), the
+//               first turn's deterministic title. Defaults to the session's
+//               stored title, so a titled session (the bot's builds, a
+//               dispatch backstop) is still named after its change.
 //
 // Returns { branchName, created }. Throws with `code` set when the session
 // is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
 // carrying a userMessage safe to show in chat).
-async function ensureSessionBranch({ pool, sessionId, username = null }) {
+async function ensureSessionBranch({ pool, sessionId, username = null, label = null }) {
   const client = await pool.connect();
   let open = false;
   try {
     await client.query('BEGIN');
     open = true;
     const { rows } = await client.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+      `SELECT cs.id, cs.branch_name, cs.user_id, cs.session_title, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -743,7 +804,9 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
       return { branchName: row.branch_name, created: false };
     }
 
-    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    const branchName = branchNames.devBranchName(
+      username || row.username || `u${row.user_id}`, Date.now(), label || row.session_title || null,
+    );
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {
@@ -783,6 +846,9 @@ module.exports = {
   freeGlobalSlot,
   freeUserSlot,
   USER_SLOTS_BUSY,
+  PLATFORM_AT_CAPACITY,
+  recordCapacityRefusal,
+  claimGlobalSlot,
   teardownStagingForSession,
   archiveSession,
   finalizeArchivedSession,

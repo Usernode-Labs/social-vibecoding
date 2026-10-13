@@ -16,6 +16,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
 let sessionRow = {};

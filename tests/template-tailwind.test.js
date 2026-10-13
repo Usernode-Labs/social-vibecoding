@@ -57,8 +57,9 @@ test('the scaffold loads no off-origin subresources at all', () => {
 
 test('the generated tailwind.config.js matches the scaffold markup', () => {
   const cfg = file(files(), 'tailwind.config.js');
-  // darkMode must be class-based: the scaffold sets <html class="dark">, and
-  // the default (media) would key dark: variants off the OS preference.
+  // darkMode must be class-based: the scaffold sets a "dark" class on <html>
+  // from the viewer's Homeroom theme (#3688), and the default (media) would
+  // key dark: variants off the OS preference, which is all a framed app sees.
   assert.match(cfg, /darkMode:\s*'class'/, 'config should set darkMode to class');
   // Required by the native UI kit so hover: styles do not stick after taps.
   assert.match(cfg, /hoverOnlyWhenSupported:\s*true/, 'config should set the hoverOnlyWhenSupported future flag');
@@ -134,6 +135,10 @@ test('the scaffold keeps dependencies out of Git and Cloud Native Buildpacks inp
   const list = files();
   assert.match(file(list, '.gitignore'), /^node_modules\/$/m,
     'generated apps must not commit dependency trees');
+  for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+    assert.ok(file(list, '.gitignore').split('\n').includes(entry),
+      `generated apps must not commit coding-agent tool output (${entry})`);
+  }
   const project = file(list, 'project.toml');
   assert.match(project, /schema-version = "0\.2"/);
   assert.match(project, /exclude = \[[\s\S]*"node_modules"[\s\S]*\]/,

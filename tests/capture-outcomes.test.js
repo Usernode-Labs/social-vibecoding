@@ -129,7 +129,7 @@ test('the root default preserves UI screenshots without adding media to backend-
 test('the evidence kill switch stops v2 without reviving legacy review media', async () => {
   const pool = { query: async () => { throw new Error('kill switch must not query enrollment'); } };
   assert.equal(await visuals.suppressLegacyMediaForSession(pool, {
-    visualEvidence: { enabled: false, collect: false },
+    shots: { enabled: false, collect: false },
   }, {}), true);
   assert.equal(visuals.shouldCaptureMedia(true, 'default', {
     suppressLegacyMedia: true,
@@ -138,7 +138,7 @@ test('the evidence kill switch stops v2 without reviving legacy review media', a
 
 test('UI-affecting captures persist a missing evidence declaration before choosing legacy media', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
-  assert.match(src, /config\.visualEvidence\?\.collect && uiAffecting[\s\S]*requireIntentForUiChange/);
+  assert.match(src, /config\.shots\?\.collect && uiAffecting[\s\S]*requireIntentForUiChange/);
 });
 
 // ── capture.js resolveTargets: the still-only flag ─────────────────────
@@ -336,7 +336,7 @@ test('a fresh run removes cached evidence and tells open clients to clear their 
       return { rowCount: 1, rows: [] };
     },
   };
-  await visuals.resetVisualEvidence(
+  await visuals.resetShots(
     pool, { id: 7, pr_number: null }, null, null,
     (type, data) => events.push({ type, data })
   );

@@ -34,6 +34,8 @@ const ids = {
   events: require.resolve('../src/services/events'),
   ws: require.resolve('../src/services/ws'),
   pool: require.resolve('../src/db/pool'),
+  kubernetes: require.resolve('../src/services/kubernetes'),
+  applicationRuntime: require.resolve('../src/services/application-runtime'),
   reap: require.resolve('../src/services/staging-reap'),
 };
 
@@ -70,6 +72,14 @@ function freshFixtures() {
     concurrentNow: 0,
     concurrentMax: 0,
     unitDelayMs: 0,
+    // kubernetes: preview Deployments as kubernetes.listPreviews returns them
+    kubePreviews: [],
+    kubeListError: null,
+    kubeListCalls: [],
+    kubeExists: () => true,
+    kubeInspectCalls: [],
+    kubeRemoveCalls: [],
+    kubeRemoveError: null,
   };
 }
 
@@ -158,6 +168,26 @@ function installStubs() {
     broadcastToAdmins(payload) { fx.adminBroadcasts.push(payload); return 1; },
   });
   stub(ids.pool, { getPool: () => fakePool });
+  stub(ids.kubernetes, {
+    async listPreviews(config) {
+      fx.kubeListCalls.push(config);
+      if (fx.kubeListError) throw fx.kubeListError;
+      return fx.kubePreviews;
+    },
+  });
+  stub(ids.applicationRuntime, {
+    mode: (config) => config?.appRuntime || process.env.APP_RUNTIME || 'docker',
+    async inspect(_config, ref) {
+      fx.kubeInspectCalls.push(ref.runtimeName);
+      return { status: fx.kubeExists(ref.runtimeName) ? 'running' : 'not_found' };
+    },
+    async remove(config, ref) {
+      fx.kubeRemoveCalls.push({
+        name: ref.runtimeName, kind: ref.runtimeKind, namespace: config.kubernetes.appNamespace,
+      });
+      if (fx.kubeRemoveError) throw fx.kubeRemoveError;
+    },
+  });
 }
 
 function loadReap() {
@@ -174,8 +204,8 @@ function setup() {
 }
 
 // Drive one full sweep and resolve with the finished job snapshot.
-async function runSweep(reap, opts = {}) {
-  const res = reap.start({}, { userId: 7, username: 'admin-user', ...opts });
+async function runSweep(reap, opts = {}, config = {}) {
+  const res = reap.start(config, { userId: 7, username: 'admin-user', ...opts });
   assert.equal(res.started, true, 'the sweep must start');
   for (let i = 0; i < 400; i++) {
     const job = reap.read();
@@ -217,16 +247,35 @@ function fleet() {
 test('every container in the fleet is enumerated and classified', async () => {
   const reap = setup();
   fleet();
-  const job = await runSweep(reap);
+  const items = await reap.classify(fakePool, await reap.listStagingContainers());
 
-  assert.equal(job.total, 5, 'all five groups must be picked up, not just the linked ones');
-  assert.deepEqual(classifications(job), {
+  assert.equal(items.length, 5, 'all five groups must be picked up, not just the linked ones');
+  assert.deepEqual(Object.fromEntries(items.map((i) => [i.name, i.classification])), {
     'usernode-staging-community-tier-lists-57ce6a--2549': 'merged',
     'usernode-staging-whiteboard-0d337f--2458': 'merged_unlinked',
     'usernode-staging-guardian-2-99eba3--2472': 'archived',
     'usernode-staging-usernode-2d5619--2795': 'promoted',
     'usernode-staging-veya-afaeaa--1212': 'no_session_row',
   });
+});
+
+// The admin sweep used to take every preview it enumerated, a leftover of the
+// one-off RSA cutover cleanup (#850). A preview backing a live vote is rebuilt
+// in place by the heal pass when it goes out of date, so taking it down only
+// costs the voters their preview and re-runs the proposal's checks.
+test('the admin sweep never takes a preview backing a live vote', async () => {
+  const reap = setup();
+  fleet();
+  const job = await runSweep(reap);
+
+  assert.equal(job.total, 4);
+  assert.deepEqual(classifications(job), {
+    'usernode-staging-community-tier-lists-57ce6a--2549': 'merged',
+    'usernode-staging-whiteboard-0d337f--2458': 'merged_unlinked',
+    'usernode-staging-guardian-2-99eba3--2472': 'archived',
+    'usernode-staging-veya-afaeaa--1212': 'no_session_row',
+  });
+  assert.equal(fx.teardownCalls.some((c) => c.sessionId === 2795), false);
 });
 
 // The slug contains hyphens, and for the self-app it STARTS with
@@ -276,16 +325,17 @@ test('a linked session routes through teardownStaging, unlinked ones by name', a
   fleet();
   const job = await runSweep(reap);
 
-  // Chokepoint path: the three sessions whose row still names the container.
+  // Chokepoint path: the two taken sessions whose row still names the
+  // container (the promoted one backs a vote and is not taken at all).
   assert.deepEqual(
     fx.teardownCalls.map((c) => c.sessionId).sort((a, b) => a - b),
-    [2472, 2549, 2795]
+    [2472, 2549]
   );
   // teardownStaging derives the staging DB name from staging_url itself, so
   // the sweep must NOT also drop a database for those.
   assert.deepEqual(
     fx.teardownCalls.map((c) => c.slug).sort(),
-    ['community-tier-lists-57ce6a', 'guardian-2-99eba3', 'usernode-2d5619']
+    ['community-tier-lists-57ce6a', 'guardian-2-99eba3']
   );
 
   // By-name path: the leaked container and the session-less one.
@@ -360,9 +410,9 @@ test('one stuck container does not take the sweep down', async () => {
   fx.teardownError = new Error('stop timeout exceeded');
   const job = await runSweep(reap);
 
-  assert.equal(job.total, 5);
-  assert.equal(job.done, 5, 'every unit is still attempted');
-  assert.equal(job.failed, 3, 'the three chokepoint units fail');
+  assert.equal(job.total, 4);
+  assert.equal(job.done, 4, 'every unit is still attempted');
+  assert.equal(job.failed, 2, 'the two chokepoint units fail');
   const s = states(job);
   assert.equal(s['usernode-staging-community-tier-lists-57ce6a--2549'], 'failed');
   assert.equal(s['usernode-staging-whiteboard-0d337f--2458'], 'torn_down',
@@ -421,12 +471,12 @@ test('progress is broadcast to admins only, and the tally is emitted once', asyn
   const ev = fx.eventRecords[0];
   assert.equal(ev.type, 'stale_previews_reaped');
   assert.equal(ev.userId, 7);
-  assert.equal(ev.metadata.total, 5);
-  assert.equal(ev.metadata.tornDown, 5);
-  assert.equal(ev.metadata.dbsDropped, 5);
+  assert.equal(ev.metadata.total, 4);
+  assert.equal(ev.metadata.tornDown, 4);
+  assert.equal(ev.metadata.dbsDropped, 4);
   assert.equal(ev.metadata.failed, 0);
   assert.deepEqual(ev.metadata.byClassification, {
-    merged: 1, merged_unlinked: 1, archived: 1, promoted: 1, no_session_row: 1,
+    merged: 1, merged_unlinked: 1, archived: 1, no_session_row: 1,
   });
   assert.ok(typeof ev.metadata.durationMs === 'number');
 });
@@ -458,12 +508,14 @@ test('the demo job is obviously fake and covers every chip', () => {
     assert.match(p.slug, /^staging-demo-/, 'seeded rows must be unmistakably fake');
     assert.match(p.name, /^usernode-staging-staging-demo-/);
   }
-  // One row per classification the console can label, plus a failure so the
-  // red styling is screenshot-covered.
+  // One row per kind a sweep takes, plus a failure so the red styling is
+  // screenshot-covered. Never a vote-backed one: no sweep takes those.
   const seen = new Set(job.previews.map((p) => p.classification));
-  for (const c of ['merged', 'merged_unlinked', 'archived', 'promoted', 'no_session_row']) {
+  for (const c of ['merged', 'merged_unlinked', 'archived', 'paused', 'no_session_row']) {
     assert.ok(seen.has(c), `demo job must cover the ${c} classification`);
   }
+  assert.ok(!job.previews.some((p) => ['promoted', 'merging'].includes(p.classification)));
+  assert.ok(job.previews.some((p) => p.outOfDate), 'the "out of date" reason is screenshot-covered');
   const failed = job.previews.filter((p) => p.state === 'failed');
   assert.equal(failed.length, 1);
   assert.ok(failed[0].error, 'the failed row must carry an error string');
@@ -506,7 +558,7 @@ function currentFp() {
 // A fleet where each container's label is given explicitly (4th ps column).
 function labelledFleet(fp) {
   fx.psLines = [
-    // current env — must be left alone
+    // current env, live session — must be left alone
     ['usernode-staging-fresh-aaa111--3001', 'running', 'usernode-staging-fresh-aaa111-3001:aaa111', fp],
     // stale, merged proposal — the bulk of the real fleet
     ['usernode-staging-oldmerged-bbb222--3002', 'running', 'usernode-staging-oldmerged-bbb222-3002:bbb222', 'stale000stale000'],
@@ -518,7 +570,7 @@ function labelledFleet(fp) {
     ['usernode-staging-orphan-eee555--3005', 'running', 'usernode-staging-orphan-eee555-3005:eee555', 'stale000stale000'],
   ];
   fx.sessions = [
-    { id: 3001, status: 'merged', staging_container_id: 'cid-3001', staging_url: 'https://x--s3001--aaa111.example', app_slug: 'fresh-aaa111' },
+    { id: 3001, status: 'paused', staging_container_id: 'cid-3001', staging_url: 'https://x--s3001--aaa111.example', app_slug: 'fresh-aaa111' },
     { id: 3002, status: 'merged', staging_container_id: 'cid-3002', staging_url: 'https://x--s3002--bbb222.example', app_slug: 'oldmerged-bbb222' },
     { id: 3003, status: 'archived', staging_container_id: 'cid-3003', staging_url: 'https://x--s3003--ccc333.example', app_slug: 'prelabel-ccc333' },
     { id: 3004, status: 'promoted', staging_container_id: 'cid-3004', staging_url: 'https://x--s3004--ddd444.example', app_slug: 'voting-ddd444' },
@@ -642,21 +694,200 @@ test('sweepStale: never throws when docker ps fails, and reaps nothing', async (
 
   const summary = await reap.sweepStale({});
 
-  assert.deepEqual(summary, { examined: 0, stale: 0, tornDown: 0, failed: 0, skipped: 0 });
+  assert.deepEqual(summary, { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 });
   assert.deepEqual(fx.stopCalls, [], 'an unreadable host is a no-op sweep, not a blind one');
   assert.deepEqual(fx.teardownCalls, []);
 });
 
-test('sweepStale: Kubernetes runtime never probes the Docker socket', async () => {
+// ── Abandoned previews: the session finished, whatever the env ─────────
+//
+// Merge and archive tear their own preview down, and the idle reclaim skips
+// merged rows because of that, so a merge whose teardown came back busy (or
+// never ran) left a preview nothing else would ever look at. In production
+// 42 of 98 previews were exactly that, and 20 of those carried the CURRENT
+// env, which a fingerprint-only selection never picks.
+
+test('selectAbandoned: takes merged, archived and session-less previews only', async () => {
   const reap = setup();
-  labelledFleet(currentFp());
+  const fp = currentFp();
+  fx.psLines = ['merged', 'archived', 'active', 'paused', 'promoted', 'merging', 'gone']
+    .map((status, i) => [`usernode-staging-${status}-aaa111--${5000 + i}`, 'running', `img:aaa111`, fp]);
+  fx.sessions = ['merged', 'archived', 'active', 'paused', 'promoted', 'merging']
+    .map((status, i) => ({ id: 5000 + i, status, staging_container_id: `cid-${5000 + i}`, app_slug: status }));
+  const items = await reap.classify(fakePool, await reap.listStagingContainers());
 
-  const summary = await reap.sweepStale({ appRuntime: 'kubernetes' });
-  const counts = await reap.previewCounts({ appRuntime: 'kubernetes' });
+  assert.deepEqual(reap.selectAbandoned(items).map((i) => i.sessionId), [5000, 5001, 5006]);
+  assert.deepEqual(reap.selectAbandoned(items, { isInFlight: (id) => id === 5000 })
+    .map((i) => i.sessionId), [5001, 5006], 'a session mid-turn is left alone here too');
+});
 
-  assert.deepEqual(summary, { examined: 0, stale: 0, tornDown: 0, failed: 0, skipped: 0 });
-  assert.deepEqual(counts, { open: null, stale: null });
+test('sweepStale: a merged session\'s preview goes even on the current env', async () => {
+  const reap = setup();
+  const fp = currentFp();
+  fx.psLines = [
+    ['usernode-staging-merged-aaa111--6001', 'running', 'usernode-staging-merged-aaa111-6001:aaa111', fp],
+    ['usernode-staging-live-bbb222--6002', 'running', 'usernode-staging-live-bbb222-6002:bbb222', fp],
+    ['usernode-staging-oldenv-ccc333--6003', 'running', 'usernode-staging-oldenv-ccc333-6003:ccc333', 'stale000stale000'],
+  ];
+  fx.sessions = [
+    { id: 6001, status: 'merged', staging_container_id: 'cid-6001', app_slug: 'merged-aaa111' },
+    { id: 6002, status: 'paused', staging_container_id: 'cid-6002', app_slug: 'live-bbb222' },
+    { id: 6003, status: 'paused', staging_container_id: 'cid-6003', app_slug: 'oldenv-ccc333' },
+  ];
+
+  const summary = await reap.sweepStale({}, { limit: 1 });
+
+  assert.equal(summary.stale, 1, 'the out-of-date count is still the fingerprint count');
+  assert.equal(summary.abandoned, 1, 'the merged preview is counted on top of it');
+  assert.equal(summary.skipped, 1, 'the cap covers both');
+  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [6001],
+    'abandoned previews go first: they back nothing at all');
+  const rec = fx.eventRecords.find((r) => r.type === 'stale_previews_reaped');
+  assert.equal(rec.metadata.abandoned, 1);
+  assert.equal(reap.readAutomatic().abandoned, 1);
+});
+
+// ── Kubernetes: the preview Deployments are the inventory ───────────────
+
+const KUBE = Object.freeze({ appRuntime: 'kubernetes', kubernetes: { appNamespace: 'social-apps' } });
+
+function kubeFleet(fp) {
+  const preview = (appId, sessionId, fingerprint) => ({
+    name: `sv-preview-${appId}-s${sessionId}`,
+    appId,
+    sessionId,
+    state: 'running',
+    image: `ghcr.io/example/app@sha256:${'a'.repeat(64)}`,
+    labels: fingerprint ? { [realStagingEnv.LABEL_ENV_FP]: fingerprint } : {},
+  });
+  fx.kubePreviews = [
+    preview(320, 3711, fp),            // merged, row still names it
+    preview(1559, 4658, fp),           // merged, row nulled by a busy teardown
+    preview(10, 4001, fp),             // session row gone
+    preview(424, 5806, 'stale000stale000'), // paused, out-of-date env
+    preview(409, 5161, fp),            // promoted: backs a live vote
+    preview(1967, 5775, fp),           // active, current
+    preview(847, 5080, fp),            // archived, but a turn is in flight
+  ];
+  const linked = (id, status, appSlug) => ({
+    id, status, app_slug: appSlug, staging_container_id: null,
+    staging_runtime_kind: 'kubernetes', staging_runtime_name: fx.kubePreviews.find((p) => p.sessionId === id).name,
+    staging_url: `https://${appSlug}--s${id}.example`, staging_commit_sha: 'abc123',
+  });
+  fx.sessions = [
+    linked(3711, 'merged', 'puzzlechain-6cf8ff'),
+    { id: 4658, status: 'merged', app_slug: 'patch-741877', staging_container_id: null,
+      staging_runtime_kind: null, staging_runtime_name: null, staging_url: null },
+    linked(5806, 'paused', 'recipebot-33b169'),
+    linked(5161, 'promoted', 'gym-tracker-9de81f'),
+    linked(5775, 'active', 'trading-journal-13ee34'),
+    linked(5080, 'archived', 'my-cool-app-460fe8'),
+  ];
+}
+
+test('Kubernetes: a row names its preview by runtime name, and the slug comes from the app', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  const items = await reap.classify(fakePool, await reap.listPreviews(KUBE));
+  const byName = Object.fromEntries(items.map((i) => [i.name, i]));
+
+  assert.equal(byName['sv-preview-320-s3711'].classification, 'merged',
+    'staging_container_id is null on Kubernetes; the runtime name is the link');
+  assert.equal(byName['sv-preview-1559-s4658'].classification, 'merged_unlinked');
+  assert.equal(byName['sv-preview-10-s4001'].classification, 'no_session_row');
+  assert.equal(byName['sv-preview-320-s3711'].slug, 'puzzlechain-6cf8ff');
+  assert.equal(byName['sv-preview-10-s4001'].slug, null, 'nothing to read it from');
+  assert.equal(byName['sv-preview-424-s5806'].fingerprint, 'stale000stale000');
+  assert.equal(fx.dockerExecCalls, 0, 'Kubernetes never probes the Docker socket');
+  assert.equal(fx.kubeListCalls[0].kubernetes.appNamespace, 'social-apps');
+});
+
+test('Kubernetes: the automatic pass reaps abandoned and out-of-date previews only', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+
+  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+
+  assert.deepEqual(summary, { examined: 7, stale: 1, abandoned: 3, tornDown: 4, failed: 0, skipped: 0 });
+  // Rows that still name their Deployment go through the shared chokepoint,
+  // which also drops the staging database and nulls the row.
+  assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId).sort((a, b) => a - b), [3711, 5806]);
+  // The rest are removed by name, in the app namespace.
+  assert.deepEqual(fx.kubeRemoveCalls.map((c) => c.name).sort(), ['sv-preview-10-s4001', 'sv-preview-1559-s4658']);
+  for (const call of fx.kubeRemoveCalls) {
+    assert.equal(call.kind, 'kubernetes');
+    assert.equal(call.namespace, 'social-apps');
+  }
+  // A digest-addressed image names no commit, so no database name is guessed;
+  // the orphan-database pass takes those clones.
+  assert.deepEqual(fx.dropCalls, []);
   assert.equal(fx.dockerExecCalls, 0);
+  assert.deepEqual(fx.stopCalls, []);
+});
+
+test('Kubernetes: a Deployment already gone is skipped, not removed', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  fx.kubeExists = (name) => name !== 'sv-preview-10-s4001';
+
+  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+
+  assert.equal(summary.tornDown, 3);
+  assert.equal(fx.kubeRemoveCalls.some((c) => c.name === 'sv-preview-10-s4001'), false);
+});
+
+test('Kubernetes: a failed removal is isolated to its own unit', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  fx.kubeRemoveError = new Error('deployments.apps "sv-preview-10-s4001" is forbidden');
+
+  const summary = await reap.sweepStale(KUBE, { isInFlight: (id) => id === 5080 });
+
+  assert.equal(summary.failed, 2, 'both by-name removals failed');
+  assert.equal(summary.tornDown, 2, 'the chokepoint teardowns still ran');
+});
+
+test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async () => {
+  const reap = setup();
+  fx.kubeListError = new Error('connect ECONNREFUSED');
+
+  const summary = await reap.sweepStale(KUBE);
+
+  assert.deepEqual(summary, { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 });
+  assert.deepEqual(fx.kubeRemoveCalls, []);
+  assert.deepEqual(fx.teardownCalls, []);
+});
+
+test('Kubernetes: the admin sweep takes everything due at once, nothing more', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+  const saved = process.env.STAGING_STALE_SWEEP_LIMIT;
+  try {
+    // The per-pass cap paces the timer; the button is the "now" version.
+    process.env.STAGING_STALE_SWEEP_LIMIT = '1';
+    const job = await runSweep(reap, { isInFlight: (id) => id === 5080 }, KUBE);
+
+    assert.equal(job.total, 4, 'abandoned + out of date, uncapped');
+    assert.equal(job.failed, 0);
+    const taken = job.previews.map((p) => p.sessionId).sort((a, b) => a - b);
+    assert.deepEqual(taken, [3711, 4001, 4658, 5806],
+      'not the vote-backed 5161, the live current 5775, or the in-flight 5080');
+    assert.deepEqual(job.previews.filter((p) => p.outOfDate).map((p) => p.sessionId), [5806],
+      'a live session\'s row says why it was taken');
+    assert.equal(fx.dockerExecCalls, 0);
+  } finally {
+    if (saved === undefined) delete process.env.STAGING_STALE_SWEEP_LIMIT;
+    else process.env.STAGING_STALE_SWEEP_LIMIT = saved;
+  }
+});
+
+test('Kubernetes: the console counts come from the Deployments', async () => {
+  const reap = setup();
+  kubeFleet(currentFp());
+
+  const counts = await reap.previewCounts(KUBE);
+
+  assert.deepEqual(counts, { open: 7, stale: 1, abandoned: 4 });
 });
 
 test('sweepStale: an all-unlabelled fleet is verified by inspect before acting', async () => {
@@ -670,8 +901,9 @@ test('sweepStale: an all-unlabelled fleet is verified by inspect before acting',
     ['usernode-staging-b-bbb222--4002', 'running', 'img:bbb222'],
   ];
   fx.sessions = [
-    { id: 4001, status: 'merged', staging_container_id: 'cid-4001', staging_url: 'https://x--s4001--aaa111.example', app_slug: 'a-aaa111' },
-    { id: 4002, status: 'merged', staging_container_id: 'cid-4002', staging_url: 'https://x--s4002--bbb222.example', app_slug: 'b-bbb222' },
+    // Live sessions, so only the env decides (a merged one would go anyway).
+    { id: 4001, status: 'paused', staging_container_id: 'cid-4001', staging_url: 'https://x--s4001--aaa111.example', app_slug: 'a-aaa111' },
+    { id: 4002, status: 'paused', staging_container_id: 'cid-4002', staging_url: 'https://x--s4002--bbb222.example', app_slug: 'b-bbb222' },
   ];
   // Inspect can see the labels the ps format verb could not: 4001 is current.
   fx.inspect = (name) => ({
@@ -779,14 +1011,16 @@ test('previewCounts: nulls (not zeros) when docker cannot be read', async () => 
   fx.psError = new Error('daemon unreachable');
   const counts = await reap.previewCounts({});
   // A bogus 0 would read as "all clear" on the console; "—" is honest.
-  assert.deepEqual(counts, { open: 0, stale: 0 });
+  assert.deepEqual(counts, { open: 0, stale: 0, abandoned: 0 });
 });
 
 test('demoCounts: fake-but-complete numbers for the staging screenshot', () => {
   const reap = setup();
   const demo = reap.demoCounts();
-  assert.equal(demo.open, 6);
+  assert.equal(demo.open, 9);
   assert.equal(demo.stale, 4);
+  assert.equal(demo.abandoned, 2);
+  assert.equal(demo.stale + demo.abandoned, reap.demoJob().total, 'the tile matches the demo job');
   assert.ok(demo.automatic.lastRunAt, 'the "last ran" line needs a timestamp to render');
   assert.ok(demo.automatic.intervalMs > 0);
   assert.match(demo.expectedFingerprint, /^stagingdemo/, 'obviously fake, per the seed rules');

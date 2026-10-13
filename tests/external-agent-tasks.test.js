@@ -35,8 +35,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const svc = require('../src/services/external-agent-tasks');
-const evidenceContract = require('../src/services/visual-evidence-plan');
-const evidenceFixture = require('./fixtures/visual-evidence');
+const shotsContract = require('../src/services/visible-changes');
+const shotsFixture = require('./fixtures/shots');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/external-agent-tasks.js'), 'utf8'
@@ -564,6 +564,10 @@ test('every guidance step is an action the HUMAN takes, never agent narration', 
     assert.match(result.guidance[result.guidance.length - 1], /submit the change to Homeroom itself/);
     assert.match(result.guidance[result.guidance.length - 1], /can't submit/);
     assert.match(result.guidance[result.guidance.length - 2], /exactly as written/);
+    // #3687: the agent picks patch or branch itself; if one asks anyway, the
+    // person is told what to answer instead of meeting a git question cold.
+    assert.match(result.guidance[result.guidance.length - 2],
+      /If it asks whether to send a patch or a branch, tell it to choose for itself\./);
   }
 });
 
@@ -721,6 +725,52 @@ test('a base commit that is not a clean 40-hex id never reaches a work order', a
     assert.ok(!queries.some((q) => q.sql.includes('INSERT INTO external_agent_tasks')),
       'and no task row is reserved against a commit that cannot be branched from');
   }
+});
+
+test('a base read GitHub refused for the hourly budget says so, and when it resets', async () => {
+  // 2026-10-04: the bot token's 5,000 requests an hour ran out, and every
+  // new proposal answered "Try again shortly" for the rest of the hour.
+  const limited = Object.assign(new Error('API rate limit exceeded for user ID 276401300.'), {
+    status: 403,
+    response: {
+      status: 403,
+      headers: {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 17 * 60 - 5),
+      },
+    },
+  });
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 41 }]]], queries);
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool,
+      config: {},
+      gh: baseGh({ getBranchSha: async () => { throw limited; } }),
+      githubLink: linkedAs('someuser'),
+      limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'platform_unavailable');
+  assert.equal(result.retryable, true);
+  assert.equal(result.message,
+    "Homeroom could not read the app's current code. GitHub's hourly limit for Homeroom is used up. It resets in about 17 minutes.");
+  assert.ok(!/\u2014/.test(result.message));
+
+  // Any other failure keeps the old answer.
+  const other = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool: fakePool([['INSERT INTO external_agent_tasks', [{ id: 42 }]]], []),
+      config: {},
+      gh: baseGh({ getBranchSha: async () => { throw Object.assign(new Error('Bad gateway'), { status: 502 }); } }),
+      githubLink: linkedAs('someuser'),
+      limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+  assert.equal(other.message, "Homeroom could not read the app's current code. Try again shortly.");
 });
 
 test('prepare_work refuses before touching GitHub when the account is not linked', async () => {
@@ -909,19 +959,17 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
       return { number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88', head: { repo: { owner: { login: 'SomeUser' } } } };
     },
   });
-  const visualEvidence = evidenceContract.parseIntent(evidenceFixture.intent());
-  const visualEvidencePlan = {
-    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
-    planHash: evidenceContract.planHash(evidenceFixture.plan()),
-    plan: evidenceContract.parseReplayPlan(evidenceFixture.plan()),
-  };
+  const visibleChanges = shotsContract.parseIntent(shotsFixture.intent());
+  // A caller still sending the retired author plan. Nothing reads it now:
+  // the shots agent takes the shots, so only the declaration travels.
+  const visualEvidencePlan = { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), plan: {} };
 
   const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
       body: 'Adds a toggle.',
-      visualEvidence, visualEvidencePlan,
+      visibleChanges, visualEvidencePlan,
       importProposal: async (slug, prNumber, extra) => {
         imports.push({ slug, prNumber, extra });
         return { ok: true, status: 200, body: { sessionId: 55 } };
@@ -942,8 +990,9 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
   // caller's token — this service never inserts a chat_sessions row itself.
   assert.equal(imports[0].slug, 'recipe-box');
   assert.equal(imports[0].prNumber, 88);
-  assert.deepEqual(imports[0].extra.visualEvidence, visualEvidence);
-  assert.deepEqual(imports[0].extra.visualEvidencePlan, visualEvidencePlan);
+  assert.deepEqual(imports[0].extra.visibleChanges, visibleChanges);
+  assert.equal('visualEvidencePlan' in imports[0].extra, false, 'an author plan is never forwarded');
+  assert.doesNotMatch(SRC, /visualEvidencePlan/);
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
 
   // The only thing stamped afterwards is the badge column, scoped to the
@@ -1123,6 +1172,26 @@ test('a platform refusal to import is passed back with the platform’s own answ
   assert.ok(!queries.some((q) => q.sql.includes('UPDATE external_agent_tasks')));
 });
 
+test('an import refusal shaped { error: code, message } is reported by its sentence', async () => {
+  const gh = baseGh({
+    findOpenPrByBranch: async () => ({
+      number: 88, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } },
+    }),
+  });
+  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({
+        ok: false, status: 400, body: { error: 'invalid_request', message: 'testingPaths must contain at most 50 entries' },
+      }),
+    }
+  ));
+  assert.equal(result.code, 'import_failed');
+  assert.equal(result.message, 'testingPaths must contain at most 50 entries',
+    'the code alone names nothing the agent can fix');
+});
+
 // ── Structural guarantees ──────────────────────────────────────────────
 
 test('NO user credential is used, and every direct GitHub call is a public read', () => {
@@ -1168,7 +1237,7 @@ test('the service never opens a proposal itself', () => {
   // The linked-issue set travels WITH the import (#1217) for the same reason
   // the testing metadata does — the route is what creates the session row —
   // but the row is still the route's to write, not this service's.
-  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*visualEvidence/);
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*shots/);
 });
 
 // ── #1217: a proposal built from a request is linked to it ─────────────
@@ -1850,6 +1919,82 @@ test('the growth check measures what a patch ADDS, not the repository it is appl
   }
 });
 
+// #4263. The same apply, aimed at a branch that already exists: a proposal's
+// own head in the app's repository. Real git again, against a small local
+// bare repository, because the property is about what lands on that branch
+// and what the lease refuses.
+test('a patch lands ON an existing proposal branch under a lease, and a moved branch is branch_moved', async () => {
+  const patchSvc = require('../src/services/external-agent-patch');
+  const headSvc = require('../src/services/external-agent-head');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-patch-onto-'));
+  const realRemote = headSvc.authenticatedRemote;
+  const realToken = process.env.GITHUB_BOT_TOKEN;
+  try {
+    const work = path.join(root, 'work');
+    const bare = path.join(root, 'app.git');
+    fs.mkdirSync(work);
+    gitIn(work, ['init', '-q']);
+    fs.writeFileSync(path.join(work, 'README.md'), '# Recipe box\n');
+    gitIn(work, ['add', '-A']);
+    gitIn(work, ['commit', '-qm', 'Base']);
+    const base = gitIn(work, ['rev-parse', 'HEAD']).trim();
+    gitIn(root, ['clone', '--bare', '-q', work, bare]);
+    // The proposal's branch, at the commit the update work order named.
+    const target = 'usernode/from-u3-s1234';
+    gitIn(bare, ['branch', target, base]);
+
+    fs.appendFileSync(path.join(work, 'README.md'), '\nTags work now.\n');
+    gitIn(work, ['commit', '-qam', 'Fix the failing check']);
+    const patch = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
+
+    headSvc.authenticatedRemote = () => `file://${bare}`;
+    process.env.GITHUB_BOT_TOKEN = 'local-test-token';
+    const refsBefore = gitIn(bare, ['for-each-ref', '--format=%(refname)']);
+    const landed = await patchSvc.applyPatch({
+      owner: 'usernode-bot', repo: 'recipe-box', patch, baseSha: base, userId: 3, taskId: 44,
+      targetBranch: target, sessionId: 512,
+    });
+    assert.equal(landed.ok, true, `${landed.code}: ${landed.message}`);
+    assert.equal(landed.branch, target, 'the proposal\'s own branch, not a fresh usernode/patch- one');
+    assert.equal(gitIn(bare, ['rev-parse', `refs/heads/${target}`]).trim(), landed.headSha);
+    assert.equal(gitIn(bare, ['rev-parse', `${landed.headSha}^`]).trim(), base, 'one commit ON the head it was given');
+    assert.match(gitIn(bare, ['show', `${landed.headSha}:README.md`]), /Tags work now/);
+    assert.equal(gitIn(bare, ['for-each-ref', '--format=%(refname)']), refsBefore, 'no new branch was written');
+    // Nothing to roll back: the commit it just landed is the proposal's now.
+    await landed.cleanup();
+    assert.equal(gitIn(bare, ['rev-parse', `refs/heads/${target}`]).trim(), landed.headSha);
+
+    // The branch has moved off `base` (it is at the commit above), so a
+    // DIFFERENT patch made from `base` is refused by the lease rather than
+    // overwriting it. (The same patch again would rebuild the identical
+    // commit, which git pushes as a no-op.)
+    gitIn(work, ['checkout', '-q', '--detach', base]);
+    fs.writeFileSync(path.join(work, 'NOTES.md'), 'A second, unrelated revision.\n');
+    gitIn(work, ['add', '-A']);
+    gitIn(work, ['commit', '-qm', 'Somebody else\'s revision']);
+    const other = gitIn(work, ['format-patch', '--stdout', `${base}..HEAD`]);
+    const again = await patchSvc.applyPatch({
+      owner: 'usernode-bot', repo: 'recipe-box', patch: other, baseSha: base, userId: 3, taskId: 44,
+      targetBranch: target, sessionId: 512,
+    });
+    assert.equal(again.ok, false);
+    assert.equal(again.code, 'branch_moved');
+    assert.equal(again.retryable, false);
+    assert.equal(gitIn(bare, ['rev-parse', `refs/heads/${target}`]).trim(), landed.headSha, 'nothing was overwritten');
+
+    // And a target that is not a ref is refused before any git runs.
+    const bad = await patchSvc.applyPatch({
+      owner: 'o', repo: 'r', patch, baseSha: base, targetBranch: '--upload-pack=x',
+    });
+    assert.equal(bad.code, 'invalid_request');
+  } finally {
+    headSvc.authenticatedRemote = realRemote;
+    if (realToken === undefined) delete process.env.GITHUB_BOT_TOKEN;
+    else process.env.GITHUB_BOT_TOKEN = realToken;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a patch without a taskId is refused — there is no commit to apply it at', async () => {
   const result = await svc.submitWork(
     { pool: fakePool([], []), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
@@ -2463,9 +2608,28 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
   assert.match(order, /IF THE USERNODE TOOLS ARE NOT AVAILABLE/);
-  // The push comes before the submit, and the patch after both.
-  assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
-  assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
+  // #2460: the patch comes first — it needs no fork and no push — and the
+  // branch push is the fallback, both before the submit that names them.
+  const patchAt = order.indexOf('git format-patch');
+  const pushAt = order.indexOf('git push -u origin HEAD');
+  assert.ok(patchAt > 0 && pushAt > 0);
+  assert.ok(patchAt < pushAt, 'the patch step precedes the push step');
+  assert.ok(pushAt < order.indexOf('SUBMIT IT YOURSELF'));
+  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH/);
+  assert.match(order, /the patch text from step 1 as `patch`/);
+  assert.match(order, /Patches over about 250 KB are refused/);
+  assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
+  // #3687: the choice between them belongs to the agent, said both in the
+  // rules and at the step where it is made, after the rule it applies.
+  assert.match(order, /The choice is yours, never the user's\./);
+  const decideAt = order.indexOf('Patch or branch is YOUR decision, by the rule above');
+  assert.ok(decideAt > pushAt && decideAt < order.indexOf('SUBMIT IT YOURSELF'),
+    'the decision line closes step 1, after both options are on the page');
+  assert.match(order, /never ask the user which to use: most users are not developers/);
+  // The exact identifiers the fallback needs are all still printed.
+  assert.match(order, /Homeroom task id:\s+31/);
+  assert.match(order, /with taskId 31 and the patch text/);
+  assert.match(order, /Suggested branch name: +usernode\/recipe-box-issue-4-abc123/);
   // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
@@ -2485,11 +2649,11 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   // And under WHEN YOU ARE DONE.
   assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
-  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /The work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 2/);
   // Started by a chat assistant: hand it back, patch included.
-  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
-  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
+  assert.match(assistant, /or print the branch name, if you pushed one/);
   assert.match(assistant, /If they started from the Homeroom tab instead/);
   assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
@@ -2497,7 +2661,7 @@ test('the work order tells an agent with no Homeroom tools what that means and h
 
   // Started from the browser walkthrough: that tab's Submit button finishes.
   const walkthrough = fullOrder({ startedFromWalkthrough: true });
-  assert.match(walkthrough, /Otherwise finish from Homeroom: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /Otherwise finish from Homeroom: push the branch as in step 1\. The\n {3}walkthrough that produced this work order checks for the pushed branch/);
   assert.match(walkthrough, /its Submit button opens the proposal/);
   assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
 
@@ -2552,8 +2716,17 @@ test('the update work order says the same for a missing connector, in its own te
   });
   assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added/);
   assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
-  assert.match(update, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
-  assert.doesNotMatch(update, /save the patch/, 'an update never sends a patch — that opens a second proposal');
+  // #4263: an update to a proposal whose head Homeroom writes is handed in as
+  // a patch now (it updates THAT proposal), so the hand-back is the patch,
+  // with the proposal id it belongs to.
+  assert.match(update, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
+  assert.match(update, /with the proposal id/);
+  // A head in the author's own fork still takes a push, and says so.
+  const forkHome = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'user_fork' },
+  });
+  assert.match(forkHome, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
+  assert.doesNotMatch(forkHome, /save the patch/, 'a fork-home proposal only moves when its author pushes');
   const fromTab = fullOrder({
     targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
     startedFromWalkthrough: true,
@@ -2805,7 +2978,7 @@ test('the work order says to install dependencies before running anything', () =
 // says what to run BEFORE it — the suites that read the changed files, with
 // the base commit it already names filled into the command — and when the
 // whole suite is still the right call. Without this an agent runs all
-// 13,000+ tests before every push, minutes at a time.
+// 19,000+ tests before every push, minutes at a time.
 test('the work order scopes the local test run to the files the change touched', () => {
   const block = orderFor('ready');
   assert.match(block, /run the tests that cover the files you changed, not the\nwhole suite/);
@@ -2818,6 +2991,46 @@ test('the work order scopes the local test run to the files the change touched',
   // runs before `npm ci`, and the paragraph sits with the other setup.
   assert.ok(block.indexOf('npm ci') < block.indexOf('npm run test:changed'));
   assert.ok(block.indexOf('npm run test:changed') < block.indexOf('fatal: not a valid object name'));
+});
+
+// Both closing trees tell the agent how to declare its visible changes for
+// before/after shots. The replay-era instructions (a typed plan, a local
+// replay, a separate plan tool) are gone, and a stale copy would send an
+// agent looking for a tool that no longer exists.
+test('the work order explains declared changes for before/after shots, and nothing of replay', () => {
+  const create = fullOrder();
+  const update = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } });
+  for (const [label, order] of [['create', create], ['update', update]]) {
+    assert.match(order, /`visibleChanges` for this (exact )?revision: the changes a\s+(person will )?/,
+      `${label}: names the field and what it is for`);
+    assert.match(order, /before\/after shots/, `${label}: in the new words`);
+    assert.match(order, /declare_visible_changes/, `${label}: the helper, when present`);
+    assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
+      `${label}: and the direct shape when it is not`);
+    assert.match(order, /blocker/, `${label}: a state that cannot be reached is reported, not declared none`);
+    // Most states the copies lacked were new in the proposal itself (22 failed
+    // runs and 13 skipped changes, 2026-10-09 to 10-12): it seeds them.
+    assert.match(order, /seed(?:ed)? (?:it )?in this\s+change[\s\S]{0,120}the seed reaches the after copy, the side a new\s+state\s+needs/,
+      `${label}: a state the copies lack is seeded in the same change`);
+    assert.match(order, /neither reached nor seeded/, `${label}: only then is it a blocker`);
+    assert.match(order, /one to three(\s+)declared(\s+)changes/, `${label}: declared changes`);
+    assert.match(order, /intent\.controlledFailurePath/, `${label}: the controlled failure stays`);
+    assert.match(order, /"Controlled test: deliberately block the declared API GET on\s+both revisions\."/);
+    for (const gone of [/visualEvidencePlan/, /submit_visual_evidence_plan/, /replay/i,
+      /executable flow/, /submission\.json/, /evidence/i]) {
+      assert.doesNotMatch(order, gone, `${label}: no ${gone}`);
+    }
+  }
+  // The create path spells out each field of a declared change, including
+  // the motion clip and the optional hints.
+  assert.match(create, /\(motion gets a short before\/after clip\)/);
+  assert.match(create, /Optional hints help\s+the shots agent go straight there/);
+  assert.match(create, /setup \(data to create first\)/);
+  assert.match(create, /expectText \(words visible once it shows\)/);
+  assert.match(create, /focusTarget \(a locator\)/);
+  assert.match(create, /Never include secrets or personal data/);
+  // The update path says the shots are fresh for every new revision.
+  assert.match(update, /shots agent takes fresh\s+before\/after shots of every new revision/);
 });
 
 // ── Caller-supplied branch and fork name ───────────────────────────────
@@ -2980,9 +3193,9 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
           ok: false,
           status: 500,
           body: {
-            error: 'PR import failed while recording visualEvidence.',
-            stage: 'visual_evidence_intent',
-            field: 'visualEvidence',
+            error: 'PR import failed while recording the visible changes.',
+            stage: 'visible_changes',
+            field: 'visibleChanges',
             retryable: true,
           },
         }),
@@ -2994,8 +3207,8 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
   assert.equal(result.retryable, true);
   assert.equal(result.recovery, 'retry_existing_pr');
   assert.equal(result.prNumber, 99);
-  assert.equal(result.stage, 'visual_evidence_intent');
-  assert.equal(result.field, 'visualEvidence');
+  assert.equal(result.stage, 'visible_changes');
+  assert.equal(result.field, 'visibleChanges');
   assert.equal(cleaned, false, 'the PR head is the recovery handle, not litter');
   assert.match(result.message, /PR #99 remains open/);
   assert.match(result.message, /slug "recipe-box" and prNumber 99/);
@@ -3571,22 +3784,67 @@ test('a fork-home update work order says USE the existing branch, and to check i
   assert.doesNotMatch(result.workOrder, /Suggested branch name/);
 });
 
-test('the update work order asks for proposalId, and never offers the patch fallback', async () => {
+// #4263. An update used to forbid a patch ("DO NOT SEND A PATCH ... Both open
+// a SECOND proposal") and demand a push to the user's fork, which a cloud
+// coding session is often not allowed to make. The update task's id now
+// belongs to its proposal, so a patch sent with it is applied on the
+// proposal's own head and advances THAT proposal: the update work order
+// offers the patch first, exactly like new work, and the branch as the
+// fallback.
+test('the update work order offers the patch first, with the branch and proposalId as the fallback', async () => {
   const { result } = await prepareUpdate(BOT_PROPOSAL);
-  assert.match(result.workOrder, /SUBMIT THE UPDATE, through the Homeroom connector/);
-  assert.match(result.workOrder, /with proposalId 512/);
-  assert.match(result.workOrder, /taskId 44/);
-  // The two refusals an update gets that new work never does, each with the
-  // exact recovery: neither is a reason to open a second proposal.
-  assert.match(result.workOrder, /base_mismatch/);
-  assert.match(result.workOrder, /expectedBase/);
-  assert.match(result.workOrder, /branch_moved/);
-  assert.match(result.workOrder, /Neither is a reason to start over or to open a second/);
-  // A patch writes a NEW branch in the app's repo and opens a second
-  // proposal for a change the group is already voting on.
-  assert.match(result.workOrder, /DO NOT SEND A PATCH on this path/);
-  assert.doesNotMatch(result.workOrder, /git format-patch/);
-  assert.doesNotMatch(result.workOrder, /pr_open_failed/, 'there is no pull request to open on this path');
+  const order = result.workOrder;
+  assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
+  // Step 1 is new work's own: a patch from the proposal's head, no push.
+  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH of your commits/);
+  assert.match(order, new RegExp(`git format-patch ${BASE_SHA}\\.\\.HEAD --stdout`));
+  assert.match(order, /Patch or branch is YOUR decision/);
+  // Step 2: the patch goes with THIS task's id; the branch with the proposal's.
+  assert.match(order, /with taskId 44 and the patch text from step 1 as `patch`/);
+  assert.match(order, /proposalId 512 and `branch` set to the branch you/);
+  assert.match(order, /ON THE PROPOSAL'S CURRENT COMMIT/);
+  assert.match(order, /it never opens a second proposal/);
+  // The refusals an update gets that new work never does, each with the exact
+  // recovery: none is a reason to open a second proposal.
+  assert.match(order, /base_mismatch/);
+  assert.match(order, /expectedBase/);
+  assert.match(order, /branch_moved/);
+  assert.match(order, /`expectedHeadSha`/, 'a rebased patch names the commit it was made from');
+  assert.match(order, /patch_did_not_apply/);
+  assert.match(order, /None of these is a reason to start over or to open a second proposal/);
+  // The old prohibition is gone, and so is the mistaken reason for it.
+  assert.doesNotMatch(order, /DO NOT SEND A PATCH/);
+  assert.doesNotMatch(order, /Both open a SECOND proposal/);
+  assert.match(order, /Do not call `prepare_work` for a new change: that opens a SECOND/);
+  assert.doesNotMatch(order, /pr_open_failed/, 'there is no pull request to open on this path');
+});
+
+test('a fork-home update work order keeps the push, and says why a patch cannot land', async () => {
+  // Only the author can write a branch in their own fork, so there is nowhere
+  // for Homeroom to apply a patch: the push is the update.
+  const { result } = await prepareUpdate(FORK_PROPOSAL);
+  const order = result.workOrder;
+  assert.match(order, /1\. PUSH, to feature\/dark-mode/);
+  assert.match(order, /with proposalId 513, branch set to the branch you pushed to your/);
+  assert.match(order, /THIS PROPOSAL TAKES A BRANCH, NOT A PATCH/);
+  assert.match(order, /Neither is a reason to start over or to open a second/);
+  assert.doesNotMatch(order, /git format-patch/);
+  assert.doesNotMatch(order, /DO NOT SEND A PATCH/);
+  // #3687: with only a branch on offer there is no choice to hand over.
+  assert.doesNotMatch(order, /Patch or branch is YOUR decision/);
+});
+
+test('every update work order says what description and summary do to a proposal that has them', async () => {
+  // proposal-update.js applyProposedDescription REPLACES the pull request
+  // body (keeping only the managed blocks), so the old "a short description
+  // of what changed" advice wiped a proposal's description down to the delta.
+  for (const target of [BOT_PROPOSAL, FORK_PROPOSAL]) {
+    const { result } = await prepareUpdate(target);
+    assert.match(result.workOrder, /`description` REPLACES the pull request's whole description/);
+    assert.match(result.workOrder, /leave it out to keep the one it has/);
+    assert.match(result.workOrder, /Send `summary` again/);
+    assert.doesNotMatch(result.workOrder, /a short description of what changed/);
+  }
 });
 
 test('an update work order still starts the branch at the proposal’s head, and says so', async () => {
@@ -3709,12 +3967,16 @@ test('the session work order keeps every mechanical instruction the update path 
   assert.match(order, new RegExp(`It must start at the session's head:\\s+${BASE_SHA}`));
   assert.match(order, /NOT the app's main branch/);
   assert.match(order, /work already done here/);
-  // …and the same submission, with the same two refusals and no patch route.
+  // …and the same submission, with the same refusals. Its head is in the
+  // app's repository, so it takes a patch first exactly as a proposal does
+  // (#4263), with the branch and the session's id as the fallback.
   assert.match(order, /SUBMIT THE UPDATE, through the Homeroom connector/);
-  assert.match(order, /with proposalId 601/);
+  assert.match(order, /with taskId 44 and the patch text from step 1 as `patch`/);
+  assert.match(order, /proposalId 601 and `branch`/);
+  assert.match(order, /ON THE SESSION'S CURRENT COMMIT/);
   assert.match(order, /base_mismatch/);
   assert.match(order, /branch_moved/);
-  assert.match(order, /DO NOT SEND A PATCH on this path/);
+  assert.doesNotMatch(order, /DO NOT SEND A PATCH/);
   assert.match(order, /update-601/, 'the fresh branch name says which session it continues');
 });
 
@@ -3729,7 +3991,9 @@ test('the session work order closes on "not up for a vote yet", not on the PR re
   assert.doesNotMatch(order, /this proposal already has one/);
   // The ownership appendix says session, and says ADD TO rather than revise.
   assert.match(order, /Session 601 belongs to the same account, which is why you can add to/);
-  assert.match(order, /Homeroom only advances a session from a fork owned by the GitHub/);
+  // #4263: from its owner's own patch as well as from their fork.
+  assert.match(order, /Homeroom only advances a session for the account that owns it,/);
+  assert.match(order, /from that account's own patch or from a fork owned by the GitHub account it/);
 });
 
 test('the proposal work order is untouched by all of this', async () => {
@@ -4009,18 +4273,183 @@ test('a proposal that does not exist is named as such, not as a missing field', 
   assert.deepEqual(calls, [], 'refused before the platform is asked to do anything');
 });
 
-test('an update needs a branch, and a patch or prNumber is the wrong submission', async () => {
+test('an update needs new commits, and a prNumber is the wrong submission', async () => {
   const noBranch = await submitUpdateWork({ branch: undefined });
   assert.equal(noBranch.result.code, 'invalid_request');
-  assert.match(noBranch.result.message, /the branch in your own fork/);
+  assert.match(noBranch.result.message, /`patch` with the taskId of this proposal's update work order/);
+  assert.match(noBranch.result.message, /the branch\s+in your own fork/);
 
-  const patched = await submitUpdateWork({ patch: 'diff --git a/x b/x\n' });
-  assert.equal(patched.result.code, 'invalid_request');
-  assert.match(patched.result.message, /a patch opens a second proposal for the same change/);
+  // #4263: a patch is an update's own shape now, but not alongside a branch:
+  // the two name different commits.
+  const both = await submitUpdateWork({ patch: 'diff --git a/x b/x\n' });
+  assert.equal(both.result.code, 'invalid_request');
+  assert.match(both.result.message, /as a patch or as a branch, not both/);
+  assert.deepEqual(both.calls, []);
 
   const numbered = await submitUpdateWork({ prNumber: 88 });
   assert.equal(numbered.result.code, 'invalid_request');
   assert.match(numbered.result.message, /two different submissions/);
+});
+
+// ── #4263: an UPDATE task takes a patch ────────────────────────────────
+//
+// New work went in as a patch with no fork push, but revising that same
+// proposal demanded one: the update path refused a patch outright, because
+// the create path's patch opens a NEW pull request. The patch now travels to
+// the update route instead, which applies it on the proposal's own head with
+// the create path's machinery and runs the branch update's tail.
+
+const PATCH = 'diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n';
+
+test('an update task\'s patch goes to the update route at the task\'s base, and its answer comes straight back', async () => {
+  const { result, calls } = await submitUpdateWork({ branch: undefined, patch: PATCH });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{
+    slug: 'recipe-box',
+    id: 512,
+    payload: {
+      // The commit the patch is applied on and the push is leased to: the
+      // proposal head the update work order named.
+      patch: PATCH,
+      expectedHeadSha: UPDATE_TASK.base_sha,
+      linkedIssues: [4],
+    },
+  }], 'no fork branch, no fork name: the patch is the new work');
+  // The same answer a branch update gives, for the same proposal.
+  assert.equal(result.update, true);
+  assert.equal(result.proposalId, 512);
+  assert.equal(result.headSha, 'aaaa'.repeat(10));
+  assert.equal(result.votesCleared, 3);
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+});
+
+test('a patch made from a rebased head is applied at the expectedHeadSha the caller names', async () => {
+  const rebased = 'bbbb'.repeat(10);
+  const { calls } = await submitUpdateWork({ branch: undefined, patch: PATCH, expectedHeadSha: rebased.toUpperCase() });
+  assert.equal(calls[0].payload.expectedHeadSha, rebased);
+});
+
+test('a landed update moves the task\'s base to the new head, so the same task carries the next patch', async () => {
+  const { queries } = await submitUpdateWork({ branch: undefined, patch: PATCH }, {
+    updateProposal: async () => ({ ...UPDATE_OK, body: { ...UPDATE_OK.body, submittedVia: 'update_patch' } }),
+  });
+  const stamp = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.match(stamp.sql, /base_sha = COALESCE\(\$8, base_sha\)/);
+  assert.equal(stamp.params[7], 'aaaa'.repeat(10));
+  assert.equal(stamp.params[3], UPDATE_OK.body.branch, 'the branch it landed on, since a patch names none');
+  assert.equal(stamp.params[4], 'update_patch', 'the rung is recorded, as the create path records `patch`');
+  assert.ok(svc.SUBMIT_VIA.includes('update_patch'));
+  // And the schema's CHECK allows it, or the stamp would fail in production
+  // while every stubbed pool here passed.
+  const SCHEMA = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  assert.match(SCHEMA, /'update_branch','update_fork_head','update_patch'\)\);/);
+
+  // A resubmit that moved nothing leaves the base where it was.
+  const same = await submitUpdateWork({ branch: undefined, patch: PATCH }, {
+    updateProposal: async () => ({
+      ok: true, status: 200,
+      body: { ...UPDATE_OK.body, updated: false, unchanged: true, headSha: UPDATE_TASK.base_sha },
+    }),
+  });
+  const kept = same.queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.equal(kept.params[7], null);
+});
+
+test('a moved proposal refuses a patch with branch_moved and the head that replaced it', async () => {
+  const { result } = await submitUpdateWork({ branch: undefined, patch: PATCH }, {
+    updateProposal: async () => ({
+      ok: false, status: 409,
+      body: { error: 'branch_moved', message: 'This proposal is now at commit bbbbbbbb.', headSha: 'bbbb'.repeat(10) },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'branch_moved');
+  assert.equal(result.headSha, 'bbbb'.repeat(10));
+});
+
+test('a patch is only an update with an UPDATE task: a new-work task or none is refused before the route', async () => {
+  // A new-work task's base is the main commit it was cut from, which the
+  // proposal has long since moved past.
+  const newWork = await submitUpdateWork({ branch: undefined, patch: PATCH }, {
+    rows: [{ ...UPDATE_TASK, target_session_id: null }],
+  });
+  assert.equal(newWork.result.code, 'invalid_request');
+  assert.match(newWork.result.message, /Task 44 was prepared for new work, not to update proposal 512/);
+  assert.match(newWork.result.message, /prepare_work with proposalId 512/);
+  assert.deepEqual(newWork.calls, []);
+
+  const noTask = await submitUpdateWork({ taskId: null, branch: undefined, patch: PATCH }, { rows: [] });
+  assert.equal(noTask.result.code, 'invalid_request');
+  assert.match(noTask.result.message, /taskId of the proposal's update work order/);
+  assert.deepEqual(noTask.calls, []);
+});
+
+// The shape the work order now prints: taskId + patch, no proposalId. Before
+// this, it reached the CREATE path, which applied the patch on a fresh branch
+// and opened a second pull request for the proposal being revised.
+function submitUpdateTaskAlone(params, { task = UPDATE_TASK, open = false } = {}) {
+  const queries = [];
+  const calls = [];
+  const pool = fakePool([
+    // loadOpenTask: an update task stamped `submitted` by its first update is
+    // not open, and the update path still takes it.
+    ["t.status = 'open'", open ? [task] : []],
+    ['LEFT JOIN chat_sessions s ON s.id = t.session_id', [task]],
+    ['UPDATE external_agent_tasks', []],
+  ], queries);
+  return svc.submitWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 44, source: 'work_order',
+      importProposal: async () => { throw new Error('an update task must never open a second proposal'); },
+      shareWork: async () => { throw new Error('nor a card beside it'); },
+      updateProposal: async (slug, id, payload) => { calls.push({ slug, id, payload }); return UPDATE_OK; },
+      ...params,
+    }
+  ).then((result) => ({ result, queries, calls }));
+}
+
+test('taskId + patch on an UPDATE task advances the proposal the task names, never a second one', async () => {
+  for (const open of [true, false]) {
+    const { result, calls } = await submitUpdateTaskAlone({ patch: PATCH }, { open });
+    assert.equal(result.ok, true, `open: ${open}`);
+    assert.equal(result.update, true, 'reported as an update, not as a new proposal');
+    assert.equal(result.alreadySubmitted, undefined, 'a submitted update task is re-runnable');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].id, 512, 'the proposal the TASK recorded');
+    assert.equal(calls[0].payload.patch, PATCH);
+  }
+  // A branch with the same task goes to the same proposal too.
+  const branched = await submitUpdateTaskAlone({ branch: 'my-fix' });
+  assert.equal(branched.calls[0].id, 512);
+  assert.equal(branched.calls[0].payload.branch, 'my-fix');
+});
+
+test('an update task refuses `share` and a mismatched proposalId instead of opening anything', async () => {
+  const shared = await submitUpdateTaskAlone({ branch: 'my-fix', share: true });
+  assert.equal(shared.result.code, 'invalid_request');
+  assert.match(shared.result.message, /Task 44 revises proposal 512, which already exists/);
+  assert.deepEqual(shared.calls, []);
+
+  const other = await submitUpdateTaskAlone({ patch: PATCH, proposalId: 999 });
+  assert.equal(other.result.code, 'invalid_request');
+  assert.match(other.result.message, /Task 44 was prepared to update proposal 512, not 999/);
+  assert.deepEqual(other.calls, []);
+
+  // A caller that can only open new work (the walkthrough's plain submit)
+  // is told which submission this is; importProposal above would throw.
+  const createOnly = await submitUpdateTaskAlone({ branch: 'my-fix', updateProposal: undefined });
+  assert.equal(createOnly.result.code, 'invalid_request');
+  assert.match(createOnly.result.message, /submitted as an update to that proposal, not as new work/);
+});
+
+test('an abandoned update task is not revived by its id', async () => {
+  const { result, calls } = await submitUpdateTaskAlone({ patch: PATCH }, {
+    task: { ...UPDATE_TASK, status: 'abandoned' },
+  });
+  assert.equal(result.code, 'unknown_task');
+  assert.deepEqual(calls, []);
 });
 
 test('a malformed proposalId or expectedHeadSha is refused before the route is called', async () => {

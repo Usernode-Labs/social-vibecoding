@@ -587,6 +587,52 @@
   // proceed to grab whatever is there once it passes.
   const FIRST_FRAME_TIMEOUTS_MS = { play: 8000, metadata: 1500, resume: 1500 };
 
+  // Resolve with getDisplayMedia's answer, or reject with code 'abandoned'
+  // the moment `signal` aborts. Firefox on a Mac hands the choice to the
+  // system picker, and a Firefox that has been running a while can take the
+  // viewer's "Share This Window" and never settle the promise at all; the
+  // feedback dialog waiting on it sat with its attach buttons disabled until
+  // it was closed. The call itself cannot be cancelled, so a stream that
+  // does turn up after the attempt was given up goes to `onLate` (which
+  // stops it) instead of being left sharing with nothing reading it.
+  function untilAbandoned(promise, signal, onLate) {
+    if (!signal) return promise;
+    return new Promise((resolve, reject) => {
+      let abandoned = false;
+      const abandon = () => {
+        abandoned = true;
+        const err = new Error('Screen capture was given up before the browser answered');
+        err.code = 'abandoned';
+        reject(err);
+      };
+      if (signal.aborted) abandon();
+      else signal.addEventListener('abort', abandon, { once: true });
+      Promise.resolve(promise).then((value) => {
+        signal.removeEventListener('abort', abandon);
+        if (abandoned) { if (onLate) onLate(value); return; }
+        resolve(value);
+      }, (err) => {
+        signal.removeEventListener('abort', abandon);
+        if (!abandoned) reject(err);
+      });
+    });
+  }
+
+  // Whether a window/screen share's frames are far too small to hold this
+  // page: under a quarter of the viewport in either direction. A real share
+  // of the page's own window or screen lands at roughly 0.5 to 2 frame
+  // pixels per CSS pixel, so this is loose on purpose and only catches a
+  // share of something much smaller than the page. On a Mac that is
+  // typically the browser's own floating "sharing" indicator, which the
+  // system picker lists beside the real windows (Firefox's is about 380x32).
+  // Said straight away, before the viewer drags out a selection that could
+  // only end in "couldn't locate this page".
+  const MIN_SHARE_SCALE = 0.25;
+  function tooSmallForPage(frameW, frameH, viewportW, viewportH) {
+    if (!(frameW > 0) || !(frameH > 0) || !(viewportW > 0) || !(viewportH > 0)) return false;
+    return frameW < viewportW * MIN_SHARE_SCALE || frameH < viewportH * MIN_SHARE_SCALE;
+  }
+
   const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
   const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 
@@ -624,6 +670,8 @@
     settleWithin,
     TIMED_OUT,
     FIRST_FRAME_TIMEOUTS_MS,
+    untilAbandoned,
+    tooSmallForPage,
     MAX_UPLOAD_BYTES,
     markerCssCenters,
     directMapping,
@@ -810,20 +858,30 @@
     return el;
   }
 
+  function stopStream(stream) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch { /* best effort */ }
+  }
+
   // Full selection + capture flow. opts.onCaptureStart fires once the
-  // stream is granted (app.js hides the feedback modal there). Resolves
-  // { blob, contentType } or rejects with a coded Error:
-  //   'unsupported' | 'denied' | 'cancelled' | 'register_failed' |
-  //   'capture_blank' | 'capture_failed'
+  // stream is granted (app.js hides the feedback modal there). opts.signal,
+  // when it aborts before then, gives the attempt up (see untilAbandoned).
+  // Resolves { blob, contentType } or rejects with a coded Error:
+  //   'unsupported' | 'denied' | 'cancelled' | 'abandoned' |
+  //   'register_failed' | 'wrong_surface' | 'capture_blank' | 'capture_failed'
   async function start(opts = {}) {
     if (!isSupported()) throw fail('unsupported');
 
-    // Synchronous-enough with the click: getDisplayMedia is the first
-    // await, preserving the transient user activation.
+    // Synchronous-enough with the click: getDisplayMedia is called before
+    // the first await, preserving the transient user activation.
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions());
+      stream = await untilAbandoned(
+        navigator.mediaDevices.getDisplayMedia(displayMediaOptions()),
+        opts.signal,
+        stopStream,
+      );
     } catch (err) {
+      if (err && err.code === 'abandoned') throw err;
       const code = classifyDisplayMediaError(err);
       if (code === 'denied') throw fail('denied', 'Screen capture was declined');
       // The reason itself is what a bug report needs.
@@ -855,7 +913,7 @@
       }
     };
     cleanupBits.push(() => video.remove());
-    cleanupBits.push(() => stream.getTracks().forEach((t) => t.stop()));
+    cleanupBits.push(() => stopStream(stream));
 
     try {
       // Bounded (#3011): see settleWithin. A rejection still fails the
@@ -874,6 +932,15 @@
       if (!video.videoWidth) {
         throw fail('capture_blank', 'The shared window or screen sent no picture');
       }
+      // Something far smaller than this page was shared (see
+      // tooSmallForPage). Also said now, with the dialog still up.
+      if (!tabMode && tooSmallForPage(video.videoWidth, video.videoHeight, window.innerWidth, window.innerHeight)) {
+        throw fail('wrong_surface', `The shared surface is ${video.videoWidth}x${video.videoHeight}, far smaller than this page`);
+      }
+      // Given up while the first frame was on its way (the dialog closed, or
+      // an image chosen instead): there is no dialog to hide and nothing to
+      // put an overlay over. Cleanup ends the share.
+      if (opts.signal && opts.signal.aborted) throw fail('abandoned');
 
       if (typeof opts.onCaptureStart === 'function') opts.onCaptureStart();
 
@@ -890,7 +957,7 @@
       selection.style.cssText = 'position:absolute;display:none;border:1px solid rgba(255,255,255,0.9);box-shadow:0 0 0 100vmax rgba(0,0,0,0.6);';
       overlay.appendChild(selection);
       const hint = document.createElement('div');
-      hint.textContent = 'Drag to select the area to capture. Esc to cancel';
+      hint.textContent = PlatformI18n.t('dialogs:screenshot.hint');
       hint.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(24,24,27,0.92);color:#fff;font:500 13px system-ui,sans-serif;padding:8px 14px;border-radius:9999px;pointer-events:none;max-width:90vw;text-align:center;';
       overlay.appendChild(hint);
 
@@ -899,12 +966,12 @@
       const confirmBtn = document.createElement('button');
       confirmBtn.type = 'button';
       confirmBtn.textContent = '✓';
-      confirmBtn.setAttribute('aria-label', 'Attach selected area');
+      confirmBtn.setAttribute('aria-label', PlatformI18n.t('dialogs:screenshot.attach'));
       confirmBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#0a7cff;color:#fff;font-size:18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.textContent = '✕';
-      cancelBtn.setAttribute('aria-label', 'Cancel screenshot');
+      cancelBtn.setAttribute('aria-label', PlatformI18n.t('dialogs:screenshot.cancel'));
       cancelBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#3f3f46;color:#fff;font-size:16px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
       controls.appendChild(confirmBtn);
       controls.appendChild(cancelBtn);

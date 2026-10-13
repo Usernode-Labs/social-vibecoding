@@ -2,7 +2,7 @@
 //
 // Every id in public/index.html is an API. public/js/** reaches for them with
 // getElementById (57,799 lines of it, none of which the type checker sees),
-// public/css/app.css styles some of them, and dapp.json's 315 declared tests
+// public/css/app.css styles some of them, and dapp.json's declared checks
 // select against deep chains of them — so a single lost id is a silently
 // broken screen plus a blocked merge, and it is by far the most damaging way
 // a markup conversion can go wrong.
@@ -58,6 +58,31 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #4073: the waiting screen says the waitlist in one line ────────
+  'waiting-who': 'The username inside "Your account … doesn\'t have platform access yet." on the waiting screen. The screen says "You\'re on the waitlist" and one line about your spot now (features/auth/waiting.tsx), as the onboarding canvas draws it, so nothing names the account there.',
+  'waiting-check-state': 'The waiting screen\'s "Last checked …" / "Connection issue, will retry" line. The screen still checks every 30 seconds and lets the account in the moment access is granted; it no longer reports each check, and a check that fails is tried again on the next one.',
+  // ── The create-project dialog is retired ───────────────────────────
+  // Create opens "What do you want to make?" (features/first-session/
+  // make.tsx), the screen the first session asks with, for everyone. It
+  // imports a GitHub repo in place (import-repo.tsx), and every new project
+  // ends on its made screen. Who a project is for and who approves are its
+  // own levers afterwards (Invite, "Make it public", Members & approvals),
+  // and the starter templates are gone. The ids the dialog ADDED since the
+  // baseline (its step indicator, Next, the invite and approval steps, the
+  // brief and the one-line description) left ADDED_IDS with it.
+  'create-modal': 'The create-project dialog\'s root, one of the nine static dialogs. Create opens the make screen instead (App.showCreateModal → window.UsernodeReact.firstSession.create()); #create is its route and #create/import its import form.',
+  'create-card': 'The dialog\'s card, which carried every answer as data-* for app.css. The make screen has two questions and no steps to unfold.',
+  'create-title': 'The dialog\'s "New project" / "Import a project" title. The make screen says "New project" over "What do you want to make?", or "Import a GitHub repo".',
+  'create-form': 'The dialog\'s form. The make screen\'s two forms (make.tsx, import-repo.tsx) render only once it is opened, so they are not in the prerendered shell.',
+  'create-import-block': 'The repo URL and Check under "Import a GitHub repo". They are the make screen\'s import form now (#make-import-url, [data-make-import-check]), opened by its small "Import from a GitHub repo" or #create/import.',
+  'import-url': 'The repo URL field. #make-import-url in the import form.',
+  'import-check': 'The Check pill. [data-make-import-check] in the import form; GET /api/github/verify-access as before.',
+  'import-status': 'The check\'s status row. #make-import-status in the import form, which also says what is missing on a press of Import it.',
+  'create-name-block': 'The name (and "What should it do?") card. The make screen asks the same two, and the import form asks the name.',
+  'app-name': 'The project name field. #first-session-name on the make screen, #make-import-name on the import form.',
+  'create-error': 'The dialog\'s error line. Each form says its own (role="alert"), and POST /api/apps\'s answer is read by dialogs/post-create-app.ts for both.',
+  'create-cancel': 'Cancel. The make screen has ✕ ([data-make-close]), Escape and the device back press.',
+  'create-submit': 'Create / Import. Make it, or Import it, never pale for a missing answer.',
   // ── Communities, stage 3: the create dialog asks who it is for ─────
   'create-visibility-block': 'The create dialog\'s last step, two rails for who can build and who can see. The dialog now opens on who a project is FOR (Just me, A group, A community: #create-card[data-audience]), and each answer implies both columns (services/create-options.js); "public to use, invite-only building" stays in the project\'s settings. The approval rule a group or a community picks takes the last step instead (#create-approve-block).',
   'create-vis-hint': 'The rails\' "Apps everyone can build are always public to view" hint. With no rails there is no invalid combination left to explain.',
@@ -305,10 +330,62 @@ const RETIRED_IDS = {
   'landing-apps': 'The directory grid. 41 tiles, 36 locked, three of the four screens a visitor scrolled through, and none of them usable signed out. The directory is still FETCHED — ?shot=anon-back picks its target from it, pull-to-refresh re-runs it, and _loadLandingApps stays a router seam — it simply renders nothing.',
   // ── #2979: the activation-code prompt leaves sign-in ────────────────
   'register-link': 'The "Have an activation code? Register" foot pin under the password sign-in step. The #register route (register.tsx) and its own activation-code field are untouched — this retires only the login screen\'s entry point into it, along with the foot-pinning spacer and the now-unused REGISTER_LINE class constant.',
+  // ── #3027: Send feedback takes several images ──────────────────────
+  // The one-image preview row held one <img>, one status line and one ✕.
+  // With up to three images each gets its own of all three, built by
+  // feedback-controller.js inside the (kept) #feedback-screenshot-preview
+  // list, so three fixed ids would be duplicates. Nothing selected on them
+  // outside the controller.
+  'feedback-screenshot-img': 'The single attachment preview <img>. Each attached image is now an item the controller appends to #feedback-screenshot-preview, with its own preview and an alt text numbered by position.',
+  'feedback-screenshot-state': 'The single attachment\'s status line ("Uploading…", "Saved with your feedback…"). Each thumbnail item carries its own status span now, so an upload failing on one image is reported beside that image.',
+  'feedback-screenshot-remove': 'The single ✕ that dropped the only attachment. Each thumbnail has its own 48px remove button, labelled "Remove image N", so one picture can go without the others.',
+  // ── #4311: the Settings choice of where changes get built is gone ────
+  // #1191 made these three markup in Settings → Connectors & CLI (they had
+  // been injected at runtime), so they were declared in ADDED_IDS; the
+  // frozen baseline never recorded them. Nothing acted on the saved value
+  // after #4268 (agent sessions pick where work runs in their own Build-with
+  // sheet), so the row, its save route and its /api/auth/me field went
+  // together. users.dev_flow_preference stays in the schema so a rollback
+  // still reads it.
+  'dev-flow-pref-section': '#4311: the "Where changes get built" part of Settings → Connectors & CLI. Nothing chose a venue from its value any more.',
+  'settings-dev-flow': '#4311: that part\'s dropdown, which saved users.dev_flow_preference through POST /api/me/dev-flow (removed).',
+  'settings-dev-flow-status': '#4311: the dropdown\'s save/error line.',
+  // ── #4891: the email sign-up asks for no password ──────────────────
+  // The set-password step (#otp-step-password, named for its route) asks a
+  // new account for its username and nothing else: it signs in with an
+  // emailed code and adds a password in Settings (#cp-title-add below).
+  'otp-new-password': '#4891: the set-password step\'s optional New password field. A password is one more decision at the very first step; Settings → Account offers "Add a password" instead.',
+  'otp-confirm-password': '#4891: the same step\'s Confirm password field, gone with the password it confirmed.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #4405: custom domains ───────────────────────────────────────────────
+  'app-domain-modal': '#4405: the Custom domain dialog (features/dialogs/app-domain.tsx), opened from the hub\'s ⋯ menu\'s Settings & rules row for whoever manages the project, or by `?shot=app-domain`. Ships hidden and EMPTY but for its title, its error line and the Close pill; everything else arrives from GET /api/apps/:slug/domain in its onOpen, so the prerender and the first client render agree. The ids that render behind that read (and so are not in the prerender, nor here): #app-domain-input and #app-domain-add (the claim form), #app-domain-section with #app-domain-status (the state in words and the sentence that says why), #app-domain-records (the CNAME and TXT rows dapp.json\'s declared check selects on), #app-domain-check, #app-domain-open and #app-domain-remove.',
+  'app-domain-error': '#4405: the dialog\'s error line, hidden until a request fails.',
+  'topics-modal': '#4417: the Topics dialog (features/dialogs/topics.tsx), opened from the project page\'s Settings & rules › Topics row. Each change it makes (a new topic, a rename, a merge, an archive) opens a PR against dapp.json\'s `topics` for the group\'s vote. Ships hidden and EMPTY but for its title, its line and its error line; everything else is drawn from the community record once it is open, so the prerender and the first client render agree. The ids behind the open (not in the prerender, nor here): #topics-form with #topics-name, #topics-handle and #topics-about, #topics-into, #topics-submit and #topics-status.',
+  'who-decides-modal': '#4666: the Who can see & change it sheet (features/dialogs/who-decides.tsx), opened from the Workshop rule line\'s Rules, Settings & rules, App settings and Members. Who can see the project and how its changes are approved (four presets, or groups and rules of its own) go up as ONE PR against dapp.json\'s `visibility` and `governance` blocks. Ships hidden and EMPTY but for its root and card; everything is drawn from the community record once it is open, so the prerender and the first client render agree. The one id behind the open (not in the prerender, nor here): #who-group-name.',
+  'members-who-decides': '#4666: Members & approvals\' row that opens the Who can see & change it sheet, in place of the approval controls on every project but the platform\'s own. Ships hidden; members-controller.js shows it to whoever manages the project.',
+  'topics-error': '#4417: the Topics dialog\'s error line, hidden until a proposal is refused.',
+  'share-homeroom-address': '#4405: the "Also at <homeroom host>" line under Share\'s link, shown only when the link offered is the project\'s custom domain. Ships hidden and empty.',
+  // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
+  'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',
+  'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
+  'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
+  'report-modal': '#2721 shared reporting dialog',
+  // ── B8: Suggest an improvement answered by Homeroom bot ─────────────────
+  'feedback-sent-line': 'B8: the line under the filed-request confirmation\'s heading, worded by the controller: "Your idea is on the board now. Find it on your profile…", or, where Homeroom bot builds it, "Homeroom bot is building it now, usually about 8 minutes…" (#3971).',
+  'feedback-sent-chat': 'B8: Open chat, the confirmation\'s main button when Homeroom bot builds the request: the chat where its card is.',
+  'feedback-sent-fix': 'B8: the confirmation\'s small "Build it now with a coding agent" link, for somebody who could start a change there.',
+  // ── #3971: a first request Homeroom bot builds is a first request ───────
+  'feedback-sent-first': '#3971: "Your first request!" inside the bot\'s confirmation. B8 skipped the first-request moment whenever the bot built the request; it comes back here, beside Open chat rather than in place of it. Hidden unless the post was the person\'s first request and the bot builds it.',
+  'feedback-sent-first-line': '#3971: that block\'s "You just helped shape <app>." line, named by the controller after the app the request was filed to.',
+  // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
+  // in the viewer's own clock (it prerenders the server's UTC boundary).
+  'settings-spend-reset': '#3230 spend card reset line, localized at reveal',
+  // #3319: Settings → Theme's "Keep sidebar open in apps" switch, React-wired
+  // (features/settings/sections/theme.tsx) and desktop only.
+  'settings-rail-pinned': '#3319 keep-sidebar-open-in-apps switch',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
@@ -335,7 +412,7 @@ const ADDED_IDS = {
   // a discussion or an agent chat has arrived, so none of them is in the
   // prerendered document, which is what this map is for.
   'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
-  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
+  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. Still presentation, so not in the route; since #4783 the choice is remembered per device, and All is both the fresh-device start and the fallback for an unknown saved value.',
   'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
   // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
   // (#messages-filter-channels, below). It was only ever an ADDED id, so it
@@ -349,26 +426,39 @@ const ADDED_IDS = {
   // NOT in this map and that is not an omission: all six render only once
   // somebody has tapped or once a tab has filtered to nothing, so none of
   // them is in the prerendered document, which is what this map is for.
-  // #workshop-scope left this map with the chip itself (#2759), and came
-  // back with it in #3051, below. The chip on an app's own Workshop is
-  // #dev-ws-scope-chip, which renders client-side and was never in the
-  // prerendered document.
-  'workshop-scope': '#3051 (the owner\'s request, reversing #2759): the all-apps Workshop\'s scope chip, reading "All apps" with the grid glyph. #2759 took it off because the screen was then only the list of your apps and the chip\'s panel repeated it; the screen now carries the app Workshop\'s own Current status and Needs you tabs read across all of your apps, and the chip is what says so. Rendered unconditionally and closed, so the prerender and the first client render agree; its panel (#workshop-scope-picker) renders only once pressed, so it is not in this map.',
-  'workshop-tab-status': '#3051: the all-apps Workshop\'s Current status tab, the default. Its pane is the list of your apps with their two numbers (#workshop-list, unchanged) and, under it, the work you have in flight item by item under each app, from GET /api/workshop/items. #2718\'s review retired an earlier tab of this id because it only FILTERED that list of apps; this one does not filter it.',
-  'workshop-tab-needs': '#3051: the all-apps Workshop\'s Needs you tab: the votes waiting on you, item by item, grouped under each of your apps. `?ws=needs` opens the screen on it, the same parameter the app Workshop reads, so a declared check can reach the pane without a click. The pane itself is `[data-workshop-pane="needs"]`, all client data, rendered only while the tab is showing, so it is not in the cold document.',
+  // #workshop-scope left this map with the chip itself (#2759), came back
+  // with it in #3051, and left again in #852: the Communities screen's "All
+  // ⌄" is the header's #header-scope-switch at every width now, which is
+  // conditional and so not in this map. The chip on an app's own Workshop
+  // was #dev-ws-scope-chip, which rendered client-side and was never in the
+  // prerendered document; #3295 retired it for the header's
+  // #header-app-switch, which is conditional and so not in this map either.
+  // #workshop-tab-status and #workshop-tab-needs (#3051) left with the
+  // tabs they named: the Communities screen is one page, and the Needs you
+  // feed opens from a row at its top ([data-workshop-needs-open]) as a page
+  // with a way back, so neither is in the document any more.
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
-  'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
-  'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
-  'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
+  // #4417: the rail's Recents (#platform-recents, #platform-recents-head,
+  // both ADDED here by #2802 and never in the frozen baseline) is retired:
+  // the desktop strip's five recent apps and the section column beside it
+  // take its place, and the conversations it listed are Messages' own list.
+  'platform-strip-apps': '#4417: the desktop strip\'s five recent apps, between the last section (Communities) and you: each app\'s tile over its name, the still-open dot on the apps kept alive (features/nav/strip-apps.tsx). Ships `hidden` and EMPTY; the apps arrive from localStorage one commit after mount, so the prerender and the first client render agree. Never drawn on the phone\'s bar. Its rows carry no ids, only data-strip-app.',
+  'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
+  // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
+  // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
-  // #workshop-total-working, #workshop-total-needs and
+  // #workshop-total-working, #workshop-total-needs (both retired again with
+  // the Communities screen's legend, UI overhaul) and
   // #app-menu-workshop-owed are figures read from data, so they do not exist
   // until a fetch answers and the prerender carries none of them. ADDED_IDS
   // is checked BOTH ways — an entry here that is not in the document fails
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
+  // #app-menu-row-invite ("Invite to community") left the menu in the UI
+  // overhaul (#3362): invite links open from the hub's Invite, and the
+  // sheet's invite pane is unchanged.
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
@@ -396,8 +486,11 @@ const ADDED_IDS = {
   // #messages-new-agent, never shipped in the prerendered document (it is
   // gated on the global-chat flags), so it was never in this map. Both were
   // only ever ADDED ids, so they simply leave.
-  'messages-agent-dialog': '#2778: "which app?" — the Agent chat choice under the "+". An agent chat is, for now, a new dev session on one app, so this lists the apps the viewer is a member of (the same rows as their channels, already loaded) and opens the chosen one\'s new-session screen, where nothing is created until the first send. A React-owned dialog driven through useDialog like the other Messages dialogs; a platform-wide agent session will take its place later without the "+" changing.',
-  'messages-agent-apps': '#2778: the agent dialog\'s list of apps — a stable host a declared check can find, whatever is in it.',
+  // #messages-agent-dialog and #messages-agent-apps left this map in #2779:
+  // the "+"'s Agent choice asked which app and opened a classic dev session
+  // there, and classic sessions are no longer created; it opens an unsent
+  // agent session instead, which needs no app first. Both were only ever
+  // ADDED ids, so they simply leave.
   "messages-search": "#2718 review: the Messages inbox's search. It takes the place of the <h2> that used to name the screen under a bar already naming it \u2014 two titles, one word, an inch apart. A CLIENT-SIDE match over the three lists already in memory (people, app discussions, agent chats), so it answers on every keystroke and adds no endpoint; what it matches is the text each row DRAWS, because a search that found rows by a field the reader cannot see returns results they cannot explain. It composes with the filter strip rather than replacing it, and a query that matches nothing says so in its own line rather than borrowing the empty inbox's offer to start a conversation.",
   'sidebar-toggle': '#2718 review: folds and unfolds the desktop rail, from the header\'s left group — the window\'s top-left corner, where VS Code, Slack, Linear and Notion all put this control. DESKTOP ONLY: app.css gives it `display` inside `@media (min-width: 768px)` and nothing else does, because a phone\'s bar is at the FOOT of the screen and is the only navigation there is, so folding must never reach it. It ships PRESSED, matching navStore\'s `railOpen: true` and the visible bar the prerender carries; a folded rail is always something the viewer did, and it is session-only for the same reason. It renders nothing at all where the route has no rail (inside an app, chromeless, signed out), which is also what makes the header\'s left group empty on those screens rather than holding a dead control. The way back from folded is #platform-rail-peek, the same hot zone an open app already uses.',
   // ── #2370: the social-account scope disclosure ───────────────────
@@ -407,16 +500,13 @@ const ADDED_IDS = {
   // ── QA 2026-09-24 Q11: the register form states the account rules ──
   'reg-username-hint': 'The line under the register form\'s username field: the handle rule (letters, numbers and underscores, 3 to 32 characters) while the field is fine, and the server\'s sentence about the name when POST /api/auth/register refuses it (`field: "username"`). Registration now applies the same rule a rename does; the input names it through aria-describedby.',
   'reg-password-hint': 'The same line under the password field: "At least 8 characters", the rule Change password already enforced and registration now does too, or the server\'s refusal when it is `field: "password"`.',
-  // ── #1911: the create-app dialog unfolds in steps ─────────────────
-  'create-step-indicator': 'The "Step N of M" line under the create dialog\'s title. The dialog used to show every choice on one page; its steps unfold in one card now (since communities, stage 3: who it is for, what and how to start, the details, and for a group or a community made new who approves), and this names how far it has unfolded and how far these answers go.',
-  'create-next': 'The create dialog\'s Next pill, which unfolds the next step. The details step runs the guards the old single page ran at submit, one step earlier. Hidden once the last step for the answers so far is showing (app.css keys it off #create-card[data-final]), when Create takes its place, and on the two question steps, where pressing a row moves on by itself (request #3160).',
-  // ── Communities, stage 3: who it is for, and who approves ─────────
-  'create-invite-block': 'The create dialog\'s "Invite people" card, under the collapsed "A group" row: a group names its people when it is created, and they are invited when it is (POST /api/apps `invitees`). Shown only for a group, by app.css off #create-card[data-audience].',
-  'create-invitees': 'The usernames a group is created with, comma separated, in an uncontrolled input so the prerender carries no value.',
-  'create-approve-block': 'The create dialog\'s last step for a group or a community made new: Members vote, or People I pick (starting with the creator), with "at least N yes votes" as its follow-up. Written into the new repository\'s dapp.json (POST /api/apps `governance`).',
-  'create-approvals-n': 'The "Yes votes needed" number under People I pick → At least a number (1 to 50).',
+  // ── #3575: the person chooses the handle, and is told it is public ──
+  'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
   // ── Communities, stage 5: the first run ─────────────────────────────
-  'home-getting-started': 'Home\'s Getting started card: the welcome tour and three first steps for an account that came through "What communities do you want to join?", ticked off from what it did (GET /api/me/getting-started). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
+  // #home-getting-started left this map in #4635: every new account gets a
+  // tour, so Home's Getting started card went, and a new account's
+  // First challenges are ordinary cards in Home's Challenges area. It was
+  // only ever an ADDED id, so it simply leaves.
   // ── #1374: per-app notification settings ─────────────────────────
   // One switch per category governs the bell here AND the phone push,
   // because the preference gates whether the notification is CREATED and
@@ -443,20 +533,20 @@ const ADDED_IDS = {
   // nothing answered "which of my apps wants something from me", short of
   // opening each one in turn. This is that page's two numbers, once per app.
   'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
+  'profile-proposals-screen': '#5310: the "Your proposals" SCREEN root (#profile/proposals), a React-owned sibling of #workshop-screen: every proposal the viewer has started, grouped by status. Ships hidden and EMPTY; the rows arrive from GET /api/me/proposal-history in the controller\'s open(), so the prerender and the first client render agree.',
   'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
   'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────
   'app-access-section': '#2304: the canonical app access editor, above the existing Danger zone. It ships hidden and appears only for a manageable, non-self-hosted app.',
-  'app-access-status': '#2304: proposal success, duplicate-proposal and failure feedback for the access editor. It ships empty so the React-owned dialog hydrates exactly.',
-  'app-access-propose': '#2304: the explicit action that turns a selected access draft into the existing vote-gated visibility proposal.',
+  'app-access-open': '#4666: the Access section\'s one button, which opens the Who can see & change it sheet (features/dialogs/who-decides.tsx). It replaced the three access choices and their Propose button (#app-access-propose) and status line (#app-access-status): who can see it and how changes are approved are one proposal now.',
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────
-  'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
+  'settings-openrouter-model-search': 'Filters the OpenRouter catalog by model name, id or provider without another network request.',
   'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
-  'settings-openrouter-refresh-models': 'Forces a fresh key-visible catalog from OpenRouter and reports when it was refreshed.',
+  'settings-openrouter-refresh-models': 'Asks OpenRouter for a fresh catalog (at most once a minute) and reports when it was refreshed.',
   'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
   'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
   // ── #1538: check my status ────────────────────────────────────────
@@ -499,6 +589,8 @@ const ADDED_IDS = {
   'feedback-sent-notice': 'The "Thanks! Filed against …" line and any bounty outcome, carried into the sent confirmation (#3186).',
   'feedback-sent-mine': 'Opens the Me screen\'s "Your feedback" list (#profile?feedback) from the sent confirmation (#3186).',
   'feedback-sent-done': 'Dismisses the sent confirmation (#3186).',
+  // ── #4680: the form and the list point at each other ─────────────────
+  'feedback-form-mine': '#4680: the form\'s small "See your requests" link, under the intro line — the same route the two confirmations\' links open (#profile/your-requests), so what is already asked for is one tap away before writing a new one. Not hidden in the prerender, so the server render and the client render agree. Worded by React (t()); the click is ./feedback-controller\'s openMine, the same split as #feedback-sent-mine.',
   'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse (a small blue corner spinner since the #2779 follow-up), rendered only while a dev session the viewer can see is mid-turn (their own, since the same follow-up). It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
@@ -649,6 +741,10 @@ const ADDED_IDS = {
   // live: Settings → Experimental, beside the other per-user preview flag.
   'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
   'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
+  // #4289 — the experimental C shortcut for Suggest an improvement, beside
+  // the other opt-ins in Settings → Experimental. Kept on the device
+  // (features/improve/suggest-shortcut.ts), so it has no save/error line.
+  'suggest-shortcut-enabled': 'Opt-in switch for pressing C to open Suggest an improvement on a computer (#4289).',
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
@@ -665,22 +761,12 @@ const ADDED_IDS = {
   // (#1412's #improve-version-dot came and went: the Streamlined Concept
   // returned the version cue to the hamburger under its original
   // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
-  // ── #1191: the build-flow preference stops being injected ────────
-  // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
-  // which created the block and inserted it into the Connections pane on
-  // every render. The reason was this very baseline: the shell's body used to
-  // be a hand-written document, so a new settings control had nowhere to go.
-  // The pane is a component now, so the block is markup and its ids are a
-  // deliberate line here — which is also what stops a legacy module writing
-  // into a subtree React owns.
-  'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
-  'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
-  'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
   'cli-setup-guide': 'Always-visible local-agent setup in Settings → CLI access (#1609). It is static section markup so capability detection and credential-list state cannot blank the instructions.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
+  'feedback-screenshot-count': 'How many images fit and how many are attached (#3027: "You can attach up to 3 images.", "2 of 3 images attached."). Ships empty and hidden like #feedback-status; the controller fills it on every open and every add or remove.',
   // ── #1603: the description's requirement, said out loud ─────────
   // The field was always mandatory — submitFeedback returned early on an
   // empty one — but nothing on screen said so and the refusal was a bare
@@ -690,7 +776,13 @@ const ADDED_IDS = {
   // marking one of two fields required only reads as a rule if the other's
   // silence is deliberate rather than an omission.
   'feedback-text-label': 'The Description label on #feedback-text, which had a placeholder and no label at all. Also the anchor the declared check selects the asterisk through, so the marker is asserted where a reader would look for it rather than anywhere on the card.',
-  'feedback-text-required': 'The red asterisk inside that label. `aria-hidden` because the accessible requirement is carried by aria-required on the field itself, and a screen reader announcing "star" adds nothing to that.',
+  // #feedback-text-required, the red asterisk in the description's label
+  // (#1603), left with the label's old words: "What should change?" is plainly
+  // the one thing the request needs (UI overhaul). aria-required on the field
+  // and the refusal under it are unchanged.
+  'feedback-target-label': 'UI overhaul: "Where should this go?", the Suggest an improvement dialog\'s label for its destination row (#feedback-target is aria-labelledby it). It asks the question the grey #feedback-target-hint used to; the hint is only the refusal now.',
+  'feedback-target-app-name': 'UI overhaul: the app option\'s first line, the app\'s NAME ("Run Club"), written by feedback-controller.js on each open ("This app" with no name, "No app open" with no app). It was the whole button\'s text, "This app (Run Club)".',
+  'feedback-target-app-sub': 'UI overhaul: the app option\'s second line, "This app", mirroring the platform option\'s "Homeroom / The platform itself". The controller hides it when the first line already says "This app".',
   'feedback-text-error': "The inline refusal under the description: \"Please add a description.\" Deliberately its OWN node rather than a fifth writer of #feedback-status, which has an explicit newer-and-more-specific-wins rule (paintQueueState) that would either swallow this message or let it erase the offline hint. Ships empty and hidden, like #feedback-status: the controller owns the text, and a message rendered before the submit that earns it would both lie on open and mismatch on hydration.",
   'feedback-title-label': 'The Title label, marked optional. The title generates itself from the description and the server names the issue when it is blank, so its emptiness is a working state - which is worth saying next to a field that is now visibly required.',
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
@@ -705,7 +797,7 @@ const ADDED_IDS = {
   // violet "Improve" pill, between the bell and the mark. The panel it opened
   // is reached from #app-menu-row-improve below; its glyph and both its dots
   // kept their ids and are listed here still, on the row and on the mark.
-  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
+  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn. The Homeroom menu\'s one button since the UI overhaul, "Suggest an improvement".',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
   // #improve-version-dot is NOT here any more, and did not move: it is
   // retired. Amber while a build was deploying or downloading, violet once
@@ -716,7 +808,17 @@ const ADDED_IDS = {
   // it is. `Improve.setVersionState` and the store field stay; the second
   // renderer is what went. It never reached tests/baselines, so it leaves
   // this map without entering RETIRED_IDS.
-  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
+  // #improve-row-new-session and #app-menu-sessions LEAVE THIS MAP rather
+  // than entering RETIRED_IDS, because the frozen baseline never recorded
+  // either: the UI overhaul added them to the prerender, and the
+  // first-session run-through (5 Oct 2026) took them out of it. They are
+  // the Homeroom menu's Agent chats section (it was "Continue", then "Agent
+  // sessions", then "More") and the Build it now row that leads it,
+  // same ids, same call. The section is shown only to somebody who has had
+  // an agent session, which is their own data, known after mount
+  // (app-context-sheet.tsx AgentChats), so the prerender draws nothing
+  // there, as it never drew the sessions inside it. dapp.json's checks
+  // select both in the open menu, as a viewer with sessions.
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.
@@ -811,6 +913,10 @@ const ADDED_IDS = {
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Homeroom item chooser for Messages (#488).',
+  // #3660: a card's ⋯ menu said "Share to Messages" and took the sharer to
+  // the Messages screen to pick a conversation and attach the card there.
+  // Share to… is one dialog instead, mounted beside the Messages dialogs.
+  'share-to-dialog': 'React-owned Share to… dialog (#3660): pick a DM, a group, #general or an app\'s discussion, and the card is posted there (features/messages/share-to-dialog.tsx).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — eligible users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state. The
@@ -859,23 +965,23 @@ const ADDED_IDS = {
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
   'notifications-screen-tabs': 'The sheet\'s sticky Unread | Messages | All tab row. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
   'notifications-tab-unread': 'The sheet\'s FIRST tab, and the one it opens on. All led for a round, which meant opening an inbox on everything you had already read: the bell is tapped because it has a count, and the count is the unread.',
-  // (#notifications-see-older, the footer link that takes a filtered tab to
-  // All rather than paging another batch into the filter, is NOT here: it
-  // renders only when there is something more to see — rows the filter is
-  // hiding, or another server page — and the prerendered sheet has no rows at
-  // all. Same reason #notifications-all-messages is absent. Its counterpart
-  // #notifications-load-older, the real pager, renders only on All.)
-  'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
+  // (#notifications-see-older and #notifications-hide-older, the Unread
+  // footer's reveal and collapse pair, are NOT here: they render only when
+  // there is something more to see — rows the Unread filter is hiding, or
+  // another server page — and the prerendered sheet has no rows at all. Same
+  // reason #notifications-all-messages is absent. The Unread footer stays on
+  // Unread (#4700); the Messages footer's jump to All shares the
+  // #notifications-see-older id, and its counterpart #notifications-load-older,
+  // the real pager, renders on All and under an expanded Unread.)
+  'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them, and it is the only tab that pages more rows in on its own cursor. The Unread footer\'s reveal stays on Unread (#4700); only the Messages footer still steps sideways into this tab.',
   'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
-  // ── #2779: agent sessions (experimental, behind a per-user flag) ──
+  // ── #2779: agent sessions (on for everyone; the Experimental pane's
+  //    switch and its status line are retired and left this map) ──
   'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
-  'settings-agent-sessions-row': '#2779: the Experimental pane\'s agent-sessions row. Ships hidden; settings.js shows it only to a user the server lets choose (agentSessionsChoosable), so the id is how that one writer finds it.',
-  'agent-sessions-enabled': '#2779: the agent-sessions switch. settings.js binds its change handler by id (POST /api/me/agent-sessions), the same way the two switches above it are bound.',
-  'agent-sessions-status': '#2779: the switch\'s status line, where a refused or failed save says why. Ships empty and hidden, like the two status lines above it.',
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────
@@ -923,12 +1029,31 @@ const ADDED_IDS = {
   // ── The prototype's Challenges page: a History segment ──────────────
   'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
   'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
-  // ── The create dialog asks what the project is ──────────────────────
-  'app-description': 'The create dialog\'s optional "What is it?" line, under Project name in the same card (#create-name-block). A project made new sends it as `description`, which the template writes into the new repository\'s dapp.json — the line the join screen, Discover and the project\'s page show. Hidden for an import (app.css), whose own dapp.json describes it.',
   // The channels moved out of Messages onto their communities' hubs, so the
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.
   'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
+  // ── The settings restructure: Account opens with a Profile part ─────
+  'settings-profile-section': 'The Profile part at the head of Settings\' Account page (features/settings/sections/profile.tsx): who is signed in, and the way to Me\'s Edit profile sheet, where name, photo, bio and the public page are edited. Settings had no route to that sheet, so someone who came to Settings to change their name found only the username form. A settings-pane root with a stable id, like its siblings; it mounts on reveal, never in the prerender.',
+  'settings-profile-card': 'The Profile part\'s one control: an anchor to #profile?edit (features/profile/profile.js opens the Edit profile sheet off that address, as #profile?friends opens Friends), showing the avatar, the name and the @handle. dapp.json selects on it to pin that a bare #settings now opens Account.',
+  // ── #3940: Send Feedback takes one video clip ──────────────────────
+  // Three ids beside the screenshot pickers in the attachment row. The
+  // button and the hidden file input mirror #feedback-screenshot-* (the
+  // picker is a native surface, so the input never renders); the preview
+  // row's one item is built by feedback-controller.js, like the screenshot
+  // thumbnails, so it carries no id of its own.
+  'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
+  'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
+  'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
+  // ── #4891: Settings offers "Add a password" to an account with none ───
+  // Each pair is rendered once (features/settings/sections/password.tsx) and
+  // settings.js _setChangePasswordMode shows the one that fits, as it does
+  // #cp-current-row: the email sign-up no longer asks for a password, and
+  // sends the person here to add one.
+  'cp-title-change': '#4891: the Password part\'s "Change password" title, shown to an account that has a password.',
+  'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
+  'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
+  'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

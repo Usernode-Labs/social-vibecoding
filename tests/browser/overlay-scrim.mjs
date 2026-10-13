@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
 const root = new URL('../../', import.meta.url).pathname;
-const out = process.env.OVERLAY_EVIDENCE_DIR || '/tmp/overlay-rendering-evidence';
+const out = process.env.OVERLAY_EVIDENCE_DIR || '/tmp/overlay-rendering-shots';
 mkdirSync(out, { recursive: true });
 const { buildSync } = require(root + 'frontend/node_modules/esbuild');
 const bridge = buildSync({ entryPoints: [root + 'frontend/src/lib/overlay-scrim-bridge.ts'], bundle: true, write: false, format: 'iife' }).outputFiles[0].text;

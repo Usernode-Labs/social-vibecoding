@@ -301,6 +301,40 @@ test('fetchPublicIssue serves a cached open issue without a network call, full b
   }
 });
 
+test('fetchPublicIssue { fresh: true } asks GitHub even with the issue cached (#4530)', async () => {
+  // The Homeroom bot reads the issue's updated_at right after commenting on
+  // it (homeroom-bot-live.js advanceSeen); the cached list still has the
+  // time from before its comment.
+  const origFetch = global.fetch;
+  try {
+    const calls = stubFetch([fakeIssue(31, 'cached', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('StampOwner', 'stamp-repo'); // warm the cache
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => fakeIssue(31, 'cached', '2026-06-09T00:00:07Z'),
+      };
+    };
+    assert.strictEqual((await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31)).issue.updatedAt,
+      '2026-06-09T00:00:00Z', 'the cache answers an ordinary read');
+    assert.strictEqual(calls.length, 1);
+    const res = await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31, { fresh: true });
+    assert.strictEqual(calls.length, 2);
+    assert.ok(calls[1].endsWith('/repos/StampOwner/stamp-repo/issues/31'));
+    assert.strictEqual(res.issue.updatedAt, '2026-06-09T00:00:07Z');
+
+    // Rate limited, a fresh read answers nothing rather than the cached copy.
+    global.fetch = async () => ({
+      ok: false, status: 429, headers: { get: () => null }, json: async () => ({}),
+    });
+    assert.deepStrictEqual(await github.fetchPublicIssue('StampOwner', 'stamp-repo', 31, { fresh: true }),
+      { issue: null, note: 'rate limited' });
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test('fetchPublicIssue falls through to the single-issue endpoint on a cache miss', async () => {
   const origFetch = global.fetch;
   try {
@@ -690,6 +724,19 @@ test('fetchIssueComments follows Link pages oldest-first and caps at the page ce
   }
 });
 
+test('fetchIssueComments asks GitHub for the comments since a time, when given one', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = stubCommentPages([{ body: [fakeComment(1)], next: null }]);
+    await github.fetchIssueComments('O', 'r', 9, { since: '2026-10-07T09:50:00.000Z' });
+    assert.match(calls[0], /\/issues\/9\/comments\?per_page=100&since=2026-10-07T09%3A50%3A00\.000Z$/);
+    await github.fetchIssueComments('O', 'r', 9);
+    assert.doesNotMatch(calls[1], /since=/);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
 test('fetchIssueComments returns a short thread without truncation', async () => {
   const origFetch = global.fetch;
   try {
@@ -700,6 +747,26 @@ test('fetchIssueComments returns a short thread without truncation', async () =>
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(res.comments.length, 3);
     assert.strictEqual(res.truncated, false);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('#3693: fetchIssueComments carries GitHub\'s comment id, and clipIssueComments does not', async () => {
+  // The id is what the Homeroom bot recorded for each comment it posted
+  // (homeroom_bot_posts.github_comment_id), so the request page can leave
+  // out the ones its Homeroom thread already shows. The clipped thread the
+  // UI and the models read keeps its three fields.
+  const origFetch = global.fetch;
+  try {
+    stubCommentPages([{ body: [{ ...fakeComment(1), id: 2950123456 }, fakeComment(2)], next: null }]);
+    const res = await github.fetchIssueComments('O', 'r', 9);
+    assert.deepStrictEqual(res.comments[0], {
+      author: 'commenter-1', body: 'comment 1', createdAt: '2026-06-02T00:00:00Z', id: 2950123456,
+    });
+    assert.ok(!('id' in res.comments[1]), 'no id from GitHub, no id field');
+    const clipped = github.clipIssueComments(res.comments);
+    assert.deepStrictEqual(Object.keys(clipped.comments[0]).sort(), ['author', 'body', 'createdAt']);
   } finally {
     global.fetch = origFetch;
   }

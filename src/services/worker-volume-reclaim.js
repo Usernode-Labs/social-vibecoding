@@ -14,7 +14,7 @@
 //     few volumes, merged changes' first, then archived changes', then the
 //     open changes that have been idle longest.
 //   - 'closed' (the hourly GC sweep): frees only merged changes' volumes. The
-//     merge deletes its volume, but a later worker start (a visual-evidence
+//     merge deletes its volume, but a later worker start (a shots
 //     run, for one) could claim a new one.
 //
 // A volume is never taken while a worker Deployment mounts it or its change

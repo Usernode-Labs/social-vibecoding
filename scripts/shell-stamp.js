@@ -32,6 +32,7 @@ const JS_OUTPUT = 'public/shell/assets/shell.js';
 const INPUT_PATHS = [
   'frontend/src',
   'frontend/@',
+  'frontend/locales',
   'frontend/vite.config.ts',
   'frontend/vite.ssr.config.ts',
   'frontend/tsconfig.json',
@@ -39,7 +40,12 @@ const INPUT_PATHS = [
   'frontend/package-lock.json',
   'frontend/scripts/build-shell.mjs',
   'scripts/shell-stamp.js',
+  'scripts/language-packs.js',
 ];
+
+// Written by scripts/language-packs.js from frontend/locales, which is the
+// input the stamp reads. An output under frontend/src must not be one too.
+const GENERATED_CATALOGS = 'frontend/src/lib/i18n/catalogs.generated.json';
 
 const HTML_STAMP_PREFIX = '<!-- shell-build stamp: ';
 const HTML_STAMP_SUFFIX = ' -->';
@@ -49,6 +55,7 @@ const JS_STAMP_SUFFIX = ' */';
 const SKIP_DIRS = new Set(['node_modules', '.git', '.ssr']);
 
 function walk(rel, out) {
+  if (rel === GENERATED_CATALOGS) return;
   const abs = path.join(ROOT, rel);
   let stat;
   try {

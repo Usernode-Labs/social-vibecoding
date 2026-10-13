@@ -27,7 +27,7 @@ const PRIV_HOST = `secretapp.${DOMAIN}`;
 const healCalls = [];
 const fakePool = {
   async query(sql, params = []) {
-    if (/SELECT id, view_visibility FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
       if (params[0] === 'puzzle-chain') return { rows: [{ id: 1, view_visibility: 'public' }] };
       if (params[0] === 'secretapp') return { rows: [{ id: 2, view_visibility: 'private' }] };
       return { rows: [] };

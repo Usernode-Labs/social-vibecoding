@@ -55,9 +55,9 @@ test('detach leaves the running operation, synchronously and for what it schedul
   }
 });
 
-test('visual evidence scheduled from a checks run launches outside it, on the base pool', async () => {
+test('before & after shots scheduled from a checks run launches outside it, on the base pool', async () => {
   const lifecycle = require('../src/services/preview-lifecycle');
-  const orchestrator = require('../src/services/visual-evidence-orchestrator');
+  const orchestrator = require('../src/services/shots-orchestrator');
   const visuals = require('../src/services/visuals');
   const { getPool } = require('../src/db/pool');
   const config = { databaseUrl: 'postgres://unused/none' };
@@ -76,14 +76,14 @@ test('visual evidence scheduled from a checks run launches outside it, on the ba
     return { scheduled: true };
   };
   try {
-    visuals.scheduleVisualEvidence(config, guarded, 42, SHA, 'preview-ready');
+    visuals.scheduleShots(config, guarded, 42, SHA, 'preview-ready');
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(launched.length, 1);
     assert.notEqual(launched[0].pool, guarded, 'never the settled run\'s guarded pool');
     assert.equal(launched[0].pool, lifecycle.detach(() => getPool(config)), 'the base pool');    assert.equal(launched[0].headSha, SHA);
 
     const injected = { query: async () => ({ rows: [] }) };
-    visuals.scheduleVisualEvidence(config, injected, 42, SHA, 'checks-already-decided');
+    visuals.scheduleShots(config, injected, 42, SHA, 'checks-already-decided');
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(launched[1].pool, injected, 'a pool that is not the run\'s is used as given');
   } finally {

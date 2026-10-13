@@ -56,6 +56,8 @@ stub(ids.github, {
     return m ? { owner: m[1], repo: m[2] } : null;
   },
   getOctokit: async () => octokit,
+  // main's tip is a read (services/github.js getReadOctokit).
+  getReadOctokit: async () => octokit,
   isEnabled: () => true,
 });
 

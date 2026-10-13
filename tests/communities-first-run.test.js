@@ -1,18 +1,19 @@
 'use strict';
 
 // A new account's first run on the client (communities, stages 4 and 5):
-// the join screen that follows the username and terms steps, the Getting
-// started card on Home, and the small mark on a Home tile that says where a
-// project lives. The server half (what the screen lists, what answering
-// does, what ticks the card's steps) is tests/onboarding-postgres.test.js;
-// the tour that runs between them is tests/home-tour.test.js.
+// the join screen that follows the username and terms steps, and the small
+// mark on a Home tile that says where a project lives. The server half (what
+// the screen lists, what answering does) is tests/onboarding-postgres.test.js;
+// the tour is tests/home-tour.test.js. Home's Getting started card is gone
+// (#4635): a new account's First challenges are ordinary cards in Home's
+// Challenges area (tests/home-panels-render.test.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -22,7 +23,6 @@ const MAIN = read('frontend/src/main.tsx');
 const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 const SCHEMA = read('src/db/schema.sql');
-const CARD_SRC = read('frontend/src/features/home/getting-started.tsx');
 const HOME_SRC = read('frontend/src/features/home/index.tsx');
 const HOME_JS = read('frontend/src/features/home/home.js');
 const GRID_SRC = read('frontend/src/features/home/app-grid.tsx');
@@ -39,17 +39,25 @@ test('only a new account is asked: a flag set at sign-up, false for everyone bef
   // the accounts the boot seeds (capture identities), which a NULL-means-new
   // rule would have put behind a blocking step.
   assert.doesNotMatch(SCHEMA, /UPDATE users\s+SET needs_communities_choice/);
-  assert.match(SIGNUP, /needs_username_choice, needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE\)/);
+  // The same three INSERTs mark a NEW account (2026-10-01):
+  // `getting_started_gate`, FALSE for every account made before it, with no
+  // backfill either. It gated the season behind Home's Getting started card
+  // until #4635 retired both; Admin › Journey still reads it.
+  assert.match(SCHEMA,
+    /ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;/);
+  assert.match(SCHEMA, /ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;/);
+  assert.doesNotMatch(SCHEMA, /UPDATE users\s+SET getting_started_gate/);
+  assert.match(SIGNUP, /needs_username_choice, needs_communities_choice,\s*\n\s*getting_started_gate\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE, TRUE\)/);
   // Every path a PERSON signs up through asks, not only email: the
-  // activation-code route and wallet registration set the same flag.
-  assert.match(AUTH, /'INSERT INTO users \(username, password, needs_communities_choice\) VALUES \(\$1, \$2, TRUE\) RETURNING id'/);
-  assert.match(AUTH, /wallet_link_token, wallet_link_expires_at,\s*\n\s*needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, \$4, \$5, TRUE\)/);
+  // activation-code route and wallet registration set the same flags.
+  assert.match(AUTH, /'INSERT INTO users \(username, password, needs_communities_choice, getting_started_gate\) VALUES \(\$1, \$2, TRUE, TRUE\) RETURNING id'/);
+  assert.match(AUTH, /wallet_link_token, wallet_link_expires_at,\s*\n\s*needs_communities_choice, getting_started_gate\)\s*\n\s*VALUES \(\$1, \$2, \$3, \$4, \$5, TRUE, TRUE\)/);
   assert.equal((AUTH.match(/INSERT INTO users/g) || []).length, 2, 'no third sign-up path that forgets it');
-  // /api/auth/me carries both flags, failing toward no step and no card.
-  assert.match(AUTH, /let needsCommunitiesChoice = false;\s*\n\s*let showGettingStarted = false;/);
-  assert.match(AUTH, /\(u\.communities_onboarded_at IS NOT NULL\s*\n\s*AND u\.getting_started_closed_at IS NULL\) AS show_getting_started/);
+  // /api/auth/me carries the join screen's flag, failing toward no step. The
+  // Getting started card's flag beside it went with the card (#4635).
+  assert.match(AUTH, /let needsCommunitiesChoice = false;/);
   assert.match(AUTH, /\n\s*needsCommunitiesChoice,\n/);
-  assert.match(AUTH, /\n\s*showGettingStarted,\n/);
+  assert.doesNotMatch(AUTH, /showGettingStarted|show_getting_started/);
   // And whether the welcome tour is done on this account (#3237), next to
   // them, failing toward "not done" (the browser's own flag still counts).
   assert.match(SCHEMA, /ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;/);
@@ -61,7 +69,7 @@ test('only a new account is asked: a flag set at sign-up, false for everyone bef
 
 // ── the join screen ────────────────────────────────────────────────────
 
-test('the join screen comes after the username and terms steps, and before Home and its card', () => {
+test('the join screen comes after the username and terms steps, and before Home', () => {
   assert.ok(MAIN.indexOf("import './features/auth/username-first-run.js';")
     < MAIN.indexOf("import './features/auth/communities-first-run.js';"));
   assert.match(GATE, /window\.App\.user\.needsCommunitiesChoice !== true/);
@@ -71,7 +79,7 @@ test('the join screen comes after the username and terms steps, and before Home 
     < GATE.indexOf("fetch('/api/me/join-suggestions'"), 'terms first, then the list');
   // It publishes itself on window, where the tour reads whether a join
   // screen is due or was shown here (the tour no longer waits on it: it
-  // starts from the card, #3240).
+  // starts when asked, #3240).
   assert.match(GATE, /window\.CommunitiesFirstRun = CommunitiesFirstRun;/);
   assert.match(read('frontend/src/features/home/tour/index.tsx'),
     /\(window as unknown as \{ CommunitiesFirstRun\?: FirstRunGate \}\)\.CommunitiesFirstRun;/);
@@ -88,86 +96,154 @@ test('it never lands on a capture route, and has one screenshot state of its own
 
 test('one filled button that says what it will do, and a quiet Skip for now', () => {
   assert.match(GATE, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
-  assert.match(GATE, /n === 0 \? 'Pick at least one'/);
-  assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
+  assert.match(GATE, /ticked === 0 \? PlatformI18n\.t\('onboarding:communities\.pickOne'\)/);
+  assert.equal(message('onboarding:communities.pickOne'), 'Pick at least one');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.join', \{ count: n \}\)/);
+  assert.deepEqual([1, 3].map((count) => message('onboarding:communities.join', { count })), ['Join 1 community', 'Join 3 communities']);
+  // D1 (first-session test, 2026-10-03): keeping Homeroom is not a join. The
+  // account is already in it, and it never ticks "Join a community" on the
+  // card, so the button counts only the other ticks ("Continue" for Homeroom
+  // alone), and the toast after it only what was really joined.
+  assert.match(GATE, /const platform = new Set\(list\.filter\(\(c\) => c\.self_hosted\)\.map\(\(c\) => c\.slug\)\);/);
+  assert.match(GATE, /const joins = \(slugs\) => slugs\.filter\(\(slug\) => !platform\.has\(slug\)\)\.length;/);
+  assert.match(GATE, /const ticked = picked\.size;\s*\n\s*const n = joins\(\[\.\.\.picked\]\);/);
+  assert.match(GATE, /save\.textContent = ticked === 0 \? PlatformI18n\.t\('onboarding:communities\.pickOne'\)\s*\n\s*: n === 0 \? PlatformI18n\.t\('onboarding:communities\.continue'\)\s*\n\s*: PlatformI18n\.t\('onboarding:communities\.join', \{ count: n \}\)/);
+  assert.equal(message('onboarding:communities.continue'), 'Continue');
+  assert.match(GATE, /save\.setAttribute\('data-picked', String\(ticked\)\);/, 'what is ticked, Homeroom included');
+  assert.match(GATE, /const n = joins\(body\.joined \|\| \[\]\);\s*\n\s*if \(n && window\.PlatformUI\) \{\s*\n\s*PlatformUI\.toast\(PlatformI18n\.t\('onboarding:communities\.joinedToast', \{ count: n \}\)\)/);
+  assert.deepEqual([1, 2].map((count) => message('onboarding:communities.joinedToast', { count })), ['You joined 1 community.', 'You joined 2 communities.']);
+  assert.doesNotMatch(GATE, /\(body\.joined \|\| \[\]\)\.length/, 'never the raw count, which has Homeroom in it');
   // A welcome and what the place is, then the question.
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
-  assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
-  assert.ok(GATE.indexOf("'Welcome to Homeroom!'") < GATE.indexOf("'What communities do you want to join?'"));
-  assert.match(GATE, /'You can join or leave any time from Discover, and start your own group or community once you are in\.'/);
+  assert.ok(GATE.indexOf("PlatformI18n.t('onboarding:communities.welcome')") > 0);
+  assert.equal(message('onboarding:communities.welcome'), 'Welcome to Homeroom!');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.intro'\)/);
+  assert.equal(message('onboarding:communities.intro'), 'Homeroom is a place where communities build the apps they use together.');
+  assert.ok(GATE.indexOf("PlatformI18n.t('onboarding:communities.welcome')") < GATE.indexOf("PlatformI18n.t('onboarding:communities.question')"));
+  assert.equal(message('onboarding:communities.question'), 'What communities do you want to join?');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.footnote'\)/);
+  assert.equal(message('onboarding:communities.footnote'), 'You can join or leave any time from Discover, and start your own private or public community once you are in.');
   // A row with no description of its own is just its name: no empty line.
   assert.match(GATE, /if \(c\.detail\) \{\s*\n\s*text\.appendChild\(el\('div', 'mt-0\.5 line-clamp-2/);
-  // In the screen's order, so the first one ticked is the card's.
+  // In the screen's order.
   assert.match(GATE, /join: list\.map\(\(c\) => c\.slug\)\.filter\(\(s\) => picked\.has\(s\)\)/);
   // Skip is an answer: it posts `{ skip: true }` through the same path.
-  assert.match(GATE, /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
+  assert.equal(message('onboarding:communities.skip'), 'Skip for now');
+  assert.match(GATE, /PlatformI18n\.t\('onboarding:communities\.skip'\)\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
   assert.match(GATE, /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
-  assert.ok(GATE.indexOf("panel.appendChild(save);") < GATE.indexOf("panel.appendChild(skip);"),
+  // Both in the screen's foot since #3563 (the test below), Skip after Join.
+  assert.ok(GATE.indexOf("foot.appendChild(save);") < GATE.indexOf("foot.appendChild(skip);"),
     'under the Join button, not beside it');
-  // Home re-reads its pins and the card appears.
+  // Home re-reads its pins, and its Challenges block the First challenge
+  // a join ticks. No card to show any more (#4635).
   assert.match(GATE, /new CustomEvent\('sv:communities-joined'/);
-  assert.match(GATE, /window\.App\.user\.showGettingStarted = true;/);
+  assert.doesNotMatch(GATE, /showGettingStarted/);
   const code = GATE.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
   assert.doesNotMatch(code, /console\.error/, 'a console error on any route fails proposal checks');
   assert.doesNotMatch(code, /—/, 'no em dash in the copy');
 });
 
-// ── the Getting started card ───────────────────────────────────────────
-
-test('the card ships as an empty hidden section, and draws nothing until the server says so', () => {
-  const html = renderComponent('frontend/src/features/home/getting-started.tsx', 'GettingStarted');
-  assert.equal(html,
-    '<section id="home-getting-started" class="hidden px-3 pb-2 pt-3" aria-label="Getting started"></section>');
-  assert.match(CARD_SRC, /useHiddenClass\(rootRef, !model\);/);
-  assert.match(CARD_SRC, /showGettingStarted === true/);
-  assert.match(CARD_SRC, /fetch\('\/api\/me\/getting-started'/);
-  // It sits on top of Home, above the widget strip and Your apps.
-  assert.ok(HOME_SRC.indexOf('<GettingStarted />') < HOME_SRC.indexOf('<WidgetStrip />'));
-  assert.ok(HOME_SRC.indexOf('<GettingStarted />') < HOME_SRC.indexOf('<section id="home-apps-section"'));
+// #3563: on a short screen (Safari with its bars showing, a 667px or 568px
+// phone) the column ran past the kit card's bottom edge, Join cut in half
+// and Skip under it, and the rows were a scroller of their own that took
+// the swipe meant for the card. The screen is a body that scrolls and a foot
+// that does not, inside a card laid out as a column.
+test('Join and Skip stay on screen however short it is: the body scrolls, the foot does not', () => {
+  // The body holds the welcome, the question, the rows and the line under
+  // them, and is the one thing that scrolls, down to a floor.
+  assert.match(GATE, /const panel = el\('div', 'flex min-h-0 flex-col px-4 pb-5'\);/);
+  assert.match(GATE, /const scroller = el\('div', 'min-h-\[7\.5rem\] overflow-y-auto overscroll-y-contain'\);/);
+  assert.ok(GATE.indexOf('panel.appendChild(scroller);') < GATE.indexOf('panel.appendChild(foot);'),
+    'the foot is under the body');
+  for (const part of ["PlatformI18n.t('onboarding:communities.welcome')", 'scroller.appendChild(group);', "PlatformI18n.t('onboarding:communities.footnote')"]) {
+    const at = GATE.indexOf(part);
+    assert.ok(at > 0 && GATE.lastIndexOf('scroller.appendChild(', at) > GATE.lastIndexOf('foot.appendChild(', at),
+      `${part} is in the body`);
+  }
+  // The rows are not a scroller of their own any more.
+  const group = GATE.match(/const group = el\('div', '([^']*)'\);/)[1];
+  assert.doesNotMatch(group, /overflow|max-h/);
+  assert.match(group, /^rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  // The foot: the error line, Join, Skip, and never shrinks.
+  assert.match(GATE, /const foot = el\('div',\s*\n\s*'shrink-0 border-t border-transparent data-\[more\]:border-\[color:var\(--app-sheet-line\)\]'\);/);
+  assert.match(GATE, /foot\.appendChild\(status\);[\s\S]*foot\.appendChild\(save\);[\s\S]*foot\.appendChild\(skip\);/);
+  // The kit's card is a column, so the body can be told what is left. Only
+  // the modal: the fallback sheet scrolls by itself.
+  const modal = GATE.slice(GATE.indexOf("sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });"),
+    GATE.indexOf("if (!sheet && window.PlatformUI && typeof PlatformUI.sheet === 'function')"));
+  assert.match(modal, /sheet\.el\.style\.display = 'flex';\s*\n\s*sheet\.el\.style\.flexDirection = 'column';/);
+  // The hairline over the foot: on while there is more body below it,
+  // re-read on scroll and on resize, and the watcher goes with the screen.
+  assert.match(GATE, /foot\.toggleAttribute\('data-more',\s*\n\s*scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop > 1\);/);
+  assert.match(GATE, /scroller\.addEventListener\('scroll', edge, \{ passive: true \}\);/);
+  assert.match(GATE, /watch = new ResizeObserver\(edge\);\s*\n\s*watch\.observe\(scroller\);/);
+  assert.match(GATE, /CommunitiesFirstRun\._answered = true;\s*\n\s*if \(watch\) watch\.disconnect\(\);/);
 });
 
-test('the card counts, records the two visits it asks for, and closes for good', () => {
-  const card = loadTsx('frontend/src/features/home/getting-started.tsx');
-  assert.equal(card.counterText({ done: 1, total: 3 }), '1 of 3');
-  assert.equal(card.counterText({ done: 3, total: 3 }), 'All done');
-  assert.equal(card.seenKeyFor({ href: '#workshop' }), 'workshop');
-  assert.equal(card.seenKeyFor({ href: '#apps' }), 'discover');
-  assert.equal(card.seenKeyFor({ href: '#messages/app/x' }), null, 'a message leaves its own row');
-  assert.match(CARD_SRC, /void post\('\/api\/me\/getting-started\/close'\)/);
-  assert.match(CARD_SRC, /void post\('\/api\/me\/getting-started\/seen', \{ step: seen \}\)/);
-  // The fixture is four steps, one done, the shape the declared check reads:
-  // the tour first, not yet taken, so its Start button is on screen (#3240).
-  assert.deepEqual(card.SHOT_MODEL.steps.map((s) => [s.id, s.done]),
-    [['tour', false], ['say-hi', true], ['vote', false], ['explore', false]]);
-  assert.equal(card.SHOT_MODEL.total, 4);
-  assert.doesNotMatch(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, ''), /—/);
+// ── no Getting started card (#4635) ────────────────────────────────────
+
+// Every new account gets a tour, so the card that sat on top of Home
+// (the tour, then the season's First challenges, with the rest of the season
+// locked behind it) is gone, with its routes and its fixtures. A new account's
+// First challenges are ordinary cards in Home's Challenges area.
+test('Home has no Getting started card, and the server no longer draws one', () => {
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/features/home/getting-started.tsx')), false);
+  assert.doesNotMatch(HOME_SRC, /GettingStarted|getting-started/);
+  assert.match(HOME_SRC, /<WidgetStrip \/>[\s\S]*<section id="home-apps-section"/,
+    'Home opens on the widget strip and My apps');
+  const ROUTES = read('src/routes/onboarding.js');
+  const code = (src) => src.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
+  assert.doesNotMatch(code(ROUTES), /\/api\/me\/getting-started/);
+  const onboarding = require('../src/services/onboarding');
+  for (const gone of ['gettingStarted', 'closeCard', 'markWorkshopVisit', 'defaultApp', 'fallbackApp',
+    'voteTarget', 'stepAction']) {
+    assert.equal(gone in onboarding, false, `${gone} went with the card`);
+  }
+  assert.equal(typeof onboarding.markTourDone, 'function', 'the tour keeps its "done"');
+  assert.equal(typeof onboarding.resetFirstRun, 'function');
+  assert.ok(!DAPP.tests.some((t) => /getting-started/.test(`${t.id || ''} ${t.path || ''}`)),
+    'no declared check on the retired card');
+});
+
+// ── no "My apps" heading on Home (#4759) ───────────────────────────────
+
+// The app tiles start right under the search bar: the area label above
+// them is gone, its catalog entry with it. The set keeps its name
+// everywhere else ("Add to My apps", the browse badge, the tour card).
+test('the Home apps section draws no heading, and its catalog entry is gone', () => {
+  const section = HOME_SRC.slice(
+    HOME_SRC.indexOf('<section id="home-apps-section"'),
+    HOME_SRC.indexOf('<AppsMore />'));
+  assert.doesNotMatch(section, /SectionHeading/, 'no heading over the tiles');
+  assert.doesNotMatch(HOME_SRC, /home:grid\.heading/, 'and no ask for its text anywhere on Home');
+  assert.equal('grid.heading' in JSON.parse(read('frontend/locales/en/home.json')), false,
+    'the catalog entry went with the heading');
 });
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────
 
-test('a Home tile says where it lives: people for a group, a lock for just you, nothing for a community', () => {
+test('a Home tile says where it lives: people for a private community, a lock for just you, nothing for a public one', () => {
   assert.match(HOME_JS,
     /audience: app\.audience === 'invited' \|\| app\.audience === 'solo' \? app\.audience : 'open',/);
   assert.match(GRID_SRC, /\{app\.audience !== 'open' \? \(/);
   assert.match(GRID_SRC, /data-stage=\{app\.audience\}/);
   assert.match(GRID_SRC, /\? <UserGroupIcon className="w-3 h-3" aria-hidden="true" \/>\s*\n\s*: <LockIcon className="w-3 h-3" aria-hidden="true" \/>/);
-  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Group' : 'Just you'\}/);
+  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? t\('home:grid\.tile\.audience\.invited'\) : t\('home:grid\.tile\.audience\.solo'\)\}/);
+  assert.equal(message('home:grid.tile.audience.invited'), 'Private community');
+  assert.equal(message('home:grid.tile.audience.solo'), 'Just you');
 });
 
 // ── declared checks ────────────────────────────────────────────────────
 
-test('both screens have a declared check on their own screenshot state', () => {
+test('the join screen has a declared check on its own screenshot state', () => {
   const join = DAPP.tests.find((t) => t.id === 'auth.join-communities-first-run');
   assert.equal(join.path, '/?shot=join-communities');
-  assert.equal(join.expectText, 'Join 2 communities');
+  // Homeroom and the Book club invite are ticked: one of them is a join.
+  assert.equal(join.expectText, 'Join 1 community');
   assert.equal(join.visual, true);
   assert.match(join.expectSelector, /\[data-join-communities-save\]\[data-picked="2"\] \+ \[data-join-communities-skip\]$/,
     'the Skip sits right under the Join button');
-  const card = DAPP.tests.find((t) => t.id === 'home.getting-started-card');
-  assert.equal(card.path, '/?shot=getting-started');
-  assert.match(card.expectSelector, /\[data-getting-started="1\/4"\] \[data-getting-started-step="tour"\]\[data-done="false"\] ~ /);
-  assert.equal(card.expectText, 'Take the 1-minute tour');
-  for (const t of [join, card]) assert.ok(t.expectSelector.length <= 256);
+  // Home's Getting started card had one too, until #4635 retired the card.
+  assert.ok(join.expectSelector.length <= 256);
 });
 
 // ── Reset first run (admin) ────────────────────────────────────────────
@@ -181,8 +257,11 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
   // It resets the first run and nothing the account owns.
   const svc = read('src/services/onboarding.js');
   const fn = svc.slice(svc.indexOf('async function resetFirstRun('), svc.indexOf('/** The card\'s close button. */'));
-  assert.match(fn, /SET needs_communities_choice = TRUE,\s*\n\s*communities_onboarded_at = NULL,\s*\n\s*getting_started_closed_at = NULL,\s*\n\s*getting_started_seen = NULL,\s*\n\s*tour_done_at = NULL\n/,
+  assert.match(fn, /SET needs_communities_choice = TRUE,\s*\n\s*communities_onboarded_at = NULL,\s*\n\s*getting_started_closed_at = NULL,\s*\n\s*getting_started_seen = NULL,\s*\n\s*tour_done_at = NULL,/,
     'and the tour, which the account keeps now (#3237), so it follows the join screen on every device');
+  // And it marks the account as new again (2026-10-01), the flag Admin ›
+  // Journey reads: how an admin tries the first run.
+  assert.match(fn, /tour_done_at = NULL,\s*\n\s*getting_started_gate = TRUE,\s*\n\s*getting_started_unlocked_at = NULL\n/);
   assert.doesNotMatch(fn, /community_members|app_favorites|user_terms_consents|username =/,
     'memberships, Home tiles, terms and the username stay');
   // Beside Reset password in the row's ⋯ menu, behind a confirm.
@@ -193,36 +272,20 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
   assert.match(USERS, /title: `Reset \$\{user\.username\}'s first run\?`/);
 });
 
-test('a join screen shown in this browser forgets its "done", so the card offers the tour again', () => {
+test('a join screen shown in this browser forgets its "done", as the reset did on the account', () => {
   const TOUR = read('frontend/src/features/home/tour/index.tsx');
   // The gate says so, and never for the ?shot= fixture.
   assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
   assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
   // The tour no longer starts by itself after the screen (#3240): the reset
-  // cleared the account's "done", the card's tour row reads that, and this
-  // browser's copy is cleared too, or the backfill would put it back.
+  // cleared the account's "done", and this browser's copy is cleared too, or
+  // the backfill would put it back.
   assert.doesNotMatch(TOUR, /tourDoneFor|whenFirstRunSettled/);
   const forget = TOUR.slice(TOUR.indexOf('const forget = () => {'));
   assert.match(forget.slice(0, forget.indexOf('}, [userId]);')),
     /if \(!firstRunShownHere\(\)\) return;\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);/);
   // And never copied back over an account whose join screen is due.
   assert.match(TOUR, /joinShownHere: firstRunShownHere\(\),\s*\n\s*joinPending: firstRunPending\(\),/);
-});
-
-test('the card offers the tour as its first row, with a Start button until it is done', () => {
-  // Server: the first step, ticked from the account's tour_done_at.
-  const svc = read('src/services/onboarding.js');
-  const fn = svc.slice(svc.indexOf('async function gettingStarted('), svc.indexOf('/** Record a visit the card asked for.'));
-  assert.match(fn, /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_seen,\s*\n\s*tour_done_at/);
-  assert.match(fn, /const steps = \[\s*\{[\s\S]*?id: 'tour',\s*title: 'Take the 1-minute tour',\s*detail: 'See how Homeroom works\.',\s*done: !!\(u && u\.tour_done_at\),\s*href: null,/);
-  // Client: a row that is not a button, holding one; pressed, it asks for the
-  // tour the way Settings' Replay does, and the tour's own write reloads it.
-  assert.match(CARD_SRC, /step\.id === 'tour' && !step\.done \? \(/);
-  assert.match(CARD_SRC, /chevron=\{false\}/);
-  assert.match(CARD_SRC, /variant="pillAccent"/);
-  assert.match(CARD_SRC, /data-getting-started-tour-start=""/);
-  assert.match(CARD_SRC, /if \(step\.id === 'tour'\) \{\s*requestTour\(\);\s*return;\s*\}/);
-  assert.match(CARD_SRC, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
 
 // A browser that has signed in before boots from the session snapshot, and
@@ -237,17 +300,16 @@ test('the join screen is re-offered once a snapshot boot confirms the session', 
   const join = reconcile.indexOf('window.CommunitiesFirstRun?.maybePrompt?.()');
   assert.ok(terms > 0 && join > terms, 'right after the terms ask, which it then waits for');
   assert.ok(reconcile.indexOf('App.user = user;') < join, 'with the confirmed user, not the snapshot');
-  // The gate still skips the unverified boot itself.
-  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
+  // The gate still asks nothing of the unverified boot itself; the one thing
+  // it does there is draw an owed make screen from the snapshot, recording
+  // nothing (tests/first-session-persists.test.js).
+  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._showFromSnapshot\(\);\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
   // It waits for a terms ask in flight or on screen, capped.
   assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
   // The tour looks again once the screen is answered, which on this path is
   // after its first look, and forgets this browser's "done" then.
   const TOUR = read('frontend/src/features/home/tour/index.tsx');
   assert.match(TOUR, /document\.addEventListener\('sv:communities-joined', forget\);/);
-  // And the card reads the confirmed session's showGettingStarted.
-  assert.match(CARD_SRC, /document\.addEventListener\('sv:session', onChange\);/);
-  assert.match(APP_JS, /document\.dispatchEvent\(new CustomEvent\('sv:session', \{/);
 });
 
 test('what the join screen says under each name', () => {
@@ -271,4 +333,74 @@ test('what the join screen says under each name', () => {
   }
   const long = suggestionDetail({ description: 'word '.repeat(60) });
   assert.ok(long.length <= 100 && long.endsWith('…'), 'two lines at most on a phone');
+});
+
+// The member count came back as a figure of its own at each row's end, a
+// people glyph and a short number before the tick, beside the line under the
+// name rather than in place of it (the line test above). Run for real: the
+// module in a sandbox with just enough of a document to build one row's
+// count.
+function loadGate() {
+  const vm = require('node:vm');
+  const node = (tag) => ({
+    tag, className: '', textContent: '', attrs: {}, children: [],
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    appendChild(child) { this.children.push(child); return child; },
+  });
+  const document = {
+    createElement: node,
+    createElementNS: (_ns, tag) => node(tag),
+    addEventListener() {},
+  };
+  const window = { document };
+  vm.runInNewContext(GATE, { window, document, console, URLSearchParams, location: { search: '' }, PlatformI18n: englishPlatformI18n() });
+  const el = (tag, cls, text) => {
+    const n = node(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  return { gate: window.CommunitiesFirstRun, el };
+}
+
+test('each row ends in its member count, before the tick', () => {
+  const { gate, el } = loadGate();
+  // Short enough to sit beside the tick, rounded down so it never claims a
+  // member the community does not have.
+  const counts = { 1: '1', 999: '999', 1000: '1k', 1284: '1.2k', 2300: '2.3k', 9999: '9.9k',
+    12345: '12k', 999999: '999k', 1000000: '1m', 2300000: '2.3m' };
+  for (const [n, shown] of Object.entries(counts)) assert.equal(gate._count(Number(n)), shown, `${n}`);
+
+  const row = gate._members({ member_count: 1284 }, el);
+  assert.equal(row.attrs['data-join-community-members'], '1284');
+  assert.match(row.className, /\bshrink-0\b/, 'the name truncates, never the count');
+  assert.match(row.className, /\btabular-nums\b/);
+  assert.match(row.className, /\btext-zinc-500 dark:text-zinc-400\b/, 'the secondary ink, as under the name');
+  const [svg, figure, spoken] = row.children;
+  assert.equal(svg.tag, 'svg');
+  assert.equal(svg.attrs['aria-hidden'], 'true');
+  assert.equal(figure.textContent, '1.2k');
+  assert.equal(figure.attrs['aria-hidden'], 'true');
+  // A screen reader hears the whole number as part of the checkbox's name.
+  assert.equal(spoken.className, 'sr-only');
+  assert.equal(spoken.textContent, '1,284 members');
+  assert.equal(gate._members({ member_count: 1 }, el).children[2].textContent, '1 member');
+
+  // No count, or none yet: no figure, not a "0".
+  for (const c of [{}, { member_count: 0 }, { member_count: null }, { member_count: 'n/a' }]) {
+    assert.equal(gate._members(c, el), null, JSON.stringify(c));
+  }
+
+  // The glyph is the shell's own UserGroupIcon, path for path.
+  const icons = read('frontend/@/components/ui/icons.tsx');
+  const group = icons.match(/export const UserGroupIcon = stroked\(\s*'UserGroupIcon',\s*'([^']+)'/)[1];
+  assert.equal(svg.children[0].attrs.d, group);
+
+  // Between the text and the tick, and only when there is one.
+  assert.match(GATE, /row\.appendChild\(text\);\s*\n\s*if \(members\) row\.appendChild\(members\);\s*\n\s*row\.appendChild\(tick\);/);
+  // The server already sends it, and the screenshot fixture shows it.
+  assert.match(read('src/services/onboarding.js'), /member_count: Number\(row\.member_count\) \|\| 0,/);
+  const fixture = GATE.slice(GATE.indexOf('const SHOT_LIST = ['), GATE.indexOf('];', GATE.indexOf('const SHOT_LIST = [')));
+  assert.equal((fixture.match(/slug: '/g) || []).length, (fixture.match(/member_count: \d+/g) || []).length,
+    'every fixture row has a count');
 });

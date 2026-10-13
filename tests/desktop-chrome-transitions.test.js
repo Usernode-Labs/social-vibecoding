@@ -148,22 +148,55 @@ test('leaving the toggle and reaching the rail is ONE timer, not two', (t) => {
   assert.equal(peek(), true, 'the rail stays up under the pointer');
 });
 
+// ── #27: a tap is not a hover ───────────────────────────────────────────
+//
+// iOS WebKit fires compatibility mouse events around every tap. Bound to
+// those, each tap on the phone's bar entered a peek and the next tap left
+// it, running the grace and fade timers (and re-rendering the bar) in the
+// middle of taps. The peek targets now listen to pointer events through
+// mouseOnly, which answers only a real mouse (a trackpad reports as one).
+
+test('a finger or a pen never starts or ends a peek; a mouse does (#27)', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { mod, peek, peekOut } = loadPeek();
+  mod.enterPeekByMouse({ pointerType: 'touch' });
+  mod.enterPeekByMouse({ pointerType: 'pen' });
+  mod.enterPeekByMouse({});
+  assert.equal(peek(), false, 'a tap is not a hover');
+  mod.enterPeekByMouse({ pointerType: 'mouse' });
+  assert.equal(peek(), true, 'a mouse still peeks the folded rail');
+  mod.leavePeekByMouse({ pointerType: 'touch' });
+  t.mock.timers.tick((mod.PEEK_GRACE_MS + mod.PEEK_FADE_MS) * 2);
+  assert.equal(peek(), true, 'a touch leaving starts no grace or fade timer');
+  assert.equal(peekOut(), false);
+  mod.leavePeekByMouse({ pointerType: 'mouse' });
+  t.mock.timers.tick(mod.PEEK_GRACE_MS);
+  assert.equal(peekOut(), true, 'the mouse leaving starts the fade');
+  t.mock.timers.tick(mod.PEEK_FADE_MS);
+  assert.equal(peek(), false, 'the mouse leaving still fades it away');
+});
+
 test('the toggle peeks only a FOLDED rail, and its markup does not change to do it', () => {
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
-  assert.match(toggle, /import \{ clearPeekTimer, enterPeek, leavePeek \} from '\.\/rail-peek';/);
+  assert.match(toggle, /import \{ clearPeekTimer, enterPeekByMouse, leavePeekByMouse \} from '\.\/rail-peek';/);
   // A press ends the peek, or folding the rail again under the same pointer
   // would bring it straight back as an overlay.
   assert.match(toggle, /clearPeekTimer\(\);\s*navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
   // An open rail has nothing to bring back, and the press that follows the
   // hover is about to fold it.
-  assert.match(toggle, /onMouseEnter=\{railOpen \? undefined : enterPeek\}/);
-  assert.match(toggle, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
+  // Only a real mouse: a tap's compatibility mouse events start nothing (#27).
+  assert.match(toggle, /onPointerEnter=\{railOpen \? undefined : enterPeekByMouse\}/);
+  assert.match(toggle, /onPointerLeave=\{peek \? leavePeekByMouse : undefined\}/);
+  assert.ok(!/onMouse(Enter|Leave)=/.test(toggle), 'no mouse-event peek handlers left');
   // Handlers are not attributes: the prerender and the first client render
   // still agree whatever the store holds, so hydration stays silent.
   assert.ok(!/className=\{[^}]*peek/.test(toggle), 'no class is computed from the peek');
 
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /import \{ clearPeekTimer, enterPeek, leavePeek \} from '\.\/rail-peek';/);
-  assert.match(bar, /return \{ enter: enterPeek, leave: peek \? leavePeek : clearPeekTimer \};/);
+  assert.match(bar, /import \{ clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse \} from '\.\/rail-peek';/);
+  assert.match(bar, /return \{ enter: enterPeekByMouse, leave: peek \? leavePeekByMouse : clearPeekTimerByMouse \};/);
+  assert.ok(!/onMouse(Enter|Leave)=/.test(bar), 'the bar and the hot zone listen to pointer events');
+  assert.equal((bar.match(/onPointerEnter=\{enter\}/g) || []).length, 2, 'the bar and the hot zone');
+  assert.equal((bar.match(/onPointerLeave=\{leave\}/g) || []).length, 2);
   assert.ok(!/setTimeout/.test(bar), 'the grace timer lives in rail-peek.ts alone');
 });

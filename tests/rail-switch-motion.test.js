@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
@@ -274,6 +275,7 @@ test('the Workshop\'s loading state fills its column, and hands off to the Works
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const frameRows = Number(/skeletonListHtml\((\d+)\)/.exec(frame.slice(frame.indexOf('const DEV_BODY_WORKSHOP_INITIAL')))[1]);
-  const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label="Loading the workshop"/.exec(workshop)[1]);
+  const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label=\{t\('project:page\.loading'\)\}/.exec(workshop)[1]);
   assert.equal(frameRows, ownRows, 'the frame\'s placeholder and the Workshop\'s loading state draw the same rows');
+  assert.equal(message('project:page.loading'), 'Loading the workshop');
 });

@@ -174,7 +174,7 @@ async function chooseDefaultModel({ pool, userId, apiKey, config }) {
       credentialRevision: 'managed-provision',
       apiKey,
       config,
-      forceRefresh: true,
+      forceRefresh: false,
     });
     return catalog.recommendedModelId || config.openrouterDefaultCodexModel || null;
   } catch (err) {
@@ -296,7 +296,6 @@ async function provision({ pool, userId, config }) {
       return { credential, modelId };
     });
 
-    agentModels.invalidateUser(userId);
     log.info('openrouter-managed', 'managed child key provisioned', {
       userId, managedKeyId: reservation.id, remoteHash: remote.hash,
     });
@@ -418,7 +417,6 @@ async function setDisabled({ pool, id, disabled, config, actorId }) {
     await markNeedsReview(pool, id, row.user_id, err);
     throw new ManagedOpenRouterError(500, 'needs_review', 'OpenRouter changed the key, but local state needs manual review.');
   }
-  agentModels.invalidateUser(row.user_id);
   log.warn('openrouter-managed', disabled ? 'managed key disabled' : 'managed key enabled', {
     actorId, userId: row.user_id, managedKeyId: id, remoteHash: row.remote_key_hash,
   });
@@ -455,7 +453,6 @@ async function remove({ pool, id, config, actorId }) {
     await markNeedsReview(pool, id, row.user_id, err);
     throw new ManagedOpenRouterError(500, 'needs_review', 'OpenRouter deleted the key, but local state needs manual review.');
   }
-  agentModels.invalidateUser(row.user_id);
   log.warn('openrouter-managed', 'managed key deleted', {
     actorId, userId: row.user_id, managedKeyId: id, remoteHash: row.remote_key_hash,
   });

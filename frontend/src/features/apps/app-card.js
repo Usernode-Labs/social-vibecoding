@@ -99,29 +99,29 @@ export function appPillsFor(app) {
     const n = app.missingSecrets.length;
     chipDefs.push({
       cls: 'bg-red-500/10 text-red-700 dark:text-red-400',
-      label: 'Missing secrets',
-      tip: `${n} required secret${n === 1 ? '' : 's'} unset. Set values in the app's Secrets panel`,
+      label: PlatformI18n.t('discover:pill.missingSecrets'),
+      tip: PlatformI18n.t('discover:pill.missingSecretsTip', { count: n }),
     });
   }
   if (openPrs > 0) {
     chipDefs.push({
       cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
-      label: `${openPrs} to vote`,
-      tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
+      label: PlatformI18n.t('discover:pill.toVote', { count: openPrs }),
+      tip: PlatformI18n.t('discover:pill.toVoteTip', { count: openPrs }),
     });
   }
   if (activeSessions > 0) {
     chipDefs.push({
       cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
-      label: `${activeSessions} in dev`,
-      tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
+      label: PlatformI18n.t('discover:pill.inDev', { count: activeSessions }),
+      tip: PlatformI18n.t('discover:pill.inDevTip', { count: activeSessions }),
     });
   }
   if (openIssues > 0) {
     chipDefs.push({
       cls: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
-      label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
-      tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+      label: PlatformI18n.t('discover:pill.issues', { count: openIssues }),
+      tip: PlatformI18n.t('discover:pill.issuesTip', { count: openIssues }),
     });
   }
   // Visibility chip for non-default settings. View-private dominates (it
@@ -130,14 +130,14 @@ export function appPillsFor(app) {
   const vis = app.view_visibility === 'private'
     ? {
       icon: 'lock',
-      label: 'Private',
-      tip: 'Only collaborators can see and use this app',
+      label: PlatformI18n.t('discover:pill.private'),
+      tip: PlatformI18n.t('discover:pill.privateTip'),
     }
     : (app.collab_visibility === 'private'
       ? {
         icon: 'mail',
-        label: 'Invite-only build',
-        tip: 'Anyone can use this app; only invited collaborators can build it',
+        label: PlatformI18n.t('discover:pill.inviteOnly'),
+        tip: PlatformI18n.t('discover:pill.inviteOnlyTip'),
       }
       : null);
 
@@ -163,12 +163,15 @@ export const VIS_CHIP_PATHS = {
 
 export function renderAppPillsHtml(app) {
   const { chips, vis } = appPillsFor(app);
+  // The words come from the language catalog now, so they are escaped like
+  // any other text spliced into this string.
+  const attr = (text) => escapeHtml(text).replace(/"/g, '&quot;');
   const chipsHtml = chips.map((c) =>
-    `<span class="${CHIP_BASE_CLS} ${c.cls}" title="${c.tip}">${c.label}</span>`
+    `<span class="${CHIP_BASE_CLS} ${c.cls}" title="${attr(c.tip)}">${escapeHtml(c.label)}</span>`
   ).join('');
   const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
   const visChipHtml = vis
-    ? `<span class="${VIS_CHIP_CLS}" title="${vis.tip}">${visChipIcon(VIS_CHIP_PATHS[vis.icon])} ${vis.label}</span>`
+    ? `<span class="${VIS_CHIP_CLS}" title="${attr(vis.tip)}">${visChipIcon(VIS_CHIP_PATHS[vis.icon])} ${escapeHtml(vis.label)}</span>`
     : '';
   return `${chipsHtml}${visChipHtml}`;
 }

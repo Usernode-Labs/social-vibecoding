@@ -50,6 +50,7 @@ const CSS = read('css/app.css');
 // bytes. Decoding compares what the user actually reads.
 const { decodeEntities } = require('./helpers/html-tokens');
 const { interiorHtmlFor } = require('./lib/lazy-interiors');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const DAPP = JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'dapp.json'), 'utf8'
 ));
@@ -337,6 +338,7 @@ function loadSettings({ boot, fetchImpl }) {
     return Promise.resolve(fetchImpl ? fetchImpl(String(url)) : { ok: false });
   };
   if (boot !== undefined) sandbox.App = { bootSession: () => Promise.resolve(boot) };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SETTINGS, sandbox, { filename: 'settings.js' });
   return sandbox;
@@ -559,12 +561,14 @@ test('every credential exchange refuses to submit while offline', () => {
 });
 
 test('home says "offline", not "failed", when the feed cannot load', () => {
-  const cat = HOME.slice(HOME.indexOf("Couldn't load your apps") - 1500);
+  const cat = HOME.slice(HOME.indexOf("message('home:grid.notice.loadFailed')") - 1500);
   assert.match(cat, /Offline\.isOffline\(\)/);
-  assert.match(cat, /You're offline/);
+  assert.match(cat, /text: message\('home:grid\.notice\.offline'\),/);
+  assert.match(message('home:grid.notice.offline'), /^You're offline\./);
   // The failure state is still there for real failures (#1899: the grid
   // draws it as the shared error card with a Retry).
-  assert.match(HOME, /notice: \{ text: "Couldn't load your apps", tone: 'error' \}/);
+  assert.match(HOME, /notice: \{ text: message\('home:grid\.notice\.loadFailed'\), tone: 'error' \}/);
+  assert.equal(message('home:grid.notice.loadFailed'), "Couldn't load your apps");
 });
 
 // ── Screenshot deep links ────────────────────────────────────────────

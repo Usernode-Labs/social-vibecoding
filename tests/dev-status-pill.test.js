@@ -22,8 +22,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
-const { api } = require('./lib/dev-card-html');
-const { renderToHtml, createElement } = require('./lib/render-tsx');
+const { api, mergedCardHtml } = require('./lib/dev-card-html');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 // ── Rendering the pill ──────────────────────────────────────────────────
 //
@@ -74,6 +74,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -109,28 +110,104 @@ const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
 
 // ── Precedence, tier by tier ────────────────────────────────────────────
 
-test('tier 0 — a merged row is settled and reads ✓ Merged', () => {
+test('tier 0 — a merged row is settled and reads ✓ Live, in green', () => {
   const AppView = makeAppView();
   const s = AppView.statusPillState(PR({ status: 'merged', yes_count: 5 }));
   assert.equal(s.tier, 0);
-  assert.equal(s.label, '✓ Merged');
+  // The newcomer's word (first-session run-through, 4 Oct 2026). #3848 drew
+  // it grey, as a done state with no fill; #3873 brought the green back for
+  // Live: the `ok` tone, the green wash with a check.
+  assert.equal(s.label, '✓ Live');
   assert.equal(s.tone, 'ok');
+  assert.match(pillHtml(AppView, PR({ status: 'merged', yes_count: 5 })),
+    /class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/,
+    'the block pill takes the green wash (app.css `.dev-status-pill-block.gc-vote-count-ok`)');
+  // The card's spine, and the folded row's, follow the tone (edgeFor).
+  const { edgeFor } = loadTsx('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.equal(edgeFor({ key: 'session:1', pill: { state: s } }), 'ok');
+  const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
+  assert.equal(edgeFor({ key: 'session:1', pill: { state: deployed } }), 'ok');
 });
 
 test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
   const AppView = makeAppView();
   const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
-  assert.equal(deployed.label, '✓ Deployed');
+  assert.equal(deployed.label, '✓ Live');
+  assert.equal(deployed.key, 'deployed');
   assert.equal(deployed.tone, 'ok');
 
   const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
-  assert.equal(deploying.label, 'Merged · deploying…');
+  assert.equal(deploying.label, 'Going live…');
   assert.equal(deploying.tone, 'progress');
   assert.equal(deploying.spinner, true);
 
   const stalled = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'stalled' }));
-  assert.equal(stalled.label, 'Merged · deployment stalled');
+  assert.equal(stalled.label, 'Stuck going live');
   assert.equal(stalled.tone, 'blocked');
+});
+
+test('merged child proposals say whether delivery is pending, failed or confirmed; unknown reads as plain Live', () => {
+  const AppView = makeAppView();
+  const state = deployment_state => AppView.statusPillState(PR({
+    status: 'merged', deployment_kind: 'child', deployment_state,
+  }));
+  assert.equal(state('deployed').label, '✓ Live');
+  assert.equal(state('pending').label, 'Going live…');
+  assert.equal(state('pending').key, 'delivery_pending');
+  assert.equal(state('failed').label, 'Couldn’t go live');
+  assert.equal(state('failed').tone, 'blocked');
+  // #3368: `unknown` is the absence of evidence (e.g. a container deployed
+  // before revision labels existed), not a problem to flag on every row.
+  assert.equal(state('unknown').label, '✓ Live');
+  assert.equal(state('unknown').key, 'merged');
+  assert.equal(state('unknown').tone, 'ok');
+  assert.equal(state(undefined).label, '✓ Live');
+  // #3873 greens only the Live pill: a change that is still going live stays
+  // grey, and one that could not go live stays red.
+  assert.equal(state('deployed').tone, 'ok');
+  assert.equal(state('pending').tone, 'neutral');
+});
+
+// #3873: "live should be green". A live card on the board wears the green
+// pill and the green spine together; one still going live keeps the grey of
+// both. The declared check walks the same chain on the demo's Done column
+// (9100027 is seeded `deployed` there), so this resolves it against the
+// markup the real card renders before a staging run has to.
+test('a live card wears the green pill and the green edge; one going live stays grey', () => {
+  const AppView = makeAppView();
+  const live = mergedCardHtml(AppView, PR({
+    id: 9100027, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,
+    deployment_state: 'deployed',
+  }), 3);
+  assert.match(live, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="ok"[^>]*data-proposal-row="9100027"/);
+  assert.match(live, /<span class="gc-vote-count gc-vote-count-ok dev-status-pill dev-status-pill-block"[^>]*><span class="gc-vote-count-label">✓ Live<\/span>/);
+
+  const going = mergedCardHtml(AppView, PR({
+    id: 9100000, status: 'merged', merged_at: '2026-06-01T00:00:00Z', yes_count: 3,
+    deployment_kind: 'child', deployment_state: 'pending',
+  }), 3);
+  assert.match(going, /^<div class="gc-vote-item[^"]*"[^>]*data-edge="neutral"/);
+  assert.match(going, /gc-vote-count-neutral[^"]*"[^>]*><span class="gc-vote-count-label">Going live…<\/span>/);
+
+  const DAPP = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const check = DAPP.tests.find((t) => /#3873/.test(t.name || ''));
+  assert.ok(check, 'a declared check pins the green Live card');
+  assert.match(check.path, /[?&]demo=1[&#][\s\S]*col=done/);
+  assert.ok(check.expectSelector.includes(
+    ':has([data-proposal-row="9100027"][data-edge="ok"] .gc-vote-count-ok)'));
+});
+
+test('the Done summary reports a child app’s latest delivery outcome', () => {
+  const AppView = makeAppView();
+  const status = state => {
+    AppView._mergedCtx = { deployment: { kind: 'child', state,
+      runningSha: 'abcdef0123456789abcdef0123456789abcdef01' } };
+    return AppView._doneDeploymentStatus();
+  };
+  assert.match(status('pending').text, /awaiting deployment/);
+  assert.match(status('failed').text, /deploy failed/);
+  assert.equal(status('unknown'), null, 'no evidence either way is not worth a summary line (#3368)');
+  assert.match(status('deployed').text, /abcdef0/);
 });
 
 test('tier 1 — merging stays in the bar; resolving became a tag', () => {
@@ -142,7 +219,7 @@ test('tier 1 — merging stays in the bar; resolving became a tag', () => {
     status: 'merging', check_state: 'failing', merge_conflict_state: 'failed',
   }));
   assert.equal(merging.tier, 1);
-  assert.equal(merging.label, 'Merging…');
+  assert.equal(merging.label, 'Going live…');
   assert.equal(merging.tone, 'progress');
   assert.ok(merging.spinner, 'in-flight stages carry the spinner');
 
@@ -237,7 +314,8 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const pending = PR({ check_state: 'pending' });
   const running = AppView.statusTagSpecs(pending, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(running);
-  assert.equal(running.label, 'Checks running…');
+  assert.equal(running.label, 'Checks', '#4628: one word for the whole run');
+  assert.ok(running.progress && running.progress.indeterminate, 'the bar pulses before the total is known');
   assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
   assert.ok(running.spinner, 'in flight, so it spins');
   assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
@@ -247,6 +325,7 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
+  assert.ok(starting.progress && starting.progress.indeterminate, 'the busy bar covers the build too');
   assert.ok(starting.spinner);
 });
 
@@ -297,18 +376,18 @@ test('votes passed, checks green, main paused: the card says so instead of "merg
 
   const s = MergeStatus.lifecycle(paused);
   assert.equal(s.key, 'main_paused');
-  assert.equal(s.label, 'Passed, merges paused', 'the same shape as "Passed, merging shortly", which it replaces');
+  assert.equal(s.label, 'Approved, going live is paused', 'the same shape as "Passed, merging shortly", which it replaces');
   assert.equal(s.tone, 'amber', 'a condition somebody may need to act on');
   assert.match(s.title, /shared-sessions returns linked_issues per row/, 'the tooltip names the test');
-  assert.match(s.title, /Nothing about this proposal is wrong/);
+  assert.match(s.title, /Nothing about this change is wrong/);
 
   // The board card: the bar is the vote, the tag is the pause, and the pill
   // carries the reason for the detail view.
   const tag = AppView.statusTagSpecs(paused, {}).find((t) => t.key === 'tag-main_paused');
   assert.ok(tag, 'the tag exists');
-  assert.equal(tag.label, 'Merges paused');
+  assert.equal(tag.label, 'Going live is paused');
   assert.match(tag.title, /^Main's unit suite is failing since fffffff/);
-  assert.match(tag.title, /Nothing about this proposal is wrong/);
+  assert.match(tag.title, /Nothing about this change is wrong/);
   assert.ok(!tag.spinner);
   assert.match(tag.cls, /red/, 'it stops the merge, so blocking tone');
   assert.ok(AppView.statusPillState(paused).reasons.some((r) => r.key === 'main_paused'));
@@ -316,7 +395,7 @@ test('votes passed, checks green, main paused: the card says so instead of "merg
   // A provisional pause says the re-run is on.
   const confirming = PR({ ...PASSED, mergeRequirements: { gates: [PAUSED_GATE({ confirming: true })] } });
   assert.equal(AppView.statusTagSpecs(confirming, {}).find((t) => t.key === 'tag-main_paused').label,
-    'Merges paused · re-checking main');
+    'Going live is paused · re-checking main');
   assert.equal(MergeStatus.lifecycle(confirming).key, 'main_paused');
 
   // Not paused: the pill it always was.
@@ -402,6 +481,35 @@ test('tier 5 — needs your vote absorbs the pulsing "Vote" badge', () => {
   assert.ok(s.fill);
 });
 
+// Club Votes, 12 to 13 Oct 2026 (D1): a project's first version is not put
+// to a vote, so nothing on its card asks for one: no "Vote", no "Waiting for
+// your approval", no Yes or No.
+test('D1: a first version\'s pill says no vote is needed, and its card offers none', () => {
+  const AppView = makeAppView();
+  const first = PR({ first_version: true, check_state: 'pending', votes_required: 0 });
+  const s = AppView.statusPillState(first);
+  assert.equal(s.key, 'no_vote');
+  assert.equal(s.label, 'No vote needed');
+  assert.equal(s.title, 'A project’s first version goes live without a vote once testing passes.');
+  assert.equal(s.tone, 'ok');
+  assert.ok(!s.dot, 'nothing pulses for a vote');
+  assert.match(pillHtml(AppView, first), /No vote needed/);
+  assert.equal(AppView._cardVoteButtonSpecs(first).length, 0, 'no Yes, no No');
+  assert.equal(AppView._waitingWords(first), 'Goes live without a vote');
+  assert.equal(AppView._yesPutsItLive(first), false);
+  // Just you: a later change is still the maker's to approve; the first is not.
+  AppView.appData = { slug: 'x', audience: 'solo', can_collaborate: true };
+  assert.equal(AppView._approveSolo(first), false);
+  const later = PR({ check_state: 'passing', votes_required: 1 });
+  assert.equal(AppView._approveSolo(later), true);
+  assert.equal(AppView._waitingWords(later), 'Waiting for your approval');
+  assert.equal(AppView.statusPillState(later).key, 'needs_vote');
+  assert.equal(AppView._cardVoteButtonSpecs(later).length, 2);
+  // Its tags still say what is wrong: a failing check is not hidden by it.
+  const failing = PR({ first_version: true, check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }] });
+  assert.ok(AppView.statusTagSpecs(failing, {}).some((t) => /Checks failing/.test(t.label)));
+});
+
 test('tier 5 is skipped for a read-only viewer (they cannot vote)', () => {
   const AppView = makeAppView({ readOnly: true });
   const s = AppView.statusPillState(PR({ check_state: 'passing', yes_count: 2, votes_required: 5 }));
@@ -419,6 +527,7 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   assert.equal(voted.label, '2 / 5');
   assert.equal(voted.tone, 'progress');
 
+  // Settled is Live, and Live is green (tier 0, #3873).
   const won = AppView.statusPillState(PR({
     status: 'merged', yes_count: 5, votes_required: 5,
   }));
@@ -429,6 +538,57 @@ test('tier 6 — the plain tally, and the at-least-N approvals variant', () => {
   }));
   assert.equal(approvals.label, '2 of 3 approvals');
   assert.ok(approvals.fill, 'clock-free, but still a progress pill');
+});
+
+// #3826 — the member floor's wait gets words on the card, not a bare count.
+// The tally reads full, so "3 / 3" in the pass tone read as a mistake and
+// the lock glyph alone never said why it was not going live.
+test('tier 6 — the member floor wait says so in words, not a bare count (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 6);
+  assert.equal(s.key, 'needs_member');
+  assert.equal(s.label, 'Needs another member’s Yes · 3/3');
+  assert.equal(s.tone, 'attention');
+  assert.equal(s.title, 'Changes to who can see this app need a Yes from another member.');
+  assert.ok(s.lock, 'the lock glyph still rides along');
+  // Once the floor is met it is a plain pass again — no words left over.
+  const met = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 1,
+  }));
+  assert.equal(met.key, 'tally');
+  assert.equal(met.tone, 'ok');
+});
+
+test('tier 5 — when the viewer is the member it waits on, the pill says so (#3826)', () => {
+  const AppView = makeAppView();
+  const s = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true, other_member_yes_count: 0,
+  }));
+  assert.equal(s.tier, 5);
+  assert.equal(s.key, 'needs_vote');
+  assert.equal(s.label, 'Needs your Yes · 3/3');
+  assert.equal(s.tone, 'progress');
+  assert.ok(s.dot);
+  assert.match(s.title, /none is from another member yet/);
+  // An invited-approver app's non-approver vote is advisory, so the pill
+  // keeps the plain vote label and only states the floor is unmet.
+  const invited = AppView.statusPillState(PR({
+    check_state: 'passing', my_vote: null, yes_count: 3, votes_required: 3,
+    approval_policy: 'invited', requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility', needs_other_member_yes: true,
+    other_member_yes_count: 0,
+  }));
+  assert.equal(invited.label, 'Vote · 3/3');
+  assert.equal(invited.title, 'It has the Yes votes it needs, but a Yes from another member is still missing.');
 });
 
 // ── Modifiers folded into the pill ──────────────────────────────────────
@@ -776,8 +936,9 @@ function stagingRows() {
     if (src[j] === '{') depth += 1;
     else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
   }
-  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration

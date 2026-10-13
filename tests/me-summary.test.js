@@ -41,7 +41,7 @@ test('kudos is what the product calls kudos RECEIVED: direct PR kudos plus award
 test('an account with nothing yet is zeros, not a failure', () => {
   const summary = profile.shapeSummary({ counts: undefined, contributions: undefined, challenges: null });
   assert.deepEqual(summary, {
-    merged: 0, apps: 0, kudos: 0, memberSince: null,
+    merged: 0, apps: 0, proposalsTotal: 0, inProgress: 0, kudos: 0, memberSince: null,
     challenges: { done: 0, total: 0, season: null },
     contributions: [],
   });
@@ -72,13 +72,14 @@ test('a contribution carries what its row needs to open it, and a title it can a
 test('the SQL counts the viewer\'s own, authored, non-headless proposals and bounded rows', () => {
   const route = read('src/routes/profile.js');
   const counts = collapse(route.slice(route.indexOf('const SUMMARY_COUNTS_SQL'), route.indexOf('const SUMMARY_CONTRIBUTIONS_SQL')));
-  assert.match(counts, /COUNT\(\*\) FILTER \(WHERE cs\.status = 'merged'\)::int AS merged/);
+  // Counted once live (live_at): a merge still going live is in progress.
+  assert.match(counts, /COUNT\(\*\) FILTER \(WHERE cs\.status = 'merged' AND cs\.live_at IS NOT NULL\)::int AS merged/);
   assert.match(counts, /WHERE cs\.user_id = \$1 AND cs\.is_headless = FALSE/,
     'auto sessions are not proposals anybody authored');
   assert.match(counts, /FROM pr_kudos pk JOIN chat_sessions ks ON ks\.id = pk\.session_id WHERE ks\.user_id = \$1/);
   assert.match(counts, /ib\.awarded_user_id = \$1 AND ib\.status = 'awarded'/);
   const list = collapse(route.slice(route.indexOf('const SUMMARY_CONTRIBUTIONS_SQL'), route.indexOf('const SELF_APP_SQL')));
-  assert.match(list, /cs\.status = 'merged'/);
+  assert.match(list, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL/);
   assert.match(list, /ORDER BY cs\.merged_at DESC NULLS LAST, cs\.id DESC LIMIT \$2/);
   assert.equal(profile.SUMMARY_CONTRIBUTIONS_LIMIT, 5);
 });
@@ -104,7 +105,7 @@ test('each demo row opens the very merged mock it names', () => {
   // stagingMockMerged (src/routes/votes.js) serves these ids under the same
   // flag, so a demo row's link lands on a real proposal page in a preview.
   const votes = read('src/routes/votes.js');
-  const mocks = votes.slice(votes.indexOf('function stagingMockMerged()'));
+  const mocks = votes.slice(votes.indexOf('function stagingMockMerged('));
   for (const row of profile.DEMO_CONTRIBUTIONS) {
     assert.ok(mocks.includes(String(row.sessionId)), `${row.sessionId} is a merged mock`);
     const title = row.title.replace(/^\[Mock\] /, '');
@@ -123,10 +124,14 @@ function mockPool(state) {
       const sql = collapse(raw);
       calls.push({ sql, params });
       if (sql.includes('AS direct_kudos')) return { rows: [state.counts || {}] };
-      if (sql.includes("cs.status = 'merged' ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
+      if (sql.includes("cs.status = 'merged' AND cs.live_at IS NOT NULL ORDER BY cs.merged_at")) return { rows: state.contributions || [] };
       if (sql.includes('FROM apps WHERE self_hosted = TRUE')) return { rows: state.selfApp ? [state.selfApp] : [] };
       if (sql.includes('FROM seasons')) return { rows: state.season ? [state.season] : [] };
       if (sql.includes('COUNT(*)::int AS total')) return { rows: [state.totals || { total: 0, done: 0 }] };
+      // The season's First challenges, read so a First challenge done counts
+      // the way Home counts it (profile.js viewerDoneRule, 2026-10-01). None
+      // here: the totals are DONE_EXPR's alone.
+      if (sql.startsWith('/* challenge onboarding */')) return { rows: state.onboardingRows || [] };
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
     },
   };

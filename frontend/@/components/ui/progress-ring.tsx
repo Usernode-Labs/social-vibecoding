@@ -37,6 +37,22 @@ import { cn } from '@/lib/utils';
 const RING_R = 15;
 const RING_C = 94.25;
 
+/*
+ * ── The orbit (`spinning`) ───────────────────────────────────────────
+ *
+ * #4199: a ring that is still being worked toward says so with a short arc
+ * circling just outside it. It is opt-in, so the leaderboard's and the home
+ * screen's rings draw exactly what they drew before. The orbit sits at
+ * radius 20, past the 38-unit box, so the box and the layout around it do
+ * not change; the svg lets it overflow. Its circumference, 2π × 20, is
+ * written out for the same reason RING_C is. It turns only where motion is
+ * welcome, and holds still otherwise: the arc then still says "going".
+ * `transform-box: fill-box` makes the turn about the circle's own centre,
+ * not the svg's origin.
+ */
+const ORBIT_R = 20;
+const ORBIT_C = 125.66;
+
 export interface ProgressRingProps extends Omit<React.SVGProps<SVGSVGElement>, 'children'> {
   /** 0-100. Callers round it themselves, so a ring and a bar always agree. */
   pct: number;
@@ -46,10 +62,18 @@ export interface ProgressRingProps extends Omit<React.SVGProps<SVGSVGElement>, '
   title: string;
   /** The arc's colour, as a Tailwind `stroke-*` class. Complete literals only. */
   arcClassName?: string;
+  /**
+   * The track's colour, as `stroke-*` classes merged over the default.
+   * Complete literals only. For a ring on a surface the default's dark
+   * zinc-800 matches, as the messages card's #2c2c2e does.
+   */
+  trackClassName?: string;
+  /** Draw a short arc circling the ring: the work toward it is under way. */
+  spinning?: boolean;
 }
 
 export function ProgressRing({
-  pct, label, title, className, arcClassName, ...props
+  pct, label, title, className, arcClassName, trackClassName, spinning = false, ...props
 }: ProgressRingProps) {
   const filled = (Math.max(0, Math.min(100, pct)) / 100) * RING_C;
   return (
@@ -60,6 +84,7 @@ export function ProgressRing({
       viewBox="0 0 38 38"
       role="img"
       aria-label={title}
+      {...(spinning ? { overflow: 'visible', 'data-progress-ring-spinning': '' } : {})}
       {...props}
     >
       <circle
@@ -68,7 +93,7 @@ export function ProgressRing({
         r={RING_R}
         fill="none"
         strokeWidth="4"
-        className="stroke-zinc-200 dark:stroke-zinc-800"
+        className={cn('stroke-zinc-200 dark:stroke-zinc-800', trackClassName)}
       />
       {filled > 0 ? (
         <circle
@@ -81,6 +106,18 @@ export function ProgressRing({
           strokeDasharray={`${filled} ${RING_C}`}
           transform="rotate(-90 19 19)"
           className={cn('stroke-violet-500', arcClassName)}
+        />
+      ) : null}
+      {spinning ? (
+        <circle
+          cx="19"
+          cy="19"
+          r={ORBIT_R}
+          fill="none"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray={`18 ${ORBIT_C}`}
+          className={cn('origin-center [transform-box:fill-box] stroke-violet-500 motion-safe:animate-[spin_1.6s_linear_infinite] motion-reduce:animate-none', arcClassName)}
         />
       ) : null}
       {label ? (

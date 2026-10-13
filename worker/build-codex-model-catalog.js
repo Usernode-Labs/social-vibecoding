@@ -159,6 +159,7 @@ function buildCodexModelCatalog({
   selectedReasoningEffort,
   baseInstructions,
   maxOutputTokens,
+  supportsImages,
 }) {
   const slug = String(modelId || '').trim();
   if (!slug) throw new Error('modelId is required');
@@ -240,7 +241,11 @@ function buildCodexModelCatalog({
       comp_hash: null,
       effective_context_window_percent: 95,
       experimental_supported_tools: [],
-      input_modalities: ['text'],
+      // #3426: image input only when OpenRouter lists it for the model
+      // (AGENT_MODEL_SUPPORTS_IMAGES). Codex refuses view_image for a
+      // text-only model, which left GLM 5.3 Flash, a model that sees
+      // images, decoding screenshots by hand.
+      input_modalities: parseOptionalBoolean(supportsImages) === true ? ['text', 'image'] : ['text'],
       supports_search_tool: false,
       use_responses_lite: false,
       auto_review_model_override: null,
@@ -262,6 +267,7 @@ function buildCatalogFromEnvironment(env = process.env) {
     selectedReasoningEffort: env.AGENT_REASONING_EFFORT,
     baseInstructions: loadBundledBaseInstructions(bundledCatalogPath),
     maxOutputTokens: env.AGENT_MODEL_MAX_OUTPUT_TOKENS,
+    supportsImages: env.AGENT_MODEL_SUPPORTS_IMAGES,
   });
 }
 

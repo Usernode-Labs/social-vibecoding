@@ -6,7 +6,7 @@ coverage** section. Written for the next LLM-driven run, because almost
 everything expensive about the first one was *discovering the mechanics*,
 not doing the testing.
 
-The unit suite and the 365 declared dapp tests answer "does this component
+The unit suite and the declared dapp.json checks answer "does this component
 still behave?". This answers "can a person actually get through the
 product, on production, today?" — which is a different question, and the
 only one that catches a gate that never fires or a screen that freezes

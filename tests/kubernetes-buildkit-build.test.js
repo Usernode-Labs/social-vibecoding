@@ -222,6 +222,45 @@ test('progress lines: BuildKit steps parse as the Docker builder\'s steps; the J
   assert.equal(p(''), null);
 });
 
+// #4895: where a build's time went, as BuildKit itself timed each step.
+const TIMED_BUILD_LOG = [
+  '[buildkit] building Dockerfile -> registry.test/apps/demo:git-x',
+  '#1 [internal] load build definition from Dockerfile',
+  '#1 DONE 0.0s',
+  '#4 [css 1/7] FROM docker.io/library/node:22-alpine@sha256:abc',
+  '#4 resolve docker.io/library/node:22-alpine 0.4s done',
+  '#9 [css 3/7] RUN npm ci --include=dev',
+  '#9 3.211 added 120 packages in 3s',
+  '#4 DONE 4.1s',
+  '#9 [css 3/7] RUN npm ci --include=dev',
+  '#9 DONE 6.25s',
+  '#10 [stage-1 3/5] RUN npm ci --omit=dev',
+  '#10 CACHED',
+  '#14 exporting to image',
+  '#14 pushing layers 3.2s done',
+  '#14 DONE 5.0s',
+  '#15 exporting cache to registry',
+  '#15 ERROR: failed to push',
+  '#15 DONE 7.5s',
+  '#15 DONE 9.9s',
+];
+
+test('stepClock: each step\'s own duration, named by its first line, slowest first', () => {
+  const clock = buildkit._forTest.stepClock();
+  for (const line of TIMED_BUILD_LOG) clock.line(line);
+  assert.deepEqual(clock.slowest(4), [
+    { name: 'exporting cache to registry', ms: 7500 },
+    { name: '[css 3/7] RUN npm ci --include=dev', ms: 6250 },
+    { name: 'exporting to image', ms: 5000 },
+    { name: '[css 1/7] FROM docker.io/library/node:22-alpine@sha256:abc', ms: 4100 },
+  ], 'a step closes once; an ERROR line does not rename it');
+  assert.equal(clock.cached, 1);
+  const long = buildkit._forTest.stepClock();
+  long.line(`#3 [css 2/7] RUN ${'x'.repeat(100)}`);
+  long.line('#3 DONE 1.0s');
+  assert.equal(long.slowest(1)[0].name.length, 60);
+});
+
 test('createBuild: Secret then Job, owner reference, digest from the termination message, annotation for reuse, step progress from the log', async () => {
   const { clients, state } = fakeCluster({ logLines: ['[buildkit] fetching source x', '#5 [shell 2/9] RUN npm ci', '#5 1.2 noise'] });
   const progress = [];
@@ -251,6 +290,16 @@ test('createBuild: Secret then Job, owner reference, digest from the termination
     { index: 2, total: 9, phase: 'shell', detail: 'RUN npm ci' },
   ]);
   assert.equal(state.deleted.length, 0, 'a successful Job stays for reuse until its TTL');
+});
+
+test('createBuild: a finished build says where its time went, without a progress listener', async () => {
+  const { clients } = fakeCluster({ logLines: TIMED_BUILD_LOG });
+  const result = await buildkit.createBuild(config(), {
+    app, revision, environment: 'production', sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients));
+  assert.deepEqual(result.steps.map((s) => s.name).slice(0, 2), ['exporting cache to registry', '[css 3/7] RUN npm ci --include=dev']);
+  assert.ok(result.steps.length <= 6);
+  assert.equal(result.cachedSteps, 1);
 });
 
 test('createBuild: a previous successful Job for the same revision and recipe is reused without a build', async () => {
@@ -341,6 +390,19 @@ test('createBuild: a namespace or RBAC the cluster does not have yet is the lane
     return true;
   });
   assert.equal(state.deleted.filter((d) => /-input$/.test(d.name)).length, 1, 'the clone credential does not outlive the attempt');
+});
+
+test('createBuild: a Job name still held by a terminating Job past the create deadline does not strand the clone credential', async (t) => {
+  const conflict = Object.assign(new Error('jobs.batch "bk" already exists'), { code: 409 });
+  const { clients, state } = fakeCluster({ createJobError: conflict });
+  clients.batch.readNamespacedJob = async ({ name }) => ({ metadata: { name, deletionTimestamp: '2026-10-08T12:00:00Z' }, status: { active: 1 } });
+  // Every clock read lands past the one-minute create deadline.
+  let now = 0;
+  t.mock.method(Date, 'now', () => (now += 61000));
+  await assert.rejects(buildkit.createBuild(config(), {
+    app, revision, environment: 'staging', sessionId: 42, sourceDir: sourceTree(['Dockerfile']),
+  }, runtimeWith(clients)), /Timed out waiting to recreate BuildKit Job/);
+  assert.deepEqual(state.deleted.filter((d) => /-input$/.test(d.name)).map((d) => d.name), [state.secrets[0].metadata.name]);
 });
 
 test('kubernetes.createBuild under auto builds with kpack while the lane is unavailable, and remembers that for a while', async () => {

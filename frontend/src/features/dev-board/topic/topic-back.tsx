@@ -43,6 +43,18 @@
  * glyph; the accessible name says the whole thing. The native back-swipe
  * follows this chip too; see ../../header/native-back-navigation.ts.
  *
+ * ── Opened from Messages: two chips (#3691) ───────────────────────────
+ *
+ * A card opened from a Messages conversation goes back to it (#3103), so its
+ * chip reads "‹ Messages". That left the project the card belongs to with no
+ * way in from the card's own page, so a second chip, "‹ Workshop", follows
+ * it: the same pill, to the board the chip would have named had the card
+ * been opened there (`topicWorkshopHref`). The pair sits in a row
+ * (`.dev-topic-backs`) in the first chip's place. Back itself is unchanged:
+ * the header, the native back-swipe and the first chip all still read
+ * `topicBackHref`, the conversation. A card opened from the Workshop keeps
+ * its one chip, exactly as before.
+ *
  * Mounted client-side only (a legacy portal, never prerendered), so reading
  * the store during render cannot mismatch hydration.
  */
@@ -51,8 +63,9 @@ import type { MouseEvent, ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
-import { improveStore, topicBackHref, topicBackLabel } from '../../improve/improve-store.js';
+import { improveStore, topicBackHref, topicWorkshopHref } from '../../improve/improve-store.js';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -62,7 +75,53 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const href = event.currentTarget.getAttribute('href');
   if (!href) return;
   event.preventDefault();
+  // #3620: a step Back when the entry below is where the chip points (the
+  // board it was opened from), so the device's Back afterwards does not
+  // reopen this item. Anywhere else (a cold link) it pushes, as it did.
+  const app = (window as unknown as { App?: { _stepBackTo?: (h: string) => boolean } }).App;
+  if (app?._stepBackTo?.(href)) return;
   window.location.hash = href;
+}
+
+/** Where a chip goes: the screen it names. */
+type ChipKey = 'messages' | 'workshop' | 'allItems';
+
+/**
+ * The chip's words by destination, as message ids. The key names the
+ * destination and is never shown.
+ */
+const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
+  messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
+  workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
+  allItems: { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
+};
+
+/**
+ * The destination `href` names, as a key: the rule `topicBackLabel`
+ * (../../improve/improve-store.js) words. A card opened from a Messages
+ * conversation goes back to it (#3103); one opened from All items goes back
+ * there when the Workshop reopens on it (#4486); anything else goes back to
+ * the Workshop. Read as state, so the chip never compares its own words.
+ */
+function chipFor(href: string, workshopTab: string | null): ChipKey {
+  if (href.startsWith('#messages')) return 'messages';
+  return workshopTab === 'all' && /\/workshop$/.test(href) ? 'allItems' : 'workshop';
+}
+
+/** One chip: the destination's name behind the chevron. */
+function TopicChip({ href, to }: { href: string; to: ChipKey }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <a
+      className="dev-topic-back un-touch-target"
+      href={href}
+      aria-label={t(CHIP_TEXT[to].name)}
+      onClick={onBackClick}
+    >
+      <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
+      <span>{t(CHIP_TEXT[to].label)}</span>
+    </a>
+  );
 }
 
 export function TopicBack(): ReactNode {
@@ -71,16 +130,18 @@ export function TopicBack(): ReactNode {
   if (!href) return null;
   // #3103: a card opened from a Messages conversation goes back to it, and
   // says so; everywhere else the chip is the Workshop's.
-  const label = topicBackLabel(href);
+  // #4486: "‹ All items" when the Workshop reopens on All items, the page
+  // the item was opened from.
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
+  const back = <TopicChip href={href} to={chipFor(href, workshopTab)} />;
+  // #3691: and offers its project's Workshop beside that, styled the same.
+  const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
+  if (!workshop) return back;
   return (
-    <a
-      className="dev-topic-back un-touch-target"
-      href={href}
-      aria-label={`Back to ${label}`}
-      onClick={onBackClick}
-    >
-      <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>{label}</span>
-    </a>
+    <div className="dev-topic-backs">
+      {back}
+      <TopicChip href={workshop} to="workshop" />
+    </div>
   );
 }

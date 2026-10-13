@@ -320,10 +320,10 @@ test('a scout turn runs the runtime read-only and never uploads a commit', async
   assert.equal(result.body.status, 'completed');
   assert.equal(result.body.headSha, null, 'and never claims one');
   assert.equal(result.body.specMd, spec, 'the drafted spec is the product');
-  assert.match(io.stdout.join(''), /drafted a \d+-line spec/);
+  assert.match(io.stdout.join(''), /drafted a \d+-line plan/);
 });
 
-test('a scout run that produced no spec text is a failure, not a silent success', async () => {
+test('a scout run that produced no plan text is a failure, not a silent success', async () => {
   const { dir } = tempRepo();
   const api = fakeApi({ '/accept': { status: 200, data: {} }, '/result': { status: 200, data: {} } });
   const io = fakeIo();
@@ -337,7 +337,7 @@ test('a scout run that produced no spec text is a failure, not a silent success'
   const result = api.calls.find((c) => c.pathname.includes('/result'));
   assert.equal(result.body.status, 'failed');
   assert.equal(result.body.specMd, null);
-  assert.match(result.body.error, /no spec text/);
+  assert.match(result.body.error, /no plan text/);
 });
 
 test('a read-only turn that leaves the tree dirty restores it and never uploads it', async () => {

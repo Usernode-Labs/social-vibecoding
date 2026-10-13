@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const limits = require('../src/services/platform-limit-alerts');
+const githubBudget = require('../src/services/github-budget');
 
 const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
@@ -149,7 +150,7 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, set
         if (countError) throw countError;
         return { rows: [{ n: apps }] };
       }
-      if (/FROM chat_sessions/.test(sql)) return { rows: [{ n: sessions }] };
+      if (/FROM chat_sessions/.test(sql)) return { rows: [{ cnt: sessions }] };
       // services/app-limit.js: the admin's app limit, when one is stored.
       if (/FROM platform_settings s/.test(sql)) {
         return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
@@ -231,13 +232,14 @@ test('each cap counts exactly what its enforcing route counts', async () => {
   const pool = fakePool({ sessions: 10 });
   await limits.evaluate(pool, CONFIG, 'sessions', recorder().deps);
   const count = pool.state.queries.find((q) => /FROM chat_sessions/.test(q.sql)).sql;
-  // routes/sessions.js's global-cap probe.
+  // The one count every start, resume and reopen asks (session-caps.js),
+  // not a copy of it.
+  assert.equal(count, collapse(require('../src/services/session-caps').GLOBAL_SESSIONS_SQL));
   assert.match(count, /status IN \('active', 'promoted'\)/);
   assert.match(count, /source IS DISTINCT FROM 'imported'/);
-  assert.match(count, /is_synthetic = TRUE/);
-  const routes = collapse(read('src/routes/sessions.js'));
-  assert.ok(routes.includes("AND source IS DISTINCT FROM 'imported' AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)"),
-    'the sessions route still counts the same way');
+  assert.doesNotMatch(count, /is_synthetic/, 'synthetic users\' sessions count');
+  assert.match(read('src/services/session-lifecycle.js'), /const \{ countGlobalSessions \} = require\('\.\/session-caps'\);/,
+    'the gate the routes pass counts the same way');
   const apps = collapse(read('src/routes/apps.js'));
   assert.ok(apps.includes("SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'"),
     'the apps route still counts the same way');
@@ -277,14 +279,81 @@ test('a cap that is off records ok and pages nobody', async () => {
   assert.equal(out.cap, 0);
 });
 
-test('the sweep checks every cap and one failure does not stop the other', async () => {
+test('the sweep checks every cap and one failure does not stop the others', async () => {
+  githubBudget._resetForTests();
   const pool = fakePool({ countError: new Error('db down'), sessions: 60 });
   const { calls, deps } = recorder();
   const out = await limits.sweep(pool, CONFIG, deps);
   assert.deepEqual(out.errors, ['apps: db down']);
-  assert.equal(out.results.length, 1);
-  assert.equal(out.results[0].key, 'sessions');
+  assert.deepEqual(out.results.map((r) => r.key), ['sessions', 'github', 'github_app']);
+  assert.deepEqual(out.results.slice(1).map((r) => r.level), ['ok', 'ok'],
+    'nothing known about GitHub reads as ok');
   assert.deepEqual(calls.create, [{ detail: 'sessions_warn:60:75' }]);
+});
+
+// ─── GitHub's hourly budget (services/github-budget.js) ─────────────────
+
+function githubWindow(remaining, { limit = 5000, resetMin = 30, credential = 'pat' } = {}) {
+  githubBudget.record(credential, {
+    'x-ratelimit-limit': String(limit),
+    'x-ratelimit-remaining': String(remaining),
+    'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + resetMin * 60),
+  });
+}
+
+test('the bot token warns at a fifth left and again when used up, once per window', async () => {
+  githubBudget._resetForTests();
+  const pool = fakePool();
+  const { calls, deps } = recorder();
+  const run = () => limits.evaluate(pool, CONFIG, 'github', deps);
+
+  githubWindow(1001);
+  assert.equal((await run()).level, 'ok', '1,001 left is still over a fifth');
+  githubWindow(1000);
+  const warn = await run();
+  assert.deepEqual([warn.used, warn.cap, warn.level, warn.notified], [4000, 5000, 'warn', 'warn']);
+  assert.equal((await run()).notified, null, 'the same window does not page twice');
+  githubWindow(0);
+  const full = await run();
+  assert.deepEqual([full.level, full.notified], ['full', 'full']);
+  assert.equal((await run()).notified, null);
+  assert.deepEqual(calls.create, [{ detail: 'github_warn:4000:5000' }, { detail: 'github_full:5000:5000' }]);
+
+  // The next hour: a fresh window re-arms both lines, and its own crossing
+  // pages again.
+  githubWindow(4990, { resetMin: 90 });
+  assert.equal((await run()).level, 'ok');
+  githubWindow(900, { resetMin: 90 });
+  assert.equal((await run()).notified, 'warn');
+  assert.equal(calls.create.length, 3);
+});
+
+test('the warning line is GitHub\'s own, not PLATFORM_LIMIT_WARN_PERCENT', async (t) => {
+  githubBudget._resetForTests();
+  const prior = process.env.PLATFORM_LIMIT_WARN_PERCENT;
+  t.after(() => {
+    if (prior === undefined) delete process.env.PLATFORM_LIMIT_WARN_PERCENT;
+    else process.env.PLATFORM_LIMIT_WARN_PERCENT = prior;
+  });
+  process.env.PLATFORM_LIMIT_WARN_PERCENT = '95';
+  githubWindow(1000);
+  const out = await limits.evaluate(fakePool(), CONFIG, 'github', recorder().deps);
+  assert.equal(out.notified, 'warn');
+});
+
+test('the App is measured on its most-used installation', async () => {
+  githubBudget._resetForTests();
+  githubWindow(12000, { limit: 12500, credential: 'installation:a' });
+  githubWindow(0, { limit: 12500, credential: 'installation:b' });
+  const { calls, deps } = recorder();
+  const out = await limits.evaluate(fakePool(), CONFIG, 'github_app', deps);
+  assert.deepEqual([out.used, out.cap, out.notified], [12500, 12500, 'full']);
+  assert.deepEqual(calls.create, [{ detail: 'github_app_full:12500:12500' }]);
+  assert.deepEqual(limits.parseDetail('github_app_full:12500:12500'),
+    { limit: 'github_app', level: 'full', used: 12500, cap: 12500 });
+  assert.deepEqual(limits.parseDetail('github_warn:4000:5000'),
+    { limit: 'github', level: 'warn', used: 4000, cap: 5000 });
+  githubBudget._resetForTests();
 });
 
 test('an unknown cap is refused, and a nudge for a cap that is off does nothing', async () => {
@@ -314,7 +383,7 @@ test('both app-create routes nudge the apps check on success and on refusal', ()
 });
 
 test('the detail format is spelled identically wherever it is parsed', () => {
-  const literal = String.raw`/^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
+  const literal = String.raw`/^(apps|sessions|github|github_app)_(warn|full):(\d{1,7}):(\d{1,7})$/`;
   for (const rel of [
     'src/services/platform-limit-alerts.js',
     'src/services/mobile-push-policy.js',
@@ -322,7 +391,7 @@ test('the detail format is spelled identically wherever it is parsed', () => {
   ]) {
     assert.ok(read(rel).includes(literal), `${rel} parses the same token`);
   }
-  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions'],
+  assert.deepEqual(limits.LIMITS.map((l) => l.key), ['apps', 'sessions', 'github', 'github_app'],
     'a new cap must be added to the token pattern in all three places');
 });
 

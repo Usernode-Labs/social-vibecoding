@@ -47,6 +47,7 @@ function makeAppView(userId) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -119,3 +120,66 @@ test('the live card\'s band carries the kudos slot the thanks pill lands in; not
   const head = AppView._proposalCardModel(proposal({ my_vote: null }), { noNav: true });
   assert.equal((head.actions || []).filter((a) => a.kudos != null).length, 0, 'the detail head lists its own');
 });
+
+// #22: the Yes spec also says when the project is just the viewer's
+// (`audience` 'solo', from the app's own record, AppView.appData), so the
+// picker's optional Yes line is a note rather than "a line for the group".
+// The governance pair carries it the same way. The No side carries nothing.
+test('#22: on a solo project the Yes spec is marked solo, for proposals and group decisions alike', () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience: 'solo' };
+  const [yes, no] = AppView._cardVoteButtonSpecs(proposal({ my_vote: null }));
+  assert.equal(yes.solo, true);
+  assert.ok(!('solo' in no), 'the No side is worded the same either way');
+  assert.equal(yes.prior, undefined, 'and nothing else changes');
+
+  for (const audience of ['invited', 'open', undefined]) {
+    AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience };
+    const [groupYes] = AppView._cardVoteButtonSpecs(proposal({ my_vote: null }));
+    assert.ok(!('solo' in groupYes), `${audience}: a group, or nothing said, keeps "for the group"`);
+  }
+
+  AppView.appData = { slug: 'plant-pal', can_collaborate: true, audience: 'solo' };
+  AppView._govProposals = [];
+  const gov = AppView._govCardModel({
+    id: 31, kind: 'rename', title: 'Rename the app', status: 'open', payload: {},
+    up_count: 0, down_count: 0, my_vote: null, created_at: '2026-06-01T00:00:00Z', username: 'evan',
+  });
+  const govYes = (gov.actions || []).find((a) => a.key === 'yes');
+  assert.ok(govYes, 'the group decision offers its vote');
+  assert.equal(govYes.solo, true);
+  assert.ok(!('solo' in (gov.actions || []).find((a) => a.key === 'no')));
+  delete AppView.appData;
+});
+
+test('a vote spec carries its count beside its label, and the count is exactly what the label\'s parentheses held', () => {
+  const AppView = makeAppView(ME);
+  // Before the text moved, the card read the count back out of "Yes (N)".
+  // The spec now says it once more on its own; in English the two agree.
+  const inParens = (label) => (/\(([^)]*)\)\s*$/.exec(label) || [])[1];
+  for (const over of [
+    { yes_count: 1, no_count: 0 },
+    { yes_count: 12, no_count: 3 },
+    { yes_count: 3, no_count: 1, qualified_yes_count: 2, qualified_no_count: 0, approval_policy: 'invited' },
+    { yes_count: 0, no_count: 0, qualified_yes_count: 0, qualified_no_count: 0, approval_policy: 'invited' },
+  ]) {
+    const [yes, no] = AppView._cardVoteButtonSpecs(proposal(over));
+    assert.equal(yes.tally, inParens(yes.label), yes.label);
+    assert.equal(no.tally, inParens(no.label), no.label);
+    assert.ok(yes.tally.length > 0);
+  }
+});
+
+test('the plain vote pill says so in a field, so nothing has to recognise its English word', () => {
+  const AppView = makeAppView(ME);
+  const states = [
+    proposal({ my_vote: null }), proposal({ my_vote: 'yes' }), proposal({ status: 'merged' }),
+    proposal({ my_vote: null, yes_count: 0 }), proposal({ my_vote: null, approval_policy: 'invited', qualified_yes_count: 0 }),
+  ].map((p) => AppView.statusPillState(p)).filter(Boolean);
+  assert.ok(states.some((s) => s.plainVote), 'a proposal the viewer has not voted on shows the plain vote pill');
+  for (const s of states) {
+    // The old test was /^Vote\b/ on the label; the field is true for exactly those labels.
+    assert.equal(!!s.plainVote, /^Vote\b/.test(s.label || ''), `${s.key}: ${s.label}`);
+  }
+});
+

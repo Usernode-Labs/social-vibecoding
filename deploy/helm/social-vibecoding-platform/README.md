@@ -59,7 +59,10 @@ lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
 referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
-component refreshes.
+component refreshes. A manual run never waits for the release gap: a push
+to `main` waits until the previous release is `RELEASE_MIN_GAP_MINUTES`
+old. So a manual run is also how to release an urgent fix without waiting;
+see "Ownership and releases" in `docs/kubernetes-operations.md`.
 
 `main` publishes stable `0.1.x` chart versions tracked by Argo CD. The
 `feat/k8s` branch publishes `0.0.x-feat-k8s` candidates that can be pulled and
@@ -95,6 +98,45 @@ Release the updated chart and sync the encrypted values through Argo CD. The
 Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
+
+For open, click and unsubscribe attribution with the existing Gmail sender,
+set `secrets.platformMailTrackingSecret` through SOPS. Generate a stable random
+value with `openssl rand -hex 32` and keep it out of plaintext values files,
+command arguments and logs. The chart maps it to `PLATFORM_MAIL_TRACKING_SECRET`
+in the same platform Secret. With `secrets.create: false`, add that environment
+key to `secrets.existingSecret` and roll out the platform after changing it.
+An empty value leaves tracking disabled; rotating it invalidates old signed
+links. No Resend credentials or provider change is needed for Gmail engagement
+tracking; Gmail does not supply delivery, bounce or complaint callbacks.
+
+The infra values can use a separate SOPS-encrypted overlay containing only this
+new field, encrypted to the same cluster recipients and listed after the existing
+secret overlays in Argo's `valueFiles`. Release this chart before merging those
+infra values. After rollout, verify delivery with the admin test-send control,
+then send an actual tracked notification (for example a project invite) to a
+mailbox you control and open/click it. Diagnostic sends are not engagement tracked.
+Review Email engagement in Admin → Email delivery; image proxies and prefetching
+make open counts approximate.
+
+For immediate imported proposal head updates, set `secrets.githubWebhookSecret`
+in the same SOPS-encrypted values file. It maps to `GITHUB_WEBHOOK_SECRET` in
+the chart-created Secret; its empty default leaves the webhook disabled.
+With `secrets.create: false`, supply that environment-variable key in
+`secrets.existingSecret` and roll out the platform after changing it.
+
+Publish the updated chart and sync the encrypted values first. The secrets
+checksum rolls out chart-managed changes. Configure the GitHub App webhook,
+or a webhook on each relevant repository, with the same secret, JSON payloads,
+TLS verification enabled, and `pull_request` events sent to
+`https://<config.domain>/api/github/webhook`. Repository webhooks cover only
+their own repository; an App webhook covers its subscribed installations.
+
+An unsigned `ping` must return 401 `Bad signature`; 503 means the running
+process still lacks the secret. A correctly signed ping returns 200 with
+`pong: true`. Check GitHub's Recent deliveries, then verify a real proposal
+head update or the `github-webhook` log entry `Pull request event applied`.
+Delivery HTTP 200 only acknowledges receipt; synchronization runs afterward.
+The periodic sweep remains the fallback for missed deliveries.
 
 For GitHub and X account linking, add both OAuth credential pairs to the same
 encrypted file's existing `secrets` block using the SOPS editor:
@@ -156,6 +198,11 @@ origin including the scheme, with no path or trailing slash; the application
 appends `/waitlist/connect/<provider>/callback`. When overriding it, register
 the resulting callback URLs with the OAuth providers.
 
+Invite links no longer let anybody skip the waitlist: someone new who follows
+one joins its community straight away as a private member, and is let in from
+the waitlist like anybody else. The `INVITE_TREE_BUDGETS` setting is gone;
+remove `config.inviteTreeBudgets` from overrides that set it.
+
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
 `OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
@@ -189,6 +236,34 @@ With `secrets.create: false`, provide the same environment-variable keys in
 encrypted values through Argo CD; the existing secrets checksum triggers a
 rollout when chart-managed values change.
 
+To supply a Firebase web API key, add this optional field to the same
+SOPS-encrypted values file's existing `secrets` block:
+
+```yaml
+secrets:
+  firebaseWebApiKey: "<Firebase web API key>"
+```
+
+With `secrets.create: true`, it maps to `FIREBASE_WEB_API_KEY` in the platform
+Secret and reaches the process through the Deployment's `envFrom`. The field
+defaults to an empty string. With `secrets.create: false`, supply
+`FIREBASE_WEB_API_KEY` in `secrets.existingSecret` instead. The existing
+secrets checksum rolls out changes to the chart-managed value. This makes the
+key available in the environment; application code must read it to use it.
+The current Firebase Admin push provider uses the service account above.
+
+Set the non-secret phone authentication flag in the infra repository's
+plaintext `platform.yaml`:
+
+```yaml
+config:
+  firebasePhoneAuthEnabled: true
+```
+
+This maps to `FIREBASE_PHONE_AUTH_ENABLED` in the platform Deployment and
+defaults to `false` in the reusable chart. Application support for this flag
+is required for it to enable phone authentication.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
@@ -207,10 +282,10 @@ Platform links, CLI authentication, and access-grant redirects continue to use
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
 
-Agent-authored visual evidence is active by default. The chart always injects
-`VISUAL_EVIDENCE_V2_ENABLED=true`; in an incident, set
-`platform.visualEvidenceV2Enabled: false` and sync Argo CD to stop collection,
-execution, and presentation together. This kill switch does not restore
+Before & after shots are on by default. The chart always injects
+`SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`
+(formerly `platform.visualEvidenceV2Enabled`) and sync Argo CD to stop
+collection, execution, and presentation together. This kill switch does not restore
 legacy default-route screenshots.
 
 DNS and cert-manager must support both hostname sets before rollout. Keep
@@ -263,27 +338,50 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
-Previews prefer the node hosting the external CloudNativePG primary by default
-(`config.previewFollowDatabasePrimary: true`). The chart derives
+Preview databases (staging templates, preview copies, before & after shots
+copies) can live on a second PostgreSQL server instead of the main one:
+`previewPostgresql.enabled`, with the server's address and credential in the
+Secret as `STAGING_DB_ADMIN_URL`. The chart adds the platform's egress to that
+server and does not create it. It is off by default; see "A separate server
+for preview databases" in `docs/kubernetes-operations.md` for what the cluster
+has to provide, the drain step for switching back, and the costs. The
+placement preference below still follows the main server's primary.
+
+Previews and production apps prefer to run near the external CloudNativePG
+primary by default (`config.previewFollowDatabasePrimary: true`; the name
+predates apps following it too). The chart derives
 `PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
 `PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
 namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Only staging preview Deployments receive a weight-100 preferred Pod affinity
-term matching that cluster's `cnpg.io/instanceRole: primary` across
-`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
-node is full, unavailable, or no matching primary exists. This is a scheduler
+Staging preview and production app Deployments receive one preferred Pod
+affinity term matching that cluster's `cnpg.io/instanceRole: primary`, weight
+100 across `topology.kubernetes.io/zone`. It matters on a cluster spread over
+data centres: a page makes many sequential queries, so a pod in another data
+centre pays that round trip on every one, and checks against such a preview
+fail on data that arrives too late. There is deliberately no term for the
+primary's own node: it gains nothing measurable inside one data centre and
+fills that node to its Pod limit while its neighbours stay half empty. Label every node with its
+location for the zone term to apply, for example:
+
+```sh
+kubectl label node <node> topology.kubernetes.io/zone=<location>
+```
+
+A node without the label matches no zone, so an unlabelled cluster gets normal
+placement. Other eligible nodes remain available if the zone is
+full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
-no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+no extra runtime RBAC or node lookup.
 
 After releasing the platform image and chart together, newly created or
-reconciled preview Deployments get this policy. Existing Deployments are not
-patched automatically. Following a database failover, newly scheduled Pods
-prefer the new primary; running previews stay where they are. Opting out affects
-future reconciliation too. Production apps, build Pods, workers and captures
-retain their existing placement. See the
+reconciled preview and app Deployments get this policy. Existing Deployments
+are not patched automatically: a running app moves when it is next deployed.
+Following a database failover, newly scheduled Pods prefer the new primary;
+running pods stay where they are. Opting out affects future reconciliation too.
+Build Pods, workers and captures retain their existing placement. See the
 [Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
 and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
 
@@ -331,6 +429,33 @@ browser groups). Their requests are one CPU / 3 GiB, matching the observed
 browser working set; smaller limit overrides also lower the requests so
 Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
 requested / 4 GiB limited. Changes apply to newly created check Jobs.
+
+`config.checksMaxConcurrentRuns` (`CHECKS_MAX_CONCURRENT_RUNS`, default 4)
+bounds how many proposal checks runs have their Jobs on the cluster at once,
+across every platform Pod. A run whose preview is built waits for a slot
+before it creates its capture and unit-suite Jobs, so their deadlines start
+only once it has one; proposals show "Waiting for a checks slot" meanwhile.
+Slots go to promoted proposals first, then submitted CLI hand-offs, then
+drafts, first come first served within each. Main-watch's run of the unit
+suite on a merge commit has one slot of its own besides these and goes first
+for any free one. The count is the live `check_runs` rows, so it survives a
+platform restart, and a run that was waiting keeps its place when the next
+leader re-drives it. Size it so the check Jobs' requests (4 CPU each, two per
+run) leave room in the worker namespace's ResourceQuota for coding workers,
+and so the previews under test do not saturate the shared Postgres primary.
+`0` turns the queue off.
+
+`config.checkNodePool` (`CHECK_NODE_POOL`, default empty) names a dedicated
+node pool for check Jobs as the pool nodes' label `key=value`, for example
+`usernodelabs.org/node-pool=cpu-heavy`. Label the pool's nodes with that pair
+and taint them with the same pair and `NoSchedule`, so nothing else is
+scheduled there. Capture and unit-suite Jobs then tolerate the taint and
+prefer those nodes. It is a preference, so checks still run on the other nodes
+when the pool is full or down. With a pool set, checks drop their hostname
+spread: on a pool of one large node it would push Pods back onto the small
+nodes. A value that is not a valid label pair is logged once and ignored.
+Coding workers, builds, apps and previews are not affected. Changes apply to
+newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

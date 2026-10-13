@@ -89,11 +89,15 @@ function workshopHtml(AppView, tab) {
   return renderToHtml(createElement(m.DevWorkshop));
 }
 
-/** Render the whole kanban board from `AppView._kanbanView()`. */
+/**
+ * Render the whole kanban board from `AppView._kanbanView()`: the stage
+ * strip, then the columns, as All items draws them (#4486: the strip is the
+ * columns' heads and the phone's tabs, drawn in the pinned head above them).
+ */
 function kanbanHtml(AppView) {
   const m = mod();
   m.devKanbanStore.set(AppView._kanbanView());
-  return renderToHtml(createElement(m.DevKanban));
+  return renderToHtml(createElement(m.StageStrip)) + renderToHtml(createElement(m.DevKanban));
 }
 
 // ── The topic head's body blocks ────────────────────────────────────────
@@ -124,7 +128,11 @@ const BLANK_CARD = {
 function detailsHtml(AppView, pr) {
   const body = { actions: null, changeId: pr.id || 1, details: AppView._proposalDetailsView(pr) };
   body.steps = AppView._topicStepsView(pr, BLANK_CARD, body);
-  return topicHeadHtml(BLANK_CARD, body);
+  // B10b: the steps are drawn in Details (topic-head.tsx DetailsBody), the
+  // sheet the page keeps mounted beside it; the page and the sheet, in the
+  // order the document holds them.
+  return topicHeadHtml(BLANK_CARD, body)
+    + renderToHtml(createElement(mod().DetailsBody, { prRef: null, steps: body.steps, help: !!body.details.help, html: '' }));
 }
 
 /** The detail ACTION block alone — the pills, the reasons, the visuals. */

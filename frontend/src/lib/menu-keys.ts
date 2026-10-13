@@ -3,7 +3,7 @@ import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefOb
 /**
  * Keyboard behaviour for the shell's small React menus (QA 2026-09-24 Q18).
  *
- * The Messages "+", the conversation's ⋯, the Workshop's "Which workshop?"
+ * The Messages "+", the conversation's ⋯, the Workshop's "Which project?"
  * panel and the Homeroom menu each opened fine from the keyboard and then
  * left focus on the button that opened them, so the rows were a Tab-hunt
  * away (or, for a menu portalled to the end of <body>, past the whole page).

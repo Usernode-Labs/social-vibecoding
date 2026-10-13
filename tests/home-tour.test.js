@@ -10,7 +10,8 @@
 //
 // What is pinned here, and why each one is worth a test:
 //
-//   - THE STEP TABLE. Four steps in the product owner's order (#3240), with
+//   - THE STEP TABLE. Five steps in the product owner's order (#3240, and
+//     #3567's communities step first), with
 //     the copy they settled on, and the interaction flags that make the
 //     Improve arc real rather than illustrated. The order is the whole
 //     design, so a reshuffle should be a deliberate edit to this file too.
@@ -42,9 +43,9 @@
 //     measured geometry in it at all.
 //   - THE REPLAY. Settings clears the flag, asks, and navigates home.
 //   - DONE ON THE ACCOUNT (#3237). A browser that has the flag copies it to
-//     the account once, never for an account whose join screen is due; the
-//     write tells the Getting started card, whose tour row ticks. Executed
-//     against a stubbed App, fetch and storage, not grepped.
+//     the account once, never for an account whose join screen is due; a
+//     write that lands says so on `document`. Executed against a stubbed
+//     App, fetch and storage, not grepped.
 //
 // Run with: node --test tests/home-tour.test.js
 'use strict';
@@ -55,6 +56,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { renderComponent, loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -75,15 +77,20 @@ const INDEX = read('public/index.html');
 const steps = loadTsx(`${TOUR_DIR}/tour-steps.ts`);
 const spotlight = loadTsx(`${TOUR_DIR}/spotlight.ts`);
 
-test('the four steps are the ones the design settled on, in order', () => {
-  assert.equal(steps.TOUR_LENGTH, 4);
-  // #3240: the tour runs when asked, from the first row of Home's Getting
-  // started card, so it keeps only what nothing else on the first run says:
+test('the six steps are the ones the design settled on, in order', () => {
+  assert.equal(steps.TOUR_LENGTH, 6);
+  // #3240: the tour runs when asked (from Settings; until #4635, also from
+  // Home's Getting started card), so it keeps only what nothing else on the
+  // first run says:
   // your apps -> the menu -> what is in it (feedback and a new change, one
   // step, one well) -> where to replay it. The welcome, Workshop, Discover
   // and Getting started steps repeated the join screen and the card.
+  // #3567 put one stop in front: what a community is, which the join screen
+  // asks about without explaining and every later step takes for granted.
+  // #4604 put one before the last: Homeroom bot, in Messages, so nobody
+  // finishes the tour without meeting it. Replay stays last.
   assert.deepEqual(steps.TOUR_STEPS.map((s) => s.id), [
-    'apps', 'app-menu', 'menu-actions', 'settings',
+    'communities', 'apps', 'app-menu', 'menu-actions', 'meet-bot', 'settings',
   ]);
   for (const gone of ['welcome', 'workshop', 'discover', 'getting-started', 'challenges']) {
     assert.ok(!steps.TOUR_STEPS.some((s) => s.id === gone), `${gone} is not a step`);
@@ -92,11 +99,11 @@ test('the four steps are the ones the design settled on, in order', () => {
 
 test('each step carries copy, and none of it is an em dash', () => {
   for (const step of steps.TOUR_STEPS) {
-    assert.ok(step.title.length > 0, `${step.id} has a title`);
-    assert.ok(step.body.length > 12, `${step.id} has body copy`);
+    assert.ok(message(step.title).length > 0, `${step.id} has a title`);
+    assert.ok(message(step.body).length > 12, `${step.id} has body copy`);
     // tests/no-em-dash-in-copy.test.js bans it across frontend/src; this
     // table is all copy, so it is worth saying twice.
-    assert.doesNotMatch(`${step.title} ${step.body}`, /—/, `${step.id} is em-dash free`);
+    assert.doesNotMatch(`${message(step.title)} ${message(step.body)}`, /—/, `${step.id} is em-dash free`);
   }
 });
 
@@ -104,14 +111,28 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Every step has something to point at.
   for (const step of steps.TOUR_STEPS) assert.ok(step.targets.length > 0, `${step.id} points at something`);
-  // The whole Your apps section, heading included, so the card never sits on
+  // The whole My apps section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a group, a lock for one that is just yours/,
+  assert.match(message(byId.apps.body), /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
+  // #3567: the Communities tab, whose key and id are still `workshop`.
+  assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
+  // #4604: the Messages tab, where the bot's DM is the first row.
+  assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-messages']);
+  assert.equal(message(byId['meet-bot'].title), 'Meet Homeroom bot');
+  assert.match(message(byId['meet-bot'].body), /build a change, file an idea or fix a bug for you\. Find it in Messages\./);
+  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+    /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages'/,
+    'the tab the step points at is Messages');
+  assert.equal(message('core:tabs.messages'), 'Messages');
+  assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
+    /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
+  assert.equal(message('core:tabs.communities'), 'Communities',
+    'the tab the step points at is the one labelled Communities');
   // THE MENU ARC: the mark that opens it, then the well inside it that holds
   // both of its actions. The mark is on screen on every route, which is what
   // lets this step be the one the arc falls back to. No mock anywhere in the
@@ -129,7 +150,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
 test('the Improve step waits for the menu, and its Next opens the menu rather than skipping it', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   assert.equal(byId['app-menu'].advanceOn, 'menu-open');
-  assert.equal(steps.IMPROVE_STEP_INDEX, 1);
+  assert.equal(steps.IMPROVE_STEP_INDEX, 2);
   // Only the menu step's Next opens the menu; every other Next moves the
   // counter (or finishes, on the last step).
   for (const [i, step] of steps.TOUR_STEPS.entries()) {
@@ -143,7 +164,7 @@ test('the Improve step waits for the menu, and its Next opens the menu rather th
   // so step 4 can only ever arrive with the menu it points into.
   const goNext = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const goNext = useCallback('));
   const body = goNext.slice(0, goNext.indexOf('}, [finish]);'));
-  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\(\);/);
+  assert.match(body, /if \(nextOpensMenu\(at\)\) void AppContext\.open\(\);\s*else if \(isLastStep\(at\)\) finish\('finish'\);/);
   // The click on the mark is watched, never intercepted: the overlay
   // subscribes to the store and advances on the EDGE into open.
   assert.match(OVERLAY_SRC, /appContextStore\.subscribe\(/);
@@ -162,7 +183,7 @@ test("a press on the tour never dismisses the menu it is pointing into", () => {
   const onDoc = MENU_SRC.slice(MENU_SRC.indexOf('const onDoc = (event: Event) => {'));
   const body = onDoc.slice(0, onDoc.indexOf('void AppContext.close();'));
   assert.match(body, /const tour = document\.getElementById\(TOUR_ID\);/);
-  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\)\)\) return;/);
+  assert.match(body, /if \(t && \(sheet\?\.contains\(t\) \|\| mark\?\.contains\(t\) \|\| tour\?\.contains\(t\) \|\| firstSession\?\.contains\(t\)\)\) return;/);
   // And the id it spares is the overlay's root, which holds the card, the
   // shades and every button the tour draws.
   assert.match(OVERLAY_SRC, /ref=\{rootRef\}\s*id="home-tour"/);
@@ -180,7 +201,7 @@ test('the cut-out passes the press through only where pressing is the point', ()
   // them by the focus move and the Tab handler below, and the pointer agrees.
   // #2718's two new targets arrived carrying the flag and lost it here: a tab
   // and a menu button are the same case as the rows, not an exception to it.
-  for (const id of ['apps', 'menu-actions', 'settings']) {
+  for (const id of ['communities', 'apps', 'menu-actions', 'meet-bot', 'settings']) {
     assert.equal(byId[id].interactive, undefined, `${id} only describes its target`);
   }
   // The rule stated once more against the table itself, so a step added later
@@ -204,16 +225,17 @@ test('the panel step knows it needs the panel, and the step after shuts it', () 
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   assert.equal(byId['menu-actions'].needsPanel, true);
   assert.deepEqual(steps.TOUR_STEPS.filter((s) => s.needsPanel).map((s) => s.id), ['menu-actions']);
-  for (const id of ['apps', 'app-menu', 'settings']) {
+  for (const id of ['communities', 'apps', 'app-menu', 'meet-bot', 'settings']) {
     assert.equal(byId[id].needsPanel, undefined, `${id} does not need the menu`);
   }
   assert.equal(byId['app-menu'].needsPanel, undefined,
     'the Improve step needs no panel: its target is a row of the app\'s own '
     + 'menu, which it presents for itself');
-  // AND THE STEP AFTER IT SHUTS IT. That step points at the Me tab, and on a
-  // phone the menu's sheet is drawn over the tab bar, so the cut-out would be
-  // around something the viewer cannot see.
-  assert.deepEqual(steps.TOUR_STEPS.filter((s) => s.closesPanel).map((s) => s.id), ['settings']);
+  // AND THE STEP AFTER IT SHUTS IT. That step points at the Messages tab
+  // (#4604), the last one at the Me tab, and on a phone the menu's sheet is
+  // drawn over the tab bar, so the cut-out would be around something the
+  // viewer cannot see. Both carry it, so Back never lands under the sheet.
+  assert.deepEqual(steps.TOUR_STEPS.filter((s) => s.closesPanel).map((s) => s.id), ['meet-bot', 'settings']);
   // Closed through the controller's own path, never by writing to the
   // panel's DOM, which React owns. Both surfaces, because the steps that
   // carry `closesPanel` spotlight the header and either one drawn over it
@@ -290,20 +312,21 @@ test('Next and Back walk one step, and no step is skipped', () => {
   assert.equal(steps.stepFrom(0, 1), 1);
   assert.equal(steps.stepFrom(2, -1), 1);
   assert.equal(steps.stepFrom(0, -1), 0, 'nowhere to go: it stays');
-  assert.equal(steps.stepFrom(3, 1), 3);
+  assert.equal(steps.stepFrom(5, 1), 5);
   assert.match(OVERLAY_SRC, /else setIndex\(stepFrom\(at, 1\)\);/);
   assert.doesNotMatch(OVERLAY_SRC, /targetPresent/);
 });
 test('Next, Back and Finish cannot walk off either end', () => {
   assert.equal(steps.clampIndex(-3), 0);
-  assert.equal(steps.clampIndex(99), 3);
+  assert.equal(steps.clampIndex(99), 5);
   assert.equal(steps.clampIndex(Number.NaN), 0);
-  assert.equal(steps.stepAt(0).id, 'apps');
-  assert.equal(steps.stepAt(3).id, 'settings');
-  assert.ok(!steps.isLastStep(2));
-  assert.ok(steps.isLastStep(3));
-  assert.equal(steps.stepCounter(0), '1 of 4');
-  assert.equal(steps.stepCounter(3), '4 of 4');
+  assert.equal(steps.stepAt(0).id, 'communities');
+  assert.equal(steps.stepAt(4).id, 'meet-bot');
+  assert.equal(steps.stepAt(5).id, 'settings');
+  assert.ok(!steps.isLastStep(4));
+  assert.ok(steps.isLastStep(5));
+  assert.equal(steps.stepCounter(0), '1 of 6');
+  assert.equal(steps.stepCounter(5), '6 of 6');
 });
 
 test('the card goes below the hole when it fits, above it when it does not', () => {
@@ -672,23 +695,26 @@ test('a reload resumes where the viewer was, and a panel step at the Improve ste
   assert.equal(steps.resumeIndex(null), 0, 'nothing kept: from the top');
   assert.equal(steps.resumeIndex(0), 0);
   assert.equal(steps.resumeIndex(1), 1);
+  assert.equal(steps.resumeIndex(2), 2, 'the menu step resumes as itself');
   // A fresh document has no Improve panel open, so a panel step cannot be
   // resumed as itself: the arc restarts at "press Improve". ONE step is in
   // the panel now (the well with Give feedback and New change).
-  assert.equal(steps.resumeIndex(2), steps.IMPROVE_STEP_INDEX, 'step 3 resumes at the menu');
+  assert.equal(steps.resumeIndex(3), steps.IMPROVE_STEP_INDEX, 'step 4 resumes at the menu');
   // …and the ones that are not in it resume where they are, because the mark
   // and the tabs are on screen in a fresh document.
-  assert.equal(steps.resumeIndex(3), 3, 'the Me tab resumes as itself');
+  assert.equal(steps.resumeIndex(4), 4, 'the Messages tab resumes as itself');
+  assert.equal(steps.resumeIndex(5), 5, 'the Me tab resumes as itself');
   // A step kept by the eight-step tour, before #3240, is clamped like every
   // other index.
-  assert.equal(steps.resumeIndex(6), 3);
-  assert.equal(steps.resumeIndex(99), 3, 'clamped like every other index');
+  assert.equal(steps.resumeIndex(7), 5);
+  assert.equal(steps.resumeIndex(99), 5, 'clamped like every other index');
   assert.equal(steps.resumeIndex(Number.NaN), 0);
 });
 
 test('the overlay keeps its step while it is up, resumes there, and clears it on finish', () => {
   // Written on every step while open, under the viewer's id.
-  assert.match(OVERLAY_SRC, /if \(!open \|\| userId == null\) return;\s*writeStep\(userId, index\);\s*\}, \[open, index, userId\]\);/);
+  // Not on the tour's own screenshot route (#3567), which writes nothing.
+  assert.match(OVERLAY_SRC, /if \(!open \|\| userId == null \|\| isTourShot\(\)\) return;\s*writeStep\(userId, index\);\s*\}, \[open, index, userId\]\);/);
   // The reload resume is the one path that resumes; a request starts from
   // the top.
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
@@ -700,7 +726,7 @@ test('the overlay keeps its step while it is up, resumes there, and clears it on
   // Finish and Skip both go through finish(): done is written, here and on
   // the account, the place is cleared, and neither can bring the tour back on
   // the next reload.
-  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*(?:\/\/[^\n]*\n\s*)*void markDoneOnServer\(userId\);\s*clearStep\(userId\);/);
+  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*(?:\/\/[^\n]*\n\s*)*void markDoneOnServer\(userId, \{ ended, step: indexRef\.current \}\);\s*clearStep\(userId\);/);
 });
 
 test("the shell's automatic reload waits for a tour in progress", () => {
@@ -733,8 +759,8 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /id="home-tour-confirm" class="hidden"/);
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
-  assert.match(html, /1 of 4/);
-  assert.match(html, /Your apps/);
+  assert.match(html, /1 of 6/);
+  assert.match(html, /Homeroom is made of communities/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
   // hydration mismatch waiting for the first viewport that differs.
@@ -777,6 +803,47 @@ test('nothing opens the tour on a deterministic capture route', () => {
   assert.match(OVERLAY_SRC, /if \(isDeterministicRoute\(\)\) return;/);
 });
 
+test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', () => {
+  // The one named exception to the rule above, so a declared check can see
+  // the tour's first card: the same arrangement as ?shot=join-communities.
+  assert.match(OVERLAY_SRC, /const TOUR_SHOT = 'welcome-tour';/);
+  const guard = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('function isTourShot(): boolean {'));
+  const body = guard.slice(0, guard.indexOf('\n}'));
+  assert.match(body, /if \(isEmbeddedPanel\(\)\) return false;/, 'never in the side panel');
+  assert.match(body, /\.get\('shot'\) === TOUR_SHOT/);
+  // It opens at the top once Home is up, and claims the document so the
+  // resume cannot also fire.
+  const open = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (!isTourShot()) return;'));
+  const effect = open.slice(0, open.indexOf('}, [start]);'));
+  assert.match(effect, /started\.current = true;[\s\S]*await whenHomeVisible\(\);[\s\S]*start\(\);/);
+  // Finish and Skip on that route write no "done", here or on the account.
+  const finish = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const finish = useCallback(('));
+  const fbody = finish.slice(0, finish.indexOf('}, [userId]);'));
+  assert.ok(fbody.indexOf('if (isTourShot()) {') < fbody.indexOf('writeDone(userId);'),
+    'the shot returns before anything is written');
+  // The declared check that reaches the communities step is this route.
+  const DAPP = JSON.parse(read('dapp.json'));
+  const check = DAPP.tests.find((t) => t.path === '/?shot=welcome-tour');
+  assert.ok(check, 'dapp.json declares a check on the tour shot');
+  assert.match(check.expectSelector, /#home-tour:not\(\.hidden\)/);
+  assert.ok(message(steps.TOUR_STEPS[0].body).toLowerCase().includes(check.expectText.toLowerCase()),
+    'and it asserts the communities step\'s own copy');
+});
+
+test('the communities step names what the screen names (#3567)', () => {
+  // AGENTS.md, "Communities own projects": a community owns projects, and
+  // people see it by its audience, in the screen's own words.
+  const step = steps.TOUR_STEPS[0];
+  assert.equal(step.id, 'communities');
+  assert.equal(message(step.title), 'Communities');
+  assert.match(message(step.body), /communities that build projects together/);
+  assert.match(message(step.body), /propose a change, and the group votes it in/);
+  for (const audience of ['Just you', 'a Private community', 'a Public community']) {
+    assert.ok(message(step.body).includes(audience), `names ${audience}`);
+  }
+  assert.doesNotMatch(message(step.body), /\bapps?\b/, 'a thing being built is a project');
+});
+
 test('nothing opens the tour by itself: a request, or a reload under one in progress', () => {
   // #3240. It used to open on the first sign-in that reached Home, straight
   // after the join screen, which had just said the same things. Every gate
@@ -785,8 +852,8 @@ test('nothing opens the tour by itself: a request, or a reload under one in prog
     /firstRunRev/, /TermsFirstRun/]) {
     assert.doesNotMatch(OVERLAY_SRC, gone);
   }
-  // A request (Getting started's first row, Settings' Replay) opens it at
-  // once, whatever was finished before, once Home is on screen.
+  // A request (Settings' Replay) opens it at once, whatever was finished
+  // before, once Home is on screen.
   const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
   const asked = replay.slice(0, replay.indexOf('}, [request, start]);'));
   assert.match(asked, /started\.current = true;[\s\S]*await whenHomeVisible\(\);[\s\S]*start\(\);/);
@@ -809,7 +876,8 @@ test('the terms gate publishes the settled() the join screen waits on', () => {
   const check = TERMS_SRC.slice(TERMS_SRC.indexOf('async _check()'));
   assert.ok((check.match(/TermsFirstRun\._resolve\(\);/g) || []).length >= 5,
     'each early return out of the check resolves the promise');
-  assert.match(TERMS_SRC, /onClosed: \(\) => \{\s*TermsFirstRun\._presented = false;\s*TermsFirstRun\._resolve\(\);/);
+  // The terms are accepted by continuing now, with no sheet: the write's end resolves it too.
+  assert.match(TERMS_SRC, /async _acceptByContinuing\(payload\) \{[\s\S]*?TermsFirstRun\._resolve\(\);\s*\},/);
 });
 
 test('Escape behaves like Skip, and focus stays in the card', () => {
@@ -963,11 +1031,13 @@ test('on a phone, the card clears the whole menu sheet when there is room above 
 test('Settings offers Replay the tour, and it is a registered section', () => {
   const html = renderComponent('frontend/src/features/settings/sections/tour.tsx', 'TourSection');
   assert.match(html, /data-settings-section="tour"/);
-  assert.match(html, /class="hidden"/, 'the pane ships hidden, like its fifteen siblings');
+  assert.match(html, /class="hidden"/, 'the pane ships hidden, like its siblings');
   assert.match(html, /id="settings-tour-replay"/);
   assert.match(html, /Replay the tour/);
-  // Registered in the menu, in Preferences.
-  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Preferences' \}/);
+  // Registered in the menu, a page of its own under Help & about.
+  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'settings:nav\.part\.tour', group: 'settings:nav\.group\.helpAbout' \}/);
+  assert.equal(message('settings:nav.part.tour'), 'Welcome tour');
+  assert.equal(message('settings:nav.group.helpAbout'), 'Help & about');
 });
 
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {
@@ -993,8 +1063,8 @@ test('the tour never reads or writes the challenge-based onboarding gate', () =>
     assert.doesNotMatch(src, /HomePanels/);
   }
   // Communities, stage 5: the tour no longer points at Challenges at all.
-  // Its first steps are the Getting started card's, which it points at
-  // instead.
+  // The First challenges sit in Home's Challenges area, under their own
+  // header, for whoever has them to do (#4635).
   assert.ok(!steps.TOUR_STEPS.some((s) => s.id === 'challenges'));
 });
 
@@ -1089,7 +1159,7 @@ test('Finish and Skip record done on the account: one POST, and App.user and the
   } finally { shell.restore(); }
 });
 
-test('a write that lands tells the Getting started card, whose tour row ticks', async () => {
+test('a write that lands says so on document (`sv:tour-done`)', async () => {
   const shell = withShell({ user: { id: 7 } });
   const events = [];
   const before = { document: globalThis.document, CustomEvent: globalThis.CustomEvent };
@@ -1113,8 +1183,6 @@ test('a write that lands tells the Getting started card, whose tour row ticks', 
     globalThis.document = before.document;
     globalThis.CustomEvent = before.CustomEvent;
   }
-  const CARD = read('frontend/src/features/home/getting-started.tsx');
-  assert.match(CARD, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
 
 test('a replay finished on a verified session sets done again, on the account too', async () => {
@@ -1177,7 +1245,7 @@ test('the overlay backfills the account once, and forgets this browser\'s "done"
     'never on a capture route, where no POST may land');
   assert.match(effect, /if \(backfilledFor\.current === userId \|\| !sessionVerified\(userId\)\) return;/);
   assert.match(effect, /joinShownHere: firstRunShownHere\(\),\s*joinPending: firstRunPending\(\),/);
-  assert.match(effect, /backfilledFor\.current = userId;\s*void markDoneOnServer\(userId\);/);
+  assert.match(effect, /backfilledFor\.current = userId;\s*void markDoneOnServer\(userId, \{ ended: 'backfill' \}\);/);
   assert.match(effect, /document\.addEventListener\('sv:session', check\);/);
   assert.match(effect, /return \(\) => document\.removeEventListener\('sv:session', check\);/);
 });

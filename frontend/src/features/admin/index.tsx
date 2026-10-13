@@ -122,7 +122,7 @@ import { useRef } from 'react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
 // admin-console.js FIRST: it exports the AdminUI registry the others import,
-// and admin-topochain.js reads AdminUI.card at module-evaluation time.
+// and topochain/tokens.ts reads AdminUI.card at module-evaluation time.
 import { AdminUI } from './admin-console.js';
 // The nineteen section modules used to be twenty bare side-effect imports
 // here. They are ./sections.ts now, dynamic-imported by
@@ -152,6 +152,7 @@ export function AdminScreen() {
       id="admin-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       <div id="admin-root" className="w-full p-4 lg:px-6">
         <div className="md:flex md:items-start md:gap-6">

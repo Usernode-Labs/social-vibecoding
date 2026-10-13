@@ -114,14 +114,14 @@ test('the store normalises the server cap and treats a malformed one as no cap',
 
 // ── The panel ─────────────────────────────────────────────────────
 
-function renderPanel(state) {
+function renderPanel(state, props = {}) {
   const store = { get: () => ({ loading: false, error: '', requestedAt: null, ...state }), subscribe: () => () => {} };
   const mod = loadTsx('frontend/src/features/dialogs/app-allowance.tsx', {
     stubs: {
       './app-allowance-store.js': { appAllowanceStore: store, refreshAppAllowance() {}, requestMoreApps() {} },
     },
   });
-  return { html: renderToHtml(createElement(mod.AppAllowance, { id: 'create-app-quota', surface: 'pane' })), mod };
+  return { html: renderToHtml(createElement(mod.AppAllowance, { id: 'create-app-quota', surface: 'pane', ...props })), mod };
 }
 
 const QUOTA = { used: 0, limit: 2, remaining: 2 };
@@ -161,4 +161,61 @@ test('a full server blocks creation like a spent allowance, and both shots pin t
   // ?shot=create-quota keeps the #1611 check deterministic on a full server.
   assert.match(src, /shot === 'create-quota'\) \{\s*quota = \{ used: 1, limit: 2, remaining: 1 \};\s*server = null;/);
   assert.match(src, /shot === 'create-server-full'\) \{\s*quota = \{ used: 0, limit: 2, remaining: 2 \};\s*server = \{ used: 50, limit: 50, remaining: 0, full: true \};/);
+});
+
+// ── #23: quiet in the create dialog ──────────────────────────────
+
+test('quiet, the create dialog\'s card shows only when the allowance bears on what happens next (D7)', () => {
+  const quiet = (state) => renderPanel(state, { quiet: true }).html;
+  // 0 of 2: nothing to say, on any step.
+  assert.equal(quiet({ quota: { used: 0, limit: 2, remaining: 2 }, server: null }), '');
+  // 1 of 2: one slot left, so it is worth knowing before it is spent.
+  const one = quiet({ quota: { used: 1, limit: 2, remaining: 1 }, server: null });
+  assert.match(one, /id="create-app-quota"/);
+  assert.match(one, /1 of 2 app slots used/);
+  // Spent, a full server, a server that binds first, a pending request and a
+  // failed read each show it; an unlimited allowance never does.
+  assert.match(quiet({ quota: { used: 2, limit: 2, remaining: 0 }, server: null }), /data-quota-state="spent"/);
+  assert.match(quiet({ quota: QUOTA, server: { used: 50, limit: 50, remaining: 0, full: true } }), /data-quota-state="server-full"/);
+  assert.match(quiet({ quota: QUOTA, server: { used: 49, limit: 50, remaining: 1, full: false } }), /create-app-quota-server/);
+  assert.match(quiet({ quota: QUOTA, server: null, requestedAt: '2026-10-03T10:00:00Z' }), /Request pending/);
+  assert.match(quiet({ quota: null, server: null, error: 'Could not load your app allowance.' }), /role="alert"/);
+  assert.equal(quiet({ quota: { used: 7, limit: null, remaining: null }, server: null }), '');
+  // Not quiet (the fork dialog), 0 of 2 still shows as it always did.
+  assert.match(renderPanel({ quota: QUOTA, server: null }, { surface: 'inset' }).html, /0 of 2 app slots used/);
+});
+
+test('allowanceWorthShowing is pure, and the make screen is the one surface that is quiet', () => {
+  const { allowanceWorthShowing } = renderPanel({ quota: QUOTA, server: null }).mod;
+  const roomy = { used: 10, limit: 50, remaining: 40, full: false };
+  assert.equal(allowanceWorthShowing(QUOTA, null, null, ''), false);
+  assert.equal(allowanceWorthShowing(QUOTA, roomy, null, ''), false, 'a roomy server says nothing');
+  assert.equal(allowanceWorthShowing({ used: 1, limit: 2, remaining: 1 }, null, null, ''), true, 'remaining <= 1');
+  assert.equal(allowanceWorthShowing({ used: 0, limit: 1, remaining: 1 }, null, null, ''), true);
+  assert.equal(allowanceWorthShowing({ used: 2, limit: 2, remaining: 0 }, null, null, ''), true, 'spent');
+  assert.equal(allowanceWorthShowing({ used: 0, limit: 0, remaining: 0 }, null, null, ''), true, 'no slots at all');
+  assert.equal(allowanceWorthShowing(QUOTA, { used: 50, limit: 50, remaining: 0, full: true }, null, ''), true);
+  assert.equal(allowanceWorthShowing(QUOTA, { used: 49, limit: 50, remaining: 1, full: false }, null, ''), true);
+  assert.equal(allowanceWorthShowing(QUOTA, null, '2026-10-03T10:00:00Z', ''), true);
+  assert.equal(allowanceWorthShowing(QUOTA, null, null, 'boom'), true);
+  assert.equal(allowanceWorthShowing({ used: 7, limit: null, remaining: null }, null, null, ''), false, 'unlimited');
+  assert.equal(allowanceWorthShowing({ used: null, limit: 2, remaining: null }, null, null, ''), false,
+    'an unknown count is not read as one slot left');
+  assert.equal(allowanceWorthShowing(null, null, null, ''), false);
+  const read = (rel) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', rel), 'utf8');
+  // The retired create dialog's quiet row, on Create's make screen now.
+  assert.match(read('frontend/src/features/first-session/make.tsx'), /<AppAllowance id="make-app-quota" surface="pane" quiet \/>/);
+  assert.match(read('frontend/src/features/dialogs/fork-app.tsx'), /<AppAllowance \/>/, 'the fork dialog is unchanged');
+});
+
+test('"Request more" is the neutral pill on the create dialog, not the accent', () => {
+  const html = renderPanel({ quota: { used: 1, limit: 2, remaining: 1 }, server: null }, { quiet: true }).html;
+  const button = html.match(/<button[^>]*>Request more<\/button>/);
+  assert.ok(button, 'the request button renders');
+  assert.doesNotMatch(button[0], /bg-violet-600/, 'a secondary act does not wear the accent');
+  assert.match(button[0], /rounded-full bg-zinc-100/, 'the neutral pill');
+  assert.match(button[0], /text-zinc-900/, 'with the neutral ink, not white on grey');
+  // The fork dialog's inset keeps the button it had.
+  const inset = renderPanel({ quota: { used: 1, limit: 2, remaining: 1 }, server: null }, { surface: 'inset' }).html;
+  assert.match(inset.match(/<button[^>]*>Request more<\/button>/)[0], /rounded-lg bg-violet-600/);
 });

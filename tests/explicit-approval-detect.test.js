@@ -1,16 +1,20 @@
 // Tests for #788 explicit-approval DETECTION — normalizeAdmins /
-// adminsFromManifestSource / detectAdminsChange in
-// src/services/app-admins.js.
+// adminsFromManifestSource / explicitApprovalBlocks /
+// detectExplicitApprovalChange in src/services/app-admins.js.
 //
-// Two load-bearing properties:
-//   1. A proposal is flagged only when the admins SET actually moves.
-//      Reformatting the manifest, reordering the names, or recasing
-//      them must not flag — otherwise every routine dapp.json edit
-//      would silently switch off the app's merge timers.
+// Three load-bearing properties:
+//   1. A proposal is flagged only when a protected block (admins,
+//      governance, visibility, platform_env, secrets) actually moves.
+//      Reformatting the manifest, reordering the names, recasing them,
+//      or editing documentation-only fields must not flag — otherwise
+//      every routine dapp.json edit would silently switch off the app's
+//      merge timers and ask for another member's Yes.
 //   2. The comparison is THREE-DOT (head vs the merge base of main and
 //      head), not head vs main's moving tip — a branch that simply
 //      predates an admins change on main must NOT read as reverting it
 //      (the 2648 regression).
+//   3. The stored reason is the PRIMARY changed block, in
+//      services/explicit-approval.js REASONS order.
 //
 // Run with: node --test tests/explicit-approval-detect.test.js
 
@@ -85,7 +89,7 @@ test('adminsFromManifestSource normalizes a real block', () => {
   );
 });
 
-// ── detectAdminsChange: three-dot semantics (the 2648 regression) ─────
+// ── detectExplicitApprovalChange: three-dot semantics (the 2648 regression) ─
 
 test('a branch that predates an admins change on main is NOT a change', () => withGithub({
   // Merge base (where the branch was cut): no admins block. Head: also
@@ -95,7 +99,7 @@ test('a branch that predates an admins change on main is NOT a change', () => wi
   head: json({ name: 'Game Corner', tests: [] }),
   compare: { mergeBaseSha: BASE_SHA, files: ['dapp.json', 'server.js'], filesComplete: true },
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'dev/old-branch' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'dev/old-branch' });
   assert.equal(r.changed, false, 'main moving underneath must not flag the branch');
   assert.equal(r.determinate, true);
   assert.equal(r.mergeBaseSha, BASE_SHA);
@@ -107,7 +111,7 @@ test('manifest absent from a COMPLETE file list short-circuits with zero fetches
   compare: { mergeBaseSha: BASE_SHA, files: ['server.js', 'public/app.js'], filesComplete: true },
   onFetch: () => { throw new Error('getFileContent must not be called'); },
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, false);
   assert.equal(r.determinate, true);
   assert.equal(r.mergeBaseSha, BASE_SHA);
@@ -122,7 +126,7 @@ test('a CAPPED file list falls back to comparing the manifest even when dapp.jso
     filesComplete: false,
   },
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, true, 'an incomplete list missing dapp.json proves nothing');
 }));
 
@@ -131,100 +135,219 @@ test('no merge_base_commit is INDETERMINATE, not "unchanged"', () => withGithub(
   head: json({ admins: ['b'] }),
   compare: { mergeBaseSha: null, files: [], filesComplete: true },
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.determinate, false);
   assert.equal(r.changed, false);
 }));
 
-// ── detectAdminsChange: non-changes ───────────────────────────────────
+// ── detectExplicitApprovalChange: non-changes ─────────────────────────
 
 test('reordering the same names is NOT a change', () => withGithub({
   base: json({ admins: ['alice', 'bob'] }),
   head: json({ admins: ['bob', 'alice'] }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'feat/x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'feat/x' });
   assert.equal(r.changed, false);
-  assert.deepEqual(r.from, ['alice', 'bob']);
-  assert.deepEqual(r.to, ['alice', 'bob']);
+  assert.deepEqual(r.reasons, []);
+  assert.equal(r.reason, null);
+  assert.deepEqual(r.from, {}, 'only changed blocks are reported');
+  assert.deepEqual(r.to, {});
 }));
 
 test('recasing the same names is NOT a change', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ admins: ['ALICE'] }),
 }, async () => {
-  assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, false);
+  assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, false);
 }));
 
-test('reformatting the file (whitespace, key order, other blocks) is NOT a change', () => withGithub({
-  base: '{"admins":["alice"],"name":"Chess"}',
-  head: json({ name: 'Chess', visibility: { build: 'public' }, admins: ['  alice  '] }),
+test('reformatting the file (whitespace, key order, unprotected blocks) is NOT a change', () => withGithub({
+  base: '{"admins":["alice"],"name":"Chess","visibility":{"view":"public","build":"public"}}',
+  head: json({
+    name: 'Chess Club',
+    tests: [{ name: 'loads', path: '/' }],
+    visibility: { build: 'public', view: 'public' },
+    admins: ['  alice  '],
+  }),
 }, async () => {
-  assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, false);
+  assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, false);
 }));
 
-test('no admins block on either side is NOT a change', () => withGithub({
+test('no protected block on either side is NOT a change', () => withGithub({
   base: json({ name: 'Chess' }),
   head: json({ name: 'Chess Club' }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, false);
-  assert.deepEqual(r.from, []);
-  assert.deepEqual(r.to, []);
+  assert.deepEqual(r.reasons, []);
 }));
 
-// ── detectAdminsChange: real changes (relative to the merge base) ─────
+// ── detectExplicitApprovalChange: real changes (relative to the merge base) ─
 
 test('adding a name on the branch IS a change', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ admins: ['alice', 'bob'] }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, true);
-  assert.deepEqual(r.from, ['alice']);
-  assert.deepEqual(r.to, ['alice', 'bob']);
+  assert.deepEqual(r.reasons, ['admins']);
+  assert.equal(r.reason, 'admins');
+  assert.deepEqual(r.from.admins, ['alice']);
+  assert.deepEqual(r.to.admins, ['alice', 'bob']);
 }));
 
 test('removing a name the merge base had IS a change', () => withGithub({
   base: json({ admins: ['alice', 'bob'] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
-  assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, true);
+  assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, true);
 }));
 
 test('adding the block for the first time IS a change', () => withGithub({
   base: json({ name: 'Chess' }),
   head: json({ name: 'Chess', admins: ['alice'] }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, true);
-  assert.deepEqual(r.from, []);
+  assert.deepEqual(r.from.admins, []);
 }));
 
 test('deleting the block IS a change', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ name: 'Chess' }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, true);
-  assert.deepEqual(r.to, []);
+  assert.deepEqual(r.to.admins, []);
 }));
 
 test('emptying the block to [] IS a change (that is how a roster is cleared)', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ admins: [] }),
 }, async () => {
-  assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, true);
+  assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, true);
 }));
 
 test('swapping one name for another IS a change', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ admins: ['mallory'] }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.changed, true);
-  assert.deepEqual(r.from, ['alice']);
-  assert.deepEqual(r.to, ['mallory']);
+  assert.deepEqual(r.from, { admins: ['alice'] });
+  assert.deepEqual(r.to, { admins: ['mallory'] });
 }));
+
+// ── The other protected blocks ────────────────────────────────────────
+
+test('making the app private IS a change, reason visibility', () => withGithub({
+  base: json({ name: 'Chess', visibility: { build: 'public', view: 'public' } }),
+  head: json({ name: 'Chess', visibility: { build: 'private', view: 'private' } }),
+}, async () => {
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'visibility/chess-1' });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.reasons, ['visibility']);
+  assert.equal(r.reason, 'visibility');
+  assert.deepEqual(r.from, { visibility: { build: 'public', view: 'public' } });
+  assert.deepEqual(r.to, { visibility: { build: 'private', view: 'private' } });
+}));
+
+test('declaring a visibility block for the first time IS a change', () => withGithub({
+  base: json({ name: 'Chess' }),
+  head: json({ name: 'Chess', visibility: { build: 'public' } }),
+}, async () => {
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+  assert.deepEqual(r.reasons, ['visibility'], 'absent and declared are different rules');
+}));
+
+test('changing how changes are approved IS a change, reason governance', () => withGithub({
+  base: json({ governance: { approvers: 'anyone', approvals: 'default' } }),
+  head: json({ governance: { approvers: 'anyone', approvals: { atLeast: 1 } } }),
+}, async () => {
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+  assert.deepEqual(r.reasons, ['governance']);
+  assert.equal(r.reason, 'governance');
+}));
+
+test('a platform variable: adding one IS a change; re-describing it is NOT', async () => {
+  const base = json({ platform_env: [{ key: 'FEATURE_X', description: 'old words', group: 'A' }] });
+  await withGithub({
+    base,
+    head: json({ platform_env: [
+      { key: 'FEATURE_X', description: 'new words', group: 'B' },
+    ] }),
+  }, async () => {
+    const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+    assert.equal(r.changed, false, 'description and group are documentation');
+  });
+  await withGithub({
+    base,
+    head: json({ platform_env: [
+      { key: 'FEATURE_X', description: 'old words', group: 'A' },
+      { key: 'FEATURE_Y', required: true },
+    ] }),
+  }, async () => {
+    const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+    assert.deepEqual(r.reasons, ['platform_env']);
+  });
+});
+
+test('an app key: a new default value IS a change; re-describing it is NOT', async () => {
+  const base = json({ secrets: [{ key: 'API_URL', description: 'a', default: 'https://a.example' }] });
+  await withGithub({
+    base,
+    head: json({ secrets: [{ key: 'API_URL', description: 'b', default: 'https://a.example' }] }),
+  }, async () => {
+    assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, false);
+  });
+  await withGithub({
+    base,
+    head: json({ secrets: [{ key: 'API_URL', description: 'a', default: 'https://evil.example' }] }),
+  }, async () => {
+    const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+    assert.deepEqual(r.reasons, ['secrets']);
+    assert.equal(r.reason, 'secrets');
+  });
+});
+
+test('reordering keys is NOT a change', () => withGithub({
+  base: json({ secrets: [{ key: 'A_KEY' }, { key: 'B_KEY', private: true }] }),
+  head: json({ secrets: [{ key: 'B_KEY', private: true }, { key: 'A_KEY' }] }),
+}, async () => {
+  assert.equal((await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' })).changed, false);
+}));
+
+test('several blocks at once: every reason listed, the primary one stored', () => withGithub({
+  base: json({ secrets: [], visibility: { build: 'public', view: 'public' }, admins: [] }),
+  head: json({
+    secrets: [{ key: 'TOKEN', private: true }],
+    visibility: { build: 'private', view: 'private' },
+    admins: ['alice'],
+  }),
+}, async () => {
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
+  assert.deepEqual(r.reasons, ['admins', 'visibility', 'secrets'], 'REASONS order');
+  assert.equal(r.reason, 'admins');
+}));
+
+test('explicitApprovalBlocks reads each block through the deploy readers', () => {
+  const blocks = appAdmins.explicitApprovalBlocks(json({
+    admins: ['Bob', 'alice'],
+    visibility: { build: 'private', view: 'bogus' },
+    governance: { approvers: 'invited' },
+    platform_env: [{ key: 'Z_KEY', group: 'G' }, { key: 'bad key' }],
+    secrets: [{ key: 'DATABASE_URL' }, { key: 'OK_KEY', sensitive: true }],
+  }));
+  assert.deepEqual(blocks.admins, ['alice', 'bob']);
+  assert.deepEqual(blocks.visibility, { build: 'private', view: null });
+  assert.deepEqual(blocks.governance, { approvers: 'invited', approvals: null });
+  assert.deepEqual(blocks.platform_env.map((e) => e.key), ['Z_KEY']);
+  assert.deepEqual(blocks.secrets, [
+    { key: 'OK_KEY', required: false, private: true, default: null, staging_default: null },
+  ], 'a reserved key is dropped exactly as the deploy drops it');
+  const empty = appAdmins.explicitApprovalBlocks('{not json');
+  assert.deepEqual(empty, { admins: [], governance: null, visibility: null, platform_env: [], secrets: [] });
+});
 
 // ── Degradation ───────────────────────────────────────────────────────
 
@@ -233,15 +356,15 @@ test('no headRef / GitHub disabled / unparseable repo_url are INDETERMINATE, not
   // allowed to overwrite a stored `true`, or a thin session row would
   // silently un-flag a proposal and hand back the merge timers.
   await withGithub({ base: json({ admins: ['a'] }), head: json({ admins: ['b'] }) }, async () => {
-    const noRef = await appAdmins.detectAdminsChange(APP, {});
+    const noRef = await appAdmins.detectExplicitApprovalChange(APP, {});
     assert.equal(noRef.determinate, false);
     assert.equal(noRef.changed, false);
 
-    const noRepo = await appAdmins.detectAdminsChange({ ...APP, repo_url: null }, { headRef: 'x' });
+    const noRepo = await appAdmins.detectExplicitApprovalChange({ ...APP, repo_url: null }, { headRef: 'x' });
     assert.equal(noRepo.determinate, false);
   });
   await withGithub({ base: null, head: null, enabled: false }, async () => {
-    const off = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+    const off = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
     assert.equal(off.determinate, false);
   });
 });
@@ -250,7 +373,7 @@ test('a real comparison is marked determinate', () => withGithub({
   base: json({ admins: ['alice'] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
-  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  const r = await appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' });
   assert.equal(r.determinate, true);
   assert.equal(r.changed, false, 'determinate AND unchanged is a real, trustworthy verdict');
 }));
@@ -269,7 +392,7 @@ test('a transport error PROPAGATES so callers pick their own fallback', () => wi
   throws: true,
 }, async () => {
   await assert.rejects(
-    () => appAdmins.detectAdminsChange(APP, { headRef: 'x' }),
+    () => appAdmins.detectExplicitApprovalChange(APP, { headRef: 'x' }),
     /GitHub is down/
   );
 }));
@@ -301,6 +424,31 @@ test('refreshExplicitApproval stamps the resolved verdict', () => withGithub({
   const stamp = calls.find((c) => /requires_explicit_approval/.test(c.sql));
   assert.deepEqual(stamp.params, [42, true, 'admins']);
 }));
+
+test('refreshExplicitApproval stamps the block it found, not always admins', () => withGithub({
+  base: json({ visibility: { build: 'public', view: 'public' } }),
+  head: json({ visibility: { build: 'private', view: 'private' } }),
+}, async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+  assert.equal(await appAdmins.refreshExplicitApproval(pool, APP, { id: 43, branch_name: 'b' }), true);
+  assert.deepEqual(calls[0].params, [43, true, 'visibility']);
+}));
+
+test('stampExplicitApproval never invents a reason', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+  await appAdmins.stampExplicitApproval(pool, 7, true, 'governance');
+  await appAdmins.stampExplicitApproval(pool, 7, true, 'something-new');
+  await appAdmins.stampExplicitApproval(pool, 7, true);
+  await appAdmins.stampExplicitApproval(pool, 7, false, 'admins');
+  assert.deepEqual(calls.map((c) => c.params), [
+    [7, true, 'governance'],
+    [7, true, null],
+    [7, true, null],
+    [7, false, null],
+  ]);
+});
 
 test('refreshExplicitApproval clears the reason when not flagged', () => withGithub({
   base: json({ admins: ['alice'] }),

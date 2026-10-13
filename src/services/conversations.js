@@ -147,6 +147,34 @@ async function canDirectInteract(db, membership, userId) {
   return !!otherId && !(await blockedEitherWay(db, userId, otherId));
 }
 
+// The Homeroom bot's account (homeroom-bot-dm.js BOT_USERNAME).
+const HOMEROOM_BOT_USERNAME = 'homeroom_bot';
+
+/**
+ * Whether a conversation is a person's direct chat with the Homeroom bot:
+ * the one direct conversation with reply threads, one per request (the
+ * request's card is the thread's first message). Other direct chats keep
+ * none. The client reads the same off a conversation's `homeroomBot` flag
+ * (frontend/src/features/messages threadsAllowed).
+ */
+async function isHomeroomBotDirect(db, conversationId) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM conversation_direct_pairs p
+       JOIN users u ON u.id IN (p.user_low_id, p.user_high_id)
+      WHERE p.conversation_id = $1 AND u.is_synthetic IS TRUE AND u.username = $2
+      LIMIT 1`,
+    [conversationId, HOMEROOM_BOT_USERNAME]
+  );
+  return rows.length > 0;
+}
+
+/** Whether a membership's conversation has reply threads (#2387): every room, and the bot's chat. */
+async function threadsAllowed(db, membership) {
+  if (!membership) return false;
+  if (membership.kind !== 'direct') return true;
+  return isHomeroomBotDirect(db, membership.id);
+}
+
 // Deleted-peer archives are only marked for accepted, unblocked members
 // by account deletion. Writes keep canDirectInteract's live-peer gate.
 async function canReadConversation(db, membership, userId) {
@@ -400,11 +428,15 @@ async function hydrateMessages(db, user, rows) {
     // removed when it was deleted; the empty values here are the contract
     // even for a report-retained attachment the moderation queue still holds.
     const deleted = !!row.deleted_at;
+    const moderated = !!row.moderation_hidden_at;
     // A platform line has no sender: Homeroom said it. Homeroom writes none
     // into a channel any more (services/ws.js sendSystemMessage); a line an
     // earlier version wrote that somebody replied to is kept, deleted, as
     // the root of their thread (db/migrate.js clearAutomatedChannelLines).
     const system = row.msg_type === 'system';
+    // #3624: the Homeroom bot's structured part (its question and suggested
+    // answers), on the bot's own live messages only.
+    const metadata = deleted || moderated || system || !row.sender_is_synthetic ? null : publicMetadata(row.metadata);
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -412,9 +444,12 @@ async function hydrateMessages(db, user, rows) {
         id: row.sender_id || 0,
         username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
         avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
+        ...(row.sender_is_synthetic && !system ? { bot: true, ...botName(row.sender_display_name) } : {}),
       },
       ...(system ? { system: true } : {}),
+      ...(metadata ? { metadata } : {}),
       content: deleted ? '' : row.content,
+      moderated,
       createdAt: row.created_at,
       editedAt: deleted ? null : row.edited_at,
       reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
@@ -423,14 +458,15 @@ async function hydrateMessages(db, user, rows) {
           id: row.reply_sender_id || 0,
           username: row.reply_sender_username || 'Deleted user',
           avatarUrl: row.reply_sender_avatar_id ? `/avatars/${row.reply_sender_avatar_id}` : null,
+          ...(row.reply_sender_is_synthetic ? { bot: true, ...botName(row.reply_sender_display_name) } : {}),
         },
         content: row.reply_deleted_at ? '' : (row.reply_content || ''),
         deleted: !!row.reply_deleted_at,
       } : null,
-      reactions: deleted ? [] : (reactions.get(row.id) || []),
-      attachments: deleted ? [] : (attachments.get(row.id) || []),
-      objects: deleted ? [] : (objects.get(row.id) || []),
-      saved: deleted ? false : savedIds.has(row.id),
+      reactions: deleted || moderated ? [] : (reactions.get(row.id) || []),
+      attachments: deleted || moderated ? [] : (attachments.get(row.id) || []),
+      objects: deleted || moderated ? [] : (objects.get(row.id) || []),
+      saved: deleted || moderated ? false : savedIds.has(row.id),
       deleted,
       threadRootId: row.thread_root_id ?? null,
       thread: row.thread_root_id == null ? (threads.get(row.id) || null) : null,
@@ -446,13 +482,26 @@ async function hydrateMessages(db, user, rows) {
   });
 }
 
+/**
+ * B5: a platform account's name as people see it (the Homeroom bot's
+ * "Homeroom bot"), sent beside its username for the client to show in its
+ * place. A person's display name is not sent here: Messages names people by
+ * their handle.
+ */
+function botName(displayName) {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  return name ? { displayName: name.slice(0, 80) } : {};
+}
+
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
-         m.deleted_at, m.thread_root_id, m.msg_type,
-         su.username AS sender_username, sua.id AS sender_avatar_id,
+         m.deleted_at, m.moderation_hidden_at, m.thread_root_id, m.msg_type, m.metadata,
+         su.username AS sender_username, sua.id AS sender_avatar_id, su.is_synthetic AS sender_is_synthetic,
+         su.display_name AS sender_display_name,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
+         ru.is_synthetic AS reply_sender_is_synthetic, ru.display_name AS reply_sender_display_name,
          tr.content AS thread_root_content, tr.deleted_at AS thread_root_deleted_at,
          tru.username AS thread_root_sender_username
     FROM conversation_messages m
@@ -487,11 +536,22 @@ function pageLimit(limit) {
 // direction is its own fully static statement rather than one with an
 // optional bound, so the SQL linter validates all three and each keeps its
 // index-ordered plan.
+//
+// One story per request: in the chat with the Homeroom bot (the one direct
+// conversation with threads, threadsAllowed) a request's thread holds its
+// whole story, and the main stream shows only the replies the bot marks
+// `alsoInChat` (the four moments that ring), drawn there whole, with their
+// buttons. A person's own replies and the bot's quiet lines stay in the
+// thread.
+const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
                             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.sender_id
-                           WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)))`;
+                           WHERE hidden_root.id = m.thread_root_id AND hb.blocker_id = $2)
+          AND (${ALSO_IN_CHAT}
+               OR NOT EXISTS (SELECT 1 FROM conversations dc
+                               WHERE dc.id = m.conversation_id AND dc.kind = 'direct'))))`;
 async function mainStreamBefore(db, user, conversationId, before, count) {
   if (before) {
     return (await db.query(
@@ -599,11 +659,12 @@ async function listMessages(pool, user, conversationId, {
 
 // GET /api/conversations/:id/threads/:rootId (#2387). The root plus a page of
 // its replies, oldest first, paged backwards with `before` exactly like the
-// main stream. Direct conversations have no threads.
+// main stream. Direct conversations have no threads, apart from the chat
+// with the Homeroom bot (threadsAllowed).
 async function listThread(pool, user, conversationId, rootId, { before = null, limit = 50 } = {}) {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
-  if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+  if (!(await threadsAllowed(pool, membership))) return { error: 'threads_not_supported' };
   const root = await pool.query(
     `${MESSAGE_SELECT}
       WHERE m.id = $1 AND m.conversation_id = $2 AND m.thread_root_id IS NULL
@@ -634,6 +695,100 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
   };
 }
 
+// GET /api/conversations/:id/mention-candidates (#3361). The composer's `@`
+// list for a conversation whose roster is not loaded: a channel, which
+// serializeConversation COUNTS because its roster is everybody.
+//
+// WHO MAY ASK is exactly who may read the messages: the same
+// loadMembership + canReadConversation pair listMessages and listThread
+// answer with, so a person who cannot open the room (not a member of a
+// group, a DM they are not in, a direct chat across a block) gets the same
+// null — a 404 — and learns nothing about who is in it.
+//
+// WHO IS OFFERED is the conversation's accepted members, which in a channel
+// is everyone who can read it and is exactly who a channel @mention notifies
+// (sendMessage). Never the viewer, never anybody blocked in either
+// direction, never an invitee. Bounded: a prefix of at most
+// MENTION_QUERY_MAX characters of username text, LIKE-escaped, and at most
+// MENTION_CANDIDATES_MAX rows. Friends lead, then whoever spoke here most
+// recently (read off the room's last MENTION_RECENT_WINDOW messages in the
+// same statement, so there is no per-person lookup), then A to Z. The
+// projection is the public identity every message row already carries: id,
+// username and avatar.
+const MENTION_QUERY_MAX = 64;
+const MENTION_CANDIDATES_DEFAULT = 8;
+const MENTION_CANDIDATES_MAX = 25;
+const MENTION_RECENT_WINDOW = 1000;
+
+// The typed prefix, or null when it cannot begin any username. Usernames
+// are not only [A-Za-z0-9_]: legacy and imported accounts carry hyphens and
+// other punctuation, and mentionsUsername below matches them exactly, so the
+// prefix may be any text a composer's `@token` can hold (no whitespace, no
+// second `@`), clipped to MENTION_QUERY_MAX. The query is parameterised and LIKE-escaped, so no
+// character in it widens the match. Shared with the app channel's list
+// (routes/chat.js mention-suggestions) so the two accept the same text.
+function mentionPrefixQuery(raw) {
+  if (raw == null) return '';
+  if (typeof raw !== 'string') return null;
+  const query = raw.trim().replace(/^@/, '');
+  if (/[\s@]/u.test(query)) return null;
+  // A longer prefix is clipped, never rejected: every answer to the clipped
+  // one is still narrowed by the full text in the composer.
+  return query.slice(0, MENTION_QUERY_MAX);
+}
+
+function escapeMentionLike(query) {
+  return query.replace(/([\\%_])/g, '\\$1');
+}
+
+function mentionLimit(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return MENTION_CANDIDATES_DEFAULT;
+  return Math.min(n, MENTION_CANDIDATES_MAX);
+}
+
+async function mentionCandidates(pool, user, conversationId, { q = '', limit } = {}) {
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
+  const query = mentionPrefixQuery(q);
+  if (query === null) return [];
+  const escaped = escapeMentionLike(query);
+  const { rows } = await pool.query(
+    `WITH recent AS (
+       SELECT w.sender_id, MAX(w.id) AS last_id
+         FROM (SELECT m.sender_id, m.id FROM conversation_messages m
+                WHERE m.conversation_id = $1 AND m.sender_id IS NOT NULL
+                  AND m.deleted_at IS NULL AND m.msg_type = 'message'
+                ORDER BY m.id DESC LIMIT ${MENTION_RECENT_WINDOW}) w
+        GROUP BY w.sender_id
+     )
+     SELECT u.id, u.username, ua.id AS avatar_id,
+            EXISTS (SELECT 1 FROM friendships f
+                     WHERE f.status = 'accepted'
+                       AND f.user_low_id = LEAST(u.id, $2::int)
+                       AND f.user_high_id = GREATEST(u.id, $2::int)) AS friend
+       FROM conversation_members cm
+       JOIN users u ON u.id = cm.user_id
+       LEFT JOIN user_avatars ua ON ua.user_id = u.id
+       LEFT JOIN recent r ON r.sender_id = u.id
+      WHERE cm.conversation_id = $1 AND cm.status = 'member'
+        AND u.id <> $2
+        AND LOWER(u.username) LIKE LOWER($3) || '%' ESCAPE '\\'
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE (b.blocker_id = $2 AND b.blocked_user_id = u.id)
+                            OR (b.blocker_id = u.id AND b.blocked_user_id = $2))
+      ORDER BY friend DESC, r.last_id DESC NULLS LAST, LOWER(u.username), u.id
+      LIMIT $4`,
+    [conversationId, user.id, escaped, mentionLimit(limit)]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    ...(row.friend ? { friend: true } : {}),
+  }));
+}
+
 async function conversationRow(db, user, conversationId) {
   const { rows } = await db.query(
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
@@ -644,6 +799,10 @@ async function conversationRow(db, user, conversationId) {
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
             peer_avatar.id AS peer_avatar_id,
+            peer_user.is_synthetic AS peer_is_synthetic, peer_user.display_name AS peer_display_name,
+            -- #3692: a direct conversation with the Homeroom bot's own
+            -- account, which carries the bot's activity tray.
+            (peer_user.is_synthetic IS TRUE AND peer_user.username = 'homeroom_bot') AS peer_is_homeroom_bot,
             latest.id AS latest_message_id,
             -- QA 2026-09-24 Q2: a pending direct request allows ONE opening
             -- message, deleted or not (sendMessage counts every row), so the
@@ -663,10 +822,11 @@ async function conversationRow(db, user, conversationId) {
        LEFT JOIN user_avatars peer_avatar ON peer_avatar.user_id = peer.user_id
        LEFT JOIN LATERAL (
          -- #2387: the list's latest message is the main stream's latest
-         -- message anyone still has: thread replies and deletions skip.
+         -- message anyone still has: thread replies and deletions skip,
+         -- apart from a bot moment shown in the main chat too.
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+            AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -680,12 +840,14 @@ async function conversationRow(db, user, conversationId) {
 
 // The unread count behind a cursor (#2387): main stream only, other people's
 // messages only, and neither a deleted message nor one from someone the
-// viewer blocked counts. Shared by the list and by markUnread's answer.
+// viewer blocked counts. Shared by the list and by markUnread's answer. A bot
+// moment shown in the main chat as well as its thread (ALSO_IN_CHAT) counts
+// once, here; the bot's quiet lines in a thread do not.
 async function countUnread(db, conversationId, userId, cursor) {
   const result = await db.query(
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
-        AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        AND (m.thread_root_id IS NULL OR ${ALSO_IN_CHAT}) AND m.deleted_at IS NULL
         AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
@@ -713,8 +875,15 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
   let unread = 0;
+  // The viewer's read cursor, beside the count it is the cursor of: the
+  // client opens a conversation at the first message after it and draws its
+  // "New" line there (frontend/src/features/messages/unread-anchor.ts). 0 is
+  // a member who has read nothing, which countUnread reads the same way; null
+  // is "not yours to know", hidden until acceptance like the count itself.
+  let lastReadMessageId = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
     unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
+    lastReadMessageId = Number(row.last_read_message_id) || 0;
   }
   // An invitation is a consent envelope, not conversation access. The
   // requester identity is shown so the recipient can decide; roster, peer,
@@ -724,13 +893,17 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     id: row.peer_id,
     username: row.peer_username,
     avatarUrl: row.peer_avatar_id ? `/avatars/${row.peer_avatar_id}` : null,
+    ...(row.peer_is_synthetic ? { bot: true, ...botName(row.peer_display_name) } : {}),
   } : null;
   const requester = row.invited_by ? {
     id: row.invited_by,
     username: row.requester_username,
     avatarUrl: row.requester_avatar_id ? `/avatars/${row.requester_avatar_id}` : null,
   } : null;
-  const title = row.kind === 'direct' ? (peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message')) : row.title;
+  // B5: the bot's DM is titled by its name, not its handle.
+  const title = row.kind === 'direct'
+    ? ((peer?.bot && peer.displayName) || peer?.username || (row.deleted_peer ? 'Deleted user' : 'Direct message'))
+    : row.title;
   // QA 2026-09-24 Q2: the requester's side of a direct request the other
   // person has not accepted yet. They may send the one opening message and
   // nothing more (sendMessage answers `awaiting_acceptance` after that), so
@@ -759,11 +932,15 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     // posting. Invitations still use their own update timestamp.
     lastActivityAt: accepted ? (latest?.createdAt || row.created_at) : (row.updated_at || row.created_at),
     unreadCount: unread,
+    lastReadMessageId,
     awaitingAcceptance,
     canSend: row.membership_status === 'member' && row.status === 'active'
       && !(awaitingAcceptance && row.has_messages),
     canInvite: row.kind === 'group' && row.membership_status === 'member' && row.status === 'active',
     canManage: row.kind === 'group' && row.my_role === 'owner' && row.membership_status === 'member',
+    // #3692: named only on the conversation with the Homeroom bot, once it
+    // is the viewer's (frontend/src/features/messages/bot-work.tsx).
+    ...(accepted && row.kind === 'direct' && row.peer_is_homeroom_bot ? { homeroomBot: true } : {}),
   };
 }
 
@@ -846,8 +1023,15 @@ async function createDirect(pool, user, targetUserId) {
   if (!targetUserId || targetUserId === user.id) return null;
   const result = await transaction(pool, async (db) => {
     const [low, high] = await lockPair(db, user.id, targetUserId);
-    const target = await db.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
+    const target = await db.query('SELECT id, is_synthetic FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
     if (!target.rows.length || await blockedEitherWay(db, user.id, targetUserId)) return null;
+    // #3624: a platform account (the Homeroom bot) cannot answer an
+    // invitation, so a DM with one opens with both already in it, the same
+    // conversation the platform opens when it writes first.
+    if (target.rows[0].is_synthetic) {
+      const opened = await openAdmittedDirect(db, targetUserId, user.id, { requester: user.id });
+      return opened ? { conversationId: opened.conversationId, notifications: [], memberIds: opened.memberIds } : null;
+    }
     // #2386: friendship is standing consent both ways, so a DM between
     // friends has no invitation step (services/friends.js). Lazy require:
     // friends.js builds on this module.
@@ -984,6 +1168,129 @@ async function createGroup(pool, user, title, memberIds) {
   });
   if (!result) return null;
   return { ...result, conversation: await getConversation(pool, user, result.conversationId) };
+}
+
+// A group whose people are all in it from the start: nobody is asked to
+// accept. Only the platform opens one (services/welcome-dm.js, which greets
+// somebody just let in); a person putting others in a room without asking
+// is what createGroup's invitations are for. Runs on the caller's
+// transaction, so the caller can record the group in the same commit.
+async function createAdmittedGroup(db, ownerId, title, memberIds) {
+  const safeTitle = normalizeTitle(title);
+  const ids = strictIds(memberIds);
+  if (!safeTitle || !ids || !ids.includes(ownerId)) return null;
+  const others = ids.filter((id) => id !== ownerId);
+  if (!others.length) return null;
+  await lockPairsFor(db, ownerId, others);
+  if (!(await ensureEligibleInvitees(db, ownerId, others))) return null;
+  const created = await db.query(
+    `INSERT INTO conversations (kind, title, created_by)
+     VALUES ('group', $1, $2) RETURNING id`,
+    [safeTitle, ownerId]
+  );
+  const conversationId = created.rows[0].id;
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+     VALUES ($1, $2, 'owner', 'member', $2, NOW(), NOW())`,
+    [conversationId, ownerId]
+  );
+  for (const memberId of others) {
+    await db.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       VALUES ($1, $2, 'member', 'member', $3, NOW(), NOW())`,
+      [conversationId, memberId, ownerId]
+    );
+  }
+  return { conversationId, memberIds: [ownerId, ...others] };
+}
+
+// #3624: the direct conversation between a platform account (the Homeroom
+// bot) and a person, with both already in it. The platform writes first,
+// so the person reads it without accepting anything. Runs under the pair
+// lock its callers take. A person who blocked the account, or who left or
+// declined this conversation, gets none: that is how the bot is turned off.
+// `requester` is the person when they opened it themselves (createDirect),
+// which reopens a conversation they had left.
+async function openAdmittedDirect(db, systemUserId, userId, { requester = null } = {}) {
+  const [low, high] = normalizePair(systemUserId, userId);
+  const existing = await db.query(
+    `SELECT p.conversation_id, theirs.status AS their_status
+       FROM conversation_direct_pairs p
+       JOIN conversation_members theirs
+         ON theirs.conversation_id = p.conversation_id AND theirs.user_id = $3
+      WHERE p.user_low_id = $1 AND p.user_high_id = $2
+      FOR UPDATE OF theirs`,
+    [low, high, userId]
+  );
+  if (existing.rows.length) {
+    const row = existing.rows[0];
+    const optedOut = ['declined', 'left', 'removed'].includes(row.their_status);
+    if (optedOut && requester !== userId) return null;
+    await db.query(
+      `UPDATE conversation_members
+          SET status = 'member', responded_at = COALESCE(responded_at, NOW()),
+              joined_at = COALESCE(joined_at, NOW()), left_at = NULL
+        WHERE conversation_id = $1 AND status <> 'member'`,
+      [row.conversation_id]
+    );
+    await db.query(
+      `UPDATE conversations SET status = 'active', updated_at = NOW() WHERE id = $1 AND status <> 'active'`,
+      [row.conversation_id]
+    );
+    return { conversationId: row.conversation_id, created: false, memberIds: [systemUserId, userId] };
+  }
+  const created = await db.query(
+    `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+    [systemUserId]
+  );
+  const conversationId = created.rows[0].id;
+  await db.query(
+    `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+     VALUES ($1, $2, $3)`, [conversationId, low, high]
+  );
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+     VALUES ($1, $2, 'member', 'member', $2, NOW(), NOW()),
+            ($1, $3, 'member', 'member', $2, NOW(), NOW())`,
+    [conversationId, systemUserId, userId]
+  );
+  return { conversationId, created: true, memberIds: [systemUserId, userId] };
+}
+
+/**
+ * The platform's side of openAdmittedDirect: the bot's DM with a person,
+ * opened (or found) before it writes. Resolves { conversationId, created,
+ * memberIds } or null when the person blocked the bot or left the chat.
+ */
+async function ensureAdmittedDirect(pool, systemUserId, userId) {
+  if (!systemUserId || !userId || systemUserId === userId) return null;
+  return transaction(pool, async (db) => {
+    await lockPair(db, systemUserId, userId);
+    if (await blockedEitherWay(db, systemUserId, userId)) return null;
+    return openAdmittedDirect(db, systemUserId, userId);
+  });
+}
+
+// #3624: a bot message's structured part (the questions it asks with their
+// suggested answers, and the request the message is about). Written by the
+// platform only: sendMessage takes it as a separate argument, never from a
+// request body, and the bot updates it when a question is answered.
+const BOT_METADATA_KEY = 'homeroomBot';
+
+async function setMessageMetadata(db, messageId, metadata) {
+  await db.query(
+    `UPDATE conversation_messages SET metadata = $2 WHERE id = $1 AND deleted_at IS NULL`,
+    [messageId, JSON.stringify(metadata || {})]
+  );
+}
+
+/** What of a message's metadata a reader is shown: the bot's part, or nothing. */
+function publicMetadata(raw) {
+  const value = raw && typeof raw === 'object' ? raw[BOT_METADATA_KEY] : null;
+  return value && typeof value === 'object' && !Array.isArray(value) ? { [BOT_METADATA_KEY]: value } : null;
 }
 
 async function updateTitle(pool, user, conversationId, title) {
@@ -1209,7 +1516,17 @@ function mentionsUsername(content, username) {
   return pattern.test(content);
 }
 
-async function sendMessage(pool, user, conversationId, input) {
+// B4: `notify: false` stores a message that counts as unread but rings no
+// bell and sends no push (the Homeroom bot's progress, which is not news on
+// its own). `notificationDetail` rides on each notification it does make, as
+// notifications.detail, for the push and the bell to word it by.
+// WP-E: `notificationKind` names the kind of every notification a DIRECT
+// message makes, in place of the message kinds (the Homeroom bot's build
+// moments, homeroom-bot-dm.js BUILD_KINDS); it must be one of
+// notifications.CONVERSATION_NOTIFICATION_KINDS. A group or channel ignores it.
+async function sendMessage(pool, user, conversationId, input, {
+  metadata = null, notify = true, notificationDetail = null, notificationKind = null,
+} = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
   if (!Array.isArray(refsRaw) || refsRaw.length > MAX_OBJECTS || !attachmentIds) return null;
@@ -1237,14 +1554,15 @@ async function sendMessage(pool, user, conversationId, input) {
         return { messageId: existing.rows[0].id, memberIds: await activeMemberIds(db, conversationId), notifications: [], duplicate: true };
       }
     }
-    // #2387: threads live in groups and channels only, and one level deep —
+    // #2387: threads live in groups and channels (and the chat with the
+    // Homeroom bot, threadsAllowed) only, and one level deep —
     // the root is a main-stream message of this conversation that the sender
     // can see. FOR SHARE holds it against a concurrent delete, so a first
     // reply and the root's deletion serialize: a deleted message cannot start
     // a new thread, but a thread that already has replies stays open.
     let threadRoot = null;
     if (threadRootId) {
-      if (membership.kind === 'direct') return { error: 'threads_not_supported' };
+      if (!(await threadsAllowed(db, membership))) return { error: 'threads_not_supported' };
       const root = await db.query(
         `SELECT m.id, m.sender_id, m.deleted_at,
                 EXISTS (SELECT 1 FROM conversation_messages r
@@ -1303,12 +1621,14 @@ async function sendMessage(pool, user, conversationId, input) {
       if (!validated) return null;
       objectRefs.push(validated);
     }
+    // #3624: `metadata` is the platform's (the Homeroom bot's questions),
+    // passed beside the input rather than in it, so no request body sets it.
     const inserted = await db.query(
       `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [conversationId, user.id, content, replyId, key, threadRootId]
+      [conversationId, user.id, content, replyId, key, threadRootId, JSON.stringify(metadata || {})]
     );
     const messageId = inserted.rows[0].id;
     if (attachmentIds.length) {
@@ -1381,9 +1701,11 @@ async function sendMessage(pool, user, conversationId, input) {
     }
     const notifications = [];
     for (const member of members.rows) {
+      if (!notify) break;
       const mentioned = mentionsUsername(content, member.username);
       let kind = 'conversation_message';
-      if (membership.kind === 'channel') {
+      if (membership.kind === 'direct' && notificationKind) kind = notificationKind;
+      else if (membership.kind === 'channel') {
         // A channel is everybody (#2783): anything but an @mention there
         // rings bells nobody asked for (#3188). An ordinary message, a reply
         // to yours and a thread you are in stay silent; a reply or thread
@@ -1392,14 +1714,17 @@ async function sendMessage(pool, user, conversationId, input) {
         kind = 'conversation_mention';
       } else if (member.user_id === replyAuthorId) kind = 'conversation_reply';
       else if (mentioned) kind = 'conversation_mention';
-      else if (threadRoot) {
+      else if (threadRoot && membership.kind !== 'direct') {
+        // In the chat with the Homeroom bot (the one direct chat with
+        // threads) a message that rings is for the one other person in it,
+        // in a thread or not: it rings as a message, as the main chat's do.
         // One row per person: a quote or an @mention above outranks this.
         if (!threadParticipants.has(member.user_id)) continue;
         kind = 'conversation_thread_reply';
       }
       notifications.push(await insertNotification(db, {
         userId: member.user_id, conversationId, messageId,
-        sourceUserId: user.id, kind,
+        sourceUserId: user.id, kind, detail: notificationDetail,
       }));
     }
     return { messageId, memberIds: [user.id, ...members.rows.map((row) => row.user_id)], notifications, duplicate: false };
@@ -1417,7 +1742,7 @@ async function editMessage(pool, user, conversationId, messageId, rawContent) {
     const { rows } = await db.query(
       `UPDATE conversation_messages SET content = $1, edited_at = NOW()
         WHERE id = $2 AND conversation_id = $3 AND sender_id = $4
-          AND deleted_at IS NULL
+          AND deleted_at IS NULL AND moderation_hidden_at IS NULL
         RETURNING id`,
       [content, messageId, conversationId, user.id]
     );
@@ -1578,12 +1903,15 @@ async function markRead(pool, user, conversationId, messageId) {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const message = await db.query(
-      `SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2`,
+      `SELECT m.id, m.thread_root_id, ${ALSO_IN_CHAT} AS also_in_chat
+         FROM conversation_messages m WHERE m.id = $1 AND m.conversation_id = $2`,
       [messageId, conversationId]
     );
     if (!message.rows.length) return null;
     const current = membership.last_read_message_id || 0;
-    const threadRootId = message.rows[0].thread_root_id;
+    // A bot moment shown in the main chat is read where it is shown: it is
+    // a main-stream position, as its unread count says (countUnread).
+    const threadRootId = message.rows[0].also_in_chat ? null : message.rows[0].thread_root_id;
     if (threadRootId) {
       // #2387: reading a THREAD up to a reply clears that thread's alerts up
       // to it. The main-stream cursor is not a thread position — ids of the
@@ -1618,7 +1946,8 @@ async function markRead(pool, user, conversationId, messageId) {
                OR (n.conversation_message_id <= $3
                    AND NOT EXISTS (SELECT 1 FROM conversation_messages m
                                     WHERE m.id = n.conversation_message_id
-                                      AND m.thread_root_id IS NOT NULL)))`,
+                                      AND m.thread_root_id IS NOT NULL
+                                      AND ${ALSO_IN_CHAT} IS NOT TRUE)))`,
       [user.id, conversationId, cursor]
     );
     return { messageId: cursor, threadRootId: null, memberIds: await activeMemberIds(db, conversationId) };
@@ -1857,7 +2186,8 @@ async function setBlock(pool, userId, targetId, blocked) {
         WHERE user_id = $1 AND source_user_id = $2
           AND (kind IN ('conversation_invite', 'conversation_message',
                         'conversation_mention', 'conversation_reply', 'conversation_reaction',
-                        'conversation_thread_reply')
+                        'conversation_thread_reply',
+                        'build_ready', 'build_needs_you', 'build_stopped', 'build_live')
                OR chat_message_id IS NOT NULL)`,
       [userId, targetId]
     );
@@ -1911,11 +2241,24 @@ module.exports = {
   getMessage,
   createDirect,
   createGroup,
+  createAdmittedGroup,
+  ensureAdmittedDirect,
+  openAdmittedDirect,
+  setMessageMetadata,
+  publicMetadata,
+  isHomeroomBotDirect,
+  threadsAllowed,
+  ALSO_IN_CHAT,
+  BOT_METADATA_KEY,
   updateTitle,
   respond,
   addMembers,
   leave,
   removeMember,
+  mentionCandidates,
+  mentionPrefixQuery,
+  escapeMentionLike,
+  MENTION_CANDIDATES_MAX,
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,

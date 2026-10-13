@@ -15,6 +15,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -357,8 +362,9 @@ test('the client actually calls the helpers (not dead code)', () => {
   assert.ok(/summarizeCcProgress\(/.test(devChatSrc), 'dev-chat.js must call summarizeCcProgress');
   assert.ok(/typeof formatElapsed === 'function' \? formatElapsed : null/.test(devChatSrc),
     'dev-chat.js must call formatElapsed for a SETTLED step');
-  assert.ok(/\(took \$\{fmtEl\(/.test(devChatSrc),
+  assert.ok(/PlatformI18n\.t\('devchat:transcript\.took', \{ duration: fmtEl\(/.test(devChatSrc),
     "a settled step's frozen label must be composed in the model, not per tick");
+  assert.equal(message('devchat:transcript.took', { duration: '2m 5s' }), '(took 2m 5s)');
   assert.ok(/formatElapsed/.test(transcriptSrc), 'a LIVE row must re-derive its elapsed label');
   assert.ok(/formatCountdown\(/.test(transcriptSrc), 'the row must call formatCountdown (#359)');
   assert.ok(/data-elapsed-since/.test(transcriptSrc), 'the row must render the elapsed-ticker anchor');

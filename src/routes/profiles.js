@@ -154,21 +154,40 @@ function publicProfileRoutes(config) {
           return res.status(404).json({ error: 'Profile not found' });
         }
         const { rows } = await pool.query(
-          `SELECT u.id, u.username, u.display_name, u.bio, av.id AS avatar_id
+          `SELECT u.id, u.username, u.display_name, u.bio, u.profile_published,
+                  av.id AS avatar_id
              FROM users u
              LEFT JOIN user_avatars av ON av.user_id = u.id
             WHERE u.id = $1
-              AND u.profile_published = TRUE
               AND u.profile_disabled_at IS NULL`,
           [resolved.userId]
         );
         if (!rows.length) {
           return res.status(404).json({ error: 'Profile not found' });
         }
-        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);
         const friendship = req.user
           ? await friends.relationshipFor(pool, req.user.id, rows[0].id)
           : null;
+        // #3554: an unpublished profile is still reachable by someone with a
+        // friend request either way, or a friend, so the person answering a
+        // request can see who is asking (the bell and the Friends sheet both
+        // link here). They get the limited card: the username and avatar the
+        // Friends sheet already shows them, never the unpublished name, bio
+        // or links. Anyone else still gets the indistinguishable 404.
+        if (!rows[0].profile_published) {
+          if (!friendship || friendship.state === 'none') {
+            return res.status(404).json({ error: 'Profile not found' });
+          }
+          return res.json({
+            profile: {
+              ...publicShape({ ...rows[0], display_name: null, bio: null }),
+              limited: true,
+            },
+            ...(resolved.retired ? { moved: { from: username, to: resolved.username } } : {}),
+            friendship,
+          });
+        }
+        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);
         return res.json({
           profile: publicShape(rows[0], verifiedLinks),
           ...(resolved.retired ? { moved: { from: username, to: resolved.username } } : {}),

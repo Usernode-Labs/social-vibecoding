@@ -35,9 +35,10 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       CREATE TABLE apps (
         id int PRIMARY KEY, slug text NOT NULL, name text NOT NULL,
         icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false,
-        view_visibility text NOT NULL DEFAULT 'public'
+        view_visibility text NOT NULL DEFAULT 'public', moderation_suspended_at timestamptz
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
+      CREATE TABLE user_app_blocks (user_id int, app_id int, PRIMARY KEY (user_id, app_id));
       CREATE TABLE user_blocks (blocker_id int, blocked_user_id int,
         PRIMARY KEY (blocker_id, blocked_user_id));
       -- #2387: soft delete.
@@ -45,7 +46,7 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
         id int PRIMARY KEY, app_id int NOT NULL, user_id int, content text NOT NULL,
         msg_type text NOT NULL DEFAULT 'message', metadata jsonb NOT NULL DEFAULT '{}',
         thread_type text, thread_ref int, created_at timestamptz NOT NULL DEFAULT now(),
-        edited_at timestamptz, posted_via text, deleted_at timestamptz
+        moderation_hidden_at timestamptz, edited_at timestamptz, posted_via text, deleted_at timestamptz
       );
       -- #2967: the tables the Messages list's "yours"/"more" sections and
       -- #2387's unread count read. Empty here: this test is about blocks.
@@ -121,6 +122,10 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
     const { rows } = await pool.query(DISCUSSIONS_SQL, [1, false]);
     assert.equal(rows[0].last_message, 'visible newest');
     assert.equal(rows[0].last_by, 'visible');
+    await pool.query('INSERT INTO user_app_blocks VALUES (1,7)');
+    assert.equal((await pool.query(DISCUSSIONS_SQL, [1,false])).rows.length,0, 'a personal app block hides the whole channel');
+    await pool.query('DELETE FROM user_app_blocks WHERE user_id=1 AND app_id=7');
+    assert.equal((await pool.query(DISCUSSIONS_SQL, [1,false])).rows[0].last_by,'visible', 'unblocking the app preserves the separate user block');
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (pool) await pool.end().catch(() => {});

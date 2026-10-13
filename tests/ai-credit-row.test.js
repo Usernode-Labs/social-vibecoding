@@ -57,9 +57,11 @@ test('the renderer publishes into the store the row reads', () => {
   assert.match(row, /id="drawer-row-ai-budget"/);
   assert.match(row, /id="ai-budget-slot"/);
   // …and the section that hosts it renders the component rather than an
-  // empty slot for something else to fill.
+  // empty slot for something else to fill. That is the Usage part since the
+  // settings restructure lifted the allowance out of the Anthropic API key
+  // part, onto the same page, just above it.
   const section = fs.readFileSync(
-    path.join(root, 'frontend/src/features/settings/sections/api-key.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/settings/sections/usage.tsx'), 'utf8');
   assert.match(section, /<AiBudgetRow \/>/);
   assert.doesNotMatch(section, /id="ai-budget-slot"/, 'exactly one renderer');
 });
@@ -82,11 +84,12 @@ test('the settings screen refreshes the row when a section opens', () => {
   // refreshes it.
 });
 
-test('the row renders inside the Anthropic API key section', () => {
-  const pane = html.indexOf('data-settings-section="api-key"');
+test('the row renders inside the Usage part, ahead of the keys on its page', () => {
+  const pane = html.indexOf('data-settings-section="usage"');
   const slot = html.indexOf('id="ai-budget-slot"');
-  assert.ok(pane !== -1, 'the api-key settings pane is missing');
-  assert.ok(slot > pane, 'the slot lives inside that pane');
+  const next = html.indexOf('data-settings-section=', pane + 1);
+  assert.ok(pane !== -1, 'the usage settings part is missing');
+  assert.ok(slot > pane && slot < next, 'the slot lives inside that part');
   // Ships EMPTY: the me-scoped fetch that fills it is what confirms there is
   // an audience, so a signed-out visitor never sees a stub.
   const row = html.slice(html.indexOf('id="drawer-row-ai-budget"'));

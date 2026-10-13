@@ -45,20 +45,24 @@
 const GATES = [
   {
     key: 'approvals',
-    label: 'Enough approvals',
+    label: 'Votes',
     actor: 'group',
   },
   {
+    // The member floor (services/governance.js applyNoTimerMerge): a change
+    // to who runs the app, how changes are approved, who can see it, its
+    // platform settings or its keys needs a Yes from someone other than
+    // its author. Absent in a one-member community, where there is nobody
+    // else to ask; a record from before the floor (no `memberFloor` in its
+    // context) keeps the row, as it always had one.
     key: 'explicit',
-    label: 'Explicit approval from the group',
+    label: 'A Yes from another member',
     actor: 'group',
-    // Only for a change to dapp.json's admins block, which loses the
-    // time-based merge paths entirely.
-    applies: (c) => !!c.explicitApproval,
+    applies: (c) => !!c.explicitApproval && c.memberFloor !== false,
   },
   {
     key: 'admin_yes',
-    label: 'An admin approves it',
+    label: 'Admin approval',
     actor: 'admin',
     applies: (c) => !!c.locked,
   },
@@ -72,26 +76,26 @@ const GATES = [
     // group's, one it cannot push to or could not resolve is the author's.
     // The evaluated entry carries that override (see describe()).
     key: 'integration',
-    label: 'Merges cleanly with main',
+    label: 'No conflicts with main',
     actor: 'auto',
   },
   {
     key: 'checks',
-    label: 'Checks pass',
+    label: 'Checks',
     actor: 'author',
   },
   {
-    key: 'visual_evidence',
-    label: 'Visual change preview is captured',
+    key: 'shots',
+    label: 'Before & after shots',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
     // platform later enables enforcement.
-    applies: (c) => !!c.evidenceEnforced,
+    applies: (c) => !!c.shotsEnforced,
   },
   {
     key: 'platform_env',
-    label: 'Platform variables have values',
+    label: 'Platform variables',
     actor: 'admin',
     // The platform's own app only: a proposal that declares a required
     // variable with no value would deploy the platform into a crash loop.
@@ -108,7 +112,7 @@ const GATES = [
   },
   {
     key: 'github',
-    label: 'GitHub accepts the merge',
+    label: 'Merge',
     actor: 'auto',
   },
 ];
@@ -122,6 +126,8 @@ const GATE_KEYS = new Set(GATES.map((g) => g.key));
 
 // The one rule for which commit a proposal's approvals and checks are about.
 const { reviewedHeadForSession, visualHeadForSession } = require('./pr-vote-revision');
+// The member floor's words: why a flagged proposal needs another member's Yes.
+const explicitApprovalCopy = require('./explicit-approval');
 
 function intOrNull(v) {
   if (v == null) return null;
@@ -271,9 +277,12 @@ function integrationStep(session) {
       };
     }
     if (has('budget')) {
+      // Waiting on the daily budget reset is waiting on a clock: nobody can
+      // clear it, so it is automatic rather than an admin's turn (an admin
+      // read "Waiting on you" with nothing to press).
       return {
-        state: 'waiting', actor: 'admin',
-        note: `conflicts with main${files}; the platform's token budget is exhausted`,
+        state: 'active', actor: 'auto',
+        note: `conflicts with main${files}; resumes after the daily budget reset`,
       };
     }
     return { state: 'active', actor: 'auto', note: `conflicts with main${files}; the platform will resolve it` };
@@ -306,17 +315,36 @@ function summarize(list, viewer) {
     // or the ones left have never been measured — and those are opposite
     // facts. Saying "nothing left to check" for the second is the exact
     // mistake this feature exists to stop: a card that reads as finished when
-    // it has simply never been looked at.
+    // it has simply never been looked at. Nor is it "Nothing needs you",
+    // which is what the platform says while it is actively working.
     if (total && done === total) {
       return {
-        headline: 'Merging now', detail: `all ${total} steps done`,
+        headline: 'Live', detail: null,
         done, total, current: null, opensFor: null, needsViewer: false,
       };
     }
     return {
-      headline: 'Nothing needs you',
-      detail: 'still working out what this needs',
+      headline: 'Checking what this needs', detail: null,
       done, total, current: null, opensFor: null, needsViewer: false,
+    };
+  }
+
+  // The last step in flight is the merge itself.
+  if (current.key === 'github' && current.state === 'active') {
+    return {
+      headline: 'Merging',
+      detail: current.detail && current.detail.note ? current.detail.note : null,
+      done, total, current: current.key, opensFor: null, needsViewer: false,
+    };
+  }
+
+  // A blocked step is never "Nothing needs you". One with nobody named (a
+  // merge that failed for a reason the gate could not attribute) says so.
+  if (current.state === 'blocked' && current.actor === 'auto') {
+    return {
+      headline: 'Blocked',
+      detail: current.detail && current.detail.note ? current.detail.note : current.label.toLowerCase(),
+      done, total, current: current.key, opensFor: null, needsViewer: false,
     };
   }
 
@@ -332,7 +360,7 @@ function summarize(list, viewer) {
   const byActor = {
     author: { headline: 'Waiting on the author', mine: 'Waiting on you', opensFor: 'author', is: !!v.isAuthor },
     admin: { headline: 'Waiting on an admin', mine: 'Waiting on you', opensFor: 'admin', is: !!v.isAdmin },
-    group: { headline: 'Waiting on the group', mine: 'Waiting on your vote', opensFor: 'voter', is: !v.hasVoted },
+    group: { headline: 'Waiting on the group', mine: 'Waiting for your approval', opensFor: 'voter', is: !v.hasVoted },
   }[current.actor] || null;
 
   if (!byActor) {
@@ -415,6 +443,8 @@ function mainStep(session) {
   const since = short ? ` since ${short}` : '';
   const test = s.app_main_check_failing_test ? ` (${s.app_main_check_failing_test})` : '';
   const base = { key: 'main_healthy', label: 'Main is healthy', actor: 'admin' };
+  // The short line's parts, so a surface need not parse them out of the note.
+  const facts = { sha: short, test: s.app_main_check_failing_test || null };
 
   if (paused) {
     const what = confirming
@@ -424,14 +454,20 @@ function mainStep(session) {
       return {
         ...base, state: 'done',
         detail: {
+          ...facts,
           passThrough: 'level_and_green',
           note: `${what}; this head is level with main and its own checks passed on this exact tree, so it merges and re-tests main`,
         },
       };
     }
+    // A first red being re-run is the platform's to settle in minutes, and no
+    // control is offered for it (app-view.js _requirementAction), so it is
+    // in flight rather than an admin's turn. The pause itself still holds.
     return {
-      ...base, state: 'blocked',
-      detail: { paused: true, confirming, note: `${what}; merges are paused until a fix lands or an admin resumes them` },
+      ...base,
+      state: confirming ? 'active' : 'blocked',
+      actor: confirming ? 'auto' : 'admin',
+      detail: { ...facts, paused: true, confirming, note: `${what}; merges are paused until a fix lands or an admin resumes them` },
     };
   }
   return {
@@ -440,6 +476,28 @@ function mainStep(session) {
     detail: mainState === 'running' ? { note: 'checking the last merge' }
       : red ? { note: 'main is red, but an admin resumed merges' }
         : null,
+  };
+}
+
+/**
+ * The member-floor step, read off the serializer's columns
+ * (governance.explicitApprovalRowFields): done once someone other than the
+ * author has said Yes, waiting until then. Null when the row is not flagged
+ * or the floor does not apply (one member), or the serializer did not say.
+ */
+function explicitStep(session) {
+  const s = session || {};
+  if (!s.requires_explicit_approval || !s.needs_other_member_yes) return null;
+  const reason = s.explicit_approval_reason || null;
+  const other = intOrNull(s.other_member_yes_count) || 0;
+  return {
+    key: 'explicit',
+    label: 'A Yes from another member',
+    actor: 'group',
+    state: other >= 1 ? 'done' : 'waiting',
+    detail: other >= 1
+      ? { reason, otherYes: other }
+      : { reason, otherYes: 0, note: explicitApprovalCopy.reasonSentence(reason) },
   };
 }
 
@@ -470,16 +528,22 @@ function provisional(session) {
     ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
   out.push({
     key: 'approvals',
-    label: 'Enough approvals',
+    label: 'Votes',
     actor: 'group',
     state: (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
     detail: (required != null && yes != null) ? { note: `${yes} of ${required}` } : null,
   });
 
+  // The member floor, when the serializer says it applies (a flagged row in
+  // a community of more than one). Absent otherwise, like the lock: a
+  // serializer that did not read it has not said, and is not guessed for.
+  const explicit = explicitStep(s);
+  if (explicit) out.push(explicit);
+
   const step = integrationStep(s);
   out.push({
     key: 'integration',
-    label: 'Merges cleanly with main',
+    label: 'No conflicts with main',
     actor: step.actor,
     state: step.state,
     detail: step.note ? { note: step.note } : null,
@@ -490,38 +554,53 @@ function provisional(session) {
   // chose not to start yet: the head conflicts with main, and the verdict
   // runs once it merges cleanly. Nobody has to act, and nothing is running.
   const deferred = check === 'pending' && s.check_phase === 'deferred';
+  // A built preview whose run waits for a checks slot (services/checks-
+  // queue.js): in progress, and started by the queue, not by anyone here.
+  const queued = check === 'pending' && s.check_phase === 'queued';
+  // A red run that overlapped a platform rollout was stored as an 'error'
+  // the platform runs again on its own (#3828). Nothing writes that now;
+  // rows stored before still run again, so nobody has to act on them.
+  const rolloutRetry = check === 'error'
+    && s.check_error_detail === require('./staging-recovery').ROLLOUT_RETRY_DETAIL;
+  // An 'error' because the repo unit suite could not run (its Job was
+  // refused, its setup stopped before any test): the preview was fine.
+  const unitNotRun = check === 'error' && !!require('./unit-suite-row').notRunError(s);
   const checkState = (check === 'passing' || check === 'skipped') ? 'done'
-    : (check === 'failing' || check === 'error') ? 'blocked'
-      : check === 'pending' ? 'active' : 'pending';
+    : rolloutRetry ? 'active'
+      : (check === 'failing' || check === 'error') ? 'blocked'
+        : check === 'pending' ? 'active' : 'pending';
   out.push({
     key: 'checks',
-    label: 'Checks pass',
+    label: 'Checks',
     actor: 'author',
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
-      : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
-        : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
-          : check === 'pending' ? { note: 'still running' } : null,
+      : rolloutRetry ? { note: 'they ran while Homeroom was updating and will run again' }
+        : unitNotRun ? { note: 'the unit suite could not run, so there is no verdict yet' }
+          : check === 'error' ? { note: 'the staging preview could not start, so the tests could not run' }
+            : deferred ? { note: 'waiting for the head to merge cleanly; the preview is built, the tests run then' }
+              : queued ? { note: 'waiting for a checks slot; they start on their own' }
+                : check === 'pending' ? { note: 'still running' } : null,
   });
 
-  if (s.evidenceEnforced || s.evidence_enforced) {
-    const detail = s.visual_evidence_detail && typeof s.visual_evidence_detail === 'object'
-      ? s.visual_evidence_detail : {};
-    const evidenceState = s.visual_evidence_state || detail.state || 'planned';
+  if (s.shotsEnforced || s.shots_enforced) {
+    const detail = s.shots_detail && typeof s.shots_detail === 'object'
+      ? s.shots_detail : {};
+    const shotsState = s.shots_state || detail.state || 'planned';
     const currentHead = visualHeadForSession(s);
     const exactHead = !!currentHead && !!detail.headSha
       && String(currentHead).toLowerCase() === String(detail.headSha).toLowerCase();
-    const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(evidenceState);
+    const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(shotsState);
     out.push({
-      key: 'visual_evidence',
-      label: 'Visual change preview is captured',
+      key: 'shots',
+      label: 'Before & after shots',
       actor: 'author',
-      state: accepted ? 'done' : evidenceState === 'failed' ? 'blocked' : 'active',
+      state: accepted ? 'done' : shotsState === 'failed' ? 'blocked' : 'active',
       detail: accepted
-        ? { state: evidenceState }
-        : { state: evidenceState, note: exactHead
-          ? (detail.failureReason || `the visual change preview is ${String(evidenceState).replace(/_/g, ' ')}`)
-          : 'the visual change preview has not been captured for the current commit' },
+        ? { state: shotsState }
+        : { state: shotsState, note: exactHead
+          ? (detail.failureReason || `the before/after shots are ${String(shotsState).replace(/_/g, ' ')}`)
+          : 'the before/after shots have not been taken for the current commit' },
     });
   }
 
@@ -537,7 +616,7 @@ function provisional(session) {
   const allKnownDone = out.every((g) => g.state === 'done');
   out.push({
     key: 'github',
-    label: 'GitHub accepts the merge',
+    label: 'Merge',
     actor: 'auto',
     state: allKnownDone ? 'active' : 'pending',
     detail: allKnownDone ? { note: 'merging shortly' } : null,
@@ -562,9 +641,9 @@ function provisional(session) {
 function recordIsSuperseded(record, session) {
   const ctx = (record && record.context) || {};
   const s = session || {};
-  if (s.evidenceEnforced !== undefined || s.evidence_enforced !== undefined) {
-    const live = !!(s.evidenceEnforced || s.evidence_enforced);
-    if (!!ctx.evidenceEnforced !== live) return true;
+  if (s.shotsEnforced !== undefined || s.shots_enforced !== undefined) {
+    const live = !!(s.shotsEnforced || s.shots_enforced);
+    if (!!ctx.shotsEnforced !== live) return true;
   }
   if (ctx.approvalEpoch != null) {
     const then = intOrNull(ctx.approvalEpoch);
@@ -597,7 +676,7 @@ function readRequirements(session) {
   }
   return {
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLiveMainPause(describe(record), s),
+    gates: withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s),
     evaluated: true,
     provisional: false,
   };
@@ -615,6 +694,51 @@ function withLiveMainPause(gates, s) {
   const live = mainStep(s);
   if (!live.detail || (!live.detail.paused && !live.detail.passThrough)) return gates;
   return gates.map((g) => (g.key === 'main_healthy' ? live : g));
+}
+
+// #3669: the same class of staleness on the approvals step, from the other
+// direction. A vote cast after a checkAndMerge run neither bumps the approval
+// epoch nor moves the head, so the run's record ("Votes waiting, 0 of 1")
+// stays current by every test recordIsSuperseded knows — and keeps being
+// served until the background run re-stamps and another refresh reads it.
+// The row's live approval columns (the serializers attach them) say when that
+// vote has landed, so a WAITING entry they contradict is rewritten to done
+// with the live tally; every other case stands, and a done recording keeps
+// winning over columns that would have produced a different provisional list
+// (the gate saw the real tally — see the recording test below). The note
+// follows the provisional list's shape (`${yes} of ${required}`), which is
+// what the card renders.
+function withLiveApprovals(gates, s) {
+  const required = intOrNull(s.votes_required) ?? intOrNull(s.approvals_required);
+  const yes = intOrNull(s.qualified_yes_count) != null
+    ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
+  if (required == null || yes == null) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'approvals') : -1;
+  if (idx < 0 || !gates[idx] || gates[idx].state === 'done') return gates;
+  if (yes < required) return gates;
+  return gates.map((entry, i) => (i === idx
+    ? { ...entry, state: 'done', detail: { note: `${yes} of ${required}` } }
+    : entry));
+}
+
+// The same staleness for the member floor: a run that stopped at "A Yes
+// from another member" stays current after that Yes lands (a vote moves
+// neither the epoch nor the head). When the row's live columns say someone
+// other than the author has said Yes, a WAITING entry becomes done; every
+// other case stands.
+function withLiveExplicit(gates, s) {
+  if (!s.requires_explicit_approval || !s.needs_other_member_yes) return gates;
+  const other = intOrNull(s.other_member_yes_count);
+  if (other == null || other < 1) return gates;
+  const idx = Array.isArray(gates) ? gates.findIndex((g) => g && g.key === 'explicit') : -1;
+  if (idx < 0 || !gates[idx] || gates[idx].state !== 'waiting') return gates;
+  return gates.map((entry, i) => (i === idx
+    ? {
+      ...entry,
+      state: 'done',
+      detail: { reason: s.explicit_approval_reason || (entry.detail && entry.detail.reason) || null, otherYes: other },
+    }
+    : entry));
 }
 
 /**
@@ -645,11 +769,14 @@ module.exports = {
   trace,
   describe,
   integrationStep,
+  explicitStep,
   mainStep,
   levelAndGreen,
   provisional,
   summarize,
   readRequirements,
   recordIsSuperseded,
+  withLiveApprovals,
+  withLiveExplicit,
   store,
 };

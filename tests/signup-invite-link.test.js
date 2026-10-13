@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -120,7 +121,7 @@ test('a second visit lands back on the code step instead of an empty form', () =
   assert.ok(onShow.length > 0, 'loginOnShow must still exist');
   assert.match(onShow, /readAutoSend\(\)/,
     'the standing confirmation is restored inside loginOnShow');
-  assert.match(onShow, /setOtpStatus\(CODE_SENT_MSG\)/);
+  assert.match(onShow, /setOtpStatus\(translate\(CODE_SENT_MSG\)\)/);
   assert.match(onShow, /setCooldownUntil\(/,
     'the remaining cooldown is restored, not restarted');
 });
@@ -131,8 +132,10 @@ test('the resend is held for the same gap the mail layer enforces', () => {
   // The button says how long is left rather than looking broken, and both
   // arms of every conditional class are whole literals — Tailwind's
   // extractor is a regex over source text.
-  assert.match(tsx, /Send a new code in \$\{cooldownLeft\}s/);
-  assert.match(tsx, /Email me a code in \$\{cooldownLeft\}s/);
+  assert.match(tsx, /t\('auth:login\.otp\.resendIn', \{ count: cooldownLeft \}\)/);
+  assert.equal(message('auth:login.otp.resendIn', { count: 42 }), 'Send a new code in 42s');
+  assert.match(tsx, /t\('auth:login\.otp\.requestIn', \{ count: cooldownLeft \}\)/);
+  assert.equal(message('auth:login.otp.requestIn', { count: 42 }), 'Email me a code in 42s');
   assert.match(tsx, /const QUIET_BUTTON_WAITING =\s*\n?\s*'[^']*'/);
   assert.doesNotMatch(tsx, /className=\{`[^`]*\$\{[^`]*\}[^`]*`\}/,
     'no computed Tailwind class names');

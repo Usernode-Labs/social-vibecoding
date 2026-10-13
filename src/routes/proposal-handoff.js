@@ -6,6 +6,7 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const github = require('../services/github');
+const githubBudget = require('../services/github-budget');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
@@ -13,10 +14,11 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
+const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
-const visualEvidencePlan = require('../services/visual-evidence-plan');
+const visibleChangesContract = require('../services/visible-changes');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -30,6 +32,7 @@ const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
 const { changeHashPath } = require('../services/change-destination');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_BYTES,
@@ -122,43 +125,43 @@ function parseBodySessionId(value, label) {
   return value;
 }
 
-function parseVisualEvidence(value) {
+function parseVisibleChanges(value) {
   if (value === undefined) return undefined;
   try {
-    return visualEvidencePlan.parseIntent(value);
+    return visibleChangesContract.parseIntent(value);
   } catch (err) {
     throw new ValidationError(err.message);
   }
 }
 
-function visualEvidenceResponse(applied, session = {}) {
+function shotsResponse(applied, session = {}) {
   const raw = applied || {
-    state: session.visual_evidence_state || null,
-    required: session.visual_evidence_detail?.required === true,
+    state: session.shots_state || null,
+    required: session.shots_detail?.required === true,
     accepted: false,
     rejected: false,
   };
-  if (typeof proposalUpdate.visualEvidenceSubmissionFields === 'function') {
-    return proposalUpdate.visualEvidenceSubmissionFields(raw);
+  if (typeof proposalUpdate.visibleChangesSubmissionFields === 'function') {
+    return proposalUpdate.visibleChangesSubmissionFields(raw);
   }
   return {
-    visualEvidenceState: raw.state || null,
-    visualEvidenceAccepted: raw.accepted === true,
-    visualEvidenceRejected: raw.rejected === true,
-    visualEvidenceRequired: raw.required === true,
-    visualEvidenceNextStep: raw.nextStep || 'none',
+    shotsState: raw.state || null,
+    visibleChangesAccepted: raw.accepted === true,
+    visibleChangesRejected: raw.rejected === true,
+    shotsRequired: raw.required === true,
+    shotsNextStep: raw.nextStep || 'none',
   };
 }
 
-async function applyVisualEvidenceRevision(args) {
-  if (typeof proposalUpdate.applyVisualEvidenceRevision === 'function') {
-    return proposalUpdate.applyVisualEvidenceRevision(args);
+async function applyShotsRevision(args) {
+  if (typeof proposalUpdate.applyShotsRevision === 'function') {
+    return proposalUpdate.applyShotsRevision(args);
   }
   return {
-    state: args.session?.visual_evidence_state || null,
-    required: args.session?.visual_evidence_detail?.required === true,
+    state: args.session?.shots_state || null,
+    required: args.session?.shots_detail?.required === true,
     accepted: false,
-    rejected: args.visualEvidence !== undefined,
+    rejected: args.visibleChanges !== undefined,
     changed: false,
   };
 }
@@ -266,7 +269,7 @@ function parseContextBody(body) {
 }
 
 function parseBuildBody(body) {
-  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests', 'visualEvidence'], 'body');
+  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests', 'visibleChanges', 'visualEvidence'], 'body');
   if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
   return {
     headSha: parseSha(body.headSha, 'headSha'),
@@ -275,7 +278,7 @@ function parseBuildBody(body) {
       label: 'spec', min: 1, max: MAX_SPEC_BYTES,
     }),
     tests: parseTests(body.tests),
-    visualEvidence: parseVisualEvidence(body.visualEvidence),
+    visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)),
   };
 }
 
@@ -385,7 +388,7 @@ function requireCliMiddleware(req, res, next) {
 // anything. Everything else is the same field with the same cap, because the
 // two calls carry the same work — they differ only in where it lands.
 function parseShareInProgressBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'externalAgent', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -411,6 +414,14 @@ function parseShareInProgressBody(body) {
   const description = body.description == null
     ? null
     : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // The plain-English summary a voter reads first, parsed exactly as
+  // update-from-fork parses it (the pr-import route's 600-character cap), so a
+  // card shared with one says the same thing a proposal submitted with it
+  // would. The connector sends it; it used to be dropped before this route.
+  if (body.summary != null && typeof body.summary !== 'string') {
+    throw new ValidationError('summary must be a string');
+  }
+  const summary = require('./votes').parseImportSummary(body);
   // Which coding agent wrote it — a badge, resolved by the connector service
   // and carried through so the shared card reads the same as a proposal from
   // the same agent. Bounded like any other caller-supplied label.
@@ -424,8 +435,9 @@ function parseShareInProgressBody(body) {
     externalAgent,
     title,
     description,
+    summary,
     linkedIssues: body.linkedIssues == null ? null : body.linkedIssues,
-    visualEvidence: parseVisualEvidence(body.visualEvidence),
+    visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)),
     testing: {
       ...(body.testingPaths != null ? { testingPaths: body.testingPaths } : {}),
       ...(body.testingSteps != null ? { testingSteps: body.testingSteps } : {}),
@@ -434,8 +446,24 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck', 'visualEvidence'], 'body');
-  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  exactKeys(body, ['branch', 'patch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  // #4263. The new work arrives as a fork `branch` OR as a `patch` (the
+  // connector's update-by-patch), never both. A patch is applied AT a commit,
+  // so it names that commit in `expectedHeadSha`. Its size limit is the
+  // patch service's own (it names the limit and the fallback); this bound is
+  // only the body's.
+  if (body.patch != null && body.branch != null) {
+    throw new ValidationError('Pass branch or patch, not both');
+  }
+  const patch = body.patch == null
+    ? null
+    : boundedText(body.patch, { label: 'patch', min: 1, max: 512 * 1024 });
+  if (patch != null && body.expectedHeadSha == null) {
+    throw new ValidationError('A patch needs expectedHeadSha: the commit it was made against');
+  }
+  const branch = patch != null
+    ? null
+    : boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -475,6 +503,14 @@ function parseUpdateFromForkBody(body) {
   const description = body.description == null
     ? null
     : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // #3344. The plain-English summary a voter reads first. Normalized by the
+  // pr-import route's own parser, so the same 600-character cap applies and a
+  // revision cannot store what the first submission would have clipped. Empty
+  // after trimming is "said nothing", never "blank it", as for description.
+  if (body.summary != null && typeof body.summary !== 'string') {
+    throw new ValidationError('summary must be a string');
+  }
+  const summary = require('./votes').parseImportSummary(body);
   // #1323. A re-run of the checks against the commit already on the proposal.
   // Until this existed the only way an agent could get one was to CHANGE a
   // capture route so the testing-metadata write happened to trigger it.
@@ -487,9 +523,9 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
-    description,
-    recheck, linkedIssues, visualEvidence: parseVisualEvidence(body.visualEvidence) };
+  return { branch, patch, forkRepo, expectedHeadSha, testing, title,
+    description, summary,
+    recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
 
 function repoCoordinates(app) {
@@ -868,12 +904,14 @@ function proposalHandoffRoutes(config) {
           user: req.user,
           session,
           branch: input.branch,
+          patch: input.patch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
-          visualEvidence: input.visualEvidence,
+          visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
+          summary: input.summary,
           recheck: input.recheck,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
@@ -1022,9 +1060,10 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
-          visualEvidence: input.visualEvidence,
+          visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
+          summary: input.summary,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,
         }
@@ -1185,20 +1224,20 @@ function proposalHandoffRoutes(config) {
         const { freed } = await sessionLifecycle.freeUserSlot({
           pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
         });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        if (!freed) {
+          sessionLifecycle.recordCapacityRefusal(pool, {
+            cap: 'user', path: 'proposal_start', userId: req.user.id, appId: app.id,
+          });
+          return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
+        }
       }
-      const { rows: globalCounts } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'`
-      );
-      if (Number(globalCounts[0].cnt) - replacedActiveSlot
-          >= Number(config.maxGlobalSessions || 100)) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-      }
+      // The platform-wide cap, counted as every other start counts it
+      // (session-caps.countGlobalSessions): this path once had its own copy,
+      // which disagreed with the others (12 Oct 2026).
+      const global = await sessionLifecycle.claimGlobalSlot({
+        pool, config, path: 'proposal_start', userId: req.user.id, appId: app.id, discount: replacedActiveSlot,
+      });
+      if (!global.ok) return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
 
       const branchName = `dev/cli-u${req.user.id}-${input.requestId}`;
       // #1376: `requestId` is already validated to [a-z0-9-] and the user id
@@ -1218,7 +1257,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'GitHub branch creation failed', {
           app: app.slug, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
 
       let created;
@@ -1446,7 +1485,7 @@ function proposalHandoffRoutes(config) {
               requestId: detail.requestId,
               message: detail.message,
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
           // The exact local/platform pair is already durable. This can be a
           // retry before submission or long after its staging checks passed.
@@ -1460,6 +1499,7 @@ function proposalHandoffRoutes(config) {
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
+                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
                     check_state = NULL, check_phase = NULL,
                     check_error_detail = NULL, test_results = '[]'::jsonb,
@@ -1570,11 +1610,11 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
-        let evidenceApplied = null;
-        if (currentCheckedHead(session) === input.headSha && input.visualEvidence !== undefined) {
-          evidenceApplied = await applyVisualEvidenceRevision({
+        let shotsApplied = null;
+        if (currentCheckedHead(session) === input.headSha && input.visibleChanges !== undefined) {
+          shotsApplied = await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
-            visualEvidence: input.visualEvidence,
+            visibleChanges: input.visibleChanges,
           });
         }
         if (revisionKind === 'proposal'
@@ -1583,7 +1623,7 @@ function proposalHandoffRoutes(config) {
           const status = publicSessionStatus(session);
           return res.status(status.revisionState === 'ready' ? 200 : 202).json({
             ...status,
-            ...visualEvidenceResponse(evidenceApplied, session),
+            ...shotsResponse(shotsApplied, session),
           });
         }
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
@@ -1646,7 +1686,7 @@ function proposalHandoffRoutes(config) {
               log.warn('proposal-handoff', 'Promoted managed revision head read failed', {
                 sessionId: session.id, ...github.describeGithubError(err),
               });
-              return res.status(503).json({ error: 'github_unavailable' });
+              return res.status(503).json(githubBudget.githubUnavailableBody(err));
             }
             if (String(remoteHead).toLowerCase() !== input.headSha) {
               return res.status(409).json({
@@ -1668,7 +1708,7 @@ function proposalHandoffRoutes(config) {
             }
             const spec = input.spec || session.spec_md;
             if (input.spec) {
-              await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+              await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
             }
             await snapshotSpec(pool, session.id, spec, input.headSha);
             const adopted = await pool.query(
@@ -1692,9 +1732,9 @@ function proposalHandoffRoutes(config) {
             if (!adopted.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
-            evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+            shotsApplied = shotsApplied || await applyShotsRevision({
               pool, config, session, headSha: input.headSha,
-              visualEvidence: input.visualEvidence,
+              visibleChanges: input.visibleChanges,
               headChanged: currentCheckedHead(session) !== input.headSha,
             });
 
@@ -1720,7 +1760,7 @@ function proposalHandoffRoutes(config) {
               revisionState: 'deploying',
               sessionId: Number(session.id),
               headSha: input.headSha,
-              ...visualEvidenceResponse(evidenceApplied, session),
+              ...shotsResponse(shotsApplied, session),
               webPath: changeHashPath(session.app_slug, session.id),
             });
           } finally {
@@ -1760,7 +1800,7 @@ function proposalHandoffRoutes(config) {
             log.warn('proposal-handoff', 'GitHub commit adoption failed', {
               sessionId: session.id, ...github.describeGithubError(err),
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
 
           await insertHistory(pool, session.id, input.history);
@@ -1776,7 +1816,7 @@ function proposalHandoffRoutes(config) {
           }
           const spec = input.spec || session.spec_md;
           if (input.spec) {
-            await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+            await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
           }
           await snapshotSpec(pool, session.id, spec, input.headSha);
           const adopted = await pool.query(
@@ -1809,9 +1849,9 @@ function proposalHandoffRoutes(config) {
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+          shotsApplied = shotsApplied || await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
-            visualEvidence: input.visualEvidence,
+            visibleChanges: input.visibleChanges,
             headChanged: currentCheckedHead(session) !== input.headSha,
           });
           const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
@@ -1840,7 +1880,7 @@ function proposalHandoffRoutes(config) {
             status: 'deploying',
             sessionId: Number(session.id),
             headSha: input.headSha,
-            ...visualEvidenceResponse(evidenceApplied, session),
+            ...shotsResponse(shotsApplied, session),
             webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
@@ -1890,7 +1930,7 @@ function proposalHandoffRoutes(config) {
   // Membership first (services/communities.js): proposing is for the
   // community's members whichever router ends up promoting, and this one
   // runs ahead of voteRoutes' own copy of the same gate.
-  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), async (req, res, next) => {
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res, next) => {
     let releasePromotion = null;
     let releaseOnResponse = false;
     try {
@@ -1937,7 +1977,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'Could not verify branch before promotion', {
           sessionId: session.id, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {
@@ -1976,7 +2016,7 @@ module.exports = {
   parseStartBody,
   parseContextBody,
   parseBuildBody,
-  parseVisualEvidence,
+  parseVisibleChanges,
   parseCommitUploadBody,
   parseUpdateFromForkBody,
   parseSessionId,

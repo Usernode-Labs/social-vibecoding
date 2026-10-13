@@ -69,6 +69,31 @@ test('buildReportInput excludes private sessions by construction', async () => {
   assert.ok(knownUsernames.includes('alice'));
 });
 
+test('buildReportInput counts only governance proposals, never a request\'s open twin row', async () => {
+  // A rename up for a vote, and the `general` twin of a request that closed
+  // but whose twin still reads open (services/governance-kinds.js). The fake
+  // applies the query's own kind filter, so a query without one returns the
+  // twin too.
+  const openRows = [
+    { kind: 'rename', title: 'x', payload: { newName: 'Demo 2' }, created_by_username: 'dana', created_at: '2026-09-01T00:00:00Z' },
+    { kind: 'general', title: 'Dark mode resets', payload: {}, created_by_username: 'alice', created_at: '2026-09-02T00:00:00Z' },
+  ];
+  queryHandler = async (sql, params) => {
+    if (/FROM issues i[\s\S]*status = 'open'/i.test(sql)) {
+      const kinds = (params || []).find(Array.isArray);
+      return { rows: kinds ? openRows.filter((r) => kinds.includes(r.kind)) : openRows };
+    }
+    return { rows: [] };
+  };
+  queries.length = 0;
+  const { input } = await reportAi.buildReportInput(pool, APP);
+  assert.deepEqual(input.gov.map((g) => g.kind), ['rename']);
+  assert.equal(input.counts.awaitingReview, 1, 'the twin is not a proposal awaiting review');
+  const govQuery = queries.find((q) => /FROM issues i[\s\S]*status = 'open'/i.test(q.sql));
+  assert.match(govQuery.sql, /i\.kind = ANY\(\$2::text\[\]\)/);
+  assert.deepEqual(govQuery.params[1], [...require('../src/services/governance-kinds').GOVERNANCE_KINDS]);
+});
+
 test('fingerprint is stable across key order', () => {
   const a = reportAi.fingerprint({ b: 1, a: [{ y: 2, x: 1 }] });
   const b = reportAi.fingerprint({ a: [{ x: 1, y: 2 }], b: 1 });

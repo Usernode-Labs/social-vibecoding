@@ -29,6 +29,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -131,6 +132,7 @@ function loadPane({ challenges, eventId = null }) {
   sandbox.TopochainEventContext = context;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -179,12 +181,14 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Get started' },
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 2, count: 3 }), '2 of 3 done in First challenges');
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, scope: 'first' },
     'setup is its own scope while it gates the rest');
-  assert.equal(grid.notice, 'Finish these to unlock the rest of the season.');
+  // 2026-10-01: what a new account finishes is its Getting started list.
+  assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
   assert.equal(grid.lockedCount, 0, 'no hidden_count in this payload, so no placeholder');
   assert.equal(grid.groups.length, 1);
-  assert.equal(grid.groups[0].heading, 'Get started', 'the setup group’s heading (key `setup`)');
+  assert.equal(grid.groups[0].heading, 'First challenges', 'the setup group’s heading (key `setup`)');
   assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');
 });
 
@@ -198,10 +202,10 @@ test('unlocked challenge groups preserve each card’s detail target', () => {
   pane._onboarding = { total: 3, completed: 3, unlocked: true, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  // The board's order (tests/challenge-groups.test.js): unlocked, Get started
+  // The board's order (tests/challenge-groups.test.js): unlocked, First challenges
   // goes last. The identity card is found by its group rather than by position.
   assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
-    ['This week', 'Always open', 'Get started']);
+    ['This week', 'Always open', 'First challenges']);
   const identity = grid.groups.find((g) => g.key === 'always').cards[0];
   pane._openIdx(identity.idx);
   assert.equal(pane._detailChallenge.id, 4);
@@ -389,7 +393,7 @@ test('_loadedEventId tracks the event the grid belongs to', () => {
   assert.match(CHALLENGES_SRC,
     /TopochainChallenges\._loadedEventId = eventId;/,
     'loadChallenges records which event its list is for');
-  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges()'));
+  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges('));
   const assignAt = load.indexOf('_loadedEventId = eventId');
   const guardAt = load.indexOf('if (eventId == null)');
   assert.ok(assignAt > -1 && assignAt < guardAt,
@@ -630,28 +634,37 @@ test('an open card says how long it has left: its own end, else the event’s', 
 // say it under the rail, because the count only moves when a run does. Times
 // are the viewer's own locale and zone, so the expected strings are built with
 // the same Intl call rather than typed out.
-test('a card the scorer counts says how often it updates and when it last did', () => {
+test('a card the scorer counts says when it next counts, and owns up when the schedule is late', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   const noon = new Date();
   noon.setHours(12, 0, 0, 0);
   const last = new Date(noon.getTime() - 18 * 60000);
-  const clock = last.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const time = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const dated = (d) => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const scored = (scoring, extra = {}) => ({
     id: 900500, completed: false, card_preview: { goal: 'Try Three Apps' },
     progress: { done: false, current: 1, target: 3 }, scoring, ...extra,
   });
-  const at = (minutes) => scored({ interval_minutes: minutes, last_scored_at: last.toISOString() });
+  const at = (minutes, from = last) => scored({ interval_minutes: minutes, last_scored_at: from.toISOString() });
 
-  assert.equal(pane._cadenceOf(at(15), noon.getTime()), `Updates every 15 min · last ${clock}`);
-  assert.match(clock, /11:42/, 'the time of the last complete pass, not of the page load');
-  for (const [minutes, every] of [[1, 'minute'], [10, '10 min'], [60, 'hour'], [90, '90 min'], [120, '2 hours']]) {
-    assert.equal(pane._cadenceOf(at(minutes), noon.getTime()), `Updates every ${every} · last ${clock}`, `${minutes} min`);
-  }
+  // Due later: the time of the next pass, which is the last one plus the interval.
+  const next = new Date(last.getTime() + 30 * 60000);
+  assert.equal(pane._cadenceOf(at(30), noon.getTime()), `next count ${time(next)}`);
+  assert.match(time(next), /12:12/, 'counted from the last complete pass, not from the page load');
+
+  // Late by less than one interval: the run is coming.
+  assert.equal(pane._cadenceOf(at(10), noon.getTime()), 'counting now', 'due 11:52, 8 minutes late on a 10-minute rule');
+
+  // Late by more than that: the schedule has stalled, so say when it last counted.
+  assert.equal(pane._cadenceOf(at(5), noon.getTime()), `last count ${time(last)}`, 'due 11:47, 13 minutes late on a 5-minute rule');
   const twoDaysOn = noon.getTime() + 2 * 86400000;
-  assert.equal(pane._cadenceOf(at(15), twoDaysOn),
-    `Updates every 15 min · last ${last.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+  assert.equal(pane._cadenceOf(at(15), twoDaysOn), `last count ${dated(last)}`,
     'a pass from another day carries its date, so a stalled schedule reads as stale');
-  assert.notEqual(pane._cadenceOf(at(15), twoDaysOn), pane._cadenceOf(at(15), noon.getTime()));
+
+  // A next pass that falls tomorrow carries its date as well.
+  const lateNight = new Date(noon); lateNight.setHours(23, 55, 0, 0);
+  const tomorrow = new Date(lateNight.getTime() + 15 * 60000);
+  assert.equal(pane._cadenceOf(at(15, lateNight), lateNight.getTime() + 60000), `next count ${dated(tomorrow)}`);
 
   // Nothing to state, or nothing left to count: no line.
   const NONE = [
@@ -671,7 +684,7 @@ test('a card the scorer counts says how often it updates and when it last did', 
 
   // Both descriptors carry it, from the same rule.
   const live = scored({ interval_minutes: 15, last_scored_at: new Date(Date.now() - 60000).toISOString() });
-  assert.match(pane.cardView(live, 0).cadence, /^Updates every 15 min · last /);
+  assert.match(pane.cardView(live, 0).cadence, /^next count /);
   assert.equal(pane.cardView(live, 0).cadence, pane._cadenceOf(live));
   assert.equal(pane.cardView(CH[0], 0).cadence, null, 'a card with no schedule has no line');
   pane._detailChallenge = live;
@@ -749,20 +762,26 @@ test('card and page descriptors carry the illustration tone only when it is tone
   pane._detailChallenge = null;
 });
 
-// The progress over the grid (ITERATION 03): "N/M done in <event>", scoped to
-// the selected event once the bar's list has it.
+// The progress over the grid (ITERATION 03): "N/M done in this event", scoped
+// to the selected event once the bar's list has it.
 test('the grid opens on its progress: the tally, scoped to the selected event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, caption: 'done' },
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 },
     'no event known yet: the bare tally');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 2, count: 3 }), '2 of 3 done');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's. It does not
+  // name it (issue #4528): production's event name is the season's.
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, scope: 'event' });
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 2, count: 3 }),
+    '2 of 3 done in this event');
+  assert.equal(message('leaderboard:progress.event', { done: 2, count: 3 }),
+    '<0>2/3</0><1>done in this event</1>', 'the drawn line names no event either');
   context.selectedEvent = () => ({ id: 900500, name: '  ' });
   pane._renderGrid();
-  assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 }, 'a blank name is left out');
   assert.equal(store.get().grid.points, undefined, 'and it carries no points');
   delete context.selectedEvent;
 });
@@ -866,8 +885,8 @@ test('the page descriptor: category, the card’s meta line, task, a clean rail'
   const { pane, store } = loadPane({ challenges: [ch], eventId: 900500 });
   pane.openChallengeDetail(ch);
   const d = store.get().detail;
-  assert.equal(d.eyebrow, 'Get started',
-    'a grouped page names its group; Get started’s header has no clock, so the deadline stays on the meta line');
+  assert.equal(d.eyebrow, 'First challenges',
+    'a grouped page names its group; the First challenges header has no clock, so the deadline stays on the meta line');
   assert.equal(d.deadline, '3d left', 'in the card’s words, from the card’s rule');
   assert.equal(d.goal, 'Join block production');
   assert.equal(d.task, 'Up to 2,000 pts a week');
@@ -947,7 +966,9 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     // pane asks App for that name rather than knowing it — a stub that
     // answered `undefined` would have this test passing on the fallback while
     // the screen said the wrong word.
-    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+    // The table holds message ids; the name is its English catalog text.
+    _leaderboardTitle: (sub) => (LEADERBOARD_TITLES[sub || 'challenges']
+      ? message(LEADERBOARD_TITLES[sub || 'challenges']) : 'Leaderboard'),
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);
@@ -1072,4 +1093,48 @@ test('Me no longer lists completions; its row lands on the Challenges tab', () =
 test('the header back chevron asks the Challenges page first', () => {
   assert.match(appJs, /if \(App\._inLeaderboard && window\.TopochainChallenges\?\.handleBack\?\.\(\)\) return;/,
     'the same claim chain Settings, Admin and Browse use');
+});
+
+// #3253, #3248: the list row's `counted_by` ({ measure, target }) is the rule
+// that scores the challenge, and the page says under the task what it counts:
+// a proposal only once it is put to the vote, and nothing past a counted
+// measure's target while the challenge is still open.
+test('the page says a proposal counts at Propose to group, and when more stops counting', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const row = (counted_by, extra = {}) => ({
+    id: 900500, completed: false, card_preview: { goal: 'Ship it' }, counted_by, ...extra,
+  });
+  const SENT = 'Counts when you press Propose to group, which puts your change to a vote.';
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null })), SENT);
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null }, { progress: { done: true, current: null, target: null } })),
+    SENT, 'the same line once it is done: the task still does not say it');
+
+  const accepted = (current, extra = {}) => row({ measure: 'PROPOSAL_ACCEPTED', target: 2 },
+    { progress: { done: current >= 2, current, target: 2 }, ...extra });
+  assert.equal(pane._countNoteOf(accepted(2)),
+    "This challenge counts up to 2, and you have 2. More accepted changes before it ends don't add to it.");
+  assert.equal(pane._countNoteOf(row({ measure: 'TRY_APPS', target: 3 }, { progress: { done: true, current: 3, target: 3 } })),
+    "This challenge counts up to 3, and you have 3. More before it ends don't add to it.", 'any counted measure');
+  // A This week challenge's cap is the week's, and starts again on Monday.
+  assert.equal(pane._countNoteOf(accepted(2, { card_preview: { goal: 'Ship it', label: 'WEEKLY' } })),
+    "This challenge counts up to 2 each week, and you have 2 this week. More accepted changes this week don't add to it. It starts again on Monday.");
+
+  const NONE = [
+    [accepted(1), 'not at the cap yet'],
+    [accepted(0), 'nothing yet'],
+    [accepted(2, { completed: true }), 'the organiser closed it'],
+    [accepted(2, { effective: { schedule_end: new Date(Date.now() - 60000).toISOString() } }), 'it has ended'],
+    [accepted(2, { progress: undefined }), 'no progress for this viewer'],
+    [row({ measure: 'PROPOSAL_ACCEPTED', target: null }, { progress: { done: true, current: 2, target: 2 } }), 'no cap sent'],
+    [row(null), 'nothing scores it'],
+    [row(undefined), 'an older payload'],
+    [row({ measure: 42 }), 'a malformed measure'],
+  ];
+  for (const [c, why] of NONE) assert.equal(pane._countNoteOf(c), null, why);
+
+  pane._detailChallenge = accepted(2);
+  assert.equal(pane.detailView().countNote, pane._countNoteOf(accepted(2)), 'the page carries it');
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().countNote, null);
+  pane._detailChallenge = null;
 });

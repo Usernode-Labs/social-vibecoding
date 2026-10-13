@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 // Install module stubs before requiring the unit under test.
 function loadWithStubs({
@@ -73,12 +74,15 @@ function loadWithStubs({
 function mockPool(rows, {
   specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
   testingMd = null, testingPath = null, appliedTesting = null,
-  appliedSummary = null,
+  appliedSummary = null, summaryStale = false, prBody = null, summarySource = null,
 } = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
+      if (/UPDATE chat_sessions\s+SET pr_summary_source = 'generated'/.test(sql)) {
+        return { rows: [{ pr_summary_md: params[4] }], rowCount: 1 };
+      }
       if (/FROM chat_session_specs/i.test(sql)) return { rows: specRows };
       if (/FROM chat_sessions\b/i.test(sql)) {
         return {
@@ -86,6 +90,8 @@ function mockPool(rows, {
             spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
             testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
             pr_visuals_applied: null, pr_summary_md: appliedSummary,
+            pr_summary_stale: summaryStale, pr_body: prBody,
+            pr_summary_source: summarySource,
           }],
         };
       }
@@ -908,6 +914,53 @@ test('summary is prepended as the first paragraph of the PR body, before bullets
     // The summary is persisted to pr_summary_md on the new-PR write.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
     assert.equal(upd.params[6], 'Adds a dark-mode toggle so people can switch to a dark colour scheme.');
+    assert.match(upd.sql, /pr_summary_input_version = \$11/,
+      'the generated result is published only for the inputs it read');
+    assert.equal(upd.params[10], 0, 'the source input version is recorded');
+    assert.match(upd.params[12], /^[0-9a-f]{64}$/, 'the source body hash is recorded');
+  } finally {
+    restore();
+  }
+});
+
+test('delayed generation cannot publish a summary after newer inputs arrive', async () => {
+  const githubCalls = [];
+  let beginGeneration;
+  const generationStarted = new Promise((resolve) => { beginGeneration = resolve; });
+  let finishGeneration;
+  const generationGate = new Promise((resolve) => { finishGeneration = resolve; });
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: async () => {
+      beginGeneration();
+      await generationGate;
+      return { title: 'Cumulative title', body: 'Old body', summary: 'Old summary' };
+    },
+  });
+  try {
+    let inputVersion = 2;
+    const pool = mockPool([{ role: 'user', content: 'First request', metadata: {} }]);
+    const originalQuery = pool.query.bind(pool);
+    pool.query = (sql, params) => {
+      if (/SELECT pr_summary_input_version FROM chat_sessions/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      if (/FROM chat_sessions\b/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      return originalQuery(sql, params);
+    };
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_title: 'Cumulative title' };
+    const work = subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'First request', ccSummary: 'Old work', username: 'evan',
+    });
+    await generationStarted;
+    inputVersion = 3;
+    finishGeneration();
+    assert.equal(await work, null);
+    assert.equal(githubCalls.length, 0, 'the old generation never reaches GitHub');
+    assert.equal(session.pr_summary_md, undefined, 'the old summary never becomes current');
   } finally {
     restore();
   }
@@ -977,6 +1030,64 @@ test('existing PR makes no GitHub call when summary (and everything else) is unc
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
     assert.equal(githubCalls.length, 0, 'no GitHub call when the summary is unchanged too');
+  } finally {
+    restore();
+  }
+});
+
+test('a regenerated summary clears the stale notice even when its words are unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'Steady summary.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'Steady summary.', summaryStale: true,
+      prBody: 'The currently published PR body.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'the unchanged PR body needs no GitHub write');
+    assert.equal(session.pr_summary_stale, false);
+    assert.ok(pool.queries.some((q) => /pr_summary_stale = FALSE/.test(q.sql)
+      && /pr_summary_input_version = \$2/.test(q.sql)),
+    'freshness is recorded only for the version used by generation');
+    const refreshed = pool.queries.find((q) => /SET pr_summary_source = 'generated'/.test(q.sql));
+    assert.equal(refreshed.params[3],
+      crypto.createHash('sha256').update('The currently published PR body.').digest('hex'),
+      'the source hash describes the body on GitHub, not an unwritten draft');
+  } finally {
+    restore();
+  }
+});
+
+test('an empty generated summary keeps prior prose when other PR metadata changes', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: '',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [],
+      appliedSummary: 'The earlier explanation.', summaryStale: true,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'the changed issue linkage still updates GitHub');
+    assert.match(githubCalls[0].opts.body, /^The earlier explanation\./);
+    assert.equal(session.pr_summary_md, 'The earlier explanation.');
+    assert.equal(session.pr_summary_stale, true, 'old prose is still marked as needing review');
+    const update = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(update.params[10], false, 'an empty result cannot validate the old summary');
   } finally {
     restore();
   }
@@ -1256,6 +1367,83 @@ test('the in-flight description attaches to a summary already stored as the tail
     const ctx = await subject.gatherSessionContext(pool, 15, 'Did it.', 'Adds the thing.');
     assert.deepEqual(ctx.summaries, ['Did it.']);
     assert.deepEqual(ctx.descriptions, ['Adds the thing.']);
+  } finally {
+    restore();
+  }
+});
+
+// ---- #3344: an author's summary outranks a regeneration while it is fresh ----
+
+test('a fresh author summary survives a regeneration on an existing PR and leads its body', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'A generated guess.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [],
+      appliedSummary: 'The author\u2019s own words.', summarySource: 'author', summaryStale: false,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'the changed issue linkage still reaches GitHub');
+    const body = githubCalls[0].opts.body;
+    assert.match(body, /^The author\u2019s own words\.\n\nCumulative body/);
+    assert.doesNotMatch(body, /A generated guess/, 'the generated summary does not ride along');
+    const update = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(update.params[10], false, 'no summary column is rewritten as generated');
+    assert.equal(session.pr_summary_md, 'The author\u2019s own words.');
+  } finally {
+    restore();
+  }
+});
+
+test('a fresh author summary survives the lazy PR creation', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'A generated guess.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      appliedSummary: 'The author\u2019s own words.', summarySource: 'author', summaryStale: false,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.match(githubCalls[0].opts.body, /^The author\u2019s own words\.\n\nCumulative body/);
+    assert.doesNotMatch(githubCalls[0].opts.body, /A generated guess/);
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.match(upd.sql, /pr_summary_source = CASE WHEN pr_summary_input_version = \$11 AND NOT \$14::boolean/);
+    assert.equal(upd.params[13], true, 'the author summary holds, so no summary column is relabelled');
+  } finally {
+    restore();
+  }
+});
+
+test('a STALE author summary is replaced by a regeneration, as it always could be', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'A generated summary of the new code.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'Words about the old code.', summarySource: 'author', summaryStale: true,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.match(githubCalls[0].opts.body, /^A generated summary of the new code\./);
+    const update = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(update.params[10], true);
   } finally {
     restore();
   }

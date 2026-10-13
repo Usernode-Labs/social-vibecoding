@@ -17,6 +17,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -232,12 +236,17 @@ test('run-cc.sh emits terminal phase markers on scout and build paths', () => {
   const doneMarkers = runCcSrc.match(/__USERNODE_PHASE__ done/g) || [];
   assert.ok(doneMarkers.length >= 2, 'expected done markers on both scout and build paths');
   assert.ok(/__USERNODE_PHASE__ push_failed/.test(runCcSrc), 'push_failed marker missing');
-  // The build-path marker must precede the __USERNODE_RESULT__ line so
-  // the journal's last phase is terminal.
-  const buildResultIdx = runCcSrc.indexOf('mode=build');
-  const pushFailedIdx = runCcSrc.indexOf('__USERNODE_PHASE__ push_failed');
-  assert.ok(pushFailedIdx !== -1 && pushFailedIdx < buildResultIdx,
-    'terminal marker must be emitted before the build result line');
+  // A terminal marker must precede every build __USERNODE_RESULT__ line
+  // (the push's, and a failed turn's that skips it) so the journal's last
+  // phase is terminal.
+  const lines = runCcSrc.split('\n');
+  const buildResults = lines.map((line, i) => [line, i]).filter(([line]) => /__USERNODE_RESULT__ .*mode=build/.test(line));
+  assert.ok(buildResults.length >= 1);
+  for (const [, i] of buildResults) {
+    const phase = lines.slice(0, i).reverse().find((line) => /__USERNODE_PHASE__/.test(line));
+    assert.match(phase, /__USERNODE_PHASE__ (done|push_failed)/,
+      'terminal marker must be emitted before the build result line');
+  }
 });
 
 test('sessions.js heals a failed push, then errors instead of warning', () => {

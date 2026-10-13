@@ -379,6 +379,21 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     }
   });
 
+  await t.test("the Homeroom bot forgets a deleted person's words", async () => {
+    const target = await user();
+    const peer = await user();
+    await pool.query(`INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, asked_text) VALUES ($1, 9101, $2, 'their own words'), ($1, 9102, $3, 'a peer''s words')`, [app.id, target.id, peer.id]);
+    const runs = (await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, plan_change)
+      VALUES ($1, 9101, 'live', 'question', 'make it blue'), ($1, 9102, 'live', 'question', 'make it red') RETURNING id`, [app.id])).rows;
+    await erase(target);
+    await assertAnonymised(target.id);
+    const planChange = async id => (await pool.query('SELECT plan_change FROM homeroom_bot_runs WHERE id = $1', [id])).rows[0].plan_change;
+    assert.equal(await planChange(runs[0].id), null, "what they asked the plan changed with is gone");
+    assert.equal(await planChange(runs[1].id), 'make it red', "somebody else's request keeps its words");
+    assert.equal(await count('homeroom_bot_requesters', 'user_id', target.id), 0, 'their requester rows and asked_text go with them');
+    assert.equal(await count('homeroom_bot_requesters', 'user_id', peer.id), 1);
+  });
+
   await t.test('concurrent deletions cannot remove the last full administrator', async () => {
     await pool.query('DELETE FROM app_admins');
     await pool.query('UPDATE users SET is_admin=FALSE,admin_readonly=FALSE');

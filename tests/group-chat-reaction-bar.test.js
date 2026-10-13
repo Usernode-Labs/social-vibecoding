@@ -137,7 +137,7 @@ test('the pencil is always present and hidden per row', () => {
   // where the row's classes are known.
   assert.match(
     gcJs,
-    /_reactBarEditable = row\.classList\.contains\('gc-msg'\)\s*&&\s*row\.classList\.contains\('gc-msg-self'\)/,
+    /_reactBarEditable = !GroupChat\._readOnly\(\) && row\.classList\.contains\('gc-msg'\)\s*&&\s*row\.classList\.contains\('gc-msg-self'\)/,
   );
 });
 
@@ -181,4 +181,12 @@ test('the publish is flushed, because the open measures the bar it just filled',
   // changes the bar's width, and the width decides where it is placed.
   assert.match(gcJs, /_publishReactBar\(\);\s*\n\s*bar\.classList\.remove\('hidden'\);/);
   assert.match(gcJs, /const bw = bar\.offsetWidth \|\| 280;/);
+});
+
+// Reporting remains available on touch devices even without chat write access.
+test('read-only viewers can report from the long-press menu without gaining reactions or edit', () => {
+  const html = bar({ readOnly: true, reportable: true });
+  assert.match(html, /Report message/);
+  assert.doesNotMatch(html, /gc-react-bar-quick/);
+  assert.doesNotMatch(html, /gc-react-bar-edit/);
 });

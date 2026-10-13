@@ -39,7 +39,29 @@ function normalizeNonNegativeInteger(v) {
   return Math.round(n);
 }
 
+// A cache price, per million tokens, or null when there is none to apply.
+function cachePricePerMillion(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// What the snapshot's estimate assumes about the cached share of the prompt.
+// The last is every snapshot's wording before cache prices were recorded.
+function cachePricingAssumption(cacheRead, cacheWrite) {
+  if (cacheRead != null && cacheWrite != null) {
+    return 'cache reads and cache writes priced at their catalog cache rates';
+  }
+  if (cacheRead != null) {
+    return 'cache reads priced at the catalog cache-read rate; cache writes at ordinary prompt rate';
+  }
+  if (cacheWrite != null) {
+    return 'cache writes priced at the catalog cache-write rate; cache reads at ordinary prompt rate';
+  }
+  return 'cached input priced at ordinary prompt rate';
+}
+
 // Build the immutable pricing snapshot from the sanitized catalog model.
+// The cache prices ride along only where the catalog lists them, so a model
+// without any gets the snapshot it always did.
 function pricingSnapshotForModel(model) {
   if (!model) return null;
   const inP = model.inputPricePerMillion;
@@ -47,13 +69,17 @@ function pricingSnapshotForModel(model) {
   const okIn = inP != null && Number.isFinite(inP);
   const okOut = outP != null && Number.isFinite(outP);
   if (!okIn || !okOut || inP < 0 || outP < 0) return { available: false };
+  const cacheRead = cachePricePerMillion(model.cacheReadPricePerMillion);
+  const cacheWrite = cachePricePerMillion(model.cacheWritePricePerMillion);
   return {
     available: true,
     model: model.id || null,
     inputPricePerMillion: inP,
     outputPricePerMillion: outP,
+    ...(cacheRead != null ? { cacheReadPricePerMillion: cacheRead } : {}),
+    ...(cacheWrite != null ? { cacheWritePricePerMillion: cacheWrite } : {}),
     capturedAt: new Date().toISOString(),
-    pricingAssumption: 'cached input priced at ordinary prompt rate',
+    pricingAssumption: cachePricingAssumption(cacheRead, cacheWrite),
   };
 }
 
@@ -80,6 +106,10 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
     supportsReasoning: model ? model.supportsReasoning === true : null,
     reasoningEfforts: efforts,
     supportsTools: model ? model.supportsTools === true : null,
+    // #3426: false (text only) unless the catalog says the model takes images.
+    supportsImages: model ? model.supportsImages === true : null,
+    // #3557: likewise for PDFs, which Claude Code's Read tool sends as documents.
+    supportsFiles: model ? model.supportsFiles === true : null,
   };
 }
 
@@ -106,6 +136,33 @@ function defaultReasoningEffortForModel(catalogModel, config = {}) {
   ), advertised[0]);
 }
 
+// Which CLI wrote an OpenRouter thread, read back from the attempt ledger
+// that recorded it (#3296). An attempt recorded before harnesses existed ran
+// Codex, and so did a thread with no ledger row at all, since Codex was then
+// the only runner. A failed read answers "unknown" (null), which the caller
+// treats as a mismatch: a fresh start costs one turn of context, a wrong
+// resume costs a failed dispatch.
+async function threadHarnessFor(pool, sessionId, threadId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'harness' AS harness
+         FROM agent_turns
+        WHERE session_id = $1
+          AND agent_thread_id = $2
+          AND backend = 'codex_openrouter'
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [sessionId, threadId],
+    );
+    return registry.resolveOpenRouterHarness(rows[0]?.harness);
+  } catch (err) {
+    log.warn('agent-turn', 'thread harness lookup failed; starting a fresh thread', {
+      sessionId, err: err.message,
+    });
+    return null;
+  }
+}
+
 // ── Phase 1: resolve runtime context (no DB writes) ───────────────────
 // Called once per logical coding-tool invocation. Checks the feature flag
 // + allowlist, loads credential metadata, decrypts the key, resolves the
@@ -113,7 +170,20 @@ function defaultReasoningEffortForModel(catalogModel, config = {}) {
 // ledger row (plan 6.1) — that is startCodexAttempt's job, immediately
 // before the dispatch, so a later failure to start the attempt does not
 // consume a paid provider request.
-async function resolveCodexRuntimeContext({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
+//
+// `harness` picks the CLI (#3296). The default, 'codex', is what a caller
+// that names none gets: the CLI every OpenRouter turn ran in before
+// harnesses existed. 'auto' asks the platform's per-model map
+// (config.openrouterModelHarnesses). The dev chat's scout and build use it,
+// and so does every coding turn of the Homeroom bot (its triage, spec,
+// build and follow-up) and of a benchmark trial that replays them, so GLM
+// runs in Claude Code there too and a model the map leaves on Codex stays
+// there. Before & after shots do not come through here: they run on Claude
+// Code with Anthropic's models.
+async function resolveCodexRuntimeContext({
+  pool, session, userId, model, reasoningEffort, resumeThreadId, config = {},
+  harness = registry.DEFAULT_OPENROUTER_HARNESS,
+}) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
 
   // #2568 retired the gradual-rollout allowlist; the emergency switch stays.
@@ -147,6 +217,9 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
   if (!resolvedModel) {
     return { error: 'model_required' };
   }
+  const agentHarness = harness === 'auto'
+    ? registry.openRouterHarnessForModel(resolvedModel, config)
+    : registry.resolveOpenRouterHarness(harness);
 
   const configuredBase = String(config.openrouterApiBase || 'https://openrouter.ai/api/v1')
     .replace(/\/+$/, '');
@@ -196,19 +269,37 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
   const requestedReasoningEffort = reasoningEffort
     || session.agent_reasoning_effort
     || defaultReasoningEffortForModel(catalogModel, config);
+
+  // A saved thread belongs to the CLI that wrote it: a Codex thread id means
+  // nothing to `claude --resume`, and the reverse. When the harness for this
+  // model has changed since (an operator moved it), start fresh on purpose
+  // instead of paying for a resume the runner is certain to reject.
+  const candidateThreadId = resumeThreadId || session.agent_thread_id || null;
+  const threadHarness = candidateThreadId
+    ? await threadHarnessFor(pool, session.id, candidateThreadId)
+    : null;
+  const resumeThreadDropped = !!candidateThreadId && threadHarness !== agentHarness;
   return {
     agentBackend: 'codex_openrouter',
+    agentHarness,
     agentModel: resolvedModel,
     // Do not send a reasoning parameter to a model OpenRouter explicitly says
     // does not support one. If the catalog was temporarily unavailable, keep
     // the user's existing preference instead of guessing about capability.
+    // A Claude-harness turn carries it too: the worker-local adapter sends it
+    // as the Messages API's output_config.effort, which OpenRouter maps onto
+    // the model's own reasoning effort (#3296).
     agentReasoningEffort: catalogModel?.supportsReasoning === false
       ? null
       : requestedReasoningEffort,
     agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),
+    // The hosts this model's turn may use, when the platform overrides the
+    // worker listener's own shortlist (config.openrouterProviderShortlists).
+    agentProviderShortlist: config.openrouterProviderShortlists?.[resolvedModel] || null,
     openrouterApiKey,
     openrouterApiBase,
-    resumeThreadId: resumeThreadId || session.agent_thread_id || null,
+    resumeThreadId: resumeThreadDropped ? null : candidateThreadId,
+    resumeThreadDropped,
     credentialId: meta.id,
     credentialRevision: meta.revision,
     agentConfigVersion: session.agent_config_version || 1,
@@ -306,7 +397,10 @@ async function startCodexAttempt({
        resumeThreadId || null,
        expectedConfigVersion,
        durableTurnId, attemptNumber || 1,
-       JSON.stringify({ pricing: ctx.pricingSnapshot || null })],
+       JSON.stringify({
+         pricing: ctx.pricingSnapshot || null,
+         harness: registry.resolveOpenRouterHarness(ctx.agentHarness),
+       })],
     );
 
     const activeRecord = turnLifecycle.withLifecycle({
@@ -315,6 +409,9 @@ async function startCodexAttempt({
       mode,
       journal,
       backend: 'codex_openrouter',
+      // Which CLI is writing this attempt's journal: restart recovery must
+      // replay it with the matching parser (#3296).
+      harness: registry.resolveOpenRouterHarness(ctx.agentHarness),
       turnUuid: turnId,
       logicalTurnId: durableTurnId,
       attemptNumber: attemptNumber || 1,
@@ -401,10 +498,16 @@ async function lockAttempt(client, turnUuid) {
 // changing its status or double-counting.
 // One physical invocation = one attempt; a retry writes a NEW attempt row
 // and never overwrites the prior attempt's usage (plan 6.1, 6.5).
+//
+// `usageScope` says what the reported totals cover. Codex reports totals for
+// the whole THREAD, so each attempt's share is the delta from the thread's
+// previous attempt. Claude Code reports totals for the one RUN, which are
+// already this attempt's share; subtracting a previous run from them would
+// undercount every resumed turn (#3296).
 async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
-  telemetryMetrics = null,
+  telemetryMetrics = null, usageScope = 'thread', routedProvider = null,
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -446,7 +549,7 @@ async function completeCodexAttempt({
       return { updated: false, alreadyTerminal: true };
     }
 
-    const previous = current && threadId
+    const previous = current && threadId && usageScope !== 'run'
       ? await findPreviousProviderTotal(client, row.session_id, threadId, turnUuid)
       : null;
     const { delta, resetDetected } = computeProviderUsageDelta(current, previous);
@@ -456,6 +559,11 @@ async function completeCodexAttempt({
       ? estimateRequestedModelCost(delta, row.metadata?.pricing)
       : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
+    // A stopped Claude Code turn priced from what its requests reported
+    // (usageTotalFromResult), and marked so: the sum of the requests that
+    // finished, or, without those, a floor from what Claude Code streamed.
+    if (usageTotal?.source === 'requests') metadata.usage_source = 'request_sum';
+    if (usageTotal?.source === 'stream') metadata.usage_source = 'stream_floor';
     if (measuredComponent) {
       metadata.telemetry_component = measuredComponent;
       const errorClassByCode = {
@@ -515,7 +623,8 @@ async function completeCodexAttempt({
          cost_source = $17,
          usage_reset_detected = $18,
          billed_by = 'user_openrouter',
-         metadata = $19::jsonb
+         metadata = $19::jsonb,
+         routed_provider = COALESCE($21, routed_provider)
        WHERE id = $1
          AND (
            status = 'running'
@@ -546,7 +655,8 @@ async function completeCodexAttempt({
        cost != null ? cost.costSource : 'unavailable',
        resetDetected,
        JSON.stringify(metadata),
-       reconcileTerminalUsage],
+       reconcileTerminalUsage,
+       typeof routedProvider === 'string' && routedProvider ? routedProvider.slice(0, 128) : null],
     );
 
     await client.query('COMMIT');
@@ -687,10 +797,18 @@ function computeProviderUsageDelta(current, previous) {
   };
 }
 
-// Estimate cost from per-attempt deltas. Cached input is priced at the
-// ordinary prompt rate (conservative, recorded as an assumption). Reasoning
-// output tokens are already included in outputTokens and must not be added
-// again (plan 6.7). Never label the estimate exact.
+// Estimate cost from per-attempt deltas. inputTokens is every prompt token,
+// counted the way OpenRouter bills it, with cache reads (cachedInputTokens)
+// and cache writes (cacheWriteInputTokens) a share of it: Codex reports it
+// so, and a Claude Code turn's three counts are added up to it
+// (usageTotalFromResult, streamedUsageFloor). Each share is priced at its own
+// catalog rate when the snapshot carries one, and otherwise at the ordinary
+// prompt rate, which is all a snapshot recorded before cache prices has; with
+// neither rate the figure is exactly the prompt-rate one. Neither share can
+// claim more input than there is, so the uncached remainder is never
+// negative and no token is priced twice. Reasoning output tokens are already
+// included in outputTokens and must not be added again (plan 6.7). Never
+// label the estimate exact.
 function estimateRequestedModelCost(delta, pricing) {
   const p = pricing;
   if (!p || !p.available) return { costSource: 'unavailable', estimatedCostUsd: null };
@@ -699,9 +817,17 @@ function estimateRequestedModelCost(delta, pricing) {
   if (!Number.isFinite(inP) || !Number.isFinite(outP)) {
     return { costSource: 'unavailable', estimatedCostUsd: null };
   }
-  const estimatedCostUsd =
-    ((delta.inputTokens ?? 0) / 1_000_000) * inP +
+  const readP = cachePricePerMillion(p.cacheReadPricePerMillion);
+  const writeP = cachePricePerMillion(p.cacheWritePricePerMillion);
+  const inputTokens = delta.inputTokens ?? 0;
+  const shareOf = (tokens, room) => Math.min(Math.max(Number(tokens) || 0, 0), Math.max(room, 0));
+  const cacheReadTokens = readP == null ? 0 : shareOf(delta.cachedInputTokens, inputTokens);
+  const cacheWriteTokens = writeP == null ? 0 : shareOf(delta.cacheWriteInputTokens, inputTokens - cacheReadTokens);
+  let estimatedCostUsd =
+    ((inputTokens - cacheReadTokens - cacheWriteTokens) / 1_000_000) * inP +
     ((delta.outputTokens ?? 0) / 1_000_000) * outP;
+  if (cacheReadTokens > 0) estimatedCostUsd += (cacheReadTokens / 1_000_000) * readP;
+  if (cacheWriteTokens > 0) estimatedCostUsd += (cacheWriteTokens / 1_000_000) * writeP;
   return { costSource: 'requested_model_catalog_estimate', estimatedCostUsd: Math.round(estimatedCostUsd * 1e8) / 1e8 };
 }
 
@@ -776,13 +902,9 @@ async function settleRecoveredAgentAttempt({
       turnUuid: activeTurn.turnUuid,
       status: failed ? 'failed' : 'completed',
       threadId: result?.agentThreadId || activeTurn.threadId || null,
-      usageTotal: {
-        inputTokens: result?.inputTokens != null ? result.inputTokens : null,
-        cachedInputTokens: result?.cachedInputTokens != null ? result.cachedInputTokens : null,
-        cacheWriteInputTokens: result?.cacheWriteInputTokens != null ? result.cacheWriteInputTokens : null,
-        outputTokens: result?.outputTokens != null ? result.outputTokens : null,
-        reasoningOutputTokens: result?.reasoningOutputTokens != null ? result.reasoningOutputTokens : null,
-      },
+      usageTotal: usageTotalFromResult({ ...(result || {}), agentHarness: activeTurn.harness }),
+      usageScope: usageScopeForHarness(activeTurn.harness),
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? activeTurn.telemetryComponent || null
         : null,
@@ -835,11 +957,27 @@ async function getCodexAttemptRecoveryState({ pool, turnUuid }) {
 
 // Extract a cumulative-provider-usage object from a terminal worker result
 // (plan 7.3): the thread's CURRENT totals. If none observed, returns null.
+//
+// The ledger counts input the way OpenRouter bills it: every prompt token,
+// with the cached ones a subset of that total. Codex already reports it that
+// way. Claude Code reports Anthropic's split instead, where input_tokens
+// EXCLUDES cache reads and cache writes, so a Claude-harness turn's total is
+// the sum of the three (#3296). Without this nearly all of a resumed turn's
+// prompt, which Claude Code caches, would go unpriced.
 function usageTotalFromResult(result) {
   const r = result || {};
-  const input = r.inputTokens;
+  const finite = (value) => value != null && Number.isFinite(value);
+  let input = r.inputTokens;
   const output = r.outputTokens;
-  if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) return null;
+  if (registry.resolveOpenRouterHarness(r.agentHarness) === 'claude'
+      && (finite(input) || finite(r.cachedInputTokens) || finite(r.cacheWriteInputTokens))) {
+    input = (finite(input) ? input : 0)
+      + (finite(r.cachedInputTokens) ? r.cachedInputTokens : 0)
+      + (finite(r.cacheWriteInputTokens) ? r.cacheWriteInputTokens : 0);
+  }
+  if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) {
+    return streamedUsageFloor(r);
+  }
   return {
     inputTokens: input != null && Number.isFinite(input) ? input : null,
     cachedInputTokens: r.cachedInputTokens != null && Number.isFinite(r.cachedInputTokens) ? r.cachedInputTokens : null,
@@ -847,6 +985,43 @@ function usageTotalFromResult(result) {
     outputTokens: output != null && Number.isFinite(output) ? output : null,
     reasoningOutputTokens: r.reasoningOutputTokens != null && Number.isFinite(r.reasoningOutputTokens) ? r.reasoningOutputTokens : null,
   };
+}
+
+// A Claude Code turn stopped before its result event reports no usage of
+// its own: Claude Code totals a run only there. The worker sums what each of
+// its model calls streamed instead (relayUsage, finalizeHarnessResult), and
+// that is what such a turn is priced from. Before, the ledger recorded it at
+// 0 tokens and 'unavailable', so a build the Homeroom bot's clock stopped
+// cost "about $0" however long it ran (16 such builds in a week), and an
+// included key's allowance was never debited for a stopped turn. The sum is
+// of the counts each finished request's reply closed on (source
+// 'requests'), or, failing those, of what Claude Code streamed (a floor,
+// source 'stream'). Either way the request in flight at the stop is left
+// out or counted short.
+// Inputs are already totalled the way OpenRouter bills them (cached reads
+// a subset). Claude harness only: a Codex turn's totals are a thread's
+// running total, which a per-turn sum would corrupt.
+function streamedUsageFloor(r) {
+  if (registry.resolveOpenRouterHarness(r.agentHarness) !== 'claude') return null;
+  const relay = r.relayUsage;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null);
+  if (!relay || !(count(relay.requests) > 0)) return null;
+  const input = count(relay.inputTokens);
+  const output = count(relay.outputTokens);
+  if (input == null && output == null) return null;
+  return {
+    inputTokens: input,
+    cachedInputTokens: count(relay.cachedInputTokens),
+    cacheWriteInputTokens: count(relay.cacheWriteInputTokens),
+    outputTokens: output,
+    reasoningOutputTokens: null,
+    source: relay.source === 'requests' ? 'requests' : 'stream',
+  };
+}
+
+// What a harness's reported usage totals cover; see completeCodexAttempt.
+function usageScopeForHarness(harness) {
+  return registry.resolveOpenRouterHarness(harness) === 'claude' ? 'run' : 'thread';
 }
 
 // Classify a thrown dispatch error into a terminal status + code (plan 7.2).
@@ -874,6 +1049,8 @@ function sanitizeError(err) {
 module.exports = {
   backendForSession,
   resolveCodexRuntimeContext,
+  threadHarnessFor,
+  usageScopeForHarness,
   startCodexAttempt,
   completeCodexAttempt,
   completeCodexTurn,

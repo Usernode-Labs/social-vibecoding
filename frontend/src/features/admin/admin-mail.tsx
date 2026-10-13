@@ -113,6 +113,7 @@ async function fetchJson(url: string, opts?: RequestInit): Promise<{ status: num
 // as informational rather than red.
 function statusClass(status?: string): string {
   if (status === 'sent') return 'text-emerald-700 dark:text-emerald-400';
+  if (status === 'suppressed_bounce') return 'text-rose-700 dark:text-rose-400';
   if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
   if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-400';
   if (status === 'no_transport') return 'text-amber-800 dark:text-amber-400';
@@ -129,6 +130,7 @@ function outcomeHeadline(outcome: Outcome): string {
     case 'skipped_staging': return 'Rendered to the platform log. Staging never delivers mail.';
     case 'failed': return 'The provider refused the message.';
     case 'no_transport': return 'Nothing was sent: no mail transport is configured.';
+    case 'suppressed_bounce': return 'Nothing was sent: this address has bounced or reported spam.';
     case 'suppressed_rate_limit': return 'Held back by the outbound throttle.';
     case 'invalid_recipient': return 'Nothing was sent: that address could not be used.';
     default: return 'The send finished with an unexpected result.';
@@ -351,6 +353,68 @@ function ActivityCard({
   );
 }
 
+interface MailMetric {
+  label: string; sent: number; tracked_sent: number; delivered: number; bounced: number; complained: number;
+  opened: number; clicked: number; unsubscribed: number;
+}
+interface MailReports {
+  byKind: MailMetric[]; byDay: MailMetric[]; trackingEnabled: boolean;
+  /** False unless mail goes out through Resend with its webhook connected. */
+  deliveryEvents?: boolean;
+  recentEvents: Array<{ id: number; type: string; kind: string; recipient: string; url?: string;
+    user_agent_class?: string; created_at: string; meta?: { demo?: string; proxyOrPrefetch?: boolean } }>;
+}
+const METRICS = [
+  ['sent', 'Sent'], ['delivered', 'Delivered'], ['bounced', 'Bounced'], ['complained', 'Complained'],
+  ['opened', 'Opened (approx.)'], ['clicked', 'Clicked'], ['unsubscribed', 'Unsubscribed'],
+] as const;
+// Only Resend's webhook reports these, so they are left out rather than
+// shown as a 0 that reads as "nothing was delivered" (reports.js).
+const DELIVERY_METRICS = new Set<string>(['delivered', 'bounced', 'complained']);
+
+function TrackingReports({ reports, failed, onRefresh }: { reports: MailReports | null; failed: boolean; onRefresh: () => void }) {
+  const [group, setGroup] = useState<'byKind' | 'byDay'>('byKind');
+  return <div id="admin-mail-reports" className={`${AdminUI.card} p-4 mt-4`}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className={AdminUI.cardTitle}>Email engagement</h3>
+      <button type="button" className={AdminUI.btn.outlineSm} onClick={onRefresh}>Refresh reports</button>
+    </div>
+    <p className={`${AdminUI.muted} mt-2`}>Last 30 days. Non-transactional mail only. Counts are unique messages, grouped by kind or send day in UTC.
+      Sent means accepted by the provider.</p>
+    <p className={`${AdminUI.muted} mt-2`}>Open rate is approximate. Apple Mail privacy protection, image proxies and link scanners may fetch content before a person reads it.
+      User agent classes are hints and cannot identify every proxy. Open rate uses only messages sent with tracking enabled.</p>
+    {failed ? <p className={`${AdminUI.muted} mt-3`}>Could not load email reports.</p> : !reports
+      ? <p className={`${AdminUI.loading} mt-3`}>Loading…</p> : <>
+        {!reports.deliveryEvents ? <p id="admin-mail-delivery-off" className={`${AdminUI.muted} mt-3`}>Delivered, bounced and complained are not shown: only the Resend transport, with its webhook connected, reports them. Gmail does not.</p> : null}
+        {!reports.trackingEnabled ? <p className={`${AdminUI.muted} mt-3`}>Click and open tracking is off. Set PLATFORM_MAIL_TRACKING_SECRET in Platform variables to track future non-transactional mail.</p> : null}
+        <div className="flex gap-2 mt-3" aria-label="Report grouping">
+          <button type="button" className={group === 'byKind' ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} aria-pressed={group === 'byKind'} onClick={() => setGroup('byKind')}>By kind</button>
+          <button type="button" className={group === 'byDay' ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm} aria-pressed={group === 'byDay'} onClick={() => setGroup('byDay')}>By day</button>
+        </div>
+        {reports[group].length ? reports[group].map((row) => <div key={row.label} className="border-t border-zinc-200 dark:border-zinc-800 py-3 mt-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h4 className="text-sm font-semibold">{row.label}</h4>
+            <span className={AdminUI.muted}>Approx. open rate: {row.tracked_sent ? `${Math.round(row.opened / row.tracked_sent * 100)}%` : '—'}</span>
+          </div>
+          <dl className={`grid grid-cols-2 sm:grid-cols-4 ${reports.deliveryEvents ? 'lg:grid-cols-7' : 'lg:grid-cols-4'} gap-3 mt-3`}>
+            {METRICS.filter(([key]) => reports.deliveryEvents || !DELIVERY_METRICS.has(key)).map(([key, label]) => <div key={key}><dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt><dd className="text-sm font-semibold mt-1">{row[key]}</dd></div>)}
+          </dl>
+        </div>) : <p className={`${AdminUI.muted} mt-3`}>No tracked messages in the last 30 days.</p>}
+        <h4 className="text-sm font-semibold mt-4">Recent tracking events</h4>
+        {reports.recentEvents.length ? <ul className="divide-y divide-zinc-200 dark:divide-zinc-800 mt-2">
+          {reports.recentEvents.map((event) => <li key={event.id} className="py-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-semibold">{event.type} · {event.kind}{event.meta?.demo ? ' · Staging demo' : ''}</span>
+              <time className="text-xs text-zinc-500 dark:text-zinc-400">{String(event.created_at).replace('T', ' ').slice(0, 19)} UTC</time>
+            </div>
+            <p className={`${AdminUI.muted} break-words`}>{event.recipient}{event.user_agent_class ? ` · ${event.user_agent_class}` : ''}</p>
+            {event.url ? <p className="font-mono text-xs break-all mt-1">{event.url}</p> : null}
+          </li>)}
+        </ul> : <p className={`${AdminUI.muted} mt-2`}>No tracking events yet.</p>}
+      </>}
+  </div>;
+}
+
 type Result =
   | { kind: 'none' }
   | { kind: 'note'; text: string; bad?: boolean }
@@ -486,7 +550,8 @@ function MailSection() {
           ) : null}
         </div>
       </div>
-      <div id="admin-mail-activity">
+      <TrackingReports reports={activity?.reports || null} failed={activityFailed} onRefresh={() => loadActivity(kindFilter)} />
+      <div id="admin-mail-activity" className="mt-4">
         <ActivityCard
           data={activity} failed={activityFailed} kindFilter={kindFilter} highlightId={highlightId}
           onToggleFilter={() => setKindFilter((k) => (k ? null : 'admin_test'))}

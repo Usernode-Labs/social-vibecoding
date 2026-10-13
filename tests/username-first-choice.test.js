@@ -5,9 +5,14 @@
 // its profile address and the leaderboard. The contracts guarded here are
 // the five that replace it:
 //
-//   1. The address is NEVER the handle. email-signup.js writes a
-//      SUGGESTION derived from the local part, or an opaque placeholder
-//      when nothing valid can be derived — and nothing that is the email.
+//   1. The address is NEVER the handle. email-signup.js writes an opaque
+//      placeholder. #3575 removed the #2563 suggestion (the local part,
+//      prefilled wherever the person was asked); #4596 brought one back for
+//      the email sign-up's set-password step only, on purpose: the field
+//      arrives holding the letters and digits before the @ (a number added
+//      when taken) and the person can change it. The first-run gate still
+//      starts empty. Every field that asks for the handle says, beside it,
+//      that the name will be public.
 //   2. The gate is SERVER state. `users.needs_username_choice` is written
 //      where the account is created and read by /api/auth/me as a new
 //      boolean; no client infers it from what the name looks like.
@@ -31,6 +36,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -41,138 +47,101 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
 
 // ═══════════════════════════════════════════════════════════════════════
-// 1. Deriving a suggestion — pure
+// 1–2. What a new account holds until it chooses
 // ═══════════════════════════════════════════════════════════════════════
-
-test('the local part is lowercased and stripped to the allowed charset', () => {
-  assert.equal(usernames.suggestUsernameFromEmail('Ada.Lovelace@example.com'),
-    'adalovelace');
-  assert.equal(usernames.suggestUsernameFromEmail('ada+builds@example.com'),
-    'adabuilds');
-  assert.equal(usernames.suggestUsernameFromEmail('ada_l@example.com'), 'ada_l');
-  // Hyphens are out for the same reason a rename refuses them: MENTION_RE
-  // would capture `@ada` and stop.
-  assert.equal(usernames.suggestUsernameFromEmail('ada-lovelace@example.com'),
-    'adalovelace');
-});
-
-test('the suggestion is always something validateUsername accepts', () => {
-  const addresses = [
-    'Ada.Lovelace@example.com', 'a@example.com', 'ab@example.com',
-    'ada+builds@example.com', '___@example.com',
-    'a'.repeat(64) + '@example.com',
-  ];
-  for (const address of addresses) {
-    const suggestion = usernames.suggestUsernameFromEmail(address);
-    if (suggestion === null) continue;
-    assert.equal(usernames.validateUsername(suggestion).ok, true, address);
-  }
-});
-
-test('a local part under the minimum is padded rather than dropped', () => {
-  // `_`, not a digit: the numeric suffix below means exactly one thing —
-  // "somebody already has this" — and padding must not blur it.
-  assert.equal(usernames.suggestUsernameFromEmail('a@example.com'), 'a__');
-  assert.equal(usernames.suggestUsernameFromEmail('al@example.com'), 'al_');
-});
-
-test('a local part over the maximum is cut to the ceiling', () => {
-  const suggestion = usernames.suggestUsernameFromEmail('a'.repeat(64) + '@x.com');
-  assert.equal(suggestion.length, usernames.MAX_USERNAME_LEN);
-});
-
-test('no suggestion beats a bad one: null for junk and the reserved namespace', () => {
-  // Nothing survives the charset filter.
-  assert.equal(usernames.suggestUsernameFromEmail('...@example.com'), null);
-  assert.equal(usernames.suggestUsernameFromEmail('@example.com'), null);
-  assert.equal(usernames.suggestUsernameFromEmail('no-at-sign'), null);
-  assert.equal(usernames.suggestUsernameFromEmail(''), null);
-  assert.equal(usernames.suggestUsernameFromEmail(null), null);
-  // The platform's own service namespace — `usernode-capture` and friends
-  // are resolved BY NAME at runtime, so a member must never be handed one.
-  assert.equal(usernames.suggestUsernameFromEmail('usernode.ops@example.com'), null);
-  assert.equal(usernames.suggestUsernameFromEmail('staging_bot@example.com'), null);
-});
-
-test('the suggestion is never the address, on any input', () => {
-  for (const address of ['ada@example.com', 'Ada.Lovelace@example.com',
-    'a@b.co', 'usernode@example.com']) {
-    const suggestion = usernames.suggestUsernameFromEmail(address);
-    assert.notEqual(suggestion, address);
-    if (suggestion) assert.equal(suggestion.includes('@'), false);
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// 2. Walking past what is taken
-// ═══════════════════════════════════════════════════════════════════════
-
-// The smallest db this needs: `taken` is the set of live handles, matched
-// the way checkAvailability matches them.
-function availabilityDb(taken, retired = []) {
-  const seen = [];
-  return {
-    seen,
-    query: async (rawSql, params) => {
-      const sql = collapse(rawSql);
-      seen.push(params[0]);
-      if (sql.startsWith('SELECT id FROM users WHERE LOWER(username)')) {
-        return { rows: taken.includes(params[0]) ? [{ id: 99 }] : [] };
-      }
-      if (sql.startsWith('SELECT user_id FROM username_history WHERE LOWER(username)')) {
-        return { rows: retired.includes(params[0]) ? [{ user_id: 99 }] : [] };
-      }
-      throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
-    },
-  };
-}
-
-test('a free suggestion is handed back unchanged', async () => {
-  const db = availabilityDb([]);
-  assert.equal(
-    await usernames.suggestAvailableUsernameFromEmail(db, 'ada@example.com'),
-    'ada');
-});
-
-test('a taken suggestion gets a numeric suffix, counting up', async () => {
-  const db = availabilityDb(['ada', 'ada2', 'ada3']);
-  assert.equal(
-    await usernames.suggestAvailableUsernameFromEmail(db, 'Ada@example.com'),
-    'ada4');
-});
-
-test('a handle somebody RETIRED counts as taken here too', async () => {
-  // Otherwise a new account inherits the mentions, links and dapp.json
-  // admin rights of whoever gave that handle up — the whole reason the
-  // retired ledger exists.
-  const db = availabilityDb([], ['ada']);
-  assert.equal(
-    await usernames.suggestAvailableUsernameFromEmail(db, 'ada@example.com'),
-    'ada2');
-});
-
-test('the suffix never pushes the handle past the ceiling', async () => {
-  const long = 'a'.repeat(40);
-  const db = availabilityDb(['a'.repeat(32)]);
-  const suggestion = await usernames.suggestAvailableUsernameFromEmail(
-    db, `${long}@example.com`);
-  assert.ok(suggestion.length <= usernames.MAX_USERNAME_LEN, suggestion);
-  assert.equal(usernames.validateUsername(suggestion).ok, true);
-});
-
-test('nothing derivable means null — the caller falls back, never to the address', async () => {
-  const db = availabilityDb([]);
-  assert.equal(
-    await usernames.suggestAvailableUsernameFromEmail(db, '...@example.com'),
-    null);
-  assert.equal(db.seen.length, 0, 'a null stem must not cost a query');
-});
+//
+// These two sections used to pin the #2563 suggestion — how an address's
+// local part became a prefilled handle and how it walked past taken names.
+// #3575 removed the suggestion outright ("do not just generate a username
+// from their email"), so what is left to pin is the placeholder, and that
+// nothing that derives a handle from an email exists to be called again.
 
 test('the placeholder is opaque, valid, and not an address', () => {
   const placeholder = usernames.placeholderUsername();
   assert.equal(usernames.validateUsername(placeholder).ok, true);
   assert.equal(placeholder.includes('@'), false);
+  assert.match(placeholder, /^member_[0-9a-f]{18}$/);
   assert.notEqual(placeholder, usernames.placeholderUsername());
+});
+
+test('the #3575 helpers stay retired; only the email sign-up step suggests from the address (#4596)', () => {
+  for (const gone of ['suggestUsernameFromEmail', 'suggestAvailableUsernameFromEmail',
+    'isPlaceholderUsername']) {
+    assert.equal(gone in usernames, false, `${gone} is retired`);
+  }
+  for (const rel of ['src/services/usernames.js', 'src/services/email-signup.js',
+    'src/routes/profile.js', 'src/routes/auth.js']) {
+    assert.doesNotMatch(read(rel), /suggest(?:Available)?UsernameFromEmail\(|firstRunSuggestion\(/,
+      `${rel} still calls a retired email-derived suggestion`);
+  }
+  // #4596 deliberately brings a suggestion back for ONE place: the email
+  // sign-up's set-password step (the verify answer). The first-run gate and
+  // the profile routes still ask with an empty field.
+  for (const rel of ['src/routes/profile.js', 'frontend/src/features/auth/username-first-run.js']) {
+    assert.doesNotMatch(read(rel), /suggestUsernameForEmail|usernameFromEmail|suggestedUsername/, rel);
+  }
+  assert.match(read('src/services/email-signup.js'), /usernames\.suggestUsernameForEmail\(pool, email, userId\)/);
+});
+
+test('the suggestion is the letters and digits before the @, lowercased, cut to 32 (#4596)', () => {
+  const { usernameFromEmail } = usernames;
+  assert.equal(usernameFromEmail('Ada.Lovelace@example.com'), 'adalovelace');
+  assert.equal(usernameFromEmail('j_o-e.99@example.com'), 'joe99', 'underscores and hyphens go too');
+  assert.equal(usernameFromEmail('Zoë@example.com'), 'zoe', 'accents fold to their letter');
+  assert.equal(usernameFromEmail(`${'a'.repeat(40)}@example.com`), 'a'.repeat(32));
+  // Too short, or reserved: no suggestion, and the field starts empty.
+  assert.equal(usernameFromEmail('al@example.com'), null);
+  assert.equal(usernameFromEmail('a.b@example.com'), null);
+  assert.equal(usernameFromEmail('...@example.com'), null);
+  assert.equal(usernameFromEmail('homeroom.team@example.com'), null);
+  assert.equal(usernameFromEmail('Usernode@example.com'), null);
+  assert.equal(usernameFromEmail('staging1@example.com'), null);
+  assert.equal(usernameFromEmail(''), null);
+  assert.equal(usernameFromEmail(null), null);
+});
+
+test('a "+" alias is cut off before the suggestion is made (#4891)', async () => {
+  const { usernameFromEmail } = usernames;
+  // The address in the report: what follows the "+" is a filing tag, not
+  // the person's name.
+  assert.equal(usernameFromEmail('evan.a.shapiro+test1012a@example.com'), 'evanashapiro');
+  assert.equal(usernameFromEmail('Ada.Lovelace+hr@example.com'), 'adalovelace');
+  assert.equal(usernameFromEmail('alex+homeroom+more@example.com'), 'alex', 'cut at the first "+"');
+  // What is left before the "+" is held to the same rules: too short, or
+  // nothing at all, and the field starts empty rather than borrowing the tag.
+  assert.equal(usernameFromEmail('al+homeroom@example.com'), null);
+  assert.equal(usernameFromEmail('+homeroom@example.com'), null);
+  // A "+" after the @ is not an alias.
+  assert.equal(usernameFromEmail('alex@plus+example.com'), 'alex');
+  // And the free-name walk starts from the cut name.
+  const none = { query: async (sql, [candidates]) => {
+    assert.equal(candidates[0], 'evanashapiro');
+    return { rows: [] };
+  } };
+  assert.equal(await usernames.suggestUsernameForEmail(none, 'evan.a.shapiro+test1012a@example.com', 7), 'evanashapiro');
+});
+
+test('a taken suggestion takes the smallest free number, over live and retired names (#4596)', async () => {
+  const at = (live, retired = []) => ({
+    query: async (sql, [candidates, userId]) => {
+      assert.match(collapse(sql), /FROM users WHERE LOWER\(username\) = ANY\(\$1::text\[\]\) AND id IS DISTINCT FROM \$2 UNION SELECT LOWER\(username\) AS name FROM username_history WHERE LOWER\(username\) = ANY\(\$1::text\[\]\) AND user_id IS DISTINCT FROM \$2/);
+      const rows = [];
+      for (const u of live) if (u.id !== userId && candidates.includes(u.username.toLowerCase())) rows.push({ name: u.username.toLowerCase() });
+      for (const h of retired) if (h.user_id !== userId && candidates.includes(h.username.toLowerCase())) rows.push({ name: h.username.toLowerCase() });
+      return { rows };
+    },
+  });
+  const suggest = usernames.suggestUsernameForEmail;
+  assert.equal(await suggest(at([]), 'alex@example.com', 7), 'alex');
+  assert.equal(await suggest(at([{ id: 8, username: 'Alex' }]), 'alex@example.com', 7), 'alex2', 'case-insensitive');
+  assert.equal(await suggest(at([{ id: 8, username: 'alex' }, { id: 9, username: 'alex2' }], [{ user_id: 10, username: 'ALEX3' }]),
+    'alex@example.com', 7), 'alex4', 'a retired name is taken too');
+  assert.equal(await suggest(at([{ id: 7, username: 'alex' }]), 'alex@example.com', 7), 'alex', 'a name this account holds is its own');
+  // The number still fits in 32.
+  const long = 'b'.repeat(32);
+  assert.equal(await suggest(at([{ id: 8, username: long }]), `${long}@example.com`, 7), `${'b'.repeat(31)}2`);
+  // Nothing to suggest asks nothing of the database.
+  assert.equal(await suggest({ query: async () => { throw new Error('no query'); } }, 'al@example.com', 7), null);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -185,11 +154,9 @@ function makeMockPool(state) {
     const sql = collapse(rawSql);
     calls.push({ sql, params });
 
-    if (sql.startsWith('SELECT needs_username_choice FROM users WHERE id')) {
-      return { rows: state.me ? [{ needs_username_choice: state.me.needsChoice }] : [] };
-    }
-    if (sql.startsWith('SELECT username, email FROM users WHERE id')) {
-      return { rows: state.me ? [{ username: state.me.username, email: state.me.email }] : [] };
+    // (With the provisional-handle column: usernames.replaceProvisionalUsername.)
+    if (sql.startsWith('SELECT needs_username_choice, username_provisional_since IS NOT NULL AS provisional FROM users WHERE id')) {
+      return { rows: state.me ? [{ needs_username_choice: state.me.needsChoice, provisional: false }] : [] };
     }
     if (sql.startsWith('SELECT id FROM users WHERE LOWER(username)')) {
       const hit = state.live.find((u) => u.username.toLowerCase() === params[0]);
@@ -274,7 +241,6 @@ async function call(app, method, url, payload) {
 }
 
 const choose = (app, payload) => call(app, 'POST', '/api/me/username/choose', payload);
-const suggest = (app) => call(app, 'GET', '/api/me/username/suggestion');
 
 test('choosing installs the handle and clears the gate', async () => {
   const state = freshState();
@@ -376,41 +342,15 @@ test('401 without a session, and nothing is read', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('the suggestion is derived from the email, never handed back as one', async () => {
-  const { app } = makeApp(freshState());
-  const res = await suggest(app);
-  assert.equal(res.status, 200);
-  assert.equal(res.body.suggestion, 'ada');
-  assert.equal(res.body.suggestion.includes('@'), false);
-});
-
-test('an account that already holds a generated handle is offered that one back', async () => {
-  // The #2563 signup path writes a suggestion into the row, so the gate
-  // prefills the same name on every reload rather than a new one.
-  const state = freshState({
-    me: { id: 7, username: 'ada2', email: 'ada@example.com', needsChoice: true },
-    live: [{ id: 7, username: 'ada2' }],
-    retired: [],
-  });
-  const { app } = makeApp(state);
-  assert.equal((await suggest(app)).body.suggestion, 'ada2');
-});
-
-test('a null suggestion is a real answer, not a 500', async () => {
-  const state = freshState({
-    me: { id: 7, username: '...@example.com', email: '...@example.com', needsChoice: true },
-    live: [],
-    retired: [],
-  });
-  const { app } = makeApp(state);
-  const res = await suggest(app);
-  assert.equal(res.status, 200);
-  assert.equal(res.body.suggestion, null);
-});
-
-test('401 on the suggestion without a session', async () => {
-  const { app } = makeApp(freshState(), { user: null });
-  assert.equal((await suggest(app)).status, 401);
+test('the suggestion route is gone, and reads nothing (#3575)', async () => {
+  // GET /api/me/username/suggestion handed the first-run step a handle
+  // derived from the email's local part to arrive holding. With the prefill
+  // retired it has no caller, and a route that generates a username from
+  // the email is exactly what the request asked us to stop doing.
+  const { app, calls } = makeApp(freshState());
+  const res = await call(app, 'GET', '/api/me/username/suggestion');
+  assert.equal(res.status, 404);
+  assert.equal(calls.length, 0);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -428,17 +368,26 @@ test('the users INSERT no longer puts the email in the username column', () => {
 
 test('the created row is marked as still needing a choice', () => {
   // Communities, stage 5 added the join screen's flag to the same INSERT,
-  // one step later in the same first run: TRUE for both.
+  // one step later in the same first run: TRUE for both. The one list
+  // (2026-10-01) added the flag that marks a new account beside them.
   assert.match(signupJs,
-    /needs_username_choice, needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE\)/);
+    /needs_username_choice, needs_communities_choice,\s*\n\s*getting_started_gate\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE, TRUE\)/);
 });
 
-test('the username comes from the suggestion helper, with an opaque fallback', () => {
-  assert.match(signupJs,
-    /usernames\.suggestAvailableUsernameFromEmail\(client, email\)\s*\n\s*\|\| usernames\.placeholderUsername\(\)/);
+test('the username is an opaque placeholder, never derived from the address (#3575)', () => {
+  assert.match(signupJs, /let candidate = usernames\.placeholderUsername\(\);/);
 });
 
-test('a colliding suggestion is retried inside a SAVEPOINT, but an email collision is not', () => {
+test('set-password will not finish a new account without a handle (#3575)', () => {
+  const complete = signupJs.slice(signupJs.indexOf('async function completePassword'));
+  const required = complete.indexOf('if (!chosen && signup.needs_username_choice === true) {');
+  const spend = complete.indexOf('DELETE FROM web_signup_sessions');
+  assert.ok(required > 0 && required < spend,
+    'the refusal comes before the signup session is spent');
+  assert.match(complete, /throw new EmailSignupError\('username_required', usernames\.validateUsername\(''\)\.error\);/);
+});
+
+test('a colliding placeholder is retried inside a SAVEPOINT, but an email collision is not', () => {
   // The transaction still holds the consumed OTP; a failed statement
   // without a savepoint poisons it. And a second username cannot resolve a
   // clash on the email index, so that one is re-thrown.
@@ -512,15 +461,53 @@ test('the gate reads the server flag, never the shape of the stored name', () =>
 });
 
 test('the step cannot be skipped: a non-dismissible modal with no Close', () => {
-  assert.match(gateJs, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
+  // Dismissible only for a provisional handle's ask before a public place
+  // (askForPublic, `forPublic`); the first-run gate passes no such option.
+  assert.match(gateJs, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: forPublic, onDismiss \}\)/);
+  assert.match(gateJs, /const forPublic = !!\(opts && opts\.forPublic\);/);
+  assert.match(gateJs, /UsernameFirstRun\._present\(\{\}\);/, 'the first-run gate: not for public');
   assert.doesNotMatch(gateJs, /'Close'|'Cancel'|'Skip'/);
 });
 
-test('it presents before the suggestion lands, so Home is never shown first', () => {
-  const present = gateJs.indexOf("UsernameFirstRun._present({ suggestion: null })");
-  const fetchAt = gateJs.indexOf("fetch('/api/me/username/suggestion'");
-  assert.ok(present > 0 && fetchAt > present,
-    'the overlay must go up before the suggestion round trip, not after');
+test('it presents at once, with an empty field and nothing fetched to fill it (#3575)', () => {
+  // The gate used to go up first and then fill the field with a suggestion
+  // derived from the email when a round trip landed. There is no round trip
+  // now: nothing arrives to fill it, and the person types their own.
+  assert.match(gateJs, /UsernameFirstRun\._present\(\{\}\);/);
+  assert.doesNotMatch(gateJs, /fetch\('\/api\/me\/username\/suggestion'/);
+  assert.doesNotMatch(gateJs, /input\.value = |setAttribute\('data-username-suggested'/);
+  assert.doesNotMatch(gateJs, /_fill\(/);
+});
+
+test('beside the field, every sign-up surface says the username will be public (#3575)', () => {
+  const shared = read('frontend/src/features/auth/shared.ts');
+  const note = 'Your username will be public to other users on Homeroom.';
+  // The React forms read the sentence from the catalog, one entry per form.
+  assert.match(shared, /auth:register\.usernamePublic and auth:login\.signup\.usernamePublic/);
+  assert.equal(message('auth:register.usernamePublic'), note);
+  assert.equal(message('auth:login.signup.usernamePublic'), note);
+  // The gate is a classic module with no imports, so it reads the words
+  // from the catalog by id; this is what holds the copies together.
+  assert.ok(gateJs.includes("const PUBLIC_NOTE = 'onboarding:username.publicNote';"));
+  assert.match(gateJs, /PlatformI18n\.t\(PUBLIC_NOTE\)/);
+  assert.equal(message('onboarding:username.publicNote'), note);
+  // Right after the input, ahead of the error line, so a refusal never
+  // displaces it — and the input names it for a screen reader.
+  const inputAt = gateJs.indexOf('panel.appendChild(input);');
+  const noteAt = gateJs.indexOf('panel.appendChild(note);');
+  const errorAt = gateJs.indexOf("status.setAttribute('data-choose-username-error', '');");
+  assert.ok(inputAt > 0 && noteAt > inputAt && errorAt > noteAt);
+  assert.match(gateJs, /input\.setAttribute\('aria-describedby', 'choose-username-public'\);/);
+  assert.match(gateJs, /note\.setAttribute\('data-choose-username-public', ''\);/);
+
+  // The register form and the email sign-up's set-password step render the
+  // shared constant on its own line, directly under the input.
+  const register = read('frontend/src/features/auth/register.tsx');
+  assert.match(register,
+    /aria-describedby="reg-username-public reg-username-hint"[\s\S]{0,700}?<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:register\.usernamePublic'\)\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+  const login = read('frontend/src/features/auth/login.tsx');
+  assert.match(login,
+    /aria-describedby="otp-username-public otp-username-hint"[\s\S]{0,300}?\/>\s*<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>\s*<p id="otp-username-hint"/);
 });
 
 test('screenshot and demo routes are skipped, except this step own shot', () => {
@@ -560,11 +547,20 @@ test('the declared checks reach the step and pin its copy', () => {
   // The strings the checks match on live in the module; a reword that
   // breaks them fails here, next to the code, instead of in a proposal
   // check.
+  // The module reads them from the catalog: the English of the ids it asks for.
+  const gateWords = [...gateJs.matchAll(/'(onboarding:username\.[A-Za-z.]+)'/g)].map((m) => message(m[1], { username: 'x' }));
+  assert.ok(gateWords.length >= 10, 'the gate reads its words by id');
   for (const t of ours) {
-    if (t.expectText) assert.ok(gateJs.includes(t.expectText), t.expectText);
+    if (t.expectText) assert.ok(gateWords.some((words) => words.includes(t.expectText)), t.expectText);
   }
   assert.ok(gateJs.includes('data-choose-username-save'));
-  assert.ok(gateJs.includes('data-username-suggested'));
+  // #3575: the visual check asserts the field arrives EMPTY (the
+  // placeholder is showing) with the public note right after it. It used to
+  // assert the opposite — a suggestion already in the field.
+  assert.ok(gateJs.includes('data-choose-username-public'));
+  assert.match(visual[0].expectSelector,
+    /input#choose-username-input:placeholder-shown \+ \[data-choose-username-public\]/);
+  assert.doesNotMatch(JSON.stringify(ours), /data-username-suggested/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -589,5 +585,51 @@ test('no route anywhere else writes an email address into users.username', () =>
       assert.doesNotMatch(insert, /\[\s*email\b/,
         `${rel}: an INSERT INTO users leads with the email address`);
     }
+  }
+});
+
+test('every path that makes an account for a person has them choose its handle (#3575)', () => {
+  // The map, as of #3575. Each sign-up path either takes a handle the
+  // person typed, or marks the account `needs_username_choice` so it is
+  // asked before it is let in:
+  //
+  //   • email code      — placeholder + flag; set-password refuses to finish
+  //                       without a handle (section 4, and
+  //                       tests/email-signup-postgres.test.js)
+  //   • activation code — the register form's username, validateUsername
+  //                       (tests/register-account-rules.test.js)
+  //   • genesis wallet  — POST /api/auth/wallet-register's username, typed
+  //                       by the person in an external wallet client. It
+  //                       takes any non-empty string; adopting the register
+  //                       rule waits on checking that client, so it is left
+  //                       as it is here.
+  //   • admin-created   — `topochain_<hex>` + flag, so the person picks
+  //                       their own at their first sign-in instead of
+  //                       entering wearing a generated string
+  //
+  // Invite links, the waitlist, the CLI device flow and the MCP connector
+  // make no account of their own: they ride one of the above, or a session
+  // that already exists.
+  const auth = read('src/routes/auth.js');
+  {
+    const route = "router.post('/api/auth/register'";
+    const body = auth.slice(auth.indexOf(route));
+    const validate = body.indexOf('usernames.validateUsername(username)');
+    const insert = body.indexOf('INSERT INTO users');
+    assert.ok(validate > 0 && validate < insert, `${route} validates the typed handle before it inserts`);
+  }
+  {
+    // The wallet route still requires a typed name (no generated one).
+    const body = auth.slice(auth.indexOf("router.post('/api/auth/wallet-register'"));
+    assert.match(body.slice(0, 400), /if \(!username\?\.trim\(\) \|\| !password \|\| !pubkey\?\.trim\(\)\)/);
+  }
+
+  const admin = read('src/routes/topochain/admin/users.js');
+  // One line of columns, one line of values (`.` stops at the newline).
+  const inserts = [...admin.matchAll(/INSERT INTO users \(([^)]*)\)\s*VALUES \((.*)\)/g)];
+  assert.equal(inserts.length, 2, 'the single create and the bulk import');
+  for (const [, columns, values] of inserts) {
+    assert.match(columns, /, needs_username_choice$/);
+    assert.match(values, /, TRUE$/, 'an admin-created account owes its person a choice');
   }
 });

@@ -53,6 +53,9 @@ function fakePool(handlers, queries = []) {
           return { rows: typeof rows === 'function' ? rows(params) : rows };
         }
       }
+      if (sql.includes('UPDATE chat_sessions SET pr_summary_input_version')) {
+        return { rows: [], rowCount: 1 };
+      }
       throw new Error(`unstubbed query: ${String(sql).slice(0, 90)}`);
     },
   };
@@ -161,9 +164,22 @@ function deps(over = {}, log = {}) {
         (log.synced = log.synced || []).push(args);
         return 'updated';
       },
+      // The mirror re-pin the app-repo path falls back to when GitHub's pull
+      // request has not caught up with the push yet.
+      reconcileImportedHead: async (args) => {
+        (log.repinned = log.repinned || []).push(args);
+        return {
+          reconciled: true, changed: true, headSha: FORK_HEAD,
+          kind: 'authored', votesKept: false, checksCarry: false,
+        };
+      },
     }, over.prImportSync),
     githubPublic: over.githubPublic || { marker: 'public-reader' },
     prMetadata: over.prMetadata || { applyPrMetadata: async () => null },
+    // #4263: the new-work patch path's apply, aimed at the proposal's branch.
+    // Unset here, so a test that forgets it reaches the real one and fails
+    // loudly rather than quietly pushing nothing.
+    applyPatch: over.applyPatch,
     // Both of these are real behaviours elsewhere; here they only have to be
     // observable, so a test can assert the update ran INSIDE them.
     serialize: over.serialize || (async (id, fn) => {
@@ -735,6 +751,58 @@ test('an imported proposal advances the head the platform TRACKS, and pushes not
   assert.equal(log.applied[0].oldHead, NATIVE_HEAD);
 });
 
+// applyHeadChange classifies the move. An author's push that is exactly git's
+// merge of the approved head with main keeps the votes and can carry a green
+// verdict, and the report says so instead of "2 votes cleared, rebuilding".
+function forkHeadMove(applied) {
+  const session = importedSession();
+  return run(
+    {
+      session,
+      pool: fakePool([
+        ['FROM chat_sessions cs JOIN apps a', [session]],
+        ['FROM pr_votes', [{ n: 2 }]],
+      ]),
+      prImportSync: { applyHeadChange: async () => applied },
+    },
+    { branch: 'usernode/add-a-button' }
+  );
+}
+
+test('an imported fork head the classifier keeps reports the votes kept', async () => {
+  const mechanical = await forkHeadMove({
+    applied: true, kind: 'mechanical', votesKept: true, checksCarry: true, epoch: 0,
+  });
+  assert.equal(mechanical.ok, true);
+  assert.equal(mechanical.votesCleared, 0);
+  assert.equal(mechanical.votesKept, true);
+  assert.equal(mechanical.votesAtRisk, 2);
+  assert.equal(mechanical.checksRerun, false, 'the green verdict carried onto the merged commit');
+  assert.equal(mechanical.previewRebuilding, false);
+
+  // 'resolved' keeps the approvals too, but nobody has tested its tree.
+  const resolved = await forkHeadMove({
+    applied: true, kind: 'resolved', votesKept: true, checksCarry: false, epoch: 0,
+  });
+  assert.equal(resolved.votesCleared, 0);
+  assert.equal(resolved.checksRerun, true);
+  assert.equal(resolved.previewRebuilding, true);
+
+  const authored = await forkHeadMove({
+    applied: true, kind: 'authored', votesKept: false, checksCarry: false, epoch: 1,
+  });
+  assert.equal(authored.votesCleared, 2);
+  assert.equal(authored.votesKept, false);
+  assert.equal(authored.checksRerun, true);
+
+  // Another pass applied this head first, so its answer is not this call's.
+  const raced = await forkHeadMove({
+    applied: false, kind: 'mechanical', votesKept: false, checksCarry: false, epoch: null,
+  });
+  assert.equal(raced.votesCleared, 2, 'reported as it always was');
+  assert.equal(raced.checksRerun, true);
+});
+
 // #1196. The proposal the connector's mirror rung opens: imported, but its
 // head is a branch in the app repository. Before this, `branchHomeOf` sent it
 // to the fork path, which read the pull request, saw it came from
@@ -773,32 +841,96 @@ test('an imported proposal on a bot-owned branch is pushed, then reconciled as a
   assert.equal(log.reconcile, undefined, 'the native reconcile is not the one that can move this row');
   assert.equal(log.synced.length, 1);
   assert.equal(log.synced[0].session.id, 601);
+  assert.equal(log.repinned, undefined, 'GitHub had caught up, so the sync did it and the mirror is not asked');
   assert.equal(result.votesCleared, 3);
+  assert.equal(result.votesClearing, 'now');
   assert.equal(result.checksRerun, true);
   assert.equal(result.previewRebuilding, true);
 });
 
-test('a mirrored proposal GitHub has not caught up with reports no rebuild, not a failure', async () => {
-  // 'unchanged' means the pull request still reads the old head — GitHub is a
-  // second or two behind the push. The commit landed; the sweeper finishes it.
-  const log = {};
+// 'unchanged' means the pull request still reads the old head: GitHub moves
+// a PR's head a few seconds after the branch. PR #3615 showed the previous
+// commit's red check for about five minutes that way, until the sweep came
+// round. The branch is the app repository's own, so the mirror can read it.
+function lagging(log, prImportSync = {}) {
   const session = importedSession({
     branch_name: 'usernode/from-es92-t3-8510c5ac',
     imported_pr_head_repo: 'o/r',
   });
-  const result = await run({
+  return run({
     session,
     pool: fakePool([
       ['FROM chat_sessions cs JOIN apps a', [session]],
       ['FROM pr_votes', [{ n: 3 }]],
     ]),
-    prImportSync: { syncImportedProposal: async () => 'unchanged' },
+    prImportSync: Object.assign({
+      syncImportedProposal: async (args) => {
+        (log.synced = log.synced || []).push(args);
+        return 'unchanged';
+      },
+    }, prImportSync),
   }, {}, log);
+}
+
+test('a mirrored proposal GitHub has not caught up with is re-pinned from its own branch at once', async () => {
+  const log = {};
+  const result = await lagging(log);
   assert.equal(result.ok, true);
-  assert.equal(result.updated, true, 'the push happened — saying otherwise sends the author to push again');
-  assert.equal(result.votesCleared, 0, 'honest: only reported cleared when the clearing ran');
+  assert.equal(log.synced.length, 1, 'GitHub is asked first, as before');
+  assert.equal(log.repinned.length, 1);
+  const args = log.repinned[0];
+  assert.equal(args.session.id, 601);
+  assert.equal(args.fresh, true, 'a coalesced fetch from before the push would read the old tip (#2619)');
+  assert.equal(args.checks, 'background', 'the submit does not wait out a staging build');
+  assert.equal(args.notify, true, 'the group is told the votes were cleared, as the sync would');
+  assert.equal(result.updated, true);
+  assert.equal(result.votesCleared, 3);
+  assert.equal(result.votesClearing, 'now');
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+});
+
+test('a re-pin the classifier calls mechanical reports the votes kept and the verdict carried', async () => {
+  const log = {};
+  const result = await lagging(log, {
+    reconcileImportedHead: async () => ({
+      reconciled: true, changed: true, headSha: FORK_HEAD,
+      kind: 'mechanical', votesKept: true, checksCarry: true,
+    }),
+  });
+  assert.equal(result.votesCleared, 0);
+  assert.equal(result.votesClearing, 'none');
+  assert.equal(result.votesAtRisk, 3);
+  assert.equal(result.votesKept, true);
   assert.equal(result.checksRerun, false);
   assert.equal(result.previewRebuilding, false);
+});
+
+test('when the mirror cannot see the push either, it reports no rebuild, not a failure', async () => {
+  // The commit landed; the sweeper finishes it.
+  for (const repin of [
+    async () => ({ reconciled: false, reason: 'mirror_unreadable' }),
+    async () => ({ reconciled: true, changed: false, headSha: NATIVE_HEAD }),
+    async () => { throw new Error('mirror exploded'); },
+  ]) {
+    const log = {};
+    const result = await lagging(log, { reconcileImportedHead: repin });
+    assert.equal(result.ok, true);
+    assert.equal(result.updated, true, 'the push happened — saying otherwise sends the author to push again');
+    assert.equal(result.votesCleared, 0, 'honest: only reported cleared when the clearing ran');
+    assert.equal(result.votesClearing, 'on_sync');
+    assert.equal(result.checksRerun, false);
+    assert.equal(result.previewRebuilding, false);
+  }
+});
+
+test('a sync that could not reach GitHub at all is left to the sweep, not the mirror', async () => {
+  // 'skipped' is GitHub unconfigured (the staging mock among them) or a failed
+  // read. Neither says the pull request is behind the push.
+  const log = {};
+  const result = await lagging(log, { syncImportedProposal: async () => 'skipped' });
+  assert.equal(log.repinned, undefined);
+  assert.equal(result.checksRerun, false);
 });
 
 test('an imported proposal is only advanced from ITS OWN branch', async () => {
@@ -974,14 +1106,18 @@ test('no user GitHub credential is used, held or forwarded', async () => {
   assert.deepEqual(log.push[0].githubPublic, { marker: 'public-reader' });
 });
 
-test('recordPlatformPush is never called, so the head classifies as the author\'s', () => {
-  // If this path recorded a platform push, classifyNativeHeadMove would carry
-  // every existing approval onto code nobody in the group has read. The
-  // comment says so; this makes it true.
-  assert.doesNotMatch(CODE, /recordPlatformPush/);
+test('nothing here decides what the push costs the approvals', () => {
+  // Since #2038 the head-moved machinery asks services/integration.js's
+  // classifyHeadMove what the move was and spends the answer on
+  // chat_sessions.approval_epoch. A path that classified the move or moved
+  // the epoch itself could keep every existing approval on code nobody in
+  // the group has read. The comment says so; this makes it true.
+  assert.doesNotMatch(CODE, /classifyHeadMove|clearApprovals/);
+  // countVotes READS the epoch to count the current votes; nothing moves it.
+  assert.doesNotMatch(CODE, /approval_epoch\s*\+/);
   assert.doesNotMatch(CODE, /sync-main/);
-  // And the header comment says WHY, so the next person does not add it back.
-  assert.match(SRC, /recordPlatformPush/, 'the omission is documented, not accidental');
+  // And the header comment says WHY, so the next person does not add it.
+  assert.match(SRC, /classifyHeadMove/, 'the omission is documented, not accidental');
 });
 
 test('the vote-clearing and check-rerunning machinery is reused, not reimplemented', () => {
@@ -991,11 +1127,73 @@ test('the vote-clearing and check-rerunning machinery is reused, not reimplement
   assert.match(SRC, /votes\.reconcileNativeReviewedHead/);
   assert.match(SRC, /prImportSync\.applyHeadChange/);
   assert.match(SRC, /prImportSync\.syncImportedProposal/);
+  assert.match(SRC, /prImportSync\.reconcileImportedHead/);
   assert.doesNotMatch(SRC, /DELETE\s+FROM\s+pr_votes/i);
   assert.doesNotMatch(SRC, /kickNativeRevisionChecks|rerunChecksForNewHead|startStagingBuild/);
   // pr_votes is read, and only read.
   const votesReads = SRC.match(/FROM pr_votes/g) || [];
   assert.equal(votesReads.length, 1);
+});
+
+test('a native head move the classifier keeps reports the votes kept', async () => {
+  // reconcileNativeReviewedHead says what the move cost. Before, any settled
+  // reconcile was reported as "4 votes cleared, checks re-running", even
+  // when the push was exactly git's merge of the approved head with main.
+  const withReconcile = (answer) => run({
+    votes: { reconcileNativeReviewedHead: async () => answer },
+  });
+
+  const mechanical = await withReconcile({
+    updated: true, changed: true, kind: 'mechanical', votesKept: true, checksCarry: true,
+  });
+  assert.equal(mechanical.ok, true);
+  assert.equal(mechanical.votesCleared, 0);
+  assert.equal(mechanical.votesClearing, 'none');
+  assert.equal(mechanical.votesKept, true);
+  assert.equal(mechanical.votesAtRisk, 4);
+  assert.equal(mechanical.checksRerun, false, 'the green verdict carried onto the merged commit');
+  assert.equal(mechanical.previewRebuilding, false);
+
+  // 'resolved' keeps the approvals too, but nobody has tested its tree.
+  const resolved = await withReconcile({
+    updated: true, changed: true, kind: 'resolved', votesKept: true, checksCarry: false,
+  });
+  assert.equal(resolved.votesCleared, 0);
+  assert.equal(resolved.votesClearing, 'none');
+  assert.equal(resolved.checksRerun, true);
+
+  const authored = await withReconcile({
+    updated: true, changed: true, kind: 'authored', votesKept: false, checksCarry: false,
+  });
+  assert.equal(authored.votesCleared, 4);
+  assert.equal(authored.votesClearing, 'now');
+  assert.equal(authored.votesKept, false);
+  assert.equal(authored.checksRerun, true);
+
+  // A row with no pin yet is bound, not moved: nothing is cleared or kicked.
+  const initialized = await withReconcile({
+    updated: true, changed: false, kind: 'initialized', initialized: true,
+  });
+  assert.equal(initialized.votesCleared, 0);
+  assert.equal(initialized.votesClearing, 'none');
+  assert.equal(initialized.votesKept, false);
+  assert.equal(initialized.checksRerun, false);
+});
+
+test('only the votes counting now are counted as at risk', async () => {
+  // Rows survive an epoch bump, so a bare COUNT(*) also counted votes an
+  // earlier move had already retired.
+  const queries = [];
+  const session = nativeSession();
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 2 }]],
+  ], queries);
+  const result = await run({ session, pool });
+  assert.equal(result.votesCleared, 2);
+  const counted = queries.find((q) => String(q.sql).includes('FROM pr_votes'));
+  assert.match(String(counted.sql), /pv\.approval_epoch = cs\.approval_epoch/);
+  assert.deepEqual(counted.params, [501]);
 });
 
 test('a reconciliation that fails after a successful push still reports the update', async () => {
@@ -1188,7 +1386,7 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
 test('the checks UPDATE is guarded on the status and the commit it replaces', async () => {
   const log = {};
   await runSession('active', {}, log);
-  const update = queryOf(log, 'UPDATE chat_sessions');
+  const update = queryOf(log, "SET check_state = 'pending'");
   assert.match(update.sql, /status = 'active'/, 'a pause between the lock and here wins');
   assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3/,
     'a newer head that took the session is not regressed to an older pending state');
@@ -1228,7 +1426,7 @@ test('a PAUSED session takes the commit and defers the build to its reopen', asy
   assert.equal(log.pipelineBegan, undefined);
 
   // The stale verdict is cleared and the stale preview torn down.
-  const cleared = queryOf(log, 'UPDATE chat_sessions');
+  const cleared = queryOf(log, 'SET check_state = NULL');
   assert.match(cleared.sql, /status = 'paused'/);
   assert.match(cleared.sql, /check_state = NULL/,
     "a 'pending' no pipeline will resolve is a spinner forever");
@@ -2138,6 +2336,34 @@ test('an author\'s description rewrites the PR body and keeps its managed blocks
   assert.equal(mirrors[0][0], written, 'and the row mirrors it so get_proposal can report it');
 });
 
+test('a failed description refresh leaves the older summary marked stale', async () => {
+  const log = {};
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_summary_md: 'The older author summary.',
+  });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      getPR: async () => ({
+        state: 'open', merged: false, html_url: 'https://github.com/o/r/pull/91',
+        head: { ref: 'usernode/add-a-button', sha: FORK_HEAD, repo: { owner: { login: 'evan-gh' } } },
+        body: 'The old description.',
+      }),
+      updatePR: async () => { throw new Error('GitHub is unavailable'); },
+    },
+  }, { branch: 'usernode/add-a-button', description: 'The new description.' }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.descriptionRejected, 'github_write_failed');
+  assert.equal(session.pr_summary_md, 'The older author summary.');
+  assert.equal(session.pr_summary_stale, true);
+  assert.ok(pool.queries.some((q) => /pr_summary_previous_md = COALESCE/.test(q.sql)),
+    'the author text is preserved before attempting the external write');
+});
+
 test('somebody else\'s pull request keeps its body, and the caller is told', async () => {
   const log = {};
   const session = importedSession({ imported_pr_head_repo: 'other-person/r' });
@@ -2492,4 +2718,308 @@ test('an update that carries linkedIssues stores them before the tails, on every
     CODE.indexOf('async function checkAncestry')
   );
   assert.match(fork, /applyLinkedIssues/, 'an imported proposal is linked too');
+});
+
+// ── #3344: the summary, revisable by its author ─────────────────────────
+//
+// The plain-English summary was written once, at import, and nothing could
+// change it: not the agent, not the proposer. An update now carries it and
+// stores it as the AUTHOR's, fresh for the head the update landed on.
+
+function summaryWrites(pool) {
+  return pool.queries.filter((q) => /pr_summary_source = 'author'/.test(q.sql));
+}
+
+test('an author\'s summary on a same-commit resubmit replaces the old one, fresh for that head', async () => {
+  const log = {};
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_summary_md: 'The first summary.',
+    pr_summary_stale: true,
+    pr_body: 'The body.',
+  });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: { getBranchSha: async () => NATIVE_HEAD, updatePR: async () => {} },
+  }, { branch: 'usernode/add-a-button', summary: '  The toggle now remembers your choice.  ' }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryRejected, undefined);
+  const writes = summaryWrites(pool);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].params[0], 'The toggle now remembers your choice.');
+  assert.equal(writes[0].params[1], result.headSha, 'fresh for the head the update landed on');
+  assert.equal(writes[0].params[3], 601);
+  // The input version moves in the same statement, so a generation that read
+  // the older inputs is discarded instead of overwriting the author.
+  assert.match(writes[0].sql, /pr_summary_input_version = pr_summary_input_version \+ 1/);
+  assert.match(writes[0].sql, /pr_summary_stale = FALSE/);
+  assert.equal(session.pr_summary_md, 'The toggle now remembers your choice.');
+  assert.equal(session.pr_summary_stale, false);
+});
+
+test('the summary is held to the import\'s 600-character cap', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: 'x'.repeat(900) }, {});
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(summaryWrites(pool)[0].params[0].length, 600);
+});
+
+test('nobody but the proposal\'s author may change its summary', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await svc.updateProposalFromForkBranch(deps({ session, pool }), {
+    user: { id: 8, username: 'mallory' }, session, branch: 'usernode/add-a-button',
+    summary: 'Not yours to write.',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'not_your_proposal');
+  assert.equal(summaryWrites(pool).length, 0);
+
+  // And a pull request another GitHub account opened keeps its summary, by the
+  // same rule that keeps its title and body.
+  const theirs = importedSession({ imported_pr_head_repo: 'other-person/r' });
+  const theirPool = fakePool([['FROM chat_sessions cs JOIN apps a', [theirs]]]);
+  const refused = await run({
+    session: theirs, pool: theirPool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: 'Mine now' }, {});
+  assert.equal(refused.ok, true);
+  assert.equal(refused.summaryUpdated, false);
+  assert.equal(refused.summaryRejected, 'imported_pr');
+  assert.equal(summaryWrites(theirPool).length, 0);
+});
+
+test('a summary sent with a new commit lands AFTER the head move that stales the old one', async () => {
+  const order = [];
+  const session = nativeSession();
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', () => { order.push('summary'); return [{ id: 501 }]; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 1 }]],
+  ]);
+  const result = await run({
+    session, pool,
+    votes: {
+      reconcileNativeReviewedHead: async () => { order.push('reconcile'); return { updated: true }; },
+    },
+  }, { summary: 'Cards snap to the grid now.' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, true);
+  assert.deepEqual(order, ['reconcile', 'summary'],
+    'the reconcile marks the old summary stale; the author\'s new one must not be staled by it');
+});
+
+test('an update without a summary leaves the stored one alone', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: '   ' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, undefined);
+  assert.equal(summaryWrites(pool).length, 0);
+});
+
+// #3344 (review). The platform composes a native proposal's PR body with the
+// summary as its lead paragraph. A summary-only resubmit must rewrite that
+// paragraph: a later metadata pass compares against the already-updated
+// column and would never notice.
+test('a summary-only resubmit on a native proposal rewrites the body it leads', async () => {
+  const bodies = [];
+  const mirrors = [];
+  const session = nativeSession({
+    pr_summary_md: 'The old summary.',
+    pr_body: 'The old summary.\n\nTechnical detail.\n\nCloses #12',
+  });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 501 }]],
+    ['SET pr_body', (params) => { mirrors.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      getPR: async () => ({ body: 'The old summary.\n\nTechnical detail.\n\nCloses #12' }),
+      updatePR: async (o, r, n, patch) => { bodies.push({ n, patch }); },
+    },
+  }, { summary: 'The new summary.' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true, 'no code moved');
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryBodyRejected, undefined);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].n, 42);
+  assert.equal(bodies[0].patch.body, 'The new summary.\n\nTechnical detail.\n\nCloses #12');
+  assert.equal(mirrors[0][0], bodies[0].patch.body, 'the mirror get_proposal reads follows');
+
+  // Resending the same summary once the body already leads with it writes nothing.
+  bodies.length = 0;
+  const again = await run({
+    session, pool: fakePool([
+      ['pr_summary_source = \'author\'', []],
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+    ]),
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      getPR: async () => ({ body: 'The new summary.\n\nTechnical detail.\n\nCloses #12' }),
+      updatePR: async (o, r, n, patch) => { bodies.push({ n, patch }); },
+    },
+  }, { summary: 'The new summary.' }, {});
+  assert.equal(again.summaryUpdated, false);
+  assert.equal(bodies.length, 0);
+});
+
+test('an imported proposal\'s body is its author\'s and is not rewritten for the summary', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r', pr_summary_md: 'Old.' });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      updatePR: async () => { throw new Error('must not rewrite an imported body for the summary'); },
+    },
+  }, { branch: 'usernode/add-a-button', summary: 'New.' }, {});
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryBodyRejected, undefined);
+});
+
+// ── #4263: an update by PATCH ──────────────────────────────────────────
+//
+// The connector's update work order hands the fix in as a patch, the way new
+// work goes in, so a cloud session that cannot push to a fork can still revise
+// its proposal. The patch is applied ON the proposal's live head by the
+// new-work patch path's own machinery, pushed onto the proposal's own branch
+// under a lease, and then everything after the push is the branch update's
+// tail: the same votes, checks, preview and answer.
+
+const PATCH = 'diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n';
+
+function applyPatchStub(log, answer) {
+  return async (args) => {
+    (log.applied = log.applied || []).push(args);
+    if (answer) return answer;
+    return {
+      ok: true, branch: args.targetBranch, headSha: FORK_HEAD.toUpperCase(),
+      credential: 'pat', cleanup: async () => {},
+    };
+  };
+}
+
+function runPatch(over = {}, params = {}, log = {}) {
+  return run(
+    { applyPatch: applyPatchStub(log, over.applied), ...over },
+    { branch: undefined, patch: PATCH, expectedHeadSha: NATIVE_HEAD, ...params },
+    log
+  );
+}
+
+test('a patch is applied ON the proposal\'s live head, onto its own branch, and takes the branch update\'s tail', async () => {
+  const log = {};
+  const result = await runPatch({}, {}, log);
+  assert.equal(result.ok, true, `${result.code}: ${result.message}`);
+  assert.equal(log.applied.length, 1);
+  const [args] = log.applied;
+  assert.equal(args.patch, PATCH);
+  assert.equal(args.baseSha, NATIVE_HEAD, 'at the head GitHub reported, which the caller also named');
+  assert.equal(args.targetBranch, 'dev/evan-1786376366569', 'the proposal\'s own branch, not a new one');
+  assert.equal(args.sessionId, 501);
+  // No fork is read and nothing is pushed from one.
+  assert.equal(log.verify, undefined);
+  assert.equal(log.push, undefined);
+  assert.equal(log.mirror, undefined);
+  // THE SAME proposal, advanced by the native reconcile, under the same lock.
+  assert.equal(result.proposalId, 501);
+  assert.equal(result.headSha, FORK_HEAD);
+  assert.equal(result.previousHeadSha, NATIVE_HEAD);
+  assert.equal(result.targetKind, 'proposal');
+  assert.equal(result.submittedVia, 'update_patch');
+  assert.equal(result.votesCleared, 4);
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+  assert.equal(log.reconcile.length, 1);
+  assert.deepEqual(log.serialized, [501]);
+  assert.deepEqual(log.began, [501]);
+  assert.deepEqual(log.released, [501]);
+});
+
+test('a patch update answers in exactly the shape a branch update does', async () => {
+  const viaBranch = await run({}, {}, {});
+  const viaPatch = await runPatch({}, {}, {});
+  assert.equal(viaBranch.ok, true);
+  assert.deepEqual(Object.keys(viaPatch).sort(), Object.keys(viaBranch).sort());
+  // Differing only in how the commit arrived.
+  assert.deepEqual({ ...viaPatch, submittedVia: null }, { ...viaBranch, submittedVia: null });
+  assert.equal(viaBranch.submittedVia, 'update_branch');
+});
+
+test('a connector proposal (a bot-owned head under an imported row) takes a patch through its own tail', async () => {
+  const session = importedSession({
+    branch_name: 'usernode/from-es92-t3-8510c5ac',
+    imported_pr_head_repo: 'o/r',
+  });
+  const log = {};
+  const result = await runPatch({ session }, {}, log);
+  assert.equal(result.ok, true, `${result.code}: ${result.message}`);
+  assert.equal(log.applied[0].targetBranch, 'usernode/from-es92-t3-8510c5ac');
+  assert.equal(log.synced.length, 1, 'the imported head is re-read, as for a branch update');
+  assert.equal(result.proposalId, 601);
+  assert.equal(result.submittedVia, 'update_patch');
+});
+
+test('a patch made from a commit the proposal has moved off is branch_moved, and nothing is applied', async () => {
+  const log = {};
+  const result = await runPatch({}, { expectedHeadSha: OTHER_HEAD }, log);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'branch_moved');
+  assert.equal(result.headSha, NATIVE_HEAD, 'the head that replaced it, to rebase onto');
+  assert.equal(log.applied, undefined);
+  assert.equal(log.reconcile, undefined);
+});
+
+test('the apply\'s own refusals pass through, and nothing after the push runs', async () => {
+  for (const code of ['branch_moved', 'patch_did_not_apply', 'patch_rejected', 'patch_too_large']) {
+    const log = {};
+    const result = await runPatch({ applied: { ok: false, code, message: `${code}!`, retryable: false } }, {}, log);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, code, 'in the caller\'s vocabulary already, so not renamed');
+    assert.equal(log.reconcile, undefined, code);
+  }
+});
+
+test('a patch needs the commit it was made from, and is never sent with a branch', async () => {
+  const log = {};
+  const unnamed = await runPatch({}, { expectedHeadSha: undefined }, log);
+  assert.equal(unnamed.code, 'invalid_request');
+  assert.match(unnamed.message, /expectedHeadSha/);
+  const both = await runPatch({}, { branch: 'fix/failing-check' }, log);
+  assert.equal(both.code, 'invalid_request');
+  assert.match(both.message, /not both/);
+  assert.equal(log.applied, undefined);
+});
+
+test('a patch cannot move a head in the author\'s own fork, or a proposal that is not the caller\'s', async () => {
+  const log = {};
+  const fork = await runPatch({ session: importedSession({ imported_pr_head_repo: 'evan-gh/r' }) }, {}, log);
+  assert.equal(fork.code, 'invalid_request');
+  assert.match(fork.message, /in your own fork, which only you can push to/);
+  assert.match(fork.message, /submit with proposalId and branch/);
+
+  const theirs = await runPatch({ session: nativeSession({ user_id: 99 }) }, {}, log);
+  assert.equal(theirs.code, 'not_your_proposal');
+  assert.equal(log.applied, undefined);
 });

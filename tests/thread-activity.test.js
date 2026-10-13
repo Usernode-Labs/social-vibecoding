@@ -4,10 +4,10 @@
 //      thread scope (threadType / threadRef) so the client drawer can
 //      route a mention/reply/reaction click to the topic view instead
 //      of general chat.
-//   2. POST /api/sessions/:id/promote dual-posts its announcement —
-//      one general-chat system message (no thread) AND one scoped into
-//      the proposal's own thread ({ type: 'session', ref }), both
-//      carrying the vote metadata for the inline vote buttons.
+//   2. POST /api/sessions/:id/promote posts its announcement into the
+//      proposal's own thread ({ type: 'session', ref }) only, carrying the
+//      vote metadata for the inline vote buttons. A channel carries no
+//      activity, so there is no general-chat line beside it.
 //
 // Like session-done-notifications.test.js, the pool is an in-memory
 // mock that pattern-matches SQL, and side-effect modules (ws,
@@ -171,7 +171,7 @@ async function startVotesServer(loaded, user) {
   });
 }
 
-test('promote announces to general chat AND the proposal thread', async () => {
+test('promote announces in the proposal thread, and nowhere thread-less', async () => {
   const session = {
     id: 10, user_id: 1, app_id: 5, app_slug: 'demo', app_name: 'Demo',
     repo_url: 'https://github.com/o/r', status: 'active', is_headless: false,
@@ -193,19 +193,13 @@ test('promote announces to general chat AND the proposal thread', async () => {
     assert.equal(body.prNumber, 7);
 
     const promos = loaded.systemMessages.filter((m) => /promoted PR #7/.test(m.content));
-    assert.equal(promos.length, 2, 'one general post + one thread post');
+    assert.equal(promos.length, 1, 'one thread post, no channel line');
 
-    const general = promos.find((m) => !m.thread);
-    assert.ok(general, 'general-chat announcement (no thread scope)');
-    assert.equal(general.msgType, 'vote');
-    assert.deepEqual(general.metadata, { vote: { sessionId: 10, prNumber: 7 } });
-
-    const threaded = promos.find((m) => m.thread);
-    assert.ok(threaded, 'thread-scoped announcement');
+    const [threaded] = promos;
     assert.deepEqual(threaded.thread, { type: 'session', ref: 10 });
     assert.equal(threaded.msgType, 'vote');
     assert.deepEqual(threaded.metadata, { vote: { sessionId: 10, prNumber: 7 } });
-    assert.equal(threaded.content, general.content);
+    assert.match(threaded.content, /^alice promoted PR #7/);
   } finally {
     await srv.close();
     loaded.restore();

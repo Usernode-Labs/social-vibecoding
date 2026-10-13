@@ -84,7 +84,7 @@ function repo() {
 
 // A pool that records what the reconciler writes, and answers the one
 // conditional UPDATE it depends on.
-function makePool({ epoch = 0 }) {
+function makePool({ epoch = 0, voters = 0 }) {
   const writes = [];
   let currentEpoch = epoch;
   return {
@@ -98,6 +98,10 @@ function makePool({ epoch = 0 }) {
         if (!keeps) currentEpoch += 1;
         return { rows: [{ approval_epoch: currentEpoch }], rowCount: 1 };
       }
+      if (/SELECT 1 FROM pr_votes WHERE session_id = \$1 AND approval_epoch = \$2/.test(text)) {
+        // `voters` votes were cast under the epoch the proposal started in.
+        return { rows: params[1] === epoch && voters ? [{ '?column?': 1 }] : [], rowCount: 0 };
+      }
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: null, approval_epoch: currentEpoch }], rowCount: 1 };
       }
@@ -109,12 +113,16 @@ function makePool({ epoch = 0 }) {
   };
 }
 
-function load(r) {
+function load(r, posted = []) {
   const rebuilds = [];
   const restores = [
     stub('src/services/github.js', { isEnabled: () => true }),
     stub('src/services/ws.js', {
-      pushVoteUpdate() {}, pushSessionUpdate() {}, async sendSystemMessage() {},
+      pushVoteUpdate() {},
+      pushSessionUpdate() {},
+      async sendSystemMessage(pool_, appId, content, type, meta, thread) {
+        posted.push({ appId, content, type, meta, thread });
+      },
     }),
     stub('src/services/visuals.js', {
       async setChecksPending(pool_, id, sha) { rebuilds.push(sha); }, notifyChecksPending() {},
@@ -164,6 +172,7 @@ test('a clean merge of main keeps the approvals and carries the checks', async (
     assert.equal(out.epoch, 0, 'a merge nobody edited must not move the epoch');
     assert.equal(out.headSha, r.featureHead());
     assert.equal(pool.kickedChecks(), true, 'the passing verdict is stamped onto the merged commit');
+    assert.equal(out.checksCarry, true, 'and says so, for a caller that reports it');
     assert.deepEqual(rebuilds, [], 'and nothing is rebuilt');
   } finally { restore(); r.cleanup(); }
 });
@@ -185,6 +194,7 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
       assert.equal(out.kind, 'mechanical');
       assert.equal(out.votesKept, true, `${state}: the votes still stand — only the checks policy differs`);
       assert.equal(pool.kickedChecks(), false, `${state}: an unfinished verdict is not carried`);
+      assert.equal(out.checksCarry, false, `${state}: and the answer says it did not carry`);
       assert.deepEqual(rebuilds, [r.featureHead()], `${state}: the checks re-run against the merged commit`);
     } finally { restore(); r.cleanup(); }
   }
@@ -214,12 +224,18 @@ test('an author push clears the approvals and re-runs the checks', async () => {
   const { votes, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
+    const revised = session(r, { pr_summary_md: 'The earlier explanation.' });
     const out = await votes.reconcileNativeReviewedHead({
-      config: {}, pool, session: session(r), notify: false,
+      config: {}, pool, session: revised, notify: false,
     });
     assert.equal(out.kind, 'authored');
     assert.equal(out.votesKept, false);
     assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
+    assert.equal(revised.pr_summary_md, 'The earlier explanation.',
+      'the previous explanation remains readable while its freshness is reviewed');
+    assert.equal(revised.pr_summary_stale, true);
+    assert.ok(pool.writes.some((w) => /pr_summary_previous_md = COALESCE/.test(w.sql)),
+      'the prior explanation is retained when the reviewed head moves');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -244,6 +260,7 @@ test('a resolved conflict keeps the approvals but re-checks the merged tree', as
     assert.equal(out.epoch, 0);
     assert.equal(pool.kickedChecks(), false,
       'a Claude-edited tree is unverified, so its verdict must NOT be carried');
+    assert.equal(out.checksCarry, false);
   } finally { restore(); r.cleanup(); }
 });
 
@@ -394,5 +411,154 @@ test('a caller that has just pushed asks the mirror for a fetch of its own (#261
       config: {}, pool, session: session(r), notify: false,
     });
     assert.equal(asked[0].fresh, false);
+  } finally { restore(); r.cleanup(); }
+});
+
+// #3411: the tally counts only votes on the current version, while the
+// Discussion keeps each "Voted yes" line forever. A silent caller (the merge
+// queue's re-pin) used to retire those votes with no word in the thread, so
+// the page read "Voted yes" beside "Yes 0" and nothing said why.
+test('a silent caller that retires votes still says so, in the proposal\'s own thread', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 3, voters: 1 }), session: session(r, { approval_epoch: 3 }), notify: false,
+    });
+    assert.equal(out.epoch, 4);
+    assert.equal(posted.length, 1, 'one notice, not one per path');
+    assert.match(posted[0].content, /^PR #99: A proposal was updated on GitHub\. Earlier votes were cleared/);
+    assert.deepEqual(posted[0].thread, { type: 'session', ref: 42 }, 'the proposal\'s thread, never a channel');
+  } finally { restore(); r.cleanup(); }
+});
+
+// One request, one story: an update Homeroom made (the bot's, or one sent
+// through Homeroom) is one plain line in the change's thread, with no
+// "on GitHub" and no pull request number; the bot's own note does not
+// repeat it.
+test('an update Homeroom made says so in one line, without GitHub or a pull request number', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 3, voters: 1 }), session: session(r, { approval_epoch: 3 }), notify: true, madeBy: 'bot',
+    });
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    assert.deepEqual(posted[0].thread, { type: 'session', ref: 42 });
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a silent caller posts nothing when the move cleared no votes, kept them, or its caller announces it', async () => {
+  const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  let loaded = load(pushed, posted);
+  try {
+    await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 0 }), session: session(pushed), notify: false,
+    });
+    assert.equal(posted.length, 0, 'nobody had voted, so nothing was cleared');
+    await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 2 }), session: session(pushed), notify: false,
+      announceClearedVotes: false,
+    });
+    assert.equal(posted.length, 0, 'the merge\'s 409 writes its own line about the cleared votes');
+  } finally { loaded.restore(); pushed.cleanup(); }
+
+  const synced = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  loaded = load(synced, posted);
+  try {
+    const out = await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 2 }), session: session(synced), notify: false,
+    });
+    assert.equal(out.votesKept, true);
+    assert.equal(posted.length, 0, 'a clean sync keeps the votes, so a silent caller stays silent');
+  } finally { loaded.restore(); synced.cleanup(); }
+});
+
+test('the merge\'s head-moved 409 announces the cleared votes itself, so the reconciler does not', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
+  assert.match(src, /nativeRefresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
+  assert.match(src, /Earlier-revision votes were cleared and the new commit is being checked/);
+});
+
+// Run four (13 Oct 2026): a fix round of the bot's on Club Votes read "PR #7:
+// … was updated on GitHub. Earlier votes were cleared, so please re-review
+// commit 3f2a…", because the caller that reconciled its push first passed no
+// `madeBy`, and its description was marked "Written for an earlier version
+// of this change." Both are decided by the reconciler now, from the commits
+// the move added (services/homeroom-commits.js), whichever caller claims it.
+function commitOnFeature(r, file, body, message, { email = 'usernode-bot@users.noreply.github.com', name = 'usernode-bot' } = {}) {
+  git(r.dir, 'checkout', '-q', 'feature');
+  fs.writeFileSync(path.join(r.dir, file), body);
+  git(r.dir, 'add', '-A');
+  execFileSync('git', ['-C', r.dir, 'commit', '-qm', message], {
+    env: { ...process.env, GIT_COMMITTER_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_NAME: name },
+  });
+  git(r.dir, 'checkout', '-q', 'main');
+  return r;
+}
+const claimOf = (pool) => pool.writes.find((w) => /approval_epoch = approval_epoch \+/.test(w.sql));
+
+test('a push Homeroom committed says "Updated." whichever caller reconciles it, with no madeBy', async () => {
+  const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL CHANGED\nl2\nl3\n', 'Changes via Homeroom');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    const pool = makePool({ epoch: 3, voters: 1 });
+    // The merge queue's re-pin: silent, and no madeBy.
+    await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: false });
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    assert.equal(claimOf(pool).params[4], false, 'an update that is not a fix round makes the description stale, as before');
+    assert.match(claimOf(pool).sql, /pr_summary_stale = CASE WHEN \$5::boolean THEN pr_summary_stale/);
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a fix round of the bot\'s leaves the description as it stands', async () => {
+  const fixes = [
+    'Homeroom bot: fix the failing checks on #12',
+    'Homeroom bot: fix what did not work on #12',
+    'Homeroom bot: seed what the before and after shots of #12 need',
+  ];
+  for (const message of fixes) {
+    const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL FIXED\nl2\nl3\n', message);
+    const posted = [];
+    const { votes, restore } = load(r, posted);
+    try {
+      const pool = makePool({ epoch: 3, voters: 1 });
+      const out = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
+      assert.equal(out.epoch, 4, `${message}: the votes are cleared all the same`);
+      assert.equal(claimOf(pool).params[4], true, `${message}: the description keeps its freshness`);
+      assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
+    } finally { restore(); r.cleanup(); }
+  }
+});
+
+test('a person\'s push, or a fix message somebody else committed, is said and treated as before', async () => {
+  for (const [message, who] of [
+    ['Tweak the poll colours', { email: 'ada@example.com', name: 'Ada' }],
+    ['Homeroom bot: fix the failing checks on #12', { email: 'noreply@github.com', name: 'GitHub' }],
+  ]) {
+    const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL CHANGED\nl2\nl3\n', message, who);
+    const posted = [];
+    const { votes, restore } = load(r, posted);
+    try {
+      const pool = makePool({ epoch: 3, voters: 1 });
+      await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
+      assert.match(posted[0].content, /^PR #99: A proposal was updated on GitHub\. Earlier votes were cleared, so please re-review commit [0-9a-f]{8}\.$/, message);
+      assert.equal(claimOf(pool).params[4], false, `${message}: stale, as before`);
+    } finally { restore(); r.cleanup(); }
+  }
+  // A Homeroom commit that is not a fix round, after a fix: the move is not only a fix.
+  const r = commitOnFeature(commitOnFeature(repo(), 'a.txt', 'FIXED\nl2\nl3\n', 'Homeroom bot: fix the failing checks on #12'),
+    'b.txt', 'b changed\n', 'Homeroom bot: follow-up on #12');
+  const { votes, restore } = load(r, []);
+  try {
+    const pool = makePool({ epoch: 0, voters: 0 });
+    await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r), notify: false });
+    assert.equal(claimOf(pool).params[4], false, 'a follow-up changes what it does');
   } finally { restore(); r.cleanup(); }
 });

@@ -42,13 +42,24 @@ const KEY_WEEKLY = 'user_weekly_limit_cents';
 // default:
 //
 //   unverified  no verified identity at all      → KEY_WEEKLY (the base)
+//   phone       a verified phone number           → KEY_WEEKLY_PHONE
+//               (user_phone_identities), or an
+//               account the verified-identity rule
+//               exempts (let in before it was
+//               switched on: identity_rule_exempt,
+//               schema.sql), so switching the rule
+//               on never cuts an existing member
 //   social      GitHub AND X both verified        → KEY_WEEKLY_SOCIAL
 //   zkpassport  a zkPassport-verified challenge   → KEY_WEEKLY_ZK
 //               completed (the proof-backed
 //               user_activities rows the mobile
 //               flow records, source 'zkpassport')
 //
-// The two higher keys are OPTIONAL: absent (or cleared) they inherit the
+// "Verified" for public votes is the same three proofs (identity_verified,
+// schema.sql): an admin who lowers the base and gives the verified tiers the
+// full amount gives unverified accounts a smaller allowance.
+//
+// The higher keys are OPTIONAL: absent (or cleared) they inherit the
 // base weekly cap, so an untouched deployment behaves exactly as before
 // and a tier only starts to differ once an admin gives it a value. A
 // per-user override (users.weekly_limit_cents) still wins over every tier,
@@ -57,11 +68,16 @@ const KEY_WEEKLY = 'user_weekly_limit_cents';
 // links it also holds.
 const KEY_WEEKLY_SOCIAL = 'user_weekly_limit_social_cents';
 const KEY_WEEKLY_ZK = 'user_weekly_limit_zk_cents';
+const KEY_WEEKLY_PHONE = 'user_weekly_limit_phone_cents';
+// The verified-identity rule's switch (Admin, Limits): when it was turned on,
+// an ISO timestamp, absent while off. schema.sql identity_rule_since reads it.
+const KEY_IDENTITY_RULE_SINCE = 'identity_rule_since';
 const IDENTITY_TIER_UNVERIFIED = 'unverified';
+const IDENTITY_TIER_PHONE = 'phone';
 const IDENTITY_TIER_SOCIAL = 'social';
 const IDENTITY_TIER_ZK = 'zkpassport';
 const IDENTITY_TIERS = Object.freeze([
-  IDENTITY_TIER_UNVERIFIED, IDENTITY_TIER_SOCIAL, IDENTITY_TIER_ZK,
+  IDENTITY_TIER_UNVERIFIED, IDENTITY_TIER_PHONE, IDENTITY_TIER_SOCIAL, IDENTITY_TIER_ZK,
 ]);
 
 const CREDIT_POLICY_LEGACY = 'legacy';
@@ -201,6 +217,7 @@ async function readOptionalSettingCents(pool, key) {
 // #838: the platform_settings key behind a tier's weekly cap, or null for
 // the unverified tier, which IS the base weekly cap.
 function tierWeeklyKey(tier) {
+  if (tier === IDENTITY_TIER_PHONE) return KEY_WEEKLY_PHONE;
   if (tier === IDENTITY_TIER_SOCIAL) return KEY_WEEKLY_SOCIAL;
   if (tier === IDENTITY_TIER_ZK) return KEY_WEEKLY_ZK;
   return null;
@@ -233,7 +250,11 @@ async function getIdentityTier(pool, userId) {
               EXISTS (
                 SELECT 1 FROM user_activities ua
                  WHERE ua.user_id = $1 AND ua.source = 'zkpassport'
-              ) AS has_zkpassport`,
+              ) AS has_zkpassport,
+              EXISTS (
+                SELECT 1 FROM user_phone_identities up WHERE up.user_id = $1
+              ) AS has_phone,
+              identity_rule_exempt($1) AS identity_exempt`,
       [userId]
     );
     return identityTierFromFlags(rows[0]);
@@ -246,16 +267,28 @@ async function getIdentityTier(pool, userId) {
 }
 
 // Pure: the tier for a set of proofs. Exported for the admin users list,
-// which reads the same three flags in its own query, so the two can never
-// disagree about what "GitHub + X" means.
+// which reads the same flags in its own query, so the two can never
+// disagree about what "GitHub + X" means. `identity_exempt` (let in before
+// the verified-identity rule was switched on) places an account with no
+// proof in the phone tier, so the rule never cuts an existing member.
 function identityTierFromFlags(flags) {
   const hasGithub = !!(flags && flags.has_github);
   const hasX = !!(flags && flags.has_x);
   const hasZk = !!(flags && flags.has_zkpassport);
+  const hasPhone = !!(flags && flags.has_phone);
+  const exempt = !!(flags && flags.identity_exempt);
   const tier = hasZk ? IDENTITY_TIER_ZK
     : (hasGithub && hasX) ? IDENTITY_TIER_SOCIAL
-      : IDENTITY_TIER_UNVERIFIED;
-  return { tier, hasGithub, hasX, hasZkpassport: hasZk };
+      : (hasPhone || exempt) ? IDENTITY_TIER_PHONE
+        : IDENTITY_TIER_UNVERIFIED;
+  return { tier, hasGithub, hasX, hasZkpassport: hasZk, hasPhone, exempt: exempt && !hasPhone && tier === IDENTITY_TIER_PHONE };
+}
+
+/** When the verified-identity rule was switched on (an ISO string), or null while it is off. */
+async function identityRuleSince(pool) {
+  const { rows } = await pool.query('SELECT identity_rule_since() AS since');
+  const since = rows[0]?.since;
+  return since instanceof Date ? since.toISOString() : (since || null);
 }
 
 function identityCreditPolicy() {
@@ -528,7 +561,7 @@ async function checkBudget(pool, userId) {
   // limit was 0, so today's spend was always at or over it).
   if (entitlement.verificationRequired) {
     return {
-      error: 'Connect GitHub or X in Settings to unlock $10.00/day of Homeroom credits.',
+      error: "You're out of this week's free AI credits. Verify your account to get more: add your phone number, or link GitHub and X.",
       reason: 'verification_required',
       ...entitlement,
     };
@@ -988,9 +1021,13 @@ module.exports = {
   KEY_WEEKLY,
   KEY_WEEKLY_SOCIAL,
   KEY_WEEKLY_ZK,
+  KEY_WEEKLY_PHONE,
+  KEY_IDENTITY_RULE_SINCE,
+  identityRuleSince,
   KEY_SYSTEM,
   IDENTITY_TIERS,
   IDENTITY_TIER_UNVERIFIED,
+  IDENTITY_TIER_PHONE,
   IDENTITY_TIER_SOCIAL,
   IDENTITY_TIER_ZK,
   CREDIT_POLICY_LEGACY,

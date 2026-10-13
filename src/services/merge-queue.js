@@ -20,7 +20,9 @@
 // produces the same merge commit the sync would have pushed, so the sync is
 // pure cost; and its checks judged its own head against the main of the
 // time, which is the thing the group approved. Being behind main is not a
-// reason to do anything. The DIRECT LANE merges every approved, clean
+// reason to do anything. (The one exception is a preview that will not
+// start, which gives no verdict to judge it on: services/boot-failure-sync.js
+// syncs that proposal itself.) The DIRECT LANE merges every approved, clean
 // candidate in a pass, one exact-sha GitHub call each and no worker turn:
 // checkAndMerge re-measures each head at its integration gate, so a sibling
 // landing a moment earlier is noticed there (a fresh merge-tree, not a stale
@@ -72,7 +74,8 @@ const github = require('./github');
 const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
-const { currentVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { firstVersionSql } = require('./first-version-rule');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -126,7 +129,7 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at,
-            cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch,
+            cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integration_resolved_epoch,
             cs.integration_behind_by, cs.integration_merges_clean, cs.integration_conflict_paths,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_block_reasons,
             cs.check_state, cs.check_phase, cs.checks_commit_sha, cs.checks_checked_at,
@@ -140,10 +143,22 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
                        AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
+            -- The member floor (services/governance.js applyNoTimerMerge):
+            -- a flagged proposal is approved only once someone other than
+            -- its author has said Yes.
+            CASE WHEN cs.requires_explicit_approval THEN
+              (SELECT COUNT(*)::int FROM pr_votes pv
+                WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                  AND pv.user_id IS DISTINCT FROM cs.user_id
+                  AND ${countedVotePredicateSql('pv', 'cs')})
+            END AS other_yes_count,
+            -- 13 Oct 2026, D1: a project's first version goes live without
+            -- a vote (governance-gate.ts applyFirstVersion).
+            ${firstVersionSql('cs')} AS first_version
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2`,
@@ -153,13 +168,23 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
   const qualified = electorate.approverIds
     ? await governance.qualifiedCountsBatch(pool, 'pr', rows.map((r) => r.id), electorate.approverIds)
     : null;
+  const memberCount = rows.some((r) => r.requires_explicit_approval)
+    ? await governance.communityMemberCount(pool, appId)
+    : undefined;
+  // #4666: a project with rules needs who voted, not how many: the
+  // creator's yes and a group's count are answers the tallies cannot give.
+  const rulesCtx = gov.rules ? await governance.rulesContext(pool, appId, gov, 'pr', rows.map((r) => r.id)) : null;
 
   return rows.map((r) => {
-    const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0 })
-      : { yes: r.yes_count, no: r.no_count };
+    const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0, otherYes: 0 })
+      : { yes: r.yes_count, no: r.no_count, otherYes: r.other_yes_count };
     const approved = !!governance.computeGate(
       gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at, null,
-      { explicitApproval: !!r.requires_explicit_approval }
+      {
+        explicitApproval: !!r.requires_explicit_approval, otherYes: q.otherYes, memberCount,
+        ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, r.id, r.user_id, r.explicit_approval_reason || null) : {}),
+        firstVersion: r.first_version === true,
+      }
     ).mergeable;
     return { ...r, approved };
   });
@@ -561,7 +586,7 @@ async function runQueue(config, appId, { excludeSessionId = 0 } = {}) {
   });
 }
 
-const TRY_NEXT_AFTER = new Set(['sync_threw', 'turn_in_flight', 'not_promoted', 'github_disabled_or_no_pr']);
+const TRY_NEXT_AFTER = new Set(['cancel_failed', 'sync_threw', 'turn_in_flight', 'not_promoted', 'github_disabled_or_no_pr']);
 
 // ── Direct lane: one attempt ─────────────────────────────────────────────
 
@@ -633,16 +658,17 @@ async function resolveOneInner(config, pool, sessionId, admission = { reason: 'a
   await integration.setBlockReasons(pool, session.id, ['integrating']);
   broadcast(session, { integrating: true });
 
-  // #1728: supersede any capture in flight before moving the branch under
-  // it. Whatever it was building or shooting is about the PRE-resolution
-  // commit; the new head gets its own.
+  // Supersede and await the pre-resolution preview before the sync moves
+  // its branch. An error here must not admit a worker against a live run.
   try {
-    const previewLifecycle = require('./preview-lifecycle');
-    if (typeof previewLifecycle.cancelled === 'function') {
-      previewLifecycle.cancelled(session.id, 'superseded by integration');
-    }
+    await require('./preview-lifecycle').supersede(config, session.id, measured.headSha);
   } catch (err) {
-    log.debug('merge-queue', 'no in-flight check run to supersede', { sessionId, err: err.message });
+    log.warn('merge-queue', 'Could not stop the old preview before conflict repair', {
+      sessionId, err: err.message,
+    });
+    await integration.setBlockReasons(pool, session.id, []);
+    broadcast(session, { integrating: false });
+    return { ok: false, reason: 'cancel_failed' };
   }
 
   let sync;

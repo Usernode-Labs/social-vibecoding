@@ -93,12 +93,12 @@ test('native and imported proposal creation assign inside their transactions', (
       ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
       ['transaction commit', "await importClient.query('COMMIT')"],
       ['broadcast', 'pushSessionUpdate({ action: promote'],
-      ['success response', '...evidenceSubmission,'],
+      ['success response', '...visibleChangesSubmission,'],
     ]
   );
 });
 
-test('browser, shared, cloned and forked work assigns before it is exposed', () => {
+test('Mayor-started, shared and cloned work assigns before it is exposed', () => {
   const sessions = source('src/routes/sessions.js');
   orderedSlice(sessions, "router.post('/api/apps/:slug/sessions'", 'start a HEADLESS auto session', [
     ['session insert', 'INSERT INTO chat_sessions'],
@@ -110,10 +110,11 @@ test('browser, shared, cloned and forked work assigns before it is exposed', () 
     ['session insert', 'INSERT INTO chat_sessions'],
     ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
   ]);
-  orderedSlice(sessions, "router.post('/api/sessions/:id/fork'", "router.post('/api/sessions/:id/pause'", [
-    ['session insert', 'INSERT INTO chat_sessions'],
-    ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
-  ]);
+  // #2779: forking a chat into a new classic session is retired; the route
+  // writes nothing now.
+  const fork = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/fork'"),
+    sessions.indexOf("router.post('/api/sessions/:id/pause'"));
+  assert.doesNotMatch(fork, /INSERT INTO chat_sessions/);
   orderedSlice(
     source('src/routes/proposal-handoff.js'),
     "router.post('/api/apps/:slug/work/share-in-progress'",

@@ -215,7 +215,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 16 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 18 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
@@ -225,8 +225,9 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // independently reviewable, and 900017 in #1251 — the untouched row
     // mock proposal 9000013 links to, so "an issue with an open proposal
     // is still on the board" is reviewable without any other work state
-    // muddying it).
-    assert.strictEqual(body.issues.length, 22);
+    // muddying it, and 900018 for the request the Homeroom bot is building,
+    // which carries a synthetic `bot` and nothing else).
+    assert.strictEqual(body.issues.length, 23);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -261,11 +262,126 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     assert.strictEqual(draft.sessionId, 900016);
 
     // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 900006, 900014, 1, 2, 3, 4, 5]) {
+    for (const n of [900001, 900002, 900004, 900006, 900014, 900018, 1, 2, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
     }
   } finally {
     server.close();
+  }
+});
+
+// ── #17: the Homeroom bot's work on a request ───────────────────────────
+//
+// `bot` ({ what, since }) is read with homeroom-bot-progress.js's
+// projectsBusy queries (botWorkByIssue), against PostgreSQL in
+// tests/request-bot-work-postgres.test.js. Here: the wiring, the staging
+// mock, and that the list never fails over it.
+
+test('#17: each request carries what the Homeroom bot is doing on it, from the projectsBusy reads', async () => {
+  const asked = [];
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/FROM homeroom_bot_queue q/.test(s) && /'reading' AS what/.test(s) && /'building' AS what/.test(s)) {
+      asked.push(params);
+      return {
+        rows: [
+          { app_id: 1, issue_number: 2, since: '2026-10-03T10:00:00Z', what: 'reading' },
+          { app_id: 1, issue_number: 4, since: '2026-10-03T09:40:00Z', what: 'building' },
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const byNumber = new Map((await res.json()).issues.map((i) => [i.number, i]));
+    assert.deepStrictEqual(byNumber.get(2).bot, { what: 'reading', since: '2026-10-03T10:00:00Z' });
+    assert.deepStrictEqual(byNumber.get(4).bot, { what: 'building', since: '2026-10-03T09:40:00Z' });
+    for (const n of [1, 3, 5]) assert.strictEqual(byNumber.get(n).bot, null, `#${n}: the bot is not on it`);
+    // Never in_progress: the bot is not a person to claim it from.
+    assert.strictEqual(byNumber.get(4).in_progress, null);
+    assert.strictEqual(asked.length, 1, 'one read for the whole list');
+    assert.deepStrictEqual(asked[0][0], [1], 'for this app alone');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#17: a failed read of the bot\'s work leaves the list whole, with no `bot` anywhere', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/'building' AS what/.test(String(sql))) throw new Error('boom');
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.length, 5);
+    assert.ok(body.issues.every((i) => i.bot === null));
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#17: staging gives mock 900018, and only it, a synthetic bot build; production never does', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    const byNumber = new Map((await res.json()).issues.map((i) => [i.number, i]));
+    const bot = byNumber.get(900018).bot;
+    assert.strictEqual(bot.what, 'building');
+    assert.ok(Date.parse(bot.since) < Date.now(), 'started a while ago');
+    assert.strictEqual(byNumber.get(900018).in_progress, null, 'and nothing else marks it');
+    assert.strictEqual(byNumber.get(900018).headless, null);
+    for (const [n, issue] of byNumber) {
+      if (n !== 900018) assert.strictEqual(issue.bot, null, `#${n} has no bot work`);
+    }
+    // Opened by its address, the same.
+    const one = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900018?demo=1`);
+    assert.strictEqual((await one.json()).issue.bot.what, 'building');
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const port = prod.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    assert.ok((await res.json()).issues.every((i) => i.bot === null), 'production synthesizes nothing');
+  } finally {
+    prod.close();
+  }
+});
+
+test('#4530: the bot\'s demo door draws one request it waits on an answer for; nothing else, and never in production', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const list = async (qs) => new Map((await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues${qs}`)).json())
+      .issues.map((i) => [i.number, i]));
+    const drawn = await list('?demo=1&bot=1');
+    assert.deepEqual(drawn.get(900001).botAwaits, { kind: 'question', messageId: null });
+    for (const [n, issue] of drawn) {
+      if (n !== 900001) assert.strictEqual(issue.botAwaits, null, `#${n} is not waited on`);
+    }
+    assert.ok([...(await list('?demo=1')).values()].every((i) => i.botAwaits === null), 'not without the door');
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const port = prod.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1&bot=1`);
+    assert.ok((await res.json()).issues.every((i) => i.botAwaits === null), 'production synthesizes nothing');
+  } finally {
+    prod.close();
   }
 });
 
@@ -660,6 +776,152 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
     assert.strictEqual(body.truncated, false);
   } finally {
     global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+// ── #3693: the Homeroom bot's posts, once ────────────────────────────────
+//
+// The bot says each thing on GitHub AND in the issue's own thread, and the
+// request page draws both threads, so "Homeroom bot is looking at this
+// request" read twice. The comments route leaves out the bot's comments
+// whose thread copy it recorded (homeroom_bot_posts), by comment id.
+
+const BOT_THREAD = [
+  { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
+  { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
+];
+
+function stubBotThread(comments = BOT_THREAD) {
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => comments };
+    }
+    return baselineFetch(url, opts);
+  };
+}
+
+test('#3693: the bot\'s comments its Homeroom thread already carries are left out, by id', async () => {
+  stubBotThread();
+  const asked = [];
+  poolQueryHandler = async (sql, params) => {
+    if (/FROM homeroom_bot_posts/.test(String(sql))) {
+      asked.push({ sql: String(sql), params });
+      // pg hands a BIGINT back as a string.
+      return { rows: [{ github_comment_id: '3002' }, { github_comment_id: '3003' }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.comments.map((c) => c.body), [
+      'Dark mode please.',
+      // A bot comment with no thread copy is the one place it was said.
+      'Thanks for the report.',
+    ]);
+    assert.strictEqual(body.truncated, false);
+    assert.ok(body.comments.every((c) => !('id' in c)), 'the response keeps its shape');
+
+    assert.strictEqual(asked.length, 1);
+    assert.deepStrictEqual(asked[0].params, [1, 142], 'this app, this issue');
+    // Only a thread copy that landed in THIS issue's thread and still stands.
+    assert.match(asked[0].sql, /JOIN chat_messages m/);
+    assert.match(asked[0].sql, /m\.thread_type = 'issue' AND m\.thread_ref = p\.issue_number/);
+    assert.match(asked[0].sql, /m\.deleted_at IS NULL/);
+    assert.match(asked[0].sql, /p\.github_comment_id IS NOT NULL/);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: the bot\'s posts are left out BEFORE the clip, so they never take a place', async () => {
+  // One bot post, then the 30 people's comments the clip keeps: had the
+  // bot post been counted, the clip would report earlier comments dropped.
+  const people = Array.from({ length: 30 }, (_, k) => ({
+    id: 4000 + k, user: { login: `person-${k}` }, body: `reply ${k}`, created_at: '2026-10-02T19:00:00Z',
+  }));
+  stubBotThread([BOT_THREAD[1], ...people]);
+  poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
+    ? { rows: [{ github_comment_id: '3002' }] }
+    : { rows: [] });
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, 30);
+    assert.strictEqual(body.truncated, false, 'nothing a reader could want was dropped');
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: a failed lookup shows the whole thread, as before', async () => {
+  stubBotThread();
+  poolQueryHandler = async (sql) => {
+    if (/FROM homeroom_bot_posts/.test(String(sql))) throw new Error('relation does not exist');
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, BOT_THREAD.length);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: staging does not fill a thread emptied by the dedupe with fixtures', async () => {
+  // The staging fallback is for a thread GitHub sent back empty. A thread
+  // that only held the bot's thread copies is exactly what a reviewer of
+  // this fix has to see empty.
+  stubBotThread([BOT_THREAD[1], BOT_THREAD[2]]);
+  poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
+    ? { rows: [{ github_comment_id: '3002' }, { github_comment_id: '3003' }] }
+    : { rows: [] });
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/1585/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.comments, []);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: the staging spec comment is as long as a real one, so the route clips it like one', async () => {
+  // dapp.json's check on issue 900003 asserts the spec renders as a spec
+  // card. With a short fixture it passed while every real request showed
+  // the raw `<details>` markers: a real spec is clipped, its close cut off.
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
+    const body = await res.json();
+    const spec = body.comments.find((c) => /<details><summary>The plan<\/summary>/.test(c.body));
+    assert.ok(spec, 'the thread carries the bot\'s spec comment');
+    assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
+    assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');
+  } finally {
     server.close();
   }
 });
@@ -1240,6 +1502,69 @@ test('staging demo mode serves a MOCK issue by number without the live round tri
 // is the wiring: both issue routes have to carry `addressed_by`, because the
 // topic page of a CLOSED issue renders from the single-issue payload and the
 // page of an OPEN one renders from the list.
+
+// #4244: a closed issue no merged change closed says whether a vote or an
+// admin closed it, read off the applied close_issue row's audit payload.
+test('a closed issue carries closed_via from the applied close_issue row', async () => {
+  stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  let appliedBy = 'group-vote';
+  let closeParams = null;
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/kind = 'close_issue' AND status = 'closed'/.test(s)) {
+      closeParams = params;
+      return { rows: appliedBy ? [{ applied_by: appliedBy }] : [] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const read = async () => (await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`)).json()).issue;
+    assert.strictEqual((await read()).closed_via, 'vote');
+    assert.strictEqual(closeParams[1], 142);
+    appliedBy = 'admin:evan';
+    assert.strictEqual((await read()).closed_via, 'admin');
+    appliedBy = null;
+    assert.strictEqual((await read()).closed_via, null, 'closed on GitHub, no vote: says nothing');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('#4244: staging serves two closed mock requests by address only, never on the board', async () => {
+  const staging = await startStagingServer();
+  try {
+    const port = staging.address().port;
+    const list = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
+    assert.ok(!list.issues.some((i) => i.number === 900031 || i.number === 900032), 'the board lists open requests');
+    const read = async (n) => (await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/${n}?demo=1`)).json()).issue;
+    const merged = await read(900031);
+    assert.strictEqual(merged.state, 'closed');
+    assert.ok(merged.closedAt);
+    assert.strictEqual(merged.addressed_by.state, 'merged');
+    assert.strictEqual(merged.addressed_by.prNumber, 10);
+    assert.strictEqual(merged.mockAddressedBy, undefined, 'the fixture field stays server-side');
+    const voted = await read(900032);
+    assert.strictEqual(voted.state, 'closed');
+    assert.strictEqual(voted.addressed_by, null);
+    assert.strictEqual(voted.closed_via, 'vote');
+    assert.strictEqual(voted.mockClosedVia, undefined);
+  } finally {
+    staging.close();
+  }
+  const prod = await startServer();
+  try {
+    const res = await realFetch(`http://127.0.0.1:${prod.address().port}/api/apps/demo/github-issues/900031?demo=1`);
+    assert.strictEqual(res.status, 404, 'production has no mocks');
+  } finally {
+    prod.close();
+  }
+});
 
 test('both issue routes carry addressed_by, resolved in one extra query', async () => {
   stubSingleIssue(() => ({

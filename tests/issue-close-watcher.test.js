@@ -8,8 +8,12 @@
 //      trigger exactly one cache bust + broadcast.
 //   2. Issues that close a few polls in are retried with backoff and the
 //      broadcast fires once the closed state is observed.
-//   3. The watcher NEVER writes to GitHub (no closeIssue calls).
+//   3. The watcher never closes a number the session did not link, and
+//      closes nothing while GitHub is still expected to (inside the polls).
 //   4. Exhausted retries report stillOpen, no broadcast, never throw.
+//   8. When the polls run out, the watcher closes the LINKED issues GitHub
+//      left open — only for a PR merged into its repo's default branch —
+//      keeps them hidden, and falls back to un-hiding when a close fails.
 //   5. PR-shaped references and 404s are dropped from the watch.
 //   6. Issue numbers come from the merged PR body's closing keywords
 //      unioned with the session's linked_issues (getPR failure falls back
@@ -32,9 +36,10 @@ const assert = require('node:assert/strict');
 // Install module stubs before requiring the unit under test.
 // `gh` lets each test script the GitHub surface; `calls` records every
 // call for assertions; `ws` records broadcast pushes.
-function loadWithStubs({ gh = {}, calls, ws }) {
+function loadWithStubs({ gh = {}, calls, ws, issuesRoute = null }) {
   const ghPath = require.resolve('../src/services/github');
   const wsPath = require.resolve('../src/services/ws');
+  const issuesPath = require.resolve('../src/routes/issues');
   const subjectPath = require.resolve('../src/services/issue-close-watcher');
   const prMetaPath = require.resolve('../src/services/pr-metadata');
   const orig = {
@@ -42,6 +47,7 @@ function loadWithStubs({ gh = {}, calls, ws }) {
     ws: require.cache[wsPath],
     subject: require.cache[subjectPath],
     prMeta: require.cache[prMetaPath],
+    issues: require.cache[issuesPath],
   };
 
   require.cache[ghPath] = {
@@ -57,9 +63,10 @@ function loadWithStubs({ gh = {}, calls, ws }) {
         if (gh.getIssue) return gh.getIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
-      // The watcher must never call this — recorded so tests can assert 0.
+      // Recorded so tests can assert exactly which numbers get closed.
       closeIssue: async (owner, repo, issueNumber) => {
         calls.push({ type: 'closeIssue', owner, repo, issueNumber });
+        if (gh.closeIssue) return gh.closeIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
       invalidateIssuesCache: (owner, repo) => {
@@ -84,6 +91,14 @@ function loadWithStubs({ gh = {}, calls, ws }) {
     },
     loaded: true, id: wsPath, filename: wsPath, paths: orig.ws ? orig.ws.paths : [],
   };
+  // With a pool the watcher lazy-requires routes/issues for the superseded
+  // close-proposal resolve; tests that pass one stub it here.
+  if (issuesRoute) {
+    require.cache[issuesPath] = {
+      exports: issuesRoute,
+      loaded: true, id: issuesPath, filename: issuesPath, paths: orig.issues ? orig.issues.paths : [],
+    };
+  }
   // pr-metadata requires ./llm and ./github at load time; with github
   // stubbed above a fresh load is safe and gives us the real
   // parseClosingKeywords/sanitizeIssueNumbers (which we want exercised).
@@ -94,6 +109,9 @@ function loadWithStubs({ gh = {}, calls, ws }) {
   const restore = () => {
     if (orig.gh) require.cache[ghPath] = orig.gh; else delete require.cache[ghPath];
     if (orig.ws) require.cache[wsPath] = orig.ws; else delete require.cache[wsPath];
+    if (issuesRoute) {
+      if (orig.issues) require.cache[issuesPath] = orig.issues; else delete require.cache[issuesPath];
+    }
     delete require.cache[prMetaPath];
     if (orig.prMeta) require.cache[prMetaPath] = orig.prMeta;
     delete require.cache[subjectPath];
@@ -155,7 +173,7 @@ test('keeps polling until GitHub reports closed, then broadcasts', async () => {
   } finally { restore(); }
 });
 
-test('never writes to GitHub', async () => {
+test('never closes a number only the PR body names', async () => {
   const calls = [], ws = [];
   const { subject, restore } = loadWithStubs({
     calls, ws,
@@ -288,4 +306,239 @@ test('no-ops cleanly when GitHub is disabled or nothing is referenced', async ()
     assert.equal(calls2.filter((c) => c.type === 'getIssue').length, 0);
     assert.equal(ws2.length, 0);
   } finally { restore2(); }
+});
+
+// A PR as GitHub returns it once merged into the app repo's default branch.
+function mergedPr(body, over = {}) {
+  return {
+    body,
+    merged: true,
+    base: { ref: 'main', repo: { full_name: 'usernode-bot/some-app', default_branch: 'main' } },
+    ...over,
+  };
+}
+
+test('closes the linked issues GitHub left open, skips closed and unlinked ones', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      // #20 is only in the body; #10 and #11 are linked.
+      getPR: async () => mergedPr('Closes #10\nCloses #11\nfixes #20'),
+      getIssue: async (o, r, n) => ({ number: n, state: n === 11 ? 'closed' : 'open' }),
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10, 11] });
+    const closes = calls.filter((c) => c.type === 'closeIssue');
+    assert.deepEqual(closes.map((c) => c.issueNumber), [10], 'only the still-open linked issue');
+    assert.equal(closes[0].owner, 'usernode-bot');
+    assert.equal(closes[0].repo, 'some-app');
+    // Closing happens only after every poll round ran.
+    const firstClose = calls.findIndex((c) => c.type === 'closeIssue');
+    assert.equal(calls.slice(0, firstClose).filter((c) => c.type === 'getIssue').length, 1 + 3 * 2);
+    assert.deepEqual(res.closed.sort((a, b) => a - b), [10, 11]);
+    assert.deepEqual(res.stillOpen, [20]);
+    // #10 stays hidden (noted closed again, not unsuppressed); #20 is un-hidden.
+    const noted = calls.filter((c) => c.type === 'noteIssuesClosed');
+    assert.deepEqual(noted[noted.length - 1].numbers, [10]);
+    const unsup = calls.filter((c) => c.type === 'unsuppressIssues');
+    assert.deepEqual(unsup.map((c) => c.numbers), [[20]]);
+    assert.equal(ws.length, 2, 'one refresh for #11 observed, one for #10 closed');
+  } finally { restore(); }
+});
+
+test('a failed GitHub close falls back to un-hiding the issue', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      getPR: async () => mergedPr('Closes #10\nCloses #12'),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+      closeIssue: async (o, r, n) => {
+        if (n === 12) { const e = new Error('Forbidden'); e.status = 403; throw e; }
+        return { number: n, state: 'closed' };
+      },
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10, 12] });
+    assert.deepEqual(res.closed, [10]);
+    assert.deepEqual(res.stillOpen, [12]);
+    const unsup = calls.filter((c) => c.type === 'unsuppressIssues');
+    assert.deepEqual(unsup.map((c) => c.numbers), [[12]]);
+  } finally { restore(); }
+});
+
+test('closes nothing unless the PR reads as merged into its own default branch', async () => {
+  const cases = [
+    ['PR fetch failed', async () => { throw new Error('rate limited'); }],
+    ['not merged', async () => mergedPr('Closes #10', { merged: false })],
+    ['other base branch', async () => mergedPr('Closes #10', {
+      base: { ref: 'staging', repo: { full_name: 'usernode-bot/some-app', default_branch: 'main' } },
+    })],
+    ['other repository', async () => mergedPr('Closes #10', {
+      base: { ref: 'main', repo: { full_name: 'someone/else', default_branch: 'main' } },
+    })],
+  ];
+  for (const [label, getPR] of cases) {
+    const calls = [], ws = [];
+    const { subject, restore } = loadWithStubs({
+      calls, ws,
+      gh: { getPR, getIssue: async (o, r, n) => ({ number: n, state: 'open' }) },
+    });
+    try {
+      const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10] });
+      assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0, label);
+      assert.deepEqual(res.stillOpen, [10], label);
+      assert.deepEqual(calls.filter((c) => c.type === 'unsuppressIssues').map((c) => c.numbers), [[10]], label);
+    } finally { restore(); }
+  }
+});
+
+test('mergedIntoDefaultBranch tolerates a .git suffix and case', () => {
+  const { subject, restore } = loadWithStubs({ calls: [], ws: [] });
+  try {
+    assert.equal(subject.mergedIntoDefaultBranch(mergedPr(''), 'Usernode-Bot', 'some-app.git'), true);
+    assert.equal(subject.mergedIntoDefaultBranch(null, 'usernode-bot', 'some-app'), false);
+    assert.equal(subject.mergedIntoDefaultBranch({ merged: true }, 'usernode-bot', 'some-app'), false);
+  } finally { restore(); }
+});
+
+// ── The request's own twin row ──────────────────────────────────────────
+//
+// A platform-filed request keeps a `general` row in `issues` beside its
+// GitHub issue (services/governance-kinds.js). Before this, only an applied
+// close-issue vote closed it, so a request a merged proposal closed kept an
+// open twin for good: Plant Pal's #1 still read open after PR #2 closed it.
+
+// A pool that records every statement; `fail` makes the twin UPDATE reject.
+function recordingPool({ fail = false } = {}) {
+  const queries = [];
+  return {
+    queries,
+    twinCloses: () => queries.filter((q) => /UPDATE issues SET status = 'closed'/.test(q.sql)),
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (fail && /UPDATE issues/.test(sql)) throw new Error('db down');
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
+const ISSUES_ROUTE_STUB = { resolveSupersededCloseProposals: async () => ({ resolved: [] }) };
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('an observed close closes the open general twins of those numbers on that app', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool();
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: { getPR: async () => ({ body: 'Closes #3\nfixes #9' }) },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool });
+    await settle();
+    assert.deepEqual(res.closed, [3, 9]);
+    const updates = pool.twinCloses();
+    assert.equal(updates.length, 1);
+    // Only the request's own twin, only while it still reads open, only on this app.
+    assert.match(updates[0].sql, /kind = 'general'/);
+    assert.match(updates[0].sql, /status = 'open'/);
+    assert.match(updates[0].sql, /app_id = \$1/);
+    assert.deepEqual(updates[0].params, [7, [3, 9]]);
+  } finally { restore(); }
+});
+
+test('a linked issue the watcher closes itself closes its twin; one still open does not', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool();
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: {
+      // #20 is only in the body, so it is watched but never closed here.
+      getPR: async () => mergedPr('Closes #10\nfixes #20'),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10], pool });
+    await settle();
+    assert.deepEqual(res.closed, [10]);
+    assert.deepEqual(res.stillOpen, [20]);
+    const closedNumbers = pool.twinCloses().flatMap((q) => q.params[1]);
+    assert.deepEqual(closedNumbers, [10], 'a number GitHub still reports open keeps its twin open');
+  } finally { restore(); }
+});
+
+test('nothing closes a twin while every referenced issue is still open', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool();
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: {
+      getPR: async () => ({ body: 'Closes #5' }),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool });
+    await settle();
+    assert.deepEqual(res.stillOpen, [5]);
+    assert.equal(pool.twinCloses().length, 0);
+  } finally { restore(); }
+});
+
+test('a failing twin close never breaks the watch', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool({ fail: true });
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: { getPR: async () => ({ body: 'Closes #3' }) },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool });
+    await settle();
+    assert.deepEqual(res.closed, [3], 'the watch finished normally');
+    assert.equal(pool.twinCloses().length, 1);
+    assert.equal(ws.length, 1, 'the panel refresh still went out');
+  } finally { restore(); }
+});
+
+// The merge-followups workflow machine runs the watch as durable work: a
+// close it could not record must fail the work, which is then retried,
+// instead of settling while the twin or the close proposal stays open.
+test('strict: a failing twin close fails the watch, after its polls', async () => {
+  const calls = [], ws = [];
+  const pool = recordingPool({ fail: true });
+  const { subject, restore } = loadWithStubs({
+    calls, ws, issuesRoute: ISSUES_ROUTE_STUB,
+    gh: { getPR: async () => ({ body: 'Closes #3' }) },
+  });
+  try {
+    await assert.rejects(subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool, strict: true }), /db down/);
+    assert.equal(ws.length, 1, 'the close itself was still seen and broadcast');
+  } finally { restore(); }
+});
+
+test('strict: a failing superseded-proposal resolve fails the watch, and is asked to throw', async () => {
+  const calls = [], ws = [];
+  const asked = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    issuesRoute: {
+      resolveSupersededCloseProposals: async (pool, args) => {
+        asked.push(args.strict);
+        if (args.strict) throw new Error('db down');
+        return { resolved: [] };
+      },
+    },
+    gh: { getPR: async () => ({ body: 'Closes #3' }) },
+  });
+  try {
+    await assert.rejects(subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool: recordingPool(), strict: true }), /db down/);
+    assert.deepEqual(asked, [true]);
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, pool: recordingPool() });
+    assert.deepEqual(res.closed, [3], 'without strict it is logged and the watch finishes, as before');
+  } finally { restore(); }
 });

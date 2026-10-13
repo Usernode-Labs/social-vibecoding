@@ -61,9 +61,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const stream = require('stream');
-const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { parseDockerBuildLine } = require('./docker');
+
+// Loaded on first use, as in kubernetes.js: most processes that load this
+// file never patch a Job.
+const kubernetesClient = () => require('@kubernetes/client-node');
 
 const ENGINE = 'buildkit';
 const MANAGED_BY = 'social-vibecoding-runtime';
@@ -451,6 +454,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     // Left by an earlier attempt of this exact name; a fresh token replaces it.
     await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secretBody }).catch(() => {});
   }
+  // No Job of ours will own the Secret when the create is refused or never
+  // gets a turn, so its clone credential goes before the build fails.
+  const deleteInputSecret = () => runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
+    .catch((err) => log.warn('kubernetes', 'BuildKit input Secret cleanup failed', { name: inputSecretName, err: err.message }));
   const createDeadline = Date.now() + 60000;
   while (true) {
     try {
@@ -458,7 +465,7 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       break;
     } catch (err) {
       if (!isConflict(err)) {
-        await runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace).catch(() => {});
+        await deleteInputSecret();
         if (isLaneMissing(err)) markUnavailable(err, `cannot create Jobs in ${namespace} (${err.message})`);
         err.buildFailed = true;
         err.buildLog = runtime.boundedText(err.message);
@@ -478,7 +485,10 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
           break;
         }
       }
-      if (Date.now() >= createDeadline) throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      if (Date.now() >= createDeadline) {
+        await deleteInputSecret();
+        throw new Error(`Timed out waiting to recreate BuildKit Job ${name}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
@@ -494,9 +504,11 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     }
   }
   try {
-    const digest = await waitForJob(cfg, runtime, clients, name, { onProgress });
+    const clock = stepClock();
+    const digest = await waitForJob(cfg, runtime, clients, name, { onProgress, clock });
     const imageRef = `${repository}@${digest}`;
     try {
+      const k8s = kubernetesClient();
       await batch.patchNamespacedJob(
         { name, namespace, body: { metadata: { annotations: { [DIGEST_ANNOTATION]: digest } } } },
         k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch)
@@ -504,7 +516,12 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     } catch (err) {
       log.warn('kubernetes', 'BuildKit Job digest annotation not written', { name, err: err.message });
     }
-    return { buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE };
+    // `steps`: the slowest steps as BuildKit timed them (stepClock), for a
+    // caller that records where a build went (services/app-creator.js).
+    return {
+      buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE,
+      steps: clock.slowest(SLOWEST_STEPS_KEPT), cachedSteps: clock.cached,
+    };
   } catch (err) {
     await runtime.deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' })
       .catch((cleanupErr) => log.warn('kubernetes', 'Failed BuildKit Job cleanup failed', { name, err: cleanupErr.message }));
@@ -524,7 +541,44 @@ function progressFromLine(line) {
   return parseDockerBuildLine(text);
 }
 
-async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {}) {
+// Where a build's time went, in BuildKit's own words (#4895). Plain progress
+// names each step on its first line (`#9 [css 3/7] RUN npm ci`) and closes
+// it with its duration (`#9 DONE 6.2s`, or `#9 CACHED` for a cache hit).
+// Those durations, not the gaps between lines, are the account: the stages
+// run side by side, and exporting the image and the cache, which a cold
+// first build pays for, print no step counter at all.
+const STEP_NAME_MAX = 60;
+const SLOWEST_STEPS_KEPT = 6;
+function stepClock() {
+  const names = new Map();
+  const closed = new Set();
+  const done = [];
+  let cached = 0;
+  return {
+    line(raw) {
+      const m = /^#(\d+) (.+)$/.exec(String(raw || '').trim());
+      if (!m) return;
+      const [, id, rest] = m;
+      const finished = /^DONE (\d+(?:\.\d+)?)s$/.exec(rest);
+      if (finished || rest === 'CACHED') {
+        if (closed.has(id)) return;
+        closed.add(id);
+        if (!finished) cached += 1;
+        else if (names.has(id)) done.push({ name: names.get(id), ms: Math.round(Number(finished[1]) * 1000) });
+        return;
+      }
+      if (!names.has(id) && !/^(ERROR|CANCELED)\b/.test(rest)) {
+        names.set(id, rest.length > STEP_NAME_MAX ? `${rest.slice(0, STEP_NAME_MAX - 1)}…` : rest);
+      }
+    },
+    slowest(n) {
+      return done.slice().sort((a, b) => b.ms - a.ms).slice(0, n);
+    },
+    get cached() { return cached; },
+  };
+}
+
+async function waitForJob(cfg, runtime, clients, name, { onProgress = null, clock = null } = {}) {
   const namespace = cfg.buildkitNamespace;
   const { batch, core } = clients;
   const deadline = Date.now() + (cfg.activeDeadlineSeconds + 60) * 1000;
@@ -558,6 +612,7 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null } = {
       runtime.attachLineObserver(sink, (line) => {
         const clean = log.redactString(String(line || '').replace(/\x1b\[[0-9;]*m/g, ''));
         remember(clean);
+        if (clock) { try { clock.line(clean); } catch { /* observer only */ } }
         if (!report) return;
         const image = progressFromLine(clean);
         if (image) { try { onProgress(image); } catch { /* observer only */ } }
@@ -688,7 +743,7 @@ module.exports = {
   unavailableReason,
   noteUnavailable,
   _forTest: {
-    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, digestFromPod, exitCodeFromPod,
+    BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
     repoOwnerAndName, requireConfig,
     resetUnavailable() { _unavailable = null; },
   },

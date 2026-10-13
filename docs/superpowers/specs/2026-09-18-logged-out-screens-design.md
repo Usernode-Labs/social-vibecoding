@@ -80,9 +80,9 @@ Checklist per board:
 - Touch: every control at least 44px tall including the back disc's hit area.
 - Console: no error on load or on the route change, in both themes.
 
-**Gate 2, declared visual evidence.** Each proposal declares
-`visual_evidence` stories in `submit_build` (`src/cli/main.js`, schema at
-`visualEvidenceIntentSchema`): one story per board it changes, viewports
+**Gate 2, declared before & after shots.** Each proposal declares
+`shots` stories in `submit_build` (`src/cli/main.js`, schema at
+`visibleChangesSchema`): one story per board it changes, viewports
 390×844 and 1280×800, `startPath` the real hash route, `steps` the real taps,
 `checkpoint` the board's name. The pipeline replays these against base and
 head. Open issue: the persona enum is `member | read_only_admin`; the landing
@@ -90,6 +90,10 @@ is anonymous. Confirm with the pipeline owner whether a member story that
 starts signed out reaches `#landing`, or whether an `anonymous` persona is
 needed. Until answered, the landing story starts at `#login` and backs out to
 `#landing`.
+Closed 2026-10-05: there is now a `guest` persona, a browser that is not
+signed in (`docs/proposal-visuals/before-after-shots.md`, "The guest
+browser"), so a landing story declares `persona: "guest"` and starts at
+`#landing` itself.
 
 **Gate 3, declared checks in `dapp.json`.** The checks live in the top-level `tests` array
 (690 entries), read by the hand-written `readTestsWithMeta` in `src/services/app-manifest.js`, which

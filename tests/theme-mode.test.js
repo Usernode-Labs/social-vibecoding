@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -185,18 +186,26 @@ test('the moved control keeps the ids app.css draws it with', () => {
   }
 });
 
-// It is the FIRST setting, and therefore the section a bare #settings opens.
-test('theme leads the settings registry and is the default section', () => {
+// THE UI OVERHAUL made Theme the first setting and the default section. The
+// settings restructure made Account the default page (Profile leads it) and
+// gave Theme the head of the Appearance page, in Preferences, where the
+// developer console's switch joins it.
+test('theme leads the Appearance page in Preferences', () => {
   const settings = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
     'utf8',
   );
-  const list = settings.slice(settings.indexOf('SECTIONS: ['));
-  const first = list.slice(0, list.indexOf(']'));
-  assert.match(first.split('\n').find((l) => l.includes("key: '")) || '', /key: 'theme'/,
-    'theme is the first entry in SECTIONS');
-  assert.match(settings, /DEFAULT_SECTION: 'theme'/,
-    'a bare #settings resolves to it');
+  const list = settings.slice(settings.indexOf('SECTIONS: ['), settings.indexOf('    PAGES: {'));
+  const lines = list.split('\n').filter((l) => l.includes("page: 'theme'"));
+  // The registry holds message ids; the English catalog holds the words.
+  assert.match(lines[0] || '', /\{ key: 'theme', label: 'settings:nav\.part\.theme', group: 'settings:nav\.group\.preferences', page: 'theme' \}/,
+    'theme is the first part of its page');
+  assert.equal(message('settings:nav.part.theme'), 'Theme');
+  assert.equal(message('settings:nav.group.preferences'), 'Preferences');
+  assert.match(settings, /theme: 'settings:nav\.page\.theme',/);
+  assert.equal(message('settings:nav.page.theme'), 'Appearance', 'and that page is labelled Appearance');
+  assert.doesNotMatch(settings, /DEFAULT_SECTION: 'theme'/,
+    'a bare #settings opens Account now, not Theme');
 });
 
 test('index.html exposes the three data-theme-mode buttons', () => {

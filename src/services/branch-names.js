@@ -87,19 +87,61 @@ function sanitizeBranchSegment(raw) {
   return out || 'user';
 }
 
+// #3229: a branch named `dev/<who>-<epoch>` tells nobody which change it
+// holds, and someone looking through their sessions on GitHub sees a column
+// of identical names. So when the session already has words for what it is
+// doing (its title, or the deterministic title of its first ask), a short
+// slug of them sits between the owner and the timestamp:
+// `dev/evan-dark-mode-toggle-1787444512068`. The prefix and the trailing
+// millisecond timestamp are unchanged, so the name is exactly as unique as
+// before and nothing that reads `dev/<who>-` is affected.
+//
+// The slug is the strictest charset there is — lower-case ASCII letters,
+// digits and single hyphens, never at an edge — so whatever a person typed
+// cannot produce a ref git or the push proxy would refuse.
+const MAX_LABEL_SLUG_LEN = 30;
+
+/**
+ * A short, ref-safe slug of free text, or '' when nothing usable is left.
+ * Accents are folded to their base letter; everything else outside
+ * [a-z0-9] becomes a word break. Cut at a word boundary when one is close.
+ */
+function branchLabelSlug(raw, max = MAX_LABEL_SLUG_LEN) {
+  const words = String(raw == null ? '' : raw)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!words) return '';
+  let out = words.replace(/ /g, '-');
+  if (out.length > max) {
+    const cut = out.slice(0, max + 1);
+    const hyphen = cut.lastIndexOf('-');
+    // Keep whole words when that still leaves most of the budget; a single
+    // very long word is simply cut.
+    out = hyphen >= Math.floor(max / 2) ? cut.slice(0, hyphen) : out.slice(0, max);
+  }
+  return out.replace(/^-+|-+$/g, '');
+}
+
 /**
  * The single supported way to mint a dev-session branch name.
- * `dev/<sanitized who>-<timestamp>`.
+ * `dev/<sanitized who>-<timestamp>`, or, given a label (the session's
+ * title or first ask), `dev/<sanitized who>-<label slug>-<timestamp>`.
  */
-function devBranchName(who, timestamp = Date.now()) {
+function devBranchName(who, timestamp = Date.now(), label = null) {
   const ts = Number.isFinite(Number(timestamp)) ? Number(timestamp) : Date.now();
-  return `dev/${sanitizeBranchSegment(who)}-${ts}`;
+  const slug = branchLabelSlug(label);
+  return `dev/${sanitizeBranchSegment(who)}-${slug ? `${slug}-` : ''}${ts}`;
 }
 
 module.exports = {
   BRANCH_SAFE_CHARS_RE,
   MAX_SEGMENT_LEN,
+  MAX_LABEL_SLUG_LEN,
   isValidBranchName,
+  branchLabelSlug,
   sanitizeBranchSegment,
   devBranchName,
 };

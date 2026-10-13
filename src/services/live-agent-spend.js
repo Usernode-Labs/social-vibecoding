@@ -81,4 +81,25 @@ function observe(tracker, event) {
   }
 }
 
-module.exports = { createTracker, observe, snapshot };
+// The tokens the observed model calls used, from the same per-message usage
+// the estimate reads: { requests, inputTokens (cache reads and writes
+// included), cachedInputTokens, outputTokens }, or null when no call was seen.
+// A message still streaming counts what it has said so far, as the estimate
+// does. For a turn stopped before its result this is a floor: a call that had
+// not yet reported its usage counts nothing.
+function usageTotals(tracker) {
+  if (!tracker || !tracker.messages.size) return null;
+  const totals = { requests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  for (const message of tracker.messages.values()) {
+    const u = message.usage;
+    totals.requests += 1;
+    totals.inputTokens += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0)
+      + (u.cache_creation_input_tokens || 0);
+    totals.cachedInputTokens += u.cache_read_input_tokens || 0;
+    totals.outputTokens += message.complete ? (u.output_tokens || 0)
+      : Math.max(u.output_tokens || 0, Math.ceil(message.characters / 4));
+  }
+  return totals;
+}
+
+module.exports = { createTracker, observe, snapshot, usageTotals };

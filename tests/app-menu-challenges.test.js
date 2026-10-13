@@ -61,13 +61,21 @@ test('the app menu carries no platform destination at all', () => {
   // went because the view strip's Workshop segment was the same destination
   // said twice. It came BACK when the strip retired (#2761): the owner asked
   // for a plain "Go to workshop" row, not a toggle. Still the app's own, so
-  // the split holds: nothing here is the platform's.
-  for (const row of ['app-menu-row-workshop', 'app-menu-row-discussion', 'app-menu-row-about']) {
+  // the split holds: nothing here is the platform's. The discussion row left
+  // in the UI overhaul (the channel is on the hub), and since #4729 the
+  // Agent chats section left too — Messages' Agents list is its home — so
+  // the app's own rows are all the list has.
+  for (const row of ['app-menu-row-workshop', 'app-menu-row-about']) {
     assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
   }
+  assert.ok(!nav.includes('id="app-menu-row-discussion"'), 'the discussion is the hub\'s now');
+  assert.ok(!nav.includes('id="app-menu-sessions"'), 'no Agent chats section: it moved to Messages (#4729)');
+  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.ok(!SHEET.includes('id="app-menu-sessions"') && !SHEET.includes('AgentChats'),
+    'and the sheet draws nothing of theirs after mount either');
   const sheet = html.slice(html.indexOf('id="apps-switcher-sheet"'), html.indexOf('id="switcher-nav"'));
   assert.ok(!nav.includes('id="improve-row-feedback"') && sheet.includes('id="improve-row-feedback"'),
-    'feedback is a button above the list, not a row in it');
+    'Suggest an improvement is a button above the list, not a row in it');
   assert.ok(!html.includes('id="app-context-row-workshop"')
     && !html.includes('id="improve-views"'),
     'and the Workshop is a row, not a toggle segment as well (#2761)');

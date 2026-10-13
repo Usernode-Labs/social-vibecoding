@@ -366,8 +366,8 @@ test('getGovernance: cached until invalidateGovernance', async () => {
 
 test('qualifiedCountsBatch: per-id counts restricted to the electorate', async () => {
   const rows = [
-    { id: 1, yes: '2', no: '0' },
-    { id: 3, yes: '0', no: '1' },
+    { id: 1, yes: '2', no: '0', other_yes: '1' },
+    { id: 3, yes: '0', no: '1', other_yes: '0' },
   ];
   const pool = {
     query: async (sql, params) => {
@@ -384,7 +384,263 @@ test('qualifiedCountsBatch: per-id counts restricted to the electorate', async (
     },
   };
   const map = await governance.qualifiedCountsBatch(pool, 'pr', [1, 2, 3], [10, 11]);
-  assert.deepEqual(map.get(1), { yes: 2, no: 0 });
+  assert.deepEqual(map.get(1), { yes: 2, no: 0, otherYes: 1 });
   assert.equal(map.get(2), undefined, 'ids with no electorate votes are absent');
-  assert.deepEqual(map.get(3), { yes: 0, no: 1 });
+  assert.deepEqual(map.get(3), { yes: 0, no: 1, otherYes: 0 });
+});
+
+// ── The member floor's counts ─────────────────────────────────────────
+
+test('qualifiedCountsBatch: other_yes excludes each row\'s own author', async () => {
+  const seen = [];
+  const pool = { query: async (sql) => { seen.push(sql); return { rows: [] }; } };
+  await governance.qualifiedCountsBatch(pool, 'pr', [1], [10]);
+  await governance.qualifiedCountsBatch(pool, 'issue', [2], [10]);
+  assert.match(seen[0], /pv\.user_id IS DISTINCT FROM cs\.user_id\) AS other_yes/);
+  assert.match(seen[1], /iv\.user_id IS DISTINCT FROM i\.created_by\) AS other_yes/);
+  assert.match(seen[1], /JOIN issues i ON i\.id = iv\.issue_id/);
+  assert.match(seen[1], /counts_toward_issue_outcome\(iv\.user_id, iv\.issue_id\)/,
+    'test-account votes stay uncounted on the issue side');
+});
+
+test('qualifiedCounts: otherYes only when an author is asked for, and never the author\'s own', async () => {
+  const votes = [
+    { userId: 7, vote: 'yes' }, // the author
+    { userId: 8, vote: 'yes' },
+    { userId: 9, vote: 'no' },
+  ];
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FILTER/.test(sql)) {
+        const allowed = params[1];
+        const author = params[2];
+        const counted = votes.filter((v) => allowed.includes(v.userId));
+        return {
+          rows: [{
+            yes: String(counted.filter((v) => v.vote === 'yes').length),
+            no: String(counted.filter((v) => v.vote === 'no').length),
+            ...(/other_yes/.test(sql)
+              ? { other_yes: String(counted.filter((v) => v.vote === 'yes' && v.userId !== author).length) }
+              : {}),
+          }],
+        };
+      }
+      const side = /vote = 'yes'/.test(sql) ? 'yes' : 'no';
+      const exclude = /IS DISTINCT FROM \$2::int/.test(sql) ? params[1] : undefined;
+      return {
+        rows: [{ cnt: String(votes.filter((v) => v.vote === side && v.userId !== exclude).length) }],
+      };
+    },
+  };
+
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null), { yes: 2, no: 1 },
+    'the common path is unchanged');
+  assert.equal(calls.length, 2, 'two COUNT queries, as before');
+
+  calls.length = 0;
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null, { authorId: 7 }),
+    { yes: 2, no: 1, otherYes: 1 });
+  assert.match(calls[2].sql, /user_id IS DISTINCT FROM \$2::int/);
+  assert.match(calls[2].sql, /approval_epoch = \(SELECT approval_epoch/, 'epoch-scoped like the rest');
+  assert.deepEqual(calls[2].params, [5, 7]);
+
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, [7, 8, 9], { authorId: 7 }),
+    { yes: 2, no: 1, otherYes: 1 });
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, [7, 9], { authorId: 7 }),
+    { yes: 1, no: 1, otherYes: 0 }, 'only the electorate counts, and the author is not someone else');
+
+  // A deleted author: every Yes is someone else's.
+  calls.length = 0;
+  const deleted = await governance.qualifiedCounts(pool, 'pr', 5, null, { authorId: null });
+  assert.equal(deleted.otherYes, 2);
+  assert.deepEqual(calls[2].params, [5, null]);
+
+  // A stray non-object fifth argument (an old caller's revision) is ignored.
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null, 'deadbeef'), { yes: 2, no: 1 });
+});
+
+test('atLeastGate: the member floor holds the merge and lifts the keep-alive', () => {
+  const old = new Date(Date.now() - 400 * DAY);
+  const plain = governance.atLeastGate(1, 1, 3, old, Date.now());
+  assert.equal(plain.mergeable, true);
+  assert.equal(plain.rejectionArmed, false);
+
+  const held = governance.atLeastGate(1, 1, 3, old, Date.now(), { floorMet: false });
+  assert.equal(held.thresholdMet, true, 'the count is still reported as met');
+  assert.equal(held.mergeable, false);
+  assert.equal(held.rejectionArmed, true, 'support the floor does not accept keeps nothing alive');
+  assert.equal(held.rejectable, true);
+
+  const met = governance.atLeastGate(1, 1, 3, old, Date.now(), { floorMet: true });
+  assert.deepEqual(met, plain, 'floorMet: true is exactly the old gate');
+});
+
+test('communityMemberCount and proposalAuthorId read the rows they name', async () => {
+  const seen = [];
+  const pool = {
+    query: async (sql, params) => {
+      seen.push({ sql, params });
+      if (/community_members/.test(sql)) return { rows: params[0] === 1 ? [{ n: 4 }] : [] };
+      if (/FROM issues/.test(sql)) return { rows: [{ author_id: 12 }] };
+      if (/FROM chat_sessions/.test(sql)) return { rows: [{ author_id: null }] };
+      return { rows: [] };
+    },
+  };
+  assert.equal(await governance.communityMemberCount(pool, 1), 4);
+  assert.equal(await governance.communityMemberCount(pool, 2), null, 'a missing app is not evaluated');
+  assert.match(seen[0].sql, /LEFT JOIN community_members m ON m\.community_id = a\.community_id/);
+  assert.equal(await governance.proposalAuthorId(pool, 'issue', 3), 12);
+  assert.equal(await governance.proposalAuthorId(pool, 'pr', 3), null, 'a deleted author is null');
+});
+
+test('explicitApprovalRowFields: what a serializer hangs on a row', () => {
+  const g = governance.computeGate({ approverPolicy: 'anyone', approvalsRequired: null }, 2, 1, 0,
+    new Date(Date.now() - DAY), Date.now(), { explicitApproval: true, memberCount: 3, otherYes: 0 });
+  assert.deepEqual(governance.explicitApprovalRowFields(
+    { requires_explicit_approval: true, explicit_approval_reason: 'visibility' }, g
+  ), {
+    requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true,
+    other_member_yes_count: 0,
+  });
+  assert.deepEqual(governance.explicitApprovalRowFields(
+    { requires_explicit_approval: null, explicit_approval_reason: 'admins' }, g
+  ), {
+    requires_explicit_approval: false,
+    explicit_approval_reason: null,
+    needs_other_member_yes: false,
+    other_member_yes_count: null,
+  }, 'an unflagged row carries no reason, whatever the column says');
+});
+
+// #3234: the threshold as it stood when voting opened (display only). Same
+// requiredVotes over the stamped electorate and today's No votes, so the
+// only difference from the live number is who joined or left.
+test('requiredAtPromote: the stamped electorate\'s threshold, null when unstamped or fixed', () => {
+  const anyone = { approverPolicy: 'anyone', approvalsRequired: null };
+  assert.equal(governance.requiredAtPromote(anyone, 4, 0), activeUsers.requiredVotes(4, 0));
+  assert.equal(governance.requiredAtPromote(anyone, 12, 1), activeUsers.requiredVotes(12, 1));
+  assert.equal(governance.requiredAtPromote(anyone, null, 0), null, 'promoted before the stamp');
+  assert.equal(governance.requiredAtPromote({ approverPolicy: 'anyone', approvalsRequired: 2 }, 4, 0), null,
+    '"at least N" cannot move');
+});
+
+test('electorateAtPromote: the gate\'s electorate count, null when it cannot be read', async () => {
+  const invited = {
+    query: async (sql) => (/FROM apps/.test(sql)
+      ? { rows: [{ approver_policy: 'invited', approvals_required: null }] }
+      : { rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] }),
+  };
+  governance.invalidateGovernance(9101);
+  assert.equal(await governance.electorateAtPromote(invited, 9101), 3);
+  governance.invalidateGovernance(9102);
+  assert.equal(await governance.electorateAtPromote({ query: async () => { throw new Error('down'); } }, 9102), null);
+});
+
+// ── #4747: who sees the advisory line ─────────────────────────────────
+//
+// viewerDecides answers whether a viewer's vote can affect a proposal's
+// outcome under the project's governance, so the vote picker can say when
+// it cannot. It reads the same deciding set the gate reads; it is display
+// only and takes no pool.
+
+test('viewerDecides: everyone decides without approvers or rules', () => {
+  const anyone = { approverPolicy: 'anyone', approvalsRequired: null };
+  assert.equal(governance.viewerDecides(anyone, { approverIds: null }, 7), true);
+  assert.equal(governance.viewerDecides(anyone, {}, 7), true);
+});
+
+test('viewerDecides: invited project — the roster decides, nobody else', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  const opts = { approverIds: [3, 4] };
+  assert.equal(governance.viewerDecides(invited, opts, 3), true, 'an approver decides');
+  assert.equal(governance.viewerDecides(invited, opts, 9), false, 'a non-approver is advisory');
+  assert.equal(governance.viewerDecides(invited, {}, 9), false, 'a missing roster decides nobody');
+});
+
+test('viewerDecides: invited admin fallback — the admins passed as the roster decide', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  // getElectorate hands the fallback admins as approverIds; viewerDecides
+  // reads the same list, so a full admin is not flagged and others are.
+  const opts = { approverIds: [1] };
+  assert.equal(governance.viewerDecides(invited, opts, 1), true, 'the fallback admin decides');
+  assert.equal(governance.viewerDecides(invited, opts, 2), false, 'another member is advisory');
+});
+
+test('viewerDecides: a members rule decides everyone', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'members', kind: 'majority', n: null }], groups: [] },
+  };
+  assert.equal(governance.viewerDecides(gov, { facts: { creatorId: null, adminIds: [], groups: new Map() } }, 7), true);
+});
+
+test('viewerDecides: a creator-only rule decides the creator alone', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  const facts = { creatorId: 5, adminIds: [], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, { facts }, 5), true, 'the creator decides');
+  assert.equal(governance.viewerDecides(gov, { facts }, 6), false, 'another member is advisory');
+});
+
+test('viewerDecides: a named group decides its people', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: {
+      rules: [{ group: 'core', kind: 'majority', n: null }],
+      groups: [{ key: 'core', name: 'Core', ids: [11, 12] }],
+    },
+  };
+  const facts = { creatorId: null, adminIds: [], groups: new Map([['core', [11, 12]]]) };
+  assert.equal(governance.viewerDecides(gov, { facts }, 11), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 13), false);
+});
+
+test('viewerDecides: any rule passing includes the viewer, so admins count beside the creator', () => {
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: {
+      rules: [
+        { group: 'creator', kind: 'atLeast', n: 1 },
+        { group: 'admins', kind: 'atLeast', n: 1 },
+      ],
+      groups: [],
+    },
+  };
+  const facts = { creatorId: 5, adminIds: [9], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, { facts }, 5), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 9), true);
+  assert.equal(governance.viewerDecides(gov, { facts }, 6), false);
+});
+
+test('viewerDecides: a flagged change to who decides goes by WHO_DECIDES, so everyone decides', () => {
+  // A creator-only rules project, whose change is flagged for a reason that
+  // is not `secrets`: WHO_DECIDES (you or the group) includes a members
+  // rule, so every member's vote can decide it.
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  const facts = { creatorId: 5, adminIds: [], groups: new Map() };
+  assert.equal(governance.viewerDecides(gov, {
+    facts, explicitApproval: true, explicitReason: 'who_can_see',
+  }, 6), true);
+  assert.equal(governance.viewerDecides(gov, {
+    facts, explicitApproval: true, explicitReason: 'secrets',
+  }, 6), false, 'a flagged change to the keys follows the project rule');
+});
+
+test('viewerDecides: a signed-out viewer is never flagged', () => {
+  const invited = { approverPolicy: 'invited', approvalsRequired: null };
+  assert.equal(governance.viewerDecides(invited, { approverIds: [3] }, null), true);
+  const gov = {
+    approverPolicy: 'anyone',
+    rules: { rules: [{ group: 'creator', kind: 'atLeast', n: 1 }], groups: [] },
+  };
+  assert.equal(governance.viewerDecides(gov, { facts: { creatorId: 5, adminIds: [], groups: new Map() } }, null), true);
 });

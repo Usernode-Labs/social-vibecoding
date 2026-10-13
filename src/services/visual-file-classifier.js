@@ -1,6 +1,6 @@
 'use strict';
 
-// Shared by the staging capture and exact-revision evidence pipelines. A
+// Shared by the staging capture and exact-revision shots pipelines. A
 // plain .js or .ts file can be server code; only presentational extensions
 // or an actual frontend directory make the changed-file heuristic positive.
 const path = require('path');

@@ -1,32 +1,14 @@
 name: Deploy
 
-# Standalone deploy for Homeroom — the FALLBACK path.
-#
-# The PRIMARY deploy path is the host-side deployer on the VPS
-# (scripts/usernode-deployer.sh, a systemd service), which polls
-# github.com for a new main head and runs scripts/deploy.sh directly —
-# no Actions runner in the loop, so a GHA outage (2026-08-06) cannot
-# stall production. This workflow remains for two jobs:
-#
-#   1. Secrets. Only a runner can read GitHub secrets, so it composes
-#      the .env (below) and forwards it. The host deployer never
-#      rewrites .env — it reuses the one written by the last run of
-#      this workflow. Rotate a secret => dispatch this workflow.
-#   2. A manual fallback / force-redeploy (workflow_dispatch).
-#
-# The push trigger stays so secret-bearing .env refreshes keep flowing
-# without operator action; SKIP_IF_CURRENT below makes the push run a
-# cheap no-op when the host deployer already deployed the commit (the
-# usual case — the poller wins the race against the Actions queue).
-# Both paths converge on scripts/deploy.sh under one flock.
-#
-# Code is rsync'd to /opt/usernode, an `.env` is written from GitHub
-# secrets, then scripts/deploy.sh builds, health-gates, and rolls back
-# on failure.
+# DEPRECATED: this legacy VPS / Docker Compose workflow is not used for
+# Homeroom production. Build Kubernetes images (build-kubernetes-images.yml)
+# publishes the images and Helm chart; Argo CD deploys them using the
+# Usernode-Labs/infra GitOps configuration. See docs/kubernetes-operations.md.
+# Retained for historical reference and standalone deployment contract tests.
+# There is no automatic trigger, and the deploy job is disabled even on manual
+# dispatch so re-enabling the workflow cannot write secrets or deploy to the VPS.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       force_archive_refresh:
@@ -45,6 +27,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Deprecated: retained steps must never execute against the legacy VPS.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       # Signal deploy-in-progress to the /status page BEFORE doing anything
@@ -198,7 +182,7 @@ jobs:
         run: |
           cat > "$OUT_FILE" <<'ENVEOF'
           USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
-          CLI_CANONICAL_ORIGIN=https://my.onhomeroom.com
+          CLI_CANONICAL_ORIGIN=https://${{ vars.USERNODE_DOMAIN }}
           ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
           ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
           ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
@@ -264,9 +248,10 @@ jobs:
           OPENROUTER_RECOMMENDED_MODELS=${{ vars.OPENROUTER_RECOMMENDED_MODELS || 'deepseek/deepseek-v4.1-flash,z-ai/glm-5.3-flash,openai/gpt-6-astra,moonshotai/kimi-k3,anthropic/claude-opus-5' }}
           USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
           USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
-          # Default-on evidence v2 has one emergency kill switch. A repo
-          # variable set to the string "false" stops it on the next deploy.
-          VISUAL_EVIDENCE_V2_ENABLED=${{ vars.VISUAL_EVIDENCE_V2_ENABLED || 'true' }}
+          # Default-on shots have one emergency kill switch. A repo
+          # variable set to the string "false" stops them on the next deploy
+          # (VISUAL_EVIDENCE_V2_ENABLED is the variable's old name, still read).
+          SHOTS_ENABLED=${{ vars.SHOTS_ENABLED || vars.VISUAL_EVIDENCE_V2_ENABLED || 'true' }}
           LOG_LEVEL=INFO
           GIT_SHA=${{ github.sha }}
           # Scaling tunables (see README scaling notes). Committed defaults

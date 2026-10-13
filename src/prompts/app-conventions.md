@@ -70,7 +70,11 @@ Ordered by how badly an agent working offline gets each one wrong.
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
    fabricates the answer makes that code path untestable by the gate
-   and different for real users.
+   and different for real users. A project's first version is the one
+   exception, on `?demo=1` only: see "A first version's populated demo".
+   The shots' fixture accounts are not whoever opened the preview: a
+   state new in a change is seeded in that change, for them or for fake
+   people, as "Who the before & after shots see" says.
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -87,9 +91,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    renders against an empty staging database, so seed what it needs.
    Demo routes are fine for regression tests, but never add a
    screenshot-only query parameter. After a visible change, call
-   `record_visual_evidence_intent` with the claim, real user flow, focus,
-   persona, viewports, and optional animation. Homeroom performs it against
-   exact base/head revisions and replays it twice. For a non-visual change,
+   `declare_visible_changes` with the change, real steps, focus,
+   persona, viewports, and animation (`motion` gets clips). Homeroom takes
+   before/after shots of it on the exact builds. For a non-visual change,
    record `impact: "none"` with a specific rationale.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
@@ -115,12 +119,20 @@ Ordered by how badly an agent working offline gets each one wrong.
    degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
    never a hardcoded host. Handle checks use `usernode.lookupUser()` /
    `searchUsers()` — never a guess from users your app has already seen.
+   "Everyone in the group" is `GET /members` (see "Members"), which works
+   in previews: never the users who opened the app, never fake people.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
 10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
     `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
     app paths. Keep npm scripts/lockfile for kpack.
+11. **Content rules: every app rates "None".** Build nothing sexual,
+    suggestive or mature-themed, no nudity, no violence or weapons, and no
+    gambling, simulated gambling or loot boxes. That includes seed data and
+    AI-generated text: prompts for app AI features must tell the model to
+    decline these topics. Decline such a request and offer a compliant
+    version. Full text: "Content rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -304,6 +316,55 @@ own app iframe. Apps generated before this convention can adopt it by
 appending `'?path=' + encodeURIComponent(req.originalUrl)` to their clean
 chromeless redirect (see the current scaffold's `server.js` for the
 attribute-safe character check used on the landing-page anchor).
+
+### Signed in at the app's own address
+
+Someone signed in to Homeroom who opens the app's own address is signed
+in there too: the platform's edge adds the same identity token as the
+`x-usernode-token` request header on the page load, the app's own
+`fetch` and form requests, and WebSocket handshakes from the app's page.
+So the middleware above sets `req.user` with no `?token=` in the URL.
+Three consequences:
+
+- **Ask the server who is signed in** (for example a `GET /api/me`), not
+  the page URL: at the app's own address there is no `?token=` for the
+  frontend to read, and nothing to forward.
+- **WebSocket auth reads the header too**, not only a `?token=` query on
+  the socket URL.
+- **Writes are POST/PUT/PATCH/DELETE from the app's own page.** The edge
+  adds identity to a write only when its Origin is the app's own address,
+  so a sibling app cannot make a visitor's browser act as them.
+
+### Guests: people without an account (read-only)
+
+Every public app lets people with no Homeroom account look around at its own
+address. Private apps, previews and the app inside Homeroom never have
+guests. Nothing turns it on: write the app so a guest can look around.
+
+- **A guest carries a guest token**, in the same `x-usernode-token` header:
+  `ES256`, signed by a key of its own whose public half is
+  `USERNODE_GUEST_JWT_PUBLIC_KEY`, audience
+  `usernode:app:<USERNODE_APP_ID>:guest`, `pur: 'guest'`, `guest: true`,
+  and no `id` or `username`. Verify it with that key,
+  `algorithms: ['ES256']`, issuer `usernode` and that audience, and set
+  `req.guest = true`. A guest is never `req.user`, and a verifier written
+  for a person's token never accepts it. The scaffold does this.
+- **Guests read; every write needs an account.** Read routes must not
+  assume `req.user` (`req.user ? req.user.id : null`). Answer any write
+  without `req.user` with `401 { "error": "account_required" }`, optionally
+  with `"action": "post a photo"` to name what they tried; the platform's
+  edge already answers a guest's browser writes that way.
+- **Never write on GET, and check WebSocket messages yourself.** The edge
+  refuses a guest's POST, PUT, PATCH and DELETE; a write done on a GET or
+  over a WebSocket slips past it. Refuse guest writes on a socket in your
+  own handler.
+- **Asking them to join.** The bridge turns any `account_required` answer
+  to the app's own requests into a "Make an account to continue" sheet
+  that brings them back to the same page signed in. To ask before they
+  try (a disabled button, say), call
+  `usernode.askForAccount({ action: 'post a photo' })`.
+- Platform services (AI, file storage, the user directory) refuse guest
+  tokens with `account_required`.
 
 ## Database
 
@@ -490,8 +551,12 @@ Seed rules:
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
-  prefix so they can't be mistaken for real user content.
+  prefix so they can't be mistaken for real user content. (A first
+  version's `?demo=1` demo is labelled once instead: see "A first
+  version's populated demo" below.)
 - **Small.** A handful of rows — just enough for the testing steps.
+  (A project's first version is the one exception: see "A first
+  version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
 - **Strictly a no-op outside staging.** The whole block is gated on
@@ -500,6 +565,50 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### A first version's populated demo
+
+A project's **first version** (the build that replaces the starter's
+placeholder screen) is first seen as its staging preview opened with
+`?demo=1`, and that screen should show the app in use, from the
+viewer's own seat. For that build only, and on `?demo=1` only, four
+seed rules change. Every later change keeps the rules above.
+
+- **Enough to look lived in.** Varied, realistic rows filling about a
+  screen and a half of the main screen at phone width (390×844), not
+  a handful.
+- **Labelled once, not on every row.** The screen says "Staging demo"
+  once, plainly and visibly: a banner or a line at the top of the
+  screen, or the name of the list or collection the rows belong to.
+  Each row needs no label of its own (a "Staging demo" pill or prefix
+  on every row only clutters the screen), and this replaces the
+  "Staging demo …" prefix above for these rows. The rows themselves
+  stay obviously made up: no real people and no real private data.
+- **The viewer's own data too.** What the app keeps for a person
+  (their items, choices, progress, saved things) is shown as the
+  viewer's: a demo where only made-up people have done anything shows
+  the viewer an empty "mine". Either add the viewer's demo rows to the
+  `?demo=1` responses without storing them, or write them for the
+  viewing account on its first `?demo=1` request, once (fixed ids,
+  `ON CONFLICT DO NOTHING`, so a reload changes nothing and what the
+  viewer did to them stays). The viewing account is whoever opened the
+  preview, a reviewer or a test account, and the rows land only in
+  staging's own database: that is not cloning production rows, so
+  "Never reference real users" still holds. Other people in the demo
+  are still fake identities.
+- **Every control the real screen has.** The populated demo is the
+  app, not a read-only tour: the actions a person has on that screen
+  (add, edit, refresh, mark done, reorder, delete) are there and work
+  on the demo rows. A "view only" demo that hides them is not a
+  populated screen.
+
+What does not change: nothing is written outside staging, nothing is
+written by a route without `?demo=1` (the page passes `demo=1` on to
+its own API calls), boot-time seeding stays with fake identities, and
+the plain route keeps its test of the production-shaped answer. The
+viewer's demo rows must never be what makes a check of the form "has
+this user done X" pass (see the next section): keep such checks off
+demo rows, or add the rows to the responses rather than storing them.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -529,7 +638,11 @@ app's own logic. Three habits keep them apart:
   reference real users" seed rule above, and it is the one that bites
   hardest — the visitor is the account every code path checks against,
   so attributing seeded rows to them is handing the preview a
-  credential production won't have.
+  credential production won't have. (A first version's `?demo=1` demo
+  may give the viewer rows of their own, within the limits of "A first
+  version's populated demo" above; nothing else may.) The before & after
+  shots' fixture accounts are not the visitor: "Who the before & after
+  shots see" below says what a seed may give them.
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -552,13 +665,13 @@ the closest thing to production the gate can reach.
 
 Legacy proposals could only navigate to a URL, so this section historically
 required a query/hash parameter that forced an interaction-only state open.
-Agent-authored visual evidence removes that requirement: the evidence agent
-can perform the real clicks, typing, keyboard input, selection, hover,
-scrolling, and bounded pointer gestures, then ordinary platform code replays
-the accepted plan twice. It never falls back to the home screen.
+Before/after shots remove that requirement: the shots agent performs the
+real clicks, typing, keyboard input, selection, hover, scrolling, and pointer
+gestures on both builds, then takes the shots itself. It never falls back to
+the home screen.
 
 Do **not** add a screenshot-only route for a modal, bottom sheet, wizard, game
-state, or menu. Call `record_visual_evidence_intent` instead and describe how a
+state, or menu. Call `declare_visible_changes` instead and describe how a
 person reaches the state. A deterministic demo/deep route is still useful when
 it is part of the product, seeds a durable `dapp.json` regression check, or
 gives reviewers a stable "Test this change" entry point; in those cases keep
@@ -599,6 +712,65 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
+### Who the before & after shots see
+
+The shots agent signs in as the persona each declared change names, on
+throwaway copies of the app. Five things it cannot do by itself, which
+account for most changes that end up with no shots:
+
+- **It finds only the data the copies hold.** Each copy is a fresh
+  staging copy that runs its own revision's `IS_STAGING` seed. When the
+  state a change shows is not there, add an idempotent, obviously fake
+  seed for it in the same proposal: the seed reaches the after copy,
+  which is the side a state new in this proposal needs. Seed rows for
+  fake people and for the shots' own accounts, by username
+  (`usernode-capture` is the member; `usernode-capture-admin` and
+  `usernode-shots-full-admin` are the two administrators). That is not
+  "seeding the visitor" (see "Never seed the visitor" above): a fixture
+  account is one named account, not whoever opens the preview. The rest
+  of that rule holds: never seed a signal your code reads to decide
+  something, so a seed never answers the question the change's own code
+  asks ("may this person invite?", "has this user done X?"). A reply
+  from an AI feature is seeded as the stored reply, never asked for: the
+  copies have no model key. A seed cannot help a change to a state that
+  already existed, which both copies need: put the steps that make it in
+  `hints.setup`, or seed it first, in its own proposal.
+- **It has no role in your app.** `member` is an ordinary signed-in member:
+  not your app's manager or owner, with no linked wallet and nothing it
+  made. When a change shows only to someone with a role, put the real
+  in-app path to that role in `hints.setup` (for example "Create a group
+  from + first; its creator is its manager"). Do not grant the role to
+  whoever opens the preview in seed data (see "Never seed the visitor"
+  above). If no in-app path reaches it, declare what a member does see and
+  say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
+- **It cannot sign out.** A change that signed-out visitors see is declared
+  with persona `guest`. A private app shows a guest only what it shows a
+  signed-out visitor outside Homeroom, usually a sign-in page, so declare a
+  private app's changes for `member`. The response to
+  `declare_visible_changes` warns about both mistakes; declare again when it
+  does.
+- **The home screen is not on the copies' addresses**, but the shots agent
+  shoots each side's home-screen tile from that side's `dapp.json`. A change
+  to the app's `icon`, `name` or colour is a visible change: declare it
+  with impact `ui` and a claim naming the home-screen tile, not `none`.
+
 ### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the
@@ -631,6 +803,77 @@ point a deep `path:` at the specific changed self-app screen** —
 omitting it defaults to `/` (the home feed), which no capture fix can
 rescue.
 
+## Time-dependent features
+
+Some changes only show at certain times: a reminder the evening before
+bins day, a rota that turns over on Monday, a deadline, "tonight", a
+seasonal screen. A preview opens on whatever day it happens to be, so
+without help nobody can see such a change before they vote on it. (A group
+was once asked to approve a Thursday-evening banner that Try it opened on a
+Monday and the shots could not show.) A staging preview can instead be
+shown as of a chosen moment. Four things make that work:
+
+1. **Read "now" through the platform, never `new Date()`, `Date.now()` or
+   SQL's `NOW()` / `CURRENT_DATE`, wherever the day or the time decides
+   what shows.**
+   - In the page: `usernode.now()` (the bridge) returns a `Date`. It is the
+     real time, except on a preview opened at a moment, where it is that
+     moment plus the time since the page loaded. `usernode.previewNow` is
+     that moment as an ISO string, or `null`.
+   - On the server: `req.now`, a `Date`. New apps' `server.js` sets it (its
+     sign-in middleware calls `requestNow`). An app without it adds this
+     before its routes:
+
+     ```js
+     const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+     const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+     function requestNow(req) {
+       const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+       return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+     }
+     app.use((req, _res, next) => { req.now = requestNow(req); next(); });
+     ```
+
+   - The page tells the server: every API call sends
+     `x-usernode-now: usernode.now().toISOString()` when
+     `usernode.previewNow` is set. The starter templates' `api()` helper
+     already does.
+   - In SQL, pass `req.now` as a parameter (`WHERE due_on = $1::date`)
+     instead of `NOW()` where the answer decides what shows. A timestamp
+     that records when something happened (`created_at DEFAULT NOW()`)
+     stays as it is.
+   - Name the zone. The server runs in UTC, so "Thursday evening" computed
+     with `getDay()` / `getHours()` is Thursday evening in UTC. Work out the
+     day and the hour in the group's zone with `Intl.DateTimeFormat` and
+     `timeZone`, and say which zone the app uses in its `CLAUDE.md`.
+   - **Production ignores it entirely.** The platform only adds
+     `?un-now=` to a staging preview's address, the bridge never reads it
+     on a production app's address, and the server reads it only when
+     `USERNODE_ENV` is `staging`. The code path is the same everywhere; only
+     the value of "now" differs, so this is data, not a gated feature.
+2. **Say when it shows** in the change's description and testing steps,
+   in plain words: "The reminder shows on Thursdays from 6 pm until bins is
+   ticked."
+3. **Declare a preview moment.** Put one line in the TESTING block (it is
+   carried into the pull request's "How to test", where it shows to
+   nobody):
+
+   ```
+   <!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->
+   ```
+
+   A local date and time (`YYYY-MM-DDTHH:MM`), then the IANA time zone the
+   app reasons in (UTC when left out). Pick a moment when the change shows
+   with the preview's own data: a Thursday at 7 pm, with the seeded rota's
+   bins still unticked. Try it then opens the preview at that moment and
+   says so above it ("Showing it as on Thursday 8 Oct, 7 pm", with "See it
+   as now" beside it), and the shots agent opens both the before and the
+   after copy at it. On `submit_work`, put the same line in
+   `testingSteps`. Only one moment per change; the first valid line wins.
+4. **Check it yourself** in the in-loop browser: add
+   `?un-now=2026-10-08T18:00:00Z` (an ISO time with `Z` or an offset) to
+   the URL, and look at it before and after the moment.
+
 ## Proposal tests — "CI for proposals"
 
 Every proposal carries a **checks** status: after each staging build the
@@ -647,6 +890,15 @@ optionally — that an expected element or text is present. The
 console-error check is the built-in baseline: every proposal gets a
 "loads with no console errors" test on its routes for free, even with no
 tests declared.
+
+The platform also reads **every checked page** for its own row, **"Pages
+render with their stylesheets (platform check)"**, which no `dapp.json`
+setting can opt out of (`allowConsoleErrors` included). It fails when one
+of the page's own stylesheets fails, answers `204`, or comes back empty, or
+when a page renders nothing visible at all. A page that lost its stylesheet
+keeps all of its markup, so element and text checks alone never notice. Like
+the repo unit-suite row, it is advisory until the app has passed it once,
+and merge-blocking after that.
 
 Declare tests in a top-level `tests` array in `dapp.json`. They live in
 the repo and **accumulate across proposals** — once a proposal merges, its
@@ -693,12 +945,13 @@ Per-test fields:
   `dapp.json`, not in source functions.
 
 Visual scenario metadata remains useful executable documentation and durable
-regression coverage. Reviewer-facing visual evidence is proposal-specific:
-the authoring agent declares up to three claims and can submit the typed UI
-flow it used during implementation. A purpose-bound evidence agent can also
-explore the exact base/head previews to produce a plan. The platform replays
-either plan twice and verifies the generated media. No matching scenario and no
-submitted legacy route is ever permission to publish `/` as a fallback.
+regression coverage. Before/after shots are proposal-specific: the authoring
+agent declares up to three changes (changes that show on the same screen are
+one), with the steps and optional hints it used during implementation, and a
+purpose-bound shots agent follows them on the
+exact before and after builds and saves what it sees. People look at the
+shots to judge the change. No matching scenario and no submitted legacy route
+is ever permission to publish `/` as a fallback.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the
@@ -866,6 +1119,18 @@ rename takes effect when that PR is voted in, merged, and redeployed —
 not before. Don't add code that mutates the display name through any
 other channel; edit `dapp.json`'s `name` and let the deploy apply it.
 
+### Top-level `description` — one line about what the app is
+
+`dapp.json` may carry an optional top-level `"description"` string: one
+plain sentence saying what the app is ("A shared shopping list for the
+house"). The project's page, Discover, the join screen and the About
+pane show it. Keep it to **90 characters or fewer**, which is two lines
+on a phone; the create screen enforces that limit. A longer line still
+deploys, but each surface cuts it off with an ellipsis (two lines on the
+project's page, Discover and the join screen, three in the About pane), so
+the rest is never read. Change it like the name: edit this field in a
+proposal.
+
 ### Top-level `visibility` — who can build / see & use the app
 
 `dapp.json` may carry an optional top-level `visibility` block — the
@@ -1016,6 +1281,94 @@ Rules:
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
+- **Before & after shots.** The tile is on Homeroom's home screen, which
+  the app's own pages never show. Declare an icon change as a visible
+  change with `startPath` `/__shots/home-tile`: during the shots each
+  version of the app answers that path with its own home tile, drawn
+  from its own `dapp.json` (icon, name and colour). The path exists only
+  in the shots, not in a preview or in production.
+
+#### Icon style: one set on the home screen
+
+When you give an app an icon, draw it in this style unless the group
+has chosen its own artwork. Every app's tile then reads as part of one
+set instead of a mix of emoji, letters and one-off logos.
+
+- **Where the file goes.** Commit it as `brand/icon.png`, declare
+  `{ "icon": { "image": "brand/icon.png" } }`, and add a short
+  `brand/ICON.md` naming the glyph and colour so someone can redraw it.
+  Keep it out of `public/`, `assets/` and other served folders: the
+  platform reads the file at deploy time and the app never serves it,
+  and a file under those folders counts as a browser UI change, so an
+  icon-only proposal there cannot declare `shots` impact
+  `none`.
+- **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
+  tile rounds and crops it), no text or letters. A render in this style
+  is 50–80 KB, well under the 256 KB limit. SVG is not accepted, so
+  render the template below to PNG (for example
+  `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`).
+- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in
+  white, with Lucide's own 2px round strokes on its 24-unit grid,
+  scaled × 12 into the middle 288 px (112 px of margin on each side)
+  over a soft drop shadow. Pick the object the app is about (a chef hat
+  for recipes, a dumbbell for a gym log), not an abstract mark. When
+  Lucide has nothing that fits, draw one on the same grid with the same
+  strokes; never mix in a filled, multicolour or emoji glyph.
+- **Colour.** A diagonal two-stop gradient, top left to bottom right,
+  from this palette, under a faint white highlight at the top left.
+  Choose by what the app is for:
+
+  | Hue | From | To | For |
+  |---|---|---|---|
+  | orange | `#FFA552` | `#E05A12` | food, making, building |
+  | amber | `#FBB43C` | `#C9570A` | pets, notes, farming, time |
+  | brown | `#C98C5E` | `#6E3F22` | coffee, crafts |
+  | red | `#FF7163` | `#D1321F` | sport, video, voting, places |
+  | magenta | `#FF6AB8` | `#CF1F74` | social, art, people, personal pages |
+  | violet | `#B574FF` | `#7327DB` | games, quests, rankings |
+  | indigo | `#8577FF` | `#4432D1` | lists, work, markets, security |
+  | blue | `#5B9BFF` | `#1F57E6` | tools, lists, language, weather |
+  | teal | `#34D3C3` | `#0B7D84` | kids, drawing, surveys |
+  | green | `#3DD68A` | `#0E8A4C` | money, growth, luck |
+  | slate | `#6A7B93` | `#27313F` | utilities, tests, diagnostics, spooky |
+
+  A fork keeps its parent's glyph on a different hue, so the two tiles
+  can be told apart.
+- **Keep the emoji** beside the image when the app had one
+  (`{ "image": "brand/icon.png", "emoji": "🍳" }`): it is what the tile
+  shows if the image ever fails validation.
+
+The template, with the orange pair filled in and one Lucide glyph's
+`<path>`/`<circle>` elements pasted into the inner group:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFA552"/><stop offset="1" stop-color="#E05A12"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.25" cy="0.12" r="0.8">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#gloss)"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(112 112) scale(12)" fill="none" stroke="#fff"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- the glyph's elements, copied from its Lucide SVG -->
+    </g>
+  </g>
+</svg>
+```
+
+Keep the shadow filter on the outer, unscaled group: on the scaled
+group its offset and blur are multiplied by 12 and leave a visible
+box on the tile.
 
 Per-field rules:
 
@@ -1617,6 +1970,8 @@ Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
 wallet field. Only view-public, non-platform apps with a usable deployment
 appear. Use the returned `url`, never rebuild a hostname from `slug`.
 `icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+Contributors are who built an app, not who is in it: for your own
+project's people use "Members" below.
 
 Cache the response for 30–60 seconds; the route allows 60 requests/minute
 per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
@@ -1772,7 +2127,7 @@ const { found, user, ambiguous } = await resp.json();
 ```
 
 This user-token-only fallback exists **only** on the two `/users/*`
-endpoints. The governance feed still requires the app token, so its
+endpoints and `/members` (see "Members"). The governance feed still requires the app token, so its
 `FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
 `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
@@ -1822,6 +2177,46 @@ try {
   known = (await usernode.lookupUser(handle)).found;
 } catch { /* no shell — accept it */ }
 ```
+
+The directory never returns the platform's own accounts (the
+`usernode-*` service identities that run checks, and synthetic users such
+as the Homeroom bot), so a handle like `usernode-capture-admin` is
+`found: false`.
+
+## Members: who is in this project
+
+"Everyone in the group" (a chore rota, a turn order, a "who's coming"
+list) is the project's member list, and the platform has it. Ask for it;
+don't build it.
+
+```js
+const headers = { 'x-usernode-user-token': userTokenFromThisRequest };
+if (process.env.USERNODE_LLM_PROXY_TOKEN) {
+  headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+}
+const resp = await fetch(`${PLATFORM_API_BASE}/members`, { headers });
+if (resp.status === 403) { /* not a member: show the screen without the roster */ }
+const { members, has_more } = await resp.json();
+// members: [{ id, username }, ...], the creator first, then oldest member first
+```
+
+- **Same auth as `/users/*`, previews included.** A staging preview sends
+  only the user token and gets the project's **real** members, the same
+  people the live app will see. So the preview is where a member checks
+  that the rota has the right people in it.
+- **Only members get an answer.** Anyone else (an admin looking in, the
+  platform's check runner) gets `403 { code: 'not_a_member' }`. Show the
+  screen without the roster, and never fail the page on it.
+- **Never "whoever has opened the app".** Every proposal check opens the
+  preview as a platform account, so a list built from visitors shows that
+  account to the group. Key per-person rows by `members[].id`.
+- **Never a staging fixture of fake people for this.** It hides the real
+  answer in the one place people review it. If a declared check needs fixed
+  names, serve them only behind `IS_STAGING && req.query.demo === '1'` and
+  point that check at the `?demo=1` path; the plain route stays real.
+- Rate limit: shared with `/users/*` (120/min per app and user). Cache the
+  list for a minute rather than asking on every request. `?limit=` defaults
+  to 100, at most 200; `has_more` says there are more.
 
 ## Don't `git push` yourself
 
@@ -1910,6 +2305,13 @@ Rules:
   redeploy SV. All dapps recover on the next page load — no per-dapp
   redeploy needed. This is the single biggest payoff of centralization
   vs. the old vendored-fan-out model.
+- **Never answer these prefixes from the app's own server.** The
+  production edge routes `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` to the platform before the app sees the request,
+  and the in-loop launch (`usernode-run-inloop`) does the same. A route,
+  proxy, stub or `204` for them in `server.js` is dead code in production
+  that only hides a sandbox symptom, and one that also catches a built
+  asset such as `/tailwind.css` deletes the app's styling for real users.
 - **Local-dev tradeoff.** `npm run dev` for any dapp now requires SV
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
@@ -1980,10 +2382,10 @@ localize their UI should treat it as the **default** instead of building
 their own detection from `navigator.language` (which reflects the device,
 not the user's Homeroom-level choice). It reaches apps two ways:
 
-**Expect `null` for nearly every user (SV #1556).** The setting is still
-stored and still delivered on both paths below, but the platform shell is
-English-only, so its Settings picker is hidden pending platform i18n and is
-offered only to the few users who had already chosen a language. So make
+**Expect `null` for nearly every user.** The setting is stored and
+delivered on both paths below, but Homeroom's own screens are English only
+for now, so its Settings picker offers just "Auto" (`null`) and English, plus
+whatever language a user had already chosen when it listed more. So make
 device-language fallback the PRIMARY path and the platform tag an override
 when present. Do not build a feature that only works once the user sets a
 platform locale, and do not tell users to go and set one.
@@ -2112,6 +2514,31 @@ Notes:
   app uses itself. Do not strip it or depend on its position in the URL.
 - An app that offers its own light/dark picker may keep it. Treat the
   platform theme as the default until the viewer picks something in your app.
+
+### New apps: a light and a dark look, following the platform
+
+Every new app is built with both a light and a dark look. It opens in the
+viewer's Homeroom theme (`usernode.theme`), switches live on
+`usernode:theme-changed` without a reload, and falls back to
+`prefers-color-scheme` only when opened outside Homeroom. That is the wiring
+above, and every starter template (Empty included) already ships it in its
+`<head>`, right after the bridge tag.
+
+- **Keep the template's theme `<script>`** when you replace the starter
+  screen, and give everything you build both looks: Tailwind's `dark:`
+  variants (the scaffold's `tailwind.config.js` sets `darkMode: 'class'`),
+  or `.dark` overrides of your own tokens. Check both looks before you
+  finish.
+- **No theme picker by default.** The viewer's Homeroom setting is the
+  control. Add one only when a request asks for it, and then treat the
+  platform theme as the default until the viewer picks something.
+- **Only where it is relevant.** An app whose one fixed look is the point
+  (a game drawn as its own scene, a photo or camera viewer on black) may
+  keep that look. Say so under "App-specific conventions" in the app's
+  `CLAUDE.md`, so a later change does not "fix" it.
+- **Existing apps keep what they have.** An app built with one look before
+  this rule stays that way until a request asks for light and dark. Do not
+  convert it as a drive-by.
 
 ## Staying loaded in the background
 
@@ -2521,6 +2948,22 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Tap outside a field closes the keyboard (automatic).** On a phone,
+  with a text field focused, a tap (one finger, no scroll or drag, not a
+  long press) on anything that is not a field or a control blurs the
+  field, so the keyboard goes down. iOS does not do this by itself, and
+  the Homeroom app has no Done button above its keys, so this is how
+  people put the keyboard away; Chrome on Android already behaved this
+  way. The tap is never prevented and still does whatever it did. Taps on
+  inputs, textareas, selects, editable regions, buttons, links, labels,
+  `summary`, iframes, ARIA widget roles (`button`, `option`, `listbox`,
+  `menuitem`, `tab`, `switch` and the like), `.un-pressable`, and the
+  list a field names in `aria-controls` keep the keyboard up. Mark
+  anything else that must keep it (a custom picker made of plain divs)
+  with `data-keep-keyboard`; it covers everything inside. An app that
+  closes the keyboard its own way turns this off with
+  `data-un-keyboard-dismiss="off"` on `<html>` or `<body>`. No-op on
+  desktop.
 - **Keyboard avoidance for fixed-shell content scrollers.**
   `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
   fields? })` — the same keyboard physics for the APP's main content
@@ -2744,6 +3187,13 @@ The one rule this path asks of you:
 - Need a Tailwind plugin (`forms`, `typography`)? Add it to
   `tailwind.config.js` `plugins` — strictly better than the CDN's
   `?plugins=` query, which this path does not use.
+- **Never special-case `/tailwind.css` in `server.js`.** It is served from
+  `public/`, where the image build wrote it. A checkout that has not run
+  `npm run build` has no such file; that is a missing build, not a missing
+  route. Answering the path with an empty or `204` response silences the
+  local error and removes every layout utility the page has in production.
+  The platform's render-health check fails a stylesheet that comes back
+  empty.
 
 ### 2. The centrally-hosted runtime — the escape hatch and migration target
 
@@ -2888,8 +3338,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -2898,11 +3349,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML.
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
@@ -3052,9 +3508,11 @@ catching a blank page, a JS crash on load, a broken layout, or a failing
 API call that source-reading alone would miss — and fix it before
 committing.
 
-Use it before declaring a `ui` or `motion` visual evidence story. A story
-must describe a checkpoint you actually reached in the local app, including
-the state the evidence runner will need to reproduce. For backend-only,
+Use it before declaring a `ui` or `motion` change for before/after shots.
+A declared change must describe a checkpoint you actually reached in the
+local app, including the state the shots agent will need to reach it
+again (put that in `hints.setup`, or seed it as "Who the before & after
+shots see" says). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
 sync turns have no browser at all.
@@ -3073,31 +3531,97 @@ locally inside the worker the same way a staging container does:
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
   secret or invent a credential just to make the local check run.
+- It also serves the app **the way production does**. It runs the app's
+  `npm run build` first, as every staging and production image does (that
+  is what writes `public/tailwind.css`); a failing build stops the launch,
+  because the image would fail the same way. And on `$INLOOP_PORT` a small
+  front proxy answers `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` from the platform, as the production edge does, and
+  passes everything else to the app on an internal port. Browse
+  `$INLOOP_PORT`, never the internal one.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
   the flow you will declare. Self-app app screens stay under
   `/app/<slug>/...`; put its other SPA routes after the `#`.
-- Exercise the real interaction and make the evidence intent concrete. For a
+- Exercise the real interaction and make the declared change concrete. For a
   mobile-only change, resize to the viewport you will declare (for example
-  390×844). This local check helps you fix the head revision; the later paired
-  evidence run independently explores and replays both revisions.
-- A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Check the app's existing staging fixtures or
+  390×844). This local check helps you fix the after build; the later shots
+  agent independently follows your steps on both builds.
+- A **blank, unstyled or broken-looking page is a bug until you have ruled
+  the page itself out**: read the console and confirm every stylesheet and
+  script loaded. This launch builds and serves the app as production does,
+  so a failed or empty asset here fails for users too. **Never make the app
+  answer a hosted-asset path or its own built stylesheet with an empty or
+  `204` response to quiet a console error** — an app that did exactly that
+  to `/tailwind.css` shipped a blank production page for days. Only once
+  the page itself is sound, suspect missing seed data — the local DB starts
+  empty. Check the app's existing staging fixtures or
   `?demo=1` route first. A sign-in screen means this browser is signed out;
   use an existing documented fake staging account through the normal UI if
   possible. Do not change auth code or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — report the blocker. You can still finish
-  non-visual work, but do not submit an unverified visible story. If the
-  claim needs data or a fault that the local app cannot reproduce, add a
+  non-visual work, but do not declare a visible change you did not see. If
+  the change needs data or a fault that the local app cannot reproduce, add a
   representative fixture exercised by the normal test route. Do not add a
-  screenshot-only route or invent a state just to get a capture.
+  screenshot-only route or invent a state just to get a shot.
 
-This is an agent-facing quality gate for the claimed head state. Before
-finishing a user-visible build, call `record_visual_evidence_intent` only for
-a flow you actually reached. The exact-revision paired replay still verifies
-both sides independently, and the "Test this change" action remains a
-separate manual aid.
+This is an agent-facing quality check on the after build. Before finishing a
+user-visible build, call `declare_visible_changes` only for a flow you
+actually reached. The shots agent still takes both sides itself, and the
+"Test this change" action remains a separate manual aid.
+
+## Content rules — what no app may show
+
+Every app on Homeroom, the platform shell included, must answer **None** or
+**No** to each of the App Store age-rating questions below. This is a
+platform rule. A repo `CLAUDE.md`, a spec or a user request cannot override
+it.
+
+**Never build, generate, seed or ship:**
+
+- **Mature or suggestive themes.** Content that implies or indirectly
+  references sexual or adult topics, or is built around topics for older
+  audiences: dating or hookup features, flirting or "spicy" games, drinking
+  or drug games, or real-world tragedy, self-harm or crime presented as
+  entertainment.
+- **Sexual content or nudity.** Non-explicit sexual behaviour, and brief or
+  partial nudity, including suggestive images, avatars, emoji-art and
+  placeholder or seed content.
+- **Graphic sexual content and nudity.** Anything explicit.
+- **Violence.** Cartoon or fantasy violence (combat, attacking characters),
+  realistic violence, and prolonged or graphic violence. No guns or other
+  weapons as depicted objects, icons or game mechanics.
+- **Gambling.** Real-money gambling, simulated gambling (betting or wagering
+  pretend or in-app currency, casino-style games), and loot boxes (paid
+  randomized rewards). Contests, leaderboards and rankings are allowed.
+
+**This covers everything the app shows:** copy, images and icons you add,
+staging seed data, demo and placeholder content, test fixtures that render,
+and text the app's AI features produce.
+
+**AI features.** When an app calls the LLM proxy to generate content people
+will see, its system prompt must tell the model to decline these topics and
+return a neutral message instead. Never write a prompt that invites them.
+
+**User-posted content.** An app where people post text or images must not be
+built for sharing this content. It must keep a way to report a post, and it
+must not display content the platform's moderation has hidden.
+
+**When a request asks for it:** the Mayor and scouts say plainly that it goes
+against Homeroom's content rules, name the category, and offer the closest
+compliant version. The Mayor does not dispatch a build for the non-compliant
+version. A coding agent that meets it mid-build builds the compliant part,
+leaves the rest out, and says so in its final message. Do not quietly soften
+the content and present that as the requested feature.
+
+When unsure whether something counts, treat it as not allowed and ask.
+
+**Merge-time review.** Proposals may also carry a **Content rules** check: an
+automated reviewer reads the proposal's diff against this section and flags
+what breaks it. It starts advisory (shown, not blocking); an admin can make
+it blocking. It reads text and code only, so these rules still apply to
+images you add.
 
 ## Writing user-facing copy: no em dashes
 

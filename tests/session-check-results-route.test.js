@@ -144,6 +144,12 @@ test('shared and own demo details reuse list fixtures only in staging demo mode'
     assert.equal(own.status, 200);
     assert.equal(own.body.session.user_id, 42);
     assert.equal(own.body.session.session_title, '[Mock] Your in-progress session');
+    assert.equal(own.body.session.preview_placeholder, true);
+    for (const id of [990102, 990103, 990104, 990105, 990107, 990108]) {
+      const sample = await get({ id: 42 }, 'details?demo=1', id);
+      assert.equal(sample.status, 200, `listed sample ${id} has a detail response`);
+      assert.equal(sample.body.session.preview_placeholder, true);
+    }
     assert.equal((await get({ id: 42 }, 'details', 990002)).status, 404);
     process.env.USERNODE_ENV = 'production';
     assert.equal((await get({ id: 42 }, 'details?demo=1', 990002)).status, 404);

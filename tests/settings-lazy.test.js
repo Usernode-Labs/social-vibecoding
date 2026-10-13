@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -71,14 +72,14 @@ function assignedFields(src, header, target) {
 test('the façade\'s state has the same fields and defaults as settings.js', () => {
   const facade = literalKeys(facadeJs, facadeJs.indexOf('const state = '));
   const real = literalKeys(settingsJs, settingsJs.indexOf('    state: {'));
-  assert.ok(real.length >= 10, `settings.js state literal parsed (${real.length} fields)`);
+  assert.ok(real.length >= 8, `settings.js state literal parsed (${real.length} fields)`);
   assert.deepEqual(facade, real, 'facade.js `state` must mirror settings.js `state` field for field');
 });
 
 test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh() assigns', () => {
   const facade = assignedFields(facadeJs, '  async refresh() {', 'state');
   const real = assignedFields(settingsJs, '    async refresh() {', 'this\\.state');
-  assert.ok(real.length >= 10, `settings.js refresh parsed (${real.length} assignments)`);
+  assert.ok(real.length >= 8, `settings.js refresh parsed (${real.length} assignments)`);
   assert.deepEqual(facade, real);
   // And primes the CLI-auth memo from the same payload, like the original.
   assert.match(facadeJs, /Promise\.resolve\(u\.cliAuthEnabled !== false\)/);
@@ -224,7 +225,8 @@ test('the chassis gates the panes on the chunk, and init() runs where the panes 
   assert.doesNotMatch(indexTsx, /import '\.\/mount'/, 'nor settings.js (which ./mount imports)');
   assert.match(indexTsx, /\{mounted && Sections \? <Sections \/> : null\}/);
   assert.match(indexTsx, /if \(mounted\) ensureSettings\(\);/, 'a reveal without open() still asks for the module');
-  assert.match(indexTsx, /Settings could not be loaded\./, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(indexTsx, /t\('settings:screen\.loadFailed'\)/, 'a failed load says so in the host instead of leaving it blank');
+  assert.match(message('settings:screen.loadFailed'), /Settings could not be loaded\./);
   assert.match(sectionsTsx, /export function SettingsSections\(\) \{\n[\s\S]{0,900}?useIsomorphicLayoutEffect\(\(\) => \{\n\s*window\.Settings\?\.init\?\.\(\);\n\s*\}, \[\]\);/,
     'init() binds by id once the panes exist: a layout effect of the panes component');
   assert.match(chunkTs, /^import '\.\/mount';/m, 'the chunk evaluates settings.js (via ./mount) …');

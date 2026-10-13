@@ -2,6 +2,7 @@
 
 const inventory = require('./classic-inventory.generated.json');
 const { routeParameters, sanitizeForModel, sensitiveKey } = require('./classic-api-client');
+const classicSessions = require('../classic-sessions');
 
 const MAX_BODY_JSON_BYTES = 1024 * 1024;
 const QUERY_SCHEMA = Object.freeze({
@@ -42,6 +43,7 @@ const DEVELOPMENT_DETAIL_PATH = '/api/sessions/:id';
 const DEVELOPMENT_TASK_MAX_CHARS = 12_000;
 const SETTING_GROUPS = Object.freeze(inventory.settings.map((item) => item.key));
 const SETTINGS_READ_PATHS = Object.freeze({
+  profile: ['/api/auth/me'],
   theme: [],
   language: ['/api/auth/me'],
   alerts: ['/api/me/notification-preferences', '/api/me/mobile-push-preferences'],
@@ -55,8 +57,10 @@ const SETTINGS_READ_PATHS = Object.freeze({
     '/api/me/credentials/openrouter',
     '/api/me/credentials/openrouter/allowance',
   ],
+  usage: ['/api/me/ai-budget', '/api/me/building-time'],
   'api-key': ['/api/auth/me', '/api/me/ai-budget'],
-  connectors: ['/api/me/connectors', '/api/me/social-identities', '/api/me/github'],
+  connectors: ['/api/me/connectors'],
+  'linked-accounts': ['/api/me/social-identities', '/api/me/github'],
   'app-ai': ['/api/me/llm-grants'],
   'app-permissions': ['/api/me/permission-grants'],
   'agent-files': ['/api/me/agent-files'],
@@ -77,12 +81,13 @@ const SETTINGS_ACTION_MATCHERS = Object.freeze({
   'global-chat': [/^manual:settings\.global_chat\.update$/],
   openrouter: [/coding-agent/, /credentials\/openrouter/],
   'api-key': [/anthropic|api-key|credential/i],
-  connectors: [/connectors|social-identities|github/],
+  connectors: [/connectors/],
+  'linked-accounts': [/social-identities|github/],
   'app-ai': [/llm-grants/],
   'app-permissions': [/permission-grants|device-permission/],
   'agent-files': [/agent-files/],
   cli: [/cli-tokens|local-agents/],
-  experimental: [/ai-progress-estimate|session-bridge|dev-flow/],
+  experimental: [/ai-progress-estimate|session-bridge/],
   usernode: [/\/api\/v4\/mobile|wallet|staking/],
 });
 
@@ -258,7 +263,7 @@ function developmentTaskSchema(kind) {
     type: 'object',
     additionalProperties: false,
     description: kind === 'start'
-      ? 'Create a development session for one exact app, then hand the full coding request to its separately configured Development AI.'
+      ? 'Open a new agent session on one exact app with the full coding request ready for the user to send.'
       : 'Hand a complete follow-up coding request to one exact existing development session.',
     properties: {
       [kind === 'start' ? 'appSlug' : 'sessionId']: kind === 'start'
@@ -268,7 +273,7 @@ function developmentTaskSchema(kind) {
         }
         : {
           type: 'string', minLength: 1, maxLength: 24, pattern: '^[1-9][0-9]*$',
-          description: 'Exact numeric development-session id from context.activeObject when it is a session, the user, or an authoritative session result.',
+          description: 'Exact numeric development-session id from context.activeObject when it is a session, the user, or an authoritative session result. Only a session that can still be continued; an older session that reports classic_read_only cannot.',
         },
       task: {
         type: 'string', minLength: 1, maxLength: DEVELOPMENT_TASK_MAX_CHARS,
@@ -293,9 +298,17 @@ function developmentPreview(kind, input) {
     target: kind === 'start' ? input.appSlug : `Session ${input.sessionId}`,
     task: String(input.task || '').trim(),
     ...(input.issueNumber ? { issue: `#${input.issueNumber}` } : {}),
-    developmentAI: 'Use the configured Development AI model and reasoning effort',
+    ...(kind === 'start'
+      ? { opens: 'An agent session, with this task ready to send' }
+      : { developmentAI: 'Use the configured Development AI model and reasoning effort' }),
   };
 }
+
+// The agent-session hint's own slug rule (services/agent-sessions.js
+// parseHint), stricter than the route inventory's: a slug it would refuse
+// is refused here, before the user is sent to a conversation that cannot
+// name its app.
+const AGENT_HINT_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 function exactSessionPath(session, fallbackSlug, fallbackId) {
   const slug = String(session?.app_slug || fallbackSlug || '');
@@ -356,12 +369,20 @@ function handoffResult(classicResult, { session, task, classicPath }) {
   };
 }
 
+// #2779: new work starts in an agent session, and classic sessions are no
+// longer created (POST /api/apps/:slug/sessions takes only the Mayor's
+// start_change). So "Start development work" creates nothing: it hands the
+// browser an unsent agent session focused on the app (and the issue), with
+// the exact task in its composer for the user to send. The conversation's
+// Mayor and coding agent do the work; the Global Chat model never does.
+// The capability keeps the create route's id and access, so what the model
+// discovers and what the user confirms are unchanged.
 function developmentStartDefinition(route) {
   return {
     id: route.capabilityId,
     domain: 'development',
     title: 'Start development work',
-    summary: 'Create a development session with the independently configured Development AI profile, then hand the exact task to that session. The Global Chat model never performs repository work.',
+    summary: 'Open a new agent session on the exact app with the exact task ready to send, where the Mayor plans and builds it. The Global Chat model never performs repository work.',
     keywords: ['build', 'code', 'develop', 'development', 'fix', 'implement', 'repository', 'start work'],
     discoveryPriority: 40,
     inputSchema: developmentTaskSchema('start'),
@@ -371,24 +392,51 @@ function developmentStartDefinition(route) {
     risk: route.risk,
     confirmation: route.confirmation,
     confirmationPreview: (input) => developmentPreview('start', input),
+    // The confirmation card's "Open in Classic" goes to the app, as before:
+    // the bare #messages/agent/new would open a conversation without the
+    // task or the app, which only the confirmed hand-off carries.
     classicPath: ({ input }) => `#app/${encodeURIComponent(input.appSlug)}/workshop`,
     mobileSupported: true,
     sensitiveFields: [],
-    handler: async (input, context) => {
+    handler: async (input) => {
       const task = input.task.trim();
-      const created = await context.classicApi.invoke(route.capabilityId, {
-        pathParameters: { slug: input.appSlug },
-        query: [],
-        body: input.issueNumber == null ? {} : { issueNumber: input.issueNumber },
-      });
-      const session = created.authoritativeResult?.session;
-      const classicPath = exactSessionPath(session, input.appSlug, session?.id);
-      return handoffResult(created, { session, task, classicPath });
+      if (!AGENT_HINT_SLUG.test(input.appSlug)) throw new Error('That app slug is unavailable.');
+      const hint = {
+        slug: input.appSlug,
+        ...(input.issueNumber == null ? {} : { issueNumber: input.issueNumber }),
+        entry: 'global-chat',
+      };
+      const classicPath = '#messages/agent/new';
+      const data = {
+        items: [{ appSlug: input.appSlug, issueNumber: input.issueNumber ?? null }],
+        state: 'client_action_required',
+        action: { transport: 'agent_session_handoff', hint, message: task, classicPath },
+      };
+      return {
+        authoritativeResult: { ok: true, status: 202, data },
+        modelResult: {
+          ok: true,
+          status: 202,
+          data: {
+            handoffReady: true,
+            agentSession: sanitizeForModel({ appSlug: input.appSlug, issueNumber: input.issueNumber ?? null }),
+            pendingClientAction: true,
+          },
+        },
+        classicPath,
+      };
     },
     tests: ['tests/global-chat-classic-capabilities.test.js'],
   };
 }
 
+// #4268: an older (classic) session is read-only since #3976, so a turn
+// handed to one could only end in POST /chat's `classic_session_read_only`
+// 409. The handler reads the same verdict the session's own screen reads
+// (`classic_read_only` on GET /api/sessions/:id) and answers with that
+// refusal itself, without handing the browser a turn. The sessions that do
+// still continue in their dev chat, a CLI hand-off and a request's planning
+// record, are handed off as before.
 function developmentTurnDefinition(route) {
   const detailRoute = inventory.routes.find((item) => (
     item.status === 'mapped' && item.method === 'GET' && item.path === DEVELOPMENT_DETAIL_PATH
@@ -398,7 +446,7 @@ function developmentTurnDefinition(route) {
     id: route.capabilityId,
     domain: 'development',
     title: 'Continue development work',
-    summary: 'Send an exact task to an existing owned development session. The session keeps its pinned Development AI model and reasoning effort; the Global Chat model never substitutes itself.',
+    summary: 'Send an exact task to an existing owned development session that can still be continued, such as a CLI hand-off. Older sessions are read-only; start new work instead. The session keeps its pinned Development AI model and reasoning effort; the Global Chat model never substitutes itself.',
     keywords: ['code', 'continue', 'develop', 'development', 'fix', 'implement', 'repository', 'session'],
     discoveryPriority: 40,
     inputSchema: developmentTaskSchema('continue'),
@@ -417,6 +465,12 @@ function developmentTurnDefinition(route) {
       });
       const session = detail.authoritativeResult?.session;
       const classicPath = exactSessionPath(session, session?.app_slug, input.sessionId);
+      if (detail?.ok !== false && session?.classic_read_only === true) {
+        return {
+          ...normalizeExecutionResult({ ok: false, status: 409, data: classicSessions.refusal() }),
+          classicPath,
+        };
+      }
       return handoffResult(detail, { session, task: input.task.trim(), classicPath });
     },
     tests: ['tests/global-chat-classic-capabilities.test.js'],
@@ -438,12 +492,10 @@ function authProjection(group, data) {
   if (!user || typeof user !== 'object') return data;
   const fields = {
     language: ['locale'],
+    profile: ['username', 'displayName'],
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
-    experimental: [
-      'aiProgressEstimate', 'sessionBridgeEnabled', 'devFlowPreference',
-      'externalFlowsAvailable',
-    ],
+    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
 }

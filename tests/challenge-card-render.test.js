@@ -247,31 +247,41 @@ test('the meta line drops what it does not have, and never holds a stray dot', (
   assert.match(zero, />0\/3 Apps tried</);
 });
 
-// #3185: a challenge the background scorer counts says how often under its
-// rail, because its count only moves when a run writes credits. The line is
-// the view's `cadence`, composed by the controller; the card only draws it.
-const CADENCE_MD = '<div class="-mt-1 min-w-0 truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400">';
+// #3185: a challenge the background scorer counts says when it next counts,
+// because its count only moves when a run writes credits. It is the view's
+// `cadence`, composed by the controller, and the card puts it at the end of
+// the meta line it already has, never as a row of its own.
+const CADENCE = (t) => `<span class="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">${t}</span>`;
 
-test('a scored card says how often it is counted, on one line under the rail', () => {
+test('a scored card says when it next counts, at the end of the meta line, with no new row', () => {
   const base = {
     goal: 'Try Three Apps', reward: '500 pts', icon: null, state: 'progress', stateLabel: '1/3 Apps tried',
     fill: 1 / 3, counted: true, deadline: null, earned: null,
   };
-  const html = card({ ...base, cadence: 'Updates every 15 min · last 10:42' });
-  assert.ok(html.includes(`${CADENCE_MD}Updates every 15 min · last 10:42</div>`),
-    'one truncating line in the deadline’s quiet ink');
+  const html = card({ ...base, cadence: 'next count 10:42' });
+  assert.ok(html.includes(`${META_OPEN}${REWARD('500 pts')}${DOT}${CADENCE('next count 10:42')}</div>`),
+    'after the reward, behind a dot, in the deadline’s quiet ink');
   const railAt = html.indexOf('role="progressbar"');
-  const lineAt = html.indexOf('Updates every');
-  assert.ok(railAt >= 0 && lineAt > railAt, 'under the rail, not in it');
-  assert.match(html.slice(railAt, lineAt), /^role="progressbar"[^>]*>(?:(?!<\/div>).)*<\/div><div class="-mt-1/,
-    'the rail closes, then the line follows as its own row');
+  assert.ok(html.indexOf('next count') < railAt, 'above the rail, in the title group');
   assert.match(html, /aria-valuetext="1\/3 Apps tried"/, 'the rail still speaks the count alone');
 
-  // No schedule to state: exactly the card it always was.
+  // The same number of rows as a card with nothing to say: the timing adds none.
   const plain = card(base);
-  assert.doesNotMatch(plain, /-mt-1|Updates every/, 'no cadence, no line');
-  assert.equal(card({ ...base, cadence: null }), plain, 'null draws nothing');
+  const rows = (h) => (h.match(/<div/g) || []).length;
+  assert.equal(rows(html), rows(plain), 'no extra element, so no extra height');
+  assert.doesNotMatch(plain, /next count|-mt-1/, 'no cadence, nothing said');
+  assert.equal(card({ ...base, cadence: null }), plain, 'null says nothing');
   assert.equal(card({ ...base, cadence: '' }), plain, 'nor does an empty string');
+});
+
+test('the timing is what gives way on a narrow line, never the reward', () => {
+  // flex-1 is basis 0: the cadence takes only the room the deadline and the
+  // reward leave, and truncates first.
+  const full = renderToHtml(createElement(Card.ChallengeMeta, { deadline: '5d left', text: '500 pts', cadence: 'next count 9:37' }));
+  assert.equal(full, `${META_OPEN}${DEADLINE('5d left')}${DOT}${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}</div>`);
+  assert.ok(CADENCE('').includes('flex-1') && !REWARD('').includes('flex-1'));
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { cadence: 'counting now' })),
+    `${META_OPEN}${CADENCE('counting now')}</div>`, 'alone, it is the line, with no stray dot');
 });
 
 test('the detail page draws the same rail and meta line at page size', () => {
@@ -286,10 +296,10 @@ test('the detail page draws the same rail and meta line at page size', () => {
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: 'Earned 900 pts', earned: true })),
     `${META_OPEN}${EARNED('Earned 900 pts')}</div>`, 'the card size is the card’s line, unchanged');
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, {})), '', 'nothing to say, no line');
-  assert.equal(renderToHtml(createElement(Card.ProgressCadence, { text: 'Updates every hour · last 9:05', size: 'lg' })),
-    '<div class="-mt-2 min-w-0 truncate text-[0.8125rem] leading-5 text-zinc-500 dark:text-zinc-400">Updates every hour · last 9:05</div>',
-    'the cadence line at page size');
-  assert.equal(renderToHtml(createElement(Card.ProgressCadence, { size: 'lg' })), '', 'and none without one');
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '500 pts', cadence: 'next count 9:37', size: 'lg' })),
+    `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}</div>`,
+    'the timing rides the page-size meta line too');
+  assert.equal(Card.ProgressCadence, undefined, 'the row under the rail is gone');
 });
 
 test('a card that opens something is a keyboard-reachable button, so it takes the kit press (#1918)', () => {

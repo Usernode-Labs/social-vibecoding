@@ -86,6 +86,39 @@ function formatActivityRow(r) {
   };
 }
 
+// Escape LIKE metacharacters so a literal %, _ or \ typed into the search box
+// matches itself rather than widening the match. Same discipline as the
+// waitlist search; paired with an explicit ESCAPE '\' in the clause below.
+function escapeLike(s) {
+  return s.replace(/([\\%_])/g, '\\$1');
+}
+
+// Longest search the list accepts. Longer than any email, handle or display
+// name (255), so it never truncates a real query; it only bounds what a
+// pasted wall of text can make Postgres pattern-match against every row.
+const SEARCH_MAX = 255;
+
+// The `?search=` narrowing for the index route: matches the user's email,
+// display name, username, telegram or discord handle, anywhere in any of
+// them, case-insensitively. The match is an EXISTS over users rather than a
+// join so the COUNT query, which has no join to users, can share the clause
+// unchanged (the same shape as the waitlist search). An all-digit term also
+// matches the user id itself, so "42" finds user 42 even when none of their
+// identity columns contain those digits.
+function userSearchClause(search, params) {
+  params.push(`%${escapeLike(search)}%`);
+  const p = `$${params.length}`;
+  const textMatch = `(su.email ILIKE ${p} ESCAPE '\\' OR su.display_name ILIKE ${p} ESCAPE '\\'
+                      OR su.username ILIKE ${p} ESCAPE '\\' OR su.telegram ILIKE ${p} ESCAPE '\\'
+                      OR su.discord ILIKE ${p} ESCAPE '\\')`;
+  if (/^\d+$/.test(search)) {
+    params.push(parseInt(search, 10));
+    return `(EXISTS (SELECT 1 FROM users su WHERE su.id = ua.user_id AND ${textMatch})
+             OR ua.user_id = $${params.length})`;
+  }
+  return `EXISTS (SELECT 1 FROM users su WHERE su.id = ua.user_id AND ${textMatch})`;
+}
+
 // Fetches a challenge + its template category, used by create/update/
 // import to check "does this challenge belong to this event" and to
 // resolve the stored activity_type.
@@ -110,12 +143,16 @@ function userActivitiesAdminRoutes(config) {
       const seasonEventId = toIntId(req.query.season_event_id);
       const userId = toIntId(req.query.user_id);
       const activityType = typeof req.query.activity_type === 'string' ? req.query.activity_type : null;
+      const search = typeof req.query.search === 'string'
+        ? req.query.search.trim().slice(0, SEARCH_MAX)
+        : '';
 
       const clauses = [];
       const params = [];
       if (seasonEventId) { params.push(seasonEventId); clauses.push(`ua.season_event_id = $${params.length}`); }
       if (userId) { params.push(userId); clauses.push(`ua.user_id = $${params.length}`); }
       if (activityType) { params.push(activityType); clauses.push(`ua.activity_type = $${params.length}`); }
+      if (search) clauses.push(userSearchClause(search, params));
       const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
       const { rows: countRows } = await pool.query(

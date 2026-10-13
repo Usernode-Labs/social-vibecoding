@@ -239,7 +239,16 @@ test('the unit runs the mirrored copy as deploy and always restarts', () => {
 
 // ── Workflow wiring ───────────────────────────────────────────────────
 
-test('the workflow’s push trigger defers to the poller; dispatch forces', () => {
+test('the deprecated VPS workflow has no automatic trigger and cannot deploy', () => {
+  const triggers = deployYml.slice(deployYml.indexOf('\non:\n'), deployYml.indexOf('\nconcurrency:\n'));
+  assert.match(triggers, /\n  workflow_dispatch:/);
+  assert.doesNotMatch(triggers, /\n  (push|pull_request|schedule|workflow_run|workflow_call):/);
+  assert.match(deployYml, /\njobs:\n  deploy:\n(?:    #[^\n]*\n)*    if: \$\{\{ false \}\}/);
+  assert.match(deployYml, /# DEPRECATED:/);
+  assert.match(deployYml, /build-kubernetes-images\.yml/);
+});
+
+test('the retained legacy steps forward the poller race guard', () => {
   assert.match(deployYml, /SKIP_IF_CURRENT: \$\{\{ github\.event_name == 'push' && '1' \|\| '0' \}\}/,
     'push runs are the redundant path now and must no-op when the poller already deployed');
   const envs = deployYml.match(/envs: ([^\n]+)/);
@@ -247,7 +256,7 @@ test('the workflow’s push trigger defers to the poller; dispatch forces', () =
     'SKIP_IF_CURRENT must be forwarded or the remote shell never sees it');
 });
 
-test('workflow_dispatch remains the secret-rotation path', () => {
+test('the retained legacy secret-rotation steps skip before rewriting .env', () => {
   // The skip check runs before deploy.sh touches .env, so a skipped
   // push run changes nothing on disk. Rotating a secret therefore goes
   // through workflow_dispatch (SKIP_IF_CURRENT=0), which always

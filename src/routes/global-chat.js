@@ -32,6 +32,7 @@ const {
 } = require('../services/global-chat/suggestion-executor');
 const { PROMPT_VERSION } = require('../services/global-chat/prompt');
 const classicInventory = require('../services/global-chat/classic-inventory.generated.json');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const OPENROUTER = Object.freeze({ provider: 'openrouter', purpose: 'coding_agent' });
 const PATCH_FIELDS = new Set(['enabled', 'model', 'reasoningEffort', 'spendCapUsd']);
@@ -811,7 +812,7 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads', async (req, res) => {
+  router.post('/api/global-chat/threads', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     try {
@@ -896,7 +897,7 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads/:id/cancel', (req, res) => {
+  router.post('/api/global-chat/threads/:id/cancel', sameOriginBrowserOnly, (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     const key = `${req.user.id}:${req.params.id}`;
@@ -995,11 +996,11 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads/:id/turns', chatLimiter, (req, res) => (
+  router.post('/api/global-chat/threads/:id/turns', chatLimiter, sameOriginBrowserOnly, (req, res) => (
     streamTurn(req, res, 'user_turn')
   ));
 
-  router.post('/api/global-chat/threads/:id/more-suggestions', chatLimiter, (req, res) => (
+  router.post('/api/global-chat/threads/:id/more-suggestions', chatLimiter, sameOriginBrowserOnly, (req, res) => (
     streamTurn(req, res, 'more_suggestions')
   ));
 
@@ -1027,9 +1028,11 @@ function globalChatRoutes(config) {
       const presentation = enrichPresentation(validatePresentation({
         message: pendingAction?.transport === 'development_handoff'
           ? 'Development session ready. Opening it now.'
-          : pendingAction
-            ? 'Ready to apply.'
-            : 'Done.',
+          : pendingAction?.transport === 'agent_session_handoff'
+            ? 'Opening an agent session with your task ready to send.'
+            : pendingAction
+              ? 'Ready to apply.'
+              : 'Done.',
         resultRefs: [result.id],
         suggestions: [
           {
@@ -1074,7 +1077,7 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.delete('/api/global-chat/threads/:id', async (req, res) => {
+  router.delete('/api/global-chat/threads/:id', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     try {

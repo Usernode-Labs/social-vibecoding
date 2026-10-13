@@ -32,6 +32,7 @@
 
 import { useCallback, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { RefMenuView } from '../../group-chat/autocomplete';
 import type { RefOption } from '../../group-chat/autocomplete-store';
@@ -118,8 +119,10 @@ export function spliceRef(
   return { value: before + insert + value.slice(caret), caret: before.length + insert.length };
 }
 
+// `results=failing`: the Workshop's list form (AppView._listQS), so this
+// reads the copy the board already holds; numbers and titles are all it needs.
 export function promotedPath(slug: string): string {
-  return `/api/apps/${encodeURIComponent(slug)}/promoted`;
+  return `/api/apps/${encodeURIComponent(slug)}/promoted?results=failing`;
 }
 
 export function githubIssuesPath(slug: string): string {
@@ -341,6 +344,7 @@ export function FeedRefMenu({
   menuRef: RefObject<HTMLDivElement | null>;
   onPick: (kind: RefOption['kind'], number: number) => void;
 }) {
+  const t = useMessages('project');
   if (!items.length) return null;
   return (
     <div
@@ -349,7 +353,7 @@ export function FeedRefMenu({
         ? 'gc-mention-menu dev-feed-mention-menu dev-feed-mention-menu-below'
         : 'gc-mention-menu dev-feed-mention-menu'}
       role="listbox"
-      aria-label="Insert a pull request or issue reference"
+      aria-label={t('project:typeahead.ref.name')}
       data-feed-ref-menu=""
       // mousedown, not click, and prevented — the field keeps focus, so the
       // list is still open when the pick lands (a blur would close it first).

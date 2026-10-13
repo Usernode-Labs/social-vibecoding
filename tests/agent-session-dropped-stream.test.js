@@ -1,7 +1,8 @@
 'use strict';
 
 // A turn whose stream breaks is not a refused message
-// (frontend/src/features/agent-session/store.ts, resumeTurn).
+// (frontend/src/features/agent-session/store.ts: sendAgentMessage, and the
+// read that settles every turn, requestSync).
 //
 // Every platform deploy replaces its one pod, and a turn's stream
 // (POST /api/agent-sessions/:id/turns) goes with it. WebKit then throws
@@ -10,15 +11,18 @@
 // the sent message back to the composer (a resend runs it twice) and stop
 // following the turn. Now it reads where the turn stands:
 //
-//   1. FINISHED while the stream was down: the saved reply shows, no error.
-//   2. STILL RUNNING: it follows the bus, and re-reads the session until the
-//      server says the turn ended (a new pod's bus never hears the old pod).
-//   3. NEVER RECORDED (broken before the server took it): a plain sentence
-//      says so and the text goes back to the box.
+//   1. FINISHED while the stream was down: the saved reply shows, no error,
+//      and the message is one row: the server's, carrying its client id.
+//   2. STILL RUNNING: it follows the bus, and re-reads the conversation until
+//      the server says the turn ended (a new pod's bus never hears the old).
+//   3. NEVER RECORDED (broken before the server took it): sent again, under
+//      the same id, a couple of times; then it stays in the conversation,
+//      Not sent, in plain words, with Retry. Nothing goes back to the box.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const encoder = new TextEncoder();
 
@@ -35,7 +39,7 @@ function brokenStream(frames) {
 }
 
 const frame = (event) => `data: ${JSON.stringify(event)}\n\n`;
-const user = (id, content) => ({ id, role: 'user', content, createdAt: null, metadata: null });
+const user = (id, content, clientMessageId = null) => ({ id, role: 'user', content, createdAt: null, metadata: null, clientMessageId });
 const reply = (id, content) => ({ id, role: 'assistant', content, createdAt: null, metadata: null });
 
 function harness({ frames, after }) {
@@ -52,10 +56,10 @@ function harness({ frames, after }) {
     constructor(url) { this.url = url; this.closed = false; sources.push(this); }
     close() { this.closed = true; }
   };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     if (/\/turns$/.test(url) && init.method === 'POST') {
       // What the server did with the message while the stream was down.
-      after(server);
+      after(server, JSON.parse(init.body));
       return { ok: true, status: 200, body: brokenStream(frames) };
     }
     const body = /\/messages\?/.test(url) ? { messages: server.messages, nextAfter: null }
@@ -64,7 +68,7 @@ function harness({ frames, after }) {
           : /\/api\/agent-sessions$/.test(url) ? { sessions: [session()] }
             : { session: session(), turn: server.busy ? { phase: 'cc', stopping: false, changeId: 50, startedAt: 1 } : null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   return { server, sources };
 }
 
@@ -76,9 +80,9 @@ function cleanup() {
 
 test('a turn that finished while its stream was down shows its reply, with no error and nothing handed back', async () => {
   harness({
-    frames: [frame({ type: 'phase', phase: 'mayor', _seq: 'abcdefgh-1' })],
-    after(server) {
-      server.messages = [...server.messages, user(11, 'Make it blue'), reply(12, 'Done: it is blue.')];
+    frames: [frame({ type: 'accepted', messageId: 11, turnId: 'abcdefgh-0000', _seq: 'abcdefgh-1' })],
+    after(server, body) {
+      server.messages = [...server.messages, user(11, 'Make it blue', body.clientMessageId), reply(12, 'Done: it is blue.')];
     },
   });
   try {
@@ -89,7 +93,7 @@ test('a turn that finished while its stream was down shows its reply, with no er
     assert.equal(state.error, '', 'the browser\'s "Error in input stream" is not a message for the viewer');
     assert.equal(state.returnedText, null, 'the message was sent: nothing goes back to the box to be sent twice');
     assert.equal(state.turn.running, false);
-    assert.equal(state.turn.pendingUserText, null);
+    assert.deepEqual(state.outbox, [], 'one row for the message: the server\'s, which carries its client id');
     assert.deepEqual(state.messages.map((m) => m.id), [10, 11, 12], 'the saved reply is on screen');
   } finally {
     cleanup();
@@ -100,9 +104,9 @@ test('a turn still running after its stream broke is followed, and settles when 
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { server, sources } = harness({
     frames: [frame({ type: 'phase', phase: 'cc', startedAt: 1, _seq: 'abcdefgh-1' })],
-    after(s) {
+    after(s, body) {
       s.busy = true;
-      s.messages = [...s.messages, user(11, 'Make it blue')];
+      s.messages = [...s.messages, user(11, 'Make it blue', body.clientMessageId)];
     },
   });
   try {
@@ -120,7 +124,7 @@ test('a turn still running after its stream broke is followed, and settles when 
     // The old pod finished the turn; the new pod's bus never said so.
     server.busy = false;
     server.messages = [...server.messages, reply(12, 'Done: it is blue.')];
-    t.mock.timers.tick(5000);
+    t.mock.timers.tick(4000);
     for (let i = 0; i < 20 && api.getAgentSessionState().turn.running; i += 1) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => { setImmediate(resolve); });
@@ -138,16 +142,28 @@ test('a turn still running after its stream broke is followed, and settles when 
   }
 });
 
-test('a stream that broke before the server took the message says so plainly and hands the text back', async () => {
-  harness({ frames: [], after() {} });
+test('a stream that broke before the server took the message is sent again, then stays in the conversation as Not sent, with Retry', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const posts = [];
+  harness({ frames: [], after(_server, body) { posts.push(body); } });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
-    await api.sendAgentMessage('Make it blue');
+    const sent = api.sendAgentMessage('Make it blue');
+    for (let i = 0; i < 40 && posts.length < 3; i += 1) {
+      t.mock.timers.tick(5000);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setImmediate(resolve); });
+    }
+    await sent;
+    assert.equal(posts.length, 3, 'tried again, twice');
+    assert.equal(new Set(posts.map((body) => body.clientMessageId)).size, 1, 'always the same message, under the same id');
     const state = api.getAgentSessionState();
-    assert.equal(state.error, 'Could not reach Homeroom, so your message was not sent. Try again.');
-    assert.doesNotMatch(state.error, /input stream/);
-    assert.equal(state.returnedText, 'Make it blue', 'never recorded: the text goes back to the box');
+    assert.equal(state.error, '', 'no raw browser words, and no second line for it');
+    assert.doesNotMatch(JSON.stringify(state), /input stream/);
+    assert.deepEqual(state.outbox.map((item) => [item.shown, item.status, item.error]),
+      [['Make it blue', 'failed', 'Could not reach Homeroom, so this was not sent.']]);
+    assert.equal(state.returnedText, null, 'kept where it was sent, not handed back to the box');
     assert.equal(state.turn.running, false);
   } finally {
     cleanup();

@@ -242,6 +242,20 @@ test('enumeration starts from docker, not from the sessions table', () => {
     'the inventory must not be filtered by a column that misses leaked containers');
 });
 
+// On Kubernetes the same holds with Deployments for containers: a row nulled
+// by a busy teardown, or a session gone with its app, is visible only from
+// the runtime's side.
+test('on Kubernetes, enumeration starts from the preview Deployments', () => {
+  assert.match(reapJs, /kubernetes\.listPreviews\(/);
+  const listStart = reapJs.indexOf('async function listKubernetesPreviews');
+  const listEnd = reapJs.indexOf('async function listPreviews');
+  assert.ok(listStart > 0 && listEnd > listStart);
+  assert.ok(!/staging_runtime_name|staging_container_id/.test(reapJs.slice(listStart, listEnd)),
+    'the inventory must not be filtered by a column that misses leaked previews');
+  assert.match(reapJs, /session\.staging_runtime_name === item\.name/,
+    'a Kubernetes row names its preview by runtime name, not by container id');
+});
+
 test('the analytics event type is declared with the rollover-style comment', () => {
   assert.match(eventsJs, /STALE_PREVIEWS_REAPED: 'stale_previews_reaped'/);
   assert.match(reapJs, /EVENT_TYPES\.STALE_PREVIEWS_REAPED/,
@@ -268,11 +282,12 @@ function getHandlerFull() {
 
 test('the status read reports open vs out-of-date counts separately', () => {
   const get = getHandlerFull();
-  // `open` is what the button would shut down; `stale` is what the automatic
-  // pass acts on. Conflating them would either overstate the button's blast
-  // radius or understate the staleness.
+  // `open` is every preview; `stale` + `abandoned` is what the button (and
+  // the automatic pass) shuts down. Conflating them would overstate the
+  // button's blast radius.
   assert.match(get, /open: counts\.open/);
   assert.match(get, /stale: counts\.stale/);
+  assert.match(get, /abandoned: counts\.abandoned/);
   assert.match(get, /previewCounts\(/,
     'both counts come from one docker call, not two');
 });
@@ -296,6 +311,7 @@ test('the demo payload covers the new tile and the automatic line', () => {
   const demo = reapJs.slice(start, reapJs.indexOf('\n}', start));
   assert.match(demo, /open: \d+/);
   assert.match(demo, /stale: \d+/);
+  assert.match(demo, /abandoned: \d+/);
   assert.match(demo, /expectedFingerprint: 'stagingdemo/,
     'obviously fake, per the seed rules');
   assert.match(demo, /lastRunAt: '20\d\d-/,
@@ -316,9 +332,9 @@ test('the automatic pass never writes session rows itself', () => {
   assert.match(reapJs, /async function sweepStale/);
 });
 
-test('the automatic pass is selective, unlike the admin sweep', () => {
-  // The admin sweep tears down everything it enumerates. An unattended pass
-  // doing that on a timer would kill previews backing live votes.
+test('the automatic pass is selective', () => {
+  // An unattended pass taking everything it enumerates on a timer would kill
+  // previews backing live votes.
   assert.match(reapJs, /VOTE_BACKED_STATUSES/);
   assert.match(reapJs, /function selectStale/);
   const selStart = reapJs.indexOf('function selectStale');
@@ -361,9 +377,9 @@ test('the pass also runs once at boot, after the heal recovery', () => {
     'the boot sweep must follow recoverSessions');
 });
 
-test('the console renders the out-of-date tile and the automatic-sweep line', () => {
-  assert.match(reapTsx, /id="admin-reap-outdated"/);
-  assert.match(reapTsx, /Out of date/);
+test('the console renders the to-shut-down tile and the automatic-sweep line', () => {
+  assert.match(reapTsx, /id="admin-reap-due"/);
+  assert.match(reapTsx, /To shut down/);
   assert.match(reapTsx, /id="admin-reap-automatic"/);
   assert.match(reapTsx, /Automatic sweep last ran/);
   // The switched-off case must say so rather than render an empty line.
@@ -374,16 +390,34 @@ test('the console renders the out-of-date tile and the automatic-sweep line', ()
     'the line stays empty until the GET answers, as the static markup did');
 });
 
-test('the console counts the button\'s real blast radius, not the stale subset', () => {
-  // The confirmation says "this shuts down N previews" — N must be every open
-  // preview, since that is what the button does.
+test('the console counts the button\'s real blast radius, not every open preview', () => {
+  // The confirmation says "this shuts down N previews". N is what the button
+  // takes: out of date plus abandoned. Counting every open preview would
+  // overstate it, since vote-backed and current live previews stay up.
   const start = reapTsx.indexOf('const start = useCallback');
   assert.ok(start > 0, 'the handler definition, not the onClick reference');
   const body = reapTsx.slice(start, reapTsx.indexOf('const ok = await', start));
-  assert.match(body, /typeof open === 'number'/,
-    'confirming with the stale count would understate a fleet-wide action');
-  assert.ok(!/outdated/.test(body),
-    'and the out-of-date subset must not be what the dialog counts');
+  assert.match(body, /typeof due === 'number'/);
+  assert.ok(!/typeof open === 'number'/.test(body),
+    'every open preview is not what the button shuts down');
+  assert.match(reapTsx, /data\.stale \+ \(typeof data\.abandoned === 'number'/,
+    'due is the out-of-date count plus the abandoned one');
+});
+
+// The admin sweep used to take every preview it enumerated (#850's one-off
+// cleanup after the RSA cutover). Both sweeps now take one selection, which
+// never holds a preview backing a live vote: Pass 3 rebuilds those in place.
+test('the button and the automatic pass take the same selection', () => {
+  const runStart = reapJs.indexOf('async function run(');
+  const runBody = reapJs.slice(runStart, reapJs.indexOf('\n}\n', runStart));
+  assert.match(runBody, /selectReapable\(/);
+  assert.match(runBody, /isInFlight/);
+  const sweepStart = reapJs.indexOf('async function sweepStale(');
+  assert.match(reapJs.slice(sweepStart, reapJs.indexOf('\n}\n', sweepStart)), /selectReapable\(/);
+  assert.match(postHandler(), /isInFlight: isSessionBusy/,
+    'the route hands the sweep the same in-flight guard server.js gives the timer');
+  assert.match(reapTsx, /Previews backing a live vote are left/,
+    'the confirmation says what it leaves alone');
 });
 
 test('the leak event type is declared alongside the reap one', () => {

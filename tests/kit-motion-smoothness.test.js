@@ -209,12 +209,21 @@ function el(extra = {}) {
   return node;
 }
 
-function ptrHarness({ mode = 'element', getScrollTop } = {}) {
+function ptrHarness({ mode = 'element', getScrollTop, extra } = {}) {
   const win = el({ nodeType: undefined, scrollY: 0 });
   const html = el();
   const body = el();
-  const parent = el();
-  const scroller = el({ scrollTop: 0, parentNode: parent });
+  // What the kit inserts (its puck layer), for the anchor tests below.
+  const inserted = [];
+  const parent = el({ insertBefore(child) { inserted.push(child); return child; }, appendChild(child) { inserted.push(child); return child; } });
+  // A style that also takes custom properties, as a CSSStyleDeclaration does.
+  const style = {
+    props: {},
+    setProperty(name, value) { this.props[name] = value; },
+    removeProperty(name) { delete this.props[name]; },
+  };
+  const scroller = el({ scrollTop: 0, parentNode: parent, style });
+  const winContent = el({ style: { ...style, props: {} } });
   const springs = [];
   const document = {
     scrollingElement: html,
@@ -228,7 +237,7 @@ function ptrHarness({ mode = 'element', getScrollTop } = {}) {
     document,
     console,
     getComputedStyle: () => ({ position: 'relative' }),
-    firstContentChild: () => el(),
+    firstContentChild: () => winContent,
     haptic() {},
     spring(apply, opts) {
       const handle = { opts, stopped: false, stop() { handle.stopped = true; }, current: () => ({ x: opts.from, v: 0 }) };
@@ -255,12 +264,15 @@ function ptrHarness({ mode = 'element', getScrollTop } = {}) {
   });
   vm.runInContext(section('  function attachPullToRefresh(scrollEl, onRefresh, opts) {'), context);
   let reads = 0;
-  const opts = getScrollTop ? { getScrollTop: () => { reads++; return getScrollTop(); } } : undefined;
+  const opts = getScrollTop || extra
+    ? { ...(extra || {}), ...(getScrollTop ? { getScrollTop: () => { reads++; return getScrollTop(); } } : {}) }
+    : undefined;
   const target = mode === 'window' ? win : scroller;
   const handle = context.attachPullToRefresh(target, () => Promise.resolve(), opts);
   const listen = mode === 'window' ? win : scroller;
   return {
-    handle, win, scroller, parent, springs, listen,
+    handle, win, scroller, parent, springs, listen, winContent,
+    layer: () => inserted.find((n) => /un-ptr-layer/.test(n.className || '')),
     reads: () => reads,
     bound: () => listen.count('touchmove'),
     scrollTo(top) {
@@ -387,6 +399,71 @@ test('detach removes every listener it added', () => {
     assert.equal(h.scroller.count(type), 0, `${type} on the scroller`);
   }
   assert.equal(h.win.count('scroll'), 0);
+});
+
+// ── Pull-to-refresh: chrome inside the scroller holds still (opt-in) ────
+//
+// pull-to-refresh under the tabs (evan, 2026-10-01): a project page's tab
+// band is sticky INSIDE #dev-forum-scroll, so a pull that translates the
+// scroller carried the tabs down with the page. `opts.pullProperty` leaves
+// the scroller where it is and publishes the pull as a custom property the
+// page's CSS slides its content by; `opts.topEl` may be a function, so the
+// spinner can hang from chrome a re-render replaces. Additive to the frozen
+// v1 surface: without them nothing changes, which the tests above pin.
+
+function pullTo(h, y) {
+  h.touch('touchstart', 100, { t: 0 });
+  h.touch('touchmove', 110, { t: 16 });
+  return h.touch('touchmove', y, { t: 32 });
+}
+
+test('opts.pullProperty: the scroller stays put and carries the pull as a property', () => {
+  const h = ptrHarness({ extra: { pullProperty: '--dev-ptr-pull' } });
+  const move = pullTo(h, 200);
+  assert.equal(move.prevented, true, 'a locked pull still owns the gesture');
+  assert.equal(h.scroller.style.transform, undefined, 'the scroller is never translated');
+  assert.match(h.scroller.style.props['--dev-ptr-pull'], /^\d+(\.\d+)?px$/, 'the displayed pull, as a length');
+  const shown = parseFloat(h.scroller.style.props['--dev-ptr-pull']);
+  pullTo(h, 260);
+  assert.ok(parseFloat(h.scroller.style.props['--dev-ptr-pull']) > shown, 'and it follows the finger');
+  h.touch('touchend', 260, { t: 48 });
+  assert.equal(h.springs.length, 1, 'released into the same spring as ever');
+  h.handle.detach();
+  assert.equal('--dev-ptr-pull' in h.scroller.style.props, false, 'removed, not left at 0, so the page sees no pull');
+  assert.equal(h.scroller.style.transform, undefined, 'and the transform it never wrote is not touched on the way out either');
+});
+
+test('opts.pullProperty: anything but a custom property name, or window mode, is the default pull', () => {
+  for (const bad of ['dev-ptr-pull', '--', '--a b', 42, null]) {
+    const h = ptrHarness({ extra: { pullProperty: bad } });
+    pullTo(h, 200);
+    assert.match(h.scroller.style.transform, /^translateY\(\d/, `${String(bad)}: the scroller slides, as before`);
+    assert.deepEqual(h.scroller.style.props, {});
+  }
+  const w = ptrHarness({ mode: 'window', extra: { pullProperty: '--dev-ptr-pull' } });
+  pullTo(w, 200);
+  assert.match(w.winContent.style.transform, /^translateY\(\d/, 'window mode slides opts.content, as it always has');
+  assert.deepEqual(w.winContent.style.props, {});
+});
+
+test('opts.topEl as a function: asked at every measure, and no answer is the default anchor', () => {
+  let band = null;
+  let asked = 0;
+  const h = ptrHarness({ extra: { pullProperty: '--dev-ptr-pull', topEl: () => { asked++; return band; } } });
+  // Attached before the band is mounted: the scroller's own top (60 - 60).
+  assert.equal(h.layer().style.top, '0px');
+  const before = asked;
+  // The band arrives (and a later repaint may replace it): its bottom edge,
+  // 153 in the viewport, is 93 below the layer's parent (top 60).
+  band = el({ getBoundingClientRect: () => ({ top: 95, bottom: 153, left: 0, right: 390, width: 390, height: 58 }) });
+  pullTo(h, 200);
+  assert.ok(asked > before, 'asked again when the pull locks');
+  assert.equal(h.layer().style.top, '93px', 'the spinner hangs from the band');
+  // A throwing or non-element answer is no anchor, never an error.
+  const t = ptrHarness({ extra: { topEl: () => { throw new Error('gone'); } } });
+  assert.equal(t.layer().style.top, '0px');
+  const n = ptrHarness({ extra: { topEl: () => ({ nodeType: 3 }) } });
+  assert.equal(n.layer().style.top, '0px');
 });
 
 // ── CSS: layers and touch-action ────────────────────────────────────────

@@ -104,8 +104,8 @@ test('what each figure counts is only what is out in the open', () => {
     'apps: every app anyone can view, never the platform row, never a private app');
   assert.match(sql, /FROM users WHERE has_platform_access AND NOT is_synthetic\) AS members/,
     'members: accounts the platform admits, not the demo partners that cannot sign in');
-  assert.match(sql, /cs\.status = 'merged' AND \(a\.self_hosted OR a\.view_visibility = 'public'\)\) AS merged/,
-    'merged: merged proposals on those apps and the platform itself');
+  assert.match(sql, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL AND \(a\.self_hosted OR a\.view_visibility = 'public'\)\) AS merged/,
+    'merged: merged proposals on those apps and the platform itself, once live');
   assert.match(sql, /LEFT JOIN apps s ON s\.slug = \$1 AND s\.self_hosted/,
     'a database with no self row still answers the counts');
 });

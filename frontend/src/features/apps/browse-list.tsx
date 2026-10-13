@@ -28,7 +28,9 @@ import type { ReactNode } from 'react';
 import { CheckIcon, PlusIcon } from '@/components/ui/icons';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
-import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as message } from '../../lib/i18n/runtime';
+import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
   app: Record<string, any>;
@@ -65,34 +67,71 @@ const ADD_ON = 'border-transparent bg-transparent text-zinc-600 dark:text-zinc-3
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
+/**
+ * The review label a Discover row shows (#3911). The API's `directory.label`
+ * is the admin console's vocabulary, and one of its words is not for
+ * browsers: "Needs re-review" (state `outdated`, see
+ * src/services/discovery-curation.js) is an app reviewed as working whose
+ * newer version nobody has checked yet. To someone browsing, that version is
+ * simply not yet reviewed, which is the heading the app already sits under
+ * in Recommended, so the row says that instead. Its tier and its place in
+ * every sort are unchanged; Admin › Featured apps reads the server's label
+ * and keeps the distinction it needs.
+ */
+export function rowDirectoryLabel(directory?: { state?: string; label?: string } | null): string | null {
+  if (!directory?.label) return null;
+  return directory.state === 'outdated' ? message('discover:list.label.notYetReviewed') : directory.label;
+}
+
+/**
+ * The same label in the server's own vocabulary, which is what a tier
+ * heading is compared with: `rowDirectoryLabel` above is for reading, and its
+ * words change with the language on screen.
+ */
+function serverDirectoryLabel(directory?: { state?: string; label?: string } | null): string | null {
+  if (!directory?.label) return null;
+  return directory.state === 'outdated' ? 'Not yet reviewed' : directory.label;
+}
+
 function Row({ view, headingSays }: {
   view: RowView;
   /**
    * The directory label the tier heading over this row already says
-   * ("Reviewed working" under "Reviewed working apps"). A row whose own label
-   * is that one drops it: the same words once over the section and again on
-   * every row under it was the metadata that made a Discover row four lines
-   * deep. A label the heading does NOT say ("Needs an icon", "Needs
-   * re-review" under "Not yet reviewed") stays, and so does every label in
-   * an ungrouped sort, where no heading says anything.
+   * ("Reviewed working" under "Reviewed working apps", "Not yet reviewed"
+   * under "Not yet reviewed"), named as the server names it. A row whose own label is that one drops it:
+   * the same words once over the section and again on every row under it was
+   * the metadata that made a Discover row four lines deep. A label the
+   * heading does NOT say stays, and so does every label in an ungrouped sort
+   * or a search, where no heading says anything.
    */
   headingSays?: string;
 }): ReactNode {
+  const t = useMessages('discover');
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // NavLink.wireModified binds its own listeners to the node, so it runs in an
-  // effect against the mounted element. It re-binds whenever the descriptor
-  // changes identity, which is also when the guards it closes over change.
+  // effect against the mounted element. ONCE PER NODE (#3620): it has no way
+  // to unbind, and this effect used to re-run whenever the descriptor changed
+  // identity, which every list render does. Each run added another click
+  // listener, so one tap opened the row two or three times, and each open was
+  // a history entry at the same address: Back from the hub it opened stayed on
+  // the hub, two and three times over, before it reached Discover. The
+  // listeners read the descriptor through a ref instead, so the guards they
+  // apply are always the current row's.
+  const latest = useRef<RowView>(view);
+  latest.current = view;
   useEffect(() => {
     const node = rowRef.current;
     if (!node) return;
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
-      if ((e.target as Element)?.closest?.('.browse-add-btn')) return null;
+      const view = latest.current;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
-      if ((e.target as Element)?.closest?.('.browse-add-btn')) return;
+      const view = latest.current;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
     if (nav) nav.wireModified(node, hrefFor, activate);
@@ -100,9 +139,11 @@ function Row({ view, headingSays }: {
     return () => {
       if (!nav) node.removeEventListener('click', activate as EventListener);
     };
-  }, [view]);
+  }, []);
 
   const warm = () => controller()?.warmRow(view);
+  const label = rowDirectoryLabel(view.app.directory);
+  const said = serverDirectoryLabel(view.app.directory);
 
   return (
     <ListRow
@@ -119,16 +160,15 @@ function Row({ view, headingSays }: {
       titleClassName="browse-row-title"
       subtitleClassName="browse-row-meta"
       leading={(
-        <div
+        <AppIconLink
+          nested
+          slug={view.demo ? null : view.slug}
+          name={view.name}
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
-          // The same slug-derived identity tint the launcher grid draws. An
-          // app that is a lilac tile on Home was a blank white square here,
-          // which is the one thing a launcher icon must never be: different
-          // per screen. app.css turns the attribute into the colour.
         >
           <AppIconContent app={view.app} />
-        </div>
+        </AppIconLink>
       )}
       title={(
         <span className="flex items-center gap-1.5 min-w-0">
@@ -146,8 +186,8 @@ function Row({ view, headingSays }: {
           {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
               clips, so without its own ellipsis this line was cut mid-word
               ("Reviewed workir") on a phone. */}
-          {view.app.directory?.label && view.app.directory.label !== headingSays ? (
-            <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
+          {label && said !== headingSays ? (
+            <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
@@ -169,7 +209,7 @@ function Row({ view, headingSays }: {
         data-slug={view.slug}
         data-added={String(view.added)}
         aria-pressed={view.added}
-        aria-label={view.added ? undefined : `Join ${view.name}`}
+        aria-label={view.added ? undefined : t('discover:list.join.named', { app: view.name })}
         title={view.addTitle}
         onClick={(e) => {
           e.stopPropagation();
@@ -187,7 +227,7 @@ function Row({ view, headingSays }: {
             name carries the rest — "Join <app>", so a screen reader hears
             what is being joined. "Joined" is a state and stays short; a tap
             on it asks before leaving (Home.setMembership). */}
-        {view.added ? 'Joined' : 'Join'}
+        {view.added ? t('discover:list.join.joined') : t('discover:list.join.action')}
       </button>
         </>
       )}
@@ -206,6 +246,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   grouped?: boolean;
   moreExpanded?: boolean;
 }): ReactNode {
+  const t = useMessages('discover');
   if (!rows) return null;
   const renderRows = (items: RowView[], headingSays?: string) => items.map((view) => (
     <Row key={view.slug} view={view} headingSays={headingSays} />
@@ -231,9 +272,9 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
     <>
       {grouped ? (
         <>
-          {ready.length ? <SectionHeader className={headingClass}>Reviewed working apps</SectionHeader> : null}
+          {ready.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.reviewedWorking')}</SectionHeader> : null}
           {renderRows(ready, 'Reviewed working')}
-          {unreviewed.length ? <SectionHeader className={headingClass}>Not yet reviewed</SectionHeader> : null}
+          {unreviewed.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.notYetReviewed')}</SectionHeader> : null}
           {renderRows(unreviewed, 'Not yet reviewed')}
         </>
       ) : renderRows(shown)}
@@ -241,7 +282,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
         <>
           <div className="md:col-span-full p-3">
             <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Demos and apps needing fixes, setup, or an icon are still available below and in search.
+              {t('discover:list.more.note')}
             </p>
             <Button
               type="button"
@@ -251,7 +292,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
               aria-controls="browse-more-apps"
               onClick={() => controller()?.toggleMore()}
             >
-              {moreExpanded ? 'Show less' : `Show more (${more.length})`}
+              {moreExpanded ? t('discover:list.more.showLess') : t('discover:list.more.showMore', { count: more.length })}
             </Button>
           </div>
           <div id="browse-more-apps" className={moreExpanded

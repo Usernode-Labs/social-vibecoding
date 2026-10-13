@@ -66,6 +66,11 @@
     '/cli/authorize', '/connect/authorize',
     '/api/me/social-identities/github/connect',
     '/api/me/social-identities/x/connect',
+    // Back to the app a guest was looking around (P15): the app-host
+    // authorize hop (services/edge-gate.js) signs them in there and returns
+    // them to the same page. It only ever redirects to an app host it can
+    // parse, never anywhere a query names.
+    '/__access/authorize',
   ];
 
   // Screen transitions come from the platform's native kit via the
@@ -126,7 +131,7 @@
     try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
     if (!offline) return false;
     if (errorEl) {
-      showError(errorEl, "You're offline. Signing in needs a connection.");
+      showError(errorEl, PlatformI18n.t('auth:offline.signIn'));
     }
     try { window.Offline.nudge(); } catch (_) { /* ignore */ }
     return true;
@@ -139,6 +144,13 @@
     // (`/app/...`). Restored right before the authed boot so the router lands
     // on the exact app instead of the platform home.
     _pendingHash: '',
+    // The token of an invite link an account still waiting opened, kept by
+    // showWaiting for the waiting room (features/auth/waiting.tsx).
+    _waitingInvite: '',
+    // What a waitlist "you're in" mail's link asked for, `{ route, token }`,
+    // kept by enter() for the landing to take on show (takeReleaseLink in
+    // features/auth/shared.ts), which opens the sign-in sheet over the story.
+    _releaseLink: null,
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
 
@@ -198,6 +210,9 @@
     deepLinkUrl(target) {
       const value = String(target || '');
       if (value.startsWith('/app/')) return value;
+      // An invite link a visitor signed in from (App.restoreFromHash
+      // remembers it): back to it, so it is followed as the new session.
+      if (/^\/invite\/[A-Za-z0-9_-]{22}$/.test(value)) return value;
       if (value.startsWith('#')) return '/' + value;
       return '/';
     },
@@ -214,14 +229,28 @@
       // the home page, and exactly what the access-ready mail was reported
       // doing on desktop while working from a phone. A query survives that.
       //
-      // First match wins, and the address is rewritten to the hash route, so
-      // whichever spelling arrives the address bar ends up identical.
+      // First match wins, and the query comes off the address, so whichever
+      // spelling arrives the address bar ends up identical.
       //
       // `?status=1` is the check-my-status mail's one button (#1538). It
       // resolves to the code-entry step of the waitlist screen, which is a
-      // hash ROUTE plus a hash QUERY — so it cannot use the bare `/#route`
-      // template the other two share. The state stays in the fragment for
+      // hash ROUTE plus a hash QUERY. The state stays in the fragment for
       // the same reason it always has: a query would put it in server logs.
+      //
+      // `?signup=1[&t=<token>]` and `?login=1` are the waitlist's "you're
+      // in" mail (sendWaitlistReleaseMail), and they no longer go to the
+      // sign-in screen. They open the STORY, the screen everybody else
+      // starts on (features/auth/landing.tsx takes this on show): for an
+      // account that is still new, the landing spends the one-time sign-in
+      // as it opens ("Signing you in…", then the Welcome page), once a read
+      // that spends nothing says so; for one already set up, its Get started
+      // opens the sheet, which spends it then, or fills in the address the
+      // token names and sends the code; for one that exists, the Sign in
+      // sheet is open over it. So the address goes back to `/`, the
+      // landing's own, and the link waits on this object rather than in it,
+      // which also keeps the token out of the address bar. With the story
+      // switched off the landing hands it on to `#signup` / `#login`, as
+      // before.
       try {
         if (!location.hash) {
           const params = new URLSearchParams(location.search);
@@ -229,7 +258,19 @@
             : params.has('login') ? 'login'
               : params.has('status') ? 'waitlist?confirm=1'
                 : null;
-          if (route) history.replaceState(null, '', `/#${route}`);
+          if (route === 'signup' || route === 'login') {
+            const t = params.get('t');
+            // #4594: `key` is the mail's one-time sign-in link. Kept here,
+            // never spent on this GET: the landing or its sheet spends it
+            // with a POST.
+            const key = params.get('key');
+            AuthScreens._releaseLink = {
+              route,
+              token: route === 'signup' && t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null,
+              signIn: route === 'signup' && key && /^[A-Za-z0-9_-]{43}$/.test(key) ? key : null,
+            };
+            history.replaceState(null, '', '/');
+          } else if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();
@@ -237,6 +278,11 @@
 
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
     showWaiting() {
+      // An invite link opened by an account still waiting: the address is
+      // about to become /#waiting, so its token is kept for the waiting room,
+      // which follows it (features/auth/waiting.tsx) and clears this.
+      const invite = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(location.pathname);
+      if (invite) AuthScreens._waitingInvite = invite[1];
       if (AuthScreens.routeFromHash(location.hash.replace('#', '')) !== 'waiting') {
         const target = window.App?._rootUrl?.('#waiting') || '#waiting';
         history.replaceState(null, '', target);
@@ -347,9 +393,21 @@
     // ── Reload-free login completion ─────────────────────────────────
     //
     // Called after ANY successful credential exchange (password form,
-    // OTP set-password, wallet verify, activation-code register). The
-    // session cookie is set; boot the authed shell in place.
-    async finishLogin() {
+    // OTP set-password, wallet verify, activation-code register).
+    // Confirm the session before navigating. Failure stays on the form and
+    // returns a fixed diagnostic result to its React owner; retrying this
+    // method never sends credentials or mints another session.
+    //
+    // `opts.beforeShell` runs once the session is confirmed and this page is
+    // staying on its build, just before the signed-in shell starts: the
+    // sign-in sheet's hand-off to "What do you want to make?"
+    // (features/auth/sign-in-sheet.tsx). The sheet stays up, busy, through
+    // the session read and leaves only then, so the make screen, drawn in
+    // the tick the shell starts, follows it with no wait between (#4892:
+    // leaving first showed a blank page for as long as the read took).
+    async finishLogin(opts) {
+      const beforeShell = opts && typeof opts.beforeShell === 'function' ? opts.beforeShell : null;
+      let returnTo = '';
       // The login-return targets accepted by the platform. Both are separate
       // documents by design — real navigation stays.
       try {
@@ -359,8 +417,7 @@
             [...params.keys()].every((k) => k === 'return_to')) {
           const target = AuthScreens.returnToUrl(values[0]);
           if (target) {
-            window.location.href = target;
-            return;
+            returnTo = target;
           }
         }
       } catch (_) {}
@@ -371,32 +428,87 @@
       // sitting there ready for the next offline boot to paint.
       try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
 
+      // Asked alongside the session check below rather than after it: is
+      // this page behind the live build (App._moveToLiveShell)? Nothing to
+      // ask when the sign-in returns to another document.
+      const liveShell = !returnTo && typeof App !== 'undefined'
+        && typeof App._askLiveBuild === 'function' ? App._askLiveBuild() : null;
+
+      let stage = 'session-check';
+      let status = null;
+      let timedOut = false;
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 12000);
       try {
-        const res = await fetch('/api/auth/me');
-        if (!res.ok) throw new Error('me ' + res.status);
+        const res = await fetch('/api/auth/me', {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        });
+        status = res.status;
+        if (!res.ok) {
+          return { stage, status, code: status === 401 || status === 403
+            ? 'session-rejected' : 'server-response' };
+        }
+        stage = 'session-response';
         const data = await res.json();
         const user = data && data.user;
-        if (!user) throw new Error('no user');
+        if (!user || typeof user !== 'object' || !user.id) {
+          return { stage, status, code: 'invalid-response' };
+        }
+        stage = 'open-session';
+
+        if (returnTo) {
+          window.location.href = returnTo;
+          return null;
+        }
 
         if (user.hasPlatformAccess === false) {
           // Gated account: the waiting room takes over (enterAuthed
           // routes there); keep the deep link pending for the release.
+          // The waiting room moves to the live build when it lets them in
+          // (features/auth/waiting.tsx), before the signed-in shell starts.
           fx(() => App.enterAuthed(user), 'push');
-          return;
+          return null;
         }
 
         const target = AuthScreens._pendingHash || '';
-        AuthScreens._pendingHash = '';
         history.replaceState(null, '', AuthScreens.deepLinkUrl(target));
+        // Signed in on a build that is behind the live one: move to it now,
+        // before the signed-in shell starts, so no first-run screen is drawn
+        // by the old build. The reload lands on the address just restored.
+        // It never resolves once it reloads, so the sign-in stays busy until
+        // the page goes.
+        //
+        // The session this read just confirmed is kept for that reload first.
+        // The new page then starts from it (App.init's snapshot boot) and
+        // draws its first screen, "What do you want to make?" for a new
+        // account, in the tick it starts. Without it the reload waited on
+        // /api/auth/me and painted Home, then the landing, before the make
+        // screen. enterAuthed writes the same snapshot when nothing reloads.
+        if (typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
+          try { App.saveSessionSnapshot?.(user); } catch (_) {}
+          await App._moveToLiveShell('signed-in', liveShell);
+        }
+        // Staying: the sheet goes now (see above), and the shell starts once
+        // it has gone. A hand-off that fails must not keep anyone out.
+        if (beforeShell) {
+          try { await beforeShell(); } catch (_) { /* the shell starts all the same */ }
+        }
         fx(() => {
-          AuthScreens.hideAll();
           App.enterAuthed(user);
         }, 'pop');
+        AuthScreens._pendingHash = '';
+        return null;
       } catch (e) {
-        // Cookie is set but the in-place boot failed (transient /me
-        // hiccup) — a plain reload recovers via the normal boot path.
-        console.warn('[auth-screens] in-place boot failed, reloading:', e);
-        window.location.href = AuthScreens.deepLinkUrl(AuthScreens._pendingHash || '');
+        // Never include exception messages or response bodies: either may
+        // carry personal data. The UI explains this bounded category.
+        return { stage, status, code: timedOut ? 'timeout'
+          : stage === 'session-check' ? 'network-error'
+            : stage === 'session-response' ? 'invalid-response' : 'client-error' };
+      } finally {
+        clearTimeout(timer);
       }
     },
 

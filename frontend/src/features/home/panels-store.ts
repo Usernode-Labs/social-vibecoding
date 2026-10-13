@@ -49,6 +49,12 @@ export interface DiscoverTileView {
   demo: boolean;
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
+  /**
+   * Is the viewer a member of this community? Together with `added` it picks
+   * the corner pill's one of three states: a real join, the quiet "Joined"
+   * that taps through to the leave confirm, or a plain pin to My apps.
+   */
+  joined: boolean;
   icon: IconView;
   /**
    * The featured illustration: its image, how it is framed inside the art
@@ -63,6 +69,12 @@ export interface DiscoverTileView {
    * declares none, which is most apps. The card draws nothing in its place.
    */
   blurb: string | null;
+  /**
+   * The fallback facts line — "12 users · Updated 3d ago" — drawn when the
+   * app declares no description, so a card with no blurb still says more
+   * than "N contributors". Null whenever a blurb exists.
+   */
+  meta: string | null;
   /** How many people built it. 0 hides the line rather than printing "0". */
   contributors: number;
 }
@@ -119,7 +131,7 @@ export interface ChallengeRowView {
    * challenge's own end, else its event's, else the season's; null on a
    * finished or not-open challenge, or with no end in the future. Also null
    * under a This week, Always open or Season challenges header, which owns
-   * the clock; only Get started's cards keep their own.
+   * the clock; only the First challenges cards keep their own.
    */
   deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
@@ -128,7 +140,7 @@ export interface ChallengeRowView {
 
 /**
  * One group of the block's cards under the board's group header. Every group
- * is headed, a block of one group included, so `heading` ("Get started", "This
+ * is headed, a block of one group included, so `heading` ("First challenges", "This
  * week", "Always open", "Season challenges") is null only on the renderer's
  * fallback for a view built before groups existed. `meta` is the header's
  * clock ("3d left", "no deadline") or null; never a count.
@@ -152,19 +164,6 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
-  /**
-   * "Finish these to unlock the rest of the season." while setup gates the
-   * season; null once unlocked or with no gate. Drawn only when the locked
-   * placeholder is not, which says the same thing.
-   */
-  onboardingNote?: string | null;
-  /**
-   * How many challenges setup still hides (the server's
-   * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
-   * count. Above 0 the block draws the dashed placeholder, whose second line
-   * replaces the unlock note.
-   */
-  lockedCount?: number;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */

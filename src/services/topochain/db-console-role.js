@@ -91,7 +91,7 @@ function quoteIdent(name) {
 
 // Pure-ish (only reads, never writes): turns the live console scope into
 // the GRANT statements the role needs. The scope comes from
-// `db-console-scope.js`, which asks information_schema for the actual
+// `db-console-scope.js`, which asks the system catalog for the actual
 // tables and columns (rather than hardcoding either) so a table or column
 // added by a future migration becomes selectable automatically on the
 // NEXT boot's grant refresh, while the deny lists are still consulted for

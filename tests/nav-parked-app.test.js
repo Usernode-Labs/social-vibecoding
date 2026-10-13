@@ -92,8 +92,44 @@ test('the dismiss means forget, and says whose', () => {
   const html = render({ slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null });
   assert.match(html, /id="platform-parked-forget"[^>]*aria-label="Forget Notes"/);
   const SRC = read('frontend/src/features/nav/parked-strip.tsx');
-  assert.match(SRC, /onClick=\{\(\) => setParked\(null\)\}/,
+  assert.match(SRC, /onClick=\{\(\) => forgetParked\(app\)\}/,
+    'the ✕ forgets the strip and closes the app (below)');
+  assert.match(SRC, /export function forgetParked\(app: ParkedApp \| null\): void \{\n  setParked\(null\);/,
     'it clears the store AND storage, which is what forgetting is');
+});
+
+test('the dismiss also closes the app: its kept frame is let go (WP2, D2)', () => {
+  // The app's frame stays loaded behind the strip so Resume is instant. A
+  // forgotten app has nothing to resume into, and a kept copy of it would
+  // come back on its next open, on whatever build it loaded with (issue #1).
+  const notes = { slug: 'notes-ab12', name: 'Notes', iconUrl: null, iconEmoji: null };
+  const evicted = [];
+  const removed = [];
+  const prevWindow = global.window;
+  global.window = {
+    AppView: { evictKeptApp: (slug) => { evicted.push(slug); return true; } },
+    localStorage: { getItem: () => null, setItem() {}, removeItem: (k) => removed.push(k) },
+  };
+  const before = ui.parkedStore.get().app;
+  try {
+    ui.parkedStore.set({ app: notes });
+    ui.forgetParked(notes);
+    assert.equal(ui.parkedStore.get().app, null, 'the strip is forgotten');
+    assert.deepEqual(removed, [ui.PARKED_KEY], 'in storage too');
+    assert.deepEqual(evicted, ['notes-ab12'], "and the app's frame is let go");
+    // A strip already on its way out has no app: nothing more to close.
+    ui.forgetParked(null);
+    assert.deepEqual(evicted, ['notes-ab12']);
+    // A shell without the legacy app view (a harness, a failed script) still
+    // forgets the strip.
+    global.window = { localStorage: global.window.localStorage };
+    ui.parkedStore.set({ app: notes });
+    ui.forgetParked(notes);
+    assert.equal(ui.parkedStore.get().app, null);
+  } finally {
+    ui.parkedStore.set({ app: before });
+    global.window = prevWindow;
+  }
 });
 
 test('a slug with no record still draws a strip', () => {
@@ -152,6 +188,7 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   const noop = () => undefined;
   const elements = new Map();
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,
@@ -350,7 +387,8 @@ test('the strip is drawn only where the bar is', () => {
   // own visibility, applied as the class and never rendered, so a value
   // published before hydration cannot change the first render.
   assert.match(STRIP, /const barUp = useVisibility\('platform-tabs', true\);/);
-  assert.match(STRIP, /useHiddenClass\(ref, !app \|\| !barUp\);/);
+  assert.match(STRIP, /const shown: ParkedApp \| null = app \|\| leaving;/);
+  assert.match(STRIP, /useHiddenClass\(ref, !shown \|\| !barUp\);/);
   assert.match(STRIP, /className="platform-parked hidden"/, 'the class string stays a constant');
   // The keyboard takes it with the bar, and a folded desktop rail takes its
   // footer with it — both presentation, so CSS rather than the class.
@@ -365,8 +403,63 @@ test('on a peeked rail the strip rides on top, and holds the peek while pointed 
   // The pointer crossing from the rail onto the strip leaves the rail's
   // element; without these the rail and strip fade away under it. Only while
   // a peek is up — pointing at the strip never starts one.
-  assert.match(STRIP, /onMouseEnter=\{peek \? enterPeek : undefined\}/);
-  assert.match(STRIP, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
+  // Pointer events from a real mouse only: a tap's compatibility mouse
+  // events must not touch the peek's timers (#27).
+  assert.match(STRIP, /onPointerEnter=\{peek \? enterPeekByMouse : undefined\}/);
+  assert.match(STRIP, /onPointerLeave=\{peek \? leavePeekByMouse : undefined\}/);
+});
+
+// ── It arrives and leaves by the bar (#3376) ───────────────────────────
+
+test('the phases are classes toggled on the root, never a rendered className', () => {
+  assert.match(STRIP, /useClassToggle\(ref, 'platform-parked-enter', entering && !!app && barUp\);/);
+  assert.match(STRIP, /useClassToggle\(ref, 'platform-parked-leave', !app && !!leaving && barUp\);/);
+  assert.doesNotMatch(STRIP, /className=\{/, 'the root and its parts keep constant class strings');
+});
+
+test('the bar going away hides at once; a restored app does not slide in', () => {
+  const fx = STRIP.slice(STRIP.indexOf('useIsomorphicLayoutEffect(() => {'));
+  const body = fx.slice(0, fx.indexOf('}, [app, barUp]);'));
+  assert.match(body, /if \(!barUp\) \{\s*\/\/[^\n]*\n\s*setLeaving\(null\);\s*setEntering\(false\);/,
+    'never a slide over the app being opened');
+  assert.match(body, /setEntering\(!restoring\);/);
+  assert.match(STRIP, /quiet\.current = true;\s*parkedStore\.set\(\{ app: stored \}\);/,
+    'the load-time restore is marked quiet');
+  assert.match(body, /if \(leaveAnimates\(\)\) setLeaving\(was\.app\);/,
+    'a forget only lingers when the leave is actually drawn');
+});
+
+test('reduced motion and the desktop skip the leave, and a timer always ends it', () => {
+  assert.match(STRIP, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches\) return false;/);
+  assert.match(STRIP, /matchMedia\('\(max-width: 767px\)'\)\.matches;/);
+  assert.match(STRIP, /window\.setTimeout\(finish, \(leaving \? LEAVE_MS : ENTER_MS\) \+ SLACK_MS\);/,
+    'no animationend under display: none, so a timer backs it');
+  assert.match(STRIP, /el\.toggleAttribute\('inert', out\);/, 'a leaving strip takes no taps');
+});
+
+test('a forgotten app is still drawn while it leaves', () => {
+  const before = ui.parkedStore.get().app;
+  try {
+    ui.parkedStore.set({ app: null });
+    assert.doesNotMatch(renderToHtml(createElement(ui.ParkedStrip, {})), /platform-parked-resume/,
+      'with nothing parked and nothing leaving, the strip is empty');
+  } finally {
+    ui.parkedStore.set({ app: before });
+  }
+  assert.match(STRIP, /\{shown && record \? \(/, 'the children draw from the app shown, leaving included');
+});
+
+test('the motion is phone-only, clips the root and slides only its children', () => {
+  const at = CSS.indexOf('@media (max-width: 767px) {\n  .platform-parked-enter {');
+  assert.ok(at > 0, 'phone-only phase rules');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
+  assert.match(block, /\.platform-parked-enter \{\s*animation: platform-parked-reveal 220ms/);
+  assert.match(block, /\.platform-parked-leave \{\s*pointer-events: none;\s*animation: platform-parked-conceal 160ms[^;]*forwards;/);
+  assert.match(CSS, /@keyframes platform-parked-reveal \{\s*from \{ clip-path: inset\(100% 0 0 0\); \}/);
+  assert.match(CSS, /@keyframes platform-parked-rise \{\s*from \{ transform: translateY\(52px\); opacity: 0; \}/);
+  assert.doesNotMatch(CSS, /@keyframes platform-parked-(reveal|conceal) \{[^}]*transform/,
+    'a transform on the root breaks its fixed glass layer');
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-parked-enter, \.platform-parked-leave,\s*\.platform-parked-enter > \*, \.platform-parked-leave > \* \{ animation: none; \}/);
 });
 
 test('storage is read defensively and written through one key', () => {

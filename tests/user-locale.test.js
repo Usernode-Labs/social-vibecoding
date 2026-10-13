@@ -37,6 +37,7 @@ poolMod.getPool = () => ({
 
 const { authRoutes } = require('../src/routes/auth');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 let server, base;
 let user = null;
@@ -162,7 +163,7 @@ test('/api/auth/me reports null when unset', async () => {
 
 test('iframe-token mint selects the locale column alongside the pubkey', () => {
   const src = read('server.js');
-  assert.match(src, /SELECT usernode_pubkey, locale FROM users WHERE id = \$1/);
+  assert.match(src, /SELECT usernode_pubkey, locale, username_provisional_since IS NOT NULL AS provisional\s+FROM users WHERE id = \$1/);
 });
 
 test('iframe-token payload gains the locale claim additively', () => {
@@ -222,33 +223,53 @@ test('Settings markup has the Language section', () => {
   assert.match(html, /Auto: use device language/);
 });
 
-test('settings.js wires the picker to POST /api/me/locale and the live push', () => {
+test('the picker saves through the language runtime, which POSTs /api/me/locale and pushes it live', () => {
   const js = read('frontend/src/features/settings/settings.js');
   assert.match(js, /_renderLanguageSection/);
-  assert.match(js, /_saveLocale/);
-  assert.match(js, /\/api\/me\/locale/);
-  assert.match(js, /notifyLocaleChanged/);
+  const start = js.indexOf('    async _saveLocale(value) {');
+  assert.ok(start > -1, '_saveLocale exists');
+  const fn = js.slice(start, start + 1800);
+  assert.match(fn, /i18n\.changeLanguage\(value \|\| null, async \(next\) => \{/,
+    'load, save, then switch: the runtime orders it');
+  assert.match(fn, /await i18n\.saveAccountLocale\(next\)/);
+  // One save path for Settings and the automatic-language banner.
+  const account = read('frontend/src/lib/i18n/account.ts');
+  assert.match(account, /fetch\('\/api\/me\/locale'/);
+  assert.match(account, /App\.user\.locale = saved/,
+    "the shell's cached user answers the bridge's getUserLocale without a re-fetch");
+  assert.match(account, /notifyLocaleChanged\?\.\(saved\)/, 'open app iframes hear usernode:locale-changed');
+  assert.match(account, /settings\.state\.locale = saved/);
 });
 
-test('the Settings picker is gated on an already-saved locale (#1556)', () => {
-  // The platform shell is English-only, so a "Language" row in Preferences
-  // reads as a UI language switch and does nothing visible. The value only
-  // ever reached APPS, so the picker is no longer offered by default — but
-  // it stays reachable for the accounts that already have one saved, and
-  // every read path above this line is untouched.
+test('the Settings picker is offered to everyone, with Auto and the shipped languages', () => {
+  // #1556 hid the section from anyone without a saved locale, while the row
+  // could not say what it did. It is listed for everyone again; every read
+  // path above this line is untouched.
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /\{ key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' \}/,
-    'the registry entry names the gate node, which _visibleSections() reads back');
+  assert.match(js, /\{ key: 'language', label: 'settings:nav\.part\.language', group: 'settings:nav\.group\.preferences' \}/,
+    'no capability gate on the registry entry');
+  assert.equal(message('settings:nav.part.language'), 'Language');
+  assert.equal(message('settings:nav.group.preferences'), 'Preferences');
+  const html = shellMarkup();
+  assert.match(html, /id="settings-language-section">/, 'the pane ships without an inner hidden');
+  const select = html.slice(html.indexOf('id="settings-locale"'));
+  const options = [...select.slice(0, select.indexOf('</select>')).matchAll(/<option value="([^"]*)"/g)]
+    .map((match) => match[1]);
+  // A configured language ships once its translations are filled
+  // (scripts/language-packs.js): the build hands the shell only those.
+  const packs = require('../scripts/language-packs');
+  const { config, report } = packs.collectCatalogs(path.join(__dirname, '..'));
+  const shipped = Object.keys(packs.shippedLanguages(config, report));
+  assert.deepEqual(options, ['', ...shipped], 'Auto, then exactly the languages Homeroom ships');
+  assert.match(read('frontend/src/features/settings/sections/language.tsx'),
+    /shippedLanguages\.map\(\(\{ tag, name \}\) => \(/, 'the options are the config, not a second list');
+  assert.equal(shipped[0], 'en', 'English always ships, and comes first');
+  // A locale saved when the picker listed more stays visible and changeable.
   const start = js.indexOf('    _renderLanguageSection() {');
-  assert.ok(start > -1, '_renderLanguageSection exists');
-  const fn = js.slice(start, start + 1200);
-  assert.match(fn, /getElementById\('settings-language-section'\)/);
-  assert.match(fn, /if \(!value\) \{[^}]*classList\.add\('hidden'\);[^}]*return;/,
-    'no saved locale -> hidden, so the section drops out of the menu');
-  assert.match(fn, /classList\.remove\('hidden'\)/,
-    'a saved locale -> shown, so nobody is stranded with an unchangeable preference');
-  // The pane ships hidden in the markup; the render fn is the only reveal.
-  assert.match(shellMarkup(), /id="settings-language-section" class="hidden"/);
+  const fn = js.slice(start, start + 900);
+  assert.doesNotMatch(fn, /settings-language-section/, 'nothing hides the section any more');
+  assert.match(fn, /opt\.textContent = window\.PlatformI18n\?\.languageName\?\.\(value\) \|\| value/,
+    'a kept choice is listed under its own name');
 });
 
 test('shell answers the __usernode_locale family and pushes changes', () => {

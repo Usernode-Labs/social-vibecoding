@@ -39,6 +39,7 @@ const { waitlistAdminRoutes } = require('./admin/waitlist');
 const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
 const { leaderboardAdminRoutes } = require('./admin/leaderboard');
 const { challengeScoringAdminRoutes } = require('./admin/challenge-scoring');
+const { programmeExportAdminRoutes } = require('./admin/programme-export');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -132,6 +133,11 @@ function topochainAdminRoutes(config) {
   router.use(challengesAdminRoutes(config));
   // The automatic scorer's rules, and its Run now / Dry run controls.
   router.use(challengeScoringAdminRoutes(config));
+  // The whole programme (every event's challenges, their rules, the unused
+  // templates) as one CSV for the Season events and Challenge templates
+  // screens' Download CSV. Its `/programme` path is unused elsewhere, and it
+  // is a read: adminReadGate above is its whole gate.
+  router.use(programmeExportAdminRoutes(config));
   router.use(appVersionConfigsAdminRoutes(config));
   router.use(settingsAdminRoutes(config));
 

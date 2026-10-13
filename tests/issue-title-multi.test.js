@@ -63,7 +63,7 @@ test('prompt keeps the imperative verb-first single-issue style', async () => {
     await llm.generateIssueTitle({ description: 'The button is broken' });
     assert.equal(stub.calls.length, 1);
     const { model, max_tokens, messages } = stub.calls[0];
-    assert.equal(model, 'claude-haiku-4-5');
+    assert.equal(model, 'claude-haiku-5-5');
     assert.equal(max_tokens, 60);
     assert.equal(messages.length, 1);
     assert.equal(messages[0].role, 'user');
@@ -120,7 +120,7 @@ test('returns the trimmed title, with usage and model', async () => {
     const res = await llm.generateIssueTitle({ description: 'sort broken, totals stale' });
     assert.equal(res.title, 'Fix multiple leaderboard issues: sort and totals');
     assert.equal(res.actionable, true);
-    assert.equal(res.model, 'claude-haiku-4-5');
+    assert.equal(res.model, 'claude-haiku-5-5');
     assert.deepEqual(res.usage, { input_tokens: 40, output_tokens: 12 });
   });
 });

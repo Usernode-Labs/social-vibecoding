@@ -1,0 +1,31 @@
+{
+  "key": "app-bench-starter",
+  "notes": "The App bench studio's starter set of briefs (services/bench/studio.js): five small apps, each described the way a creator would. Launch them as `briefSet: \"starter\"`, or name new briefs at launch.",
+  "briefs": [
+    {
+      "ref": "bread",
+      "name": "Bread Bot",
+      "brief": "I want to make an app where I can do the following: 1 I set the kind of bread (sourdough, bagels, sourdough bagels, rye, sandwich loaf) 2 I set the hydration and how many loaves and how big 3 it tells me how many grams of each ingredient, how long to let it rise, and what temperature and how long to bake it."
+    },
+    {
+      "ref": "rss-reader",
+      "name": "RSS Reader",
+      "brief": "Hey, I want to make an RSS Reader. Can we do this? I'm thinking it should work like Feedly: I add my RSS feeds and see all the unread posts from them in one scrolling list. Tapping a post shows a preview of the article, with a link to open the full thing in the browser. Each person's feeds are their own."
+    },
+    {
+      "ref": "ear-trainer",
+      "name": "Ear Trainer",
+      "brief": "An app to learn relative notes / chords, and then basic chord progressions. Chord progressions to learn should be taken from popular songs, and hymns. Learning progressions should take more different notes / chords / chord progressions first, and then add in the ones that sound closer until you are being quizzed on the full set. You should be able to select how big the set is from a list of lessons that get progressively harder for each lesson type."
+    },
+    {
+      "ref": "voxel-world",
+      "name": "Block World",
+      "brief": "A 3D voxel creative building game, like Minecraft creative mode. Fly around a world and place and break blocks, picking from a palette of block types. The world is shared, so everyone sees what everyone else builds."
+    },
+    {
+      "ref": "tier-list",
+      "name": "Tier List",
+      "brief": "A tier list for different things that I can rank things with friends, like restaurants in the bay area. Anyone can add new things to score, and then everyone drags it where they think it should be. Everyone can see both their scores, and the view of the crowd, as well as how everyone voted on a thing."
+    }
+  ]
+}

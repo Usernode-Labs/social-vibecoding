@@ -31,7 +31,7 @@
 // ./app-card-view.tsx, off the same descriptor functions the home grid's strings
 // are built from. The rest is still Home's, reached through the global,
 // because each one reads Home's loaded-app list or the viewer's permissions:
-// isYours, matchesQuery, toggleAdded, menuItemsFor.
+// isYours, filterApps, toggleAdded, menuItemsFor.
 //
 // WHAT THIS FILE DOES NOW (#1191 slice 6, conversion 3): every decision, and
 // no markup. The sort, the search filter, the level derivation, the two
@@ -68,6 +68,7 @@ const Browse = {
   // Guards the cold-deep-link fetch below so a miss can't loop.
   _detailFetching: null,
   _detailMissing: false,
+  _detailBlocked: false,
   // Where the CURRENT detail page was entered from, so the header's back
   // button lands where the user actually came from:
   //   'list' — a browse row tap, or a deep link / screenshot state. Back
@@ -138,6 +139,7 @@ const Browse = {
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
     Browse._slug = slug || null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (Browse._slug) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -155,6 +157,7 @@ const Browse = {
     Browse._open = false;
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     // Leaving the screen retires the entry note with it — the next detail
     // page declares its own origin.
     Browse._detailOrigin = 'list';
@@ -182,6 +185,7 @@ const Browse = {
     const goingDeeper = !!next && !Browse._slug;
     Browse._slug = next;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (next) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -195,6 +199,7 @@ const Browse = {
     if (!slug) return;
     Browse._slug = slug;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._takeOrigin();
     Browse._syncLevel();
@@ -204,6 +209,7 @@ const Browse = {
   showList() {
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._pendingOrigin = null;
     Browse._syncLevel();
@@ -224,6 +230,9 @@ const Browse = {
       App.navigateHome();
       return true;
     }
+    // #3620: up to the list is a step Back when the list is the entry below,
+    // so Back afterwards leaves Discover rather than reopening the page.
+    if (typeof App !== 'undefined' && App._stepBackTo && App._stepBackTo('#apps')) return true;
     location.hash = '#apps';
     return true;
   },
@@ -290,7 +299,7 @@ const Browse = {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
     } else {
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('discover:browse.headerTitle'));
     }
   },
 
@@ -353,11 +362,11 @@ const Browse = {
   // The order of this array is the order of the <select>; the first entry is
   // the default. Labels are user-facing.
   SORTS: [
-    { key: 'recommended', label: 'Recommended' },
-    { key: 'users', label: 'Most users' },
-    { key: 'active', label: 'Most active' },
-    { key: 'merged', label: 'Most changes merged' },
-    { key: 'new', label: 'Newest' },
+    { key: 'recommended', label: 'discover:sort.recommended' },
+    { key: 'users', label: 'discover:sort.users' },
+    { key: 'active', label: 'discover:sort.active' },
+    { key: 'merged', label: 'discover:sort.merged' },
+    { key: 'new', label: 'discover:sort.newest' },
   ],
 
   // localStorage key for the remembered choice. Namespaced like the rest of
@@ -434,13 +443,13 @@ const Browse = {
   // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
   // of SORTS (tests/browse-screen.test.js pins the two together).
   FILTERS: [
-    { key: 'all', label: 'All' },
-    { key: 'featured', label: 'Featured' },
+    { key: 'all', label: 'discover:filter.all' },
+    { key: 'featured', label: 'discover:filter.featured' },
     // The key stays `yours` — ?filter=yours links and the declared checks
     // select on it — while the label says what the chip now holds: the
     // communities you are in, not the shortcuts on your Home screen.
-    { key: 'yours', label: 'Joined' },
-    { key: 'new', label: 'New' },
+    { key: 'yours', label: 'discover:filter.joined' },
+    { key: 'new', label: 'discover:filter.new' },
   ],
 
   // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
@@ -537,14 +546,14 @@ const Browse = {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const q = String(query || '').trim();
     if (q) {
-      if (filter === 'featured') return `No featured apps match “${q}”.`;
-      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
-      if (filter === 'new') return `No new apps match “${q}”.`;
-      return `No apps match “${q}”.`;
+      if (filter === 'featured') return PlatformI18n.t('discover:empty.search.featured', { query: q });
+      if (filter === 'yours') return PlatformI18n.t('discover:empty.search.joined', { query: q });
+      if (filter === 'new') return PlatformI18n.t('discover:empty.search.new', { query: q });
+      return PlatformI18n.t('discover:empty.search.all', { query: q });
     }
-    if (filter === 'featured') return 'No featured apps yet.';
-    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
-    return 'No apps to show yet.';
+    if (filter === 'featured') return PlatformI18n.t('discover:empty.featured');
+    if (filter === 'yours') return PlatformI18n.t('discover:empty.joined');
+    return PlatformI18n.t('discover:empty.all');
   },
 
   // Unreviewed is not the same as broken. Apps with icons that have not yet
@@ -643,12 +652,14 @@ const Browse = {
   // The rows for the current chip and query. The chip picks the set first
   // (filterApps), then the sort orders it, then the search narrows it. The
   // search covers every app the chip admits (home's own search is scoped to
-  // "Your apps"), reusing Home's matcher so both fields behave identically.
-  // The three compose, and searching never changes the order.
+  // "Your apps"), reusing Home's search (Home.filterApps) so both fields
+  // behave identically. The three compose, and searching keeps the sort's
+  // order with one exception (#4793): an app whose name or slug IS the
+  // query moves to the top, the rest staying where the sort put them.
   visibleApps() {
     const pool = Browse.filterApps(Browse._apps, Browse._filter);
     const sorted = Browse.sortApps(pool, Browse._sort);
-    return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
+    return Home.filterApps(sorted, Browse._query);
   },
 
   // ── Row rendering ─────────────────────────────────────────────────
@@ -676,28 +687,28 @@ const Browse = {
     const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
-    bits.push(`${users} user${users === 1 ? '' : 's'}`);
+    bits.push(PlatformI18n.t('discover:row.meta.users', { count: users }));
     if (sort === 'active') {
       const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
-      if (recent > 0) bits.push(`${recent} merged in 30d`);
+      if (recent > 0) bits.push(PlatformI18n.t('discover:row.meta.liveRecently', { count: recent }));
     } else if (sort === 'merged') {
       const merged = parseInt(app.merged_prs || 0, 10) || 0;
-      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} merged`);
+      if (merged > 0) bits.push(PlatformI18n.t('discover:row.meta.changesLive', { count: merged }));
     }
     if (sort === 'new') {
       const created = formatRelativeTime(app.created_at);
-      if (created) bits.push(`Created ${created}`);
+      if (created) bits.push(PlatformI18n.t('discover:row.meta.created', { when: created }));
     } else {
       const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
-      if (rel) bits.push(`Updated ${rel}`);
+      if (rel) bits.push(PlatformI18n.t('discover:row.meta.updated', { when: rel }));
     }
     const status = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up…'
-      : app.status === 'awaiting_secrets' ? 'Awaiting secrets'
-      : app.status === 'error' ? 'Error'
+      : app.status === 'creating' ? PlatformI18n.t('discover:row.status.creating')
+      : app.status === 'awaiting_secrets' ? PlatformI18n.t('discover:row.status.awaitingSecrets')
+      : app.status === 'error' ? PlatformI18n.t('discover:row.status.error')
       : app.status || '';
     if (status) bits.push(status);
-    return bits.join(' · ');
+    return joinFacts(bits);
   },
 
   // One app-store row, as DATA: icon · name + meta + status pills · Add
@@ -727,7 +738,9 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
+      addTitle: isAdded
+        ? PlatformI18n.t('discover:row.join.joinedTip', { app: app.name || app.slug })
+        : PlatformI18n.t('discover:row.join.tip', { app: app.name || app.slug }),
     };
   },
 
@@ -796,6 +809,8 @@ const Browse = {
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
+    // The hub, not the tab that project page was last left on.
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(view.slug);
     location.hash = href;
   },
 
@@ -920,7 +935,7 @@ const Browse = {
     } catch (err) {
       ok = false;
     }
-    PlatformUI.toast(ok ? 'Link copied' : 'Couldn’t copy the link');
+    PlatformUI.toast(ok ? PlatformI18n.t('discover:detail.share.copied') : PlatformI18n.t('discover:detail.share.copyFailed'));
   },
 
   // ── Contributors (#919) ───────────────────────────────────────────
@@ -967,11 +982,11 @@ const Browse = {
     };
 
     if (state === 'loading') {
-      view.note = 'Loading contributors…';
+      view.note = PlatformI18n.t('discover:detail.contributors.loading');
     } else if (state === 'error') {
-      view.note = 'Couldn’t load contributors.';
+      view.note = PlatformI18n.t('discover:detail.contributors.loadFailed');
     } else if (!items.length) {
-      view.note = 'No contributors yet.';
+      view.note = PlatformI18n.t('discover:detail.contributors.none');
     } else {
       const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
       view.rows = shown.map((c, i) => Browse.contributorRowView(c, i + 1));
@@ -980,8 +995,8 @@ const Browse = {
       // quotes `total` so the number matches the heading.
       if (items.length > Browse.CONTRIB_FOLD) {
         view.toggle = expanded
-          ? 'Show fewer'
-          : `Show all ${total} contributor${total === 1 ? '' : 's'}`;
+          ? PlatformI18n.t('discover:detail.contributors.showFewer')
+          : PlatformI18n.t('discover:detail.contributors.showAll', { count: total });
       }
     }
 
@@ -994,24 +1009,29 @@ const Browse = {
   // right — so the platform's two ranked people-lists read as one system. A
   // <button> so it is keyboard-focusable like those rows are. Pure.
   contributorRowView(c, rank) {
+    // `who` is also the row's key (data-username, openContributor), so the
+    // missing-name value stays this literal; `unnamed` tells the tooltip to
+    // use its own wording instead of taking it as a username.
     const who = (c && c.username) || 'unknown';
+    const unnamed = !(c && c.username);
     const merged = parseInt(c && c.merged_count, 10) || 0;
     const votes = parseInt(c && c.votes_count, 10) || 0;
     // Role first (it says what they ARE on this app), then the vote count.
     // Creator wins over member — the creator is always backfilled as one,
     // so showing both would be noise on every single first row.
     const bits = [];
-    if (c && c.is_creator) bits.push('Creator');
-    else if (c && c.is_member) bits.push('Member');
-    if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
+    if (c && c.is_creator) bits.push(PlatformI18n.t('discover:detail.contributor.creator'));
+    else if (c && c.is_member) bits.push(PlatformI18n.t('discover:detail.contributor.member'));
+    if (votes > 0) bits.push(PlatformI18n.t('discover:detail.contributor.votes', { count: votes }));
     return {
       who,
+      unnamed,
       rank,
       initial: (who[0] || '?').toUpperCase(),
       merged,
       // null rather than '' so the renderer drops the line instead of
       // drawing an empty one, exactly as the string version did.
-      meta: bits.length ? bits.join(' · ') : null,
+      meta: bits.length ? joinFacts(bits) : null,
       // A zero stays visible in muted grey rather than vanishing, so every
       // row keeps the same shape and the column doesn't ragged out.
       pillTint: merged > 0
@@ -1070,7 +1090,7 @@ const Browse = {
 
     if (!app) {
       if (Browse._detailMissing) {
-        Browse._store.set({ detail: { state: 'missing' } });
+        Browse._store.set({ detail: { state: Browse._detailBlocked ? 'blocked' : 'missing' } });
         return;
       }
       Browse._store.set({ detail: { state: 'loading' } });
@@ -1090,7 +1110,7 @@ const Browse = {
           includePrContext: false,
         })
       : '';
-    // Fork lineage — "⑂ Forked from <name>", under the version chip.
+    // Fork lineage — "⑂ Remixed from <name>", under the version chip.
     //
     // This was the hamburger drawer's last footer row, painted by
     // AppView.renderForkBadge() into a slot by id and revealed through
@@ -1109,6 +1129,8 @@ const Browse = {
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
+          // The original is gone: the line has its own wording, and `name` is a placeholder.
+          deleted: !forkRef.name,
           href: (forkRef.linkable && forkRef.slug)
             ? `#app/${encodeURIComponent(forkRef.slug)}`
             : null,
@@ -1147,12 +1169,12 @@ const Browse = {
         updatedRel,
         canOpen,
         openLabel: canOpen
-          ? 'Open'
-          : (app.status === 'creating' ? 'Spinning up…'
-            : app.status === 'error' ? 'Not running'
-            : (app.status || 'Unavailable')),
+          ? PlatformI18n.t('discover:detail.open.action')
+          : (app.status === 'creating' ? PlatformI18n.t('discover:detail.open.creating')
+            : app.status === 'error' ? PlatformI18n.t('discover:detail.open.notRunning')
+            : (app.status || PlatformI18n.t('discover:detail.open.unavailable'))),
         isAdded,
-        favLabel: isAdded ? 'Remove from Your apps' : 'Add to Your apps',
+        favLabel: isAdded ? PlatformI18n.t('discover:detail.myApps.remove') : PlatformI18n.t('discover:detail.myApps.add'),
         // The Share row (shareDetailApp). A flag, not the URL: the click
         // resolves the link from the app record it is handed, the same one
         // Open and Add act on, rather than from a string frozen at paint.
@@ -1161,6 +1183,9 @@ const Browse = {
           index: i,
           label: a.label,
           title: a.title || null,
+          // The line under the label, for an item that has one (Remix's
+          // "Make your own copy"); absent for every other row.
+          ...(a.sub ? { sub: a.sub } : {}),
           danger: !!a.danger,
           disabled: !!a.disabled,
         })),
@@ -1200,8 +1225,15 @@ const Browse = {
     if (Browse._detailFetching === slug) return;
     Browse._detailFetching = slug;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // `manifest=summary`: the row joins the list's rows, which carry the
+      // same summary, and shares the service worker's copy with AppView.
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+      if (!res.ok) {
+        const failure = await res.json().catch(() => ({}));
+        Browse._detailBlocked = failure.code === 'app_blocked';
+        throw new Error(`HTTP ${res.status}`);
+      }
+      Browse._detailBlocked = false;
       // The route answers `{ app: … }` (src/routes/apps.js), NOT a bare app
       // row — reading it as one made every cold deep link resolve to the
       // "isn't available" state. It only ever surfaced when the concurrent
@@ -1271,12 +1303,19 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return PlatformI18n.t('discover:time.justNow');
+  if (seconds < 3600) return PlatformI18n.t('discover:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return PlatformI18n.t('discover:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return PlatformI18n.t('discover:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return PlatformI18n.t('discover:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return PlatformI18n.t('discover:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
+}
+
+// Short facts on one line of a row ("12 users · Updated 3d ago"). Each fact is
+// a whole message of its own, and what joins two of them is a message too, so
+// a language can use its own separator.
+function joinFacts(facts) {
+  return facts.reduce((first, second) => PlatformI18n.t('discover:row.meta.pair', { first, second }));
 }
 
 // Still published as a global: App.navigateToBrowse, app.js's hash router and
@@ -1284,3 +1323,13 @@ function formatRelativeTime(input) {
 // scripts. Guarded because the SSG prerender pass evaluates this module in
 // Node (the island imports it).
 if (typeof window !== 'undefined') window.Browse = Browse;
+
+// The descriptors above hold text, so a language change rebuilds them from
+// the same state: the rows or the detail page, and the header's title.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!Browse._open) return;
+    Browse.render();
+    Browse._syncChrome();
+  });
+}

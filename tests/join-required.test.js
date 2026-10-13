@@ -154,3 +154,16 @@ test('a hidden or removed anchor falls back to the dialog', async () => {
     assert.equal(h.asked.length, 2, 'nor does one that has gone');
   } finally { h.restore(); }
 });
+
+test('an anchor that joined through an invite link says so, and no second membership is written (#3700)', async () => {
+  const h = harness({ answers: [response(403, REFUSED), response(200, { ok: true })] });
+  try {
+    const off = h.mod.registerJoinAnchor('notes', { visible: () => true, ask: async () => 'joined' });
+    const res = await h.win.fetch('/api/apps/notes/issues', { method: 'POST' });
+    assert.equal(res.status, 200, 'the refused write is sent again');
+    assert.deepEqual(h.joined, [], 'the link wrote the membership, so Home.setMembership is not called');
+    assert.equal(h.asked.length, 0);
+    off();
+  } finally { h.restore(); }
+  assert.match(read(MOD), /if \(ok === 'joined'\) return true;\s+if \(!ok\) return false;/);
+});

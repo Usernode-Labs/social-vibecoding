@@ -30,6 +30,9 @@
  * `--restart unless-stopped` policy is usually mid-backoff and recovers on
  * its own; we only step in when it's still not running next tick.
  *
+ * Each time it brings an app back, it records the minute
+ * (app-outages.js), which the Infra topic's figures count.
+ *
  * Like the drift poller, apps.status deliberately stays 'running'
  * throughout a heal (flipping it would drop the app's URL from the home
  * tile — see main-drift-poller.js for the full rationale), and rebuilds
@@ -40,6 +43,8 @@
 const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
+const appOutages = require('./app-outages');
+const appTeardown = require('./app-teardown');
 const { getPool } = require('../db/pool');
 
 const FIRST_PASS_DELAY_MS = 30_000;
@@ -81,7 +86,35 @@ function containerName(slug) {
 // every other deploy path uses (per-slug serialized, drives the version
 // pill); repo-less apps re-run their already-built image with a freshly
 // assembled env. Returns the result status string.
+// A recovery takes minutes, so an app can be deleted while one runs: the
+// teardown removes the runtime, then this puts it back. Whatever the recovery
+// did, an app that is gone or going by the end keeps no runtime. A lookup
+// that fails removes nothing.
 async function recoverFromScratch(config, pool, app) {
+  try {
+    return await rebuildOrRespawn(config, pool, app);
+  } finally {
+    await removeRuntimeIfDeleted(config, pool, app);
+  }
+}
+
+async function removeRuntimeIfDeleted(config, pool, app) {
+  try {
+    if (!appTeardown.isTearingDown(app.slug)) {
+      const { rows } = await pool.query('SELECT 1 FROM apps WHERE id = $1', [app.id]);
+      if (rows.length) return;
+    }
+    const ref = applicationRuntime.productionRef(config, app);
+    await applicationRuntime.remove(config, { ...ref, appId: app.id }, {
+      deleteBuilds: ref.runtimeKind === 'kubernetes',
+    });
+    log.warn('app-heal', 'App was deleted during recovery; runtime removed', { slug: app.slug });
+  } catch (err) {
+    log.warn('app-heal', 'Could not check for a deleted app after recovery', { slug: app.slug, err: err.message });
+  }
+}
+
+async function rebuildOrRespawn(config, pool, app) {
   const github = require('./github');
   const name = containerName(app.slug);
 
@@ -149,6 +182,7 @@ async function provisionMissingRepo(config, pool, app) {
 
   const botUsername = await github.getBotUsername();
   let repoUrl;
+  let lineage = null;
   if (app.forked_from) {
     const { copyRepoTree, findForkSource } = require('./app-forker');
     const sourceApp = await findForkSource(pool, app);
@@ -165,6 +199,9 @@ async function provisionMissingRepo(config, pool, app) {
         tempDir,
       });
       repoUrl = copied.repoUrl;
+      // The commits this copy was cut from and starts at, recorded as the
+      // fork worker records them (app-forker forkApp).
+      lineage = { sourceSha: copied.sourceSha || null, forkBaseSha: copied.mainSha || null };
     } finally {
       await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
     }
@@ -183,7 +220,15 @@ async function provisionMissingRepo(config, pool, app) {
     repoUrl = repo.html_url;
 
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
-    const files = getTemplateFiles(app.name, app.slug, dbUrl);
+    // The app's own emoji icon, when that is what it has (apps.icon_emoji,
+    // and no icon image): the healed repo's starter screen shows the app's
+    // thumbnail rather than a bare letter, and dapp.json's icon block keeps
+    // the emoji through the first deploy's reconcile (#4047). An image icon
+    // cannot be carried by the template, so it is left alone — heal has
+    // never written one, and the template must not claim an emoji over it.
+    const files = getTemplateFiles(app.name, app.slug, dbUrl, null, {
+      iconEmoji: app.icon_emoji && !app.icon_image_id ? app.icon_emoji : null,
+    });
     await github.pushFiles(botUsername, app.slug, files, {
       message: `Initialize ${app.name} from Homeroom template (repo heal)`,
     });
@@ -194,6 +239,13 @@ async function provisionMissingRepo(config, pool, app) {
   // container heal paths take over from here on the next tick.
   await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, app.id]);
   app.repo_url = repoUrl;
+  if (lineage) {
+    await pool.query(
+      `UPDATE apps SET forked_from = forked_from || $1::jsonb
+        WHERE id = $2 AND jsonb_typeof(forked_from) = 'object'`,
+      [JSON.stringify(lineage), app.id]
+    );
+  }
   log.info('app-heal', app.forked_from
     ? 'Fork repository restored from source app'
     : 'GitHub repo provisioned for repo-less app', {
@@ -225,6 +277,7 @@ async function provisionMissingRepo(config, pool, app) {
 // structured status so the sweep loop and tests can act on the outcome:
 //   healthy         — container is running (and, when probed, answering)
 //   skipped         — self-hosted / not eligible
+//   deleting        — the app is being taken down (app-teardown)
 //   in_flight       — a heal for this slug is already running
 //   deploying       — a rebuild is mid-flight (app-deploy-status)
 //   restart_grace   — 'restarting' seen once; give Docker's policy a tick
@@ -234,9 +287,16 @@ async function provisionMissingRepo(config, pool, app) {
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
+//   github_budget   : a sweep found a missing repo while GitHub's hourly
+//                     budget is nearly used up; created on a later tick
 //   heal_failed     — the attempt threw; cooldown stamped
-async function checkAndHealOne(config, pool, app, { probeRunning = false } = {}) {
+//
+// `background: true` is the sweep's own call (poll below): only then is the
+// GitHub-heavy repo provisioning held for the budget. A person landing on a
+// down app (requestHeal) is never held.
+async function checkAndHealOne(config, pool, app, { probeRunning = false, background = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
+  if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
   if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
@@ -255,6 +315,12 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
     if (!app.repo_url && github.isEnabled()) {
       if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
         return { status: 'cooldown', slug: app.slug };
+      }
+      // Creating and filling a repository is half a dozen GitHub writes;
+      // services/github-budget.js says whether background work may spend
+      // them now.
+      if (background && !require('./github-budget').budgetAllows('background')) {
+        return { status: 'github_budget', slug: app.slug };
       }
       healAttempts.set(app.slug, Date.now());
       inFlight.add(app.slug);
@@ -406,7 +472,8 @@ async function poll(config) {
   for (const app of rows) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
     try {
-      const result = await checkAndHealOne(config, pool, app);
+      const result = await checkAndHealOne(config, pool, app, { background: true });
+      appOutages.recordHealed(pool, app, result, 'sweep');
       if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
@@ -435,6 +502,7 @@ function requestHeal(slug, config = _config) {
     );
     if (!rows.length) return;
     const result = await checkAndHealOne(config, pool, rows[0], { probeRunning: true });
+    appOutages.recordHealed(pool, rows[0], result, 'visit');
     log.info('app-heal', 'On-demand heal finished', { slug, status: result.status });
   })().catch((err) => {
     log.warn('app-heal', 'On-demand heal failed', { slug, err: err.message });

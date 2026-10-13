@@ -89,7 +89,7 @@ export type RefSegment =
   | { type: 'ref'; isPr: boolean; num: string }
   | { type: 'channel'; handle: string };
 
-const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
+const TOKEN = /(^|[^\w&])(@([A-Za-z0-9_]{1,32}(?:(?<=homeroom) bot\b)?)|(pr ?#|#)(\d{1,7})(?!\w)|#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-]))/gi;
 
 export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSegment[] {
   const segs: RefSegment[] = [];
@@ -120,11 +120,37 @@ export function tokenizeRefs(text: string, handles: ReadonlySet<string>): RefSeg
 }
 
 /**
+ * #4029: where `@name` opens — that person's page, the address a project's
+ * contributors and Kudos' Top users already open.
+ */
+export function personHref(username: string): string {
+  return `#leaderboard/users/${encodeURIComponent(username)}`;
+}
+
+/** #4029: whether `@name` names Homeroom bot, which has no person page. */
+export function isBotMention(name: string): boolean {
+  const key = String(name || '').toLowerCase();
+  return key === 'homeroom bot' || key === 'homeroom_bot';
+}
+
+/**
+ * #3770: where `#N` opens when a message names the project it is about:
+ * that project's request N, the address the server's own cards give it.
+ */
+export function issueRefHref(appSlug: string, num: string): string {
+  return `#app/${encodeURIComponent(appSlug)}/dev/issues/${Number(num)}`;
+}
+
+/**
  * Decorate rendered, SANITIZED message HTML in place: text nodes only, never
  * inside a link or code, and every element built through DOM APIs — so no
  * markup the sanitizer removed can come back through a reference.
+ *
+ * `appSlug` is the project the message is about, when it names one (#3770:
+ * a Homeroom bot message carries its request's): its `#N` chips are links
+ * to that project's requests.
  */
-export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: string): void {
+export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: string, appSlug?: string | null): void {
   const doc = root.ownerDocument;
   const walk = (node: Node) => {
     for (const child of Array.from(node.childNodes)) {
@@ -140,19 +166,31 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
       if (seg.type === 'text') {
         frag.appendChild(doc.createTextNode(seg.value));
       } else if (seg.type === 'mention') {
-        const span = doc.createElement('span');
-        span.className = seg.name.toLowerCase() === me ? 'gc-mention gc-mention-self' : 'gc-mention';
-        span.textContent = `@${seg.name}`;
-        frag.appendChild(span);
+        // #4029: a link to the person's page; Homeroom bot has none, so its
+        // mention ("@Homeroom bot", the app chat's B9 form, or its handle)
+        // stays text.
+        const bot = isBotMention(seg.name);
+        const el = doc.createElement(bot ? 'span' : 'a');
+        el.className = seg.name.toLowerCase() === me ? 'gc-mention gc-mention-self' : 'gc-mention';
+        if (!bot) {
+          el.setAttribute('href', personHref(seg.name));
+          el.setAttribute('data-mention', seg.name);
+        }
+        el.textContent = `@${seg.name}`;
+        frag.appendChild(el);
       } else if (seg.type === 'ref') {
-        // No app to reveal it in: a DM belongs to none, so the chip names
-        // the ref without pretending to navigate.
-        const span = doc.createElement('span');
-        span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
-        span.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
-        span.setAttribute('data-ref-number', seg.num);
-        span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
-        frag.appendChild(span);
+        // An issue in a message that names its project is a link to the
+        // request (#3770). Anything else has no app to reveal it in — a DM
+        // belongs to none — so the chip names the ref without pretending to
+        // navigate, and app.css draws it as text there.
+        const href = !seg.isPr && appSlug ? issueRefHref(appSlug, seg.num) : null;
+        const chip = doc.createElement(href ? 'a' : 'span');
+        if (href) chip.setAttribute('href', href);
+        chip.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+        chip.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
+        chip.setAttribute('data-ref-number', seg.num);
+        chip.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+        frag.appendChild(chip);
       } else {
         const link = doc.createElement('a');
         link.className = 'gc-channel-ref';

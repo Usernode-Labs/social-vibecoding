@@ -66,6 +66,7 @@ function anonymisedEmail(keptId, mergedId) {
 const REVOKED_TABLES = Object.freeze([
   'sessions',
   'web_signup_sessions',
+  'oauth_signup_sessions',
   'mobile_auth_tokens',
   'mobile_push_registrations',
   'mcp_tokens',
@@ -686,7 +687,6 @@ async function mergeUsers(pool, { keepId, mergeId, actorId, emailFrom, confirmat
   // visibility / admin rosters that named it are rebuilt.
   try {
     require('./account-deletion-runtime').revoke(mergeId, []);
-    require('./agent-models').invalidateUser(keepId);
   } catch {
     log.warn('user-merge', 'Live disconnect will be reconciled', { mergedUserId: mergeId });
   }

@@ -108,7 +108,11 @@ function loadVotes(opts = {}) {
   stub(ids.adminApproval, { isAppLocked: async () => locked, hasAdminYesVote: async () => adminYes });
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {} });
+  const retired = [];
+  stub(ids.worker, {
+    destroyCcVolume: async () => {},
+    retireWorker: async (id) => { retired.push(id); return { deferred: false }; },
+  });
   stub(ids.issueWatcher, { watchIssuesClosedAfterMerge: async () => {} });
 
   delete require.cache[ids.subject];
@@ -118,7 +122,7 @@ function loadVotes(opts = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, mergeCalls, systemMessages, restore };
+  return { subject, mergeCalls, systemMessages, retired, restore };
 }
 
 const session = {
@@ -147,12 +151,15 @@ function poolReadyToMerge() {
 }
 
 test('a voted + passing promoted PR auto-merges (the checks-complete drive target)', async () => {
-  const { subject, mergeCalls, restore } = loadVotes();
+  const { subject, mergeCalls, retired, restore } = loadVotes();
   const p = poolReadyToMerge();
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, true);
     assert.equal(mergeCalls.count, 1, 'merged on GitHub exactly once');
+    // Retired, not destroyed outright: a shots run still working in the
+    // worker keeps it until it finishes (worker.retireWorker).
+    assert.deepEqual(retired, [7], 'the merged change retires its worker');
   } finally {
     restore();
   }

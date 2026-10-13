@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❓</text></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans), then the
+       game's own scene (public/scene.css). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/scene.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. The game's scene keeps
+       its own look in both; the kit's parts (the toast) follow it. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <!-- The title screen: the show's name in lights, the contestants (the
+       lobby), the way to writing questions, and the leaderboard. -->
+  <div id="title" class="show fixed inset-0 overflow-y-auto">
+    <main class="mx-auto flex min-h-full max-w-md flex-col items-center gap-5 px-4 pb-10 pt-10">
+      <div class="marquee">
+        <p class="badge" aria-hidden="true">?</p>
+        <h1 class="title-name">{{APP_NAME}}</h1>
+        <p class="title-line">How well do you know each other? Everyone writes questions about themselves, and the show asks them.</p>
+      </div>
+
+      <section id="lobby" class="card-show flex flex-col gap-4" aria-live="polite">
+        <!-- Loading: shapes where the contestants will be. -->
+        <div id="loading" class="flex flex-col gap-3" aria-label="Loading">
+          <div class="skeleton h-6 w-40"></div>
+          <div class="flex gap-4">
+            <div class="skeleton h-12 w-12 rounded-full"></div>
+            <div class="skeleton h-12 w-12 rounded-full"></div>
+          </div>
+          <div class="skeleton h-12 w-full rounded-full"></div>
+        </div>
+
+        <!-- Error: only when the first load failed. -->
+        <div id="error" class="state-error" hidden>
+          <p class="card-title">The game did not load</p>
+          <p class="card-note">Nothing is lost. Check your connection and try again.</p>
+          <button id="retry" type="button" class="btn-soft">Retry</button>
+        </div>
+
+        <div id="lobby-body" class="flex flex-col gap-4" hidden>
+          <div class="flex flex-col gap-1">
+            <h2 id="lobby-title" class="card-title">Contestants</h2>
+            <p id="lobby-note" class="card-note"></p>
+          </div>
+          <ul id="players" class="contestants"></ul>
+          <!-- Empty: only when nobody has joined yet. -->
+          <div id="empty" class="state-empty py-1" hidden>
+            <p class="card-note">Nobody has joined yet. Join, and start the show when everyone is here.</p>
+          </div>
+          <div id="lobby-actions" class="flex flex-wrap gap-2">
+            <button id="join" type="button" class="btn-show flex-1">Join the show</button>
+            <button id="start" type="button" class="btn-show flex-1">Start the show</button>
+            <button id="resume" type="button" class="btn-show flex-1" hidden>Back to the show</button>
+            <button id="watch" type="button" class="btn-soft flex-1" hidden>Watch</button>
+            <button id="leave" type="button" class="btn-soft">Leave</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Writing questions is a screen of its own. -->
+      <button id="to-write" type="button" class="door">
+        <span class="door-mark" aria-hidden="true">✎</span>
+        <span class="flex min-w-0 flex-col gap-0.5">
+          <span class="card-title">Write questions</span>
+          <span id="bank-line" class="card-note">About yourself, for the others to guess.</span>
+        </span>
+      </button>
+
+      <section id="leaders-section" class="card-show flex flex-col gap-1" hidden>
+        <h2 class="card-title">Most wins</h2>
+        <ol id="leaders" class="ranks"></ol>
+      </section>
+    </main>
+  </div>
+
+  <!-- Writing questions: your own, with their answers, and the form. -->
+  <div id="builder" class="show fixed inset-0 overflow-y-auto" hidden>
+    <main class="mx-auto flex min-h-full max-w-lg flex-col gap-5 px-4 pb-10 pt-4">
+      <header class="flex items-center gap-3">
+        <button id="builder-back" type="button" class="btn-soft px-4" aria-label="Back to the title screen">&lsaquo;</button>
+        <h1 class="card-title flex-1">Your questions</h1>
+        <p id="mine-count" class="pill"></p>
+      </header>
+      <p class="card-note">Write questions about yourself, with the right answer and up to three wrong ones. The others guess in the show; you score for everyone who knows you. Nobody sees your answers before the show asks.</p>
+
+      <form id="question-form" class="flex flex-col gap-3" autocomplete="off">
+        <label for="q-text" class="q-label">The question</label>
+        <textarea id="q-text" name="text" maxlength="200" required class="q-field q-question" placeholder="What was my first job?"></textarea>
+        <label for="q-answer" class="q-label">The right answer</label>
+        <input id="q-answer" name="answer" type="text" maxlength="80" required class="q-field q-right" placeholder="Baker">
+        <span class="q-label">Wrong answers (one at least)</span>
+        <input name="wrong1" type="text" maxlength="80" required class="q-field" aria-label="A wrong answer" placeholder="Lifeguard">
+        <input name="wrong2" type="text" maxlength="80" class="q-field" aria-label="Another wrong answer, if you like" placeholder="Paper round (optional)">
+        <input name="wrong3" type="text" maxlength="80" class="q-field" aria-label="One more wrong answer, if you like" placeholder="Shop assistant (optional)">
+        <button type="submit" class="btn-show mt-1">Add the question</button>
+      </form>
+      <p id="builder-guest" class="card-note" hidden>Make an account to write questions.</p>
+
+      <section class="flex flex-col gap-2">
+        <h2 class="card-title">Written so far</h2>
+        <ul id="mine" class="flex flex-col gap-2"></ul>
+        <!-- Empty: only when you have not written one yet. -->
+        <div id="mine-empty" class="state-empty py-2" hidden>
+          <p class="card-note">None yet. Your first question could be the one nobody gets.</p>
+        </div>
+      </section>
+      <p id="bank-all" class="card-note"></p>
+    </main>
+  </div>
+
+  <!-- The show: the question, the clock and the four answers fill the
+       screen, with everyone's score along the bottom. -->
+  <div id="stage" class="show fixed inset-0 flex flex-col" hidden>
+    <header class="flex items-center gap-3 p-3">
+      <button id="to-title" type="button" class="btn-soft px-4" aria-label="Back to the title screen">&lsaquo;</button>
+      <p id="ask-count" class="pill"></p>
+      <div class="flex-1"></div>
+      <div class="clock" role="img" aria-label="Time left">
+        <svg viewBox="0 0 36 36" aria-hidden="true">
+          <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="4"></circle>
+          <circle id="timer" cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-dasharray="97.4" stroke-dashoffset="0"></circle>
+        </svg>
+        <span id="timer-text" class="clock-text"></span>
+      </div>
+    </header>
+
+    <section id="ask" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-4 py-2">
+      <p id="ask-about" class="about"></p>
+      <p id="ask-text" class="question"></p>
+      <p id="ask-note" class="ask-note" aria-live="polite"></p>
+      <button id="join-in" type="button" class="btn-show" hidden>Join the show</button>
+    </section>
+
+    <div id="options" class="mx-auto grid w-full max-w-4xl grid-cols-1 gap-2.5 px-3 pb-3 sm:grid-cols-2"></div>
+    <ol id="scores" class="score-strip" aria-label="Scores"></ol>
+
+    <!-- The end of the show: who knows everyone best. -->
+    <div id="over" class="veil" hidden>
+      <div class="card-show flex max-w-sm flex-col gap-3" role="dialog" aria-labelledby="over-line">
+        <p class="trophy" aria-hidden="true">🏆</p>
+        <p id="over-line" class="card-title text-center"></p>
+        <ol id="standings" class="ranks"></ol>
+        <div class="flex flex-wrap gap-2 pt-1">
+          <button id="again" type="button" class="btn-show flex-1">Play again</button>
+          <button id="over-title" type="button" class="btn-soft">Title screen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Only when the live connection is lost. -->
+  <p id="connection" class="fixed left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-fg px-3 py-1 text-small text-ground" role="status" hidden></p>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" role="status" aria-live="polite" hidden>
+    <p id="toast-text" class="rounded-lg bg-fg px-4 py-2 text-small text-ground shadow-lg"></p>
+  </div>
+
+  <script src="/game/room.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

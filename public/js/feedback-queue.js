@@ -45,6 +45,11 @@
   // storage quota, since one full-screen PNG can be several MB.
   const MAX_ENTRIES = 10;
   const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
+  // #3027: images per message — the same limit POST /api/feedback enforces
+  // (MAX_SCREENSHOTS_PER_ISSUE in src/routes/feedback.js). The dialog never
+  // hands over more; this only keeps a stray caller from queueing a message
+  // the server is certain to refuse.
+  const MAX_SCREENSHOTS = 3;
 
   // Retry schedule: 30s, 1m, 2m, 4m, 8m, then flat 10m. Deliberately slow —
   // the flush triggers (coming back online, a fresh sign-in) are the ones
@@ -54,7 +59,7 @@
   const MAX_BACKOFF_MS = 10 * 60_000;
   const FLUSH_INTERVAL_MS = 60_000;
 
-  // A send is at most a screenshot upload plus one POST. Two minutes is a
+  // A send is at most three screenshot uploads plus one POST. Two minutes is a
   // generous ceiling, after which another tab may assume the claiming tab
   // was closed mid-flight and take the record over.
   const CLAIM_STALE_MS = 2 * 60_000;
@@ -145,11 +150,21 @@
   // ?shot= screenshot deep links so a photographable queue never writes
   // anything to the device.
 
+  // #3027: a record's image bytes, oldest shape included. Records queued
+  // before multi-image support hold one Blob in `screenshot`; newer ones hold
+  // an array in `screenshots`. Both flush the same way.
+  function recordScreenshots(record) {
+    if (!record) return [];
+    if (Array.isArray(record.screenshots)) return record.screenshots.filter(Boolean);
+    return record.screenshot ? [record.screenshot] : [];
+  }
+
   function stripBlob(record) {
     const copy = Object.assign({}, record);
     delete copy.screenshot;
+    delete copy.screenshots;
     copy.screenshotBytes = 0;
-    copy.screenshotDropped = !!record.screenshot || !!record.screenshotDropped;
+    copy.screenshotDropped = recordScreenshots(record).length > 0 || !!record.screenshotDropped;
     return copy;
   }
 
@@ -327,26 +342,53 @@
     const queuedAt = record.queuedAt || formatQueuedAt(record.createdAt);
     if (queuedAt) body.queuedAt = queuedAt;
 
-    // The screenshot has to be uploaded now — its id only exists server-side.
-    // A transient failure retries the whole record (the words and the picture
-    // stay together); a permanent one files the text without the attachment,
-    // because the description is the part that matters.
-    if (record.screenshot) {
-      try {
-        const res = await fetch('/api/feedback/screenshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: record.screenshot,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data && data.id) {
-          body.screenshotId = data.id;
-        } else if (classifyFailure({ status: res.status }) !== 'permanent') {
-          return { ok: false, status: res.status, networkError: false, error: (data && data.error) || 'screenshot upload failed' };
+    // The screenshots have to be uploaded now — their ids only exist
+    // server-side. A transient failure on ANY of them retries the whole
+    // record (the words and the pictures stay together); a permanent one
+    // files without that attachment, because the description is the part
+    // that matters. #3027: ids the dialog had already uploaded before it went
+    // offline ride in the payload, and the freshly minted ones join them.
+    //
+    // Progress is written back onto `record` as it happens (fresh objects,
+    // never a mutation of the stored ones): an image that uploaded moves from
+    // `screenshots` into `payload.screenshotIds`, and one the server refused
+    // outright leaves `screenshots`. flushOnce persists the record it passed
+    // in after a failure, so a retry uploads only what is still missing
+    // rather than minting a second (orphaned) row for every image that
+    // already made it, each against the per-user upload limiter.
+    const shots = recordScreenshots(record);
+    if (shots.length) {
+      const ids = Array.isArray(body.screenshotIds) ? body.screenshotIds.slice() : [];
+      const remaining = shots.slice();
+      const saveProgress = () => {
+        record.payload = Object.assign({}, record.payload, ids.length ? { screenshotIds: ids.slice() } : {});
+        record.screenshots = remaining.slice();
+        record.screenshotBytes = remaining.reduce((n, b) => n + (Number(b && b.size) || 0), 0);
+        delete record.screenshot;
+      };
+      for (const shot of shots) {
+        try {
+          const res = await fetch('/api/feedback/screenshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: shot,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data && data.id) {
+            ids.push(data.id);
+            remaining.splice(remaining.indexOf(shot), 1);
+            saveProgress();
+          } else if (classifyFailure({ status: res.status }) !== 'permanent') {
+            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || PlatformI18n.t('shell:feedbackQueue.error.screenshotUpload') };
+          } else {
+            remaining.splice(remaining.indexOf(shot), 1);
+            saveProgress();
+          }
+        } catch (err) {
+          return { ok: false, status: 0, networkError: true, error: PlatformI18n.t('shell:feedbackQueue.error.network') };
         }
-      } catch (err) {
-        return { ok: false, status: 0, networkError: true, error: 'network error' };
       }
+      if (ids.length) body.screenshotIds = ids;
     }
 
     try {
@@ -364,7 +406,7 @@
         error: (data && data.error) || null,
       };
     } catch (err) {
-      return { ok: false, status: 0, networkError: true, error: 'network error' };
+      return { ok: false, status: 0, networkError: true, error: PlatformI18n.t('shell:feedbackQueue.error.network') };
     }
   }
 
@@ -399,7 +441,7 @@
       const verdict = classifyFailure(res);
       const next = Object.assign({}, claimed, {
         sendingSince: null,
-        lastError: res.error || 'Could not send',
+        lastError: res.error || PlatformI18n.t('shell:feedbackQueue.error.couldNotSend'),
       });
       if (verdict === 'permanent') {
         next.status = 'failed';
@@ -429,6 +471,7 @@
   const FeedbackQueue = {
     MAX_ENTRIES,
     MAX_SCREENSHOT_BYTES,
+    MAX_SCREENSHOTS,
     // Pure helpers, exported for tests and reused by the dialog.
     dedupeKey,
     withinCaps,
@@ -476,22 +519,25 @@
     },
 
     // Save a submit for later. `entry.payload` is the /api/feedback body the
-    // dialog would have posted; `entry.screenshot` is the captured Blob, kept
-    // as-is because its id can only be minted online.
+    // dialog would have posted; `entry.screenshots` are the captured Blobs
+    // not yet uploaded (#3027; `entry.screenshot`, one Blob, is the older
+    // shape and still accepted), kept as-is because their ids can only be
+    // minted online.
     async enqueue(entry) {
       const s = await ensureStore();
       const t = nowMs();
-      const screenshot = (entry && entry.screenshot) || null;
+      const shots = recordScreenshots(entry).slice(0, MAX_SCREENSHOTS);
       const record = {
         id: newId(),
         userId: currentUserId(),
         createdAt: t,
         queuedAt: formatQueuedAt(t),
         payload: Object.assign({}, (entry && entry.payload) || {}),
-        screenshot: s.keepsBlobs ? screenshot : null,
-        screenshotType: (screenshot && screenshot.type) || null,
-        screenshotBytes: s.keepsBlobs && screenshot ? (Number(screenshot.size) || 0) : 0,
-        screenshotDropped: !!screenshot && !s.keepsBlobs,
+        screenshots: s.keepsBlobs ? shots : [],
+        screenshotBytes: s.keepsBlobs
+          ? shots.reduce((n, b) => n + (Number(b && b.size) || 0), 0)
+          : 0,
+        screenshotDropped: shots.length > 0 && !s.keepsBlobs,
         attempts: 0,
         nextAttemptAt: t,
         status: 'pending',
@@ -548,6 +594,47 @@
       return flushing;
     },
 
+    // #3994: the dialog's "Try again". The automatic triggers can all miss a
+    // connection that is back (the probe still says offline, the backoff is
+    // at its 10 minute step), and a person looking at a stuck message should
+    // not have to wait for them. Every waiting record is made due now and a
+    // pass runs straight away. Nothing is removed here: a send that fails
+    // again goes back on the schedule with its words, exactly as before.
+    // A record another tab is sending keeps its claim (isDue still honours
+    // it), so a press cannot file the same issue twice.
+    async retryNow() {
+      if (flushDisabled) return { sent: 0, failed: 0, remaining: 0, filed: [], reason: 'manual' };
+      // Let a pass already in flight settle first: it chose its records
+      // before this reset, and writing over a record it holds would undo
+      // its progress.
+      while (flushing) await flushing;
+      const s = await ensureStore();
+      const t = nowMs();
+      const waiting = mine(await s.all()).filter((r) => r.status !== 'failed'
+        && !(Number(r.sendingSince) && t - Number(r.sendingSince) < CLAIM_STALE_MS)
+        && (Number(r.nextAttemptAt) || 0) > t);
+      for (const record of waiting) {
+        try { await s.put(Object.assign({}, record, { nextAttemptAt: t })); } catch (err) { /* sent on schedule instead */ }
+      }
+      // A pass that started during the writes above (the timer, a reconnect)
+      // may have chosen its records before them, and joining it would send
+      // nothing. Wait it out, then start our own: flush() claims the slot
+      // synchronously, so nothing can slip in between.
+      while (flushing) await flushing;
+      return FeedbackQueue.flush('manual');
+    },
+
+    // Put a record handed out by takeFailed() back, unchanged. For a caller
+    // that took one to fill the composer and then found someone typing in
+    // it: the refused words go back to wait for the next open.
+    async putBack(record) {
+      if (!record || !record.id) return;
+      const s = await ensureStore();
+      await s.put(record);
+      broadcast('changed');
+      notifyChange();
+    },
+
     // Display-only seeding for the ?shot=feedback-queued screenshot link.
     // Swaps in the in-memory adapter and disables flushing: the pinned state
     // is photographable without writing to the device or filing anything.
@@ -560,7 +647,7 @@
         createdAt: t - (i + 1) * 60_000,
         queuedAt: formatQueuedAt(t - (i + 1) * 60_000),
         payload: {},
-        screenshot: null,
+        screenshots: [],
         screenshotBytes: 0,
         attempts: 0,
         nextAttemptAt: t + MAX_BACKOFF_MS,

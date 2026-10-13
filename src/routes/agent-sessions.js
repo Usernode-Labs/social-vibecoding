@@ -3,10 +3,10 @@
 // Agent sessions (#2779, spec: docs/agent-sessions.md): the HTTP surface.
 //
 // Every route is owner-scoped: another user's session answers 404, never
-// 403, so ids are not enumerable. Only CREATING a session is gated on the
-// experimental flag (req.user.agentSessionsEnabled). A user who turns the
-// flag off keeps their existing conversations, the same way turning it on
-// leaves their classic sessions alone.
+// 403, so ids are not enumerable. Any signed-in user may start one: the
+// experimental per-user flag is retired, and new work starts here for
+// everyone (POST /api/apps/:slug/sessions takes only the Mayor's start_change
+// now). Classic sessions that already exist keep working as they did.
 //
 // The conversation's data (create, list, read, rename, archive, its
 // transcript), and since step 3b its Mayor: a turn streamed over SSE, its
@@ -23,9 +23,11 @@ const { drainGuard } = require('../services/lifecycle');
 const agentSessions = require('../services/agent-sessions');
 const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
+const agentStop = require('../services/agent-session-stop');
 const models = require('../services/models');
 const agentPreferences = require('../services/agent-preferences');
 const notifications = require('../services/notifications');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const MAX_MESSAGE_CHARS = 20000;
 
@@ -153,9 +155,6 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // creating one would resolve it, and nothing written. New change opens this
   // state; the row only exists once the first message is sent.
   router.get('/api/agent-sessions/draft', requireUser, async (req, res) => {
-    if (!req.user.agentSessionsEnabled) {
-      return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
-    }
     const q = req.query || {};
     const hint = {};
     if (q.slug) hint.slug = String(q.slug);
@@ -166,17 +165,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const draft = await agentSessions.previewDraft(pool, { user: req.user, hint: Object.keys(hint).length ? hint : null });
       return res.json({ draft });
     } catch (err) {
-      return sendError(res, err, 'Preview agent session');
+      return sendError(res, err, 'Shots agent session');
     }
   });
 
   // POST /api/agent-sessions { hint?: { slug, issueNumber?, proposalId?, entry? }, agent? }
   // Called on the FIRST message of a New change, carrying the model the
   // viewer picked while it was unsent (`agent`, see resolveChoice).
-  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, async (req, res) => {
-    if (!req.user.agentSessionsEnabled) {
-      return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
-    }
+  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, sameOriginBrowserOnly, async (req, res) => {
     const body = req.body || {};
     if (typeof body !== 'object' || Array.isArray(body)) {
       return res.status(400).json({ error: 'Body must be an object.' });
@@ -194,6 +190,9 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   });
 
   // GET /api/agent-sessions?status=open|archived&limit=&before=
+  // { sessions, nextBefore, started }: `started` is whether the viewer has
+  // ever had an agent session, archived ones included, which is what shows
+  // Messages' Agents list's "Show archived" group (services/agent-sessions.js).
   router.get('/api/agent-sessions', requireUser, async (req, res) => {
     try {
       const result = await agentSessions.listAgentSessions(pool, {
@@ -254,9 +253,76 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         const startedAt = Date.parse((rows[0] && rows[0].started_at) || '');
         turn = Number.isFinite(startedAt) ? { ...recovered, startedAt } : recovered;
       }
+      const work = await agentStop.readWork(pool, { agentSessionId: session.id, userId: req.user.id });
+      if (work) return res.json({ session: { ...session, busy: work.busy }, turn: work.turn });
       return res.json({ session: turn && !session.busy ? { ...session, busy: true } : session, turn });
     } catch (err) {
       return sendError(res, err, 'Read agent session');
+    }
+  });
+
+  // GET /api/agent-sessions/:id/state?version=&rev=
+  // Everything a screen draws, in one consistent read
+  // (agentSessions.readState), with the running turn: this process's own
+  // when it runs here, a recovered build's, or the lease's (any pod). A
+  // screen sends the version it holds: still current, the answer is only
+  // that (and `busy`), which is what a screen polls while the Mayor works.
+  // `rev` asks for the rows written or edited since.
+  router.get('/api/agent-sessions/:id/state', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Agent session not found' });
+    const number = (value) => (value == null || value === '' || !/^\d{1,15}$/.test(String(value)) ? null : Number(value));
+    try {
+      const cleared = await agentSessions.markSeen(pool, { userId: req.user.id, id }).catch((err) => {
+        log.warn('agent-sessions', 'Could not mark the conversation seen', { err: err.message });
+        return false;
+      });
+      if (cleared) {
+        require('../services/ws').pushToUser(req.user.id, { type: 'agent_session_changed', agentSessionId: id, busy: false });
+      }
+      const ask = { userId: req.user.id, id, version: number(req.query.version), rev: number(req.query.rev) };
+      let state = await agentSessions.readState(pool, ask);
+      if (!state) return res.status(404).json({ error: 'Agent session not found' });
+      // The turn's process died and no sweep has ended it yet: end it now
+      // (the interrupted note with Retry) and answer with that, so the
+      // screen goes from working straight to Retry, never through an idle
+      // conversation that shows no answer.
+      if (state.stale && !agentTurn.turnState(id)) {
+        const ended = await agentTurn.sweepInterruptedTurns({ pool, agentSessionId: id }).catch((err) => {
+          log.warn('agent-sessions', 'Could not end an interrupted turn on read', { agentSessionId: id, err: err.message });
+          return 0;
+        });
+        if (ended) {
+          state = await agentSessions.readState(pool, ask);
+          if (!state) return res.status(404).json({ error: 'Agent session not found' });
+        }
+      }
+      const local = agentTurn.turnState(id);
+      const recovered = !local && !state.busy && !(state.session && state.session.busy)
+        ? agentTurn.recoveredRunState(id, state.activeChangeId)
+        : null;
+      const work = await agentStop.readWork(pool, { agentSessionId: id, userId: req.user.id });
+      const turn = work ? work.turn : (local || recovered || state.lease || null);
+      const busy = work ? work.busy : !!(local || recovered || (state.unchanged ? state.busy : state.session.busy));
+      if (state.unchanged) {
+        return res.json({ unchanged: true, version: state.version, busy, turn: busy ? turn : null });
+      }
+      // Reading the conversation answers the bell's rows for it, as GET
+      // /:id does; not on the polls that found nothing new.
+      notifications.markReadForAgentSession(pool, req.user.id, id)
+        .then((n) => {
+          if (n > 0) require('../services/ws').pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+        })
+        .catch((err) => log.warn('agent-sessions', 'session_done dismiss failed', { err: err.message }));
+      const { lease: _lease, stale: _stale, activeChangeId: _change, ...answer } = state;
+      return res.json({
+        ...answer,
+        session: busy && !state.session.busy ? { ...state.session, busy: true, doneUnseen: false } : state.session,
+        busy,
+        turn: busy ? turn : null,
+      });
+    } catch (err) {
+      return sendError(res, err, 'Read agent session state');
     }
   });
 
@@ -308,7 +374,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/archive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/archive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.archiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or already archived' });
@@ -318,7 +384,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/unarchive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/unarchive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.unarchiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or not archived' });
@@ -418,16 +484,31 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  // POST /api/agent-sessions/:id/turns { message, model? } — one Mayor turn,
-  // streamed as server-sent events. One turn at a time per conversation: a
-  // second one answers 409 while the first holds the lease. Everything that
-  // can refuse the turn (the lease, the payer, the model) is decided before
-  // the stream opens, so a refusal is an ordinary JSON answer.
+  // POST /api/agent-sessions/:id/turns { message, clientMessageId?, attachmentIds?, model? }
+  //                                   | { retry: true, clientMessageId? }
+  // One Mayor turn, streamed as server-sent events. One turn at a time per
+  // conversation: a second one answers 409 while the first holds the lease.
+  // Everything that can refuse the turn (the payer, the model, the lease) is
+  // decided before the stream opens, so a refusal is an ordinary JSON answer
+  // and writes nothing. The message and the lease are written together
+  // (agentSessions.startTurnWithMessage), and the stream's first event is
+  // `accepted`: a message the screen heard that for is in the conversation
+  // however the connection ends. `clientMessageId` is the screen's own id for
+  // the message: a send retried after a dropped connection answers
+  // `{ duplicate: true }` with the row it already wrote, and runs no second
+  // turn. `retry` re-runs a turn that did not finish (interrupted by an
+  // update, or failed) on the conversation as it stands, writing no message.
+  const CLIENT_MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/;
   router.post('/api/agent-sessions/:id/turns', requireUser, chatLimiter, drainGuard, async (req, res) => {
     const id = positiveId(req.params.id);
     const body = req.body || {};
-    const unknown = Object.keys(body).filter((key) => !['message', 'model', 'attachmentIds'].includes(key));
+    const unknown = Object.keys(body).filter((key) => !['message', 'model', 'attachmentIds', 'clientMessageId', 'retry'].includes(key));
     if (unknown.length) return res.status(400).json({ error: `Unsupported field: ${unknown[0]}` });
+    const clientMessageId = body.clientMessageId == null ? null : String(body.clientMessageId);
+    if (clientMessageId !== null && !CLIENT_MESSAGE_ID.test(clientMessageId)) {
+      return res.status(400).json({ error: 'clientMessageId must be 8 to 64 letters, digits, - or _' });
+    }
+    const retry = body.retry === true;
     const attachmentIds = attachmentsSvc.sanitizeAttachmentIds(body.attachmentIds);
     if (attachmentIds === null) {
       return res.status(400).json({ error: `attachmentIds must be up to ${attachmentsSvc.MAX_PER_MESSAGE} attachment ids` });
@@ -435,15 +516,39 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     // Files alone are a message, as in the dev chat.
     const typed = typeof body.message === 'string' ? body.message.trim() : '';
     const message = typed || (attachmentIds.length ? attachmentsSvc.ATTACHMENTS_ONLY_TEXT : '');
-    if (!message) return res.status(400).json({ error: 'Message required' });
+    if (retry && (message || attachmentIds.length)) {
+      return res.status(400).json({ error: 'A retry sends no message of its own.' });
+    }
+    if (!retry && !message) return res.status(400).json({ error: 'Message required' });
     if (message.length > MAX_MESSAGE_CHARS) {
       return res.status(400).json({ error: `Message too long (max ${MAX_MESSAGE_CHARS} characters)` });
     }
     const turnId = agentTurn.newTurnId();
+    // The same message again (a retry after the connection dropped): what
+    // the server already has, and whether its turn is still running.
+    const duplicate = (found) => res.json({
+      accepted: true, duplicate: true, messageId: found.messageId, turnId: found.turnId || null,
+    });
     try {
       const session = id ? await agentSessions.getAgentSession(pool, { userId: req.user.id, id }) : null;
       if (!session) return res.status(404).json({ error: 'Agent session not found' });
       if (session.status !== 'open') return res.status(409).json({ error: 'This agent session is archived.' });
+      if (clientMessageId) {
+        const { rows: sent } = await pool.query(
+          `SELECT id, metadata->>'agentTurnId' AS turn_id FROM chat_session_messages
+            WHERE agent_session_id = $1 AND client_message_id = $2`,
+          [id, clientMessageId]
+        );
+        if (sent.length) return duplicate({ messageId: sent[0].id, turnId: sent[0].turn_id });
+      }
+      const work = await agentStop.readWork(pool, { agentSessionId: id, userId: req.user.id });
+      if (work?.busy) {
+        return res.status(409).json({
+          error: work.turn?.stopping ? 'The agent is stopping. Your message has not been sent.'
+            : 'The agent is still working. Stop it or wait before sending another message.',
+          busy: true, turn: work.turn,
+        });
+      }
       // Every id must be this user's own upload to this conversation, not
       // yet sent. Checked before the stream opens, so a refusal is a plain
       // 400 and nothing is recorded.
@@ -467,27 +572,45 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
           };
         });
       }
-      const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId: id, userId: req.user.id, turnId });
-      if (!leased) {
-        return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
-      }
-      let mayor;
-      try {
-        mayor = await agentTurn.resolveAgentMayor({
-          pool, config, userId: req.user.id, agentSessionId: id, requestedModel: body.model,
-        });
-      } catch (err) {
-        await agentSessions.releaseTurnLease(pool, { agentSessionId: id, turnId }).catch(() => {});
-        throw err;
-      }
+      // Who pays, before anything is written: a refusal leaves the message
+      // with the screen, to send again, and nothing in the conversation.
+      const mayor = await agentTurn.resolveAgentMayor({
+        pool, config, userId: req.user.id, agentSessionId: id, requestedModel: body.model,
+      });
       if (!mayor.ok) {
-        await agentSessions.releaseTurnLease(pool, { agentSessionId: id, turnId }).catch(() => {});
         return res.status(mayor.status).json({
           error: mayor.error,
           code: mayor.code,
           ...(mayor.reason ? { reason: mayor.reason } : {}),
           ...(mayor.verificationRequired ? { verificationRequired: true } : {}),
         });
+      }
+      let recorded = null;
+      if (retry) {
+        const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId: id, userId: req.user.id, turnId });
+        if (!leased) return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
+      } else {
+        const started = await agentSessions.startTurnWithMessage(pool, {
+          agentSessionId: id,
+          userId: req.user.id,
+          turnId,
+          changeId: session.activeChange ? session.activeChange.id : null,
+          text: message,
+          attachments,
+          clientMessageId,
+          title: session.title ? null : agentTurn.titleFromMessage(message),
+        });
+        if (started.duplicate) return duplicate(started);
+        if (started.busy) {
+          return res.status(409).json({ error: 'The Mayor is already answering in this conversation.', busy: true });
+        }
+        recorded = { id: started.messageId, clientMessageId };
+        // #3752: a conversation opened on a request is named after the
+        // request, not after this message. Not awaited: the request is read
+        // from GitHub, and the turn never waits on that.
+        if (!session.title && session.focusContext && session.focusContext.issueNumber) {
+          void agentSessions.nameFromRequest(pool, { agentSessionId: id, userId: req.user.id });
+        }
       }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -496,7 +619,8 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         'X-Accel-Buffering': 'no',
       });
       await agentTurn.runAgentTurn({
-        pool, config, user: req.user, agentSessionId: id, turnId, messageText: message, attachments, mayor, res,
+        pool, config, user: req.user, agentSessionId: id, turnId,
+        messageText: retry ? null : message, attachments, recorded, retry, mayor, res,
         scheduleInteractiveRecovery,
       });
       return undefined;
@@ -531,12 +655,25 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     try { res.write(':ok\n\n'); } catch { /* client gone */ }
     const sinceSeq = req.headers['last-event-id'] || req.query.since || null;
     const sessionBus = require('../services/session-bus');
-    const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), (event) => {
+    const write = (event) => {
       try {
         res.write(`id: ${event._seq}\n`);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       } catch { /* client gone */ }
-    }, sinceSeq);
+    };
+    // A screen that opens mid-turn gets what the running turn has said so
+    // far, and none of an earlier turn's tail. Read and subscribed in the
+    // same tick, so nothing published between the two is missed.
+    if (!sinceSeq) {
+      const running = agentTurn.turnState(id);
+      if (running && running.id) {
+        const prefix = `${String(running.id).slice(0, 8)}-`;
+        sessionBus.snapshot(agentTurn.busKey(id))
+          .filter((event) => typeof event._seq === 'string' && event._seq.startsWith(prefix))
+          .forEach(write);
+      }
+    }
+    const unsubscribe = sessionBus.subscribe(agentTurn.busKey(id), write, sinceSeq);
     const heartbeat = setInterval(() => {
       try { res.write(':heartbeat\n\n'); } catch { /* client gone */ }
     }, 15000);
@@ -549,26 +686,23 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     return undefined;
   });
 
-  router.post('/api/agent-sessions/:id/stop', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/stop', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Bad agent session id' });
+    const body = req.body || {};
+    if (Object.keys(body).some((key) => !['force', 'token'].includes(key))
+        || (body.token != null && (typeof body.token !== 'string' || body.token.length > 1024))
+        || (body.force != null && typeof body.force !== 'boolean')) {
+      return res.status(400).json({ error: 'Invalid stop request' });
+    }
     try {
-      const { rows } = id
-        ? await pool.query('SELECT active_turn, active_change_id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
-        : { rows: [] };
-      if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
-      // During a dispatch the answer names the change: its own stop route
-      // (POST /api/sessions/:changeId/stop) confirms the kill and escalates.
-      let answer = agentTurn.stopAgentTurn(id, { by: req.user.username });
-      const recovered = answer.reason === 'no_active_turn'
-        ? agentTurn.recoveredRunState(id, rows[0].active_change_id ? Number(rows[0].active_change_id) : null)
-        : null;
-      if (recovered) {
-        answer = { stopped: false, reason: 'dispatch_running', changeId: recovered.changeId };
-      } else if (answer.reason === 'no_active_turn' && rows[0].active_turn) {
-        answer.released = await agentTurn.handBackOrphanedTurn({ pool, agentSessionId: id, userId: req.user.id });
-      }
-      return res.json({ ok: true, ...answer });
+      const result = await agentStop.requestStop({
+        pool, user: req.user, agentSessionId: id, force: body.force === true,
+        token: body.token || null, scheduleInteractiveRecovery,
+      });
+      return res.status(result.status).json(result.body);
     } catch (err) {
+      if (err.code === 'stop_unconfirmed') return res.status(503).json({ error: err.message, code: err.code });
       return sendError(res, err, 'Stop agent turn');
     }
   });
@@ -577,7 +711,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // drawer's "Switch to". The same move as the Mayor's switch_active_change
   // (parks the current change, appends a change_switched note), without
   // spending a model call on a button press.
-  router.post('/api/agent-sessions/:id/active-change', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/active-change', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {
@@ -606,7 +740,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {
@@ -628,7 +762,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {

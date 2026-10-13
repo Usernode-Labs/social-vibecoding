@@ -33,7 +33,7 @@ import { readParked } from './parked-store.js';
 
 const KEY = 'usernode_recent_apps_v1';
 
-/** More than the rail's list holds (./recents.ts, RECENTS_LIMIT), so a
+/** More than the strip shows (./strip-apps.tsx, STRIP_APPS), so a
  *  burst of messages cannot push every app out of storage for good. */
 export const RECENT_APPS_MAX = 40;
 
@@ -114,6 +114,18 @@ export function rememberRecentApp(app, owner, at) {
     window.localStorage.setItem(KEY, JSON.stringify({ owner, apps }));
   } catch {
     // A list that does not survive a reload is better than a throw.
+  }
+}
+
+/** Remove a blocked app from this account's resume history, including storage. */
+export function forgetRecentApp(slug, owner) {
+  const apps = recentAppsStore.get().apps.filter((app) => app.slug !== slug);
+  recentAppsStore.set({ apps });
+  if (!owner) return;
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify({ owner, apps }));
+  } catch {
+    // Keep the current view correct when storage is unavailable.
   }
 }
 

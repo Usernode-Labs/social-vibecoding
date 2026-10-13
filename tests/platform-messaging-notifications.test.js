@@ -26,6 +26,12 @@ const KINDS = [
   'conversation_reply',
   'conversation_reaction',
   'conversation_thread_reply',
+  // WP-E: the Homeroom bot's build moments, conversation rows in their own
+  // push category.
+  'build_ready',
+  'build_needs_you',
+  'build_stopped',
+  'build_live',
 ];
 
 function conversationRow(kind) {

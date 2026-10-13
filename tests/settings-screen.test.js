@@ -35,6 +35,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
 const { shellMarkup } = require('./lib/shell-markup');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 // The markup the shell renders — document plus the settings panes, which
 // mount on first reveal (tests/lib/shell-markup.js).
@@ -76,6 +77,9 @@ const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
 // it the default, and a hard-coded copy would have silently kept asserting
 // the old one.
 const DEFAULT_SECTION = settingsJs.match(/DEFAULT_SECTION: '([a-z-]+)'/)[1];
+// DEFAULT_SECTION names a PAGE since the settings restructure; what a
+// declared check sees is that page's first wrapper (Account → profile).
+const DEFAULT_PART = registrySections().find((s) => s.page === DEFAULT_SECTION).key;
 const mountTs = read('frontend/src/features/settings/mount.ts');
 const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
 
@@ -93,20 +97,33 @@ const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
 
 // The registry, parsed out of the shipped source so the tests can't drift
-// from it. Matches `{ key: 'x', label: 'Y', group: 'Z'[, gate: 'id'] }`.
+// from it. Matches `{ key: 'x', label: 'Y', group: 'Z'[, page: 'p'][, gate: 'id'] }`
+// — one PART per entry; `page` defaults to the part's own key.
 function registrySections() {
   const block = settingsJs.slice(
     settingsJs.indexOf('    SECTIONS: ['),
-    settingsJs.indexOf('    DEFAULT_SECTION:'),
+    settingsJs.indexOf('    PAGES: {'),
   );
   assert.ok(block, 'SECTIONS registry found in settings.js');
   const out = [];
-  const re = /\{ key: '([a-z-]+)', label: '([^']+)', group: '([^']+)'(?:, gate: '([a-z-]+)')? \}/g;
+  const re = /\{ key: '([a-z-]+)', label: '([^']+)', group: '([^']+)'(?:, page: '([a-z-]+)')?(?:, gate: '([a-z-]+)')? \}/g;
   let m;
   while ((m = re.exec(block))) {
-    out.push({ key: m[1], label: m[2], group: m[3], gate: m[4] || null });
+    out.push({ key: m[1], label: m[2], group: m[3], page: m[4] || m[1], gate: m[5] || null });
   }
   return out;
+}
+
+// The pages the registry describes, in first-appearance order, each with its
+// parts — what Settings._visiblePages() derives when every gate is open.
+function registryPages() {
+  const pages = [];
+  for (const s of registrySections()) {
+    let p = pages.find((x) => x.key === s.page);
+    if (!p) { p = { key: s.page, group: s.group, parts: [] }; pages.push(p); }
+    p.parts.push(s);
+  }
+  return pages;
 }
 
 // ── The screen host ────────────────────────────────────────────────────
@@ -177,10 +194,21 @@ test('every registry section has exactly one wrapper, and vice versa', () => {
     assert.ok(registryKeys.includes(w),
       `wrapper "${w}" has a registry entry (otherwise it is unreachable)`);
   }
-  // Wrappers ship hidden — the router unhides exactly one.
+  // Wrappers ship hidden — the router unhides the parts of exactly one page.
   for (const key of registryKeys) {
     assert.match(html, new RegExp(`data-settings-section="${key}" class="hidden"`),
       `the ${key} wrapper ships hidden`);
+  }
+  // A page shows its parts at once, stacked in DOM order, so the wrappers
+  // must come in registry order and a page's parts must be contiguous —
+  // otherwise Account would read Username, Theme, Password.
+  assert.deepEqual(wrappers, registryKeys, 'the wrappers render in registry order');
+  const seen = [];
+  for (const s of sections) {
+    if (seen[seen.length - 1] !== s.page) {
+      assert.ok(!seen.includes(s.page), `the parts of page "${s.page}" are contiguous`);
+      seen.push(s.page);
+    }
   }
 });
 
@@ -194,176 +222,226 @@ test('every gated section names a real inner node that owns its own hidden', () 
     'menu membership is READ off the gate node, never re-derived');
 });
 
-test('the default section is an ungated key', () => {
+test('the default section is an ungated page, and the first one', () => {
   const m = settingsJs.match(/DEFAULT_SECTION: '([a-z-]+)'/);
   assert.ok(m, 'DEFAULT_SECTION is declared');
-  const hit = registrySections().find((s) => s.key === m[1]);
-  assert.ok(hit, `${m[1]} is a registered section`);
-  assert.equal(hit.gate, null, 'the default section is never behind a gate');
+  const page = registryPages().find((p) => p.key === m[1]);
+  assert.ok(page, `${m[1]} is a registered page`);
+  assert.ok(page.parts.every((s) => s.gate === null), 'the default page is never behind a gate');
+  // DEFAULT_SECTION, the visible[0] fallbacks in open()/route()/setSection()
+  // and the initial `_section` all have to name the same page.
+  assert.equal(registryPages()[0].key, m[1], 'the default page leads the registry');
+  assert.match(settingsJs, new RegExp(`_section: '${m[1]}',`),
+    'and the initial _section is that page, so a fresh tab lands on it');
 });
 
-// ── Grouping and the Advanced disclosure (#1554) ────────────────────────
+// ── Pages and groups (the settings restructure) ─────────────────────────
 
-test('the registry groups into four sections, Advanced last', () => {
+test('the registry groups pages under four headings, Account first', () => {
   const sections = registrySections();
-  // First-appearance order, exactly what _groupedSections() derives.
-  const order = [];
-  for (const s of sections) if (!order.includes(s.group)) order.push(s.group);
-  assert.deepEqual(order, ['Preferences', 'Account', 'AI & agents', 'Advanced'],
+  // A group is named by its message id; the heading is that id's English.
+  const groupIds = [];
+  for (const s of sections) if (!groupIds.includes(s.group)) groupIds.push(s.group);
+  assert.deepEqual(groupIds, ['settings:nav.group.account', 'settings:nav.group.aiBuilding',
+    'settings:nav.group.preferences', 'settings:nav.group.helpAbout']);
+  const order = groupIds.map((id) => message(id));
+  assert.deepEqual(order, ['Account', 'AI & building', 'Preferences', 'Help & about'],
     'four groups, in menu order');
   // dapp.json asserts this heading by TEXT, so the spelling is a contract.
-  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & agents'),
-    'the AI & agents heading is a declared check');
+  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & building'),
+    'the AI & building heading is a declared check');
 
-  // Theme leads the registry: DEFAULT_SECTION, the visible[0] fallbacks in
-  // open()/route()/setSection and the "Theme is the first setting" check all
-  // resolve through position, so the regrouping must not have moved it.
-  assert.equal(sections[0].key, 'theme', 'Theme is still the first entry');
-  assert.equal(sections[0].group, 'Preferences');
-  assert.equal(sections[0].gate, null);
+  // A page takes its group from its first part, and never straddles two.
+  for (const page of registryPages()) {
+    for (const part of page.parts) {
+      assert.equal(part.group, page.group, `${part.key} sits in its page's group`);
+    }
+  }
 
-  // Nothing was dropped on the way: every section is still registered, and
-  // the rarely-used ones are the ones that moved.
-  const byKey = Object.fromEntries(sections.map((s) => [s.key, s.group]));
+  // Nothing was dropped on the way: every address that ever reached a pane
+  // is still a registered part, so its deep links still resolve.
+  const byKey = Object.fromEntries(sections.map((s) => [s.key, s]));
   for (const key of [
-    'theme', 'language', 'alerts', 'username', 'password', 'wallet',
-    'openrouter', 'api-key', 'connectors', 'app-ai', 'agent-files', 'cli',
+    'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
+    'password', 'delete-account', 'wallet', 'global-chat', 'openrouter',
+    'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
-  ]) assert.ok(byKey[key], `${key} is still reachable from the menu`);
-  for (const key of [
-    'app-ai', 'agent-files', 'cli', 'dev-console', 'experimental',
-    'usernode', 'admin-preview', 'about',
-  ]) assert.equal(byKey[key], 'Advanced', `${key} sits under Advanced`);
-});
+  ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
-test('Advanced is the ONE collapsible group, and it starts closed', () => {
-  assert.match(settingsJs, /ADVANCED_GROUP: 'Advanced'/,
-    'the collapsible group is named once, not spelled at every reader');
-  const isCollapsible = sliceMethod(settingsJs, '_isCollapsibleGroup');
-  assert.match(isCollapsible, /=== Settings\.ADVANCED_GROUP/,
-    '_isCollapsibleGroup is the single reader of that name');
-
-  // The set stores the EXPANDED names, the inverse of the admin console's
-  // NAV_COLLAPSED_KEY: an empty, cleared or foreign store must resolve to
-  // "Advanced is shut", which is what the declared check asserts.
-  assert.match(settingsJs, /const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';/);
-  const isExpanded = sliceMethod(settingsJs, '_isGroupExpanded');
-  assert.match(isExpanded, /_isCollapsibleGroup\(name\)/,
-    'a group that does not collapse is always expanded');
-  assert.match(isExpanded, /_expanded\(\)\.has\(/,
-    'presence in the set is what opens it');
-  assert.match(isExpanded, /_revealedGroup === key/,
-    'or the group the active section lives in, for this visit only');
-
-  // Closing the group you are standing in has to drop that reveal too, or
-  // the heading is a button that visibly does nothing.
-  assert.match(sliceMethod(settingsJs, '_toggleGroup'),
-    /if \(!open\) Settings\._revealedGroup = null;/);
-
-  // Runs inside a render path, and the prerender pass / vm harnesses have no
-  // localStorage, so the load must neither throw nor touch storage there.
-  const load = sliceMethod(settingsJs, '_loadExpandedGroups');
-  assert.match(load, /if \(typeof window === 'undefined'\) return;/,
-    'the storage read is guarded for Node');
-  assert.match(load, /catch \{/, 'corrupt or unavailable storage is non-fatal');
-  assert.match(load, /_isCollapsibleGroup\(key\)/,
-    'names that are no longer a collapsible group are pruned');
-  assert.match(sliceMethod(settingsJs, '_saveExpandedGroups'), /catch \{/);
-});
-
-test('a disclosure press repaints the menu and nothing else', () => {
-  const fn = sliceMethod(settingsJs, '_toggleGroup');
-  assert.match(fn, /_setGroupExpanded\(/, 'it flips the persisted state');
-  assert.match(fn, /Settings\._renderNav\(\);/, 'and repaints the nav');
-  // The admin console's rule, for the same three reasons: the section on
-  // screen keeps rendering, a phone repaint would tear the menu down
-  // mid-gesture, and focus stays on the heading you just pressed.
-  for (const forbidden of [
-    /setSection\(/, /location\.hash/, /_writeHash\(/, /_renderContent\(/,
-  ]) assert.doesNotMatch(fn, forbidden, `_toggleGroup must not call ${forbidden}`);
-});
-
-test('arriving at a section reveals the group it lives in, transiently', () => {
-  const fn = sliceMethod(settingsJs, '_ensureActiveGroupExpanded');
-  assert.match(fn, /Settings\._revealedGroup =/,
-    'the reveal is derived from the active section');
-  // Persisting it would make one deep link into About or CLI the last time
-  // that viewer ever sees Advanced shut. It would also make "ships
-  // collapsed" depend on route order: the capture container walks the
-  // declared #settings routes as hash cohorts of ONE document, in
-  // declaration order, and #settings/about lands before #settings.
-  for (const forbidden of [/_setGroupExpanded\(/, /_saveExpandedGroups\(/]) {
-    assert.doesNotMatch(fn, forbidden, 'the arrival reveal never persists');
+  // The pages the restructure folded together.
+  const pageOf = (key) => byKey[key].page;
+  assert.deepEqual(['profile', 'username', 'email', 'password', 'delete-account'].map(pageOf),
+    Array(5).fill('account'), 'Account holds who you are and how you sign in');
+  assert.equal(registryPages().find((p) => p.key === 'account').parts.at(-1).key, 'delete-account',
+    'and Delete account closes it');
+  assert.deepEqual(['usage', 'openrouter', 'api-key'].map(pageOf), Array(3).fill('ai'));
+  assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
+  // #4311: "Where changes get built" is gone; nothing acted on its value.
+  assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
+  // A page key that is also the key of a LATER part on that page would make
+  // the page's own nav row resolve as a deep link to that part, opening the
+  // page scrolled past everything above it.
+  for (const page of registryPages()) {
+    const later = page.parts.slice(1).map((s) => s.key);
+    assert.ok(!later.includes(page.key), `page ${page.key} is not also the key of a later part`);
   }
-  assert.match(fn, /: null/, 'and it clears when the section leaves the group');
+  assert.deepEqual(['app-permissions', 'app-ai', 'blocked-apps'].map(pageOf),
+    Array(3).fill('app-permissions'), 'what each app may do, on one page');
+  assert.deepEqual(['theme', 'dev-console', 'admin-preview'].map(pageOf), Array(3).fill('theme'),
+    'Appearance: what the shell shows on this device');
+  // No "Admin" group in the nav any more: it sat directly above the footer's
+  // own Admin block, two identical headings in a row.
+  assert.ok(!order.includes('Admin'), 'admin preview shares Appearance rather than a group of its own');
 
-  // On ARRIVAL only — the three paths that resolve a section. A deep link
-  // into Advanced (the out-of-credits card's #settings/cli, the consent
-  // modal's #settings/api-key, a bookmark) must not leave the highlighted
-  // row inside a shut group.
-  const open = sliceMethod(settingsJs, 'open');
-  assert.equal((open.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
-    'open() reveals on both the menu and the section branch');
-  const route = sliceMethod(settingsJs, 'route');
-  assert.equal((route.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
-    'route() reveals on both the desktop and the mobile branch');
-  assert.match(sliceMethod(settingsJs, '_renderNavIfOpen'), /_ensureActiveGroupExpanded\(\)/,
-    'a late-arriving gate re-resolves through the same reveal');
-});
-
-test('both nav descriptors carry the disclosure, with per-surface ids', () => {
-  const disclosure = sliceMethod(settingsJs, '_groupDisclosure');
-  for (const field of ['collapsible', 'expanded', 'domId']) {
-    assert.match(disclosure, new RegExp(`${field}[,:]`), `_groupDisclosure emits ${field}`);
+  // A gated part is a page of its own — so its gate hides exactly one row —
+  // unless it shares a page with ungated parts, where the gate hides only its
+  // block. Admin preview is the one of those, and it is never a page's first
+  // part, so the page's own address and title never depend on it.
+  for (const s of sections.filter((x) => x.gate)) {
+    if (s.key === 'admin-preview') {
+      assert.notEqual(registryPages().find((p) => p.key === s.page).parts[0].key, s.key);
+      continue;
+    }
+    assert.equal(s.page, s.key, `gated ${s.key} is a page of its own`);
   }
-  // aria-controls targets have to be unique, and at phone width BOTH hosts
-  // are in the document — hence one id prefix per surface.
-  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1600), /_groupDisclosure\('settings-nav-group'/);
-  const menu = settingsJs.slice(settingsJs.indexOf('    _menuView() {'));
-  assert.match(menu.slice(0, 1600), /_groupDisclosure\('settings-menu-group'/);
-
-  // The component renders the button, the pair and the wrapper the declared
-  // checks select on, and leaves every other group's markup alone.
-  assert.match(navTsx, /data-settings-group-toggle=\{group\.name\}/);
-  assert.match(navTsx, /aria-expanded=\{group\.expanded \? 'true' : 'false'\}/);
-  assert.match(navTsx, /aria-controls=\{group\.domId \|\| undefined\}/);
-  assert.match(navTsx, /if \(!group\.collapsible\) \{/,
-    'a non-collapsible group keeps the bare heading it always had');
-  // The only user-facing copy this adds. No em dash, no punctuation: it is
-  // read out by screen readers and shown as the hover title.
-  assert.match(navTsx, /`\$\{group\.expanded \? 'Collapse' : 'Expand'\} \$\{group\.name\}`/,
-    'the toggle labels itself Expand / Collapse <group>');
-
-  // The two checks that hold the behaviour in staging.
-  const paths = (t) => manifest.tests.filter((x) => x.path === t);
-  assert.ok(paths('/#settings').some((t) => /group-toggle="Advanced"\]\[aria-expanded="false"/.test(t.expectSelector || '')),
-    'a declared check pins Advanced shipping collapsed');
-  assert.ok(paths('/?demo=cli-empty#settings/cli').some((t) => /#settings-nav-group-advanced:not\(\.hidden\)/.test(t.expectSelector || '')),
-    'a declared check pins the deep-link reveal');
+  // Every page of more than one part has a label in PAGES.
+  const pagesBlock = settingsJs.slice(settingsJs.indexOf('    PAGES: {'), settingsJs.indexOf('    KEYWORDS: {'));
+  for (const page of registryPages().filter((p) => p.parts.length > 1)) {
+    assert.match(pagesBlock, new RegExp(`'?${page.key}'?: '[^']+',`), `PAGES labels ${page.key}`);
+  }
 });
 
-// ── #1556: Language is gated on an already-saved locale ────────────────
+test('no group collapses: the menu hides nothing behind a disclosure', () => {
+  // #1554 shut seven rarely used panes inside a collapsed "Advanced" group.
+  // Folding parts into pages made the menu short without it, and two of
+  // those seven were privacy controls. The machinery is gone, not idle.
+  for (const gone of [
+    /ADVANCED_GROUP/, /NAV_EXPANDED_KEY/, /_isCollapsibleGroup/, /_toggleGroup/,
+    /_ensureActiveGroupExpanded/, /_revealedGroup/, /_groupDisclosure/,
+  ]) assert.doesNotMatch(settingsCode, gone, `${gone} is gone from settings.js`);
+  assert.doesNotMatch(code(navTsx), /data-settings-group-toggle|aria-expanded/,
+    'the nav renders no disclosure');
+  assert.ok(!manifest.tests.some((t) => /data-settings-group-toggle|settings-nav-group-advanced/.test(t.expectSelector || '')),
+    'no declared check still asserts the collapsed group');
+});
 
-test('the Language section is offered only to a user who already saved a locale', () => {
+test('a part address resolves to its page, scrolled to the part', () => {
+  const resolve = sliceMethod(settingsJs, '_resolve');
+  assert.match(resolve, /Settings\.SECTIONS\.find\(\(s\) => s\.key === k\)/,
+    'a part key is looked up in the registry');
+  assert.match(resolve, /anchor: first && first\.key !== k \? k : null/,
+    'the anchor is the part, unless it is the page\'s first');
+  assert.match(resolve, /return \{ page: null, anchor: null \};/, 'anything unknown is invalid');
+
+  // Run it against the real registry, as the router does.
+  const block = settingsJs.slice(settingsJs.indexOf('    SECTIONS: ['), settingsJs.indexOf('    DEFAULT_SECTION:'));
+  const S = new Function(`
+    const Settings = {
+      ${block.trim()}
+      ${sliceMethod(settingsJs, '_pageKey')},
+      ${resolve}
+    };
+    return Settings;
+  `)();
+  assert.deepEqual(S._resolve('password'), { page: 'account', anchor: 'password' });
+  assert.deepEqual(S._resolve('profile'), { page: 'account', anchor: null });
+  assert.deepEqual(S._resolve('account'), { page: 'account', anchor: null });
+  assert.deepEqual(S._resolve('cli'), { page: 'connectors', anchor: 'cli' });
+  assert.deepEqual(S._resolve('connectors'), { page: 'connectors', anchor: null },
+    'connectors leads its page, so its address is the page');
+  assert.deepEqual(S._resolve('build-venue'), { page: null, anchor: null }, 'a retired part (#4311)');
+  assert.deepEqual(S._resolve('api-key'), { page: 'ai', anchor: 'api-key' });
+  assert.deepEqual(S._resolve('theme'), { page: 'theme', anchor: null });
+  assert.deepEqual(S._resolve('usernode'), { page: 'usernode', anchor: null });
+  assert.deepEqual(S._resolve('nope'), { page: null, anchor: null });
+  assert.deepEqual(S._resolve(null), { page: null, anchor: null });
+
+  // Every entry point goes through it, and the content pane shows every part
+  // of the resolved page.
+  for (const fn of ['open', 'route', 'setSection']) {
+    assert.match(sliceMethod(settingsJs, fn), /Settings\._resolve\(/, `${fn}() resolves the address`);
+  }
+  assert.match(sliceMethod(settingsJs, '_renderContent'),
+    /Settings\._resolve\(el\.dataset\.settingsSection\)\.page/,
+    'a wrapper shows while its page is the current one');
+  const scroll = sliceMethod(settingsJs, '_scrollToAnchor');
+  assert.match(scroll, /scrollIntoView\(/);
+  assert.match(scroll, /Settings\._isMobile\(\) && Settings\._level === 1/,
+    'never on the phone\'s menu level, where no part is on screen');
+});
+
+test('the nav lists pages and hands the filter its terms', () => {
+  const nav = sliceMethod(settingsJs, '_navView');
+  assert.match(nav, /\.\.\.Settings\._filterTerms\(p\)/, 'the sidebar rows carry filter terms');
+  assert.match(sliceMethod(settingsJs, '_menuView'), /\.\.\.Settings\._filterTerms\(p\)/,
+    'and so do the menu rows');
+  const terms = sliceMethod(settingsJs, '_filterTerms');
+  assert.match(terms, /Settings\.KEYWORDS\[s\.key\]/, 'keywords are matched per part');
+  assert.match(terms, /toLowerCase\(\)/, 'lower-cased once, in the module');
+  // Every part has keywords, so the filter can find it by the words people
+  // type rather than only by its label.
+  const keywords = settingsJs.slice(settingsJs.indexOf('    KEYWORDS: {'), settingsJs.indexOf('    DEFAULT_SECTION:'));
+  for (const s of registrySections()) {
+    assert.match(keywords, new RegExp(`\\n      '?${s.key}'?: '[^']+',`), `KEYWORDS covers ${s.key}`);
+  }
+
+  // The component: a search field on both hosts, ids distinct because both
+  // hosts are in the document at phone width, rendered only beside a
+  // descriptor so the prerender stays the two empty hosts.
+  assert.match(navTsx, /id="settings-filter-desktop"/);
+  assert.match(navTsx, /id="settings-filter-mobile"/);
+  assert.match(navTsx, /type="search"/);
+  assert.match(navTsx, /\{desktop \? \(/, 'the sidebar field waits for its descriptor');
+  assert.match(navTsx, /\{mobile \? \(/, 'and so does the menu\'s');
+  assert.match(navTsx, /e\.key === 'Enter' && hits\[0\]/, 'Enter opens the first hit');
+  assert.match(navTsx, /e\.key === 'Escape'/, 'Escape clears');
+  assert.match(navTsx, /t\('settings:nav\.filter\.noMatch', \{ query: query\.trim\(\) \}\)/, 'an empty result says so');
+  assert.equal(message('settings:nav.filter.noMatch', { query: 'zzz' }), 'No settings match “zzz”.');
+});
+
+test('the filter matches every word, and names the parts that matched', () => {
+  // filterPages is pure; evaluate it from the component's source with its
+  // TypeScript annotations stripped.
+  const at = navTsx.indexOf('function filterPages(');
+  const src = navTsx.slice(at, navTsx.indexOf('\n}\n', at) + 2)
+    .replace('(groups: { items: Filterable[] }[], query: string): FilterHit[]', '(groups, query)')
+    .replace(/const hits: FilterHit\[\] = \[\];/, 'const hits = [];');
+  const filterPages = new Function(`${src}; return filterPages;`)();
+  const part = (key, label, words = '') => ({ key, label, terms: `${label} ${words}`.toLowerCase() });
+  const groups = [{
+    items: [
+      { key: 'account', label: 'Account', terms: 'account', parts: [
+        part('profile', 'Profile', 'name photo'), part('password', 'Password', 'sign in login'),
+      ] },
+      { key: 'theme', label: 'Appearance', terms: 'appearance', parts: [part('theme', 'Theme', 'dark')] },
+    ],
+  }];
+  const hit = (q) => filterPages(groups, q).map((h) => [h.item.key, h.parts.map((p) => p.key)]);
+  assert.deepEqual(hit('login'), [['account', ['password']]], 'a keyword finds the part and names it');
+  assert.deepEqual(hit('ACCOUNT'), [['account', []]], 'a page-label match needs no part names');
+  assert.deepEqual(hit('dark'), [['theme', ['theme']]]);
+  assert.deepEqual(hit('account photo'), [['account', []]],
+    'words may land on the page and a part');
+  assert.deepEqual(hit('zebra'), []);
+  assert.deepEqual(hit('   '), [], 'blank is not a query');
+});
+
+// ── Language is offered to everyone (the #1556 gate is gone) ───────────
+
+test('the Language section is offered to everyone, whatever is saved', () => {
   const hit = registrySections().find((s) => s.key === 'language');
   assert.ok(hit, 'language is still a registered section');
-  assert.equal(hit.gate, 'settings-language-section',
-    'the shell is English-only, so the picker is behind a capability gate');
-  // It ships hidden (the generic gate test above covers the markup), and the
-  // render fn is what reveals it — for a saved value, and only then.
+  assert.equal(hit.gate ?? null, null, 'no capability gate: Auto and English are always there');
   const fn = sliceMethod(settingsJs, '_renderLanguageSection');
   assert.match(fn, /const value = this\.state\.locale \|\| ''/,
-    'the gate is decided by the stored locale, nothing else');
-  assert.match(fn, /if \(!value\) \{[^}]*section\.classList\.add\('hidden'\);[^}]*return;/,
-    'no saved locale -> the section stays hidden and nothing else renders');
-  assert.match(fn, /section\.classList\.remove\('hidden'\)/,
-    'a saved locale -> the section is revealed, so the preference stays changeable');
+    'the select shows the stored locale');
+  assert.doesNotMatch(fn, /settings-language-section/,
+    'nothing hides the section for an account without a saved locale');
   // state.locale lands with /api/auth/me, which can resolve AFTER a cold-boot
-  // deep link has already painted the menu — so the gate re-renders there too.
+  // deep link has already painted the section, so the select re-renders there.
   const refresh = sliceMethod(settingsJs, 'refresh');
   assert.match(refresh, /this\._renderLanguageSection\(\)/,
-    'refresh() re-runs the gate once the account payload arrives');
+    'refresh() re-renders the select once the account payload arrives');
 });
 
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
@@ -510,7 +588,8 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
     'an in-screen navigation is handed to the module, not re-mounted');
   assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
     'reveals #settings-screen (and hides every sibling root) through the shared primitive');
-  assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
+  assert.match(head, /App\.setHeaderTitle\(PlatformI18n\.t\('shell:title\.settings'\)\)/, 'sets the header title');
+  assert.equal(message('shell:title.settings'), 'Settings');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
   assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
     'hands the section to the module, holding its header write for the transition');
@@ -752,7 +831,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // declared check, and the second half is what makes the two differ.
   // QA 2026-09-24 Q20: the sidebar was `role="tab"` + `aria-selected` with no
   // tablist parent (axe aria-required-parent); it is the <nav>'s links now.
-  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('function SettingsLabel('));
+  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('export function SettingsNavDesktop('));
   assert.doesNotMatch(navRowFn, /role="tab"|aria-selected=/, 'the sidebar rows are not orphan tabs');
   assert.match(navRowFn, /aria-current=\{item\.active \? 'page' : undefined\}/,
     'the current section is announced as the current page');
@@ -937,9 +1016,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  // #1556: 'language' is deliberately absent — it is no longer a routable
-  // section for a default user, and its check asserts the FALLBACK instead.
-  for (const key of ['password', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
+  for (const key of ['password', 'language', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -961,13 +1038,15 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs an explicit CLI review fixture`);
     }
   }
-  // #1556: the Language deep link still has a check, but it asserts that the
-  // route falls back to the default section rather than rendering a pane.
+  // The Language deep link opens its own pane, for an account with no saved
+  // locale too, and the pane offers Auto and English.
   const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
   assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
   assert.match(lang[0].expectSelector || '',
-    /data-settings-section="theme"\]:not\(\.hidden\)/,
-    'the Language deep link lands on the default section, not on a Language pane');
+    /data-settings-section="language"\]:not\(\.hidden\) #settings-language-section:not\(\.hidden\)/,
+    'the Language deep link lands on the Language pane');
+  assert.match(lang[0].expectSelector || '', /option\[value=""\]\).*option\[value="en"\]\)/,
+    'the pane offers Auto and English');
 
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to
@@ -978,11 +1057,11 @@ test('dapp.json covers the settings screen and its deep links', () => {
   assert.match(back[0].expectSelector || '', /data-settings-route="skipped"/,
     'it asserts the SECOND dispatch was skipped — the marker is the only way to observe an '
     + 'ordering that is otherwise visible for one animation frame only');
-  // The DEFAULT section, whatever it is — THE UI OVERHAUL made that Theme,
-  // moving it out of the hamburger where it was the drawer's first row. Read
-  // from the registry rather than hard-coded, so the two cannot drift.
+  // The DEFAULT page, whatever it is — THE UI OVERHAUL made that Theme; the
+  // settings restructure made it Account, which Profile leads. Read from the
+  // registry rather than hard-coded, so the two cannot drift.
   assert.match(back[0].expectSelector || '',
-    new RegExp(`data-settings-section="${DEFAULT_SECTION}"`),
+    new RegExp(`data-settings-section="${DEFAULT_PART}"`),
     'and that the traversal landed back on the default section rather than the drilled-in one');
 });
 
@@ -993,7 +1072,8 @@ test('the native-only password creation link has a read-only browser review stat
     'exactly one declared check drives the password-creation screenshot state');
   assert.equal(checks[0].path, '/?shot=password-create#settings/password');
   assert.equal(checks[0].expectText, 'Don’t have a password? Create one');
-  assert.match(passwordTsx, /Don’t have a password\? Create one/,
+  assert.match(passwordTsx, /t\('settings:password\.useWallet'\)/);
+  assert.equal(message('settings:password.useWallet'), checks[0].expectText,
     'the component renders the user-facing copy the check expects');
 
   assert.match(sliceMethod(settingsJs, '_passwordCreateDemo'),
@@ -1008,6 +1088,51 @@ test('the native-only password creation link has a read-only browser review stat
   const firstRequest = submit.indexOf('fetch(');
   assert.ok(nativeGate > -1 && firstRequest > nativeGate,
     'a browser using the review state cannot reach the wallet request path');
+});
+
+test('Settings → Account offers "Add a password" to an account that has none (#4891)', () => {
+  // The email sign-up asks for no password and says "You can add a password
+  // later in Settings." This is where: the Password part, titled and
+  // buttoned for the account it is showing to.
+  assert.equal(message('settings:password.titleAdd'), 'Add a password');
+  assert.equal(message('settings:password.submitAdd'), 'Add password');
+  assert.equal(message('settings:password.title'), 'Change password');
+  // Both wordings ship, the "add" one hidden, so the section stays a static
+  // render that settings.js toggles (no React state over its nodes).
+  assert.match(html, /<span id="cp-title-change">Change password<\/span><span id="cp-title-add" class="hidden">Add a password<\/span>/);
+  assert.match(html, /<span id="cp-save-change">Change password<\/span><span id="cp-save-add" class="hidden">Add password<\/span>/);
+
+  // settings.js picks the wording from /api/auth/me's hasPassword, with the
+  // current-password row (#4595), each time the section is shown.
+  const shown = (hasPassword) => {
+    const els = new Map();
+    const document = {
+      getElementById(id) {
+        if (!els.has(id)) {
+          const el = { hidden: false };
+          el.classList = { toggle(name, on) { if (name === 'hidden') el.hidden = on; } };
+          els.set(id, el);
+        }
+        return els.get(id);
+      },
+    };
+    const App = { user: { hasPassword } };
+    const S = new Function('document', 'window', 'App',
+      `return ({${sliceMethod(settingsJs, '_noPasswordYet')},${sliceMethod(settingsJs, '_setChangePasswordMode')}});`,
+    )(document, { App }, App);
+    S._walletChangeAvailable = false;
+    S._setChangePasswordMode('password');
+    return (id) => !els.get(id).hidden;
+  };
+  const none = shown(false);
+  for (const id of ['cp-title-add', 'cp-save-add', 'cp-save']) assert.equal(none(id), true, `${id} shows with no password`);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row']) assert.equal(none(id), false, `${id} hides with no password`);
+  const has = shown(true);
+  for (const id of ['cp-title-change', 'cp-save-change', 'cp-current-row', 'cp-save']) assert.equal(has(id), true, `${id} shows with a password`);
+  for (const id of ['cp-title-add', 'cp-save-add']) assert.equal(has(id), false, `${id} hides with a password`);
+  // Once the first one is set, the section reads "Change password" again.
+  assert.match(sliceMethod(settingsJs, 'changePassword'),
+    /if \(j\.first && window\.App && App\.user\) \{\s*App\.user\.hasPassword = true;\s*this\._setChangePasswordMode\('password'\);/);
 });
 
 // ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
@@ -1121,7 +1246,8 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(usernodeTsx, /Could not load Homeroom app settings\./,
+  assert.match(usernodeTsx, /t\('settings:usernode\.body\.loadFailed'\)/);
+  assert.equal(message('settings:usernode.body.loadFailed'), 'Could not load Homeroom app settings.',
     'the headline is unchanged so existing reports stay recognisable');
   // #1079: the box is sections/usernode.tsx now. The MODEL carries the
   // app's own message and the component renders it verbatim in a mono run.
@@ -1137,8 +1263,9 @@ test('the failed read is recoverable in place', () => {
   // a retry that swaps in a progress line rather than blanking the section.
   assert.match(usernodeTsx, /id="settings-usernode-error"/,
     'the error box has a stable id');
-  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: 'Try again'/,
+  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: t\('core:common\.tryAgain'\)/,
     'the retry button has a stable id and is offered on the screen');
+  assert.equal(message('core:common.tryAgain'), 'Try again');
   const retry = sliceMethod(settingsJs, '_retryUsernodeRead');
   assert.match(retry, /this\._usernodeLoading = true;/,
     'a retry swaps the box for a progress line instead of blanking the section');
@@ -1170,8 +1297,9 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
   ]) {
     assert.ok(view.includes(field), `${field} is computed with or without a snapshot`);
   }
-  assert.match(view, /actions: \[\s*\n?\s*\{ label: 'Device benchmark'/,
+  assert.match(view, /actions: \[\s*\n?\s*\{ label: tr\('settings:usernode\.diagnostics\.deviceBenchmark'\)/,
     'the two native screens are reachable whether or not the snapshot loaded');
+  assert.equal(message('settings:usernode.diagnostics.deviceBenchmark'), 'Device benchmark');
   assert.match(usernodeTsx, /<Faq s=\{s\} \/>/, 'the FAQ needs no snapshot');
 
   // These read the snapshot, so every one of them must be guarded.
@@ -1196,14 +1324,16 @@ test('the native ZK identity entry is capability-gated and dispatchable', () => 
     /const canOpenZkIdentity = this\._hasNativeCapability\('zkIdentityFlow'\)/,
     'the button follows the additive feature capability, not bridge version');
   assert.match(view,
-    /open: canOpenZkIdentity \? \{[\s\S]*label: 'Open ZK identity'[\s\S]*action: '_openZkIdentityScreen'/,
+    /open: canOpenZkIdentity \? \{[\s\S]*label: tr\('settings:usernode\.privacy\.openZkIdentity'\)[\s\S]*action: '_openZkIdentityScreen'/,
     'supported builds publish a visible settings action');
+  assert.equal(message('settings:usernode.privacy.openZkIdentity'), 'Open ZK identity');
   assert.match(usernodeTsx,
     /s\.privacy\.open \? <UnBtn btn=\{s\.privacy\.open\} \/> : null/,
     'unsupported builds render no dead control');
   assert.match(sliceMethod(settingsJs, '_openZkIdentityScreen'),
-    /_openNativeScreen\('zkIdentity', 'Could not open ZK identity'\)/,
+    /_openNativeScreen\('zkIdentity', tr\('settings:usernode\.privacy\.openZkIdentityFailed'\)\)/,
     'the action uses the allowlisted native target');
+  assert.equal(message('settings:usernode.privacy.openZkIdentityFailed'), 'Could not open ZK identity');
 });
 
 
@@ -1260,8 +1390,9 @@ test('activity notifications wait for native admission and surface failures', ()
     'and the retry actually re-runs the handoff');
   assert.match(usernodeTsx, /includeErrorDetail: true/,
     'native storage and admission errors remain visible to the user');
-  assert.match(usernodeUiTsx, /Could not save the setting/,
+  assert.match(usernodeUiTsx, /useAction\(t\('settings:usernode\.settingSaveFailed'\)\)/,
     'a failed setter says so rather than silently reverting');
+  assert.equal(message('settings:usernode.settingSaveFailed'), 'Could not save the setting');
 });
 
 test('only the newest usernode read attempt paints', () => {
@@ -1358,7 +1489,8 @@ test('the machine list reads the account route, not the CLI surface', () => {
     settingsJs.indexOf('_detachLocalAgent(')
   );
   assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
-  assert.match(render, /Demo data/);
+  assert.match(render, /status\.textContent = tr\('settings:localAgents\.demoData'\)/);
+  assert.match(message('settings:localAgents.demoData'), /Demo data/);
 });
 
 test('detaching is confirmed, and an already-gone lease is not an error', () => {
@@ -1426,8 +1558,10 @@ test('the panel has stable ids and both actions', () => {
   assert.match(usernodeTsx, /id="settings-usernode-connection"/);
   assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry'/);
   assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy'/);
-  assert.match(usernodeTsx, /'Try again'/);
-  assert.match(usernodeTsx, /'Copy diagnostics'/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry', label: t\('core:common\.tryAgain'\)/);
+  assert.equal(message('core:common.tryAgain'), 'Try again');
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy', label: t\('settings:usernode\.connection\.copyDiagnostics'\)/);
+  assert.equal(message('settings:usernode.connection.copyDiagnostics'), 'Copy diagnostics');
   // PlatformUI.copyText is the real API (async → boolean, never throws).
   const copy = sliceMethod(settingsJs, '_copyUsernodeDiagnostics');
   assert.match(copy, /PlatformUI\.copyText\(/);
@@ -1454,7 +1588,8 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Homeroom app: widget icons/);
+  assert.match(usernodeTsx, /title=\{t\('settings:usernode\.widgetIcons\.title'\)\}/);
+  assert.equal(message('settings:usernode.widgetIcons.title'), 'Homeroom app: widget icons');
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1470,13 +1605,31 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // app couldn't say" and "the app said no" are different diagnoses with
   // different fixes, and collapsing them is the bug being diagnosed.
   assert.match(widget, /diag\.capability === true/);
-  assert.match(widget, /diag\.capability === false \? 'Not advertised' : 'The app couldn’t say'/);
+  assert.match(widget, /diag\.capability === false\s*\? tr\('settings:usernode\.widgetIcons\.capability\.notAdvertised'\)\s*: tr\('settings:usernode\.widgetIcons\.capability\.unknown'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.capability.notAdvertised'), 'Not advertised');
+  assert.equal(message('settings:usernode.widgetIcons.capability.unknown'), 'The app couldn’t say');
   // Same for the behavioural verdict and what SV is actually sending.
   assert.match(widget, /diag\.verdict === 'supported'/);
-  assert.match(widget, /diag\.verdict === 'unsupported' \? 'Single face only' : 'Not confirmed yet'/);
+  assert.match(widget, /diag\.verdict === 'unsupported'\s*\? tr\('settings:usernode\.widgetIcons\.verdict\.unsupported'\)\s*: tr\('settings:usernode\.widgetIcons\.verdict\.unconfirmed'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.verdict.unsupported'), 'Single face only');
+  assert.equal(message('settings:usernode.widgetIcons.verdict.unconfirmed'), 'Not confirmed yet');
   assert.match(widget, /diag\.resolved === true/);
-  assert.match(widget, /Verdict bound to app version/);
-  assert.match(widget, /Last icon check/);
+  assert.match(widget, /tr\('settings:usernode\.widgetIcons\.verdictBound', \{/);
+  assert.match(message('settings:usernode.widgetIcons.verdictBound', { version: '1.2', build: '34' }), /Verdict bound to app version/);
+  assert.match(message('settings:usernode.widgetIcons.verdictUnbound'), /Verdict bound to app version/);
+  // The "Last icon check" note is a whole message per outcome, chosen by a
+  // helper of its own.
+  assert.match(widget, /\{ text: this\._widgetIconLastCheckText\(diag\), tone: 'muted' \}/);
+  const lastCheck = sliceMethod(settingsJs, '_widgetIconLastCheckText');
+  assert.match(lastCheck, /const \[timed, never\] = this\.WIDGET_ICON_LAST_CHECK\[kind\];/);
+  assert.match(lastCheck, /\? tr\(timed, \{ \.\.\.values, when: this\._widgetIconTime\(diag\.lastHealAt\) \}\)\s*: tr\(never, values\)/);
+  const lastCheckTable = settingsJs.slice(settingsJs.indexOf('    WIDGET_ICON_LAST_CHECK: {'));
+  const lastCheckIds = [...new Set(lastCheckTable.slice(0, lastCheckTable.indexOf('\n    },'))
+    .match(/settings:usernode\.widgetIcons\.lastCheck\.[A-Za-z]+/g) || [])];
+  assert.equal(lastCheckIds.length, 12, 'the note is drawn from the catalog: a timed and a never message per outcome');
+  for (const id of lastCheckIds) {
+    assert.match(message(id, { when: 'now', count: 2, refused: 1 }), /^Last icon check/, id);
+  }
   // A failed probe explains itself in the same plain language the rest
   // of this screen uses, rather than leaving a silent "couldn't say".
   assert.match(widget, /USERNODE_READ_ERROR_REASONS\[diag\.readError\.kind\]/);
@@ -1503,11 +1656,19 @@ test('per-entry rows separate "never sent" from "sent and not kept"', () => {
   // apart from a shell bug — they live in different repositories.
   assert.match(entries, /entry\.hasIcon/);
   assert.match(entries, /entry\.hasIconDark/);
-  assert.match(entries, /entry\.matches \? 'current' : 'stale'/);
+  assert.match(entries, /entry\.matches\s*\? tr\('settings:usernode\.widgetIcons\.entry\.sentCurrent'\)\s*: tr\('settings:usernode\.widgetIcons\.entry\.sentStale'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.entry.sentCurrent'), 'sent current');
+  assert.equal(message('settings:usernode.widgetIcons.entry.sentStale'), 'sent stale');
   // Tri-state all the way down: a shell that reports neither key says
   // "—", not "no".
-  assert.match(entries, /v === true \? 'yes' : \(v === false \? 'no' : '—'\)/);
-  assert.match(entries, /pinned by another app/,
+  for (const [fact, word] of [['icon', 'icon'], ['dark', 'dark']]) {
+    assert.match(entries, new RegExp(`const ${fact} = \\(v\\) => tr\\(v === true \\? 'settings:usernode\\.widgetIcons\\.entry\\.${fact}Yes'`
+      + `\\s*: \\(v === false \\? 'settings:usernode\\.widgetIcons\\.entry\\.${fact}No' : 'settings:usernode\\.widgetIcons\\.entry\\.${fact}Unknown'\\)\\)`));
+    assert.deepEqual(['Yes', 'No', 'Unknown'].map((v) => message(`settings:usernode.widgetIcons.entry.${fact}${v}`)),
+      [`${word} yes`, `${word} no`, `${word} —`]);
+  }
+  assert.match(entries, /entry\.foreign\s*\? tr\('settings:usernode\.widgetIcons\.entry\.foreign'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.entry.foreign'), 'pinned by another app',
     'a foreign shortcut is named as such rather than shown as broken');
 });
 
@@ -1539,8 +1700,10 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   // a device — is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
   assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
-  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
-  assert.match(usernodeTsx, /Staging demo: sample data/);
+  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: t\('settings:usernode\.widgetIcons\.recheck'\)/);
+  assert.equal(message('settings:usernode.widgetIcons.recheck'), 'Re-check icons');
+  assert.match(usernodeTsx, /w\.demo \? <UnP note=\{\{ text: t\('settings:usernode\.demoNote'\)/);
+  assert.equal(message('settings:usernode.demoNote'), 'Staging demo: sample data');
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1573,9 +1736,10 @@ test('every privileged state has a plain-language reason, remedy-ordered', () =>
   // The remedy order the report asked for: force-close and reopen FIRST,
   // reinstall only if that does not clear it.
   for (const key of ['blocked-frame', 'unattached']) {
-    const at = table.indexOf(`'${key}':`);
-    const next = table.indexOf("':", table.indexOf('\n', at) + 1);
-    const copy = table.slice(at, next > at ? next + 200 : table.length);
+    // The table names a message per state; the copy is that message's English.
+    const id = table.match(new RegExp(`'${key}': '(settings:usernode\\.connection\\.reason\\.[A-Za-z]+)',`));
+    assert.ok(id, `${key} names its reason`);
+    const copy = message(id[1]);
     const closeAt = copy.search(/[Ff]orce-close/);
     const reinstallAt = copy.search(/reinstall/i);
     assert.ok(closeAt > -1, `${key} tells the user to force-close and reopen`);
@@ -1606,8 +1770,12 @@ test('a refused bridge changes what the dependent messages say', () => {
   // through the SAME helper by name across the seam.
   assert.match(usernodeUiTsx, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
     'the shared control wrapper routes through the helper');
-  for (const fallback of ['Could not save the setting', 'Action failed']) {
-    assert.ok(usernodeUiTsx.includes(fallback), `${fallback} is a fallback message`);
+  for (const [id, fallback] of [
+    ['settings:usernode.settingSaveFailed', 'Could not save the setting'],
+    ['settings:usernode.actionFailed', 'Action failed'],
+  ]) {
+    assert.ok(usernodeUiTsx.includes(`useAction(t('${id}'))`), `${fallback} is a fallback message`);
+    assert.equal(message(id), fallback);
   }
   assert.ok(settingsJs.includes('this._nativeActionMessage(err, failMsg)'),
     'the native-screen opener still routes through the helper');
@@ -1651,8 +1819,9 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
   // component's — a demo snapshot still says so on screen.
   assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
     /demo: !!this\._bridgeDiagDemo\(\)/);
-  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo: sample data'/,
+  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: t\('settings:usernode\.demoNote'\)/,
     'the demo snapshot is labelled as fake on screen');
+  assert.equal(message('settings:usernode.demoNote'), 'Staging demo: sample data');
   // Read-only hook: the buttons render so the screenshot shows the real
   // panel, but they must not touch a bridge or a session.
   assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
@@ -1693,7 +1862,8 @@ test('the connection panel offers wallet recovery off the recorded failure', () 
   assert.match(view, /walletRecovery: this\._walletRecoveryAvailable\(\) \?/,
     'the button is a slice of the connection model');
   assert.match(view, /id: 'settings-usernode-connect-wallet'/);
-  assert.match(view, /label: 'Connect existing wallet'/);
+  assert.match(view, /label: tr\('settings:usernode\.connection\.connectWallet'\)/);
+  assert.equal(message('settings:usernode.connection.connectWallet'), 'Connect existing wallet');
   assert.match(view, /action: '_openWalletRecovery'/);
 
   const available = sliceMethod(settingsJs, '_walletRecoveryAvailable');
@@ -1851,8 +2021,12 @@ test('the local-agent setup guide is always-visible section markup', () => {
   assert.match(source, /PlatformUI/);
   assert.match(source, /copyText\?\.\(value\)/,
     'the shared helper keeps the clipboard fallback used elsewhere in the shell');
-  assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
+  // The button's label follows the outcome, each outcome its own message.
+  assert.match(source, /setCopyState\(ok \? 'copied' : 'failed'\)/,
     'a rejected copy never claims success');
+  assert.match(source, /copied: 'core:common\.copied',\s*failed: 'settings:cli\.guide\.copyFailed',/);
+  assert.match(source, /\{t\(COPY_STATE_LABEL\[copyState\]\)\}/);
+  assert.equal(require('./lib/platform-i18n').message('settings:cli.guide.copyFailed'), 'Copy failed');
   const shell = shellMarkup();
   assert.match(shell, /id="cli-setup-guide"/,
     'the SSG output contains the guide before capability detection or credential loading');
@@ -1895,7 +2069,8 @@ test('settings.js publishes the rows rather than building them', () => {
   // The two SIBLINGS of the host stay the module's: the Load-more button
   // follows the keyset cursor and the status line has three writers.
   assert.match(render, /more\.classList\.toggle\('hidden', !this\._cliTokenCursor\)/);
-  assert.match(render, /status\.textContent = 'Demo data/);
+  assert.match(render, /status\.textContent = tr\('settings:cliTokens\.demoData'\)/);
+  assert.match(message('settings:cliTokens.demoData'), /^Demo data/);
 });
 
 // ── App AI permissions rows (#1957) ───────────────────────────────────
@@ -2050,19 +2225,27 @@ test('the social block renders its four host states', () => {
 // two more cards. These drive the real view builder rather than hand-written
 // fixtures, because the defect worth catching is the builder and the markup
 // disagreeing about what a state says.
-const tierView = () => new Function(`return ({${[
+// The builders read their words through settings.js's own `tr` and `dotText`,
+// so a slice of them is given the English catalog and the module's joiner.
+const tr = englishPlatformI18n().t;
+const dotTextSrc = settingsJs.match(/\n  const dotText = \(parts\) => \{\n[\s\S]*?\n  \};\n/);
+assert.ok(dotTextSrc, 'settings.js defines dotText');
+const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
+const sliced = (...methods) => new Function('tr', 'dotText', `return ({${methods.join(',')}})`)(tr, dotText);
+const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),
-].join(',')}})`)();
+);
 
 test('the head row says where the account stands, in words a reader has', () => {
   const view = tierView();
   const locked = view._socialIdentityTierView({
     policy: 'tiered', limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+    weeklyLimitCents: 5000,
   });
   const html2 = socialHtml({ ...socialBase, tier: locked });
   assert.match(html2, />Signed in</);
-  assert.match(html2, />\$0 \/ day</);
+  assert.match(html2, />\$0 \/ week</);
   assert.match(html2, /id="github-link-tier-note"[^>]*>Either one is enough\./,
     'the one sentence the ladder needs sits under the list');
   assert.doesNotMatch(html2, /Layer 1/,
@@ -2075,39 +2258,75 @@ test('off the credit ladder the list promises nothing a connection cannot delive
   const view = tierView();
   // `legacy` is IDENTITY_CREDIT_POLICY's default, so this is the state most
   // deployments are in: a flat allowance that connecting does not change.
+  // #4913: the figure is the weekly allowance. `limitCents` is the daily
+  // value #2571 switched off; printed, it read "$20 / day" beside a $50 week.
   const legacy = view._socialIdentityTierView({
-    policy: 'legacy', limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+    policy: 'legacy', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    verificationRequired: false, entitlementAvailable: true,
   });
   assert.equal(legacy.title, 'Your credits');
-  assert.equal(legacy.amount, '$25 / day');
+  assert.equal(legacy.amount, '$50 / week');
   assert.match(legacy.note, /do not depend on a connected account/);
   const override = view._socialIdentityTierView({
-    policy: 'tiered', tier: 'override', limitCents: 5050, entitlementAvailable: true,
+    policy: 'tiered', tier: 'override', limitCents: 2000, weeklyLimitCents: 5050, entitlementAvailable: true,
   });
-  assert.equal(override.amount, '$50.50 / day', 'a part-dollar amount keeps its cents');
+  assert.equal(override.amount, '$50.50 / week', 'a part-dollar amount keeps its cents');
   assert.match(override.note, /administrator set this amount/i);
+  // An administrator's weekly figure for one account is an override too…
+  const weeklyOverride = view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, weeklyLimitCents: 10000, weeklySource: 'admin_override',
+    entitlementAvailable: true,
+  });
+  assert.equal(weeklyOverride.amount, '$100 / week');
+  assert.match(weeklyOverride.note, /administrator set this amount/i);
+  // A DAILY override changes no figure since #2571, so it claims none.
+  const dailyOnly = view._socialIdentityTierView({
+    policy: 'legacy', tier: 'override', limitCents: 2000, weeklyLimitCents: 5000, weeklySource: 'default',
+    entitlementAvailable: true,
+  });
+  assert.equal(dailyOnly.amount, '$50 / week');
+  assert.match(dailyOnly.note, /do not depend on a connected account/);
+  // A weekly override does not lift the tiered identity gate: until the
+  // account connects it is on the ladder, and the head row says so.
+  const gated = view._socialIdentityTierView({
+    policy: 'tiered', tier: 'unverified', limitCents: 0, verificationRequired: true,
+    weeklyLimitCents: 8000, weeklySource: 'admin_override', entitlementAvailable: true,
+  });
+  assert.equal(gated.title, 'Signed in');
+  assert.equal(gated.amount, '$0 / week');
+  // …and an entitlement with no weekly figure shows none, not a daily one.
+  assert.equal(view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, entitlementAvailable: true,
+  }).amount, null);
   for (const tier of [legacy, override]) {
     assert.doesNotMatch(socialHtml({ ...socialBase, tier }), /Signed in|Either one is enough/);
   }
 
-  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
   const unlinked = { available: true, linked: false };
-  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy' }, false).amount, null,
-    'no "$10 / day" beside Connect where connecting unlocks no $10');
+  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy', weeklyLimitCents: 5000 }, false).amount, null,
+    'no figure beside Connect where connecting unlocks nothing');
   assert.equal(
-    rows._socialIdentityRowView('github', unlinked, { policy: 'tiered', verificationRequired: true }, false).amount,
-    '$10 / day');
+    rows._socialIdentityRowView('github', unlinked,
+      { policy: 'tiered', verificationRequired: true, weeklyLimitCents: 5000 }, false).amount,
+    '$50 / week');
 });
 
 test('a second proof never reads as a second $10', () => {
   // src/services/limits.js: "provider proofs replace one another; they do
-  // not stack". Two rows each saying "$10 / day" would say the opposite.
-  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
-  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false };
+  // not stack". Two rows each carrying the figure would say the opposite.
+  const rows = sliced(
+    sliceMethod(settingsJs, '_socialIdentityMoney'),
+    sliceMethod(settingsJs, '_socialIdentityRowView'),
+  );
+  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false, weeklyLimitCents: 5000 };
   const github = { available: true, linked: true, handle: 'octo' };
   const x = { available: true, linked: true, handle: 'octo' };
   const both = { github, x };
-  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$10 / day');
+  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$50 / week');
   const second = rows._socialIdentityRowView('x', x, tiered, false, both);
   assert.equal(second.amount, null);
   assert.equal(second.state.text, 'No extra credits');
@@ -2120,7 +2339,7 @@ test('an unverifiable entitlement is the one head row that reads as a fault', ()
   const down = tierView()._socialIdentityTierView({ entitlementAvailable: false });
   assert.equal(down.amount, null, 'no figure is shown when none could be checked');
   const html2 = socialHtml({ ...socialBase, tier: down });
-  assert.match(html2, /text-amber-800[^"]*"[^>]*>Daily credits unavailable</);
+  assert.match(html2, /text-amber-800[^"]*"[^>]*>Weekly credits unavailable</);
   assert.match(html2, /Your own API key still works/);
 });
 
@@ -2130,7 +2349,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
     name: 'GitHub',
     heading: 'GitHub',
     state: { tone: 'muted', text: '' },
-    amount: '$10 / day',
+    amount: '$50 / week',
     done: false,
     linkedAt: null,
     noToken: null,
@@ -2154,7 +2373,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
   // affordance are inside it, and nothing interactive is nested in it.
   const anchor = live.slice(live.indexOf('<a '), live.indexOf('</a>'));
   assert.match(anchor, />GitHub</);
-  assert.match(anchor, />\$10 \/ day</);
+  assert.match(anchor, />\$50 \/ week</);
   assert.match(anchor, /<span[^>]*>Connect<\/span>/, 'an affordance, not a nested control');
   assert.doesNotMatch(anchor.slice(3), /<button|<a /);
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled
@@ -2174,7 +2393,7 @@ test('a not-connected row is one full-width control, inert but present in a fixt
 });
 
 test('a connected provider offers refresh, safe replacement, visibility and disconnect separately', () => {
-  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const view = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
   const row = view._socialIdentityRowView('github', {
     available: true,
     linked: true,
@@ -2239,7 +2458,7 @@ test('a verified replacement is reviewable and cancellable before the active acc
 });
 
 test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
-  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const view = sliced(sliceMethod(settingsJs, '_socialIdentityRowView'));
   for (const provider of ['github', 'x']) {
     const row = view._socialIdentityRowView(provider, {
       available: true, linked: false, pendingAttemptAt: '2026-09-07T10:00:00Z',

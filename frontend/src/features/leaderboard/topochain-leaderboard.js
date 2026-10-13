@@ -72,6 +72,12 @@ const TopochainLeaderboard = {
   _page: 1,
   _perPage: 25,
 
+  // #3887: podium-excluded users are hidden by default and shown grayed-out
+  // when this is true (the chip above the table). Session-sticky like
+  // _page — close() deliberately keeps it so a re-open paints the same
+  // choice — and reset only by a full page load.
+  _showNonPodium: false,
+
   // Last successful /leaderboard payload: { event, leaderboard } + meta.
   _data: null,
   _meta: null,
@@ -197,6 +203,11 @@ const TopochainLeaderboard = {
     }
     params.set('page', String(TopochainLeaderboard._page));
     params.set('per_page', String(TopochainLeaderboard._perPage));
+    // #3887: the chip's ask. The server filters by default, so the param
+    // only goes out when the viewer chose to see the excluded rows.
+    if (TopochainLeaderboard._showNonPodium) {
+      params.set('include_non_podium', '1');
+    }
 
     const { status, ok, data } = await TopochainLeaderboard.fetchJson(
       `/api/v4/leaderboard?${params.toString()}`
@@ -224,11 +235,11 @@ const TopochainLeaderboard = {
         // event bar's default pick covers "none is currently running").
         // That's an empty world, not a failure — render it neutrally.
         TopochainLeaderboard._error = null;
-        TopochainLeaderboard._empty = 'No events have been published yet.';
+        TopochainLeaderboard._empty = PlatformI18n.t('leaderboard:standings.noEvents');
       } else {
         TopochainLeaderboard._empty = null;
         TopochainLeaderboard._error = (data && data.error)
-          || 'Failed to load the leaderboard.';
+          || PlatformI18n.t('leaderboard:standings.loadFailed');
       }
     }
     TopochainLeaderboard._renderBody();
@@ -321,10 +332,44 @@ const TopochainLeaderboard = {
       return { state: 'private', disclaimer };
     }
 
+    // ── #3887: the non-podium chip + the default-hidden rows ────────────
+    //
+    // A current server filters the excluded rows out itself when the pane
+    // did not ask for them and answers `non_podium_count` over the
+    // UNFILTERED scope, so the chip knows the number in both states. A
+    // server older than that field ignores `include_non_podium` and sends
+    // the full board with no count key — so the count is computed from the
+    // rows that arrived and the chip offers itself without a number.
+    // Either way the default view must not list an excluded row: the
+    // client-side filter below is the pane's own guarantee, a no-op
+    // against a current server and the whole show against an old one.
+    const rawCount = payload.non_podium_count;
+    const legacyServer = rawCount == null;
+    const rawExcluded = legacyServer
+      ? leaderboard.filter((r) => !!r.is_non_podium).length
+      : rawCount;
+    const shown = TopochainLeaderboard._showNonPodium
+      ? leaderboard
+      : leaderboard.filter((r) => !r.is_non_podium);
+    const nonPodiumToggle = rawExcluded > 0
+      ? {
+        count: legacyServer ? null : rawExcluded,
+        on: !!TopochainLeaderboard._showNonPodium,
+      }
+      : null;
+
     // The cross-link DOES belong here: an event can have challenges before
     // anyone has scored on it, and that is exactly when "go look at the
     // challenges" is the most useful thing this pane can say.
-    if (!leaderboard.length) {
+    if (!shown.length) {
+      // "Nobody has scored yet" (nothing under the filter) is a different
+      // board from "everyone who scored is hidden by the default" — the
+      // second is the filter working, and it must carry the chip out so
+      // the viewer can see them. Both keep the declared-check contract
+      // (data-tc-lb-empty) in the pane component.
+      if (rawExcluded > 0) {
+        return { state: 'allexcluded', challengeLine, disclaimer, nonPodiumToggle };
+      }
       return { state: 'noentries', challengeLine, disclaimer };
     }
 
@@ -346,20 +391,22 @@ const TopochainLeaderboard = {
       ? ['rank', 'user', 'points', 'blocks']
       : ['rank', 'user', 'points', 'blocks', 'success'];
     const headers = {
-      rank: 'Rank',
-      user: 'User',
-      points: isSeason ? 'Season points' : 'Points',
-      blocks: 'Blocks produced',
-      success: 'Success rate',
+      rank: PlatformI18n.t('leaderboard:standings.column.rank'),
+      user: PlatformI18n.t('leaderboard:standings.column.user'),
+      points: isSeason ? PlatformI18n.t('leaderboard:standings.column.seasonPoints') : PlatformI18n.t('leaderboard:standings.column.points'),
+      blocks: PlatformI18n.t('leaderboard:standings.column.blocks'),
+      success: PlatformI18n.t('leaderboard:standings.column.success'),
     };
 
-    const rows = leaderboard.map((r, i) => ({
+    const rows = shown.map((r, i) => ({
       index: i,
       rank: r.is_non_podium ? '—' : String(r.rank),
       nonPodium: !!r.is_non_podium,
       // The server resolves a name for every account it can (#2394); a row
       // it still cannot name says so rather than showing only its points.
-      user: str(r.display_name) || 'Anonymous',
+      user: str(r.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
+      // Nobody to name: the row's sentence has an unnamed wording.
+      anonymous: !str(r.display_name),
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),
@@ -383,6 +430,7 @@ const TopochainLeaderboard = {
       columns,
       headers,
       rows,
+      nonPodiumToggle,
       pagination,
     };
   },
@@ -391,8 +439,16 @@ const TopochainLeaderboard = {
   // innerHTML'd nodes; the renderer calls them by name now, so the behaviour
   // stays in this module and only the wiring moved.
   _openRowAt(index) {
-    const rows = TopochainLeaderboard._data?.leaderboard;
-    if (!Array.isArray(rows) || !rows[index]) return;
+    // The rendered rows are the SHOWN board (#3887: excluded rows are
+    // hidden by default), so the drill opens the row at that index of the
+    // same filtered list bodyView built — never of the raw payload, whose
+    // indices drift once rows are hidden. Same filter, same direction.
+    const raw = TopochainLeaderboard._data?.leaderboard;
+    if (!Array.isArray(raw)) return;
+    const rows = TopochainLeaderboard._showNonPodium
+      ? raw
+      : raw.filter((r) => !r.is_non_podium);
+    if (!rows[index]) return;
     TopochainLeaderboard._openDrill(rows[index]);
   },
 
@@ -401,6 +457,16 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._page -= 1;
       TopochainLeaderboard.loadLeaderboard();
     }
+  },
+
+  // #3887: the chip. Flipping changes which rows exist, so the table
+  // restarts at page 1 — the same reset an event switch does. The drill
+  // stays open like on a page turn; its rows are matched by identity, not
+  // by index, so it is not invalidated by the row set changing.
+  _toggleNonPodium() {
+    TopochainLeaderboard._showNonPodium = !TopochainLeaderboard._showNonPodium;
+    TopochainLeaderboard._page = 1;
+    TopochainLeaderboard.loadLeaderboard();
   },
 
   _nextPage() {
@@ -436,14 +502,14 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillActivities = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillActivities = {
-            loading: false, error: (data && data.error) || 'Could not load activities.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.activitiesFailed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
       });
     } else {
       TopochainLeaderboard._drillActivities = {
-        loading: false, error: 'No identifier available for this row.', data: null,
+        loading: false, error: PlatformI18n.t('leaderboard:drill.noIdentifier'), data: null,
       };
     }
 
@@ -457,7 +523,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillEpoch = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillEpoch = {
-            loading: false, error: (data && data.error) || 'Could not load the epoch breakdown.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.epoch.failed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -473,8 +539,8 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._drillEpoch = {
         loading: false,
         error: TopochainLeaderboard._isSeasonBoard()
-          ? 'The epoch breakdown is per event. Pick a single event above to see it.'
-          : 'No wallet linked for this row.',
+          ? PlatformI18n.t('leaderboard:drill.epoch.perEvent')
+          : PlatformI18n.t('leaderboard:drill.epoch.noWallet'),
         data: null,
       };
     }
@@ -495,7 +561,7 @@ const TopochainLeaderboard = {
           TopochainLeaderboard._drillProfile = { loading: false, error: null, data: data.data };
         } else {
           TopochainLeaderboard._drillProfile = {
-            loading: false, error: (data && data.error) || 'Could not load your profile.', data: null,
+            loading: false, error: (data && data.error) || PlatformI18n.t('leaderboard:drill.profile.failed'), data: null,
           };
         }
         TopochainLeaderboard._renderDrill();
@@ -532,6 +598,8 @@ const TopochainLeaderboard = {
         ? act.data.map((a) => ({
           label: str(a.description || a.activity_type),
           points: str(a.points),
+          // Raw; ./activity-row.tsx formats it in the renderer (#3648).
+          at: a.activity_at || null,
         }))
         : null,
     };
@@ -572,7 +640,7 @@ const TopochainLeaderboard = {
     };
 
     return {
-      displayName: str(row.display_name) || 'Anonymous',
+      displayName: str(row.display_name) || PlatformI18n.t('leaderboard:standings.anonymous'),
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,
@@ -588,3 +656,13 @@ const TopochainLeaderboard = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.TopochainLeaderboard = TopochainLeaderboard;
+
+// The table's headings and stand-in names are read when a view is built, so a
+// new language builds the views again from what is already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!TopochainLeaderboard._open) return;
+    TopochainLeaderboard._renderBody();
+    TopochainLeaderboard._renderDrill();
+  });
+}

@@ -51,8 +51,15 @@ test('assets bypass the per-app visibility gate', () => {
   const site = CADDYFILE.slice(CADDYFILE.indexOf('*.{$USERNODE_DOMAIN} {'));
   assert.ok(site.includes(`@not_platform_assets not path ${GLOBS.join(' ')}`),
     'the complementary matcher covers exactly the same three prefixes');
-  assert.match(site, /handle @not_platform_assets \{\s*\n\s*import platform_gate\n\s*\}/,
-    'the gate runs only for non-asset requests');
+  // The gate, then (#3657) the identity it returned put on the request as
+  // x-usernode-token; nothing else in the block (comments aside).
+  const block = site.match(/handle @not_platform_assets \{\n([\s\S]*?)\n\t\}/);
+  assert.ok(block, 'the gate runs only for non-asset requests');
+  const statements = block[1].split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  assert.deepEqual(statements, [
+    'import platform_gate',
+    'request_header @edge_identity X-Usernode-Token {http.request.header.X-Usernode-Identity}',
+  ], 'the gate runs only for non-asset requests');
   // And the gate is not ALSO imported bare, which would reinstate it for
   // asset requests and undo the whole point.
   assert.equal((site.match(/^\t*import platform_gate$/gm) || []).length, 1);

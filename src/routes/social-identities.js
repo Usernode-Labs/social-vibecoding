@@ -55,7 +55,7 @@ function callbackUri(config, provider) {
 
 function settingsUrl(config, status, provider) {
   const params = new URLSearchParams({ identity: status, provider });
-  return `${config.cliAuthOrigin}/#settings/connectors?${params.toString()}`;
+  return `${config.cliAuthOrigin}/#settings/linked-accounts?${params.toString()}`;
 }
 
 // The provider's `error` parameter on a callback that carries no code. The
@@ -131,6 +131,7 @@ function demoPayload(mode) {
   let entitlement = {
     policy: 'tiered', tier: 'unverified', source: 'identity',
     limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+    weeklyLimitCents: limits.DEFAULT_WEEKLY_LIMIT_CENTS,
   };
 
   if (mode === 'identity-legacy') {
@@ -174,6 +175,7 @@ function demoPayload(mode) {
       policy: 'tiered', tier: 'social', source: 'identity',
       limitCents: limits.TIER_ONE_LIMIT_CENTS,
       verificationRequired: false, entitlementAvailable: true,
+      weeklyLimitCents: limits.DEFAULT_WEEKLY_LIMIT_CENTS,
     };
   } else if (mode !== 'identity-unverified') {
     providers.github = {
@@ -189,6 +191,7 @@ function demoPayload(mode) {
       policy: 'tiered', tier: 'social', source: 'identity',
       limitCents: limits.TIER_ONE_LIMIT_CENTS,
       verificationRequired: false, entitlementAvailable: true,
+      weeklyLimitCents: limits.DEFAULT_WEEKLY_LIMIT_CENTS,
     };
   }
   return { providers, entitlement, demo: true };
@@ -240,6 +243,8 @@ function socialIdentityRoutes(config) {
       payload.entitlement = {
         policy: 'legacy', tier: 'legacy', source: 'default',
         limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+        // #4913: the figure Linked accounts shows is the weekly allowance.
+        weeklyLimitCents: limits.DEFAULT_WEEKLY_LIMIT_CENTS,
       };
       delete payload.demo;
       return res.json(payload);

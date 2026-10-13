@@ -19,8 +19,8 @@
  *
  * ONE RHYTHM: every band in the column is a 14px step from the one above it.
  * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
- * on `pb-1.5` (6px + 8px). Inside the rows list the cards, the headers and the
- * locked placeholder sit `gap-2.5` (10px) apart, the same step as the featured
+ * on `pb-1.5` (6px + 8px). Inside the rows list the cards and the headers
+ * sit `gap-2.5` (10px) apart, the same step as the featured
  * apps rail (`.home-discover-rail` in app.css). Nothing is inset: the season line, the headers, the cards
  * and the footer all start where the heading's label starts.
  *
@@ -35,14 +35,14 @@
  *
  * A CARD'S DEADLINE sits on the line under its title beside the reward ("5d
  * left · 500 pts"): the challenge's own end, else its event's, else the
- * season's. Only Get started's open cards draw it; every other group's header
+ * season's. Only the First challenges open cards draw it; every other group's header
  * carries the clock instead (below).
  *
  * ── Group headers, without counts ─────────────────────────────────────
  *
  * The cards are the Challenges tab's list in the tab's order: grouped by the
- * board's categories (Get started, This week, Always open, the season's other
- * challenges, and a finished Get started last). Expanded, the block draws
+ * board's categories (First challenges, This week, Always open, the season's other
+ * challenges, and a finished First challenges group last). Expanded, the block draws
  * that whole list. Collapsed, its four slots go to the viewer's unfinished
  * challenges first (#2490), cutting a group mid-way when the cap falls inside
  * it; finished challenges only fill the slots that are left, and they sit
@@ -51,28 +51,28 @@
  * screen included, static here: no toggle, no collapse and no count, because a
  * collapsed block does not draw the whole group. The header owns the clock
  * ("This week · 3d left", "Always open · no deadline") and the cards under it
- * drop theirs; Get started's keep their own. The Done header carries no clock.
+ * drop theirs; the First challenges cards keep their own. The Done header carries no clock.
  * HomePanels.orderRows, HomePanels.visibleSlots and HomePanels.challengeGroups
  * decide all of it; the headers sit inside `.home-panel-rows` beside the
  * cards, which the declared checks select through, so nothing comes between
  * the season progress and the body. The Done header alone carries a class of
  * its own, `home-challenge-done-head`, which the #2490 check selects on.
  *
- * ── While setup gates the season ──────────────────────────────────────
+ * ── First challenges are ordinary cards ──────────────────────────────
  *
- * The server sends only setup's challenges until setup is finished, plus how
- * many it holds back (`lockedCount`). Those draw as ONE dashed placeholder
- * after the last card, inside `.home-panel-rows` so it keeps the cards' 10px
- * step, but it is not a `.home-challenge-card`: the declared checks and the
- * tests count and select real cards. Its second line ("Finish setup to
- * unlock") is the unlock note, so the note is not drawn beside it.
+ * A new account's First challenges (Join a community, Try an app, Vote on an
+ * app, Send feedback, as the admin sets them up) are drawn here like every
+ * other challenge: `.home-challenge-card`s under the "First challenges"
+ * header, in the admin's order, ticking from their credits, and opening on
+ * the Challenges tab when tapped. While any of them is unfinished the group
+ * leads the block; once all are done it moves to the end (HomePanels
+ * groupRankOf), as it does for everyone.
  *
- * The note itself sits UNDER the challenges, after `.home-panel-body`: the
- * season progress leads, then the cards, then what they unlock. That keeps
- * `.home-panel-season + .home-panel-body` adjacent in every state. It shows
- * only while setup is locked and no placeholder draws (no count to draw):
- * "Finish these to unlock the rest of the season." Once unlocked there is no
- * note.
+ * Until #4635 a new account's season was GATED behind a Getting started card
+ * on top of Home, and this block drew one dashed locked card ("6 challenges
+ * unlock after Getting started") in place of its cards, or an unlock note
+ * under them. Every new account gets a tour now, so the card, the gate,
+ * the locked card and the note all went: nothing here is locked.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
@@ -91,14 +91,15 @@
 
 import { Fragment } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import { GroupHeader } from '../../leaderboard/group-header';
-import { LockedChallengesCard } from '../../leaderboard/locked-challenges-card';
 import { SeasonProgress } from '../../leaderboard/season-progress';
 import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
+  const t = useMessages('home');
   if (!view.rows.length) {
     // The line's hover is a text colour, not a tint: with no plate and no
     // inset a background would fill a square box starting at the first glyph,
@@ -117,11 +118,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           <button
             type="button"
             className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
-            title="Go to the Challenges tab on the Leaderboard screen"
-            aria-label="No challenges are running right now. Go to the Challenges tab on the Leaderboard screen"
+            title={t('home:challenges.empty.tip')}
+            aria-label={t('home:challenges.empty.label')}
             onClick={() => panels()?.goToChallenges?.()}
           >
-            No challenges are running right now
+            {t('home:challenges.empty.text')}
           </button>
         </div>
       </PanelShell>
@@ -130,9 +131,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
 
   const groups: ChallengeGroupView[] = view.groups
     ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
-  const lockedCount = view.lockedCount ?? 0;
   const hasFooter = view.expandable !== false;
-  const hasNote = !!view.onboardingNote && !(lockedCount > 0);
 
   return (
     <PanelShell
@@ -145,11 +144,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       ) : null}
     >
       {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
-      {/* The body closes on `pb-1.5` only when a band follows it (the footer or
-          the note), as the first half of their 14px step. A block that ends at
+      {/* The body closes on `pb-1.5` only when a band follows it (the
+          footer), as the first half of their 14px step. A block that ends at
           its last card ends there, on the section's own bottom padding, as
           Discover does. */}
-      <div className={hasFooter || hasNote ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
+      <div className={hasFooter ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
         <div className="home-panel-rows flex flex-col gap-2.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
@@ -171,18 +170,8 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
               ))}
             </Fragment>
           ))}
-          <LockedChallengesCard count={lockedCount} className="home-challenge-locked" />
         </div>
       </div>
-      {/* #1915 kept this line off its neighbours. It still is, by the column's
-          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
-          of its own against a hairline that is gone. It follows the cards,
-          and the placeholder's own second line stands in for it. */}
-      {hasNote ? (
-        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
-          {view.onboardingNote}
-        </p>
-      ) : null}
     </PanelShell>
   );
 }

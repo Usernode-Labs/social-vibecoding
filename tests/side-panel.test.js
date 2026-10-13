@@ -63,7 +63,7 @@ const R = api.routes;
 
 // ── 1. The address table ─────────────────────────────────────────────────
 
-test('the panel\'s pages: an app\'s Workshop and work, its discussion, conversations, agent chats', () => {
+test('the panel\'s pages: an app\'s Workshop and work, conversations, agent chats', () => {
   const kinds = {
     'app/notes-ab12/workshop': 'workshop',
     'app/notes-ab12/board': 'workshop',
@@ -76,9 +76,11 @@ test('the panel\'s pages: an app\'s Workshop and work, its discussion, conversat
     'app/notes-ab12/dev/sessions/new': 'new-change',
     'app/notes-ab12/dev/sessions/41': 'change',
     'app/notes-ab12/dev/shared/41': 'change',
-    'app/notes-ab12/dev/chat': 'discussion',
-    'app/notes-ab12/group-chat': 'discussion',
-    'messages/app/notes-ab12': 'discussion',
+    // #3653: an app's discussion is its project page's Discussion tab, so
+    // its old addresses are that page.
+    'app/notes-ab12/dev/chat': 'workshop',
+    'app/notes-ab12/group-chat': 'workshop',
+    'messages/app/notes-ab12': 'workshop',
     'messages/4242': 'thread',
     'messages': 'messages',
     'chat': 'chat',
@@ -166,9 +168,13 @@ test('an app\'s App tab is never the panel\'s: it names the app to hand to the t
   assert.equal(R.appTabSlug('messages/12'), null);
 });
 
-test('Back climbs: a discussion or a message to Messages, a proposal, an issue or a change to the Workshop', () => {
-  assert.equal(R.parentRoute('messages/app/notes-ab12'), 'messages');
-  assert.equal(R.parentRoute('app/notes-ab12/dev/chat'), 'messages');
+test('Back climbs: a message to Messages, a proposal, an issue or a change to the Workshop', () => {
+  // #3653: an app's discussion is its project page, which has nothing above it.
+  assert.equal(R.parentRoute('messages/app/notes-ab12'), null);
+  assert.equal(R.parentRoute('app/notes-ab12/dev/chat'), null);
+  assert.equal(R.samePage('messages/app/notes-ab12/thread/7', 'app/notes-ab12/workshop'), true,
+    'the redirect to the page is not a navigation');
+  assert.equal(R.samePage('app/notes-ab12/dev/chat', 'app/notes-ab12/workshop'), true);
   assert.equal(R.parentRoute('messages/4242'), 'messages');
   assert.equal(R.parentRoute('chat/abc'), 'messages');
   for (const route of ['app/notes-ab12/dev/proposals/12', 'app/notes-ab12/dev/issues/7',
@@ -181,17 +187,17 @@ test('Back climbs: a discussion or a message to Messages, a proposal, an issue o
 
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
-  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Notes', 'a discussion is its app\'s');
-  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
+  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Community', 'a discussion is its project page (#3653)');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Community', 'the project page is titled Community, as the prototype titled it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
-  assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Issue');
+  assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Request');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/new', 'Notes'), 'New change');
   // Derived from the route while the document has said nothing yet.
-  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Workshop');
+  assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Community');
   assert.equal(R.titleFor('messages/4242', ''), 'Messages');
-  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Discussion');
+  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Community');
 });
 
 test('the panel document\'s address keeps the top window\'s query, less its own and the load-scoped ones', () => {
@@ -253,7 +259,7 @@ test('an open panel renders ONE frame, at a constant address, with the spinner a
     title: 'Design review', canBack: true, loading: true,
   });
   const loading = renderToHtml(createElement(api.SidePanelIsland, {}));
-  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame"><\/iframe><div id="side-panel-loading"/,
+  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame" data-un-keyboard-relay=""><\/iframe><div id="side-panel-loading"/,
     'the frame is the body\'s first child, transparent while its document boots');
   assert.match(loading, />Design review<\/h2>/);
   api.sidePanelStore.set({ loading: false, route: 'app/x/dev/proposals/1', title: 'Proposal' });
@@ -363,20 +369,20 @@ test('opening starts ONE document, and later pages are navigations inside it', (
   assert.equal(s.frameSrc, '/?demo=1&panel=1#app/notes-ab12/workshop');
   assert.equal(s.frameKey, 1);
   assert.equal(s.loading, true);
-  assert.equal(s.title, 'Workshop', 'titled from the route until the document says');
+  assert.equal(s.title, 'Community', 'titled from the route until the document says');
   assert.equal(s.canBack, false);
   const gone = fakeFrame();
   // A second page asked for while it boots is where it goes once it can.
-  api.take('messages/app/notes-ab12');
+  api.take('messages/4242');
   assert.deepEqual(gone, [], 'nothing to tell a document that has not booted');
   api.embeddedApi.ready('app/notes-ab12/workshop', 'Workshop');
-  assert.deepEqual(gone, [['messages/app/notes-ab12', null]]);
+  assert.deepEqual(gone, [['messages/4242', null]]);
   s = api.sidePanelStore.get();
   assert.equal(s.loading, false);
-  assert.equal(s.route, 'messages/app/notes-ab12');
+  assert.equal(s.route, 'messages/4242');
   assert.equal(s.canBack, true, 'the Workshop it was opened on is behind it');
-  api.embeddedApi.navigated('messages/app/notes-ab12', 'Notes', false);
-  assert.equal(api.sidePanelStore.get().title, 'Notes');
+  api.embeddedApi.navigated('messages/4242', 'Design review', false);
+  assert.equal(api.sidePanelStore.get().title, 'Design review');
   // Another page: the same frame, navigated.
   api.take('app/notes-ab12/dev/proposals/12');
   assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null]);
@@ -658,7 +664,7 @@ test('the panel never runs an app: the running one is asked for nothing, another
 
 // ── 5. The panel's own document ──────────────────────────────────────────
 
-function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false } = {}) {
+function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false, nested = false } = {}) {
   let url = new URL(href);
   const listeners = {};
   const docListeners = {};
@@ -724,7 +730,11 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
     navListeners.forEach((fn) => fn(e));
     return e.defaultPrevented;
   };
-  globalThis.document = { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } };
+  win.top = nested ? {
+    get UsernodeReact() { throw new Error('SecurityError: cross-origin preview host'); },
+  } : win.parent;
+  const embedded = runHeadCheck({ nested });
+  globalThis.document = { documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } };
   if (typeof globalThis.PopStateEvent === 'undefined') {
     globalThis.PopStateEvent = class { constructor(type, init) { this.type = type; this.state = init && init.state; } };
   }
@@ -732,12 +742,41 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
   const boot = () => (docListeners['sv:authed'] || []).forEach((fn) => fn());
   return { win, runtime, reports, routed, history, fire, boot, navigate, url: () => url.href };
 }
-const tick = () => new Promise((r) => setTimeout(r, 5));
+// The runtime reports from a 0 ms timer, and `go()` (or a refused hash push)
+// sets that timer from a microtask, after the page has routed. A 5 ms timer
+// started before the microtask ran could fire first when routing took more
+// than 4 ms on a loaded machine, and the report was not there yet. Waiting
+// for the next turn first lets the runtime's timer be set before this one,
+// and timers fire in the order they expire.
+const tick = async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 5));
+};
 
 test('the runtime installs only in the panel\'s document', () => {
   globalThis.document = { documentElement: { classList: { contains: () => false } } };
   assert.equal(api.installEmbeddedRuntime({}), null, 'the top document is left alone');
   delete globalThis.document;
+});
+
+test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {
+  const p = panelWindow({ nested: true, href: 'https://homeroom.test/?panel=1#messages/app/notes-ab12' });
+  try {
+    assert.notEqual(p.win.parent, p.win.top, 'Preview is itself framed');
+    assert.ok(p.runtime, 'the head check enables the embedded runtime');
+    p.boot();
+    await tick();
+    assert.equal(p.runtime.isBooted(), true);
+    assert.deepEqual(p.reports[0], ['ready', 'messages/app/notes-ab12', ''],
+      'the Preview can reveal Discussion instead of keeping its loading cover');
+    p.runtime.go('app/notes-ab12/dev/sessions/new', { proposalHint: true });
+    await tick();
+    assert.equal(p.win.AppView._proposalHint, true);
+    assert.deepEqual(p.reports.at(-1), ['navigated', 'app/notes-ab12/dev/sessions/new', '', false]);
+    assert.deepEqual(p.history.pushes, [], 'New change reuses the same panel');
+  } finally {
+    delete globalThis.document;
+  }
 });
 
 test('the panel\'s document adds no history entry, and reports each page to the top', async () => {
@@ -897,6 +936,7 @@ function router({ embedded = false, takes = true } = {}) {
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,
@@ -1034,7 +1074,7 @@ test('the router consults the panel\'s document before routing an address', () =
   assert.ok(forward < body.indexOf('if (!hash) {'), 'before the first screen is chosen');
   assert.ok(forward > body.indexOf('AuthScreens.routeFromHash(hash)'), 'and after the signed-out routing');
   // The bar is down in there, and the parked strip is never written.
-  assert.match(APP_JS, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && !inApp,/);
+  assert.match(APP_JS, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
   assert.match(APP_JS, /_syncParkedApp\(inApp\) \{\s*\/\/[^\n]*\n[^\n]*\n\s*if \(App\.embeddedPanel\) return;/);
 });
 
@@ -1047,14 +1087,16 @@ function runHeadCheck({ search = '?panel=1', framed = true, sameOrigin = true, n
   const code = HEAD.slice(start, end) + "if (inSidePanel) document.documentElement.classList.add('in-side-panel');";
   const classes = new Set();
   const win = { location: { search, origin: 'https://homeroom.test' } };
-  const top = framed ? {
+  const parent = framed ? {
     get location() {
       if (!sameOrigin) throw new Error('SecurityError: cross-origin');
       return { origin: 'https://homeroom.test' };
     },
   } : win;
-  win.top = top;
-  win.parent = nested ? {} : top;
+  win.parent = parent;
+  win.top = nested ? {
+    get location() { throw new Error('SecurityError: cross-origin preview host'); },
+  } : parent;
   const context = vm.createContext({
     window: win, URLSearchParams,
     document: { documentElement: { classList: { add: (c) => classes.add(c) } } },
@@ -1063,11 +1105,12 @@ function runHeadCheck({ search = '?panel=1', framed = true, sameOrigin = true, n
   return classes.has('in-side-panel');
 }
 
-test('embedded mode needs panel=1 AND a same-origin top window framing it directly', () => {
+test('embedded mode needs panel=1 AND a same-origin parent, including inside Preview', () => {
   assert.equal(runHeadCheck(), true, 'the panel\'s frame');
   assert.equal(runHeadCheck({ framed: false }), false, 'a ?panel=1 address opened in a tab of its own');
   assert.equal(runHeadCheck({ sameOrigin: false }), false, 'framed by another site');
-  assert.equal(runHeadCheck({ nested: true }), false, 'framed inside something else');
+  assert.equal(runHeadCheck({ nested: true }), true, 'same-origin panel inside a cross-origin Preview host');
+  assert.equal(runHeadCheck({ nested: true, sameOrigin: false }), false, 'a foreign immediate parent is still refused');
   assert.equal(runHeadCheck({ search: '?demo=1' }), false, 'no panel=1');
   const block = HEAD.slice(HEAD.indexOf('var inSidePanel = false;') - 2000, HEAD.indexOf('var inSidePanel = false;'));
   assert.match(block, /before the first\s*(?:\/\/\s*)?paint/i, 'decided before the first paint');
@@ -1104,7 +1147,7 @@ test('what the top window owns stands down in the panel\'s document', () => {
   assert.match(snap, /export function clearShellSnapshot\(\): void \{\s*if \(!isBrowser\(\) \|\| inSidePanel\(\)\) return;/);
   assert.match(read('frontend/src/lib/shell-snapshot-apply.ts'), /if \(isEmbeddedPanel\(\)\) return;/);
   // The service worker (registered by the top window).
-  assert.match(read('frontend/src/lib/service-worker.ts'), /if \(isEmbeddedPanel\(\)\) return;\s*container\.register\('\/sw\.js'\)/);
+  assert.match(read('frontend/src/lib/service-worker.ts'), /if \(isEmbeddedPanel\(\)\) return;\s*container\.register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/);
   // A frame's history entries are the top's: no dismiss records.
   assert.match(read('frontend/src/lib/back-stack.ts'), /if \(typeof window !== 'undefined' && !isEmbeddedPanel\(\)\) \{\s*shared = createBackStack\(window\);/);
   // The first-run gates and the tour (the top window presents them, once).
@@ -1177,12 +1220,18 @@ test('the JS entry points ask the panel before they navigate', () => {
     assert.ok(upTo.indexOf('if (sidePanelTakes(target)) return;') < upTo.indexOf('window.location.hash = target'),
       `${fn} asks before it moves the address`);
   }
+  // New change is an agent session now (#2779): the agent store's own start
+  // asks the panel (sidePanelTakes) before it moves the address, hint and all.
   const IMPROVE = read('frontend/src/features/improve/improve-controller.js');
   const start = IMPROVE.slice(IMPROVE.indexOf('  startSession() {'));
   const body = start.slice(0, start.indexOf('\n  },'));
-  assert.match(body, /panel\?\.take\?\.\(`app\/\$\{encodeURIComponent\(slug\)\}\/dev\/sessions\/\$\{ref\}`,\s*\{ proposalHint: true \}\)\) return;/,
-    'New change opens the unsent change beside the app, hint and all');
-  assert.ok(body.indexOf('panel?.take?.') < body.indexOf('Improve._withApp('), 'before it navigates');
+  assert.match(body, /Improve\._startAgentSession\(\{ slug: improveStore\.get\(\)\.slug, entry: 'improve' \}\);/);
+  const AGENT = read('frontend/src/features/agent-session/store.ts');
+  const starter = AGENT.slice(AGENT.indexOf('export function startAgentSession('));
+  const startBody = starter.slice(0, starter.indexOf('\n}'));
+  assert.ok(startBody.indexOf('sidePanelTakes(') > 0
+    && startBody.indexOf('sidePanelTakes(') < startBody.indexOf('go(agentSessionAddress('),
+    'the agent session asks the panel before it navigates');
   const open = APP_JS.slice(APP_JS.indexOf('  openAppTab(slug, tab, opts) {'));
   assert.ok(open.indexOf('const inPanel = App._openAppTabInPanel(slug, tab, opts);') > 0
     && open.indexOf('App._openAppTabInPanel(') < open.indexOf('App.setChromeless(false);'),

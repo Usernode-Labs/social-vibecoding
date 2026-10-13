@@ -8,11 +8,15 @@
 const fs = require('fs');
 const path = require('path');
 
+const { PACK_NAME } = require('./language-packs');
+
 const ROOT = path.join(__dirname, '..');
 const IMAGE_ASSETS = process.env.USERNODE_IMAGE_ASSET_DIR || '/opt/usernode-shell-assets';
 const FILES = [
   'index.html',
   'css/tailwind.css',
+  'shell/release.json',
+  'shell/worker.js',
 ];
 // Everything the React build emitted, discovered rather than listed: it is
 // more than one file now (frontend/vite.config.ts emits lazy route chunks
@@ -31,6 +35,18 @@ function emittedShellAssets() {
   }
 }
 
+// The language packs the image built (scripts/language-packs.js). None while
+// only English ships, and the directory is then empty or absent.
+function emittedLanguagePacks() {
+  try {
+    return fs.readdirSync(path.join(IMAGE_ASSETS, 'locales'))
+      .filter((name) => PACK_NAME.test(name))
+      .map((name) => path.posix.join('locales', name));
+  } catch {
+    return [];
+  }
+}
+
 const publicDir = path.join(ROOT, 'public');
 const owner = fs.statSync(publicDir);
 
@@ -45,7 +61,7 @@ function createParentDirectories(destination) {
   for (const directory of missing) fs.chownSync(directory, owner.uid, owner.gid);
 }
 
-for (const relative of [...FILES, ...emittedShellAssets()]) {
+for (const relative of [...FILES, ...emittedShellAssets(), ...emittedLanguagePacks()]) {
   const source = path.join(IMAGE_ASSETS, relative);
   const destination = path.join(ROOT, 'public', relative);
   if (fs.existsSync(destination)) continue;

@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/ (the prompts pinned below are built from these files; scripts/test-changed.js)
 // Golden parity suite for the Mayor turn (#2779).
 //
 // POST /api/sessions/:id/chat runs the whole Mayor turn: the phase-1 model
@@ -21,6 +22,11 @@
 // refactor pass:
 //
 //   UPDATE_GOLDEN=1 node --test tests/mayor-turn-golden.test.js
+//
+// An edit to a prompt under src/prompts/ is such a change: the platform
+// conventions are in every Mayor system prompt and the design guidance in
+// the coding agent's, so their shas move. Refresh the golden in the same
+// commit; the line at the top runs this suite on any such edit.
 //
 // Harness: property overrides installed BEFORE the route is required (the
 // tests/chat-repo-less-turn.test.js pattern), a stateful in-memory pool, a
@@ -210,6 +216,11 @@ limits.settleTurnSpend = async (_pool, userId, cents, opts) => { rec.billing.pus
 
 // ── Titles, broadcasts, fire-and-forget work ─────────────────────────────
 
+// Status fan-out has its own suite. Its 150ms coalescer otherwise records
+// unrelated SQL here depending on CPU load, sometimes in the NEXT scenario.
+// Keep the turn golden deterministic without changing its expected output.
+require('../src/services/session-state').touch = () => {};
+
 const sessionTitles = require('../src/services/session-title');
 sessionTitles.titleAtTurnEnd = (args) => { rec.calls.push({ fn: 'titleAtTurnEnd', firstTurn: !!args.firstTurn, message: args.message }); };
 sessionTitles.titleFromFirstMessage = (args) => { rec.calls.push({ fn: 'titleFromFirstMessage', message: args.message }); };
@@ -264,10 +275,18 @@ worker.execInWorker = async (id, opts) => {
 
 // The Codex attempt ledger (OpenRouter coding turns).
 const agentTurn = require('../src/services/agent-turn');
+// The CLI the runtime resolves for an OpenRouter attempt (#3296); null is
+// Codex, as the platform's harness map leaves every model by default.
+let runtimeHarness = null;
+// Whether the catalog says the attempt's model takes images; null is a
+// runtime with no catalog metadata, as every golden scenario has.
+let runtimeImages = null;
 agentTurn.resolveCodexRuntimeContext = async () => ({
   agentModel: 'openai/gpt-5.3-codex',
   agentReasoningEffort: 'low',
   resumeThreadId: null,
+  ...(runtimeHarness ? { agentHarness: runtimeHarness } : {}),
+  ...(runtimeImages == null ? {} : { agentModelMetadata: { supportsImages: runtimeImages } }),
 });
 agentTurn.startCodexAttempt = async (args) => {
   rec.calls.push({ fn: 'startCodexAttempt', attemptNumber: args.attemptNumber, mode: args.mode, model: args.model });
@@ -276,6 +295,13 @@ agentTurn.startCodexAttempt = async (args) => {
 agentTurn.completeCodexAttempt = async (args) => {
   rec.calls.push({ fn: 'completeCodexAttempt', turnUuid: args.turnUuid, status: args.status });
   return { estimatedCost: { estimatedCostUsd: 0.12 } };
+};
+
+// The draft report card an OpenRouter turn's PLATFORM ISSUE block files.
+const issueDraft = require('../src/services/issue-draft');
+issueDraft.createDraft = async (_pool, _config, opts) => {
+  rec.calls.push({ fn: 'issueDraft.createDraft', ...opts });
+  return { ok: true, draftId: 1 };
 };
 
 const managedOpenRouter = require('../src/services/openrouter-managed-keys');
@@ -323,6 +349,12 @@ prMetadata.applyPrMetadata = async (args) => {
 // ── The route ────────────────────────────────────────────────────────────
 
 const stopRegistry = require('../src/services/stop-registry');
+// #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
+// refuses every row this suite drives (src/services/classic-sessions.js). The
+// classic turn it pins stays in place until the classic dev chat is deleted,
+// so the suite lifts that one gate, the way it stubs billing;
+// tests/classic-session-read-only.test.js pins the refusal itself.
+require('../src/services/classic-sessions').isClassicSession = () => false;
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
@@ -368,8 +400,10 @@ async function settle() {
   for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
 }
 
-async function runTurn({ session = {}, history = [], message = 'Add a dark mode toggle', llmSteps = [], pillSteps = [], openProposals = [], billing = { apiKey: null }, run = null, openRouterMayor: orMayor = { error: 'disabled' } } = {}) {
+async function runTurn({ session = {}, history = [], message = 'Add a dark mode toggle', llmSteps = [], pillSteps = [], openProposals = [], billing = { apiKey: null }, run = null, openRouterMayor: orMayor = { error: 'disabled' }, harness = null, readsImages = null } = {}) {
   resetRecording();
+  runtimeHarness = harness;
+  runtimeImages = readsImages;
   resetDb({ ...BASE_SESSION, ...session }, { history });
   db.openProposals = openProposals;
   llmScript = [...llmSteps];
@@ -501,7 +535,7 @@ test('fallback-served reply records the fallback once and prices the served mode
       rawContent: [],
       stopReason: 'end_turn',
       fallbackServed: true,
-      servedModel: 'claude-sonnet-5',
+      servedModel: 'claude-sonnet-5-5',
       stopDetails: { category: 'bio' },
     }],
   });
@@ -780,4 +814,78 @@ test('OpenRouter session without a Mayor runs the direct turn', async () => {
     run: directBuild,
   });
   check('openrouter direct', result);
+});
+
+test('OpenRouter model in Claude Code: the handbook is system context, and a PLATFORM ISSUE block is drafted', async () => {
+  const result = await runTurn({
+    session: OR_SESSION,
+    openRouterMayor: { error: 'disabled' },
+    harness: 'claude',
+    run: async () => ({
+      ...(await directBuild()),
+      lastResultText: [
+        'Added the toggle.',
+        '',
+        '==== PLATFORM ISSUE ====',
+        'The bridge answers 401 in the preview',
+        'GET /usernode-bridge/ returns 401 in the in-loop preview, so the wallet button cannot load.',
+        '==== END PLATFORM ISSUE ====',
+      ].join('\n'),
+    }),
+  });
+  check('openrouter claude harness escalation', result);
+
+  // #3296: the same transport hosted Claude uses, not 165 KB in the prompt.
+  const exec = result.worker.map((l) => JSON.parse(l)).find((w) => w.fn === 'execInWorker');
+  assert.ok(exec.systemPrompt && exec.systemPrompt.length > 100000, 'the handbook travels as system context');
+  assert.ok(exec.prompt.length < 30000, `the prompt no longer carries it (${exec.prompt.length})`);
+
+  // The block is filed as the helper's draft card, and never reaches chat.
+  const drafts = result.calls.map((l) => JSON.parse(l)).filter((c) => c.fn === 'issueDraft.createDraft');
+  assert.deepEqual(drafts, [{
+    fn: 'issueDraft.createDraft',
+    sessionId: 4242,
+    title: 'The bridge answers 401 in the preview',
+    body: 'GET /usernode-bridge/ returns 401 in the in-loop preview, so the wallet button cannot load.',
+    target: 'platform',
+    source: 'agent',
+  }]);
+  const rendered = JSON.stringify([result.messages, result.events, result.broadcasts, result.calls.filter((l) => !l.includes('issueDraft'))]);
+  assert.doesNotMatch(rendered, /PLATFORM ISSUE/);
+  assert.match(rendered, /Added the toggle\./);
+});
+
+test('an OpenRouter build checks its work the way its model can: screenshots when the catalog says it takes images', async () => {
+  // The self-check used to follow the backend, so every OpenRouter model was
+  // told "you read text, not images", GLM 5.3 Flash included, while both
+  // runners hand an image-capable model its screenshots (#3426). It follows
+  // the attempt's runtime now, in either CLI, and the runner's own flag.
+  const SCREENSHOTS = /take screenshots \(`browser_take_screenshot`\) of each changed screen/;
+  const TEXT_ONLY = /you read text, not images[\s\S]*`browser_snapshot`/;
+  for (const harness of ['claude', 'codex']) {
+    for (const readsImages of [true, false]) {
+      let sent = null;
+      const result = await runTurn({
+        session: OR_SESSION,
+        openRouterMayor: { error: 'disabled' },
+        harness,
+        readsImages,
+        run: async (_id, opts) => { sent = opts; return directBuild(); },
+      });
+      assert.equal(result.status, 200);
+      assert.ok(sent, `${harness}: the build was dispatched`);
+      // Claude Code carries the guidance in its system context, Codex inline.
+      const guidance = harness === 'claude' ? sent.systemPrompt : sent.prompt;
+      const where = `${harness}, readsImages=${readsImages}`;
+      assert.match(guidance, /==== UI DESIGN/, where);
+      if (readsImages) {
+        assert.match(guidance, SCREENSHOTS, where);
+        assert.doesNotMatch(guidance, TEXT_ONLY, where);
+      } else {
+        assert.match(guidance, TEXT_ONLY, where);
+        assert.doesNotMatch(guidance, SCREENSHOTS, where);
+      }
+      if (readsImages) assert.doesNotMatch(sent.prompt, /you read text, not images/, where);
+    }
+  }
 });

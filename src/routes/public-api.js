@@ -30,6 +30,9 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const firstSession = require('../services/first-session');
+const signInProviders = require('../services/sign-in-providers');
+const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
 const {
   waitlistJoinLimiter,
@@ -43,11 +46,13 @@ const {
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
+const releaseLinks = require('../services/release-links');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
@@ -124,18 +129,21 @@ function publicApiRoutes(config) {
   });
 
   // GET /api/public/apps/:slug/contributors — one app's contributor list.
-  // 404 (never 403) for a missing, self-hosted, or view-private slug so a
-  // hidden app's existence isn't disclosed.
+  // Answers only for an app the public directory lists (isPublicDirectoryApp:
+  // not self-hosted, not suspended by moderators, view-public, and not in a
+  // hidden status). Anything else is 404 (never 403), so a hidden app's
+  // existence isn't disclosed.
   router.get('/api/public/apps/:slug/contributors', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
       const { rows } = await pool.query(
-        `SELECT id, slug, self_hosted, view_visibility
+        `SELECT id, slug, self_hosted, view_visibility, status,
+                moderation_suspended_at
            FROM apps WHERE slug = $1`,
         [String(req.params.slug)]
       );
       const app = rows[0];
-      if (!app || app.self_hosted || app.view_visibility !== 'public') {
+      if (!isPublicDirectoryApp(app)) {
         return res.status(404).json({ error: 'App not found' });
       }
 
@@ -150,6 +158,28 @@ function publicApiRoutes(config) {
       log.error('public-api', 'contributors failed', {
         slug: req.params.slug, message: err.message,
       });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/app-host?host= — which app a LIVE custom domain serves
+  // (#4405): the slug and the name, nothing else. The hosted bridge asks
+  // from the app's own page to draw its Homeroom button there, which is why
+  // this is anonymous and under the CORS-open prefix. 404 for anything that
+  // is not a live custom host, a Homeroom host included (the bridge already
+  // knows those from platform.json).
+  router.get('/api/public/app-host', async (req, res) => {
+    const host = String(req.query.host || '').trim().toLowerCase().replace(/:\d+$/, '');
+    if (!host || host.length > 253 || !/^[a-z0-9.-]+$/.test(host) || !host.includes('.')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    try {
+      const found = await require('../services/app-domains').lookupLiveHost(pool, host);
+      if (!found) return res.status(404).json({ error: 'Not found' });
+      res.set('Cache-Control', 'public, max-age=60');
+      res.json({ slug: found.slug, name: found.name });
+    } catch (err) {
+      log.error('public-api', 'app-host lookup failed', { host, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -174,11 +204,50 @@ function publicApiRoutes(config) {
   // lives in this closure and that service deliberately takes none. The
   // spread makes a fresh object: publicOptions() returns REFERENCES to
   // the module's option constants, which must never be mutated.
-  router.get('/api/public/waitlist/options', (_req, res) => {
+  //
+  // `story_landing` is the first session's switch (services/first-session.js):
+  // true, the landing tells the story and asks people to get started rather
+  // than pointing at the waitlist. On unless an admin switched it off, and on
+  // when it cannot be read.
+  //
+  // `sign_in_providers` is which of Apple and Google the sign-in sheet
+  // offers beside the email code (services/sign-in-providers.js): only those
+  // an admin has set up and switched on, Apple first; none when unreadable.
+  //
+  // `terms_link` is the current published terms' own address, for the
+  // sign-in screens' "By continuing, you agree to Homeroom's terms"
+  // (frontend/src/features/auth/sign-in-sheet.tsx and login.tsx). "Current"
+  // is the terms gate's rule (routes/topochain/mobile.js): the latest
+  // published version. null when none is published, it has no link, or the
+  // read fails; the notice then names the terms without a link.
+  async function currentTermsLink() {
+    try {
+      const { rows } = await pool.query(
+        `SELECT terms_link FROM terms_versions
+          WHERE published_at IS NOT NULL
+          ORDER BY published_at DESC, id DESC LIMIT 1`
+      );
+      return (rows[0] && rows[0].terms_link) || null;
+    } catch (err) {
+      log.warn('public-api', 'Current terms link read failed', { err: err.message });
+      return null;
+    }
+  }
+  router.get('/api/public/waitlist/options', async (_req, res) => {
     res.json({
       ...questions.publicOptions(),
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
+      story_landing: await firstSession.storyLandingEnabled(pool),
+      sign_in_providers: await signInProviders.offeredProviders(pool, config),
+      // Phone-number sign-in (services/firebase-phone-auth.js): offered
+      // only when its four Firebase values are set and the flag is on.
+      // Sync on purpose — the gate reads config, not the database.
+      phone_sign_in: phoneAuth.offered(config),
+      terms_link: await currentTermsLink(),
+      // The same, from the Homeroom app's own sheets (the bridge's
+      // signInWithProvider), once the app's client IDs are saved.
+      native_sign_in_providers: await signInProviders.offeredNativeProviders(pool, config),
     });
   });
 
@@ -616,6 +685,12 @@ function publicApiRoutes(config) {
         // short-circuit: that branch is the confirmation poll, it repeats on a
         // timer, and it has no reader for this.
         email: row.email,
+        // Whether a "You're in" mail's link for this row may be spent as the
+        // page opens (features/auth/landing.tsx): released, and the account
+        // the address would prove is still new (none yet, or no username and
+        // no password). A boolean and nothing else. Read only: it spends no
+        // link and makes no session (services/release-links.js isNewAccount).
+        new_account: await releaseLinks.isNewAccount(pool, row),
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
@@ -670,30 +745,16 @@ function publicApiRoutes(config) {
 
   // GET /api/public/mobile-app — where a phone browser can install the native
   // app, per OS. Backs the install banner (#1372); anonymous, because the
-  // banner shows on the landing screen too.
-  //
-  // The URL is `app_version_configs.update_url`, which already exists, is
-  // already editable in the admin console (App version), and is already the
-  // place the native update gate sends a user to. A store listing is the same
-  // destination whether you are updating or arriving, so this needs no new
-  // setting and no second thing for an operator to keep in sync — the day a
-  // listing goes live, one field turns the banner on.
+  // banner shows on the landing screen too. The URLs come from
+  // services/mobile-store-links.js, which says why they are the store listings.
   //
   // NOT a reuse of POST /api/v4/app-version/check: that route records a
   // version check for analytics, so answering this from it would file a check
   // for a build that does not exist on every mobile pageview.
   router.get('/api/public/mobile-app', async (_req, res) => {
-    // Both keys are always present, so the client has one shape to read.
-    const urls = { ios: null, android: null };
+    let urls = { ios: null, android: null };
     try {
-      const { rows } = await pool.query(
-        `SELECT os, update_url FROM app_version_configs
-          WHERE is_active = TRUE AND os IN ('ios', 'android')`
-      );
-      for (const row of rows) {
-        const url = String(row.update_url || '').trim();
-        if (url && Object.prototype.hasOwnProperty.call(urls, row.os)) urls[row.os] = url;
-      }
+      urls = await loadMobileAppUrls(pool);
     } catch (err) {
       // Degrade to "no offer" rather than 500. This is an upsell strip on an
       // otherwise-working page, and a failed request here would put a console

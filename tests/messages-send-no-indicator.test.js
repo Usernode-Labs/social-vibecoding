@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -197,7 +198,11 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
   assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  assert.match(TRANSCRIPT, /label: 'Report message'[\s\S]*?label: `Report @\$\{msg\.username\}`[\s\S]*?label: `Block @\$\{msg\.username\}`/);
+  assert.match(TRANSCRIPT, /label: translate\('chat:group\.menu\.report'\)[\s\S]*?label: msg\.usernameMissing \? translate\('chat:group\.menu\.blockUnknown'\) : translate\('chat:group\.menu\.block', \{ username: msg\.username \}\)/);
+  assert.equal(message('chat:group.menu.report'), 'Report message');
+  assert.equal(message('chat:group.menu.block', { username: 'ada' }), 'Block @ada');
+  assert.doesNotMatch(TRANSCRIPT, /report-user|onReportUser|targetType: 'user'/,
+    'message menus offer one report action, targeting the message');
 
   // #2387: the ⋯ is the shared hover bar's (../message-actions/action-bar.tsx),
   // and it keeps the class and the popup role the declared checks select on.
@@ -205,8 +210,9 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   assert.match(BAR, /className=\{`msgx-bar-icon \$\{moreClassName\}[^`]*`\}[\s\S]{0,160}aria-haspopup="menu"/);
   assert.match(ROW, /<MessageActionBar[\s\S]*?onToggleMore=/);
   assert.doesNotMatch(ROW, />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
-  assert.match(ROW, /<ReportForm kind="message"/);
-  assert.match(ROW, /<ReportForm kind="user"/);
+  assert.match(ROW, /openReport\(\{ targetType: 'conversation_message'/);
+  assert.doesNotMatch(ROW, /report-user|targetType: 'user'/,
+    'private message menus also report only the message');
 });
 
 test('dapp.json declares the ⋯ menus', () => {

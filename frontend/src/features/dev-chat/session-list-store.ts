@@ -62,6 +62,12 @@ export interface SessionRow {
 export interface SessionListState {
   /** `null` until the first publish; `[]` is the real "no sessions" state. */
   rows: SessionRow[] | null;
+  /**
+   * Finished sessions the list left out: it carries every session under way
+   * and only the newest finished ones (DevChat.loadSessions). Above zero, the
+   * list ends with "Show N older sessions".
+   */
+  older?: number;
 }
 
-export const sessionListStore = createStore<SessionListState>({ rows: null });
+export const sessionListStore = createStore<SessionListState>({ rows: null, older: 0 });

@@ -139,6 +139,13 @@ test('every skip names the thing the operator has to change', () => {
     rules.skipReason(r, challengeRow({ metric_target: null, t_metric_target: null }), { now: NOW }),
     /^no target/
   );
+  // A count of one is a target, not a missing one (#3570): "Try an app" is
+  // TRY_APPS at 1, and this used to report it as "no target" and pay nobody.
+  assert.equal(rules.skipReason(r, challengeRow({ metric_target: 1, t_metric_target: 1 }), { now: NOW }), null);
+  assert.match(
+    rules.skipReason(r, challengeRow({ metric_target: 0, t_metric_target: 0 }), { now: NOW }),
+    /^no target/
+  );
 });
 
 test('a measure that never reads a target does not ask for one', () => {
@@ -281,6 +288,10 @@ test('the pre-filter rejects junk without spending a model call', () => {
     'sending the same sentence four times earns one credit');
   // Accepted proposals passed a group vote, so there is nothing to pre-filter.
   assert.equal(grader.preFilter('PROPOSAL_ACCEPTED', { text: 'x' }, seen), null);
+  // The ungraded First-challenge measure reads the same reports through the
+  // same filter (#3568): "test" does not tick "Suggest an improvement".
+  assert.equal(grader.preFilter('FEEDBACK_SENT', { text: 'test' }, new Set()), 'too short to act on');
+  assert.equal(grader.preFilter('FEEDBACK_SENT', real, new Set()), null);
 });
 
 test('a score is clamped into the band and never reaches zero', () => {
@@ -482,11 +493,53 @@ test('a skipped rule reports the reason instead of failing silently', async () =
   assert.equal(pool.inserted.length, 0);
 });
 
-test('the leaderboard is not rebuilt while its last snapshot is fresh', async () => {
-  const pool = scriptedPool();
-  const fresh = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR });
-  assert.equal(fresh, null, 'each rebuild ages out older history — do not do it every tick');
-});
+// The standings: a new snapshot (a chart point) every six hours, and the
+// latest one rewritten in place whenever the ledger is newer (#3650: a member
+// saw the challenge's points long before the leaderboard's).
+function standingsPool({ at, fresh, newer }) {
+  const seen = [];
+  return {
+    seen,
+    async query(sql, params) {
+      seen.push({ sql, params });
+      if (sql === scorer.LAST_AGGREGATE_SQL) return { rows: at ? [{ at: new Date(at), fresh: fresh ? new Date(fresh) : null }] : [] };
+      if (sql === scorer.LEDGER_NEWER_SQL) return { rows: [{ newer: newer(params[0]) }] };
+      throw new Error(`unexpected query: ${sql.slice(0, 60)}`);
+    },
+  };
+}
+function withBuilder(fn) {
+  const builder = require('../src/services/topochain/snapshot-builder');
+  const real = builder.buildSnapshots;
+  const calls = [];
+  builder.buildSnapshots = async (pool, opts = {}) => { calls.push(opts); return { events: [{}] }; };
+  return fn(calls).finally(() => { builder.buildSnapshots = real; });
+}
+
+test('the standings are left alone while nothing in the ledger is newer than them', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW + 10 * MIN, newer: () => false });
+  assert.equal(await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR }), null);
+  assert.equal(calls.length, 0);
+  assert.equal(pool.seen[1].params[0].getTime(), NOW + 10 * MIN,
+    'compared with when the snapshot was last WRITTEN, or a refresh would repeat on every check');
+}));
+
+test('a newer credit refreshes the latest snapshot in place, not a new chart point', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW, newer: () => true });
+  const result = await scorer.maybeAggregate(pool, { hours: 6, now: NOW + 2 * HOUR });
+  assert.deepEqual(result, { events: 1, refreshed: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].now.getTime(), NOW, 'rebuilt AT the latest snapshot_at: the builder upserts, so the history keeps its points');
+}));
+
+test('a snapshot older than the cadence gets a new one, as before', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW - 7 * HOUR, fresh: NOW - 7 * HOUR, newer: () => true });
+  assert.deepEqual(await scorer.maybeAggregate(pool, { hours: 6, now: NOW }), { events: 1 });
+  assert.equal(calls[0].now, undefined, 'stamped now: a new point on the chart');
+  const none = standingsPool({ at: null, newer: () => false });
+  assert.deepEqual(await scorer.maybeAggregate(none, { hours: 6, now: NOW }), { events: 1 }, 'and with no snapshot at all');
+  assert.equal(await scorer.maybeAggregate(none, { hours: 0, now: NOW }), null, 'hours 0 leaves it to the admin button');
+}));
 
 // ─── Dates ─────────────────────────────────────────────────────────────
 
@@ -972,6 +1025,8 @@ test('the source key printed for a measure is the key its credits really carry',
     user_id: 7, app_id: 3, app_name: 'Notes', last_date: '2026-09-15', seconds: 900, session_id: 11,
     promoted_at: new Date(NOW), event_id: 12, created_at: new Date(NOW), id: 13, provider: 'x',
     linked_at: new Date(NOW), at: new Date(NOW),
+    // VOTE_CAST names the proposal or request voted on (#3569).
+    kind: 'pr', ref_id: 14,
   };
   for (const measure of rules.MEASURE_KEYS) {
     const pool = { async query() { return { rows: [row] }; } };
@@ -1004,19 +1059,29 @@ test('the rubric, the model and the input limits printed are the ones the grader
   assert.ok(sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS)) && !sent.user.includes('t'.repeat(grader.GRADE_TITLE_CHARS + 1)));
   assert.ok(step.text.includes('first 200 characters') && step.text.includes('first 2,000'));
 
-  // The transport's fallback names the same model, for a caller that passes none.
+  // The transport's default names the same model, for a caller that passes
+  // none, and its fallback is the one the panel names beside it.
+  const llm = require('../src/services/llm');
   const llmSource = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/services/llm.js'), 'utf8');
-  assert.match(llmSource, new RegExp(`gradeChallengeUnit\\(\\{[^)]*model = '${grader.GRADE_MODEL}'`));
+  assert.match(llmSource, /gradeChallengeUnit\(\{[^)]*model = HELPER_MODEL/);
+  assert.equal(llm.HELPER_MODEL, grader.GRADE_MODEL);
+  assert.equal(llm.HELPER_FALLBACK_MODEL, grader.GRADE_FALLBACK_MODEL);
+  assert.ok(step.text.includes(`${grader.GRADE_FALLBACK_MODEL} when it does not answer in time`));
 });
 
 test('a measure that calls no model says so, and only feedback has a junk filter', () => {
+  // Both feedback measures since #3568: FEEDBACK_SENT reads the same reports
+  // ungraded, through the same filter. The panel keys on the `screened` flag
+  // the scorer runs the filter by, so the two cannot disagree.
+  assert.deepEqual(rules.MEASURE_KEYS.filter((m) => rules.MEASURES[m].screened === true),
+    ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']);
   for (const measure of rules.MEASURE_KEYS) {
     const shown = anatomy(measure, { points: 1000, target: 4 });
     const kinds = shown.steps.map((s) => s.kind);
     const graded = rules.MEASURES[measure].graded === true;
     assert.equal(shown.lane, graded ? 'sql_model' : 'sql', measure);
     assert.equal(kinds.includes('grade'), graded, measure);
-    assert.equal(kinds.includes('filter'), measure === 'USEFUL_FEEDBACK', measure);
+    assert.equal(kinds.includes('filter'), rules.MEASURES[measure].screened === true, measure);
     assert.deepEqual([kinds[0], kinds[kinds.length - 1]], ['read', 'write'], measure);
   }
   const filter = anatomy('USEFUL_FEEDBACK', {}).steps.find((s) => s.kind === 'filter');
@@ -1158,6 +1223,40 @@ test('the challenge list reads every card\'s cadence in one query, and none with
   assert.equal(calls.length, 0, 'the schedule off, or nothing listed: Postgres is not asked');
 });
 
+// #3253, #3248: the page says what a rule counts — that a proposal counts
+// once it is put to the vote, and that a counted measure stops at its target —
+// so the read names the measure and, for a counted one, that target. Unlike
+// the cadence it does not wait for a first run.
+test('countedByOf names the scoring rule\'s measure, and the cap a counted measure stops at', () => {
+  const at = { now: NOW, defaultMinutes: 10 };
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_SENT' })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'one is enough: no cap to state');
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_ACCEPTED', target: 2 })], challengeRow(), at),
+    { measure: 'PROPOSAL_ACCEPTED', target: 2 }, 'the rule\'s own target is where crediting stops');
+  assert.deepEqual(rules.countedByOf([rule({ measure: 'PROPOSAL_SENT', lastScoredAt: null })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'known before the first run');
+  assert.equal(rules.countedByOf([], challengeRow(), at), null);
+  assert.equal(rules.countedByOf([rule({ enabled: false })], challengeRow(), at), null, 'rule switched off');
+  assert.equal(rules.countedByOf([rule()], challengeRow({ completed: true }), at), null, 'challenge closed');
+  assert.equal(rules.countedByOf([rule()], challengeRow(), { now: NOW, defaultMinutes: 0 }), null, 'schedule off');
+  assert.deepEqual(rules.countedByOf([rule({ enabled: false }), rule({ id: 2, measure: 'PROPOSAL_SENT' })], challengeRow(), at),
+    { measure: 'PROPOSAL_SENT', target: null }, 'the first rule that scores it');
+});
+
+test('the list read returns the measure beside the cadence, from one query', async () => {
+  const ruleRows = [
+    { id: 1, measure: 'PROPOSAL_ACCEPTED', target: 2, points: null, challenge_id: 74, challenge_template_id: null,
+      interval_minutes: 15, last_scored_at: null,
+      event_starts_at: new Date(NOW - 10 * DAY), event_ends_at: new Date(NOW + 10 * DAY) },
+  ];
+  let calls = 0;
+  const pool = { query: async () => { calls += 1; return { rows: ruleRows }; } };
+  const out = await scorer.loadRuleFacts(pool, 10, [challengeRow({ id: 74 })], { defaultMinutes: 10, now: NOW });
+  assert.equal(calls, 1);
+  assert.equal(out.cadence.size, 0, 'never run: no cadence line yet');
+  assert.deepEqual(out.countedBy.get(74), { measure: 'PROPOSAL_ACCEPTED', target: 2 });
+});
+
 test('the cadence read is scoped the way the scorer\'s own is', () => {
   const sql = scorer.CADENCE_RULES_SQL.replace(/\s+/g, ' ');
   assert.match(sql, /^ \/\* challenge scoring cadence \*\//, 'labelled, so a scripted pool can answer it');
@@ -1167,4 +1266,284 @@ test('the cadence read is scoped the way the scorer\'s own is', () => {
   assert.match(sql, /se\.is_active = TRUE AND COALESCE\(s\.is_active, FALSE\) = TRUE/,
     'the live events RULE_CHALLENGES_SQL scores, and no others');
   assert.match(scorer.RULE_CHALLENGES_SQL.replace(/\s+/g, ' '), /se\.is_active = TRUE AND COALESCE\(s\.is_active, FALSE\) = TRUE/);
+});
+
+// ─── The community measures ────────────────────────────────────────────
+//
+// Season 2's "Find people to build with", "Build for your community" and
+// "Invite 3 people". The first two are state (a membership or a project from
+// before the season counts); the third counts people, 250 pts each.
+
+test('"Invite 3 people" pays 250 a person and stops at the third', () => {
+  const row = challengeRow({
+    measure: 'INVITES_JOINED', metric_target: 3, t_metric_target: 3,
+    reward: 'Up to 750 pts', t_reward: 'Up to 750 pts', t_category: 'PERSISTENT',
+  });
+  const plan = rules.planCredits(rule({ measure: 'INVITES_JOINED' }), row, {
+    candidates: [candidate(7, 'invitee:21'), candidate(7, 'invitee:22'), candidate(7, 'invitee:23'), candidate(7, 'invitee:24')],
+    now: NOW,
+  });
+  assert.deepEqual(plan.map((c) => c.points), [250, 250, 250]);
+  assert.equal(plan.every((c) => c.completion === false), true, 'three people are three rows, not a completion');
+  assert.equal(rules.skipReason(rule({ measure: 'INVITES_JOINED' }), row, { now: NOW }), null);
+});
+
+test('joining a community and making an app for one are single state credits', () => {
+  for (const measure of ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']) {
+    const spec = rules.MEASURES[measure];
+    assert.equal(spec.windowed, false, `${measure} is state`);
+    assert.equal(spec.counted, false, measure);
+    const plan = rules.planCredits(rule({ measure }), challengeRow({
+      measure, metric_target: null, t_metric_target: null, reward: '500 pts', t_reward: '500 pts',
+    }), { candidates: [candidate(7, 'community', iso(NOW - 90 * DAY))], now: NOW });
+    assert.equal(plan.length, 1, `${measure}: a membership from before the season counts`);
+    assert.equal(plan[0].completion, true);
+    assert.equal(plan[0].points, 500);
+  }
+});
+
+test('the community audience test is the Workshop\'s: never "Just you", never the platform\'s own project', () => {
+  const communities = require('../src/services/communities');
+  const flat = (s) => s.replace(/\s+/g, ' ');
+  // The same three branches audienceSql derives 'open' and 'invited' from.
+  const audience = flat(communities.audienceSql('a', 'x'));
+  assert.match(audience, /a\.view_visibility = 'public'/);
+  assert.match(audience, /ic\.status = 'invited'/);
+  for (const measure of ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']) {
+    const sql = flat(scorer.MEASURE_SQL[measure]);
+    assert.match(sql, /a\.self_hosted = FALSE/, `${measure}: the platform's project is everyone's, not a choice`);
+    assert.match(sql, /a\.status NOT IN \('creating', 'failed', 'deleted'\)/, `${measure}: a project that never got built is nobody's community`);
+    assert.match(sql, /a\.view_visibility = 'public'/, measure);
+    assert.match(sql, /\) > 1/, `${measure}: a private project counts once somebody else is in it`);
+    assert.match(sql, /ic\.app_id = a\.id AND ic\.status = 'invited'/, `${measure}: or somebody is invited`);
+  }
+  assert.match(flat(scorer.MEASURE_SQL.COMMUNITY_JOINED), /m\.source <> 'auto'/,
+    'being put in by the platform is not joining');
+});
+
+test('an invitee counts once, for the first invite they took, and only once they joined', async () => {
+  const sql = scorer.MEASURE_SQL.INVITES_JOINED.replace(/\s+/g, ' ');
+  assert.match(sql, /x\.status = 'joined' AND x\.applied_at IS NOT NULL/, 'a queued person has not joined yet');
+  assert.match(sql, /c\.status = 'member' AND c\.invited_by IS NOT NULL AND c\.accepted_at IS NOT NULL/,
+    'a pending username or email invite is not a person who came');
+  assert.match(sql, /DISTINCT ON \(t\.invitee_id\)/);
+  assert.match(sql, /ORDER BY t\.invitee_id ASC, t\.at ASC/, 'the earliest invite names the one inviter');
+  assert.match(sql, /t\.inviter_id <> t\.invitee_id/);
+
+  const seen = [];
+  const pool = {
+    async query(text, params) {
+      seen.push(params);
+      return { rows: [{ user_id: 7, invitee_id: 21, at: new Date(NOW - HOUR), invitee_username: 'ana' },
+        { user_id: 7, invitee_id: 22, at: new Date(NOW - HOUR), invitee_username: null }] };
+    },
+  };
+  const out = await scorer.loadCandidates(pool, 'INVITES_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+  assert.deepEqual(seen[0].slice(0, 2), [iso(NOW - DAY), iso(NOW + DAY)], 'windowed: from the challenge\'s own start');
+  assert.deepEqual(out.map((c) => c.sourceKey), ['invitee:21', 'invitee:22']);
+  assert.deepEqual(out.map((c) => c.description), ['@ana joined by your invite', 'Somebody joined by your invite']);
+});
+
+test('the two state measures credit once each, under a fixed key, whenever the state began', async () => {
+  const pool = {
+    async query(text) {
+      if (text === scorer.MEASURE_SQL.COMMUNITY_JOINED) return { rows: [{ user_id: 7, joined_at: new Date(NOW - 90 * DAY) }] };
+      if (text === scorer.MEASURE_SQL.COMMUNITY_APP_CREATED) return { rows: [{ user_id: 7, created_at: null }] };
+      return { rows: [] };
+    },
+  };
+  const joined = await scorer.loadCandidates(pool, 'COMMUNITY_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, {});
+  assert.deepEqual(joined.map((c) => [c.userId, c.sourceKey, c.description]), [[7, 'community', 'Joined a community']]);
+  assert.equal(joined[0].activityAt, iso(NOW - 90 * DAY), 'a membership from before the season keeps its own date');
+  const made = await scorer.loadCandidates(pool, 'COMMUNITY_APP_CREATED', { startMs: NOW - DAY, endMs: NOW + DAY }, {});
+  assert.deepEqual(made.map((c) => [c.userId, c.sourceKey, c.description]), [[7, 'community-app', 'Created an app for a community']]);
+  assert.ok(made[0].activityAt, 'a missing date still stamps the credit');
+});
+
+// ─── Counting a join on the spot (#3564) ───────────────────────────────
+//
+// "Find people to build with" read "Not started" after a join because the
+// measure was only taken on the rule's next scheduled pass. The doors now
+// run the two community state measures themselves (scoreOnJoin); the
+// behaviour is proven against a real database in
+// tests/challenge-join-scoring-postgres.test.js, and these pin the parts a
+// later edit could quietly undo.
+
+test('a join runs only the community STATE measures, which are race-free without the lock', () => {
+  assert.deepEqual([...scorer.JOIN_MEASURES], ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']);
+  for (const measure of scorer.JOIN_MEASURES) {
+    const spec = rules.MEASURES[measure];
+    // Outside the tick's advisory lock, only a single completion under a
+    // fixed key is safe: the completion index refuses the racing copy. A
+    // counted measure's cap is enforced by the plan, which needs the lock.
+    assert.equal(spec.counted, false, `${measure}: one completion, never a count`);
+    assert.equal(spec.graded, false, `${measure}: no model call on somebody's Join tap`);
+    assert.equal(spec.windowed, false, `${measure}: state, so a join before the season counts too`);
+  }
+  assert.ok(!scorer.JOIN_MEASURES.includes('INVITES_JOINED'), 'the counted invite measure waits for the locked schedule');
+  // #3568/#3569/#3570 made the join's pass one door of scoreOn; the rule
+  // lookup it starts with is the shared one, renamed for that.
+  const sql = scorer.ON_THE_SPOT_RULES_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /WHERE enabled = TRUE AND measure = ANY\(\$1::text\[\]\)/, 'a switched-off rule is not run on a join');
+  // Said where the operator picks the interval: for these two it is the
+  // backstop, and for every other measure nothing changed.
+  for (const measure of rules.MEASURE_KEYS) {
+    const { cost } = anatomy(measure, { points: 1000, target: 4 });
+    assert.equal(cost.includes('A join also runs it on the spot'), scorer.JOIN_MEASURES.includes(measure), measure);
+  }
+});
+
+test('scoreOnJoin is a no-op when scoring is off, and never throws into the join', async () => {
+  const seen = [];
+  const quiet = { async query(text) { seen.push(text); return { rows: [] }; } };
+  assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 0 } }), null);
+  assert.equal(seen.length, 0, 'interval 0 asks Postgres nothing');
+  assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 10 } }), null);
+  assert.deepEqual(seen, [scorer.ON_THE_SPOT_RULES_SQL], 'no rule on either measure: one read, then nothing');
+  const failing = { async query() { throw new Error('boom'); } };
+  assert.equal(await scorer.scoreOnJoin(failing, { challengeScorer: { intervalMinutes: 10 } }), null);
+});
+
+test('every door a person joins a community through counts the join before it answers', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const doors = {
+    // The Join button (Discover, a project's page).
+    'src/routes/apps.js': /await communities\.join\(pool, app, req\.user\.id\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // The join screen, once for the whole answer.
+    'src/routes/onboarding.js': /if \(result\.joined\.length\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // An invite link followed while signed in, and one carried through sign-up.
+    'src/routes/community-invites.js': /if \(result\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    'src/routes/auth.js': /if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // A collaborator invite accepted.
+    'src/routes/collaborators.js': /if \(!result\.alreadyMember\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+  };
+  for (const [file, pattern] of Object.entries(doors)) {
+    const src = read(file);
+    assert.match(src, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/, file);
+    assert.match(src, pattern, `${file} counts the join on the spot`);
+  }
+});
+
+// ─── Weekly challenges: the cap starts again every Monday 00:00 UTC ──────
+//
+// "Up to 2 count each week" used to be up to 2 per challenge ROW, and Season
+// 2 runs each weekly challenge as one row for the whole season, so the
+// pre-season week's credits capped people for the rest of it.
+
+test('a week starts on Monday 00:00 UTC', () => {
+  const at = (s) => rules.weekStartMs(Date.parse(s));
+  assert.equal(at('2026-10-05T00:00:00Z'), Date.parse('2026-10-05T00:00:00Z'), 'Monday midnight starts its own week');
+  assert.equal(at('2026-10-04T23:59:59Z'), Date.parse('2026-09-28T00:00:00Z'), 'Sunday night is the week before');
+  assert.equal(at('2026-10-07T13:00:00Z'), Date.parse('2026-10-05T00:00:00Z'));
+  assert.equal(rules.isWeekly({ t_category: 'WEEKLY' }), true);
+  assert.equal(rules.isWeekly({ category: ' weekly ' }), true);
+  assert.equal(rules.isWeekly({ t_category: 'PERSISTENT' }), false);
+});
+
+test('a weekly challenge is scored this week, and last week only while its grace lasts', () => {
+  const window = { startMs: Date.parse('2026-09-22T22:00:00Z'), endMs: Date.parse('2026-12-31T22:59:00Z'), open: true };
+  const wed = rules.weeklyWindows(window, { now: Date.parse('2026-10-07T12:00:00Z') });
+  assert.deepEqual(wed.map((w) => [iso(w.startMs), iso(w.endMs)]),
+    [['2026-10-05T00:00:00.000Z', '2026-10-11T23:59:59.999Z']], 'midweek: this week alone');
+  const mon = rules.weeklyWindows(window, { now: Date.parse('2026-10-05T03:00:00Z') });
+  assert.deepEqual(mon.map((w) => iso(w.startMs)), ['2026-09-28T00:00:00.000Z', '2026-10-05T00:00:00.000Z'],
+    'early Monday: last week too, so a Sunday-night action is still paid');
+  // Clipped to the challenge: a start of 5 Oct means last week is never scored.
+  const fromMonday = rules.weeklyWindows({ ...window, startMs: Date.parse('2026-10-05T00:00:00Z') }, { now: Date.parse('2026-10-05T03:00:00Z') });
+  assert.deepEqual(fromMonday.map((w) => iso(w.startMs)), ['2026-10-05T00:00:00.000Z']);
+});
+
+const weeklyRow = (extra = {}) => challengeRow({
+  measure: 'PROPOSAL_ACCEPTED', metric_target: 2, t_metric_target: 2, reward: 'Up to 1,000 pts',
+  t_reward: 'Up to 1,000 pts', t_category: 'WEEKLY',
+  schedule_start: '2026-09-22T22:00:00Z', schedule_end: '2026-12-31T22:59:00Z', ...extra,
+});
+const credits = (entries) => {
+  const map = new Map();
+  for (const [userId, key, at] of entries) {
+    const state = map.get(userId) || { keys: new Set(), count: 0, weeks: new Map() };
+    state.keys.add(key);
+    state.count += 1;
+    const week = rules.weekStartMs(Date.parse(at));
+    state.weeks.set(week, (state.weeks.get(week) || 0) + 1);
+    map.set(userId, state);
+  }
+  return map;
+};
+
+test('the weekly cap counts only the candidate’s own week', () => {
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  // Two accepted last week: capped then, free again now.
+  const held = credits([[17, 'merged:1', '2026-09-30T10:00:00Z'], [17, 'merged:2', '2026-10-01T10:00:00Z']]);
+  const plan = rules.planCredits(rule({ measure: 'PROPOSAL_ACCEPTED' }), weeklyRow(), {
+    candidates: [
+      candidate(17, 'merged:3', '2026-10-05T09:00:00Z'),
+      candidate(17, 'merged:4', '2026-10-06T09:00:00Z'),
+      candidate(17, 'merged:5', '2026-10-07T09:00:00Z'),
+    ],
+    credited: held, now,
+  });
+  assert.deepEqual(plan.map((c) => c.sourceKey), ['merged:3', 'merged:4'], 'two this week, the third waits for Monday');
+  assert.ok(plan.every((c) => c.points === 500 && c.completion === false));
+
+  // The same credits on a challenge that is not weekly still cap it for good.
+  const persistent = rules.planCredits(rule({ measure: 'PROPOSAL_ACCEPTED' }), weeklyRow({ t_category: 'PERSISTENT' }), {
+    candidates: [candidate(17, 'merged:3', '2026-10-05T09:00:00Z')], credited: held, now,
+  });
+  assert.equal(persistent.length, 0);
+});
+
+test('a one-off measure on a weekly challenge pays every week, and never as THE completion', () => {
+  const row = weeklyRow({ measure: 'USE_APPS_MINUTES', metric_target: null, t_metric_target: null, reward: '1,000 pts', t_reward: '1,000 pts' });
+  const r = rule({ measure: 'USE_APPS_MINUTES', target: 10 });
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  const held = credits([[7, 'window:2026-09-28', '2026-10-02T12:00:00Z']]);
+  const plan = rules.planCredits(r, row, { candidates: [candidate(7, 'window:2026-10-05', '2026-10-06T12:00:00Z')], credited: held, now });
+  assert.equal(plan.length, 1, 'a new week, a new 1,000 pts');
+  assert.equal(plan[0].completion, false, 'one completion per person per challenge is a database rule; a weekly one must not take it');
+  const again = rules.planCredits(r, row, {
+    candidates: [candidate(7, 'window:2026-10-05', '2026-10-06T12:00:00Z')],
+    credited: credits([[7, 'window:2026-10-05', '2026-10-06T12:00:00Z']]), now,
+  });
+  assert.equal(again.length, 0, 'once a week');
+});
+
+test('the scorer loads a weekly challenge a week at a time, and counts what is held per week', async () => {
+  const seen = [];
+  const pool = { async query(sql, params) { seen.push(params); return { rows: [{ user_id: 7, seconds: 900, last_date: '2026-10-06' }] }; } };
+  const [c] = await scorer.loadCandidates(pool, 'USE_APPS_MINUTES',
+    { startMs: Date.parse('2026-10-05T00:00:00Z'), endMs: Date.parse('2026-10-11T23:59:59.999Z') }, { target: 10 });
+  assert.equal(c.sourceKey, 'window:2026-10-05', 'each week’s unit has a key of its own');
+  assert.equal(seen[0][0], '2026-10-05T00:00:00.000Z');
+  assert.match(scorer.CREDITED_SQL, /activity_at/, 'the cap reads when each credit was earned');
+  const credited = await scorer.loadCredited({
+    async query() {
+      return { rows: [
+        { user_id: 17, source_key: 'merged:1', activity_at: new Date('2026-09-30T10:00:00Z') },
+        { user_id: 17, source_key: 'merged:2', activity_at: new Date('2026-10-06T10:00:00Z') },
+      ] };
+    },
+  }, 81);
+  const state = credited.get(17);
+  assert.equal(state.count, 2);
+  assert.equal(state.weeks.get(Date.parse('2026-09-28T00:00:00Z')), 1);
+  assert.equal(state.weeks.get(Date.parse('2026-10-05T00:00:00Z')), 1);
+});
+
+test('progress on a weekly challenge counts this week’s credits only, on every list', () => {
+  const onboarding = require('../src/services/topochain/challenge-onboarding');
+  const panels = require('../src/routes/home-panels');
+  const sql = onboarding.COUNTS_THIS_WEEK_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /UPPER\(TRIM\(COALESCE\(ct\.category, ''\)\)\) <> 'WEEKLY'/, 'any other challenge counts every credit');
+  assert.match(sql, /ua\.activity_at >= date_trunc\('week', NOW\(\) AT TIME ZONE 'UTC'\) AT TIME ZONE 'UTC'/,
+    'a weekly one from Monday 00:00 UTC, the week the scorer caps by');
+  assert.ok(panels.MY_COUNT_SQL.includes(onboarding.COUNTS_THIS_WEEK_SQL), 'Home and the profile');
+  const fs = require('fs');
+  const path = require('path');
+  const pub = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/public.js'), 'utf8');
+  assert.match(pub, /AND \$\{COUNTS_THIS_WEEK_SQL\}/, 'the Challenges tab’s list');
+  const mobile = fs.readFileSync(path.join(__dirname, '..', 'src/routes/topochain/mobile.js'), 'utf8');
+  assert.match(mobile, /isWeekly\(\{ category: item\.category \}\)/, 'and the phone app’s, in JS');
 });

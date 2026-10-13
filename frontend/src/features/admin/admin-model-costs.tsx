@@ -43,7 +43,11 @@ interface CostRow {
 interface CostPayload {
   days: number;
   typicalChange: {
+    // Every prompt token; the two cached parts are shares of it, never added
+    // to it. Absent from an older server.
     inputTokens: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
     outputTokens: number;
     source: string;
     changes: number;
@@ -72,6 +76,20 @@ function tokens(n: number): string {
   if (n >= 1_000_000) return `${String(Number((n / 1_000_000).toFixed(1)))}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
   return String(Math.round(n));
+}
+
+/**
+ * How much of a typical change's input is cached, as the paragraph says it:
+ * " (95% of it cache reads and 5% cache writes)", or '' when none is.
+ */
+function cachedShare(profile: CostPayload['typicalChange']): string {
+  const input = Number(profile.inputTokens);
+  if (!Number.isFinite(input) || input <= 0) return '';
+  const pct = (n: number | undefined) => Math.round((Number(n) || 0) / input * 100);
+  const parts: string[] = [];
+  if (pct(profile.cachedInputTokens) > 0) parts.push(`${pct(profile.cachedInputTokens)}% of it cache reads`);
+  if (pct(profile.cacheWriteInputTokens) > 0) parts.push(`${pct(profile.cacheWriteInputTokens)}% cache writes`);
+  return parts.length ? ` (${parts.join(' and ')})` : '';
 }
 
 /** An ISO instant as a plain day, for the sentence that names the cutoff. */
@@ -162,12 +180,15 @@ function ModelCostsSection() {
       </div>
       <p className={`${AdminUI.muted} mb-4`} id="admin-model-costs-profile">
         {profile
-          ? `Estimates are per-token pricing times a typical change: ${tokens(profile.inputTokens)} in, `
+          ? `Estimates are per-token pricing times a typical change: ${tokens(profile.inputTokens)} in`
+            + `${cachedShare(profile)}, `
             + `${tokens(profile.outputTokens)} out (${profile.source === 'recorded_usage'
               ? `measured from ${profile.changes} recorded changes`
               : 'a documented constant, because there is not enough recorded usage yet'}). `
             + 'They assume a session running at the platform default reasoning effort; a session set to a '
             + 'different effort reads and writes a different number of tokens, so it costs more or less than this. '
+            + 'Cache reads and writes are priced at the model’s own cache rates where it publishes them, '
+            + 'and at its prompt rate where it does not. '
             // #2592: say what a change IS. The observed figures used to read
             // low because the coding agent's own spend had no model recorded
             // against it and was left out, and because a session that

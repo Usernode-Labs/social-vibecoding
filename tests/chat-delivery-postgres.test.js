@@ -84,6 +84,12 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
   require('../src/services/ws').broadcastGlobal = () => {};
   // The turn-done notification is not under test, and must not outlive it.
   require('../src/services/notifications').createSessionDoneNotification = async () => [];
+  // #3976: classic sessions are read-only, so POST /api/sessions/:id/chat now
+  // refuses every row this suite drives (src/services/classic-sessions.js). The
+  // classic turn it pins stays in place until the classic dev chat is deleted,
+  // so the suite lifts that one gate, the way it stubs billing;
+  // tests/classic-session-read-only.test.js pins the refusal itself.
+  require('../src/services/classic-sessions').isClassicSession = () => false;
   const { sessionRoutes } = require('../src/routes/sessions');
 
   await pool.query(`
@@ -173,7 +179,7 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
     assert.equal(rows[1].client_message_id, null);
   });
 
-  await t.test('GET /status: the owner and an admin are answered, nobody else', async () => {
+  await t.test('GET /status: the owner and an admin are answered; anyone else gets 404', async () => {
     const [first] = await userRows();
     // The bus cleanup is on the mocked clock, so the turn is still buffered.
     assert.deepEqual(await delivery(CLIENT_ID), {
@@ -181,9 +187,13 @@ test('chat delivery against the full schema', { timeout: 120000 }, async (t) => 
     });
     assert.deepEqual(await delivery('never-sent-0001'), { clientMessageId: 'never-sent-0001', received: false });
 
+    // A non-owner of this unshared session is not answered at all: the
+    // status route applies the session's visibility rule (canViewSession),
+    // so the delivery receipt, like the rest of the status, is a 404.
     viewer = { id: 8, username: 'bo' };
-    assert.deepEqual(await delivery(CLIENT_ID), { clientMessageId: CLIENT_ID, received: false },
-      'indistinguishable from an id that was never sent');
+    const denied = await fetch(`${base}/status?client_message_id=${CLIENT_ID}`);
+    assert.equal(denied.status, 404);
+    assert.deepEqual(await denied.json(), { error: 'Session not found' });
     viewer = { id: 9, username: 'root', isAdmin: true };
     assert.equal((await delivery(CLIENT_ID)).received, true);
     viewer = { id: 7, username: 'ada' };

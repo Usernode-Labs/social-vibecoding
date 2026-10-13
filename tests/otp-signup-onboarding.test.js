@@ -9,15 +9,27 @@
 // against real PostgreSQL in tests/email-signup-postgres.test.js), and the
 // set-password step:
 //   * says the code created the account,
-//   * asks for the username, prefilled with the suggestion, and sends it with
-//     the password (the first-run gate's rules and endpoint semantics),
+//   * asks for the username and sends it (the first-run gate's rules and
+//     endpoint semantics), and, since #4891, no password: the account signs
+//     in with an emailed code and adds a password in Settings,
 //   * says plainly, before the waiting room, that new accounts join a
 //     waitlist.
+//
+// #3575 changed the second point twice over. The field used to arrive
+// prefilled with a handle derived from the address, and was optional: one
+// press of "Create account" signed up under a username generated from the
+// email. Now it starts EMPTY, says beside it "Your username will be public to
+// other users on Homeroom.", and the server refuses to finish without it.
+// #4596 brought the prefill back for this step, on purpose: the field arrives
+// holding the letters and digits before the @ and any "+" (#4891; made free
+// by a number when taken), the person can change it, and it is still
+// required.
 //
 // Run with: node --test tests/otp-signup-onboarding.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -26,38 +38,92 @@ const LOGIN = read('frontend/src/features/auth/login.tsx');
 const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 
-test('the verify answer says what happened, additively', () => {
-  const route = AUTH.slice(AUTH.indexOf("router.post('/api/auth/otp/verify'"));
-  assert.match(route, /next: 'set-password',\s+created: !!verified\.created,\s+needsUsername: !!verified\.needsUsernameChoice,\s+suggestedUsername: verified\.suggestedUsername \|\| null,\s+waitlisted:/);
+test('the verify answer says what happened, additively, and suggests a name from the address', () => {
+  // The code's answer and the release link's (#4594) are one: answerProvenEmail.
+  const route = AUTH.slice(AUTH.indexOf('async function answerProvenEmail'));
+  // #4596 (overturning #3575 for this step): a suggestion made from the
+  // address, only for an account that still owes its handle (null when
+  // none fits), and absent otherwise.
+  assert.match(route, /next: 'set-password',\s+created: !!verified\.created,\s+needsUsername: !!verified\.needsUsernameChoice,\s+\.\.\.\(verified\.needsUsernameChoice \? \{ suggestedUsername: verified\.suggestedUsername \|\| null \} : \{\}\),\s+waitlisted:/);
+  assert.match(SIGNUP, /if \(result\.next === 'set-password' && result\.needsUsernameChoice\) \{\s*result\.suggestedUsername = await suggestedUsername\(pool, email, result\.userId\);/);
+  // Best effort: a failed read is an empty field, never a failed code.
+  const helper = SIGNUP.slice(SIGNUP.indexOf('async function suggestedUsername'));
+  assert.match(helper, /try \{\s*return await usernames\.suggestUsernameForEmail\(pool, email, userId\);\s*\} catch \(error\) \{[\s\S]*?return null;/);
   // Read after linkUserByEmail, which releases an address the waitlist already let in.
   assert.ok(SIGNUP.indexOf('result.waitlisted = await isWaitlisted') > SIGNUP.indexOf('await waitlist.linkUserByEmail'));
+  // #4083: a waiting account gets its own spot, after the link (which lets a
+  // released address in) and before the waiting state is read.
+  const spot = SIGNUP.indexOf('await waitlist.ensureAccountSignup(pool, { userId: result.userId })');
+  assert.ok(spot > SIGNUP.indexOf('await waitlist.linkUserByEmail'));
+  assert.ok(spot < SIGNUP.indexOf('result.waitlisted = await isWaitlisted'));
 });
 
-test('the password step says the account is new, and asks for its handle', () => {
-  assert.match(LOGIN, /"Code verified\. No account uses this email yet, so we'll create one\. Choose a username and a password\."/);
+test('the password step says the account is new, and asks for its handle with the suggestion in the field', () => {
+  assert.match(LOGIN, /const OTP_PASSWORD_INTRO_NEW =\n\s*'auth:login\.signup\.introNew';/);
+  assert.equal(message('auth:login.signup.introNew'), "Code verified. No account uses this email yet, so we'll create one. Choose a username.");
   assert.match(LOGIN, /otpSignup\?\.created\s+\? OTP_PASSWORD_INTRO_NEW/);
   const field = LOGIN.slice(LOGIN.indexOf('id="otp-username"'), LOGIN.indexOf('id="otp-username-hint"'));
   assert.match(field, /\{\.\.\.HANDLE_FIELD\}/, 'no auto-capitalising a handle');
-  assert.match(field, /defaultValue=\{otpSignup\.suggestedUsername \|\| ''\}/, 'prefilled with the suggestion');
+  // #4596: the field arrives holding the server's suggestion ('' for none),
+  // and stays the person's to change.
+  assert.match(field, /defaultValue=\{otpSignup\.suggestedUsername\}/);
+  assert.match(LOGIN, /suggestedUsername: typeof data\.suggestedUsername === 'string' \? data\.suggestedUsername : '',/);
+  assert.doesNotMatch(field, /data-username-suggested|readOnly/);
+  // Beside it, who will see it; then the rule, or the server's refusal.
+  assert.match(field, /aria-describedby="otp-username-public otp-username-hint"/);
+  assert.match(field, /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>/);
+  assert.equal(message('auth:login.signup.usernamePublic'), 'Your username will be public to other users on Homeroom.');
+  assert.match(LOGIN, /\{otpUsernameError \|\| t\('auth:login\.signup\.usernameRule'\)\}/);
+  assert.equal(message('auth:login.signup.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
   assert.match(LOGIN, /\{otpSignup\?\.needsUsername \? \(/, 'only when the account still owes a choice');
-  // The handle rides with the password, and a refusal lands under the field.
+  // The handle rides with the password, an empty field is caught before the
+  // round trip, and a refusal lands under the field.
+  assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\(translate\('auth:login\.signup\.usernameMissing'\)\);/);
+  assert.equal(message('auth:login.signup.usernameMissing'), 'Enter a username.');
   assert.match(LOGIN, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
   assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(data\.error\);/);
 });
 
+test('the set-password step asks for no password, and says how they sign in (#4891)', () => {
+  const step = LOGIN.slice(LOGIN.indexOf('id="otp-step-password"'), LOGIN.indexOf('id="otp-error"'));
+  assert.ok(step.length > 0, 'the step renders');
+  // No password, no confirmation, and no "Skip the password for now".
+  assert.doesNotMatch(step, /PasswordInput|new-password|otp-new-password|otp-confirm-password|onOtpSetPassword\(true\)/);
+  assert.doesNotMatch(LOGIN, /otpNewPassword|otpConfirmPassword|login\.signup\.(?:password|confirm|skip|saving)/);
+  for (const intro of ['intro', 'introNew', 'introUsername']) {
+    assert.doesNotMatch(message(`auth:login.signup.${intro}`), /password/i, intro);
+  }
+  assert.doesNotMatch(message('auth:login.signup.submit'), /password/i);
+  // The request carries the handle and nothing else.
+  const handler = LOGIN.slice(LOGIN.indexOf('const onOtpSetPassword = useCallback'), LOGIN.indexOf('// ── Wallet sign-in'));
+  assert.match(handler, /useCallback\(async \(\) => \{/);
+  assert.match(handler, /body: JSON\.stringify\(\{\s*\.\.\.\(handle \? \{ username: handle \} : \{\}\),\s*\}\),/);
+  assert.doesNotMatch(handler, /password:|passwordConfirmation/);
+  // In the password's place, how they sign in and where a password is added.
+  assert.match(step, /<p className="text-sm text-zinc-500 dark:text-zinc-400">\s*\{t\('auth:login\.signup\.codeNote'\)\}\s*<\/p>/);
+  assert.equal(message('auth:login.signup.codeNote'),
+    'You sign in with a code we email you. You can add a password later in Settings.');
+  assert.equal(message('auth:login.signup.codeNote'), message('auth:signInSheet.account.codeNote'),
+    'the sign-in screen and the sheet say the same');
+});
+
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /"New accounts join a short waitlist\. After this step you'll wait in the queue, and you'll get in automatically when it's your turn\."/);
+  assert.match(LOGIN, /const OTP_WAITLIST_NOTE =\n\s*'auth:login\.signup\.waitlistNote';/);
+  assert.equal(message('auth:login.signup.waitlistNote'), 'New accounts get a spot on the waitlist. We\u2019re letting people in a few at a time.');
+  assert.doesNotMatch(LOGIN, /in the queue|your turn/);
   assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
 });
 
 test('set-password spends the signup session only on a name it accepts', () => {
   const complete = SIGNUP.slice(SIGNUP.indexOf('async function completePassword'));
+  const required = complete.indexOf('return { usernameRequired: true };');
   const check = complete.indexOf('usernames.checkAvailability(client, chosen, signup.user_id)');
   const spend = complete.indexOf('DELETE FROM web_signup_sessions');
+  assert.ok(required > 0 && required < spend, 'a missing name is refused before the session is deleted');
   assert.ok(check > 0 && check < spend, 'availability is checked before the session is deleted');
   assert.match(complete, /usernames\.chooseFirstUsername\(client, signup\.user_id, chosen\)/,
     'the same needs_username_choice-guarded write as the first-run gate');
   const route = AUTH.slice(AUTH.indexOf("router.post('/api/auth/otp/set-password'"));
-  assert.match(route, /error\.code === 'invalid_username' \|\| error\.code === 'username_taken'\) \{\s+return res\.status\(422\)\.json\(\{ error: error\.message, code: error\.code, field: 'username' \}\);/,
-    'and the route keeps the signup cookie for a username refusal');
+  assert.match(route, /error\.code === 'invalid_username' \|\| error\.code === 'username_taken'\s+\|\| error\.code === 'username_required'\) \{\s+return res\.status\(422\)\.json\(\{ error: error\.message, code: error\.code, field: 'username' \}\);/,
+    'and the route keeps the signup cookie for every username refusal');
 });

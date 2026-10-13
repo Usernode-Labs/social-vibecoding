@@ -22,20 +22,18 @@ WORKDIR /app
 
 # puppeteer-core only — the browser comes from the distro package above,
 # so no Chromium download at npm-install time.
-RUN npm install puppeteer-core@^23 playwright-core@1.55.1 zod@3.25.76 pngjs@7.0.0 \
+RUN npm install puppeteer-core@^23 \
   && chown -R node:node /app
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 COPY capture/capture.js /app/capture.js
-COPY evidence/replay-runner.js /app/evidence-replay.js
-COPY evidence/hosted-app-fixture.js /app/evidence-hosted-app-fixture.js
+COPY shots/hosted-app-fixture.js /app/shots-hosted-app-fixture.js
 COPY worker/session-bootstrap.js /worker/session-bootstrap.js
-COPY worker/evidence-hosted-origins.js /worker/evidence-hosted-origins.js
-COPY worker/evidence-hosted-app-contract.js /worker/evidence-hosted-app-contract.js
-COPY src/services/visual-evidence-plan.js /app/visual-evidence-plan.js
+COPY worker/shots-hosted-origins.js /worker/shots-hosted-origins.js
+COPY worker/shots-hosted-app-contract.js /worker/shots-hosted-app-contract.js
 
-# This image also serves the short-lived hosted-app evidence fixture through
+# This image also serves the short-lived hosted-app shots fixture through
 # the ordinary Kubernetes app runtime. That runtime enforces runAsNonRoot
 # without assigning a UID, so kubelet must be able to verify a numeric image
 # user before the container starts. UID/GID 1000 are the official node

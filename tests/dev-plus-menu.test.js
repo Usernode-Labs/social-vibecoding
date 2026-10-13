@@ -10,8 +10,9 @@
 //     held (creator/admin, or collaborator of an invite-only app; never
 //     for the self-app).
 //   - data-plus="rename" / data-plus="secrets" render for every
-//     non-read-only viewer; data-plus="settings" is gone.
-//   - Read-only viewers still get only "Fork this app".
+//     non-read-only viewer; the App settings nesting is gone (#645), and
+//     "Settings & rules" is one row that opens them on top (#4045).
+//   - Read-only viewers still get only the fork row ("Remix").
 //   - Old #app/<slug>/dev/settings deep links normalize to the card list.
 //
 // Run with: node --test tests/dev-plus-menu.test.js
@@ -21,6 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -164,16 +166,21 @@ test('the members item is gated on the predicate, and only on the predicate', ()
 
 test('the members item keeps both label pairs, branched on self_hosted', () => {
   const { whenSelfHosted, otherwise } = selfHostedBranch(membersBlock());
-  assert.ok(whenSelfHosted.includes('Proposal approvals'), 'self-app label is Proposal approvals');
+  // The labels are catalog entries: each branch wires its own pair of ids.
+  assert.ok(whenSelfHosted.includes("title={t('project:menu.approvals.title')}"), 'self-app label is Proposal approvals');
+  assert.equal(message('project:menu.approvals.title'), 'Proposal approvals');
   assert.ok(
-    whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
+    whenSelfHosted.includes("sub={t('project:menu.approvals.sub')}"),
     'self-app sublabel unchanged'
   );
-  assert.ok(!whenSelfHosted.includes('Members &amp; approvals'),
+  assert.equal(message('project:menu.approvals.sub'), 'Who approves proposals and how many approvals are needed');
+  assert.ok(!whenSelfHosted.includes('project:menu.members.title'),
     'self-app does not use the Members label');
-  assert.ok(otherwise.includes('Members &amp; approvals'), 'other apps keep the Members label');
-  assert.ok(otherwise.includes('Manage collaborators, app admins and proposal approvals'),
+  assert.ok(otherwise.includes("title={t('project:menu.members.title')}"), 'other apps keep the Members label');
+  assert.equal(message('project:menu.members.title'), 'Members & approvals');
+  assert.ok(otherwise.includes("sub={t('project:menu.members.sub')}"),
     'other apps describe the remaining member and approval controls');
+  assert.equal(message('project:menu.members.sub'), 'Manage collaborators, app admins and proposal approvals');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
     VIEW_SRC,
@@ -220,10 +227,18 @@ test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
 
 // ── the App settings nesting is gone; rename/secrets are direct items ────
 
-test('"+" menu has direct rename and secrets items, no App settings entry', () => {
-  assert.ok(!FRAME_SRC.includes('data-plus="settings"'), 'nested App settings entry removed');
+test('"+" menu has rename and secrets items in its Settings & rules panel, no App settings entry', () => {
+  // #645 took the App settings nesting out. #4045 (the owner, 7 Oct) folds
+  // the settings behind ONE "Settings & rules" row that opens them on top of
+  // the menu; the rows themselves are still the menu's own.
+  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="settings"\s+group="settings"[\s\S]{0,120}title=\{t\('project:menu\.settings\.title'\)\}/);
+  assert.equal(message('project:menu.settings.title'), 'Settings & rules');
+  assert.ok(FRAME_SRC.indexOf('id="dev-plus-settings"') < FRAME_SRC.indexOf('data-plus="rename"')
+    && FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="suggest-back"'),
+    'rename and secrets are inside the settings panel, and Suggest this back and Remix end it (the owner, 7 Oct)');
   assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
-  assert.ok(FRAME_SRC.includes('App display name'), 'rename label present');
+  assert.match(FRAME_SRC, /data-plus="rename"[\s\S]{0,160}title=\{t\('project:menu\.rename\.title'\)\}/, 'rename label present');
+  assert.equal(message('project:menu.rename.title'), 'App display name');
   assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
   assert.ok(FRAME_SRC.includes('id="dc-secrets-state"'),
     'secrets item carries the missing-required state slot for refreshDevChatSecretsState');
@@ -255,7 +270,8 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   assert.ok(FRAME_SRC.slice(end).includes('data-plus="fork"'), 'fork item still present');
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
-  assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
+  assert.ok(FRAME_SRC.includes("? t('project:menu.button.remix')"), 'read-only tooltip names the one row it opens');
+  assert.equal(message('project:menu.button.remix'), 'Remix: make your own copy');
   // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
   // and broke a version of this that pinned the exact string, and the "+"
   // moving to the end of the Workshop's tab strip swapped the Tailwind
@@ -334,7 +350,8 @@ test('the ?shot=plus-menu hook waits for a button that now arrives late', () => 
   // found". That is how this reached a gate rather than a test.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  const i = src.indexOf("if (shot === 'plus-menu')");
+  // #4045: `?shot=plus-menu-settings` shares the hook, and opens the settings too.
+  const i = src.indexOf("if (shot === 'plus-menu' || plusMenuSettings)");
   assert.ok(i > 0, 'the hook exists');
   const block = src.slice(i, src.indexOf("if (shot === 'card-menu')", i));
   assert.match(block, /setInterval\(/, 'it retries rather than firing once');
@@ -348,4 +365,42 @@ test('the ?shot=plus-menu hook waits for a button that now arrives late', () => 
   // ...and a human's first real gesture ends it, so a person following one of
   // these links does not get a menu put back under them.
   assert.match(block, /e\.isTrusted\) done\(\)/);
+});
+
+// ── the one lit row (the owner, 8 Oct 2026) ───────────────────────────────
+
+test('"+" menu: Suggest an improvement is the one highlighted row, on desktop and in the phone sheet', () => {
+  // Desktop: a tint behind it and a bold title; every other row is plain.
+  assert.match(FRAME_SRC, /<PlusRow\s+data-plus="issue"\s+lit\s/);
+  assert.equal((FRAME_SRC.match(/^\s+lit$/gm) || []).length, 1, 'exactly one row is lit');
+  assert.match(FRAME_SRC, /const PLUS_ROW_LIT_CLS =[\s\S]*?bg-violet-50 hover:bg-violet-100 dark:bg-violet-900\/30/);
+  assert.match(FRAME_SRC, /const PLUS_TITLE_LIT_CLS = 'block text-sm font-bold /);
+  assert.match(FRAME_SRC, /data-plus-lit=\{lit \? '' : undefined\}/);
+  assert.match(FRAME_SRC, /className=\{\(lit \? PLUS_ROW_LIT_CLS : PLUS_ROW_CLS\) \+ dividerCls\}/);
+  // Phone: the action sheet's row is lit by the kit's own `highlighted`.
+  assert.match(VIEW_SRC, /highlighted: node\.hasAttribute\('data-plus-lit'\),/);
+  const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(kit, /\(action\.highlighted \? ' un-highlighted' : ''\)/);
+  const kitCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  assert.match(kitCss, /\.un-action-btn\.un-highlighted \{\s*font-weight: 700;\s*background: color-mix\(in srgb, var\(--un-accent\) 12%, transparent\);/);
+});
+
+// ── #4417: Topics, in Settings & rules ────────────────────────────────
+
+test('Settings & rules has a Topics row that opens the Topics dialog', () => {
+  const settings = FRAME_SRC.indexOf('id="dev-plus-settings"');
+  const at = FRAME_SRC.indexOf('data-plus="topics"');
+  assert.ok(settings > -1 && at > settings, 'the row is inside the Settings & rules panel');
+  assert.ok(at > FRAME_SRC.indexOf('data-plus="rename"') && at < FRAME_SRC.indexOf('data-plus="secrets"'),
+    'beside the other change that is a proposal against dapp.json, the display name');
+  const row = FRAME_SRC.slice(at, FRAME_SRC.indexOf('/>', FRAME_SRC.indexOf('onClick', at)));
+  assert.match(row, /title=\{t\('project:menu\.topics\.title'\)\}/);
+  assert.equal(message('project:menu.topics.title'), 'Topics');
+  // Its own onClick, so it works however the menu was wired (a row the menu
+  // wired before it rendered would otherwise be dead), and it closes the menu
+  // before the dialog goes up.
+  assert.match(row, /callAppView\('_closePlusMenu'\);\s*window\.UsernodeReact\?\.dialogs\?\.topics\?\.open\(\{ slug: window\.AppView\?\.appData\?\.slug \}\)/);
+  const dialog = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dialogs', 'topics.tsx'), 'utf8');
+  assert.match(dialog, /useDialog<\{ slug\?: string \}>\('topics'/, 'the dialog answers to that name');
+  assert.match(dialog, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/topics-pr`/, 'and each change it makes is a topics PR');
 });

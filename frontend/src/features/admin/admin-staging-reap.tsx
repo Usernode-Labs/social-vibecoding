@@ -55,6 +55,7 @@ type ReapPreview = {
   sessionId: number | string;
   state: string;
   classification: string;
+  outOfDate?: boolean;
   ms?: number | null;
   error?: string | null;
 };
@@ -86,10 +87,11 @@ const REAP_STATES: Record<string, { label: string; cls: string }> = {
   failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
 };
 
-// Why each preview was picked up. Presentational only — the sweep tears
-// down everything it enumerates; this just explains what the admin is
-// looking at, and distinguishes "expected leftover of a merged proposal"
-// from "the session row is gone entirely".
+// What each preview's session is doing. Presentational only: the service
+// decides what a sweep takes (abandoned or out of date, never a preview
+// backing a vote). This explains what the admin is looking at, and
+// distinguishes "expected leftover of a merged proposal" from "the session
+// row is gone entirely"; a row taken for its env also says "out of date".
 const REAP_CLASSIFICATIONS: Record<string, string> = {
   merged: 'proposal merged',
   archived: 'proposal abandoned',
@@ -140,15 +142,8 @@ function ago(iso: string): string | null {
 
 // The background pass's one-line status. Empty before the first load, which
 // is the markup the innerHTML version shipped.
-function automaticLine(
-  automatic: Automatic | null,
-  unavailableReason: string | null,
-  loaded: boolean,
-): string {
+function automaticLine(automatic: Automatic | null, loaded: boolean): string {
   if (!loaded) return '';
-  if (unavailableReason === 'kubernetes') {
-    return 'Kubernetes stale-preview administration is not implemented yet; normal per-session idle cleanup still applies.';
-  }
   if (!automatic || !automatic.intervalMs) return 'The automatic background sweep is switched off.';
   if (!automatic.lastRunAt) {
     const every = Math.round(automatic.intervalMs / 60000);
@@ -178,7 +173,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
   if (!loaded) return <span className={AdminUI.loading}>Loading…</span>;
   if (!job) return <>No sweep has run since this platform process started.</>;
   if (!job.total) {
-    return <>{job.finishedAt ? 'Finished. No open previews were found.' : 'Starting…'}</>;
+    return <>{job.finishedAt ? 'Finished. Nothing needed shutting down.' : 'Starting…'}</>;
   }
   const parts = [`${job.done} of ${job.total} done`];
   if (job.failed) parts.push(`${job.failed} failed`);
@@ -195,7 +190,8 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
 
 function PreviewRow({ preview }: { preview: ReapPreview }) {
   const chip = REAP_STATES[preview.state] || { label: preview.state, cls: NEUTRAL_CHIP };
-  const why = REAP_CLASSIFICATIONS[preview.classification] || preview.classification;
+  const session = REAP_CLASSIFICATIONS[preview.classification] || preview.classification;
+  const why = preview.outOfDate ? `${session}, out of date` : session;
   const secs = preview.ms == null ? '' : `${(preview.ms / 1000).toFixed(1)}s`;
   return (
     <div className={ReapUI.row} data-reap-name={preview.name} data-reap-state={preview.state}>
@@ -216,10 +212,10 @@ function PreviewRow({ preview }: { preview: ReapPreview }) {
 function StalePreviewsSection() {
   const canWrite = !!console_()?.canWrite();
   const [loaded, setLoaded] = useState(false);
-  // `open` is every preview (what the button shuts down); `outdated` is the
-  // out-of-date subset the automatic pass acts on.
+  // `open` is every preview; `due` is what the button (and the automatic
+  // pass) shuts down: the out-of-date ones plus those whose session finished.
   const [open, setOpen] = useState<number | null>(null);
-  const [outdated, setOutdated] = useState<number | null>(null);
+  const [due, setDue] = useState<number | null>(null);
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
   const [concurrency, setConcurrency] = useState<number | null>(null);
   const [demo, setDemo] = useState(false);
@@ -227,7 +223,6 @@ function StalePreviewsSection() {
   // or not the reviewer arrived with ?demo=1.
   const [staging, setStaging] = useState(false);
   const [available, setAvailable] = useState(true);
-  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [job, setJob] = useState<ReapJob | null>(null);
   const [starting, setStarting] = useState(false);
   const alive = useRef(true);
@@ -244,13 +239,14 @@ function StalePreviewsSection() {
     // back to it for `open`.
     setOpen(typeof data.open === 'number' ? data.open
       : (typeof data.stale === 'number' ? data.stale : null));
-    setOutdated(typeof data.stale === 'number' ? data.stale : null);
+    setDue(typeof data.stale === 'number'
+      ? data.stale + (typeof data.abandoned === 'number' ? data.abandoned : 0)
+      : null);
     setAutomatic(data.automatic || null);
     setConcurrency(data.concurrency || null);
     setDemo(!!data.demo);
     setStaging(!!data.staging);
     setAvailable(data.available !== false);
-    setUnavailableReason(data.unavailableReason || null);
     setJob(data.job || null);
     setLoaded(true);
   }, []);
@@ -267,15 +263,16 @@ function StalePreviewsSection() {
   }, [load]);
 
   const start = useCallback(async () => {
-    // The button takes EVERY open preview, not just the out-of-date ones, so
-    // the confirmation counts `open` — saying "4 previews" when it will shut
-    // down 6 would be a lie about a fleet-wide action.
-    const many = typeof open === 'number'
-      ? `${open} preview${open === 1 ? '' : 's'}`
-      : 'every open preview';
+    // The confirmation counts exactly what the button takes, `due`, not
+    // every open preview: previews backing a vote or a live session on
+    // current settings are left running.
+    const many = typeof due === 'number'
+      ? `${due} preview${due === 1 ? '' : 's'}`
+      : 'every preview due for shutdown';
     const ok = await console_()._confirm({
       title: 'Shut down stale previews?',
-      message: `This shuts down ${many}. Anyone who wants one back gets it `
+      message: `This shuts down ${many}. Previews backing a live vote are left `
+        + 'alone. Anyone who wants one back gets it '
         + 'rebuilt automatically on their next Preview click, with current '
         + "settings. Each preview's throwaway test data is discarded, and "
         + "rebuilding re-runs that proposal's automated checks.",
@@ -304,7 +301,7 @@ function StalePreviewsSection() {
       if (alive.current) setStarting(false);
       load();
     }
-  }, [open, load]);
+  }, [due, load]);
 
   const running = !!(job && !job.finishedAt && !job.stale);
   // A preview has no docker socket, so it cannot manage other previews, and
@@ -315,9 +312,7 @@ function StalePreviewsSection() {
   const runtimeUnavailable = available === false;
   const label = starting ? 'Starting…'
     : (preview ? 'Unavailable in previews'
-      : (unavailableReason === 'kubernetes'
-        ? 'Not yet supported in Kubernetes'
-        : (running ? 'Sweep in progress…' : 'Shut down stale previews')));
+      : (running ? 'Sweep in progress…' : 'Shut down stale previews'));
   const rows = job && job.total ? (job.previews || []) : [];
 
   return (
@@ -334,13 +329,13 @@ function StalePreviewsSection() {
         </button>
       </div>
       <p className={ReapUI.lede}>
-        Shuts down every proposal preview that is still running. A preview&apos;s
-        settings are fixed when it is built, so after a platform change to
-        what gets injected into containers, old previews keep running with
-        the old settings, typically showing a login screen instead of the
-        app. Out-of-date previews are now found and cleaned up
-        automatically in the background; this button is the immediate
-        version, and takes every preview rather than only the stale ones.
+        Shuts down previews nobody needs: those whose proposal merged, was
+        withdrawn or no longer exists, and those built before a platform
+        change to what gets injected into containers, which typically show a
+        login screen instead of the app. A preview backing a live vote is
+        never shut down here; when it goes out of date it is rebuilt in place.
+        The background sweep does the same work a few previews at a time;
+        this button does all of it now.
       </p>
       <p className={ReapUI.fine}>
         Nothing is lost that matters: clicking Preview on a proposal rebuilds
@@ -355,9 +350,9 @@ function StalePreviewsSection() {
           value={open == null ? '—' : String(open)}
         />
         <Tile
-          id="admin-reap-outdated"
-          label="Out of date"
-          value={outdated == null ? '—' : String(outdated)}
+          id="admin-reap-due"
+          label="To shut down"
+          value={due == null ? '—' : String(due)}
         />
         <Tile
           id="admin-reap-concurrency"
@@ -371,7 +366,7 @@ function StalePreviewsSection() {
         />
       </div>
       <p id="admin-reap-automatic" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-        {automaticLine(automatic, unavailableReason, loaded)}
+        {automaticLine(automatic, loaded)}
       </p>
       {canWrite ? (
         <button

@@ -22,6 +22,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -208,38 +212,19 @@ test('the shell loads the module', () => {
   assert.match(INDEX_SRC, /src="\/js\/session-options\.js"/);
 });
 
-test('the card\'s screenshot state is a declared check', () => {
+test('the card and the hand-off states are no longer declared checks (#3976)', () => {
+  // The instructions card (?shot=session-options-instructions) and the
+  // three hand-off states (#1071: continue this session, continue the
+  // proposal, start fresh) were checked on classic sessions 990405-990408.
+  // Classic sessions are read-only now: the venue sheet is put away and a
+  // classic session is handed to no agent, so those checks were retired with
+  // the chat. The unit tests above still pin the copy for as long as the
+  // classic dev chat renders it.
   const paths = DAPP.tests.map((t) => t.path || '');
-  assert.ok(paths.some((p) => p.includes('shot=session-options-instructions')),
-    'the instructions card has a declared check');
-  assert.ok(!paths.some((p) => p.includes('shot=session-options#')),
-    'and the retired menu no longer has one');
-});
-
-test('all three hand-off states have a declared check (#1071)', () => {
-  // One fixture per state, because the difference is entirely in the copy
-  // and no single session can show three of them.
-  //
-  // #1348 made the row a bare noun — "Claude or Codex WebUI" — so the verb
-  // that used to carry this ("Continue this session with…" / "Start new
-  // work with…") is gone from the label. The distinction itself is NOT:
-  // continuing this session, continuing the proposal and starting fresh
-  // are different promises, and picking the wrong one costs somebody their
-  // branch. It lives in the row's own explanation now, which is what these
-  // checks read. Worth knowing: that explanation is the row's tooltip, so
-  // on a touch action sheet — which has no tooltips — the sheet no longer
-  // distinguishes the three. The launchpad it opens still does.
-  const expected = [
-    ['990405', 'pushes its work back onto this session'],
-    ['990407', 'pushes its work back onto this session'],
-    ['990406', 'pushes back onto the same proposal'],
-    ['990408', 'comes back as its own proposal'],
-  ];
-  for (const [sessionId, note] of expected) {
-    assert.ok(
-      DAPP.tests.some((t) => (t.path || '').includes(`/dev/sessions/${sessionId}`)
-        && (t.expectSelector || '').includes(note)),
-      `session ${sessionId} has a check pinning "${note}"`
-    );
+  assert.ok(!paths.some((p) => p.includes('shot=session-options')),
+    'neither the card nor the retired menu has a check');
+  for (const sessionId of ['990405', '990406', '990407', '990408']) {
+    assert.ok(!paths.some((p) => p.includes(`/dev/sessions/${sessionId}`)),
+      `no declared check loads classic session ${sessionId}`);
   }
 });

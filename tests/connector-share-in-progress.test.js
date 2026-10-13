@@ -228,6 +228,7 @@ async function payloadFor(task, extra = {}) {
     share: true,
     title: 'Dark mode',
     body: 'Half of it works.',
+    summary: 'The app gets a dark theme.',
     testing: { testingPaths: [{ path: '/', viewport: 'desktop' }], testingSteps: '1. Look.' },
     expectedHeadSha: 'a'.repeat(40),
     shareWork: async (slug, payload) => {
@@ -270,7 +271,41 @@ test('the RESHARE payload is a body update-from-fork will accept', async () => {
   assert.equal(payload.branch, 'my-branch');
   assert.equal(payload.title, 'Dark mode');
   assert.equal(payload.description, 'Half of it works.');
+  assert.equal(payload.summary, 'The app gets a dark theme.');
   assert.deepEqual(payload.linkedIssues, [4]);
+});
+
+// A first share sent neither the summary nor a title unless the caller gave
+// one: the summary was dropped before the route, and a card with no title
+// read "<user>'s changes" until somebody renamed it by hand.
+test('the first share carries the summary, and a title even when none was given', async () => {
+  const given = await payloadFor(TASK_ROW);
+  assert.equal(given.summary, 'The app gets a dark theme.');
+  assert.equal(given.title, 'Dark mode', 'a given title is kept');
+
+  const untitled = await payloadFor(TASK_ROW, { title: undefined });
+  assert.equal(untitled.title, 'Add dark mode',
+    'the same default the vote path gives a pull request: the task\'s brief');
+  const blank = await payloadFor({ ...TASK_ROW, brief: '' }, { title: undefined });
+  assert.equal(blank.title, 'Change to Recipe Box');
+
+  const quiet = await payloadFor(TASK_ROW, { summary: '   ' });
+  assert.ok(!('summary' in quiet), 'a blank summary says nothing rather than blanking one');
+});
+
+test('a reshare invents no title, so it never renames a card its owner named', async () => {
+  const payload = await payloadFor(SHARED_TASK, { title: undefined });
+  assert.ok(!('title' in payload));
+  assert.equal(payload.summary, 'The app gets a dark theme.', 'but the summary still travels');
+});
+
+test('the share route takes the summary and lands it with the commits', () => {
+  assert.ok(acceptedKeys('parseShareInProgressBody').has('summary'));
+  const at = ROUTE_SRC.indexOf('function parseShareInProgressBody(body)');
+  const parser = ROUTE_SRC.slice(at, ROUTE_SRC.indexOf('function parseUpdateFromForkBody(body)'));
+  assert.match(parser, /require\('\.\/votes'\)\.parseImportSummary\(body\)/,
+    'the same parser and cap as update-from-fork and pr-import');
+  assert.match(shareRoute(), /summary: input\.summary,/, 'handed to updateProposalFromForkBranch, which stores it');
 });
 
 test('a plain submit on shared work is refused, and names the call that promotes it', async () => {

@@ -403,6 +403,58 @@ test('every generated title loses to a hand-chosen one', async () => {
   }
 });
 
+// ---- #3518: the Homeroom bot's build seed ----
+
+// The first message of every build session the bot opens
+// (homeroom-bot-live.js buildAndPropose): the issue on its own line, the
+// triage's plan under it.
+const BOT_SEED = 'Build issue #3233: Quota notifications are cryptic codes\n\n'
+  + 'Edit the app_quota_changed row in notifications.js so it reads as a sentence. '
+  + 'Keep the fallback line for a detail that is not two numbers.';
+
+test('parseIssueSeed peels the Homeroom bot\'s build seed too (#3518)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    const seed = subject.parseIssueSeed(BOT_SEED);
+    assert.equal(seed.number, 3233);
+    assert.equal(seed.title, 'Quota notifications are cryptic codes', 'the title line alone');
+    assert.match(seed.body, /^Edit the app_quota_changed row/, 'the plan is the body, not part of the title');
+    // An issue fetch that fell back to "Issue #N" still names something,
+    // and a seed with no plan under it still parses.
+    assert.equal(subject.parseIssueSeed('Build issue #7: Issue #7\n\n').title, 'Issue #7');
+    assert.equal(subject.parseIssueSeed('Build issue #7: Sort by date').body, '');
+    // The card's own seed is unchanged by the second wrapper.
+    assert.equal(subject.parseIssueSeed(ISSUE_SEED).title, 'Add claimed issues to workshop current work');
+    // Only at the very start, and only with a number.
+    assert.equal(subject.parseIssueSeed('Please build issue #7: sort'), null);
+    assert.equal(subject.parseIssueSeed('Build issue: sort the list'), null);
+  } finally {
+    restore();
+  }
+});
+
+test('the bot\'s deterministic name is the issue, not "Build issue N:" and a severed plan (#3518)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    // Before: `Build issue 3233: Quota notifications are cryptic codes Edit
+    // the app…`, the title every bot proposal on the platform carried.
+    assert.equal(subject.deterministicTitle(BOT_SEED), 'Quota notifications are cryptic codes');
+    assert.doesNotMatch(subject.deterministicTitle(BOT_SEED), /Build issue|3233|Edit the/);
+    // An issue title past the cap is still cut the way #2500 cuts one: at a
+    // word, and only the title, never the plan run into it.
+    const long = subject.deterministicTitle(`Build issue #9: ${'Accepted proposals scored one point versus '
+      + 'a hundred and fifty with no reason given anywhere'}\n\nShow the reason.`);
+    assert.ok(long.length <= 72, long);
+    assert.equal(long, 'Accepted proposals scored one point versus a hundred and fifty with no…');
+    // The model is handed the issue title as its own signal, and the plan.
+    const prepared = subject.titleInputsFromRequests([BOT_SEED]);
+    assert.equal(prepared.issueTitle, 'Quota notifications are cryptic codes');
+    assert.doesNotMatch(prepared.requests[0], /Build issue/);
+  } finally {
+    restore();
+  }
+});
+
 // ---- #2500: the shared turn-end hook ----
 
 test('titleAtTurnEnd re-titles from history, and names a first turn from its ask', async () => {
@@ -1065,6 +1117,118 @@ test('a deterministic PR title never carries the issue-card scaffolding (#2500)'
     assert.doesNotMatch(githubCalls[0].opts.title, /Please implement GitHub issue/);
     // The seeded linkage is what puts `Closes #N` in the body (#2537).
     assert.match(githubCalls[0].opts.body, /^Closes #2496$/m);
+  } finally {
+    restore();
+  }
+});
+
+// #3518: the pull request the Homeroom bot's promotion opens is named by the
+// same deterministic draft when the spec gave it no name of its own, so the
+// seed's scaffolding must not reach it there either.
+test('a deterministic PR title for a bot build never carries "Build issue N:" (#3518)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadPrMetadataWithStubs({ githubCalls });
+  try {
+    const ask = 'Build issue #3233: Quota notifications are cryptic codes\n\n'
+      + 'Edit the app_quota_changed row in notifications.js so it reads as a sentence.';
+    const pool = prMetadataMockPool();
+    pool.query = async function query(sql, params) {
+      this.queries.push({ sql, params });
+      if (/FROM chat_session_messages/i.test(sql)) return { rows: [{ role: 'user', content: ask, metadata: {} }] };
+      if (/FROM chat_session_specs/i.test(sql)) return { rows: [] };
+      if (/FROM chat_sessions\b/i.test(sql)) {
+        return { rows: [{ spec_md: '', linked_issues: [3233], pr_linked_issues_applied: [], testing_md: null, testing_path: null, pr_testing_applied: null }] };
+      }
+      return { rows: [] };
+    };
+    const session = {
+      id: 14, branch_name: 'dev/homeroom_bot-s14', pr_number: null,
+      agent_backend: 'codex_openrouter', session_title: 'Homeroom bot: #3233 Quota notifications are cryptic codes',
+    };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: ask, ccSummary: '', username: 'homeroom_bot',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(githubCalls[0].opts.title, 'Quota notifications are cryptic codes');
+    // The issue is where the proposal says it is: in Addresses, and in the
+    // body's closing line.
+    assert.match(githubCalls[0].opts.body, /^Closes #3233$/m);
+  } finally {
+    restore();
+  }
+});
+
+// #3183: sessions driven by a templated work order were named after the
+// template — "implement this change in the app: TITLE: Add Calm mode: slower
+// sheep…" — on the payer-free path (titleFromFirstMessage) and in the PR
+// title deterministicPrMetadataDraft derives from the same trim.
+const WORK_ORDER = 'Please implement this change in the app: TITLE: Add Calm mode: slower sheep, '
+  + 'softer colors, same rounds. DETAIL: A Calm mode toggle in the Grown-ups panel that slows '
+  + "the flock's movement and softens the meadow's colors, without changing flock sizes, seeds "
+  + 'or round numbering. Persist it like the other settings. Must keep canvas, DOM fallback and '
+  + 'a11y list working. When done, build/check it. Do NOT promote/put to vote yet; just reply '
+  + 'DONE + summary when the code is ready.';
+
+test('a work order is named after its TITLE, not its instruction (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deterministicTitle(WORK_ORDER),
+      'Add Calm mode: slower sheep, softer colors, same rounds');
+    assert.equal(subject.deterministicTitle(
+      'Please implement this change in the app: TITLE: Add mid-round save and resume. DETAIL: '
+        + 'If a child leaves in the middle of a round, save the board.',
+    ), 'Add mid-round save and resume');
+    // A TITLE on its own line, with markdown emphasis, and no DETAIL field.
+    assert.equal(subject.deterministicTitle(
+      'Implement the following change:\n**TITLE:** Show quota changes as a sentence\n'
+        + 'The app_quota_changed row should read as a sentence.',
+    ), 'Show quota changes as a sentence');
+    assert.deepEqual(subject.parseTitledRequest('TITLE: Fix the login redirect\nDETAIL: it loops'),
+      { title: 'Fix the login redirect', body: 'it loops' });
+    // Prose that mentions a title is not a work order.
+    assert.equal(subject.parseTitledRequest('Change the page title: it should say Homeroom'), null);
+    assert.equal(subject.parseTitledRequest('make the leaderboard paginate'), null);
+    assert.equal(subject.deterministicTitle('Change the page title: it should say Homeroom'),
+      'Change the page title: it should say Homeroom');
+  } finally {
+    restore();
+  }
+});
+
+test('the instruction to make a change is dropped even from a message that fits (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deterministicTitle('Please implement this change in the app: Add dark mode'),
+      'Add dark mode');
+    assert.equal(subject.deterministicTitle('Implement the following change:\n\nThe leaderboard should paginate'),
+      'The leaderboard should paginate');
+    assert.equal(subject.deterministicTitle(
+      'Hey, could you build this feature for the game — a wolf that hides in the flock',
+    ), 'a wolf that hides in the flock');
+    const long = subject.deterministicTitle('Please apply this fix to the project: the avatar upload '
+      + 'rejects anything over four megabytes with an unhelpful five hundred error page');
+    assert.match(long, /^the avatar upload rejects/);
+    assert.doesNotMatch(long, /apply this fix|project/);
+    // Without a colon, dash or line break it is a request, not boilerplate.
+    assert.match(subject.deterministicTitle('Make this change permanent across all pages of the '
+      + 'app and the admin area too please'), /^Make this change permanent/);
+    // A greeting a person typed is still theirs when it fits.
+    assert.equal(subject.deterministicTitle('please fix the login redirect'),
+      'please fix the login redirect');
+  } finally {
+    restore();
+  }
+});
+
+test('the model is handed a work order\'s title and detail, not its template (#3183)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    const prepared = subject.titleInputsFromRequests([WORK_ORDER]);
+    assert.equal(prepared.issueTitle, null);
+    assert.match(prepared.requests[0],
+      /^Add Calm mode: slower sheep, softer colors, same rounds\n\nA Calm mode toggle/);
+    assert.doesNotMatch(prepared.requests[0], /implement this change|TITLE:|DETAIL:/);
   } finally {
     restore();
   }

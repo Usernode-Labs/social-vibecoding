@@ -4,6 +4,7 @@ const appAccess = require('../services/app-access');
 const reportAi = require('../services/report-ai');
 const { reportAiLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // AI progress report (Reporting tab). GET serves the shared per-app
 // cache plus a staleness flag; POST regenerates it (debited to the
@@ -67,7 +68,7 @@ function reportAiRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/report-ai/generate', reportAiLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/report-ai/generate', reportAiLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
       if (!app) return res.status(404).json({ error: 'App not found' });

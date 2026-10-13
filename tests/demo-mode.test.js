@@ -516,11 +516,11 @@ test('promoting a held proposal is the announcement, with the partner\'s vote on
   assert.equal(state.sessions[0].status, 'promoted');
   assert.equal(queriesLike('INSERT INTO app_activity').length, 2, 'standing refreshed at both cues');
 
-  // The group hears the promotion, then the vote, in that order; the
+  // The proposal's thread hears the promotion, then the vote, in that
+  // order (no channel line: a channel carries no activity); the
   // notification leaves after both, so the card it opens already reads
   // "voted yes".
   assert.deepEqual(calls.sendSystemMessage.map((c) => c[2]), [
-    'sam promoted PR #42: Smooth category animations for voting',
     'sam promoted PR #42: Smooth category animations for voting',
     'sam voted yes on PR #42: Smooth category animations',
   ]);

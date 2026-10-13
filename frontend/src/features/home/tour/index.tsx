@@ -1,5 +1,5 @@
 /**
- * `#home-tour` — the four-step welcome tour, which replaced the
+ * `#home-tour` — the five-step welcome tour, which replaced the
  * `#home-welcome` banner (#1561).
  *
  * The banner said the two things the launcher never says, in three lines, and
@@ -14,25 +14,27 @@
  * Nothing here is a drawing of the product. The Improve arc works because the
  * Improve row is reachable on Home: the app's own menu, behind the Homeroom
  * mark, targeting the platform's own self-hosted row for as long as Home is up
- * (`Home.publishImproveTarget`, #1367). So steps 2 to 4 are one interaction
- * rather than three descriptions:
+ * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
+ * rather than three descriptions (step 1, what a community is, and step 2,
+ * My apps, only describe what they point at):
  *
- *   * step 2 spotlights the MARK that opens that menu, asking the viewer to
+ *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to
  *     `appContextStore` and advances when `open` goes true, so what opens the
  *     panel is the product's own handler and the tour is only watching. Its
  *     Next opens the menu through `AppContext.open()` — the same path — and
- *     the same watcher advances it, so Next never lands on step 3 with the
+ *     the same watcher advances it, so Next never lands on step 4 with the
  *     menu shut;
- *   * step 3 spotlights `#improve-quick-actions`, the well holding Give
+ *   * step 4 spotlights `#improve-quick-actions`, the well holding Give
  *     feedback and New change INSIDE the menu the viewer just opened. It is
  *     DESCRIBED, not driven: the cut-out blocks the press the way the dim
  *     around it does, because each of them leaves the tour (a dialog, a new
  *     session) and a spotlight is not an instruction to press.
  *     ./tour-steps.ts carries the whole argument;
- *   * step 4 shuts the menu through `Improve.close()`, the controller's own
- *     close path and never a write into its DOM, then points at the Me tab,
- *     whose screen holds Settings, where the tour can be replayed.
+ *   * the steps after it shut the menu through `Improve.close()`, the
+ *     controller's own close path and never a write into its DOM, then point
+ *     at the Messages tab, where Homeroom bot is, and the Me tab, whose
+ *     screen holds Settings, where the tour can be replayed.
  *
  * ── The island rules, and how each is kept ────────────────────────────
  *
@@ -125,14 +127,18 @@
  *
  * Only when somebody asks (#3240). It used to open by itself on the first
  * sign-in that reached Home, straight after "What communities do you want to
- * join?", and the two screens said the same things back to back. Now the
- * first row of Home's Getting started card, "Take the 1-minute tour"
- * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
- * and both ask through ./tour-request.ts. That path ignores whether the
+ * join?", and the two screens said the same things back to back. Settings'
+ * "Replay the tour" is the way in (Home's Getting started card offered it
+ * too, until #4635 retired the card), and it asks through ./tour-request.ts.
+ * That path ignores whether the
  * tour was finished before and waits only for Home to be on screen, which is
  * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
  * `?token=` routes except a press, so the platform's declared checks never
- * meet the overlay.
+ * meet the overlay, with ONE exception that is asked for by name:
+ * `?shot=welcome-tour` (#3567) opens it at step 1 once Home is up, the way
+ * `?shot=join-communities` draws the join screen, so a declared check can
+ * see the tour's first card. That route writes nothing: no kept step, no
+ * "done" here or on the account (`isTourShot`).
  *
  * Once it is up it PAUSES rather than fights. Whenever Home leaves the screen,
  * or any kit surface that is not the Improve panel is presented (a dialog, a
@@ -142,8 +148,8 @@
  * that stands on its own.
  *
  * Finish and Skip record "done" in this browser and on the account
- * (./tour-done.ts), which ticks the card's row. A browser that finished the
- * tour before the account kept the answer copies it there once.
+ * (./tour-done.ts). A browser that finished the tour before the account
+ * kept the answer copies it there once.
  *
  * ── A reload is not a restart ──────────────────────────────────────────
  *
@@ -165,6 +171,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
@@ -268,6 +275,21 @@ function isDeterministicRoute(): boolean {
   try {
     const params = new URLSearchParams(location.search);
     return !!(params.get('shot') || params.get('demo') || params.get('token'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The tour's own screenshot state (#3567): `?shot=welcome-tour` opens the
+ * tour at step 1 and lets it be walked, Next, Back and Skip included, while
+ * writing nothing. Not in the side panel's document, which never shows Home.
+ */
+const TOUR_SHOT = 'welcome-tour';
+function isTourShot(): boolean {
+  if (isEmbeddedPanel()) return false;
+  try {
+    return new URLSearchParams(location.search).get('shot') === TOUR_SHOT;
   } catch {
     return false;
   }
@@ -480,6 +502,9 @@ export function OnboardingTour() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [otherSurface, setOtherSurface] = useState(false);
 
+  // The card's words (the step's are message ids; the counter reads the
+  // runtime), in the language on screen.
+  const t = useMessages('onboarding');
   const step = stepAt(index);
   const last = isLastStep(index);
 
@@ -522,6 +547,8 @@ export function OnboardingTour() {
     setIndex(clampIndex(at));
     setConfirming(false);
     setOpen(true);
+    // A step of the person's path (#3369); never the screenshot state.
+    if (!isTourShot()) (window as any).UITelemetry?.navigate?.('tour');
   }, []);
 
   // ── A reload under a tour comes back to it ───────────────────────────
@@ -588,7 +615,7 @@ export function OnboardingTour() {
         joinPending: firstRunPending(),
       })) return;
       backfilledFor.current = userId;
-      void markDoneOnServer(userId);
+      void markDoneOnServer(userId, { ended: 'backfill' });
     };
     check();
     document.addEventListener('sv:session', check);
@@ -601,11 +628,27 @@ export function OnboardingTour() {
   // the shell's own reasons caused it -- comes back here rather than at step
   // 1. Cleared by finish(), because a finished tour has nowhere to resume.
   useEffect(() => {
-    if (!open || userId == null) return;
+    if (!open || userId == null || isTourShot()) return;
     writeStep(userId, index);
   }, [open, index, userId]);
 
-  // ── Asked for: Getting started's first row, or Settings' Replay ──────
+  // ── `?shot=welcome-tour`: the declared check's way in (#3567) ────────
+  //
+  // Opens at step 1 once Home is on screen, and claims the document so the
+  // resume above cannot also fire. Everything after is the ordinary tour.
+  useEffect(() => {
+    if (!isTourShot()) return;
+    started.current = true;
+    let cancelled = false;
+    void (async () => {
+      const home = await whenHomeVisible();
+      if (cancelled || !home) return;
+      start();
+    })();
+    return () => { cancelled = true; };
+  }, [start]);
+
+  // ── Asked for: Settings' Replay ──────────────────────────────────────
   const request = useTourRequest();
   const seenRequest = useRef(0);
   useEffect(() => {
@@ -663,7 +706,7 @@ export function OnboardingTour() {
   // THE PANEL MUST BE SHUT. The step's instruction is "press Improve" and it
   // ends on the panel OPENING, so arriving with it already up is a dead end:
   // there is no edge left to wait for. Whichever way the viewer got here —
-  // Back from step 3, or a panel opened through an earlier cut-out — it is
+  // Back from step 4, or a panel opened through an earlier cut-out — it is
   // shut again through the controller's own close path. That is also the
   // answer to what Back does with a still-open panel: it closes it, so the
   // step always presents the same way.
@@ -694,9 +737,9 @@ export function OnboardingTour() {
     if (panelOpenNow()) void Improve.close();
   }, [live, index]);
 
-  // Step 4 ends the arc by shutting the panel itself — and the app's menu with
-  // it, because the step that carries `closesPanel` spotlights a tab, and on a
-  // phone the menu's sheet is drawn over the tab bar, hiding the thing the
+  // The steps after the menu's end the arc by shutting the panel itself — and
+  // the app's menu with it, because a step that carries `closesPanel`
+  // spotlights a tab, and on a phone the menu's sheet is drawn over the tab bar, hiding the thing the
   // cut-out is drawn around.
   useEffect(() => {
     if (!live) return;
@@ -899,18 +942,29 @@ export function OnboardingTour() {
     (first ?? cardRef.current)?.focus?.();
   }, [live, index, confirming]);
 
-  const finish = useCallback(() => {
+  // `ended` says how (#3369): Next on the last step, or Skip. The account
+  // keeps it with the furthest step reached, the first time only.
+  const finish = useCallback((ended: 'finish' | 'skip' = 'finish') => {
+    // The screenshot route writes nothing, here or on the account.
+    if (isTourShot()) {
+      setConfirming(false);
+      setOpen(false);
+      backToTopOfHome();
+      return;
+    }
     writeDone(userId);
     // And on the account, so no other browser or device offers it again.
     // Fire-and-forget: a write that fails costs a repeat tour elsewhere,
     // never this one.
-    void markDoneOnServer(userId);
+    void markDoneOnServer(userId, { ended, step: indexRef.current });
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
     // The steps may have scrolled Home; hand the viewer back the top of the
     // page they started on.
     backToTopOfHome();
+    // Back on the screen under the tour: the next step of the path (#3369).
+    (window as any).App?._renotifyNavigation?.();
   }, [userId]);
 
   const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1)), []);
@@ -921,7 +975,7 @@ export function OnboardingTour() {
     // advances from there, so step 4 always arrives with the menu it points
     // into.
     if (nextOpensMenu(at)) void AppContext.open();
-    else if (isLastStep(at)) finish();
+    else if (isLastStep(at)) finish('finish');
     else setIndex(stepFrom(at, 1));
   }, [finish]);
 
@@ -1001,10 +1055,10 @@ export function OnboardingTour() {
             id="home-tour-title"
             className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
           >
-            {step.title}
+            {t(step.title)}
           </h2>
           <p id="home-tour-text" className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            {step.body}
+            {t(step.body)}
           </p>
           <div className="mt-4 flex items-center gap-2">
             <Button
@@ -1016,7 +1070,7 @@ export function OnboardingTour() {
               className="rounded px-1 py-1"
               onClick={() => setConfirming(true)}
             >
-              Skip
+              {t('onboarding:tour.skip')}
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <Button
@@ -1029,7 +1083,7 @@ export function OnboardingTour() {
                 disabled={index === 0}
                 onClick={goBack}
               >
-                Back
+                {t('core:common.back')}
               </Button>
               {/*
                   On every step. On the menu step it opens the menu rather
@@ -1042,7 +1096,7 @@ export function OnboardingTour() {
                 size="sm"
                 onClick={goNext}
               >
-                {last ? 'Finish' : 'Next'}
+                {last ? t('onboarding:tour.finish') : t('onboarding:tour.next')}
               </Button>
             </div>
           </div>
@@ -1058,7 +1112,7 @@ export function OnboardingTour() {
             id="home-tour-confirm-text"
             className="text-sm text-zinc-700 dark:text-zinc-200"
           >
-            Are you sure? You can reopen this from Settings.
+            {t('onboarding:tour.confirm.text')}
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <Button
@@ -1069,15 +1123,15 @@ export function OnboardingTour() {
               ink="muted"
               onClick={() => setConfirming(false)}
             >
-              Keep going
+              {t('onboarding:tour.confirm.keepGoing')}
             </Button>
             <Button
               id="home-tour-confirm-skip"
               type="button"
               size="sm"
-              onClick={finish}
+              onClick={() => finish('skip')}
             >
-              Skip the tour
+              {t('onboarding:tour.confirm.skip')}
             </Button>
           </div>
         </div>

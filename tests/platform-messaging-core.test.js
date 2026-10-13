@@ -56,6 +56,7 @@ test('shared object references accept UI aliases but no labels or arbitrary URLs
 function publicAppPool() {
   return {
     query: async (sql, params) => {
+      if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
       if (sql.includes('FROM apps WHERE id = $1')) {
         assert.deepEqual(params, [7]);
         return { rows: [{

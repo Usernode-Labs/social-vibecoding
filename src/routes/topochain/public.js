@@ -63,9 +63,9 @@ const {
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
-const { loadCadence, intervalMinutes } = require('../../services/topochain/challenge-scorer');
+const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
 const seasonHistory = require('../../services/topochain/season-history');
 
@@ -130,6 +130,16 @@ function eventStatus(startsAt, endsAt, now = new Date()) {
   const hasStarted = now >= start;
   const hasEnded = now >= end;
   return { hasStarted, hasEnded, status: hasEnded ? 'ended' : (hasStarted ? 'active' : 'upcoming') };
+}
+
+// Boolean query params read with the truthy-list idiom GET /season-events
+// uses for `include_past` (same list, same case handling). Absent,
+// empty, or anything outside the list reads as FALSE — so a new opt-in
+// param defaults to OFF on both an old client and a garbage value.
+const TRUTHY_QUERY_VALUES = ['1', 'true', 'on', 'yes'];
+
+function truthyQuery(raw) {
+  return typeof raw === 'string' && TRUTHY_QUERY_VALUES.includes(raw.toLowerCase());
 }
 
 // ─── Identifier masking, display names, per-event rows ──────────────────
@@ -298,15 +308,33 @@ function topochainPublicRoutes(config) {
       // SPEC 961: display_leaderboard=false -> identical envelope, empty
       // list, meta.total 0.
       if (!event.display_leaderboard) {
-        return ok(res, { data: { event: eventPayload, leaderboard: [] } }, { meta: meta(page, perPage, 0) });
+        return ok(res, {
+          data: { event: eventPayload, leaderboard: [], non_podium_count: 0 },
+        }, { meta: meta(page, perPage, 0) });
       }
 
       const rows = await fetchEventLeaderboardRows(pool, event);
-      const total = rows.length;
-      const start = (page - 1) * perPage;
-      const leaderboard = rows.slice(start, start + perPage).map(formatLeaderboardRow);
 
-      return ok(res, { data: { event: eventPayload, leaderboard } }, { meta: meta(page, perPage, total) });
+      // #3887: podium-excluded users are HIDDEN by default and shown only
+      // when the pane's toggle asks for them. The filter sits HERE, after
+      // the ranks were assigned over the FULL board (stored shared ranks
+      // for a regular event, computeStandings for the season aggregate) —
+      // never inside the SQL. Filtering inside the SQL would shift every
+      // ranked user's number when the toggle flips; filtering here means a
+      // ranked user's rank is byte-identical with the toggle on or off, and
+      // an included excluded row still doesn't consume a slot (its own rank
+      // is serialized as-is; the pane renders it "—").
+      const nonPodiumCount = rows.filter((r) => !!r.exclude_podium).length;
+      const includeNonPodium = truthyQuery(req.query.include_non_podium);
+      const visible = includeNonPodium ? rows : rows.filter((r) => !r.exclude_podium);
+
+      const total = visible.length;
+      const start = (page - 1) * perPage;
+      const leaderboard = visible.slice(start, start + perPage).map(formatLeaderboardRow);
+
+      return ok(res, {
+        data: { event: eventPayload, leaderboard, non_podium_count: nonPodiumCount },
+      }, { meta: meta(page, perPage, total) });
     } catch (err) {
       if (err instanceof ValidationError) {
         return fail(res, err.status, err.message, { details: err.details, code: err.code });
@@ -739,9 +767,12 @@ function topochainPublicRoutes(config) {
       // skipping any row whose template join came back empty instead
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
+      //
+      // The season's First challenges (their ids and the viewer's lifetime
+      // progress on them) are ordinary rows of this list for everyone: since
+      // #4635 they gate nothing, so the list is the whole event.
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
-      const listed = rows.filter((r) => r.t_id != null);
-      const visible = visibleChallenges(listed, onboarding);
+      const visible = rows.filter((r) => r.t_id != null);
 
       // The viewer's own credit count per challenge.
       //
@@ -761,10 +792,13 @@ function topochainPublicRoutes(config) {
       const counts = new Map();
       if (req.user?.id && visible.length) {
         const { rows: countRows } = await pool.query(
-          `SELECT challenge_id, COUNT(*)::int AS credits
-             FROM user_activities
-            WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
-            GROUP BY challenge_id`,
+          `SELECT ua.challenge_id, COUNT(*)::int AS credits
+             FROM user_activities ua
+             JOIN challenges c ON c.id = ua.challenge_id
+             LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+            WHERE ua.user_id = $1 AND ua.challenge_id = ANY($2::bigint[])
+              AND ${COUNTS_THIS_WEEK_SQL}
+            GROUP BY ua.challenge_id`,
           [req.user.id, visible.map((r) => Number(r.id))]
         );
         for (const row of countRows) counts.set(Number(row.challenge_id), Number(row.credits));
@@ -788,7 +822,10 @@ function topochainPublicRoutes(config) {
       // with nothing saying why, and people redid what they had finished.
       // The admin route had these two times; the card had neither. Not per
       // viewer — the schedule is the challenge's — so one read for the list.
-      const cadence = await loadCadence(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+      // The same read says what the rule counts (#3253, #3248), so the page
+      // can say that a proposal counts once it is put to the vote, and that
+      // a counted measure stops paying at its target.
+      const { cadence, countedBy } = await loadRuleFacts(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
 
       const data = visible
         .map((r) => {
@@ -800,6 +837,11 @@ function topochainPublicRoutes(config) {
           item.scoring = counted
             ? { interval_minutes: counted.intervalMinutes, last_scored_at: iso(counted.lastScoredAt) }
             : null;
+          // `{ measure, target }` — a MEASURES key and, for a measure that
+          // counts, the number past which nothing more is credited — for a
+          // challenge a rule scores right now, else null; always present.
+          const by = countedBy.get(Number(item.id));
+          item.counted_by = by ? { measure: by.measure, target: by.target } : null;
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();
@@ -821,15 +863,10 @@ function topochainPublicRoutes(config) {
           return item;
         });
 
-      // This list now carries the signed-in viewer's onboarding state. While
-      // the gate is closed it also says how many of THIS event's challenges
-      // it hides (additive `hidden_count`, the tab's "N challenges locked"
-      // placeholder); unlocked, the summary is exactly what it was.
-      const summary = onboarding && !onboarding.summary.unlocked
-        ? { ...onboarding.summary, hidden_count: listed.length - visible.length }
-        : onboarding?.summary;
       res.set('Cache-Control', 'private, no-store');
-      return ok(res, { data, ...(summary ? { onboarding: summary } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and every
+      // client already reads a missing summary as "not gated".
+      return ok(res, { data });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

@@ -105,7 +105,7 @@ function makePool({ apps = [], collaborators = [], users = {} } = {}) {
         };
       }
 
-      if (/SELECT usernode_pubkey, locale FROM users/.test(text)) {
+      if (/SELECT usernode_pubkey, locale, username_provisional_since IS NOT NULL AS provisional\s+FROM users/.test(text)) {
         return { rows: [users[params[0]] || { usernode_pubkey: null, locale: null }] };
       }
 
@@ -123,8 +123,9 @@ async function call({ user = VIEWER, query = {}, pool = makePool() } = {}) {
   };
 
   // eslint-disable-next-line no-new-func
-  new Function('app', 'appAccess', 'platformJwt', 'getPool', 'config', 'log', handlerSource())(
-    app, appAccess, platformJwt, () => pool, {}, { error: () => {}, warn: () => {} }
+  new Function('app', 'appAccess', 'platformJwt', 'getPool', 'config', 'log', 'usernames', handlerSource())(
+    app, appAccess, platformJwt, () => pool, {}, { error: () => {}, warn: () => {} },
+    require('../src/services/usernames')
   );
   assert.equal(routes.length, 1, 'expected exactly one registered route');
 
@@ -234,6 +235,26 @@ test('200 for a public app, and the token is scoped to THAT app', async () => {
     /audience/i,
     'a token minted for one app must not verify for another'
   );
+});
+
+// A provisional handle (an invite's phone sign-up, made from its name) is
+// for private groups: a public app gets a username the person chose.
+test('409 username_required for a provisional handle on a public app, a token on a private one', async () => {
+  const provisional = { [VIEWER.id]: { usernode_pubkey: null, locale: null, provisional: true } };
+  const pub = await call({ user: VIEWER, query: { app: 'public-app' }, pool: makePool({ apps: [PUBLIC_APP], users: provisional }) });
+  assert.equal(pub.res.statusCode, 409);
+  assert.equal(pub.res.body.code, 'username_required');
+  assert.equal(pub.res.body.token, undefined);
+  const priv = await call({
+    user: OWNER, query: { app: 'private-app' },
+    pool: makePool({
+      apps: [PRIVATE_APP],
+      collaborators: [{ appId: PRIVATE_APP.id, userId: OWNER.id }],
+      users: { [OWNER.id]: { usernode_pubkey: null, locale: null, provisional: true } },
+    }),
+  });
+  assert.equal(priv.res.statusCode, 200);
+  assert.ok(priv.res.body.token);
 });
 
 // ── The mint path: RS256 or a structured 503, never a downgrade ─────────

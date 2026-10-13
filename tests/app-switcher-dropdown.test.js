@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -207,7 +208,9 @@ test('a kit-adopted sheet is never left invisible by the dropdown state', () => 
 
 test('the island measures the mark with the vote popover\'s arithmetic', () => {
   // One helper, two callers: the popover and the menu cannot drift apart.
-  assert.match(VOTE, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/\.\.\/lib\/anchor-popover';/);
+  // (#3595 also brings the popover's height clamp in from the same module,
+  // so the pin is on placeUnderAnchor being in the named set, not alone.)
+  assert.match(VOTE, /import \{[^}]*\bplaceUnderAnchor\b[^}]*\} from '\.\.\/\.\.\/\.\.\/lib\/anchor-popover';/);
   assert.match(VOTE, /placeUnderAnchor\(rect,/, 'the vote popover places itself through it');
   assert.match(ISLAND, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/lib\/anchor-popover';/);
   assert.match(ISLAND, /getElementById\(MARK_ID\)/, 'the menu reads the mark\'s rect');
@@ -399,7 +402,7 @@ test('the Workshop is a row in the menu, not a toggle (#2761)', () => {
   // the App segment — the parked app on the bar (#2762) is the way back.
   assert.ok(!/AppViewTabs|view-tabs/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
     'the strip is not rendered here any more');
-  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label="Go to workshop"/,
+  assert.match(SHEET, /id="app-menu-row-workshop"[\s\S]{0,200}label=\{t\('agent:appContext\.row\.community'\)\}/,
     'the row that replaced it');
   // The strip's Workshop segment carried the vote count; it rides the row now.
   assert.match(SHEET, /id="app-menu-workshop-owed"/);

@@ -1,24 +1,18 @@
 'use strict';
 
-// #2564: an empty "Your apps" says so.
+// An empty "Your apps" says nothing: a new account's Home is the New project
+// tile alone (the owner, 6 October 2026, from the planned-vs-built review).
 //
-// A finished load of the launcher canvas with nothing on it used to render an
-// empty `#app-list`, so the area under the "Your apps" label was blank on a
-// first sign-in. It now carries the one line the app-context sheet's switcher
-// strip already used for the same empty set, and both read it from the shared
-// constant in frontend/src/features/apps/no-apps-yet.ts.
+// It carried "No apps added yet. Make one with New project, or find one in
+// the Discover section." from #2564 until then, which told a new account what
+// the tile beside it already showed; the "Look around first" tour now points
+// at the tile instead. What stays pinned:
 //
-// Three properties are worth pinning, and none of them is a grep:
-//
-//   1. The note is ABSENT from the initial store state. That is the hydration
-//      contract (AGENTS.md): the SSG pass renders `INITIAL_GRID`, so a first
-//      client render that drew the note would mismatch the prerendered
-//      document, `console.error`, and fail the proposal checks.
-//   2. It appears only for a finished, un-noticed, un-searched, empty load —
-//      the grid has two other empty answers (the error card and the
-//      "no match" search line) and this must not displace either.
-//   3. `Home.render()` actually reaches that state for an account with no
-//      apps, which is the case the request is about.
+//   1. A finished, empty load draws no line: the tile alone.
+//   2. The initial state is still the skeleton (the hydration contract,
+//      AGENTS.md: the SSG pass renders `INITIAL_GRID`).
+//   3. A failed load and a search that matched nothing keep their own lines.
+//   4. `Home.render()` reaches the empty state for an account with no apps.
 //
 // Run with: node --test tests/home-empty-apps.test.js
 
@@ -32,14 +26,15 @@ const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installGridStore, installPanelsStore, INITIAL_GRID } = require('./helpers/home-grid-store');
 const { installAppCard } = require('./helpers/app-card');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const GRID = 'frontend/src/features/home/app-grid.tsx';
 const SHEET = 'frontend/src/features/app-context/app-context-sheet.tsx';
-const COPY = 'frontend/src/features/apps/no-apps-yet.ts';
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const SENTENCE = 'No apps added yet. Find apps to add in the Discover section.';
+// The line it used to draw.
+const SENTENCE = 'No apps added yet. Make one with New project, or find one in the Discover Communities section.';
 
 // ── rendering AppGrid at an arbitrary state ───────────────────────────
 //
@@ -54,35 +49,16 @@ function renderGrid(patch) {
   return renderToHtml(createElement(AppGrid, {}));
 }
 
-// ── 1. the line itself ────────────────────────────────────────────────
+// ── 1. no line ────────────────────────────────────────────────────────
 
-test('the note is the exact sentence, from the shared constant', () => {
-  const { NO_APPS_YET } = loadTsx(COPY);
-  assert.equal(NO_APPS_YET, SENTENCE, 'the wording is fixed copy, not a paraphrase');
-
-  const { AppsEmptyNote } = loadTsx(GRID);
-  const html = renderToHtml(createElement(AppsEmptyNote, {}));
-  assert.match(html, /data-home-apps-empty=""/);
-  assert.ok(html.includes(SENTENCE), `the note renders the sentence: ${html}`);
-  assert.match(html, /col-span-full/, 'it spans the four columns of the canvas');
-});
-
-test('the launcher says it with a constant, and nothing hand-types it', () => {
-  // ONE CALLER NOW, not two. The app chip's sheet used to open on a strip of
-  // your other apps and needed this sentence for the account that has none;
-  // #2718's review took the strip out — a rail of other apps at the top of a
-  // menu about ONE app is an invitation to leave it — so there is no second
-  // surface to keep in step with. The constant stays: it is still the
-  // launcher's copy, and the rule that matters is the one below, that NOBODY
-  // hand-types the sentence.
+test('the line and its copy are gone, from the grid and from the source', () => {
   const src = read(GRID);
-  assert.match(src, /from '\.\.\/apps\/no-apps-yet'/, `${GRID} imports the shared copy`);
-  assert.match(src, /NO_APPS_YET/, `${GRID} renders the constant`);
-  assert.ok(!read(SHEET).includes(SENTENCE),
-    'and the app menu, which no longer lists apps, does not carry a copy');
+  assert.doesNotMatch(src, /AppsEmptyNote|NO_APPS_YET|no-apps-yet|data-home-apps-empty/);
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/apps/no-apps-yet.ts')), false);
+  assert.ok(!read(SHEET).includes(SENTENCE), 'and the app menu carries no copy either');
 });
 
-// ── 2. when it draws, and when it must not ────────────────────────────
+// ── 2. the states around it ────────────────────────────
 
 test('the initial state renders no note — the prerender has none either', () => {
   const html = renderGrid({});
@@ -94,10 +70,14 @@ test('the initial state renders no note — the prerender has none either', () =
     'and the prerendered shell agrees');
 });
 
-test('a finished, empty load draws it', () => {
+test('a finished, empty load draws no line: the New project tile alone', () => {
   const html = renderGrid({ ready: true });
-  assert.ok(html.includes(SENTENCE), html);
+  assert.ok(!html.includes(SENTENCE), html);
+  assert.ok(!/No apps added/.test(html));
   assert.ok(!/Loading your apps/.test(html), 'and the skeleton is gone');
+  const withTile = renderGrid({ ready: true, create: { enabled: true, hint: '', placement: null } });
+  assert.match(withTile, /id="home-create-tile"/);
+  assert.ok(!withTile.includes(SENTENCE));
 });
 
 test('a load that produced apps does not', () => {
@@ -139,6 +119,8 @@ test('a search that matched nothing keeps its own answer', () => {
   const html = renderGrid({ ready: true, view: 'search', emptyQuery: 'zzz' });
   assert.ok(!html.includes(SENTENCE), 'the search line names the query instead');
   assert.match(html, /No apps match/);
+  // ...and points at the section below by its heading (#4184).
+  assert.match(html, /try <span[^>]*>Discover Communities<\/span> below\./);
 });
 
 // ── 3. Home.render() reaches that state for an account with no apps ───
@@ -171,6 +153,7 @@ function makeHome() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   const gridStore = installGridStore(sandbox);
@@ -184,7 +167,7 @@ function makeHome() {
   return { Home: sandbox.__Home, gridStore };
 }
 
-test('an account with no apps pushes exactly the state the note keys off', () => {
+test('an account with no apps reaches the empty state, which draws no line', () => {
   const { Home, gridStore } = makeHome();
   Home._apps = [];
   Home.render();
@@ -195,6 +178,6 @@ test('an account with no apps pushes exactly the state the note keys off', () =>
   assert.deepEqual(state.items, []);
   assert.equal(state.notice, null);
   assert.equal(state.emptyQuery, null);
-  // ...and that state is the one the component draws the note for.
-  assert.ok(renderGrid(state).includes(SENTENCE));
+  // ...and that state draws no line.
+  assert.ok(!renderGrid(state).includes(SENTENCE));
 });

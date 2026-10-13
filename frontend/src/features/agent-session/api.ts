@@ -2,6 +2,17 @@
 // conversation screen reads and writes. Every route is owner-scoped on the
 // server (src/routes/agent-sessions.js); nothing here decides access.
 
+import { t } from '../../lib/i18n/runtime';
+import type { ReleaseOutlook } from '../../lib/release-eta';
+
+/** A change's failing checks, as services/agent-sessions.js reads them (#3755). */
+export interface FailingChecks {
+  /** When the failing verdict was stored: one run, one offer. */
+  at: string | null;
+  total: number;
+  checks: Array<{ name: string; reason: string }>;
+}
+
 export interface AgentChange {
   id: number;
   appSlug: string | null;
@@ -15,9 +26,21 @@ export interface AgentChange {
   checkFailing?: number;
   /** Why the checks were skipped, when they were and a reason was recorded. */
   checkSkipReason?: string | null;
+  /**
+   * #3755: while the checks are failing, the first few that failed (name and
+   * what each reported), how many failed in all, and when that run's verdict
+   * was stored. Null otherwise, and on the changes list's rows.
+   */
+  failingChecks?: FailingChecks | null;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
-  /** Its visual change preview, while one is being captured. */
+  /**
+   * Merged into the platform's own app and not live yet (it reads
+   * `merging`): when the platform's next release carries it, which
+   * ../../lib/release-eta.ts words. Absent on anything else.
+   */
+  release?: ReleaseOutlook | null;
+  /** Its before/after shots, while they are being taken. */
   previewCapture?: { state: string; startedAt: string | null } | null;
 }
 
@@ -55,12 +78,23 @@ export interface AgentSession {
   doneUnseen?: boolean;
   lastActivityAt: string | null;
   createdAt: string | null;
+  /**
+   * The server's count of writes to this conversation (schema.sql, "Keeping
+   * every screen of a conversation in step"): a screen holding an older one
+   * re-reads its state.
+   */
+  version?: number;
 }
 
 export interface AgentTurnState {
+  /** The running turn's id, where it is known: the lease every pod reads. */
+  id?: string | null;
   phase: 'mayor' | 'cc' | 'mayor2';
-  stopping: boolean;
-  changeId: number | null;
+  stopping?: boolean;
+  stopRequestedAt?: number | null;
+  stopToken?: string | null;
+  canForceStop?: boolean;
+  changeId?: number | null;
   /** Epoch ms the running work started: the build once dispatched, else the turn. */
   startedAt?: number | null;
 }
@@ -76,6 +110,10 @@ export interface AgentMessage {
   costCents?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string | null;
+  /** The sending screen's own id for a user message, when it gave one. */
+  clientMessageId?: string | null;
+  /** When the row was written or last edited, in the database's order. */
+  rev?: number;
 }
 
 /**
@@ -149,6 +187,18 @@ export interface AgentHint {
    * request itself, so this never leaves the browser (serverHint).
    */
   issueTitle?: string;
+  /**
+   * The first message the unsent conversation offers, unsent and editable,
+   * when the entry point has one to hand over: Global Chat's development
+   * task, or Explore's message about a proposal. For the screen only, like
+   * the title (./request-seed.ts draftSeed).
+   */
+  message?: string;
+  /**
+   * Open the composer's "Build with" sheet on this agent's tab: the
+   * out-of-credits card's "Use Claude Code" / "Use Codex". Screen only.
+   */
+  handoff?: 'claude-code' | 'codex';
 }
 
 /** The hint as the server takes it: the fields it resolves, nothing the screen added. */
@@ -179,10 +229,15 @@ export interface OpenRouterModel {
   /** The catalog's published prices, for the cost of a typical change. */
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  /** What a prompt-cache read and write cost, where the catalog lists them. */
+  cacheReadPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
   isFavorite?: boolean;
+  /** Which CLI the platform runs this model in (#3296). */
+  harness?: 'claude' | 'codex';
 }
 
 /** Everything the picker offers, read once per page. */
@@ -203,10 +258,12 @@ export interface ModelCatalog {
 /**
  * The platform's per-model notes and estimates (#2570): an estimate for each
  * curated model, and the token profile of a typical change, which prices any
- * other model from its catalog prices.
+ * other model from its catalog prices. `inputTokens` is every prompt token;
+ * `cachedInputTokens` and `cacheWriteInputTokens` are the parts of it read
+ * from and written to the prompt cache, absent from an older server.
  */
 export interface ModelNotes {
-  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  typicalChange: { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheWriteInputTokens?: number } | null;
   models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
@@ -238,7 +295,7 @@ export async function createSession(hint: AgentHint | null, agent: AgentChoice |
   if (agent) payload.agent = agent;
   const body = await json<{ session: AgentSession }>(
     await request('/api/agent-sessions', { method: 'POST', body: JSON.stringify(payload) }),
-    'Could not start an agent session.',
+    t('agent:session.error.startFailed'),
   );
   return body.session;
 }
@@ -251,7 +308,7 @@ export async function previewDraft(hint: AgentHint | null): Promise<AgentDraftPr
   const suffix = query.toString() ? `?${query}` : '';
   const body = await json<{ draft: AgentDraftPreview }>(
     await request(`/api/agent-sessions/draft${suffix}`),
-    'Could not load this agent session.',
+    t('agent:session.error.loadFailed'),
   );
   return body.draft;
 }
@@ -259,19 +316,54 @@ export async function previewDraft(hint: AgentHint | null): Promise<AgentDraftPr
 export async function setAgentChoice(id: number, agent: AgentChoice): Promise<AgentSession> {
   const body = await json<{ session: AgentSession }>(
     await request(`/api/agent-sessions/${id}/agent`, { method: 'PATCH', body: JSON.stringify(agent) }),
-    'Could not change the model.',
+    t('agent:session.error.modelFailed'),
   );
   return body.session;
+}
+
+/** The reads the picker is built from, each of which can be asked again on its own. */
+export type CatalogPart = 'models' | 'prefs' | 'notes' | 'openrouter';
+
+export interface CatalogRead {
+  catalog: ModelCatalog;
+  /** The parts that did not answer this time, to ask again later; empty once all have. */
+  missing: CatalogPart[];
+}
+
+// How long the picker waits for one read. A request that never settles (a
+// stalled socket, a phone app resuming on a radio that is still waking) used
+// to hold the whole catalog, and with it the model pill, for the rest of the
+// page. The OpenRouter list waits longer: the server reads the key's own
+// catalogue from OpenRouter for it, and gives that read 20 seconds.
+const CATALOG_READ_MS = 10_000;
+const CATALOG_LIST_MS = 30_000;
+
+/** A read's JSON, or null when it failed, answered an error, or ran out of time. */
+function readWithin(path: string, ms: number): Promise<unknown> {
+  const abort = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    timer = setTimeout(() => { abort?.abort(); resolve(null); }, ms);
+  });
+  const read = request(path, abort ? { signal: abort.signal } : {})
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  return Promise.race([read, expired]).finally(() => clearTimeout(timer));
 }
 
 /**
  * The picker's options: the Anthropic models (GET /api/models), the saved
  * default (GET /api/me/coding-agent) and, where OpenRouter is offered, the
  * viewer's OpenRouter catalog. A part that does not load is left out rather
- * than failing the picker; the server validates every pick anyway.
+ * than failing the picker, and named in `missing` so the caller can ask for
+ * it again: pass back the catalog and those parts, and only they are read,
+ * over what was already known. The server validates every pick anyway.
  */
-export async function loadModelCatalog(): Promise<ModelCatalog> {
-  const catalog: ModelCatalog = {
+export async function loadModelCatalog(
+  previous: ModelCatalog | null = null,
+  retry: CatalogPart[] | null = null,
+): Promise<CatalogRead> {
+  const catalog: ModelCatalog = previous ? { ...previous } : {
     anthropic: [],
     anthropicDefault: null,
     defaultBackend: 'claude_code',
@@ -282,10 +374,18 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     recommendedOpenRouterId: null,
     notes: null,
   };
+  const wanted = (part: CatalogPart) => !previous || !retry || retry.includes(part);
+  const missing: CatalogPart[] = [];
+  const read = (part: CatalogPart, path: string) => (wanted(part)
+    ? readWithin(path, CATALOG_READ_MS).then((body) => {
+      if (!body) missing.push(part);
+      return body;
+    })
+    : Promise.resolve(null));
   const [models, prefs, notes] = await Promise.all([
-    request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/model-notes').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    read('models', '/api/models'),
+    read('prefs', '/api/me/coding-agent'),
+    read('notes', '/api/model-notes'),
   ]) as [
     { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
     {
@@ -294,14 +394,26 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
-    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
+    {
+      typicalChange?: { inputTokens?: unknown; outputTokens?: unknown; cachedInputTokens?: unknown; cacheWriteInputTokens?: unknown } | null;
+      models?: unknown;
+    } | null,
   ];
   if (notes && notes.models && typeof notes.models === 'object') {
     const profile = notes.typicalChange;
     const input = Number(profile?.inputTokens);
     const output = Number(profile?.outputTokens);
+    const cached = Number(profile?.cachedInputTokens);
+    const written = Number(profile?.cacheWriteInputTokens);
     catalog.notes = {
-      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      typicalChange: Number.isFinite(input) && Number.isFinite(output)
+        ? {
+          inputTokens: input,
+          outputTokens: output,
+          ...(Number.isFinite(cached) ? { cachedInputTokens: cached } : {}),
+          ...(Number.isFinite(written) ? { cacheWriteInputTokens: written } : {}),
+        }
+        : null,
       models: notes.models as ModelNotes['models'],
     };
   }
@@ -323,27 +435,32 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     catalog.codexAvailable = prefs.codexAvailable === true;
     catalog.defaultReasoningEffort = typeof prefs.defaultReasoningEffort === 'string' ? prefs.defaultReasoningEffort : null;
   }
-  if (catalog.codexAvailable) {
-    const list = await request('/api/me/coding-agent/models?backend=codex_openrouter')
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as
+  // The list is read once the preferences say OpenRouter is offered. Until
+  // they have answered nobody knows whether it is, so it stays owed.
+  if (missing.includes('prefs')) {
+    if (wanted('openrouter')) missing.push('openrouter');
+  } else if (catalog.codexAvailable && (wanted('openrouter') || prefs)) {
+    const list = await readWithin('/api/me/coding-agent/models?backend=codex_openrouter', CATALOG_LIST_MS) as
       { models?: OpenRouterModel[]; recommendedModelId?: unknown } | null;
     if (list && Array.isArray(list.models)) {
       catalog.openrouter = list.models.filter((m) => m && typeof m.id === 'string');
       catalog.recommendedOpenRouterId = typeof list.recommendedModelId === 'string' ? list.recommendedModelId : null;
+    } else {
+      missing.push('openrouter');
     }
   }
-  return catalog;
+  return { catalog, missing };
 }
 
 export async function listDrafts(id: number): Promise<SavedDraft[]> {
-  const body = await json<{ drafts: SavedDraft[] }>(await request(`/api/agent-sessions/${id}/drafts`), 'Could not load your saved drafts.');
+  const body = await json<{ drafts: SavedDraft[] }>(await request(`/api/agent-sessions/${id}/drafts`), t('agent:session.error.draftsLoadFailed'));
   return body.drafts || [];
 }
 
 export async function saveDraft(id: number, draft: SavedDraft): Promise<SavedDraft[]> {
   const body = await json<{ drafts: SavedDraft[] }>(
     await request(`/api/agent-sessions/${id}/drafts`, { method: 'POST', body: JSON.stringify(draft) }),
-    'Could not save that draft.',
+    t('agent:session.error.draftSaveFailed'),
   );
   return body.drafts || [];
 }
@@ -351,7 +468,7 @@ export async function saveDraft(id: number, draft: SavedDraft): Promise<SavedDra
 export async function deleteDraft(id: number, draftId: string): Promise<SavedDraft[]> {
   const body = await json<{ drafts: SavedDraft[] }>(
     await request(`/api/agent-sessions/${id}/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' }),
-    'Could not delete that draft.',
+    t('agent:session.error.draftDeleteFailed'),
   );
   return body.drafts || [];
 }
@@ -359,7 +476,7 @@ export async function deleteDraft(id: number, draftId: string): Promise<SavedDra
 export async function renameSession(id: number, title: string): Promise<AgentSession> {
   const body = await json<{ session: AgentSession }>(
     await request(`/api/agent-sessions/${id}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
-    'Could not rename this session.',
+    t('agent:session.error.renameFailed'),
   );
   return body.session;
 }
@@ -367,7 +484,7 @@ export async function renameSession(id: number, title: string): Promise<AgentSes
 export async function archiveSession(id: number): Promise<AgentSession> {
   const body = await json<{ session: AgentSession }>(
     await request(`/api/agent-sessions/${id}/archive`, { method: 'POST' }),
-    'Could not archive this session.',
+    t('agent:session.error.archiveFailed'),
   );
   return body.session;
 }
@@ -375,7 +492,7 @@ export async function archiveSession(id: number): Promise<AgentSession> {
 export async function unarchiveSession(id: number): Promise<AgentSession> {
   const body = await json<{ session: AgentSession }>(
     await request(`/api/agent-sessions/${id}/unarchive`, { method: 'POST' }),
-    'Could not unarchive this session.',
+    t('agent:session.error.unarchiveFailed'),
   );
   return body.session;
 }
@@ -413,68 +530,113 @@ export async function handoffStatus(slug: string, change: { id: number; kind: 's
   const suffix = query.toString() ? `?${query}` : '';
   return json(
     await request(`/api/apps/${encodeURIComponent(slug)}/dev-flow/status${suffix}`),
-    'Could not check where the hand-off stands.',
+    t('agent:session.error.handoffStatusFailed'),
   );
 }
 
-export async function listSessions(): Promise<AgentSession[]> {
-  const body = await json<{ sessions: AgentSession[] }>(await request('/api/agent-sessions'), 'Could not load agent sessions.');
+/**
+ * The viewer's open sessions, and `started`: whether they have ever had one,
+ * archived ones included (Messages' Agents list shows its "Show archived"
+ * group only then). A server from before `started` existed answers without
+ * it, and a session in the list says it as well.
+ */
+export async function listSessions(): Promise<{ sessions: AgentSession[]; started: boolean }> {
+  const body = await json<{ sessions: AgentSession[]; started?: boolean }>(await request('/api/agent-sessions'), t('agent:session.error.listFailed'));
+  const sessions = body.sessions || [];
+  return { sessions, started: body.started === true || sessions.length > 0 };
+}
+
+/**
+ * The viewer's archived sessions (GET /api/agent-sessions?status=archived),
+ * for Messages' Agents list's "Show archived" group: the 50 most recent,
+ * oldest work not paged in this read. Until #4729 an archived session was
+ * in no list at all.
+ */
+export async function listArchivedSessions(): Promise<AgentSession[]> {
+  const body = await json<{ sessions: AgentSession[] }>(
+    await request('/api/agent-sessions?status=archived&limit=50'),
+    t('agent:session.error.listFailed'),
+  );
   return body.sessions || [];
 }
 
 export async function getSession(id: number): Promise<{ session: AgentSession; turn: AgentTurnState | null }> {
-  return json(await request(`/api/agent-sessions/${id}`), 'Could not load this agent session.');
+  return json(await request(`/api/agent-sessions/${id}`), t('agent:session.error.loadFailed'));
+}
+
+/**
+ * A conversation read in one consistent snapshot (GET .../state): what the
+ * screen draws, the version and rev it was read at, and the running turn.
+ * Sent the version it holds, the server answers only `unchanged` (and
+ * `busy`) while that is still current; sent a rev, only the rows written or
+ * edited since (`full: false`).
+ */
+export type AgentStateRead =
+  | { unchanged: true; version: number; busy: boolean; turn: AgentTurnState | null }
+  | {
+    unchanged: false;
+    version: number;
+    busy: boolean;
+    turn: AgentTurnState | null;
+    session: AgentSession;
+    messages: AgentMessage[];
+    full: boolean;
+    nextAfter: number | null;
+    rev: number;
+    actions: AgentAction[];
+  };
+
+export async function getState(id: number, { version = null, rev = null }: { version?: number | null; rev?: number | null } = {}): Promise<AgentStateRead> {
+  const query = new URLSearchParams();
+  if (version != null) query.set('version', String(version));
+  if (rev != null) query.set('rev', String(rev));
+  const suffix = query.toString() ? `?${query}` : '';
+  return json(await request(`/api/agent-sessions/${id}/state${suffix}`), t('agent:session.error.loadFailed'));
 }
 
 export async function getMessages(id: number, after = 0): Promise<{ messages: AgentMessage[]; nextAfter: number | null }> {
-  return json(await request(`/api/agent-sessions/${id}/messages?after=${after}&limit=200`), 'Could not load the conversation.');
+  return json(await request(`/api/agent-sessions/${id}/messages?after=${after}&limit=200`), t('agent:session.error.messagesFailed'));
 }
 
 export async function getActions(id: number): Promise<AgentAction[]> {
-  const body = await json<{ actions: AgentAction[] }>(await request(`/api/agent-sessions/${id}/actions`), 'Could not load confirmations.');
+  const body = await json<{ actions: AgentAction[] }>(await request(`/api/agent-sessions/${id}/actions`), t('agent:session.error.actionsFailed'));
   return body.actions || [];
 }
 
 export async function confirmAction(id: number, actionId: string) {
   return json<{ status: string; result: AgentAction['result']; followUp: { turnId: string } | null }>(
     await request(`/api/agent-sessions/${id}/actions/${encodeURIComponent(actionId)}/confirm`, { method: 'POST' }),
-    'That confirmation did not go through.',
+    t('agent:session.error.confirmFailed'),
   );
 }
 
 export async function dismissAction(id: number, actionId: string) {
   return json<{ ok: boolean }>(
     await request(`/api/agent-sessions/${id}/actions/${encodeURIComponent(actionId)}/dismiss`, { method: 'POST' }),
-    'Could not dismiss that confirmation.',
+    t('agent:session.error.dismissFailed'),
   );
 }
 
 export async function switchChange(id: number, changeId: number): Promise<AgentSession> {
   const body = await json<{ session: AgentSession }>(
     await request(`/api/agent-sessions/${id}/active-change`, { method: 'POST', body: JSON.stringify({ changeId }) }),
-    'Could not switch to that change.',
+    t('agent:session.error.switchFailed'),
   );
   return body.session;
 }
 
-export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?: string; changeId?: number | null }> {
-  const body = await json<{ stopped: boolean; reason?: string; changeId?: number | null }>(
-    await request(`/api/agent-sessions/${id}/stop`, { method: 'POST' }),
-    'Could not stop the Mayor.',
+export async function stopTurn(id: number, options: { token?: string | null; force?: boolean } = {}): Promise<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }> {
+  return json<{ stopped: boolean; reason?: string; stopRequestedAt?: number | null }>(
+    await request(`/api/agent-sessions/${id}/stop`, { method: 'POST', body: JSON.stringify(options) }),
+    t('agent:session.error.stopFailed'),
   );
-  // A running build belongs to its change: that change's own stop route
-  // confirms the kill (and escalates), as it does from a classic session.
-  if (!body.stopped && body.reason === 'dispatch_running' && body.changeId) {
-    await request(`/api/sessions/${body.changeId}/stop`, { method: 'POST', body: '{}' }).catch(() => null);
-  }
-  return body;
 }
 
-/** Stop the change's running visual change preview (the proposal's Rerun starts it again). */
+/** Stop the change's running before/after shots (the proposal's Take again starts them again). */
 export async function stopPreviewCapture(appSlug: string, changeId: number): Promise<{ stopped: boolean; reason?: string }> {
   return json<{ stopped: boolean; reason?: string }>(
-    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/evidence/stop`, { method: 'POST', body: '{}' }),
-    'Could not stop capturing previews.',
+    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/shots/stop`, { method: 'POST', body: '{}' }),
+    t('agent:session.error.stopCaptureFailed'),
   );
 }
 
@@ -487,13 +649,19 @@ export interface SpecVersion {
 /**
  * A change's spec, from the change's own routes (the conversation's owner
  * owns its changes): the latest text and its saved versions, newest first.
+ * `html` is the latest version's HTML document when it was written as one
+ * (#3699); `spec` is then its markdown copy.
  */
-export async function getSpec(changeId: number): Promise<{ spec: string; versions: SpecVersion[] }> {
-  const body = await json<{ spec?: string; versions?: SpecVersion[] }>(
+export async function getSpec(changeId: number): Promise<{ spec: string; html: string | null; versions: SpecVersion[] }> {
+  const body = await json<{ spec?: string; html?: string | null; versions?: SpecVersion[] }>(
     await request(`/api/sessions/${changeId}/spec`),
-    'Could not load the spec.',
+    t('agent:session.error.specFailed'),
   );
-  return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
+  return {
+    spec: typeof body.spec === 'string' ? body.spec : '',
+    html: typeof body.html === 'string' && body.html ? body.html : null,
+    versions: Array.isArray(body.versions) ? body.versions : [],
+  };
 }
 
 /**
@@ -501,7 +669,18 @@ export async function getSpec(changeId: number): Promise<{ spec: string; version
  * one the dev chat's Propose button and an imported PR's use.
  */
 export async function promoteChange(changeId: number): Promise<void> {
-  await json(await request(`/api/sessions/${changeId}/promote`, { method: 'POST' }), 'Could not put this change up for the vote.');
+  await json(await request(`/api/sessions/${changeId}/promote`, { method: 'POST' }), t('agent:session.error.proposeFailed'));
+}
+
+/**
+ * Name a change as its owner chose (#3251): the owner's title route, which
+ * sets the title the proposal goes to the vote with.
+ */
+export async function renameChange(changeId: number, title: string): Promise<void> {
+  await json(
+    await request(`/api/sessions/${changeId}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    t('agent:session.error.titleFailed'),
+  );
 }
 
 /**
@@ -510,15 +689,24 @@ export async function promoteChange(changeId: number): Promise<void> {
  * its staging_ready or staging_failed reaches the conversation.
  */
 export async function ensureChangeStaging(changeId: number): Promise<{ status: string; url?: string | null; reason?: string | null }> {
-  return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), 'Could not rebuild the preview.');
+  return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), t('agent:session.error.rebuildFailed'));
+}
+
+/** One saved version of a change's spec: its text, and its HTML document when it has one (#3699). */
+export async function getSpecVersionDoc(changeId: number, version: number): Promise<{ text: string; html: string | null }> {
+  const body = await json<{ spec?: { content?: string; content_html?: string | null } }>(
+    await request(`/api/sessions/${changeId}/specs/${version}`),
+    t('agent:session.error.specVersionFailed'),
+  );
+  const spec = body.spec || {};
+  return {
+    text: typeof spec.content === 'string' ? spec.content : '',
+    html: typeof spec.content_html === 'string' && spec.content_html ? spec.content_html : null,
+  };
 }
 
 export async function getSpecVersion(changeId: number, version: number): Promise<string> {
-  const body = await json<{ spec?: { content?: string } }>(
-    await request(`/api/sessions/${changeId}/specs/${version}`),
-    'Could not load that version of the spec.',
-  );
-  return body.spec && typeof body.spec.content === 'string' ? body.spec.content : '';
+  return (await getSpecVersionDoc(changeId, version)).text;
 }
 
 export async function getChange(changeId: number): Promise<ChangeDetail | null> {
@@ -571,30 +759,48 @@ export async function readEventStream(
   dispatch();
 }
 
-/** POST a turn and stream its events. Throws with the server's answer when it refuses. */
+/**
+ * POST a turn and stream its events. Throws with the server's answer when it
+ * refuses. `clientMessageId` is this screen's own id for the message: sent
+ * again after a dropped connection, the server recognises it and answers
+ * that it already has it (`duplicate`), with no second turn. `retry` re-runs
+ * a turn that did not finish, with no message of its own.
+ */
 export async function sendTurn(
   id: number,
   message: string,
-  { signal, onEvent, attachmentIds = [] }: {
+  { signal, onEvent, attachmentIds = [], clientMessageId = null, retry = false }: {
     signal?: AbortSignal;
     onEvent: (event: AgentTurnEvent) => void;
     /** Uploads to this conversation (uploadAttachment), sent with the message. */
     attachmentIds?: string[];
+    clientMessageId?: string | null;
+    retry?: boolean;
   },
-): Promise<void> {
+): Promise<{ duplicate: boolean; messageId?: number | null }> {
+  const payload: Record<string, unknown> = retry ? { retry: true } : { message };
+  if (attachmentIds.length) payload.attachmentIds = attachmentIds;
+  if (clientMessageId) payload.clientMessageId = clientMessageId;
   const response = await fetch(`/api/agent-sessions/${id}/turns`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(attachmentIds.length ? { message, attachmentIds } : { message }),
+    body: JSON.stringify(payload),
     signal,
   });
   if (!response.ok) {
-    await json(response, 'The Mayor could not take that message.');
-    return;
+    await json(response, t('agent:session.error.turnRefused'));
+    return { duplicate: false };
+  }
+  // The stream is the answer; JSON is the exception: the server already had
+  // this message (a retry after a dropped connection).
+  if (/application\/json/.test(response.headers?.get?.('Content-Type') || '')) {
+    const body = await json<{ duplicate?: boolean; messageId?: number }>(response, t('agent:session.error.turnRefused'));
+    return { duplicate: !!body.duplicate, messageId: body.messageId ?? null };
   }
   await readEventStream(response, onEvent);
+  return { duplicate: false };
 }
 
 /**
@@ -611,7 +817,7 @@ export async function uploadAttachment(id: number, file: Blob, filename: string)
       headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' },
       body: file,
     }),
-    `Could not attach ${filename}.`,
+    t('agent:session.error.attachFailed', { file: filename }),
   );
 }
 

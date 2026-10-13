@@ -89,7 +89,7 @@ test('#1788: the asserted row is still two days old, which is why slots must be 
 });
 
 test('the staging preview makes the deployment cue reviewable', () => {
-  assert.match(SRC, /pendingDemo\.deployment_state = 'deploying'/);
-  assert.match(SRC, /livePrNumber: 910127/);
-  assert.match(SRC, /pendingCount: 1/);
+  assert.match(SRC, /pendingDemo\.deployment_state = 'pending'/);
+  assert.match(SRC, /failedDemo\.deployment_state = 'failed'/);
+  assert.match(SRC, /unknownDemo\.deployment_state = 'unknown'/);
 });

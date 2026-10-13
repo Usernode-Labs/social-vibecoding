@@ -97,6 +97,28 @@ function code(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+// A disabled Save looked exactly like a live one: the button recipes had no
+// disabled state. Each filled recipe now dims, shows the not-allowed cursor,
+// and keeps its resting fill under the pointer (the hover would otherwise
+// still lighten it, which reads as pressable). `disabled:` matches only a
+// form control, so an <a> drawn with a recipe hovers as before.
+test('every button recipe looks disabled when it is', () => {
+  const { btn } = loadRegistry();
+  for (const key of ['primary', 'outline', 'destructive', 'primarySm', 'outlineSm', 'destructiveSm']) {
+    const classes = btn[key].split(/\s+/);
+    assert.ok(classes.includes('disabled:opacity-50'), `AdminUI.btn.${key} dims when disabled`);
+    assert.ok(classes.includes('disabled:cursor-not-allowed'), `AdminUI.btn.${key} shows it cannot be pressed`);
+    const rest = classes.find((c) => /^bg-(?:violet|red|zinc)-\d+$/.test(c));
+    assert.ok(rest, `AdminUI.btn.${key} has a resting fill`);
+    assert.ok(classes.includes(`disabled:hover:${rest}`), `AdminUI.btn.${key} keeps ${rest} under the pointer when disabled`);
+    const darkRest = classes.find((c) => /^dark:bg-zinc-\d+$/.test(c));
+    if (darkRest) {
+      assert.ok(classes.includes(`dark:disabled:hover:${darkRest.slice('dark:'.length)}`),
+        `AdminUI.btn.${key} keeps its dark fill under the pointer when disabled`);
+    }
+  }
+});
+
 test('the admin console does not reach for the shell’s primitives', () => {
   // THIS is the boundary now. It used to be a palette one — gray/indigo here,
   // zinc/violet there — and the widget-language reskin folded the console into

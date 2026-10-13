@@ -56,6 +56,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
 
   const calls = [];
   const dbCalls = [];
+  const stdinCalls = [];
   const realDocker = require('../src/services/docker');
   stub(ids.docker, {
     ...realDocker,
@@ -65,7 +66,10 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
       return { stdout: '', stderr: '' };
     },
     // execInWorker writes the turn prompt through this one.
-    execShellStdin: async () => ({ stdout: '', stderr: '' }),
+    execShellStdin: async (runtimeName, script, opts) => {
+      stdinCalls.push({ runtimeName, script, opts });
+      return { stdout: '', stderr: '' };
+    },
   });
   const noop = () => {};
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
@@ -139,7 +143,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
     }
     delete require.cache[require.resolve('../src/services/worker')];
   };
-  return { worker, calls, dbCalls, restore };
+  return { worker, calls, dbCalls, stdinCalls, activeTurns, restore };
 }
 
 // A warm worker execInWorker will accept a dispatch for.
@@ -374,6 +378,53 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
   } finally { restore(); }
 });
 
+// Change 7490 (9 Oct 2026): attempt registration (startCodexAttempt) writes
+// the turn's record in dispatch_pending BEFORE execInWorker. The pending-stop
+// gate returned ahead of the try/finally that releases a turn, so a skipped
+// dispatch left that record behind; the Homeroom bot's follow-ups never
+// finish turns themselves, and the proposal read as running for good.
+test('a skipped dispatch releases the record registered for it', async () => {
+  const { worker, activeTurns, restore } = loadWorker();
+  try {
+    warmSession(worker, 8104);
+    activeTurns.set(8104, { turnId: 'registered-8104', phase: 'dispatch_pending', journal: '/home/node/.claude/turn-a.log' });
+    await worker.stopTurn(8104);
+
+    const state = await worker.execInWorker(8104, {
+      ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'registered-8104',
+    });
+
+    assert.equal(state.exitCode, 143, 'still skipped, with the killed-turn shape');
+    assert.equal(activeTurns.has(8104), false, 'and its record is cleared, as a finished turn\'s is');
+    assert.equal(await worker.finishTurn(8104, { turnId: 'registered-8104' }), true,
+      'a caller that finishes the turn itself finds nothing left, and that is fine');
+  } finally { restore(); }
+});
+
+test('a skipped dispatch hands a tail-holding caller its record, and never touches another turn\'s', async () => {
+  const { worker, activeTurns, restore } = loadWorker();
+  try {
+    warmSession(worker, 8105);
+    activeTurns.set(8105, { turnId: 'registered-8105', phase: 'dispatch_pending' });
+    await worker.stopTurn(8105);
+    await worker.execInWorker(8105, {
+      ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'registered-8105', holdTurnRecord: true,
+    });
+    assert.equal(activeTurns.get(8105)?.phase, 'tail_pending', 'handed to the tail, as the finally would');
+
+    // A record that is not this attempt's, or has moved past dispatch, stays.
+    warmSession(worker, 8106);
+    activeTurns.set(8106, { turnId: 'someone-else', phase: 'dispatch_pending' });
+    await worker.stopTurn(8106);
+    await worker.execInWorker(8106, { ...DISPATCH_ARGS, agentBackend: 'codex_openrouter', logicalTurnId: 'mine-8106' });
+    assert.deepEqual(activeTurns.get(8106), { turnId: 'someone-else', phase: 'dispatch_pending' });
+
+    activeTurns.set(8106, { turnId: 'mine-8106', phase: 'executing' });
+    assert.equal(await worker.releaseSkippedDispatch(8106, 'mine-8106'), false, 'executing is not a skipped dispatch');
+    assert.equal(activeTurns.get(8106).phase, 'executing');
+  } finally { restore(); }
+});
+
 test('a skipped legacy dispatch does not invent a durable turn owner', async () => {
   const { worker, calls, restore } = loadWorker();
   try {
@@ -501,48 +552,102 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
-test('a hosted Codex evidence turn cannot dispatch without the planning contract', async () => {
-  const { worker, calls, restore } = loadWorker();
+// Every shots turn runs on Claude Code. An OpenRouter evidence
+// turn, on either harness, is refused before a token is minted, a context
+// file is written, or the provider is touched.
+test('a shots turn on an OpenRouter backend is refused before anything is dispatched', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8304);
-    await assert.rejects(
-      () => worker.execInWorker(8304, {
-        ...DISPATCH_ARGS,
-        mode: 'evidence',
-        agentBackend: 'codex_openrouter',
-        systemPrompt: null,
-        evidenceRunId: '1'.repeat(32),
-        evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-        evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-      }),
-      /hosted Codex evidence requires systemPrompt/,
-    );
-    assert.equal(calls.length, 0, 'validation fails before the provider is touched');
+    for (const [sessionId, agentHarness] of [[8304, null], [8305, 'codex'], [8306, 'claude']]) {
+      warmSession(worker, sessionId);
+      await assert.rejects(
+        () => worker.execInWorker(sessionId, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'codex_openrouter',
+          agentHarness,
+          agentModel: 'z-ai/glm-5.3-flash',
+          agentModelMetadata: { supportsTools: true },
+          openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+        }),
+        /execInWorker: shots turns run on Claude Code/,
+        String(agentHarness),
+      );
+    }
+    assert.equal(calls.length, 0, 'validation fails before either context file or the provider is touched');
   } finally { restore(); }
 });
 
-test('Codex evidence dispatch carries the planning contract file to its runner', async () => {
+test('a shots turn refuses a clip size that is not WIDTHxHEIGHT before anything is dispatched', async () => {
   const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8305);
-    await worker.execInWorker(8305, {
-      mode: 'evidence',
-      prompt: 'open the run context',
-      systemPrompt: 'Use evidence_get_context first and submit through evidence_run_plan.',
-      branchName: 'dev/test',
-      agentBackend: 'codex_openrouter',
-      agentModel: 'z-ai/glm-5.3-flash',
-      agentModelMetadata: { supportsTools: true },
-      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
-      evidenceRunId: '1'.repeat(32),
-      evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-      evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-    });
+    warmSession(worker, 8307);
+    for (const shotsClipSize of ['390', '390x844 --flag', '0x844', 12]) {
+      await assert.rejects(
+        () => worker.execInWorker(8307, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'claude_code',
+          model: 'claude-sonnet-5-5',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+          shotsRecordClips: true,
+          shotsClipSize,
+        }),
+        /execInWorker: shots clip size must be WIDTHxHEIGHT/,
+        String(shotsClipSize),
+      );
+    }
+    assert.equal(calls.length, 0);
+  } finally { restore(); }
+});
+
+// A persona with a phone screen gets a phone browser beside its desktop one
+// (worker/write-shots-mcp-config.js reads SHOTS_PHONE_PERSONAS).
+test('a shots turn names the personas that get a phone browser, and refuses anything else', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  const shots = (extra) => ({
+    mode: 'shots',
+    prompt: 'open the run context',
+    systemPrompt: 'Shots agent contract.',
+    branchName: 'dev/test',
+    agentBackend: 'claude_code',
+    model: 'claude-sonnet-5-5',
+    shotsRunId: '1'.repeat(32),
+    shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+    shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+    ...extra,
+  });
+  try {
+    warmSession(worker, 8309);
+    for (const bad of [
+      { shotsPhonePersonas: ['admin'] }, { shotsPhonePersonas: ['member', '../state'] },
+      { shotsPhonePersonas: 'member' }, { shotsPhonePersonas: null },
+      { shotsRecordClips: true, shotsPhoneClipSize: '390' },
+    ]) {
+      await assert.rejects(() => worker.execInWorker(8309, shots(bad)),
+        /execInWorker: shots (?:phone personas must be a list of personas|clip size must be WIDTHxHEIGHT)/,
+        JSON.stringify(bad));
+    }
+    assert.equal(calls.length, 0, 'refused before anything is dispatched');
+
+    await worker.execInWorker(8309, shots({
+      shotsRecordClips: true, shotsClipSize: '1280x800', shotsPhoneClipSize: '390x844',
+      shotsPhonePersonas: ['member', 'guest', 'member'],
+    }));
     const dispatch = calls.find(isDispatch);
-    assert.ok(dispatch, 'Codex evidence turn was dispatched');
-    assert.ok(dispatch.args.includes('MODE=evidence'));
-    assert.ok(dispatch.args.includes('SYSTEM_PROMPT_FILE=/home/node/.claude/turn-system-prompt.txt'));
-    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')));
+    assert.ok(dispatch, 'a valid shots turn dispatches');
+    assert.ok(dispatch.args.includes('SHOTS_PHONE_PERSONAS=["member","guest"]'));
+    assert.ok(dispatch.args.includes('SHOTS_CLIP_SIZE=1280x800'));
+    assert.ok(dispatch.args.includes('SHOTS_PHONE_CLIP_SIZE=390x844'));
   } finally { restore(); }
 });
 
@@ -576,6 +681,41 @@ test('a complete resume fallback is accepted only for a resumed hosted-Claude bu
   } finally { restore(); }
 });
 
+// The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner) resumes
+// a build's conversation with a short prompt; when Claude Code cannot resume
+// it, run-cc.sh starts afresh, and must do so from the whole build prompt,
+// on OpenRouter as on Anthropic.
+test('a resumed Claude Code build on OpenRouter carries its complete fresh fallback to the runner', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  const env = (dispatch, name) => dispatch.args.find((a) => typeof a === 'string' && a.startsWith(`${name}=`));
+  try {
+    const args = {
+      mode: 'build',
+      prompt: 'the nudge',
+      resumeSessionId: 'claude-session-1',
+      branchName: 'dev/openrouter-test',
+      agentBackend: 'codex_openrouter',
+      agentHarness: 'claude',
+      agentModel: 'z-ai/glm-5.3-flash',
+      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+    };
+    warmSession(worker, 8311);
+    await worker.execInWorker(8311, { ...args, resumeFallbackPrompt: 'the whole build prompt, then the nudge' });
+    const withFallback = calls.filter(isDispatch).at(-1);
+    // #4575: the turn's own file, named by its id, never a path another
+    // turn on the session shares.
+    assert.match(env(withFallback, 'RESUME_FALLBACK_PROMPT_FILE'),
+      /^RESUME_FALLBACK_PROMPT_FILE=\/home\/node\/\.claude\/turn-resume-fallback-prompt-[A-Za-z0-9-]+\.txt$/);
+    assert.equal(env(withFallback, 'CLAUDE_RESUME_SESSION_ID'), 'CLAUDE_RESUME_SESSION_ID=claude-session-1');
+
+    warmSession(worker, 8312);
+    await worker.execInWorker(8312, args);
+    assert.equal(env(calls.filter(isDispatch).at(-1), 'RESUME_FALLBACK_PROMPT_FILE'), 'RESUME_FALLBACK_PROMPT_FILE=',
+      'every other OpenRouter turn has none');
+  } finally { restore(); }
+});
+
 test('Codex dispatch forwards OpenRouter model metadata without exposing its key in argv', async () => {
   const { worker, calls, restore } = loadWorker({
     journalLines: ['__USERNODE_EXIT__ 0'],
@@ -596,6 +736,7 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
         supportsReasoning: true,
         reasoningEfforts: ['low', 'medium', 'high'],
         supportsTools: true,
+        supportsImages: true,
       },
       openrouterApiKey: 'sk-or-must-not-appear-in-argv',
       openrouterApiBase: 'https://openrouter.ai/api/v1',
@@ -611,12 +752,114 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
       'AGENT_MODEL_SUPPORTS_REASONING=1',
       'AGENT_MODEL_REASONING_EFFORTS=low,medium,high',
       'AGENT_MODEL_SUPPORTS_TOOLS=1',
+      // #3426: the catalog builder declares image input from this.
+      'AGENT_MODEL_SUPPORTS_IMAGES=1',
     ]) {
       assert.ok(dispatch.args.includes(expected), `${expected} reaches the runner`);
     }
+    // Text only unless the catalog said images, on both OpenRouter runtimes.
+    const workerSrc = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/g) || []).length, 2);
+    // #3557: PDFs only on the Claude Code runtime, whose Read tool sends them.
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata\?\.supportsFiles === true \? '1' : '';/g) || []).length, 1);
     assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
       'Docker copies the secret from the host environment by name');
     assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),
       'the OpenRouter key value never enters docker argv');
   } finally { restore(); }
+});
+
+
+test('immediate Stop kills the process tree without a TERM grace window and confirms before the journal marker', () => {
+  const { worker, restore } = loadWorker();
+  try {
+    const script = worker.buildTurnStopScript('/tmp/turn.log', { force: true });
+    assert.doesNotMatch(script, /kill -TERM/);
+    assert.ok(script.indexOf('kill -STOP') < script.indexOf('kill -KILL'), 'freeze before collecting descendants');
+    assert.match(script, /PPid:/, 'tool subprocesses are included');
+    assert.ok(script.indexOf('kill -KILL') < script.indexOf('__USERNODE_EXIT__ 137'));
+    assert.ok(script.indexOf('exit 75') < script.indexOf('__USERNODE_EXIT__ 137'), 'a live survivor is an error, never a fake exit');
+  } finally { restore(); }
+});
+
+test('immediate stop errors reach the caller, and its remote command has a short timeout', async () => {
+  const { worker, calls, restore } = loadWorker({ onExec: async () => { throw new Error('runtime unavailable'); } });
+  try {
+    await assert.rejects(worker.stopTurn(4242, { force: true }), /runtime unavailable/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.timeout, 5000);
+    assert.match(calls[0].args[4], /kill -KILL/);
+    assert.doesNotMatch(calls[0].args[4], /kill -TERM/);
+  } finally { restore(); }
+});
+
+// #4575: the before & after shots lost a race with the Homeroom bot's turn
+// on the same session. The bot's turn held chat_sessions.active_turn, the
+// shots dispatch wrote its prompt and then could not claim the session, and
+// the card read "execInWorker: durable active turn could not be persisted".
+test('a dispatch that loses the session to another turn says why, and leaves the winner alone', async () => {
+  const { worker, calls, stdinCalls, activeTurns, restore } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+  });
+  try {
+    warmSession(worker, 8330);
+    // The winner: its durable record, and the in-memory state a previous
+    // turn left on the registry (its journal, an unpushed commit).
+    const winner = { turnId: 'bot-turn-1', phase: 'executing', mode: 'build',
+      journal: '/home/node/.claude/turn-bot-turn-1.log' };
+    activeTurns.set(8330, winner);
+    worker._registryUpsertForTests(8330, {
+      activeTurnMode: 'build', journal: winner.journal, activeTurnId: winner.turnId,
+      unpushed: { sha: 'abc' },
+    });
+
+    await assert.rejects(
+      () => worker.execInWorker(8330, {
+        ...DISPATCH_ARGS, mode: 'build', logicalTurnId: 'shots-turn-1',
+      }),
+      (err) => {
+        assert.equal(err.code, 'durable_turn_persist_failed');
+        assert.equal(err.persistCode, 'session_busy');
+        assert.equal(err.sessionBusy, true);
+        assert.match(err.message, /another turn already owns this session/);
+        return true;
+      },
+    );
+
+    assert.deepEqual(activeTurns.get(8330), winner, 'the winner keeps the session');
+    const own = worker.turnPromptPaths('shots-turn-1');
+    // The loser wrote only its own files, never the shared prompt path.
+    const written = stdinCalls.map((c) => c.script).join('\n');
+    assert.match(written, new RegExp(`> ${own.prompt}\n`));
+    assert.match(written, new RegExp(`> ${own.system}\n`));
+    assert.doesNotMatch(written, new RegExp(`> ${worker.TURN_PROMPT_PATH}\n`));
+    assert.doesNotMatch(written, new RegExp(`> ${worker.TURN_SYSTEM_PROMPT_PATH}\n`));
+    // ...and removed them again, since no turn will read them.
+    const rm = calls.find((c) => c.args?.[0] === 'exec' && c.args.includes('rm'));
+    assert.ok(rm && rm.args.includes(own.prompt) && rm.args.includes(own.system));
+    assert.ok(!calls.some(isDispatch), 'nothing was dispatched');
+    assert.equal(worker.isInFlight(8330), false);
+    // The in-memory record the dispatch replaced is put back: a Stop still
+    // writes its marker to the winner's own journal.
+    await worker.stopTurn(8330);
+    const stop = calls.find(isStopScript);
+    assert.ok(stop && stop.args[4].includes(winner.journal),
+      'the stop targets the journal the losing dispatch would have wiped');
+  } finally { restore(); }
+});
+
+test('concurrent turns on one session write their prompts to different files', () => {
+  const worker = require('../src/services/worker');
+  const a = worker.turnPromptPaths('11111111-1111-4111-8111-111111111111');
+  const b = worker.turnPromptPaths('22222222-2222-4222-8222-222222222222');
+  assert.notEqual(a.prompt, b.prompt);
+  assert.notEqual(a.system, b.system);
+  assert.notEqual(a.resumeFallback, b.resumeFallback);
+  for (const path of Object.values(a)) {
+    assert.match(path, /^\/home\/node\/\.claude\/turn-[a-z-]+-11111111-1111-4111-8111-111111111111\.txt$/);
+    // The dispatch wrapper's `rm -f turn-*.log` must never reach a prompt.
+    assert.doesNotMatch(path, /\.log$/);
+  }
+  // An id that is not path-safe falls back to the fixed paths.
+  assert.equal(worker.turnPromptPaths('../x').prompt, worker.TURN_PROMPT_PATH);
 });

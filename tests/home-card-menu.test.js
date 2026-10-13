@@ -31,10 +31,19 @@ const { installAppCard } = require('./helpers/app-card');
 
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 const { installGridStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
 }
+
+test('app listing report action follows server eligibility and stays hidden until loaded', () => {
+  const Home = makeHome({id:3});
+  for (const can_report of [undefined,false,true]) {
+    const items = Home.menuItemsFor({id:928,slug:'watchnest-0bd214',name:'WatchNest',created_by:3,can_report});
+    assert.equal(items.some(item=>item.key==='report'),can_report===true);
+  }
+});
 
 // Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
 // DOM. It draws a rounded-rect tile (face + hairline) before the glyph,
@@ -70,6 +79,8 @@ function fakeCtx(paints) {
 function makeHomeEnv(user) {
   const sandbox = {
     console,
+    // The build line's words are read from the catalog (#4053).
+    PlatformI18n: englishPlatformI18n(),
     App: { user },
     document: {
       getElementById: () => null,
@@ -112,6 +123,7 @@ function makeHomeEnv(user) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
@@ -135,6 +147,7 @@ const baseApp = (over) => ({
   name: 'Demo App',
   status: 'running',
   created_by: OTHER,
+  can_report: over?.created_by !== ME && !over?.demo,
   created_at: '2026-06-01T00:00:00Z',
   last_deploy_at: null,
   repo_url: 'https://github.com/o/r',
@@ -203,6 +216,9 @@ test('renderAppPillsHtml: always display-only spans, ordered, self-trimming', ()
   assert.match(html, /1 in dev/);
   assert.match(html, /3 issues/);
   assert.match(html, /Private</, 'privacy chip last');
+  // Private decides who can OPEN the app; its code is public on GitHub, so
+  // the tooltip says open, never see.
+  assert.match(html, /title="Only members can open and use this app"/);
   const order = ['Missing secrets', '2 to vote', '1 in dev', '3 issues', 'Private']
     .map((s) => html.indexOf(s));
   assert.ok(order.every((idx, i) => idx !== -1 && (i === 0 || idx > order[i - 1])),
@@ -292,6 +308,21 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
   assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
   assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
+  // #4053: a first version Homeroom bot is making says its build line
+  // instead, quiet, and blue only when it waits on the reader. Run four
+  // (13 Oct): in the tile's short words, on one line, so nothing is cut off.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating', first_version_line: 'planning' })),
+    /<p class="app-card-status line-clamp-1 text-zinc-500 dark:text-zinc-400" data-build-line="planning">Planning<\/p>/);
+  assert.match(Home.renderAppCard(baseApp({ first_version_line: 'plan' })),
+    /<p class="app-card-status line-clamp-1 font-semibold text-\[color:var\(--accent\)\]" data-build-line="plan">Plan ready<\/p>/);
+  // The name keeps its two lines: the caption needs only one.
+  assert.doesNotMatch(Home.renderAppCard(baseApp({ first_version_line: 'plan' })), /\[&_\.app-card-title\]/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error', first_version_line: 'planning' })), />Error</);
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'question' })).statusLabel, 'Question');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'ready' })).statusLabel, 'Ready to try');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
+  assert.equal(Home.appView(baseApp()).buildLine, null);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {
@@ -432,9 +463,9 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Your apps');
+  assert.equal(items[2].label, 'Add to My apps');
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -457,7 +488,7 @@ test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Remove from Your apps');
+  assert.equal(fav.label, 'Remove from My apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -470,7 +501,7 @@ test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => 
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, undefined, 'active, not the old inert row');
-  assert.equal(fav.label, 'Remove from Your apps');
+  assert.equal(fav.label, 'Remove from My apps');
   assert.equal(typeof fav.run, 'function', 'action wired');
 });
 
@@ -478,7 +509,7 @@ test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(fav.label, 'Add to Your apps');
+  assert.equal(fav.label, 'Add to My apps');
   assert.equal(typeof fav.run, 'function');
 });
 
@@ -594,7 +625,7 @@ test('menu: full admin on a running repo app gets check-updates, lock and safe a
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings']);
+    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings', 'report']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
@@ -653,7 +684,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
     'no retry/check/lock/delete');
 });
 
@@ -728,7 +759,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen']);
+    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen', 'report']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
@@ -898,7 +929,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Your apps here/);
+  assert.match(empty, /Drag a card from My apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

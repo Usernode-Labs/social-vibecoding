@@ -51,14 +51,16 @@ const STATIC_MODAL = read('frontend/src/lib/static-modal.ts');
 const KIT_SURFACE = read('frontend/src/lib/kit-surface.ts');
 const USE_DIALOG = read('frontend/src/features/dialogs/use-dialog.ts');
 
-// The eleven roots. This list was read out of platform-ui.js's STATIC_MODAL_IDS
+// The roots. This list was read out of platform-ui.js's STATIC_MODAL_IDS
 // until chunk I retired it; it is spelled out here now, and the first test
-// below is what keeps it honest against the components. The tenth —
-// #board-filters-modal — is the Streamlined Concept's Filters dialog, NEW
-// markup on the same useDialog contract as the nine converted ones. The
-// eleventh is native-only legacy-wallet recovery.
+// below is what keeps it honest against the components. #board-filters-modal
+// is the Streamlined Concept's Filters dialog, NEW markup on the same
+// useDialog contract as the nine converted ones, and #wallet-recovery-modal
+// is native-only legacy-wallet recovery. #create-modal, the first of the
+// nine, is retired: Create opens "What do you want to make?"
+// (tests/create-front-door.test.js).
 const DIALOG_IDS = [
-  'create-modal', 'rename-modal', 'close-issue-modal', 'fork-modal',
+  'rename-modal', 'close-issue-modal', 'fork-modal',
   'import-pr-modal', 'members-modal', 'feedback-modal', 'share-modal',
   'app-secrets-modal', 'board-filters-modal', 'wallet-recovery-modal', 'app-settings-modal',
   // #1374: per-app notification settings. Its own dialog rather than a
@@ -66,19 +68,31 @@ const DIALOG_IDS = [
   // admins and the creator while these switches belong to everybody who
   // uses the app.
   'app-notifications-modal',
+  'report-modal', // #2721 shared reporting dialog
+  // #4405: a project's custom domain. Its own dialog rather than a section
+  // of app-settings-modal: that one proposes a vote-gated access change,
+  // this one claims a hostname and shows where it stands on its way live.
+  'app-domain-modal',
+  // #4417: a project's topics (Settings & rules › Topics). Its own dialog:
+  // each change it makes is a proposal against dapp.json's `topics`.
+  'topics-modal',
+  // #4666: who can see a project and how its changes are approved, one
+  // proposal for both. Its own dialog: it replaces the approval controls of
+  // members-modal and the Access section of app-settings-modal.
+  'who-decides-modal',
 ];
 
 /**
  * Not every .tsx here is a dialog.
  *
- * `create-progress.tsx` is the second VIEW of the create dialog — the card
- * swaps to it after a successful POST /api/apps and reports the creation
- * phases app-creator broadcasts. It renders no modal root, holds no
- * visibility, and is rendered by create-app.tsx rather than by index.tsx,
- * so the seam contract below does not apply to it.
+ * `create-progress.tsx` is the second VIEW of the fork dialog (it was the
+ * retired create dialog's too) — the card swaps to it after a successful
+ * POST and reports the creation phases app-creator broadcasts. It renders
+ * no modal root, holds no visibility, and is rendered by fork-app.tsx rather
+ * than by index.tsx, so the seam contract below does not apply to it.
  *
- * `app-allowance.tsx` is the allowance panel shared by create-app.tsx and
- * fork-app.tsx. It renders inside those dialogs and owns no modal root or
+ * `app-allowance.tsx` is the allowance panel fork-app.tsx and the make
+ * screen (features/first-session/make.tsx) draw. It owns no modal root or
  * dialog visibility, so it belongs to the same support half.
  *
  * The partition is by "does this file render a *-modal root", and the
@@ -86,7 +100,9 @@ const DIALOG_IDS = [
  * is the load-bearing one: without it, a genuine dialog that forgot its
  * root would fall into the support half and skip every check in this file.
  */
-const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx'];
+// controller-text.tsx is the first words of a node a controller module then
+// owns (feedback, members, app secrets); it renders text, never a root.
+const SUPPORT_FILES = ['create-progress.tsx', 'app-allowance.tsx', 'controller-text.tsx'];
 
 const allFiles = fs.readdirSync(DIALOGS)
   .filter((f) => f.endsWith('.tsx') && f !== 'index.tsx');
@@ -111,7 +127,8 @@ const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
  * see the comment above AutoSessionModal. They already build on DialogCard,
  * which is the whole of the chassis available to them.
  */
-const MESSAGES_DIALOGS = ['agent-dialog.tsx', 'create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
+// #3660 adds Share to…, the card menus' one-step share (share-to-dialog.tsx).
+const MESSAGES_DIALOGS = ['create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx', 'share-to-dialog.tsx'];
 const chassisSrc = new Map([
   ...componentSrc,
   ...MESSAGES_DIALOGS.map((f) => [`messages/${f}`, fs.readFileSync(path.join(MESSAGES, f), 'utf8')]),
@@ -144,10 +161,12 @@ function rootTag(src, id) {
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
-  // 12 → 13 with #1374's per-app notification dialog. The count guards the
-  // list above against being trimmed to make this test pass; the per-id
-  // assertions below are what actually check the 1:1 mapping.
-  assert.equal(DIALOG_IDS.length, 13);
+  // 13 → 14 with #2721's shared report dialog, 14 → 13 with the create
+  // dialog's retirement, 13 → 14 with #4405's Custom domain dialog, and
+  // 14 → 15 with #4417's Topics dialog. The count guards the list above against being trimmed to make this test
+  // pass; the per-id assertions below are what actually check the 1:1
+  // mapping.
+  assert.equal(DIALOG_IDS.length, 16);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);
@@ -286,7 +305,10 @@ test('the dialogs still publish controllers for the legacy call sites', () => {
   assert.match(USE_DIALOG, /dialogs\[name\] = controller/);
   const appJs = read('public/js/app.js');
   const appViewJs = read('public/js/app-view.js');
-  assert.match(appJs, /window\.UsernodeReact\?\.dialogs\?\.create\?\.open\(\)/);
+  // App.showCreateModal opens the make screen; the create dialog it used
+  // to forward to is retired (tests/create-front-door.test.js).
+  assert.match(appJs, /showCreateModal\(opts\) \{\s+const front = window\.UsernodeReact\?\.firstSession;/);
+  assert.doesNotMatch(appJs, /dialogs\?\.create\?\.open/);
   for (const name of ['rename', 'closeIssue', 'fork', 'importPr', 'share']) {
     assert.ok(appViewJs.includes(`dialogIsland('${name}')`),
       `app-view.js no longer forwards to the ${name} dialog island`);

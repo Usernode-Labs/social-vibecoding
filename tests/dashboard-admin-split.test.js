@@ -44,21 +44,18 @@ function handler(sql) {
       creators: 10, creators_admin: 1,
     }] };
   }
-  if (/started_admin/.test(sql) && /LEFT JOIN users usr/.test(sql)) {
+  if (/started_admin/.test(sql) && /cohort_sessions AS/.test(sql)) {
     return { rows: [{
       started: 50, started_admin: 5,
       produced_pr: 40, produced_pr_admin: 4,
       promoted: 30, promoted_admin: 3,
       received_vote: 20, received_vote_admin: 2,
       merged: 10, merged_admin: 1,
-    }] };
-  }
-  if (/COUNT\(DISTINCT cs\.user_id\)/.test(sql)) {
-    return { rows: [{
-      started: 25, started_admin: 3,
-      produced_pr: 20, produced_pr_admin: 2,
-      promoted: 15, promoted_admin: 1,
-      merged: 8, merged_admin: 1,
+      reach_started: 25, reach_started_admin: 3,
+      reach_produced_pr: 20, reach_produced_pr_admin: 2,
+      reach_promoted: 15, reach_promoted_admin: 1,
+      reach_received_vote: 10, reach_received_vote_admin: 1,
+      reach_merged: 8, reach_merged_admin: 1,
     }] };
   }
   // Growth.
@@ -135,6 +132,8 @@ test('funnels: every stage carries an _admin companion when includeAdmins=true',
   // Non-admin value stays the base count.
   assert.equal(f.dappUsage.signed_up, 100);
   assert.equal(f.dappUsage.signed_up_admin, 5);
+  assert.equal(f.prSessions.started, 50);
+  assert.equal(f.prUsers.started, 25);
 });
 
 test('growth: each weekly row carries the four _admin companions', async () => {
@@ -212,6 +211,31 @@ test('includeAdmins gates the SQL: NOT-IN admin filter present when off, dropped
   const onSql = lastQueries.find((s) => /new_users_admin/.test(s));
   assert.doesNotMatch(onSql, /NOT IN \(SELECT id FROM users WHERE is_admin\)/,
     'with the box on, admins are included so the NOT-IN filter is dropped (the split FILTER does the work)');
+});
+
+test('test accounts are left out of the analytics whatever the admin box says', async () => {
+  const testsOut = /IS NULL OR [\w.]+ NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL( OR is_synthetic)?\)/;
+  // #3970: synthetic accounts (the Homeroom bot) are no one's use either.
+  // Only spend keeps them: the bot's own LLM spend is still platform spend.
+  const botOut = /NOT IN \(SELECT id FROM users WHERE test_account_created_at IS NOT NULL OR is_synthetic\)/;
+  for (const flag of ['false', 'true']) {
+    lastQueries = [];
+    await get(`/api/admin/analytics/growth?includeAdmins=${flag}`);
+    const sql = lastQueries.find((s) => /new_users_admin/.test(s));
+    assert.match(sql, testsOut, `growth with includeAdmins=${flag}`);
+    assert.match(sql, botOut, `growth leaves the bot out with includeAdmins=${flag}`);
+    lastQueries = [];
+    await get(`/api/admin/analytics/overview?includeAdmins=${flag}`);
+    assert.ok(lastQueries.length >= 6 && lastQueries.every((q) => testsOut.test(q)),
+      `every overview counter with includeAdmins=${flag}`);
+    assert.ok(lastQueries.filter((q) => !/FROM llm_usage/.test(q)).every((q) => botOut.test(q)),
+      `every overview counter but spend leaves the bot out with includeAdmins=${flag}`);
+  }
+  const funnels = read('src/services/analytics-funnels.js');
+  assert.equal((funnels.match(/AND u\.test_account_created_at IS NULL/g) || []).length, 2,
+    'both funnels\' cohorts leave test accounts out');
+  assert.equal((funnels.match(/AND NOT u\.is_synthetic/g) || []).length, 2,
+    'both funnels\' cohorts leave the bot out');
 });
 
 // ── 2. Source guards — route SQL companions ──────────────────────────────

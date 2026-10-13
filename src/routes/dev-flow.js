@@ -72,7 +72,7 @@ const STATUS_BY_CODE = {
   pr_open_failed: 502,
   import_failed: 502,
   invalid_request: 400,
-  invalid_visual_evidence: 400,
+  invalid_visible_changes: 400,
   at_capacity: 429,
   // The update path (#1054). Three of these are 409 rather than 403 on
   // purpose: `base_mismatch` and `branch_moved` mean the caller's picture of
@@ -96,6 +96,10 @@ const STATUS_BY_CODE = {
   // matches import_failed, its exact twin on the other destination.
   already_shared: 409,
   share_failed: 502,
+  // #4266: closeWorkOrder's answer for a work order closed before. Only the
+  // connector's close_work_order emits it today; mapped like already_submitted,
+  // its sibling, so no service code answers a bare 400 here.
+  already_closed: 409,
 };
 
 // Same-origin guard for the two writes, copied in spirit from

@@ -18,6 +18,12 @@
 // BEFORE requiring the route module, capture every query, and assert the
 // INSERT's column list + params directly (the persistence is the contract).
 //
+// #2779: only an agent session's Mayor creates a change now (a delegated
+// agent_mayor grant naming the session); every request here carries one,
+// and the pool answers the agent session's own reads as an open session with
+// no model choice of its own, so the behaviour under test is unchanged. The
+// refusal of every other caller has its own test at the bottom.
+//
 // Run with: node --test tests/create-session-issue-link.test.js
 
 const { test } = require('node:test');
@@ -29,6 +35,11 @@ let capturedQueries = [];
 poolMod.getPool = () => ({
   query: (sql, params) => {
     capturedQueries.push({ sql: String(sql), params });
+    // The Mayor's conversation: open, the caller's, nothing active to park,
+    // and no model choice of its own (so the user's default applies).
+    if (/FROM agent_sessions/.test(String(sql))) {
+      return Promise.resolve({ rows: [{ id: 5, active_change_id: null, agent_backend: null }] });
+    }
     return poolQueryHandler(sql, params);
   },
 });
@@ -72,10 +83,12 @@ function installInsertCapture() {
   return () => insert;
 }
 
-function startServer(config = {}) {
+const MAYOR = { kind: 'agent_mayor', agentSessionId: 5 };
+
+function startServer(config = {}, { delegation = MAYOR } = {}) {
   const app = express();
   app.use(express.json());
-  app.use((req, res, next) => { req.user = VIEWER; next(); });
+  app.use((req, res, next) => { req.user = VIEWER; req.mcpDelegation = delegation; next(); });
   app.use(sessionRoutes(config));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
@@ -492,4 +505,34 @@ test('a failing claim never fails session creation', async (t) => {
   const res = await postSession({ issueNumber: 287 });
   assert.strictEqual(res.status, 201);
   assert.strictEqual((await res.json()).session.id, 99);
+});
+
+test('#2779: nobody but an agent session\'s Mayor creates a session', async () => {
+  const getInsert = installInsertCapture();
+  const callers = [
+    ['a browser', null],
+    ['a delegated grant that names no conversation', { kind: 'agent_mayor', agentSessionId: null }],
+    ['a coding agent\'s read grant', { kind: 'worker_read', agentSessionId: 5 }],
+  ];
+  try {
+    for (const [who, delegation] of callers) {
+      const server = await startServer({}, { delegation });
+      try {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ issueNumber: 287 }),
+        });
+        assert.strictEqual(res.status, 403, who);
+        const body = await res.json();
+        assert.strictEqual(body.code, 'agent_sessions_only', who);
+        assert.match(body.error, /agent session/, who);
+      } finally {
+        server.close();
+      }
+    }
+    assert.strictEqual(getInsert(), null, 'no row is written for any of them');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+  }
 });

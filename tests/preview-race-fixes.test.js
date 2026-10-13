@@ -55,7 +55,7 @@ test('the promote kick consults the stranded-pending rule', () => {
   assert.match(votesSrc, /let needsKick = !session\.check_state \|\| strandedPendingChecks\(session\);/);
 });
 
-test('no visual-evidence run on a change reads as none', () => {
-  const orchestrator = require('../src/services/visual-evidence-orchestrator');
+test('no shots run on a change reads as none', () => {
+  const orchestrator = require('../src/services/shots-orchestrator');
   assert.equal(orchestrator.inFlightRunFor(987654), null);
 });

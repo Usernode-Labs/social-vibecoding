@@ -301,8 +301,8 @@ test('create general issue persists the returned GitHub issue number', async () 
     const insert = pool.issued(/INSERT INTO issues/);
     assert.equal(insert.params[1], 777);
     assert.equal(res.body.issue.github_issue_number, 777);
-    assert.equal(spies.systemMessages.length, 2);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 777 });
+    assert.equal(spies.systemMessages.length, 1, 'the issue thread only; a channel carries no activity');
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'issue', ref: 777 });
     assert.equal(spies.issueUpdates[0].action, 'created');
   } finally { restore(); }
 });
@@ -339,11 +339,11 @@ test('create: happy path files a vote-only proposal, no GitHub twin', async () =
     // No twin created.
     assert.equal(spies.ghCalls.filter((c) => c.type === 'createIssue').length, 0);
 
-    // Group line + governance-thread + target-issue-thread dual-posts.
-    assert.equal(spies.systemMessages.length, 3);
+    // The governance thread and the target issue's thread; no channel line.
+    assert.equal(spies.systemMessages.length, 2);
     assert.match(spies.systemMessages[0][2], /proposed closing issue #42/);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 61 });
-    assert.deepEqual(spies.systemMessages[2][5], { type: 'issue', ref: 42 });
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 61 });
+    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 42 });
 
     assert.equal(spies.issueUpdates[0].action, 'created');
     assert.equal(spies.issueUpdates[0].kind, 'close_issue');
@@ -487,11 +487,11 @@ test('apply: passing vote closes the proposal, GitHub close then comment with re
     assert.ok(spies.ghCalls.find((c) => c.type === 'invalidateIssuesCache'));
     assert.ok(spies.issueUpdates.find((u) => u.action === 'github_synced'));
 
-    // Chat: group line + governance-thread + issue-thread dual-posts.
-    assert.equal(spies.systemMessages.length, 3);
+    // Chat: the governance thread and the issue's thread; no channel line.
+    assert.equal(spies.systemMessages.length, 2);
     assert.match(spies.systemMessages[0][2], /Issue #42 closed by group vote \(2\//);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 61 });
-    assert.deepEqual(spies.systemMessages[2][5], { type: 'issue', ref: 42 });
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 61 });
+    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 42 });
   } finally { restore(); }
 });
 
@@ -608,6 +608,32 @@ test('admin-apply: accepts close_issue with force (gates bypassed); non-admin 40
     assert.equal(audit.appliedBy, 'admin:boss');
     const comment = spies.ghCalls.find((c) => c.type === 'createIssueComment');
     assert.match(comment.body, /admin override \(boss\)/);
+  } finally { restore(); }
+});
+
+test('close / admin-apply / vote: a malformed or out-of-range id is 404 without a DB query', async () => {
+  const pool = makePool([]);
+  const { router, restore } = loadIssues(pool);
+  try {
+    for (const [route, body] of [
+      ['/api/issues/:id/close', undefined],
+      ['/api/issues/:id/admin-apply', undefined],
+      ['/api/issues/:id/vote', { vote: 'up' }],
+    ]) {
+      const handler = routeHandler(router, route);
+      for (const id of ['abc', '0', '-1', '12abc', '99999999999']) {
+        for (const user of [
+          { id: 1, username: 'pleb' },
+          { id: 2, username: 'boss', canAdminWrite: true },
+        ]) {
+          const res = mockRes();
+          await handler({ params: { id }, user, body }, res);
+          assert.equal(res.statusCode, 404, `${route} ${id} ${user.username}`);
+          assert.deepEqual(res.body, { error: 'Issue not found' }, `${route} ${id}`);
+        }
+      }
+    }
+    assert.equal(pool.calls.length, 0, 'no query reached Postgres');
   } finally { restore(); }
 });
 

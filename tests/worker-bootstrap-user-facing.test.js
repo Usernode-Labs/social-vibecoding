@@ -70,6 +70,30 @@ test('a worker volume the namespace quota refused says the platform is out of ro
   assert.ok(!/[—]|&mdash;|&#8212;/.test(msg));
 });
 
+test('a worker machine that could not start names the cause in plain words and no internals', () => {
+  const cases = {
+    image_unavailable: /software image could not be downloaded/,
+    config_error: /platform configuration/,
+    unschedulable: /no free capacity/,
+  };
+  for (const [reason, wording] of Object.entries(cases)) {
+    const err = new Error('worker could not start (ImagePullBackOff) on node pool-a-7f3 sv-worker-s69');
+    Object.defineProperty(err, 'bootstrapReason', { value: reason });
+    Object.defineProperty(err, 'bootstrapFailed', { value: true });
+    Object.defineProperty(err, 'bootstrapLog', { value: ['Back-off pulling image "registry.internal/worker@sha256:abc"'] });
+    const msg = describeTurnError(err);
+    assert.match(msg, wording);
+    assert.match(msg, /could not start/);
+    assert.match(msg, /no code was changed/);
+    assert.match(msg, /platform problem, not your change/);
+    assert.doesNotMatch(msg, /ImagePullBackOff|Unschedulable|sv-worker|pool-a|registry|sha256|kubelet|Pod\b/);
+    assert.ok(!/[\u2014]|&mdash;|&#8212;/.test(msg));
+  }
+  const capacity = new Error('worker could not start (Unschedulable)');
+  Object.defineProperty(capacity, 'bootstrapReason', { value: 'unschedulable' });
+  assert.match(describeTurnError(capacity), /Try again in a few minutes/);
+});
+
 test('a bootstrap failure with no detail after the prefix reads as a sentence', () => {
   // `clip` can legitimately produce nothing (a command that failed silently).
   const msg = describeTurnError(new Error('clone failed'));

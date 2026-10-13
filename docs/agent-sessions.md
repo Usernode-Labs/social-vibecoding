@@ -4,11 +4,11 @@ Agreed with evan on 2026-09-23, before implementation. This copy is the referenc
 
 ## Summary
 
-An **agent session** is one long-lived conversation per thread, per user, with a Mayor that can work on any app, including Homeroom itself. The Mayor drives one change at a time, using the existing per-change machinery underneath and the platform MCP as its toolset. It replaces the per-change sessions. The experimental Global Chat stays as it is, behind its own toggle. It ships behind a per-user experimental flag; with the flag on, new work starts in an agent session and existing sessions keep working unchanged.
+An **agent session** is one long-lived conversation per thread, per user, with a Mayor that can work on any app, including Homeroom itself. The Mayor drives one change at a time, using the existing per-change machinery underneath and the platform MCP as its toolset. It replaces the per-change sessions. The experimental Global Chat stays as it is, behind its own toggle. It shipped behind a per-user experimental flag; since stages 3 and 4 of the rollout the flag is gone, new work starts in an agent session for everyone, classic sessions are no longer created, and existing ones are read-only: they can be read, and the proposals they became carry on, but their chats take no new message (see *As built: stages 3 and 4* and *As built: classic sessions are read-only*).
 
 **Goals**
 
-- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, visual evidence, promotion, votes, merge.
+- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, before & after shots, promotion, votes, merge.
 - Do everything a per-change session does through one shared platform MCP toolset, used by the Mayor and by external Claude or Codex clients.
 - Give the coding agent read-only platform MCP access. Every write goes through the Mayor, and writes that matter are confirmed with the user.
 - Take an app hint from wherever the user starts, without binding the session to that app.
@@ -42,7 +42,7 @@ Today one `chat_sessions` row is both the conversation and the change. A `chat_s
 
 | Surface | What it is | What it lacks for #2779 |
 | --- | --- | --- |
-| Per-change session | Chat, branch, PR, staging, checks, visual evidence and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visual-intent and evidence MCPs, under `--strict-mcp-config`. |
+| Per-change session | Chat, branch, PR, staging, checks, before & after shots and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visible-changes and shots MCPs, under `--strict-mcp-config`. |
 | Global Chat (experimental, opt-in) | Threads per user, not tied to an app (`global_chat_threads`). A cheap GLM model calls 525 auto-generated web routes by replaying the user's browser cookie. It confirms writes with sealed one-use tokens and has its own monthly cap. | No Mayor and no MCP. Code work creates a per-change session and navigates away (plan.md rule 5). The `activeAppSlug` hint is cleared before the chat opens (`app.js:5586`). |
 | Hosted Homeroom connector | 29 MCP tools over stateless Streamable HTTP, with OAuth tokens (`svmcp_`) issued only after browser consent. The allowlist is `CONNECTOR_ALLOWED_ROUTES`. | `prepare_work`/`submit_work` assume an external checkout and the user's own GitHub fork. Its charter assumes a human-driven client. There are no delegated or service tokens. |
 | CLI MCP (local, stdio) | Native proposal flow: `proposal_start → push_commit → submit_build → status/recheck → promote`, plus generic `api_read`/`api_write`. Uses `svcli_` device-code tokens and needs no fork. | Runs on the user's machine and uploads a local commit. It has no way to ask a platform worker to build. |
@@ -75,7 +75,7 @@ The Mayor lives in the agent session. Workers, previews and votes stay per chang
 | Focus app | A soft hint about which app the user means. It is set from the entry point or by the Mayor, and it never restricts what the session can do. |
 | Mayor | The same project-manager LLM as today, with a global prompt and the platform MCP toolset. It is the only actor that writes to the platform. |
 | Coding agent | Claude Code or Codex, running in the active change's worker as today, with read-only platform MCP. |
-| Classic session | A per-change session created the old way. It keeps its own chat and behaves exactly as it does today. |
+| Classic session | A per-change session created the old way, with a chat of its own. Since #3976 it is read-only: its transcript, previews and proposal stay, and its chat takes no new message. |
 
 ## Rollout: the experimental flag
 
@@ -86,7 +86,7 @@ One per-user flag decides where new work starts. It never changes how existing s
 - `users.agent_sessions_enabled BOOLEAN NULL`. NULL means "follow the platform default"; TRUE or FALSE is the user's explicit choice, so an opt-out survives the later default flip.
 - `config.agentSessionsDefault` (env `AGENT_SESSIONS_DEFAULT`, default `false`). The effective value is `COALESCE(user value, platform default)`.
 - The effective value is loaded into `req.user` by `middleware/auth.js`, returned by `/api/auth/me` as `agentSessionsEnabled`, and read by the client as `App.user.agentSessionsEnabled`. The pinned auth SELECT in `sql-dynamic-baseline.json` is updated to match.
-- `POST /api/me/agent-sessions` is a clone of `/api/me/session-bridge`. The UI is a `SwitchRow`, "Agent sessions (experimental)", in Settings → Experimental.
+- `POST /api/me/agent-sessions` is a clone of `/api/me/session-bridge`. The UI is a `SwitchRow`, "Agent sessions (experimental)", in Settings → Experimental. (Both retired in stages 3 and 4.)
 - Every server route that creates an agent session also checks the flag. The client check is for routing only; the server check is the gate.
 
 **Behaviour by flag state**
@@ -108,6 +108,8 @@ One per-user flag decides where new work starts. It never changes how existing s
 2. Open opt-in for every user (\`AGENT\_SESSIONS\_OPT\_IN=all\`), with the Experimental label shown. **This is the current stage:** `src/config.js` defaults the audience to `all`, because the variable is not declared in `dapp.json`'s `platform_env` and so could not be set in production. `AGENT_SESSIONS_OPT_IN=admins` closes the switch to admins again.
 3. Flip `AGENT_SESSIONS_DEFAULT=true`. Users who opted out keep classic sessions.
 4. Remove the classic creation path in a separate, later change. Global Chat's future is decided separately. Classic sessions stay readable until their changes close.
+
+**Done.** Stages 3 and 4 shipped together, and further than planned: there is no opt-out left to keep, because the flag and its Settings switch are gone. See *As built: stages 3 and 4* under the implementation plan.
 
 ## Data model
 
@@ -140,7 +142,7 @@ The data model adds one table and two nullable columns. Every migration is addit
 
 **What stays as it is**
 
-- `pr_votes`, `check_runs`, `visual_evidence_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
+- `pr_votes`, `check_runs`, `shot_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
 - Global Chat's six `global_chat_*` tables are not touched in v1. They stay for as long as Global Chat does.
 - No existing session is migrated. Classic sessions have `agent_session_id` NULL forever.
 
@@ -156,7 +158,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
   - `transport`: `{send, sendStatus, heartbeat, done}`, for SSE plus WebSocket plus bus.
 - What moves: handler lines \~5392–6706, tool definitions and resolvers \~10596–11700, `resolveTurnPills`, `buildMayorMessages` and `getMayorSystemPrompt` (about 2.5k lines in total).
 - What stays in `POST /api/sessions/:id/chat` (\~300 lines): auth, row load, attachments, branch mint, the user-message insert and opening the SSE stream. Its conversation adapter wraps the change's own transcript, so classic behaviour is unchanged.
-- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, visual evidence and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
+- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, before & after shots and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
 - The headless auto-session keeps its own copy of the loop in v1. Folding it into the service is a follow-up.
 - Staging: proposal 1 moves the turn as it is, `runMayorTurn(ctx, deps)` taking the route's own inputs, pinned byte-for-byte by `tests/mayor-turn-golden.test.js`. Proposal 3 splits `ctx` into the `conversation`, `change` and `transport` above.
 
@@ -172,10 +174,10 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 
 | Tool | Source | Confirmed by user | Notes |
 | --- | --- | --- | --- |
-| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
+| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_discussion`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
 | `start_change {app, title, linkedIssues?}` | Shared MCP (new) | **Yes** | Creates a change with `agent_session_id` and makes it active. It parks the previous active change. It counts against the active-session cap. |
-| `promote_change`, `sync_change`, `recheck_change`, `withdraw_change` | Shared MCP (new) | **Yes** (except recheck) | Promotion and withdrawal are the user's decision. Sync revises the change, which clears votes, so it needs a yes. |
-| `create_request`, `claim_request`, `release_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name |
+| `promote_change`, `sync_change`, `recheck_change`, `withdraw_change` | Shared MCP (new) | **Yes** (except recheck) | Promotion and withdrawal are the user's decision. Sync pushes a merge onto the change's branch, so it needs a yes. It keeps the votes unless a conflict resolution edits files outside the conflict. |
+| `create_request`, `claim_request`, `release_request`, `propose_close_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name. `propose_close_request` opens a group vote on closing a request; it closes nothing by itself |
 | `dispatch_scout`, `dispatch_coding_agent` | Mayor-internal | No, as today | Target the active change only; refused when there is none |
 | `switch_active_change {changeId}`, `set_focus_app {slug}` | Mayor-internal | No | Switching resumes a parked change. The user's own changes only. |
 | `web_fetch`, `draft_issue_report`, `get_prod_status`, `suggest_answers`, `suggest_replies` | Mayor-internal, as today | No | `get_prod_status` only for admins when the active change targets the platform app |
@@ -218,6 +220,50 @@ A new `getAgentMayorPrompt`, with shared blocks moved out of the classic prompt:
 - **Streaming.** The event protocol is the same, on `POST /api/agent-sessions/:id/turns` with bus key `agent:<id>` and a resumable `GET /api/agent-sessions/:id/events`. The active change's `cc_progress`, `staging_ready`, `pr_created` and similar events are forwarded to the agent bus.
 - **Durability.** `agent_sessions.active_turn` leases mayor1 and mayor2. The dispatch turn stays durable on the change (`chat_sessions.active_turn`) exactly as today. Recovered wrap-ups land in the change's transcript, and the trigger surfaces them in the conversation. The dispatching Mayor turn died with its process, so recovery then hands its stale lease back and sends the conversation's `done` in its place (`handBackAfterRecovery`); a stale lease is never shown as busy, and stop clears one.
 - **Stop.** Stop ends the agent session's turn and forwards to the active change's stop registry, with today's rule that wrap-up cannot be stopped.
+
+### Keeping every screen in step with the server
+
+A conversation is drawn by several screens at once: its own screen, the Messages pane, the side panel, another device. They used to learn what changed from the turn's in-memory event stream, which had to reach each of them exactly once. Several things broke that:
+
+- every deploy replaced the pod the bus lived in;
+- a screen that opened mid-turn got no replay;
+- a change notice carried only `busy`.
+
+The screen also guessed "the Mayor is working" from those events. The results were a sent message that flashed away and came back, a transcript that only updated after leaving and coming back, and Send quietly turning into Save with nobody working. The design now:
+
+- **The server is the one source of truth, and says when it moved.**
+  - `agent_sessions.state_version` is bumped by database triggers on every write a screen draws: a message written or edited, the active change's status, checks or preview, the turn lease taken, moving phase or released, a card, the title, the model, the archive.
+  - A lease renewal and a read (`seen_at`) do not bump it.
+  - Every message row carries `rev`, taken from one sequence on insert and on update.
+  - Each bump is announced by the trigger itself, as a `pg_notify` in `services/ws-bus.js`'s own envelope, so every pod delivers `agent_session_changed { agentSessionId, version, busy }` to the owner's sockets.
+- **One consistent read.** `GET /api/agent-sessions/:id/state?version=&rev=` reads the session with its changes, the running turn, the messages and the cards in one `REPEATABLE READ` snapshot.
+  - A screen that holds the current version gets `{ unchanged, busy, turn }`, a one-row read.
+  - Given a rev, it gets only the rows written or edited since.
+  - The running turn comes from this process's registry, a recovered build, or the lease, whose `phase` and `phaseStartedAt` the turn writes as it moves. That way a screen on any pod can draw it.
+- **The screen converges on it.** The store (`frontend/src/features/agent-session/store.ts`, `requestSync`) runs one read at a time. A trigger that arrives mid-read asks for one more, so an older answer can never land over a newer one. It reads:
+  - on every route into a conversation, the same one included;
+  - on a notice with a newer version;
+  - on `accepted`, the saved reply, `done`, `error`, `stopped` and the change's events;
+  - when the page comes back to the foreground, or the network or the notices' socket returns;
+  - every 4 seconds while the Mayor works, and every 30 seconds otherwise.
+
+  Whether the Mayor is working is the server's answer, never the screen's guess.
+- **Events only animate.** Tokens, the tool line and the build's progress are drawn from the turn's events. The streamed words stay until the read that brings the saved row replaces them, in one publish. `GET .../events` replays the running turn's events to a screen that opens mid-turn, and a turn's 30-second buffer cleanup no longer empties a newer turn's buffer.
+- **Durable, idempotent sends.**
+  - `POST .../turns` takes the screen's `clientMessageId`. It writes the message and takes the lease in one transaction (`startTurnWithMessage`) before the stream opens, then answers `accepted`.
+  - A resend of the same id answers `{ duplicate }` and runs no second turn (a per-conversation unique index on `client_message_id`).
+  - Who pays is decided before anything is written, so every refusal writes nothing.
+  - On the screen, a message is drawn at once as the conversation's outbox row (`outbox.ts`). The server's row with its id replaces it in place.
+  - A send with no answer is tried again under the same id: twice, and after 20 seconds of silence, or on a 503 from a restarting server.
+  - A send the server did not take stays in the conversation, Not sent, with Retry, Edit and Discard. It is never handed back to the box and never turned into a draft. The outbox is kept per conversation in `localStorage`, so a reload finds it.
+  - Leaving a conversation no longer aborts a send on its way.
+- **Turns that end with their process.**
+  - A lease is renewed every 15 seconds and is stale after 90 (`TURN_LEASE_STALE_SECONDS`).
+  - A shutting-down process ends its own Mayor turns as interrupted (`interruptLocalTurns`). What was said is kept, a `turn_interrupted` note is written, and the lease is handed back. A running build is left to restart recovery.
+  - A process that died leaves its leases to the sweeper (`sweepInterruptedTurns`, every 30 seconds on every pod). It ends each stale lease and writes the same note in one transaction (`endInterruptedTurn`), unless the active change still has a run on record, which recovery hands back.
+  - A read of the conversation that finds its lease stale sweeps that conversation first (`GET .../state`, `sweepInterruptedTurns({ agentSessionId })`) and answers with the result. The screen goes from working straight to the note with Retry, never through an idle conversation with no answer while it waits for the next sweep.
+  - The conversation's last `turn_interrupted` or `turn_failed` note offers Retry. `POST .../turns { retry: true }` re-runs the turn with no new message, and the Mayor is told why.
+- **Save for later, unmistakable.** While the Mayor works, typing shows "The Mayor is still working, so this will be saved as a draft, not sent" above the box. The button reads "Save draft", and the drafts list says "Ready to send" once the turn ends.
 
 ### Riskiest parts
 
@@ -308,7 +354,7 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 1. `buildTurnSecretEnv` mints a `worker_read` delegation, next to today's `mintIssuesReadJwt`. It is bound to `user_id`, `change_id` and the change's `app_id`, and lasts one turn.
 2. The worker gets it as `HOMEROOM_MCP_TOKEN`.
-3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `build-evidence-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
+3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `visible-changes-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
 4. Claude: the bridge is added to the strict `~/.usernode-mcp.json` for build and scout modes. The token is passed through the environment, never expanded into the heredoc at bootstrap.
 5. Codex: the bridge is added to the per-turn `config.toml` with `env_vars` and `enabled_tools`. The token is added to `shell_environment_policy.exclude` and to output scrubbing.
 6. The turn's `finally` revokes the delegation. Pausing or archiving the change also makes it fail on the next call.
@@ -408,7 +454,7 @@ There is one new screen, the agent session. Four existing surfaces change. Mocku
 | **Messages → Agents** | Agent-session rows (title, focus-app tile, active-change status, last activity) sit above classic session rows. Global Chat rows still appear for people who turned Global Chat on, labelled apart from agent sessions. “+” → Agent chat opens a new agent session with no app picker. |
 | **Change page** `#app/<slug>/dev/proposals/<id>` for a change started from an agent session | Status, preview, spec, checks and votes as today. For the owner, the transcript slice is read-only, and the composer is replaced by “Continue in agent session”. Other members see what they see today. |
 | **Entry points** (see Rollout) | Same buttons and labels. With the flag on they open the agent session with a hint instead of a classic session. |
-| **Settings → Experimental** | An “Agent sessions (experimental)” switch, shown to admins only until stage 2. The Global Chat section stays as it is. |
+| **Settings → Experimental** | An “Agent sessions (experimental)” switch, shown to admins only until stage 2, and retired in stages 3 and 4. The Global Chat section stays as it is. |
 
 **Implementation constraints** (from AGENTS.md)
 
@@ -438,9 +484,9 @@ The Mayor uses the normal per-user LLM budget instead of the monthly cap.
 **Side by side**
 
 - Messages → Agents shows agent-session rows for users with the agent-sessions flag on, and Global Chat rows for users with Global Chat on. A user with both sees both, each labelled.
-- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled`.
+- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled` (retired with the flag in stages 3 and 4: every viewer has them).
 - `#chat/<id>`, Global Chat's settings section and `/api/global-chat/*` do not change.
-- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1.
+- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1. (Done in stages 3 and 4: it opens an unsent agent session with the task.)
 
 **Existing Global Chat threads** stay where they are, for as long as Global Chat does.
 
@@ -532,7 +578,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 | 3b-ii | The agent-session Mayor, building | Dispatch to the active change (`dispatch_scout`, `dispatch_coding_agent`), forwarding the change's events to the conversation, the wrap-up, the follow-up turn after a confirmation, compaction, the Mayor-internal tools | None (API only, behind the flag) | High |
 | 4 | Agent sessions UI | `AgentSessionScreen`, the changes drawer, Messages rows, entry-point routing with hints, the owner view of the change page, the Settings switch, `dapp.json` checks | Only for users with the flag on | Medium |
 | 5 | Read-only MCP for the coding agent | `worker_read` minting, `homeroom-read-mcp.js`, Claude and Codex config, the prompt block | None visible | Small to medium |
-| later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision |
+| later | Stage 3 and 4 | Flip `AGENT_SESSIONS_DEFAULT`; then remove the classic creation path. Global Chat is decided separately | Everyone | Separate decision. Shipped as one change: see *As built: stages 3 and 4* |
 
 **Order.** 1 and 2 are independent and can be voted on in parallel. 3 needs both. 4 needs 3. 5 needs 2 and can land any time after it. Step 3 was split in two when it started (3a, then 3b), because the data layer is reviewable on its own and the Mayor turn is the riskiest part of the whole plan. 3b was split again the same way: 3b-i is a Mayor that reads and proposes, 3b-ii is the Mayor that builds. After 3b-i merged, 3b-ii, 4 and 5 were folded into one proposal, so that the Mayor that builds ships together with the screen that shows it and the reads the coding agent gains from it.
 
@@ -551,8 +597,8 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 **As built in 3b-i.**
 
 - The agent turn is its own module, `services/mayor/agent-turn.js`, not a generalized `turn.js`. The classic turn is untouched, and so is its golden test. A turn is one loop of at most six model rounds; the last round cannot call tools. There is no dispatch and no mayor2 yet, so there is nothing to wrap up.
-- `POST /api/agent-sessions/:id/turns {message, model?}` streams the same event protocol as a change's chat, on bus key `agent:<id>`; `GET /api/agent-sessions/:id/events` resumes it and `POST /api/agent-sessions/:id/stop` stops it. The user's message lands on the active change's transcript when there is one, and on the conversation's otherwise. An untitled conversation takes its title from the first message.
-- The lease is a row write on `agent_sessions.active_turn`, taken with one conditional `UPDATE`, so two tabs or two pods cannot both start a turn. A lease older than 20 minutes belongs to a turn whose process died, and is taken over. Only the turn holding the lease releases it.
+- `POST /api/agent-sessions/:id/turns {message, model?}` streams the same event protocol as a change's chat, on bus key `agent:<id>`; `GET /api/agent-sessions/:id/events` resumes it and `POST /api/agent-sessions/:id/stop` stops it. The user's message lands on the active change's transcript when there is one, and on the conversation's otherwise. An untitled conversation takes its title from the first message. One opened on a request (Start work) is then named after that request, `#N · <title>`, once the request is read (`agentSessions.nameFromRequest`, #3752); a name the owner chose is never replaced.
+- The lease is a row write on `agent_sessions.active_turn`, taken with one conditional `UPDATE`, so two tabs or two pods cannot both start a turn. A lease not renewed for 90 seconds belongs to a turn whose process died, and is taken over (it was 20 minutes, then 3; see "Keeping every screen in step with the server"). Only the turn holding the lease releases it.
 - The Mayor follows the user's default coding backend, as the spec says. OpenRouter users get `openrouter-mayor.js` keyed `homeroom-agent-<id>`; everyone else gets Anthropic with today's budget and BYOK resolution. `mayor_model` is not read yet: the model is the request's, or the default.
 - Each turn issues an `agent_mayor` delegation with read scope, bound to the conversation, and serves the Mayor's tools through `services/mayor/mcp-shim.js`: an `McpServer` and a `Client` over `InMemoryTransport`. The shim writes the `token_used` audit row and spends from an `agent-mayor-mcp` bucket of 120 calls a minute per conversation before every call, and revokes the grant when the turn ends, however it ends. Results are cut at 24k characters.
 - A confirmed tool never runs from the model. The turn seals its exact input into `agent_session_actions` (the shared core in `services/confirmations`) and the model reads back `pending_confirmation`. The card's own id is the handle: `POST /api/agent-sessions/:id/actions/:actionId/confirm` claims the row in one statement (pending, unexpired, the owner's, in an open conversation), so a card runs at most once however many presses race. It then opens the sealed input against its fingerprint and runs it on a one-action write grant bound to the change or app the input names, revoked when the call returns. The outcome is stored on the card and appended to the conversation as an `action_result` event. Cards expire after 15 minutes; expiry is read from `expires_at`, so nothing sweeps it. A delegated bearer cannot reach these routes, because they are on no delegation allowlist.
@@ -572,7 +618,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - The run's events reach the conversation (its SSE response and `agent:<id>`) and the change's own channels (its bus key and the global WebSocket), so the change page and the Dev board see a build started from a conversation like any other. `done` and `stopped` go to the change only; `token`, `usage` and `error` stay off the WebSocket, as in a classic turn.
 - The wrap-up is a second Mayor call (`mayor_phase_2`) offered only `suggest_replies`, and it cannot be stopped, as in a classic session. With no payer left, a plain fallback line is recorded instead. The change's durable turn is finished only after the wrap-up (`deferTurnCleanup`), so a restart during the wrap-up is recovered the classic way.
 - Stop: during the Mayor's own rounds, `POST /api/agent-sessions/:id/stop` stops the turn. During a dispatch it answers `{stopped: false, reason: 'dispatch_running', changeId}`, and the client calls the change's own `POST /api/sessions/:changeId/stop`, which keeps its kill confirmation and force escalation. During the wrap-up it answers `wrap_up_not_stoppable`.
-- The turn lease is renewed every minute (`active_turn.renewedAt`), so a build longer than 20 minutes is not taken over. The takeover test reads `COALESCE(renewedAt, startedAt)`.
+- The turn lease is renewed every 15 seconds (`active_turn.renewedAt`), so a build of any length is not taken over. The takeover test reads `COALESCE(renewedAt, startedAt)`.
 - After the user confirms a card, the Mayor takes a follow-up turn on its own. That turn records no user message: the card's outcome is already in the conversation.
 - Compaction (`services/mayor/agent-compaction.js`) runs after a turn when the replayed history passes about 60k tokens (characters / 4). It keeps the last 10 user turns word for word and folds everything older into `agent_sessions.summary_md` with one Mayor-model call. `summary_through_id` only moves forward, through a conditional `UPDATE`. The summary reaches the prompt inside an untrusted-content block.
 - Mayor-internal tools: `web_fetch`, `suggest_replies`, and `get_prod_status` when the active change is eligible for production debug access (an admin's change on the platform app), the same rule a classic session uses. `draft_issue_report` is left out: filing a request from a conversation is `create_request` behind a card.
@@ -691,13 +737,13 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 *Follow-up: the composer and the live turn, with what the dev chat's had.*
 
 - **Saved drafts** (the dev chat's #798 list, per account like #940).
-  - While the Mayor works, the composer's one button is a green Save when something is typed (Stop when nothing is). Enter does the same. Saving parks the text in a list above the box ("Saved drafts (N) · on all your devices"), so nothing typed mid-turn can join the running turn.
+  - While the Mayor works, the composer's one button is a green "Save draft" when something is typed (Stop when nothing is), with a line above the box saying the message will be saved as a draft, not sent. Enter does the same. Saving parks the text in a list above the box ("Saved drafts (N) · on all your devices"), so nothing typed mid-turn can join the running turn.
   - A draft is sent only by a tap, never on its own, and not while the Mayor works ("sending unlocks when the Mayor finishes"). Edit puts it back in the box; Delete drops it. Sending or editing keeps what the box held as a draft of its own first.
   - The server: `agent_session_drafts` (per conversation, `ON DELETE CASCADE`, `staging:private`) and `GET/POST/DELETE /api/agent-sessions/:id/drafts[/:draftId]` (`routes/agent-session-drafts.js`). Its limits and helpers are the dev chat's own (`routes/chat-drafts.js`): 20 drafts, 10,000 characters, client ids, idempotent writes, the conversation row as the cap's lock. Every write answers with the list and tells the owner's other devices (`agent_session_drafts_changed` over `pushToUser`), which re-read.
 - **Unsent text is kept** per conversation in this browser (`unsent.ts`, `usernode:agent-session-unsent:<id|new>`), so a reload or a switch brings it back.
 - **Stop hands the message back** to an empty box (the one still waiting, or the newest sent), as the dev chat's does. The busy placeholder says what to do: "The Mayor is working. Type your next message and save it for later."
 - **Costs.**
-  - The model picker says what a typical change costs on each model, the dev chat's figures (#2570, `GET /api/model-notes`): the platform's estimate for a model it curates, otherwise the catalog's prices times the typical change's token profile (`modelCost`). The open list reads "GLM 5 · about $0.42 for a typical change". Only the open list: the closed control says "Model: X" and nothing after it (#3008), because a figure beside it read as a standing price under every message. Never a bare amount.
+  - The model picker says what a typical change costs on each model, the dev chat's figures (#2570, `GET /api/model-notes`): the platform's estimate for a model it curates, otherwise the catalog's prices times the typical change's token profile, its cached share priced at the catalog's cache prices where it lists them (`modelCost`, `typicalChangeCents`). The open list reads "GLM 5 · about $0.42 for a typical change". Only the open list: the closed control says "Model: X" and nothing after it (#3008), because a figure beside it read as a standing price under every message. Never a bare amount.
   - Each Mayor reply says what it cost, "Mayor · reply $0.012" (`replyCostLabel`). An OpenRouter Mayor's figure is the list-price estimate and carries "~" (`costEstimated`, now written on its rows).
 - **A turn that did not finish** (failed, or stopped after it said something) offers the dev chat's pair, "Try that again" and "What went wrong?", when it left no suggestions of its own.
 - **The Mayor at work** is its name and three dots where its reply will appear, with what it is doing beside them ("Reading the app", "Wrapping up", the coding agent's progress and clock), instead of a box across the pane. Once it has said something the dots follow the words. Still dots under reduced motion. A screen reader hears "The Mayor is thinking".
@@ -727,11 +773,53 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - **A change's title reads as written on the Dev board** (#3010). The session cards' label (`AppView._sessionCardLabel`) still returned `escapeHtml` output from the innerHTML days, while every reader of it is now a React card model that escapes it again, so a title with a quote read `&quot;` (an ampersand, `&amp;`). The Mayor names changes in prose, quotes and all, which is how it surfaced. It returns plain text now, as do the proposal meta's provenance words, which had the same double escape.
 - **Phones** (#3016). At 390px the session bar's controls came to 537px, and a bar that could not wrap made the whole conversation that wide; the screen clips its overflow, so the right edge of every message and the Send button were gone. The bar wraps on both surfaces (Build starts the second row on a phone, Changes and the ⋯ end it), the panel shrinks below its content (`min-w-0`), and an empty message box is as tall as its hint instead of cutting it off mid-line.
 
+**As built: stages 3 and 4 (the flag retired, classic creation closed).** Agent sessions are no longer experimental. There is no per-user choice left, so everyone, including users who had opted out, starts new work in an agent session. Classic sessions that already exist kept their chat, builds, previews and votes exactly as before; only creating one was closed. (Since #3976 they are read-only: see the next section.)
+
+- **The flag is gone.** `services/agent-sessions-flag.js`, `config.agentSessionsDefault` / `agentSessionsOptIn` (`AGENT_SESSIONS_DEFAULT`, `AGENT_SESSIONS_OPT_IN`), `POST /api/me/agent-sessions` and the Settings → Experimental switch (`#settings-agent-sessions-row` and its switch and status line) are removed. The auth middleware no longer reads `users.agent_sessions_enabled`. The column stays in `schema.sql`, unread, so a rolling deploy's older pods keep their `SELECT`; a later migration can drop it.
+- **`/api/auth/me` still reports `agentSessionsEnabled: true`**, for a shell cached before the deploy: its entry points read it to choose between an agent session and a classic one, and the classic one would now be refused. `agentSessionsChoosable` is gone, so such a shell hides the old switch.
+- **Creating a session needs no flag.** `GET /api/agent-sessions/draft` and `POST /api/agent-sessions` answer any signed-in user.
+- **Every entry point opens an unsent agent session** with no classic fallback: Improve's New change and the Workshop's Start here (`entry: improve`), Messages' "+" (now "Agent session", with no app picker: `messages/agent-dialog.tsx` and its two ids are removed), the change page's "Start a new change" banner (`banner`), a request's Start work and Feedback's "Try a fix yourself" (`issue`, with the title), a proposal's Explore (`proposal`, now carrying the explain-only seed as the composer's first message), and a finished auto-solve run's primary, which reads "Start work" and starts on the run's request instead of cloning the run.
+  - **The hint gains two screen-only fields**, dropped by `serverHint` like `issueTitle`: `message`, the first message the unsent conversation offers (`draftSeed` in `request-seed.ts`), and `handoff`, which opens the composer's "Build with" sheet on that agent's tab. The out-of-credits card's "Use Claude Code" / "Use Codex" (`AppView.createProposal({ flow })`) uses it, instead of creating a classic session to record a hand-off on.
+  - **The old address**, `/app/<slug>/dev/sessions/new`, resolves in the router (`App.openNewChangeAsAgentSession`): it prepares the unsent conversation with `{ slug, entry: 'app' }` and replaces itself with `#messages/agent/new` (`#agent/new` in the side panel's own document), so a bookmark or Back lands in an agent session and Back does not bounce. The dev chat's placeholder machinery behind that screen (`startPendingSession`, `_materializePendingSession`) was no longer reachable, and #4268 deleted it.
+- **The server closes classic creation.**
+  - `POST /api/apps/:slug/sessions` answers `403 {code: 'agent_sessions_only'}` to anything but an `agent_mayor` delegation that names a conversation (the Mayor's `start_change`): a browser, a shell cached before the deploy, a CLI token, a coding agent's `worker_read` grant, and Global Chat's cookie loopback.
+  - `POST /api/sessions/:id/clone-headless` answers the same to anything but an external connector token (not a delegation): the hosted connector's `submit_platform_build` still takes ownership of a build this way.
+  - `POST /api/sessions/:id/fork` answers `410` to everyone and writes nothing; "Fork this chat" is gone from the transcript, and the transcript read reports `can_fork: false` so an older shell does not draw it.
+  - Still creating rows, because none is a classic chat a person starts: the headless run, a CLI hand-off (`proposal_start`), a connector's share of work in progress, an imported PR, a revert, manifest PRs, maintenance campaigns, the Homeroom bot and demo mode.
+- **Global Chat's "Start development work"** creates nothing any more. It keeps its capability id and its confirmation, and on confirm hands the browser an `agent_session_handoff` action: the unsent conversation on the app (and the issue), entry `global-chat`, with the exact task in its box for the user to send. "Continue development work" still hands the browser a turn for an existing session that can take one; since #4268 it answers an older (classic) session with the read-only refusal itself (#3976, below). The inventory exempts the fork and clone-headless routes, so Global Chat does not offer them.
+- **Staging:** the three declared checks that loaded the classic unsent-change screen now load its old address and assert the unsent agent session it lands on: the empty state, a live message box with the session's ⋯ disabled, and the composer's model pill.
+
+**As built: classic sessions are read-only (#3976).** Creating a classic session was closed in stages 3 and 4; continuing one is closed now. New work happens in an agent session.
+
+- **Which sessions.** A classic session is a change whose chat is its own: a `chat_sessions` row with no parent agent session (`agent_session_id` NULL) that is neither a headless run nor an imported pull request, which have no chat at all (`services/classic-sessions.js`, `isClassicSession`). Two kinds of row the paths above still create are not old sessions and stay continuable on the web: a CLI hand-off (`source = 'cli_handoff'`, whose local and web turns may alternate) and a request's planning record (`source = 'request_spec'`).
+- **What is refused**, with `409 {code: 'classic_session_read_only'}` and a message that says to start an agent session:
+  - `POST /api/sessions/:id/chat`, where every Mayor turn, scout and coding run of a classic session started. A paused one is refused too, and no longer resumed first. The refusal comes after the duplicate-delivery lookup, so a retry of a message stored before this landed still learns it was received.
+  - `POST /api/sessions/:id/attachments` (a file only goes with a message), `POST /api/sessions/:id/reset-agent-context` (the coding agent and model of a next turn) and `POST /api/sessions/:id/build-venue` (where it is built next).
+- **What stays open**: reading the transcript, specs and published chats; previews (`ensure-staging`, `deploy-staging`); checks (`recheck`); everything about the proposal it became: proposing it (`promote`, which takes a paused session as it is), the vote, unpromote, sync with main, archive and unarchive, the description, linked requests and the title; sharing; saved drafts (they are only text); stopping a turn already running. Proposing a classic session that was never proposed is allowed on purpose: it is finished work, and putting it to a vote runs nothing new in its chat.
+- **The screen.** `GET /api/sessions/:id` carries `classic_read_only`, decided by the same function. The dev chat reads it (`DevChat._classicReadOnlyView`) and:
+  - shows a strip above the panes, `#dc-classic-read-only-banner`: "This is an older session. You can read it, but it can no longer be continued. New work happens in agent sessions.", with **Start an agent session**, which opens an unsent agent session on the same app (`DevChat.startNewChange`, entry `banner`);
+  - puts the composer away (drafts, quick replies, attach, model picker and send), and with it the questionnaire's answers, the venue dropdown, the launchpad and hand-off walkthrough, the new-change and credits banners, the empty state and the first-use "come back later" hint;
+  - never resumes a paused one, on open or when the tab returns;
+  - keeps the transcript, the Changes-ready card (Preview, Propose to group, View on GitHub), the sync banner, the spec panel and the preview.
+- **Checks.** Every declared check that drove the classic dev chat was retired with it: 109 of them, on the 9008xx and 9904xx fixtures' session pages, the Messages pane that hosts a classic session (`#messages/session/…`) and the `?conversation=workspace` redirect into one. The five on the coding-run card became one on the agent-session fixture (`#messages/agent/990801`), because that card is the dev chat's `Attached`, which agent sessions draw too. The spec panel's (900830, 900831), the published chat's (990002) and the old `/dev/sessions/new` address's checks stay. The fixtures themselves are still seeded, so a preview can open an old session and see the strip.
+- **Left for the cleanup that deletes the classic dev chat**: see the next section, which removed what nothing could reach and says what had to stay.
+
+**As built: the unreachable parts removed (#4268).** Two kinds of session still continue in the dev chat on the web: a CLI hand-off (`source = 'cli_handoff'`, whose local and web turns may alternate) and a request's planning record (`source = 'request_spec'`). Everything they use stays; what no remaining kind of session could reach is gone.
+
+- **Removed:**
+  - the dev chat's unsent-change placeholder (`startPendingSession`, `_materializePendingSession`, `_materializePendingSessionForVenue`, `isPendingSession`, `pending_agent_choice` and every `session.pending` branch in the picker, the venue sheet, the header strip, send and attach), `DevChat.createSession`, which only it called and which `POST /api/apps/:slug/sessions` refuses to a browser, and `Improve.onSessionCreated`, which only that called. `/app/<slug>/dev/sessions/new` still resolves to an unsent agent session (`NEW_SESSION_REF` and the router keep the word); the venue sheet always opens in its `switch` mode now.
+  - Global Chat's "Continue development work" for a classic session: the capability still reads the session (`GET /api/sessions/:id`), and when it reports `classic_read_only` it answers with the same 409 body as `services/classic-sessions.js` `refusal()` instead of handing the browser a turn. Its summary tells the model older sessions are read-only. A CLI hand-off and a planning record are handed off as before.
+  - attaching a local agent to a classic session: `POST /api/cli/agent/attach` refuses it with the same 409 and message, server side, so an older CLI (which prints the `error` when it does not know the code) says why too. Sessions that still take turns attach as before.
+  - staging fixtures that no check, test or story used and that showed nothing on a read-only session: 990410 (the venue fallback), 990413 (the questionnaire), 990414 (the draft delete, with the dev chat's `?shot=draft-delete`) and 900812 (the not-stoppable spinner, with the `-unstoppable` rule in `/status`'s fixture lookup). `?shot=venue-fallback` stays: it paints on any session that draws the venue line.
+- **Stays, because a CLI hand-off or a planning record still uses it:** the classic turn in `POST /api/sessions/:id/chat` and `services/mayor/turn.js` with the suites that drive it; the composer, drafts, quick replies, questionnaire, venue sheet, launchpad, walkthrough and credits banners in `features/dev-chat/`; `agent run --session` itself.
+- **Stays, still referenced:** the 9008xx and 9904xx fixtures that a declared check, a unit test or the read-only strip's shots use (900801, 900830, 900831 and 990412 among them); the tests that pin the rest say why each is kept.
+- **Removed after (#4311):** the Settings choice of where changes get built. Nothing acted on its value, so the Settings part (`#settings-dev-flow`, `#settings/build-venue`) and its declared check, `POST /api/me/dev-flow` and the venue sheet's and launchpad toggle's writes to it, the `devFlowPreference` field of `GET /api/auth/me`, and Global Chat's inventory entry and settings-inspector row are gone. Picking a web hand-off still records the venue on the session (`chat_sessions.build_venue`). The `users.dev_flow_preference` column and its CHECK stay, so a rollback to an older build still reads and writes it; drop it in a later migration once no deployable build does.
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;
 2. runs the local fast checks (`npm test`, which also builds the shell);
-3. declares visual evidence for UI changes;
+3. declares before & after shots for UI changes;
 4. is submitted with a user-facing summary and a technical description.
 
 ## Questions

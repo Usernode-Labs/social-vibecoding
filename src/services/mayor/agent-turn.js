@@ -50,8 +50,20 @@ const MAX_TOOL_ROUNDS = 6;
 // history well under it in practice.
 const HISTORY_ROWS = 400;
 const TITLE_MAX = 80;
-const LEASE_RENEW_MS = 30_000;
+const LEASE_RENEW_MS = 15_000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
+// What the conversation says about a turn that ended with its process: a
+// deploy replacing the platform's pod, or a crash. The screen offers Retry.
+const INTERRUPTED_TEXT = 'The agent was interrupted by a platform update before it finished. Retry to pick it up again.';
+// What the model is told on Retry: its last attempt at this turn left no
+// answer, and the user asked for one.
+const RETRY_NOTE = '[HOMEROOM] Your last answer to this was cut off by a platform restart before it finished, and '
+  + 'the user pressed Retry. Answer their last message now. Do not mention the restart unless it matters.';
+// What the model is told when a round ends the turn with no words for the
+// person: some models call tools (suggest_replies among them), then end the
+// next round with nothing to say. It gets one more round, without tools.
+const EMPTY_REPLY_NOTE = '[HOMEROOM] Your last reply had no text for the person. Answer them now in plain words, '
+  + 'using what the tools returned. Do not call more tools.';
 
 // The wrap-up is offered no tool but suggest_replies, so it cannot act on a
 // dispatch that failed. Without this it has promised "Retrying now."
@@ -113,6 +125,13 @@ const SET_FOCUS_APP_TOOL = Object.freeze({
 // Stop handles for the turns this process is running, by agent session id.
 const stopRegistry = new Map();
 
+// Whether this turn's model can look at pictures: a Claude model always can,
+// an OpenRouter one when the catalog lists image input (openrouter-mayor.js).
+// Only then does the platform shim fetch a request's screenshots for it.
+function seesImages(mayor) {
+  return !!mayor && (mayor.provider === 'anthropic' || !!(mayor.client && mayor.client.imageInput === true));
+}
+
 function busKey(agentSessionId) {
   return `agent:${agentSessionId}`;
 }
@@ -124,6 +143,8 @@ function defaults(deps = {}) {
     limits: deps.limits || require('../limits'),
     openrouterMayor: deps.openrouterMayor || require('../openrouter-mayor'),
     openMayorMcp: deps.openMayorMcp || require('./mcp-shim').openMayorMcp,
+    turnImageBudget: deps.turnImageBudget || require('./mcp-shim').turnImageBudget,
+    toolResultContent: deps.toolResultContent || require('./mcp-shim').toolResultContent,
     agentSessions: deps.agentSessions || require('../agent-sessions'),
     actions: deps.actions || require('../agent-session-actions'),
     sessionBus: deps.sessionBus || require('../session-bus'),
@@ -131,6 +152,7 @@ function defaults(deps = {}) {
     buildMayorMessages: deps.buildMayorMessages || require('./messages').buildMayorMessages,
     attachments: deps.attachments || require('../attachments'),
     stripFakeCompletionMarker: deps.stripFakeCompletionMarker || require('./messages').stripFakeCompletionMarker,
+    takeTextualReplies: deps.takeTextualReplies || require('./messages').takeTextualReplies,
     dispatch: deps.dispatch || require('./agent-dispatch'),
     dispatchDeps: deps.dispatchDeps || {},
     compaction: deps.compaction || require('./agent-compaction'),
@@ -140,6 +162,10 @@ function defaults(deps = {}) {
     // The dev chat's own "Session finished" (routes/sessions.js), read at
     // call time: that module requires this one at load.
     notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
+    // The bell's "Session stopped before finishing" (#4729), read at call
+    // time like notifyDone: an agent session's turn that ended in an error
+    // bell nobody watching live (they saw it happen) when nobody is watching.
+    notifyStalled: deps.notifyStalled || ((pool, changeId) => require('../../routes/sessions').notifySessionStalled(pool, changeId)),
     // The owner's lists (Recents, the mark's menu, Messages) show a spinner
     // while a turn runs and a dot once it has finished: tell every tab, on
     // every pod, when either happens.
@@ -183,7 +209,7 @@ async function resolveAgentMayor({ pool, config, userId, agentSessionId, request
     if (resolved.error) {
       return {
         ok: false, status: 503, code: 'mayor_unavailable',
-        error: `Your OpenRouter setup cannot run the Mayor (${resolved.error}). Check your coding agent in Settings.`,
+        error: `Your OpenRouter setup cannot run the agent (${resolved.error}). Check your coding agent in Settings.`,
       };
     }
     if (resolved.usesIncludedKey) {
@@ -366,7 +392,7 @@ function fallbackWrapUp(outcome) {
     return reason || 'The coding agent could not run on this change.';
   }
   if (outcome.isError) return 'The coding agent did not finish this run. The details are above.';
-  if (outcome.kind === 'scout') return 'The spec is updated. Tell me when you want it built.';
+  if (outcome.kind === 'scout') return 'The plan is updated. Tell me when you want it built.';
   return 'The coding agent has finished. The details are above.';
 }
 
@@ -382,6 +408,13 @@ async function runAgentTurn({
   // The files sent with messageText, already checked as this user's own,
   // unsent uploads to this conversation (routes/agent-sessions.js).
   attachments = [],
+  // The user's row when the route already wrote it with the lease
+  // (agentSessions.startTurnWithMessage): `{ id, clientMessageId }`. The turn
+  // then writes no row of its own and starts by saying it has the message.
+  recorded = null,
+  // Retry of a turn that did not finish: no new message, the model is told
+  // to answer the last one.
+  retry = false,
   followUp = null,
   mayor,
   res,
@@ -402,8 +435,14 @@ async function runAgentTurn({
   };
   const stop = {
     abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
-    startedAt: Date.now(), buildStartedAt: null,
+    startedAt: Date.now(), buildStartedAt: null, turnId,
+    // Set when this process is shutting down (interruptLocalTurns): the turn
+    // ends as interrupted, with Retry, not as failed.
+    interrupted: false,
+    ended: null,
   };
+  let markEnded = () => {};
+  stop.ended = new Promise((resolve) => { markEnded = resolve; });
   const prior = stopRegistry.get(agentSessionId);
   if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
   stopRegistry.set(agentSessionId, stop);
@@ -413,12 +452,26 @@ async function runAgentTurn({
     stop.phase = phase;
     if (phase === 'cc') stop.buildStartedAt = Date.now();
     send('phase', { phase, ...(phase === 'cc' ? { startedAt: stop.buildStartedAt } : {}), ...extra });
+    // On the lease too, so a screen that did not hear this event (another
+    // pod, one opened mid-turn) reads where the turn is. Best effort: the
+    // event already said it to the screens following this turn.
+    if (typeof d.agentSessions.setTurnPhase === 'function') {
+      Promise.resolve(d.agentSessions.setTurnPhase(pool, {
+        agentSessionId, turnId, phase, startedAt: phase === 'cc' ? stop.buildStartedAt : null,
+      })).catch(() => {});
+    }
   };
 
   // The turn keeps its lease fresh while it runs: a dispatch can outlast the
   // stale window, and only a turn whose process died should lose it.
   const leaseTimer = setInterval(() => {
     d.agentSessions.renewTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
+    if (!stop.stopped && typeof d.agentSessions.readTurnStopRequest === 'function') {
+      d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId }).then((request) => {
+        if (!request || stopRegistry.get(agentSessionId) !== stop) return;
+        return require('../agent-session-stop').requestStop({ pool, user, agentSessionId, scheduleInteractiveRecovery });
+      }).catch((err) => log.warn('agent-mayor', 'Could not apply durable stop', { agentSessionId, err: err.message }));
+    }
   }, LEASE_RENEW_MS);
   if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
 
@@ -491,8 +544,16 @@ async function runAgentTurn({
     });
   };
 
+  // A reply's own words, with any pills it wrote as text (#4125) cut out and
+  // kept as the turn's pills when no real suggest_replies call gave some.
+  const replyText = (raw) => {
+    const { text, replies } = d.takeTextualReplies(d.stripFakeCompletionMarker(raw || '').trim());
+    if (replies && !quickReplies) quickReplies = d.tools.sanitizeQuickReplies({ replies });
+    return text;
+  };
+
   const keepStreamedText = () => {
-    const partial = d.stripFakeCompletionMarker(roundText).trim();
+    const partial = replyText(roundText);
     roundText = '';
     if (partial) visibleText = visibleText ? `${visibleText}\n\n${partial}` : partial;
   };
@@ -585,7 +646,7 @@ async function runAgentTurn({
       }
       if (shim && shim.toolNames.includes(use.name)) {
         const result = await shim.call(use.name, input);
-        return { ok: !result.isError, text: result.text };
+        return { ok: !result.isError, text: result.text, images: result.images || [] };
       }
       return { ok: false, text: `unknown_tool: ${use.name} is not available in this conversation.` };
     } catch (err) {
@@ -618,6 +679,8 @@ async function runAgentTurn({
       sendAgent: send,
       res,
       onStopHandle: (handle) => { stop.change = handle; },
+      shouldStop: async () => stop.stopped || !!(typeof d.agentSessions.readTurnStopRequest === 'function'
+        && await d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId })),
       scheduleInteractiveRecovery,
       deps: d.dispatchDeps,
     });
@@ -643,10 +706,12 @@ async function runAgentTurn({
     }
     // A spec drafted or a build done while nobody is looking is the bell's,
     // as a dev chat's finished turn is ("Session finished", one unread per
-    // change). Looking means this turn's own stream is still open, or the
-    // conversation screen is following the conversation's events.
+    // change). A turn that ended in an error is the bell's other line,
+    // "Session stopped before finishing" (#4729), so the notification says
+    // what kind of news waits. Looking means this turn's own stream is still
+    // open, or the conversation screen is following the conversation's events.
     if (outcome.ran && outcome.changeId && !watching()) {
-      await d.notifyDone(pool, outcome.changeId);
+      await (outcome.isError ? d.notifyStalled : d.notifyDone)(pool, outcome.changeId);
     }
   };
 
@@ -698,9 +763,12 @@ async function runAgentTurn({
         });
         wrapCost = costOf(mayor, wrap, d);
         bill(wrapCost);
-        wrapText = d.stripFakeCompletionMarker(wrap.text || '').trim();
+        const written = d.takeTextualReplies(d.stripFakeCompletionMarker(wrap.text || '').trim());
+        wrapText = written.text;
         const repliesUse = (wrap.toolUses || []).find((u) => u.name === SUGGEST_REPLIES);
         wrapReplies = repliesUse ? d.tools.sanitizeQuickReplies(repliesUse.input) : null;
+        // #4125: pills the wrap-up wrote as text, when it made no real call.
+        if (!wrapReplies && written.replies) wrapReplies = d.tools.sanitizeQuickReplies({ replies: written.replies });
       }
     } catch (err) {
       log.warn('agent-mayor', 'Wrap-up failed; using fixed text', { agentSessionId, err: err.message });
@@ -723,12 +791,23 @@ async function runAgentTurn({
     return true;
   };
 
+  // Declared here, not inside the try, so the catch's failed turn can reach
+  // the active change it may have left behind and bell it (#4729).
+  let session = null;
   try {
-    const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+    session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
     if (!session || session.status !== 'open') throw new Error('agent session is not open');
 
-    if (messageText) {
-      // The user's message: on the active change's slice when there is one,
+    if (recorded) {
+      // Written with the lease, before the stream opened: say so first, so
+      // the screen settles its "Sending" copy on this row.
+      send('accepted', { messageId: recorded.id, clientMessageId: recorded.clientMessageId || null, turnId });
+    } else if (retry) {
+      send('accepted', { retry: true, turnId });
+    } else if (messageText) {
+      // A caller that has not written the row itself (the route writes it
+      // with the lease, agentSessions.startTurnWithMessage) gets it written
+      // here. The user's message: on the active change's slice when there is one,
       // so the change page reads the conversation that shaped it, and on the
       // conversation always.
       const { rows: inserted } = await pool.query(
@@ -762,15 +841,21 @@ async function runAgentTurn({
     compactionPlan = d.compaction.planCompaction(history);
     const historyAttachments = await d.attachments.loadForHistory(pool, history);
     let convo = historyToMessages(history, d.buildMayorMessages, historyAttachments);
-    if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
+    if (retry) convo = withTrailingUserText(convo, RETRY_NOTE);
+    else if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
     const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
-    shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
+    shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId, imageInput: seesImages(mayor) });
+    const takeImages = d.turnImageBudget();
 
     let dispatchUse = null;
     let pendingResults = null;
     let claimChecked = false;
+    let emptyNudged = false;
     for (let round = 0; ; round += 1) {
-      const lastRound = round >= MAX_TOOL_ROUNDS;
+      // The nudge round is the turn's last whatever its number: it may be
+      // one past MAX_TOOL_ROUNDS, and it runs at most once.
+      const nudgeRound = emptyNudged;
+      const lastRound = nudgeRound || round >= MAX_TOOL_ROUNDS;
       const offer = await toolOffer();
       roundText = '';
       const result = await mayor.client.streamChat({
@@ -784,14 +869,14 @@ async function runAgentTurn({
         apiKey: mayor.apiKey,
         telemetryContext: {
           pool, appId: null, sessionId: null, backend: 'mayor',
-          component: round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration',
+          component: nudgeRound ? 'mayor_empty_retry' : (round === 0 ? 'mayor_phase_1' : 'mayor_data_iteration'),
         },
       });
       const cents = costOf(mayor, result, d);
       bill(cents);
       phaseOneCost += cents;
       roundText = '';
-      const text = d.stripFakeCompletionMarker(result.text || '').trim();
+      const text = replyText(result.text);
       if (text) visibleText = visibleText ? `${visibleText}\n\n${text}` : text;
       const toolUses = Array.isArray(result.toolUses) ? result.toolUses : [];
       // The turn is ending without a dispatch. A reply that says one is
@@ -808,6 +893,15 @@ async function runAgentTurn({
             : withTrailingUserText(convo, note);
           continue;
         }
+      }
+      // The turn is ending with no words for the person: ask once more,
+      // without tools, before falling back to EMPTY_REPLY_TEXT. An empty
+      // assistant message is not replayable, so the note joins the last
+      // user message.
+      if ((!toolUses.length || lastRound) && !stop.stopped && !visibleText && !cards.length && !emptyNudged) {
+        emptyNudged = true;
+        convo = withTrailingUserText(convo, EMPTY_REPLY_NOTE);
+        continue;
       }
       if (stop.stopped || !toolUses.length || lastRound) break;
 
@@ -847,7 +941,8 @@ async function runAgentTurn({
         toolResults.push({
           type: 'tool_result',
           tool_use_id: use.id,
-          content: answer.text,
+          // A request's screenshots ride as image blocks after the text.
+          content: d.toolResultContent(takeImages(answer)),
           ...(answer.ok ? {} : { is_error: true }),
         });
       }
@@ -875,23 +970,40 @@ async function runAgentTurn({
   } catch (err) {
     failed = true;
     await flushSpend();
-    if (stop.stopped) keepStreamedText();
-    const messageId = await persistReply(stop.stopped ? { stopped: true } : { failed: true }).catch((persistErr) => {
+    if (stop.stopped || stop.interrupted) keepStreamedText();
+    const flag = stop.stopped ? { stopped: true } : (stop.interrupted ? { interrupted: true } : { failed: true });
+    const messageId = await persistReply(flag).catch((persistErr) => {
       log.warn('agent-mayor', 'Could not record a cut-short reply', { agentSessionId, err: persistErr.message });
       return null;
     });
     if (messageId) send('mayor_reasoning', { text: visibleText, messageId, cards });
     if (stop.stopped) {
       send('stopped', { by: stop.stoppedBy });
+    } else if (stop.interrupted) {
+      log.info('agent-mayor', 'Agent turn interrupted by shutdown', { agentSessionId });
+      await d.agentSessions.appendConversationEvent(pool, {
+        agentSessionId,
+        content: INTERRUPTED_TEXT,
+        event: 'turn_interrupted',
+        metadata: { agentTurnId: turnId, retryable: true },
+      }).catch(() => {});
     } else {
       log.error('agent-mayor', 'Agent turn failed', { agentSessionId, err: err.message });
-      send('error', { error: 'The Mayor could not finish this turn. Try again.' });
+      send('error', { error: 'The agent could not finish this turn. Try again.' });
       await d.agentSessions.appendConversationEvent(pool, {
         agentSessionId,
         content: 'The last turn did not finish.',
         event: 'turn_failed',
-        metadata: { agentTurnId: turnId },
+        metadata: { agentTurnId: turnId, retryable: true },
       }).catch(() => {});
+      // The bell's other line (#4729): a turn that died mid-work bell
+      // "Session stopped before finishing" against the change it was on,
+      // when nobody was watching — a stop or an interruption was answered
+      // where it happened, so those stay out of the bell. Off this catch's
+      // critical path: the turn is already recorded as failed.
+      if (session && session.activeChange && !watching()) {
+        d.notifyStalled(pool, session.activeChange.id).catch(() => {});
+      }
     }
   } finally {
     clearInterval(leaseTimer);
@@ -903,7 +1015,13 @@ async function runAgentTurn({
     listChanged(false);
     send('done', {});
     try { if (res) res.end(); } catch { /* already closed */ }
-    setTimeout(() => d.sessionBus.clearSession(busKey(agentSessionId)), 30_000).unref?.();
+    markEnded();
+    // The buffer lets a screen that reconnects moments later replay the end
+    // of this turn. A turn that started since owns it now: clearing it would
+    // throw that turn's first events away.
+    setTimeout(() => {
+      if (!stopRegistry.has(agentSessionId)) d.sessionBus.clearSession(busKey(agentSessionId));
+    }, 30_000).unref?.();
   }
 
   // After the turn, and off its critical path: fold the oldest turns into
@@ -939,11 +1057,22 @@ async function compactHistory({ pool, config, user, agentSessionId, mayor, summa
 // change's: its stop goes through POST /api/sessions/:changeId/stop, which
 // confirms the kill and escalates, so this answers with the change to stop.
 // The wrap-up cannot be stopped.
-function stopAgentTurn(agentSessionId, { by = null } = {}) {
+function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}) {
   const handle = stopRegistry.get(agentSessionId);
   if (!handle) return { stopped: false, reason: 'no_active_turn' };
+  if (expectedTurnId && handle.turnId !== expectedTurnId) return { stopped: false, reason: 'turn_changed' };
   if (handle.phase === 'mayor2') return { stopped: false, reason: 'wrap_up_not_stoppable' };
   if (handle.phase === 'cc') {
+    handle.stopped = true;
+    handle.stoppedBy = by;
+    if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
+    const child = handle.change?.handle;
+    if (child && child.phase !== 'mayor2') {
+      child.stopped = true;
+      child.stoppedBy = by;
+      child.stopRequestedAt ||= handle.stopRequestedAt;
+      try { child.abort.abort(); } catch { /* already aborted */ }
+    }
     return {
       stopped: false,
       reason: 'dispatch_running',
@@ -952,9 +1081,21 @@ function stopAgentTurn(agentSessionId, { by = null } = {}) {
   }
   handle.stopped = true;
   handle.stoppedBy = by;
+  if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
   try { handle.send('stopping', { by }); } catch { /* best effort */ }
   try { handle.abort.abort(); } catch { /* already aborted */ }
   return { stopped: true, phase: handle.phase };
+}
+
+// Cross-process notifications are a wake-up, never permission to stop an
+// arbitrary run. Re-read the durable intent and match the exact local turn.
+async function receiveStopRequest(pool, { agentSessionId, turnId } = {}, deps = {}) {
+  const handle = stopRegistry.get(Number(agentSessionId));
+  if (!pool || !handle || handle.turnId !== turnId) return false;
+  const request = await (deps.agentSessions || require('../agent-sessions')).readTurnStopRequest(pool, { agentSessionId, turnId });
+  if (!request || stopRegistry.get(Number(agentSessionId)) !== handle) return false;
+  stopAgentTurn(Number(agentSessionId), { by: request.stopRequestedBy, expectedTurnId: turnId });
+  return true;
 }
 
 // Where the running turn is, for a client that joins mid-turn.
@@ -962,8 +1103,10 @@ function turnState(agentSessionId) {
   const handle = stopRegistry.get(agentSessionId);
   if (!handle) return null;
   return {
+    id: handle.turnId || null,
     phase: handle.phase,
     stopping: !!handle.stopped,
+    stopRequestedAt: handle.stopRequestedAt || null,
     changeId: handle.change ? handle.change.changeId : null,
     // What the screen's clock counts from: the build once one was
     // dispatched (the wrap-up keeps counting it), else the turn.
@@ -979,9 +1122,9 @@ function recoveredRunState(agentSessionId, changeId, deps = {}) {
   if (stopRegistry.has(agentSessionId) || !changeId) return null;
   const d = defaults(deps);
   if (!d.isChangeBusy(changeId)) return null;
-  // The change's visual change preview is not the coding agent: the
+  // The change's before/after shots are not the coding agent: the
   // conversation shows it as its own capture (activeChange.previewCapture).
-  if (d.activeTurnMode(changeId) === 'evidence') return null;
+  if (d.activeTurnMode(changeId) === 'shots') return null;
   return { phase: 'cc', stopping: false, changeId };
 }
 
@@ -1019,7 +1162,7 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     d.sessionBus.publish(busKey(agentSessionId), {
       type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
     });
-    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_MINUTES * 60_000 + LEASE_RENEW_MS);
+    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_SECONDS * 1000 + LEASE_RENEW_MS);
     const timer = setTimeout(() => {
       handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
         log.warn('agent-mayor', 'Could not hand back an orphaned turn lease', { agentSessionId, err: err.message });
@@ -1027,6 +1170,93 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     }, wait);
     if (typeof timer.unref === 'function') timer.unref();
   }
+}
+
+// ── Turns that end with their process ──────────────────────────────────
+//
+// Every deploy replaces the platform's one pod, and the turns running in it
+// end with it. Two things make sure a conversation is never left looking
+// busy with nobody working, and never silently without its answer:
+
+// 1. A process that is shutting down ends its own Mayor turns as
+// interrupted: what was said so far is kept, the conversation says the turn
+// was interrupted (with Retry), and the lease is handed back. A turn whose
+// coding agent is running is left alone: the build belongs to the change,
+// and restart recovery adopts it (handBackAfterRecovery). Resolves once each
+// ended turn has written its end, or after `timeoutMs`.
+async function interruptLocalTurns({ timeoutMs = 3000 } = {}) {
+  const ending = [];
+  for (const handle of stopRegistry.values()) {
+    if (handle.phase === 'cc' || handle.stopped || handle.interrupted) continue;
+    handle.interrupted = true;
+    try { handle.abort.abort(); } catch { /* already aborted */ }
+    if (handle.ended) ending.push(handle.ended);
+  }
+  if (!ending.length) return 0;
+  let timer = null;
+  await Promise.race([
+    Promise.allSettled(ending),
+    new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return ending.length;
+}
+
+// 2. A process that died without that (a crash, a kill) leaves its leases to
+// go stale. The sweeper, on every pod, ends each stale one as interrupted, in
+// one transaction with the note (agentSessions.endInterruptedTurn), and the
+// database's version bump tells every screen. A conversation whose active
+// change still has a run on record is left to restart recovery, which hands
+// it back when the build ends.
+// `agentSessionId` sweeps that one conversation only: a read of it that
+// found its lease stale ends the turn there and then (routes/agent-sessions.js
+// GET /:id/state), rather than showing an idle conversation with no answer
+// until the next sweep.
+async function sweepInterruptedTurns({ pool, agentSessionId = null, deps = {} } = {}) {
+  const d = defaults(deps);
+  const stale = await d.agentSessions.staleTurnLeases(pool, agentSessionId == null ? {} : { agentSessionId });
+  let ended = 0;
+  for (const lease of stale) {
+    if (stopRegistry.has(lease.agentSessionId)) continue;
+    if (lease.changeTurn || recoveredRunState(lease.agentSessionId, lease.activeChangeId, deps)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const done = await d.agentSessions.endInterruptedTurn(pool, {
+      agentSessionId: lease.agentSessionId, turnId: lease.turnId, content: INTERRUPTED_TEXT,
+    }).catch((err) => {
+      log.warn('agent-mayor', 'Could not end an interrupted turn', { agentSessionId: lease.agentSessionId, err: err.message });
+      return false;
+    });
+    if (!done) continue;
+    ended += 1;
+    log.info('agent-mayor', 'Ended a turn its process left behind', { agentSessionId: lease.agentSessionId });
+    try { d.notifyUser(lease.userId, { type: 'agent_session_changed', agentSessionId: lease.agentSessionId, busy: false }); } catch { /* the version notice says it too */ }
+    d.sessionBus.publish(busKey(lease.agentSessionId), {
+      type: 'done', _seq: `interrupted-${Date.now().toString(36)}`, agentSessionId: lease.agentSessionId,
+    });
+  }
+  return ended;
+}
+
+const SWEEP_EVERY_MS = 30_000;
+let sweepTimer = null;
+
+// Started once per process, after boot (server.js). The first sweep waits a
+// window, so a turn another pod is still finishing during a rollout has had
+// every chance to renew.
+function startInterruptedTurnSweeper({ pool, everyMs = SWEEP_EVERY_MS } = {}) {
+  if (sweepTimer) return;
+  const tick = () => {
+    sweepInterruptedTurns({ pool }).catch((err) => {
+      log.warn('agent-mayor', 'Interrupted-turn sweep failed', { err: err.message });
+    });
+  };
+  sweepTimer = setInterval(tick, everyMs);
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+}
+
+function stopInterruptedTurnSweeper() {
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
 }
 
 function newTurnId() {
@@ -1038,6 +1268,9 @@ module.exports = {
   HISTORY_ROWS,
   LEASE_RENEW_MS,
   EMPTY_REPLY_TEXT,
+  INTERRUPTED_TEXT,
+  RETRY_NOTE,
+  EMPTY_REPLY_NOTE,
   IMMEDIATE_WRITE_TOOLS,
   SWITCH_ACTIVE_CHANGE_TOOL,
   SET_FOCUS_APP_TOOL,
@@ -1056,11 +1289,15 @@ module.exports = {
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
-  stopAgentTurn,
+  stopAgentTurn, receiveStopRequest,
   turnState,
   handBackOrphanedTurn,
   handBackAfterRecovery,
   recoveredRunState,
+  interruptLocalTurns,
+  sweepInterruptedTurns,
+  startInterruptedTurnSweeper,
+  stopInterruptedTurnSweeper,
   newTurnId,
   _stopRegistry: stopRegistry,
 };

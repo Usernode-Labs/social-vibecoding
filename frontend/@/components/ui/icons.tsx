@@ -217,6 +217,18 @@ export const UserIcon = stroked(
   'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
 );
 
+/**
+ * A soft person silhouette, solid: a head and shoulders that run off the
+ * bottom edge, so a round frame crops them. The waiting seats in the
+ * community's people row (first-session/people-row.tsx) draw it in a tint,
+ * and the hub's open seats draw it pale in a circle (community-card.tsx
+ * WeekPeople).
+ */
+export const PersonSilhouetteIcon = filled(
+  'PersonSilhouetteIcon',
+  'M12 4.4a4.6 4.6 0 100 9.2 4.6 4.6 0 100-9.2zM2.5 24c.9-5.2 4.6-8.4 9.5-8.4s8.6 3.2 9.5 8.4z',
+);
+
 export const WalletIcon = stroked(
   'WalletIcon',
   'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
@@ -341,6 +353,9 @@ export const LockIcon = stroked(
   'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
 );
 
+// LockOpenIcon (its shackle swung open) went with the Getting started card's
+// done state, its one user (#4635).
+
 export const KeyIcon = stroked(
   'KeyIcon',
   'M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z',
@@ -399,6 +414,33 @@ export const HandRaisedIcon = stroked(
   'HandRaisedIcon',
   'M10.05 4.575a1.575 1.575 0 10-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 013.15 0v1.5m-3.15 0l.075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 013.15 0V15M6.9 7.575a1.575 1.575 0 10-3.15 0v8.175a6.75 6.75 0 006.75 6.75h2.018a5.25 5.25 0 003.712-1.537l1.732-1.732a5.25 5.25 0 001.538-3.712l.003-2.024a.668.668 0 01.198-.471 1.575 1.575 0 10-2.228-2.228 3.818 3.818 0 00-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0116.35 15m.002 0h-.002',
 );
+// #4666: the approval presets' own glyphs. A bolt for You or the group (you
+// ship on your own), sliders for Make your own.
+export const BoltIcon = stroked('BoltIcon', 'M13 3 5 13.5h6l-1 7.5 8-10.5h-6l1-7.5Z');
+export const AdjustmentsIcon = stroked('AdjustmentsIcon', [
+  'M4 7h9M17 7h3M4 17h3M11 17h9',
+  'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
+]);
+// #4916: All items' "By category" tab, beside BoardIcon for "By stage".
+// Heroicons v1 outline tag, the set this file draws from.
+export const TagIcon = stroked(
+  'TagIcon',
+  'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+);
+// #4916: the board's two "mine" toggles, drawn as a person with a mark:
+// a check for Assigned to you, a pen for Created by you. New glyphs, so not
+// transcribed from older markup: lucide's user-check and user-pen, on the
+// same 24 grid at the same 2px stroke as UserIcon.
+export const UserCheckIcon = stroked('UserCheckIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M16 11l2 2 4-4',
+]);
+export const UserPenIcon = stroked('UserPenIcon', [
+  'M11.5 15H7a4 4 0 00-4 4v2',
+  'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+]);
 export const SparklesIcon = stroked(
   'SparklesIcon',
   'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
@@ -427,6 +469,12 @@ export const PaperClipIcon = stroked(
 export const ArrowUpTrayIcon = stroked(
   'ArrowUpTrayIcon',
   'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
+);
+
+/** Download a file onto the device: the arrow into the tray (#4055). */
+export const DownloadIcon = stroked(
+  'DownloadIcon',
+  'M12 3v12m0 0l-4-4m4 4l4-4M5 13v7h14v-7',
 );
 
 export const SendIcon = stroked(
@@ -499,6 +547,14 @@ export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6
 export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
 
 /**
+ * FOUR ARROWS out from the centre (✥) — a handle that moves what it is on.
+ *
+ * The comment bar's grip wears it beside a move cursor, so "drag me" reads at
+ * a glance where the ⋮ it replaced read as a menu.
+ */
+export const ArrowsMoveIcon = stroked('ArrowsMoveIcon', 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3');
+
+/**
  * A NEWSPAPER — the Activity row and screen.
  *
  * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
@@ -526,6 +582,14 @@ export const NewspaperIcon = stroked(
  */
 export const ListLinesIcon = stroked('ListLinesIcon', 'M4 6h16M4 12h16M4 18h16');
 
+/**
+ * Lines of text, the last one short: the Needs-you rail's Description, the
+ * way a short video's player marks the words under it. Bars3Icon's grid and
+ * rhythm with the third line cut to where a paragraph ends, so it reads as
+ * text rather than as a menu.
+ */
+export const DescriptionIcon = stroked('DescriptionIcon', 'M4 6h16M4 12h16M4 18h10');
+
 export const TerminalIcon = stroked(
   'TerminalIcon',
   'M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z',
@@ -535,6 +599,17 @@ export const CogIcon = stroked('CogIcon', [
   'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
   'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
 ]);
+
+/**
+ * A globe, for a project's custom domain (#4405): the Settings & rules row
+ * that opens the Custom domain dialog. Renders behind state (the row shows
+ * only to whoever manages the project), so it is on the expected-absent list
+ * in tests/shell-icon-set.test.js.
+ */
+export const GlobeIcon = stroked(
+  'GlobeIcon',
+  'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
+);
 
 export const SunIcon = stroked(
   'SunIcon',
@@ -573,6 +648,13 @@ export const CameraIcon = stroked('CameraIcon', [
 export const PhotoIcon = stroked(
   'PhotoIcon',
   'M3 16.5l5.25-5.25a2.25 2.25 0 013.182 0L15 14.818m-1.5-1.5 1.068-1.068a2.25 2.25 0 013.182 0L21 15.5m-18 3.75h18A2.25 2.25 0 0023.25 17V6.75A2.25 2.25 0 0021 4.5H3A2.25 2.25 0 00.75 6.75V17A2.25 2.25 0 003 19.25z',
+);
+
+// #3940: the feedback modal's "Add video" option. Heroicons v2
+// video-camera (24 outline), like the rest of the file.
+export const VideoCameraIcon = stroked(
+  'VideoCameraIcon',
+  'M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z',
 );
 
 /**
@@ -674,6 +756,37 @@ export const GitHubIcon = filled(
   'GitHubIcon',
   'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
 );
+
+/**
+ * The Apple mark, for Continue with Apple on the sign-in sheet
+ * (features/auth/sign-in-sheet.tsx). One colour, the button's own ink, as
+ * Apple's sign-in button guidelines draw it.
+ */
+export const AppleIcon = filled(
+  'AppleIcon',
+  'M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701',
+);
+
+// The four parts of Google's "G", on its own 48 grid.
+const GOOGLE_RED = 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z';
+const GOOGLE_BLUE = 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z';
+const GOOGLE_YELLOW = 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z';
+const GOOGLE_GREEN = 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z';
+
+/**
+ * The Google "G", for Continue with Google on the sign-in sheet. Written out
+ * rather than built: Google's sign-in branding asks for the four-colour
+ * mark, so each part carries its own fill instead of the button's ink.
+ */
+export const GoogleIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 48 48" {...rest}>
+    <path fill="#EA4335" d={GOOGLE_RED} />
+    <path fill="#4285F4" d={GOOGLE_BLUE} />
+    <path fill="#FBBC05" d={GOOGLE_YELLOW} />
+    <path fill="#34A853" d={GOOGLE_GREEN} />
+  </svg>
+);
+GoogleIcon.displayName = 'GoogleIcon';
 
 /**
  * The dev card's fold mark: which SIZE the item is at (card/fold.tsx
@@ -796,6 +909,15 @@ export const HeartIcon = stroked(
   'HeartIcon',
   'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
 );
+
+/**
+ * A phone with a plus on its screen: "Add Homeroom to your home screen", the
+ * mark menu's row for a private member who has not been Home yet (#4399).
+ */
+export const PhonePlusIcon = stroked('PhonePlusIcon', [
+  'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
+  'M12 9v6M9 12h6',
+]);
 
 /** Food & drink, a category of the emoji picker: a cup with steam. */
 export const CupIcon = stroked('CupIcon', [

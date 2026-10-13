@@ -37,22 +37,22 @@ test('Kubernetes capacity renders quota reservations, not invented live usage', 
   assert.match(source, /<StatePill state=\{s\.worker\.state/);
 });
 
-test('Kubernetes stale-preview administration is exposed as an explicit gap', () => {
+test('Kubernetes previews are administered like Docker ones', () => {
+  // The route used to refuse the sweep and report a 'kubernetes' gap, because
+  // its inventory was `docker ps`. staging-reap now lists the preview
+  // Deployments there, so only a staging preview (which manages no other
+  // previews) is refused.
   const route = read('src/routes/admin.js');
-  // The Stale previews section left the console chassis for its own React
-  // module in #1120 slice 23; the two strings the route's gap feeds moved
-  // with it.
+  const reap = read('src/services/staging-reap.js');
   const reapSource = read('frontend/src/features/admin/admin-staging-reap.tsx');
-  assert.match(route, /available: !staging && runtimeKind === 'docker'/);
-  assert.match(route, /unavailableReason: staging \? 'staging' : \(runtimeKind === 'kubernetes' \? 'kubernetes' : null\)/);
-  assert.match(reapSource, /Not yet supported in Kubernetes/);
-  assert.match(reapSource, /normal per-session idle cleanup still applies/);
-  // Both strings are reached through the reason the route sends, not through
-  // an environment read of the section's own — the demo/staging gate above it
-  // must not be what decides the Kubernetes wording.
-  assert.match(reapSource, /unavailableReason === 'kubernetes'/);
+  assert.match(route, /available: !staging,/);
+  assert.match(route, /unavailableReason: staging \? 'staging' : null/);
+  assert.doesNotMatch(route, /mode\(config\) !== 'docker'/);
+  assert.match(reap, /kubernetes\.listPreviews\(/);
+  assert.doesNotMatch(reap, /mode\(config\) !== 'docker'/);
+  assert.doesNotMatch(reapSource, /Not yet supported in Kubernetes|not implemented yet/);
   assert.ok(!/USERNODE_ENV|runtimeKind/.test(reapSource),
-    'the section renders the gap the route reports; it does not detect the runtime');
+    'the section renders what the route reports; it does not detect the runtime');
 });
 
 test('database export remains runtime-neutral through networked pg_dump', () => {

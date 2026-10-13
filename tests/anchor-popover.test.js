@@ -10,7 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
 
-const { placeUnderAnchor } = loadTsx('frontend/src/lib/anchor-popover.ts');
+const { clampPopoverHeight, placeUnderAnchor } = loadTsx('frontend/src/lib/anchor-popover.ts');
 
 const VIEW = { width: 1280, height: 800 };
 
@@ -40,4 +40,24 @@ test('rounds to whole pixels', () => {
   const p = placeUnderAnchor({ top: 8.4, bottom: 36.4, right: 1263.6 },
     { width: 384, height: 100 }, VIEW);
   assert.ok(Number.isInteger(p.top) && Number.isInteger(p.left));
+});
+
+// #3595: the vote panel's real height renders taller than the estimate the
+// placement arithmetic ran on, so the popover ran past the bottom of the
+// screen or landed on the Vote button. Callers now measure the mounted
+// panel and place again — and clampPopoverHeight caps the rare panel no
+// placement can fit, so it scrolls inside instead of off-screen.
+
+test('a panel taller than the viewport is capped to the room between the margins', () => {
+  assert.equal(clampPopoverHeight({ height: 500 }, { width: 1280, height: 400 }), 384);
+});
+
+test('a panel that fits keeps its natural height (undefined)', () => {
+  assert.equal(clampPopoverHeight({ height: 206 }, { width: 1280, height: 800 }), undefined);
+  assert.equal(clampPopoverHeight({ height: 784 }, { width: 1280, height: 800 }), undefined,
+    'exactly the room between the margins still fits');
+});
+
+test('the cap never goes below the margin', () => {
+  assert.equal(clampPopoverHeight({ height: 500 }, { width: 1280, height: 12 }), 8);
 });

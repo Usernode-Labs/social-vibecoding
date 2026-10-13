@@ -61,6 +61,7 @@ function makeCtx(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -106,6 +107,181 @@ const merged = (over) => ({
   id: 8000001, pr_number: 800101, pr_title: 'Fix leaderboard scroll jump',
   username: 'kim', priority: null, assignee: null,
   ...over,
+});
+
+// #3199: sorting is local to In review and must never become a filter.
+const reviewColumn = a => a._kanbanView().cols.find(c => c.key === 'inreview');
+const reviewKeys = a => Array.from(reviewColumn(a).rows, row => row.key);
+function reviewBoard({ livePaint = false } = {}) {
+  const a = makeAppView();
+  a.appData = { slug: 'first-app' };
+  a._ghIssues = [issue({ number: 1 })];
+  a._envIssueNumbers = new Set();
+  a._proposals = [];
+  a._govProposals = [];
+  a._merged = [merged({ id: 80, created_at: '2026-09-28' })];
+  a._mySessions = [{ id: 90, session_title: 'Working', status: 'active' }];
+  a._sharedSessions = [];
+  a._kanbanFilters = { ...none };
+  if (!livePaint) a._repaintBoardSurface = () => {};
+  return a;
+}
+
+test('In review defaults to newest submission, independent of comments, status and old manual order', () => {
+  const a = reviewBoard();
+  a._proposals = [
+    prop({ id: 1, promoted_at: '2026-09-01', last_message_at: '2026-09-28', status: 'merging' }),
+    prop({ id: 2, promoted_at: '2026-09-20', created_at: '2026-08-01' }),
+    prop({ id: 3, promoted_at: '2026-09-20' }),
+    prop({ id: 4, created_at: '2026-09-10' }),
+    prop({ id: 5 }),
+  ];
+  a._boardOrder = { issues: [], review: ['proposal:1', 'proposal:2', 'proposal:5'] };
+  assert.equal(reviewColumn(a).reviewSort, 'newest');
+  assert.deepEqual(reviewKeys(a), ['proposal:3', 'proposal:2', 'proposal:4', 'proposal:1', 'proposal:5']);
+});
+
+test('Vote priority orders unvoted first, then positive qualifying shortfall, enough votes, unknown', () => {
+  const a = reviewBoard();
+  a._proposalsCtx = {};
+  a._proposals = [
+    prop({ id: 1, qualified_yes_count: 1, yes_count: 99, votes_required: 5 }),
+    prop({ id: 2, yes_count: 3, votes_required: 4, my_prior_vote: 'yes' }),
+    prop({ id: 3, yes_count: 7, votes_required: null }),
+    prop({ id: 4, yes_count: 10, votes_required: 10 }),
+    prop({ id: 5, yes_count: 3, votes_required: 4, my_vote: 'yes' }),
+    prop({ id: 6, yes_count: 1, votes_required: 4, my_vote: 'no' }),
+    prop({ id: 7, yes_count: 20, votes_required: 10 }),
+  ];
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), [2, 1, 7, 4, 3, 5, 6].map(id => `proposal:${id}`));
+  assert.equal(reviewColumn(a).count, 7, 'voted and already-qualified proposals remain visible');
+});
+
+test('code and governance proposals share qualifying shortfalls and newest tie breaks', () => {
+  const a = reviewBoard();
+  a._proposalsCtx = { majority: 4 };
+  a._proposals = [
+    prop({ id: 1, yes_count: 2, promoted_at: '2026-09-20' }),
+    prop({ id: 2, votes_required: 4, yes_count: 2, promoted_at: '2026-09-21' }),
+  ];
+  a._govProposals = [gov({ id: 8, up_count: 99, qualified_yes_count: 1, approvals_required: 3,
+    votes_required: 50, created_at: '2026-09-22' })];
+  a._setReviewSort('priority');
+  const col = reviewColumn(a);
+  assert.equal(col.rows[0].card.key, a._govCardModel(a._govProposals[0]).key);
+  assert.deepEqual(Array.from(col.rows.slice(1), r => r.key), ['proposal:2', 'proposal:1']);
+  assert.equal(a._reviewVotesNeeded({ kind: 'gov', item: { up_count: 2, votes_required: 5 } }), 3);
+});
+
+test('changing review order leaves filters, every other column, feed and category data unchanged', () => {
+  const a = reviewBoard();
+  a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4, promoted_at: '2026-09-01' }),
+    prop({ id: 2, votes_required: 5, yes_count: 1, promoted_at: '2026-09-20' })];
+  const others = () => JSON.stringify(a._kanbanView().cols.filter(c => c.key !== 'inreview'));
+  const feed = JSON.stringify(a._feedItems());
+  const categories = JSON.stringify(a._bucketDevItems({ proposals: a._proposals }));
+  const before = others();
+  assert.deepEqual(reviewKeys(a), ['proposal:2', 'proposal:1']);
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), ['proposal:1', 'proposal:2']);
+  assert.equal(others(), before);
+  assert.equal(JSON.stringify(a._feedItems()), feed);
+  assert.equal(JSON.stringify(a._bucketDevItems({ proposals: a._proposals })), categories);
+  assert.equal(a._kanbanFiltersActive(), false);
+  assert.equal(a._kanbanFilterCount(), 0);
+  a._kanbanFilters = { ...none, q: 'no such proposal' };
+  assert.equal(reviewColumn(a).count, 0);
+  assert.equal(reviewColumn(a).empty, 'No matching cards');
+  assert.equal(reviewColumn(a).reviewSort, 'priority', 'empty filtered columns still offer the toggle');
+});
+
+test('review sort persists per app, survives reload, validates values and repaints once per change', () => {
+  const a = reviewBoard();
+  let repaints = 0;
+  a._repaintBoardSurface = () => { repaints++; };
+  a._setReviewSort('priority');
+  a._setReviewSort('priority');
+  a._setReviewSort('invalid');
+  assert.equal(repaints, 1);
+  const store = a.__sandbox.sessionStorage;
+  const b = makeCtx({ sessionStorage: store }).__AppView;
+  b.appData = { slug: 'first-app' };
+  assert.equal(b._reviewSort(), 'priority');
+  a.appData = { slug: 'second-app' };
+  assert.equal(a._reviewSort(), 'newest');
+  a.appData = { slug: 'first-app' };
+  assert.equal(a._reviewSort(), 'priority');
+  a._setReviewSort('newest');
+  assert.equal(store.getItem(`${a.REVIEW_SORT_KEY}:first-app`), null);
+  store.setItem(`${a.REVIEW_SORT_KEY}:third-app`, 'invalid');
+  a.appData = { slug: 'third-app' };
+  assert.equal(a._reviewSort(), 'newest');
+});
+
+test('selecting either sort immediately republishes the visible column in Workshop and standalone board', () => {
+  for (const mode of ['workshop', 'kanban']) {
+    const a = reviewBoard({ livePaint: true });
+    a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4, promoted_at: '2026-09-01' }),
+      prop({ id: 2, votes_required: 5, yes_count: 1, promoted_at: '2026-09-20' })];
+    const hostId = mode === 'workshop' ? 'dev-workshop' : 'dev-kanban-board';
+    a.__sandbox.document.getElementById = id => id === hostId ? {} : null;
+    a._getViewMode = () => mode;
+    a._getWorkshopGroup = () => 'stage';
+    a._workshopView = () => ({});
+    for (const fn of ['_wireFeedComments', '_fillKudosHosts', '_refreshAiAvailability',
+      '_startMergeCountdownTimer', '_reanchorCardMenu']) a[fn] = () => {};
+    const published = [];
+    a._reactDevBoard = () => ({
+      mountWorkshop() {}, publishWorkshop() {}, publishWorkshopGroup() {}, mountKanban() {},
+      publishKanban(view) { published.push(view.cols.find(c => c.key === 'inreview')); },
+    });
+    a._setReviewSort('priority');
+    assert.equal(published.length, 1, `${mode} must update without a reload`);
+    assert.equal(published[0].reviewSort, 'priority');
+    assert.deepEqual(Array.from(published[0].rows, r => r.key), ['proposal:1', 'proposal:2']);
+    a._setReviewSort('newest');
+    assert.equal(published.length, 2);
+    assert.equal(published[1].reviewSort, 'newest');
+    assert.deepEqual(Array.from(published[1].rows, r => r.key), ['proposal:2', 'proposal:1']);
+  }
+});
+
+test('review sort still works with unavailable storage and when signed out', () => {
+  const a = reviewBoard();
+  a.__sandbox.sessionStorage = {
+    getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); },
+    removeItem() { throw new Error('blocked'); },
+  };
+  a.__sandbox.App.user = null;
+  a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4 }),
+    prop({ id: 2, votes_required: 5, yes_count: 1 })];
+  assert.equal(a._reviewSort(), 'newest');
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), ['proposal:1', 'proposal:2']);
+  a._setReviewSort('newest');
+  assert.equal(a._reviewSort(), 'newest');
+});
+
+test('only Waiting for approval renders one sort button naming the current mode and the next action', () => {
+  const a = reviewBoard();
+  let html = kanbanHtml(a);
+  const control = h => h.match(/<button[^>]*aria-label="Sort Waiting for approval:[\s\S]*?<\/button>/g) || [];
+  assert.equal(control(html).length, 1);
+  assert.match(control(html)[0], /aria-label="Sort Waiting for approval: Newest\. Switch to Vote priority\."/);
+  assert.match(control(html)[0], /title="Most recently submitted for review first\. Click to switch to Vote priority\."/);
+  assert.match(control(html)[0], /Newest<\/button>/);
+  assert.doesNotMatch(control(html)[0], /aria-pressed|aria-haspopup/);
+  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort Waiting for approval:'));
+  assert.doesNotMatch(html, /Most recently submitted for review first\.<\/p>/);
+  a._setReviewSort('priority');
+  html = kanbanHtml(a);
+  assert.equal(control(html).length, 1);
+  assert.match(control(html)[0], /aria-label="Sort Waiting for approval: Vote priority\. Switch to Newest\."/);
+  assert.match(control(html)[0], /Vote priority<\/button>/);
+  assert.doesNotMatch(html, /Unvoted first, then fewest qualifying votes still needed\.<\/p>/);
+  const dialog = renderComponent('frontend/src/features/dialogs/board-filters.tsx', 'BoardFiltersDialog', {});
+  assert.doesNotMatch(dialog, /Already voted|Proposal order|Fewest votes needed/);
 });
 
 test('default filters match every kind', () => {
@@ -311,7 +487,10 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
       ],
     },
   );
-  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search cards, comments, or #"/);
+  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search requests, changes, comments or #"/);
+  // #4486: the chips are one group, so All items' one-row head can lay the
+  // search, the grouping and the chips out in that order; `contents` here.
+  assert.match(html, /<span id="dev-filter-chips" class="contents"><button id="dev-kanban-filters-btn"/);
   assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
   assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
   // The chip reads as SET while any dialog filter is on — the filled tonal state.
@@ -647,7 +826,7 @@ test('priority / category are a VISIBLE no-op on session cards', () => {
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Regular dev sessions don&#x27;t carry priority, category or assignee/);
+  assert.match(html, /Agent sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself keeps the attribute filters as an explicit no-op.
@@ -735,8 +914,8 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
   const html = kanbanHtml(AppView);
 
-  assert.match(html, /Underway <span[^>]*>· 1<\/span>/, 'column head retitled');
-  assert.ok(!/In progress <span/.test(html), 'the old title is gone');
+  assert.match(html, /<span class="dev-kanban-step-name">Underway<\/span><span class="dev-kanban-step-n">1<\/span>/, 'its step retitled (#4486: the steps are the column heads)');
+  assert.ok(!/In progress</.test(html), 'the old title is gone');
   // Load-bearing and unchanged: the key, the id and the tab wiring.
   assert.match(html, /id="dev-kanban-col-inprogress"/);
   assert.match(html, /data-kanban-col="inprogress"/);
@@ -744,14 +923,15 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   // The tab strip reads the same title, so the two surfaces cannot drift.
   const tab = html.match(/id="dev-kanban-tab-inprogress"[\s\S]*?<\/button>/);
   assert.ok(tab && /Underway/.test(tab[0]), 'the mobile tab is retitled too');
-  // One-line hover explanation on the column head — the column name alone
-  // still cannot say what the five underway states have in common.
-  const head = html.match(/id="dev-kanban-col-inprogress"[\s\S]*?dev-kanban-col-head[^>]*title="([^"]+)"/);
+  // One-line hover explanation on the column's step (#4486: the steps are
+  // the column heads) — the name alone still cannot say what the five
+  // underway states have in common.
+  const head = html.match(/id="dev-kanban-tab-inprogress"[^>]*class="dev-kanban-step" title="([^"]+)"/);
   assert.ok(head, 'the column head carries a title attribute');
   assert.match(head[1], /auto-solving/i);
   assert.match(head[1], /paused/i);
   // …and only that column has one, so the other three heads are unchanged.
-  assert.equal((html.match(/dev-kanban-col-head[^>]*title="/g) || []).length, 1);
+  assert.equal((html.match(/class="dev-kanban-step" title="/g) || []).length, 1);
 });
 
 // ── The bar itself (#1191, then Streamlined Concept) ────────────────────
@@ -814,7 +994,7 @@ test('a repaint republishes the whole strip: count and chips track the filters',
     [
       { key: 'q', label: 'Search: ripple' },
       { key: 'priority', label: 'High priority' },
-      { key: 'assignee', label: 'Unassigned' },
+      { key: 'assignee', label: 'Nobody yet' },
       { key: 'needsVote', label: 'Waiting on you' },
     ],
   );
@@ -1144,7 +1324,7 @@ test('a declared check reading the filter bar asks for the All-items sub-view (w
   const ALL_ITEMS_ONLY = [
     '#dev-filter-row', '#dev-kanban-filterbar', '#dev-kanban-search',
     '#dev-kanban-filters-btn', 'data-quick-filter', 'data-ws-pane',
-    'data-ws-ear', 'dev-ws-group',
+    'dev-ws-group',
   ];
   const offenders = [];
   for (const t of DAPP.tests) {

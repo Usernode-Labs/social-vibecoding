@@ -18,6 +18,8 @@
 
 import { SparklesIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /** The values the server may write; anything else draws nothing. */
 export type PostedVia = 'agent';
 
@@ -30,14 +32,15 @@ export function PostedViaChip({ via, className }: {
   /** The transcript's name span has no gap of its own; the feed head does. */
   className?: string;
 }) {
+  const t = useMessages('chat');
   if (via !== 'agent') return null;
   return (
     <span
       className={`gc-posted-via inline-flex shrink-0 items-center gap-0.5 rounded-full border border-violet-200 bg-violet-50 px-1.5 align-middle text-[11px] font-medium leading-4 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-300${className ? ` ${className}` : ''}`}
-      title="Posted by a coding agent on this person's behalf"
+      title={t('chat:group.postedVia.title')}
     >
       <SparklesIcon className="h-3 w-3" strokeWidth="1.75" aria-hidden="true" />
-      via agent
+      {t('chat:group.postedVia.chip')}
     </span>
   );
 }

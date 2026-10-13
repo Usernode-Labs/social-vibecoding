@@ -16,8 +16,8 @@
 //
 //   1. MAX_APPS <= 0 switches the cap OFF, and the stored setting with it.
 //      This is the deploy's own off switch, and it has to stay absolute:
-//      visual-evidence runtimes set MAX_APPS=0 so app-creation flows can be
-//      exercised (services/visual-evidence-environment.js), and their
+//      shots runtimes set MAX_APPS=0 so app-creation flows can be
+//      exercised (services/shots-environment.js), and their
 //      databases are clones in which production's stored setting is
 //      present. Honouring the setting there would put back the cap the
 //      runtime deliberately removed.

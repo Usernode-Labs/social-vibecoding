@@ -15,6 +15,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+// The outbox words a failed send through the language runtime's global;
+// give it the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+
 const MODULE_PATH = require.resolve('../public/js/feedback-queue.js');
 
 function load() {
@@ -292,6 +296,94 @@ test('flush: concurrent callers share one pass, so nothing is filed twice', asyn
   assert.equal((await FQ.pending()).length, 0);
 });
 
+// #3994: "Try again" in the dialog. A message stuck behind the backoff (or
+// behind a probe that still says offline) is sent on the press, not ten
+// minutes later, and a press that fails again keeps the words.
+test('retryNow: sends a message that is waiting out its backoff, straight away', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'stuck while offline' }));
+  stubFetch({ throws: true });
+  await FQ.flush('reconnect');
+  const [backedOff] = await FQ.pending();
+  assert.ok(backedOff.nextAttemptAt > Date.now(), 'the record is waiting out its backoff');
+  assert.equal((await FQ.flush('timer')).sent, 0, 'an ordinary pass leaves it alone');
+
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 1);
+  assert.equal(res.reason, 'manual');
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0].body).description, 'stuck while offline');
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+test('retryNow: a press that fails again keeps the message and its words', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'still stuck' }));
+  stubFetch({ throws: true });
+  await FQ.flush();
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 0);
+  assert.equal(res.remaining, 1);
+  const [rec] = await FQ.pending();
+  assert.equal(rec.payload.description, 'still stuck');
+  assert.equal(rec.status, 'pending');
+  assert.ok(rec.nextAttemptAt > Date.now(), 'it goes back on the schedule');
+});
+
+test('retryNow: a record another tab is sending is left to that tab', async () => {
+  const FQ = load();
+  const rec = await FQ.enqueue(entry());
+  // The in-memory adapter keeps the very object enqueue returned, so this is
+  // the stored record: claimed the way a flush in another tab claims it.
+  rec.sendingSince = Date.now();
+  rec.nextAttemptAt = Date.now() + 60_000;
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(calls.length, 0, 'a live claim is never sent twice');
+  assert.equal(res.sent, 0);
+  assert.equal((await FQ.pending()).length, 1);
+});
+
+test('retryNow: a pass that starts during the press does not swallow it', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'raced' }));
+  stubFetch({ throws: true });
+  await FQ.flush();
+  const calls = stubFetch({ status: 200 });
+  // The timer fires in the same tick as the press, after retryNow's first
+  // look at the slot: it picks no record (still backed off) and must not be
+  // the pass the press settles for.
+  const press = FQ.retryNow();
+  const timer = FQ.flush('timer');
+  const res = await press;
+  await timer;
+  assert.equal(calls.length, 1, 'the press sent it');
+  assert.equal(res.reason, 'manual');
+  assert.deepEqual(await FQ.pending(), []);
+});
+
+test('putBack: a record taken for the composer can be returned, words intact', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ description: 'refused words' }));
+  stubFetch({ status: 400, body: { error: 'nope' } });
+  await FQ.flush();
+  const taken = await FQ.takeFailed();
+  await FQ.putBack(taken);
+  const again = await FQ.takeFailed();
+  assert.equal(again.payload.description, 'refused words');
+});
+
+test('retryNow: a screenshot link never sends', async () => {
+  const FQ = load();
+  FQ.seedDisplayOnly([{ payload: { description: 'a saved message', target: 'platform' } }]);
+  const calls = stubFetch({ status: 200 });
+  const res = await FQ.retryNow();
+  assert.equal(res.sent, 0);
+  assert.equal(calls.length, 0);
+  assert.equal((await FQ.pending()).length, 1);
+});
+
 test('flush: a screenshot is uploaded first and its id attached to the submit', async () => {
   const FQ = load();
   // The in-memory adapter keeps blobs, like IndexedDB does.
@@ -307,7 +399,103 @@ test('flush: a screenshot is uploaded first and its id attached to the submit', 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].url, '/api/feedback/screenshot');
   assert.equal(calls[0].body, blob, 'the retained bytes are what gets uploaded');
-  assert.equal(JSON.parse(calls[1].body).screenshotId, 'a'.repeat(32));
+  // #3027: an entry queued before multi-image support (one `screenshot`
+  // Blob) is sent in the new shape — the server accepts either.
+  assert.deepEqual(JSON.parse(calls[1].body).screenshotIds, ['a'.repeat(32)]);
+});
+
+// ── #3027: several images in one queued message ──────────────────────
+
+test('enqueue: several images are kept together and weighed together', async () => {
+  const FQ = load();
+  const blobs = [{ size: 1000, type: 'image/png' }, { size: 2000, type: 'image/jpeg' }, { size: 3000, type: 'image/png' }];
+  const record = await FQ.enqueue({ payload: { description: 'three pictures', target: 'platform' }, screenshots: blobs });
+  assert.deepEqual(record.screenshots, blobs);
+  assert.equal(record.screenshotBytes, 6000, 'the byte cap sees every image, not just the first');
+  assert.equal(record.screenshotDropped, false);
+});
+
+test('enqueue: at most three images are kept, whatever the caller hands over', async () => {
+  const FQ = load();
+  const blobs = [1, 2, 3, 4, 5].map((n) => ({ size: n, type: 'image/png' }));
+  const record = await FQ.enqueue({ payload: { description: 'five pictures', target: 'platform' }, screenshots: blobs });
+  assert.equal(record.screenshots.length, 3);
+  assert.equal(record.screenshotBytes, 6);
+});
+
+test('withinCaps: several images in one entry count toward the byte cap', () => {
+  const FQ = load();
+  const heavy = [{ payload: { description: 'a' }, screenshotBytes: FQ.MAX_SCREENSHOT_BYTES - 5000 }];
+  assert.equal(FQ.withinCaps(heavy, { payload: { description: 'b' }, screenshotBytes: 6000 }).reason, 'too-large');
+});
+
+test('flush: every queued image is uploaded, in order, and all ids go with the submit', async () => {
+  const FQ = load();
+  const blobs = [{ size: 1, type: 'image/png' }, { size: 2, type: 'image/png' }, { size: 3, type: 'image/jpeg' }];
+  await FQ.enqueue({ payload: { description: 'before and after', target: 'platform' }, screenshots: blobs });
+  let n = 0;
+  const calls = stubFetch((call) => (call.url === '/api/feedback/screenshot'
+    ? { status: 200, body: { id: String(++n).repeat(32) } }
+    : { status: 200 }));
+
+  const res = await FQ.flush();
+  assert.equal(res.sent, 1);
+  assert.equal(calls.length, 4, 'three uploads, then one submit');
+  assert.deepEqual(calls.slice(0, 3).map((c) => c.body), blobs);
+  assert.deepEqual(JSON.parse(calls[3].body).screenshotIds, ['1'.repeat(32), '2'.repeat(32), '3'.repeat(32)]);
+});
+
+test('flush: ids uploaded before going offline are kept beside the queued bytes', async () => {
+  const FQ = load();
+  await FQ.enqueue({
+    payload: { description: 'half uploaded', target: 'platform', screenshotIds: ['e'.repeat(32)] },
+    screenshots: [{ size: 5, type: 'image/png' }],
+  });
+  const calls = stubFetch((call) => (call.url === '/api/feedback/screenshot'
+    ? { status: 200, body: { id: 'f'.repeat(32) } }
+    : { status: 200 }));
+  await FQ.flush();
+  assert.deepEqual(JSON.parse(calls[1].body).screenshotIds, ['e'.repeat(32), 'f'.repeat(32)]);
+});
+
+test('flush: one image the server refuses outright is dropped, the rest still go', async () => {
+  const FQ = load();
+  await FQ.enqueue({
+    payload: { description: 'one bad picture', target: 'platform' },
+    screenshots: [{ size: 1, type: 'image/png' }, { size: 2, type: 'image/gif' }],
+  });
+  const calls = stubFetch((call, i) => (call.url === '/api/feedback/screenshot'
+    ? (i === 0 ? { status: 200, body: { id: 'a'.repeat(32) } } : { status: 400, body: { error: 'bad' } })
+    : { status: 200 }));
+  const res = await FQ.flush();
+  assert.equal(res.sent, 1);
+  assert.deepEqual(JSON.parse(calls[2].body).screenshotIds, ['a'.repeat(32)]);
+});
+
+test('flush: a transient failure on any image retries the whole message', async () => {
+  const FQ = load();
+  await FQ.enqueue({
+    payload: { description: 'keep all of us together', target: 'platform' },
+    screenshots: [{ size: 1, type: 'image/png' }, { size: 2, type: 'image/png' }],
+  });
+  const calls = stubFetch((call, i) => (i === 0 ? { status: 200, body: { id: 'a'.repeat(32) } } : { throws: true }));
+  const res = await FQ.flush();
+  assert.equal(res.sent, 0);
+  assert.equal(calls.some((c) => c.url === '/api/feedback'), false, 'nothing filed without every picture');
+  const pending = await FQ.pending();
+  assert.equal(pending.length, 1);
+
+  // The retry uploads only the image that did not make it: the first one's
+  // id was kept, so it is not uploaded (and orphaned) a second time.
+  pending[0].nextAttemptAt = 0;
+  const retry = stubFetch((call) => (call.url === '/api/feedback/screenshot'
+    ? { status: 200, body: { id: 'b'.repeat(32) } }
+    : { status: 200 }));
+  const again = await FQ.flush();
+  assert.equal(again.sent, 1);
+  assert.equal(retry.filter((c) => c.url === '/api/feedback/screenshot').length, 1);
+  assert.deepEqual(retry.find((c) => c.url === '/api/feedback/screenshot').body, { size: 2, type: 'image/png' });
+  assert.deepEqual(JSON.parse(retry.find((c) => c.url === '/api/feedback').body).screenshotIds, ['a'.repeat(32), 'b'.repeat(32)]);
 });
 
 test('flush: a screenshot the server rejects outright still files the words', async () => {
@@ -324,6 +512,7 @@ test('flush: a screenshot the server rejects outright still files the words', as
   assert.equal(res.sent, 1, 'the description is worth more than the attachment');
   assert.equal(calls.length, 2);
   assert.equal(JSON.parse(calls[1].body).screenshotId, undefined);
+  assert.equal(JSON.parse(calls[1].body).screenshotIds, undefined);
 });
 
 test('flush: a screenshot upload that times out retries the whole message', async () => {

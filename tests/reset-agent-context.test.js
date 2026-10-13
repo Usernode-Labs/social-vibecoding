@@ -65,8 +65,9 @@ test('reset-agent-context rejects a malformed session id before DB checkout', as
   const { response, json } = await post(server, 'not-a-number', {
     backend: 'claude_code',
   });
-  assert.equal(response.status, 400);
-  assert.equal(json.error, 'Bad session id');
+  // The session guard answers a malformed id before the route runs.
+  assert.equal(response.status, 404);
+  assert.equal(json.error, 'Session not found');
   assert.equal(connectCalls, 0);
 });
 

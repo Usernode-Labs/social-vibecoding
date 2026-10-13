@@ -18,9 +18,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -100,13 +102,20 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
     'the instructions are asked to carry this change\'s spec (the server checks it is the viewer\'s)');
   // One button: copy inside the click, then the agent opens in a new tab.
   assert.match(dialog, /href=\{AGENT_URL\[agent\]\}\s+target="_blank"\s+rel="noopener noreferrer"\s+data-agent-session-handoff-action="copy-open"\s+onClick=\{copyAndOpen\}/);
-  assert.match(dialog, /\{`Copy instructions and open \$\{label\}`\}/);
-  assert.match(dialog, />Paste into the new session\. It starts building straight away\.</);
-  assert.match(dialog, /Handed over with the instructions/);
-  assert.match(dialog, /`This chat's spec: "\$\{active\.title\}"`/);
+  assert.match(dialog, /\{t\('agent:session\.handoff\.copyAndOpen', \{ agent: label \}\)\}/);
+  assert.equal(message('agent:session.handoff.copyAndOpen', { agent: 'Codex' }), 'Copy instructions and open Codex');
+  assert.match(dialog, />\{t\('agent:session\.handoff\.pasteHint'\)\}</);
+  assert.equal(message('agent:session.handoff.pasteHint'), 'Paste into the new session. It starts building straight away.');
+  assert.match(dialog, /t\('agent:session\.handoff\.carried\.heading'\)/);
+  assert.equal(message('agent:session.handoff.carried.heading'), 'Handed over with the instructions');
+  assert.match(dialog, /t\('agent:session\.handoff\.carried\.specTitled', \{ title: active\.title \}\)/);
+  assert.equal(message('agent:session.handoff.carried.specTitled', { title: 'Dark mode' }), 'This chat\'s plan: "Dark mode"');
+  assert.equal(message('agent:session.handoff.carried.spec'), 'This chat\'s plan');
+  assert.equal(message('agent:session.handoff.carried.noSpec', { agent: 'Codex' }), 'No plan yet, so Codex will ask what to build.');
   // The copy fallback: the instructions, open, for copying by hand.
   assert.match(dialog, /<details [^>]*open=\{manual\}>/);
-  assert.match(dialog, /Could not copy\. Copy the instructions below by hand/);
+  assert.match(dialog, /t\('agent:session\.handoff\.copyFailed'\)/);
+  assert.match(message('agent:session.handoff.copyFailed'), /Could not copy\. Copy the instructions below by hand/);
   assert.doesNotMatch(dialog, /export function (HandoffDialog|VenuePicker)|<dialog/, 'no second dialog');
 });
 
@@ -159,7 +168,7 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
     AppView: { castRecheck: async (id) => { rechecks.push(id); return true; } },
   };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     const method = init.method || 'GET';
     requests.push([method, url, init.body ? JSON.parse(init.body) : null]);
     if (/\/title$/.test(url)) session = { ...session, title: 'Night mode' };
@@ -171,7 +180,7 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
           : /\/api\/agent-sessions$/.test(url) ? { sessions: [session] }
             : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
@@ -201,18 +210,18 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
   }
 });
 
-test('a refused message becomes the credits card and goes back to the box', async () => {
+test('a refused message becomes the credits card, and stays in the conversation as Not sent, with Retry', async () => {
   const session = { id: 7, title: 'x', status: 'open', focusApp: null, focusContext: {}, busy: false, activeChange: null, changes: [] };
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, PlatformUI: { toast() {} } };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     if (/\/turns$/.test(url) && init.method === 'POST') {
       return { ok: false, status: 429, json: async () => ({ error: 'Weekly limit reached.', code: 'budget_exceeded' }) };
     }
     const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
       : /\/actions$/.test(url) ? { actions: [] } : /\/drafts$/.test(url) ? { drafts: [] } : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
@@ -220,7 +229,11 @@ test('a refused message becomes the credits card and goes back to the box', asyn
     const state = api.getAgentSessionState();
     assert.deepEqual(state.credits, { error: 'Weekly limit reached.', reason: null, verificationRequired: false });
     assert.equal(state.error, '', 'the card, not a red line');
-    assert.equal(state.returnedText, 'Make it blue');
+    // Kept where it was sent, not handed back to the box behind the user's
+    // back: Retry sends it once there is a way, Edit puts it back to reword.
+    assert.deepEqual(state.outbox.map((item) => [item.shown, item.status]), [['Make it blue', 'failed']]);
+    assert.match(state.outbox[0].error, /out of credits/);
+    assert.equal(state.returnedText, null);
     assert.equal(state.turn.running, false);
     api.dismissCredits();
     assert.equal(api.getAgentSessionState().credits, null);
@@ -253,17 +266,22 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   const panel = read('frontend/src/features/agent-session/index.tsx');
   assert.doesNotMatch(panel, /VenuePicker|data-agent-session-venue|HandoffDialog/, '#3078: Build left the bar');
   // The pills and Changes stay siblings: #2779's declared drawer check reads
-  // the bar as focus ~ change pill ~ Changes.
-  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<button\s+type="button"\s+data-agent-session-changes-button/);
+  // the bar as focus ~ change pill ~ Changes. Since #3577 they are siblings in
+  // the bar's one pill row (tests/agent-session-phone.test.js).
+  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*<\/span>\s*<button\s+type="button"\s+data-agent-session-changes-button/);
   // The composer's sheet is Build with; the credits card's rows open it on their tab.
   assert.match(panel, /<BuildSheetBody\s+tab=\{buildTab\}/);
   assert.match(panel, /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);
   assert.match(panel, /if \(!snapshot\.handoff\) return;\s*openSheet\(snapshot\.handoff\);\s*closeHandoff\(\);/);
-  assert.match(panel, /\{ label: 'Rename…'/);
-  assert.match(panel, /label: 'Archive',[\s\S]*?destructive: true/);
-  assert.match(panel, /\{ label: 'Unarchive'/);
+  assert.match(panel, /\{ label: t\('agent:session\.menu\.rename'\)/);
+  assert.equal(message('agent:session.menu.rename'), 'Rename…');
+  assert.match(panel, /label: t\('agent:session\.menu\.archive'\),[\s\S]*?destructive: true/);
+  assert.equal(message('agent:session.menu.archive'), 'Archive');
+  assert.match(panel, /\{ label: t\('agent:session\.menu\.unarchive'\)/);
+  assert.equal(message('agent:session.menu.unarchive'), 'Unarchive');
   assert.match(panel, /\{snapshot\.credits \? <CreditsCard refusal=\{snapshot\.credits\} \/> : null\}/);
   assert.match(panel, /useStoreState<AiBudgetState>\(aiBudgetStore\)/, 'the header\'s own meter, kept live by budget_updated');
-  assert.match(panel, /This session is archived\. Unarchive it to keep going\./);
+  assert.match(panel, /t\('agent:session\.composer\.archivedNote'\)/);
+  assert.equal(message('agent:session.composer.archivedNote'), 'This session is archived. Unarchive it to keep going.');
   assert.match(panel, /window\.AppView\?\.openSessionChecks\?\.\(item\.changeId\)/);
 });

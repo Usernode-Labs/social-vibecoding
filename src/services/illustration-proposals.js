@@ -35,8 +35,10 @@ const crypto = require('crypto');
 const log = require('./logger');
 const { sendSystemMessage, pushIssueUpdate } = require('./ws');
 
+const illustrations = require('../workflow/rules/illustrations.ts');
+
 const KIND = 'featured_illustration';
-const IMAGE_PATH = '/app-illustrations/';
+const { IMAGE_PATH, imageIdFromUrl } = illustrations;
 
 function newImageId() {
   return crypto.randomBytes(16).toString('hex');
@@ -44,13 +46,6 @@ function newImageId() {
 
 function imageUrl(id) {
   return `${IMAGE_PATH}${id}`;
-}
-
-/** The image id a stored illustration url names, or null for anything else. */
-function imageIdFromUrl(url) {
-  if (typeof url !== 'string' || !url.startsWith(IMAGE_PATH)) return null;
-  const id = url.slice(IMAGE_PATH.length);
-  return /^[a-f0-9]{32}$/.test(id) ? id : null;
 }
 
 /** The card's route, the same one shared-objects.js builds for a governance row. */
@@ -138,14 +133,19 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
     client.release();
   }
 
-  // Announce it the way the other governance kinds are announced: once in
-  // group chat, once in the proposal's own thread so the discussion opens
-  // with its origin in context. Best-effort, outside the transaction.
+  // Announce it the way the other governance kinds are announced: in the
+  // proposal's own thread, so the discussion opens with its origin in
+  // context. Best-effort, outside the transaction.
   const createdMsg = `${user.username} proposed ${remove ? 'removing' : 'changing'} the featured illustration`;
-  await sendSystemMessage(pool, app.id, createdMsg, 'system')
-    .catch((err) => log.warn('illustrations', 'Proposal chat message failed', { err: err.message }));
   await sendSystemMessage(pool, app.id, createdMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
+  // Enroll it with the workflow governance machine, when that is on; a
+  // failure is caught by the next vote or the boot backfill.
+  const workflow = require('../workflow/platform.ts');
+  if (workflow.governsKind(KIND)) {
+    await workflow.fileProposal(issue.id, app.id).catch((err) =>
+      log.warn('illustrations', 'Filing the governance proposal failed', { issueId: issue.id, err: err.message }));
+  }
   pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issue.id, kind: KIND });
 
   log.info('illustrations', 'Featured illustration proposal created', {
@@ -154,68 +154,10 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
   return issue;
 }
 
-/**
- * Write the proposed record onto the app. Runs on the caller's client, inside
- * the transaction that has the issue row locked, so a vote and the sweeper
- * cannot both apply it. Returns the illustration the app now wears (null
- * when it was removed).
- *
- * The bytes for each url in the record come from the proposal's own pending
- * row when the url is new, or from the app's current row when the proposal
- * kept an image (a reframe, a light-only upload). Anything else means the
- * image is gone, which is an error rather than a silent blank card.
- */
-async function applyProposal(client, appId, payload, issueId) {
-  const proposed = payload && payload.proposed ? payload.proposed : null;
-  if (!proposed) {
-    await client.query('DELETE FROM app_illustrations WHERE app_id = $1', [appId]);
-    await client.query('UPDATE apps SET featured_illustration = NULL WHERE id = $1', [appId]);
-    await client.query('DELETE FROM app_illustration_proposals WHERE issue_id = $1', [issueId]);
-    return null;
-  }
-  const lightId = imageIdFromUrl(proposed.url);
-  const darkId = proposed.darkUrl ? imageIdFromUrl(proposed.darkUrl) : null;
-  if (!lightId || (proposed.darkUrl && !darkId)) {
-    throw new Error('The proposed illustration names no image');
-  }
-  const { rows: pendingRows } = await client.query(
-    'SELECT * FROM app_illustration_proposals WHERE issue_id = $1', [issueId]
-  );
-  const { rows: currentRows } = await client.query(
-    'SELECT * FROM app_illustrations WHERE app_id = $1', [appId]
-  );
-  const sources = [pendingRows[0], currentRows[0]].filter(Boolean);
-  const pick = (id) => {
-    if (!id) return null;
-    for (const row of sources) {
-      if (row.id === id) return { id, contentType: row.content_type, data: row.data };
-      if (row.dark_id === id) return { id, contentType: row.dark_content_type, data: row.dark_data };
-    }
-    return null;
-  };
-  const light = pick(lightId);
-  const dark = pick(darkId);
-  if (!light || (darkId && !dark)) {
-    throw new Error('The proposed image is no longer available');
-  }
-  // The pending row goes first: its ids are UNIQUE in that table only, but
-  // reading it before the upsert keeps the bytes in hand either way.
-  await client.query('DELETE FROM app_illustration_proposals WHERE issue_id = $1', [issueId]);
-  await client.query(
-    `INSERT INTO app_illustrations (app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (app_id) DO UPDATE SET id = EXCLUDED.id, content_type = EXCLUDED.content_type,
-       data = EXCLUDED.data, dark_id = EXCLUDED.dark_id, dark_content_type = EXCLUDED.dark_content_type,
-       dark_data = EXCLUDED.dark_data`,
-    [appId, light.id, light.contentType, light.data,
-      dark ? dark.id : null, dark ? dark.contentType : null, dark ? dark.data : null]
-  );
-  await client.query(
-    'UPDATE apps SET featured_illustration = $2::jsonb WHERE id = $1',
-    [appId, JSON.stringify(proposed)]
-  );
-  return proposed;
-}
+// Applying a passed proposal inside the apply's transaction, and the
+// workflow's up-front check of the same thing: the workflow's
+// (src/workflow/rules/illustrations.ts), where the reasons are.
+const { applyProposal, missingProposalImage } = illustrations;
 
 module.exports = {
   KIND,
@@ -229,4 +171,5 @@ module.exports = {
   findOpenProposal,
   createProposal,
   applyProposal,
+  missingProposalImage,
 };

@@ -4,11 +4,12 @@
 // #2377: derive the auditable Classic surface Global Chat must cover.
 //
 // This does not claim parity by counting routes. It records every Express
-// route, every API path referenced by the web/mobile shell, every Settings
-// section, and the non-HTTP navigation surfaces. Routes used by Classic get a
-// stable proposed capability id; routes with no detected Classic reference
-// stay `review_required` until a person maps or exempts them. The generated
-// file is deterministic and `--check` makes source drift fail CI.
+// route, every Settings section, and the non-HTTP navigation surfaces, and it
+// checks every API path referenced by the web/mobile shell against those
+// routes. Platform API routes get a stable proposed capability id; anything
+// else stays `review_required` until a person maps or exempts it, and a client
+// call that matches no route fails the check until it is fixed or exempted.
+// The generated file is deterministic and `--check` makes source drift fail CI.
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -51,6 +52,10 @@ const REGISTRATION = Symbol('registration');
 // The route counts this script reports, kept off the committed file for the
 // same reason as `line` (see buildInventory()).
 const COUNTS = Symbol('counts');
+// Client calls that reach a reviewed exemption rather than a route, with the
+// files that make them. Checked on every run, never written (see
+// buildInventory()).
+const REVIEWED_REFERENCES = Symbol('reviewed client references');
 
 const FILE_EXEMPTIONS = new Map([
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
@@ -59,14 +64,16 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
   ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
+  ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
+  ['src/routes/languages.js', 'the shell\'s own language list and packs, read by its language runtime as it boots, never a model-visible control'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
   ['src/routes/topochain/partner.js', 'partner service protocol'],
 ]);
 
 const PATH_EXEMPTIONS = [
-  [/^\/(?:app-icons|avatars|illustrations|issue-images|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
+  [/^\/(?:app-icons|avatars|illustrations|issue-images|issue-videos|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
   [/^\/reports\//, 'public immutable share document'],
   [/^\/\.well-known\//, 'protocol discovery metadata'],
   [/^\/api\/connect\/oauth\/(?:register|token|revoke)$/, 'OAuth protocol endpoint represented by connector Settings'],
@@ -82,6 +89,21 @@ const PATH_EXEMPTIONS = [
 // response would be both misleading and unsafe.
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
+    matches: (route) => route.source === 'src/routes/apps.js'
+      && route.method === 'POST' && route.path === '/api/apps/:slug/openings',
+    reason: 'browser navigation telemetry, emitted by the Classic shell rather than an interactive control',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/sessions.js' && route.method === 'POST'
+      && ['/api/sessions/:id/fork', '/api/sessions/:id/clone-headless'].includes(route.path),
+    reason: 'retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
+      && ['/sw.js', '/shell/release.json'].includes(route.path),
+    reason: 'generated service-worker and asset manifest delivery, not an interactive control',
+  },
+  {
     matches: (route) => route.source === 'server.js'
       && ['/health', '/claude.md', '/node-status'].includes(route.path),
     reason: 'public health, documentation, or redirect surface rather than a signed-in Classic control',
@@ -92,8 +114,35 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
   },
   {
+    matches: (route) => route.source === 'src/routes/mail-tracking.js'
+      && ['/mail/c/:messageId/:linkIndex', '/mail/o/:messageId.gif'].includes(route.path),
+    reason: 'signed sessionless email redirect and image endpoints, never model-visible interactive controls',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-webhooks.js' && route.path === '/api/mail/webhooks/resend',
+    reason: 'provider callback authenticated by a raw-body signature, never a signed-in Classic control',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/activity-mail.js' && route.path === '/mail/unsubscribe',
+    reason: 'the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
+    reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
+      && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
+    reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
+  },
+  {
     matches: (route) => route.path === '/api/iframe-token',
     reason: 'credential mint used by the app iframe transport, never a model-visible capability',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/ui-telemetry.js'
+      && route.path === '/api/ui-telemetry/batch',
+    reason: 'browser_telemetry: same-origin diagnostics transport, never a model-visible capability',
   },
   {
     matches: (route) => route.source === 'src/routes/auth.js'
@@ -121,6 +170,12 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
       && route.path === '/api/me/cli-tokens'
       && route[REGISTRATION].shadowsLaterRoute,
     reason: 'staging empty-state middleware represented by the concrete CLI-token list capability',
+  },
+  {
+    // #4313: answers only the ?demo=1 Needs-you cards' negative ids on staging.
+    matches: (route) => route.source === 'src/routes/workshop-overview.js'
+      && ['/api/sessions/:id/vote', '/api/sessions/:id/votes'].includes(route.path),
+    reason: 'staging demo-card middleware represented by the concrete session vote capabilities',
   },
   {
     matches: (route) => route.source === 'src/routes/mcp-remote.js' && !route.path,
@@ -152,14 +207,14 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'test-only mock control unavailable in normal production Classic mode',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics',
     reason: 'proposal-owner troubleshooting export for local replay, not a Classic user control',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId',
-    reason: 'private binary comparison image represented by proposal evidence diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics/:artifactId',
+    reason: 'private binary comparison image represented by proposal shots diagnostics',
   },
   {
     matches: (route) => route.source === 'src/routes/waitlist-connect.js',
@@ -187,6 +242,7 @@ const CLIENT_REFERENCE_EXEMPTIONS = [
 ];
 
 const DOMAIN_RULES = [
+  [/^\/api\/me\/app-blocks(?:\/|$)/, 'settings'],
   [/^\/api\/v4\/admin(?:\/|$)/, 'admin'],
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
@@ -197,10 +253,10 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
   [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
-  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
+  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|changes|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],
-  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors|dev-flow)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
+  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
   [/^\/api\/(?:apps|favorites|gallery|home|workshop|campaigns)/, 'apps'],
 ];
 
@@ -459,6 +515,7 @@ function classicPathFor(domain, routePath) {
   const value = String(routePath || '');
   const inApp = value.includes(':slug');
   const appRoot = '#app/:slug';
+  if (/^\/api\/me\/app-blocks(?:\/|$)/.test(value)) return '#settings/blocked-apps';
   if (domain === 'settings') return '#settings';
   if (domain === 'admin') return '#admin';
   if (domain === 'notifications') return '#notifications';
@@ -485,6 +542,9 @@ function classicPathFor(domain, routePath) {
     if (inApp && governance) return appRoot + '/dev/governance/:' + governance[1];
     const proposal = value.match(/\/proposals\/:(id|sessionId)(?:\/|$)/);
     if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
+    // #4367: a change by its pull request's number.
+    const change = value.match(/\/changes\/:(number)(?:\/|$)/);
+    if (inApp && change) return appRoot + '/dev/changes/:' + change[1];
     return inApp ? appRoot + '/workshop' : '#workshop';
   }
   if (domain === 'apps') {
@@ -514,7 +574,7 @@ function transportFor(route) {
   return 'server_loopback';
 }
 
-function mappedClassification(route, clientRefs, matches, reason = null) {
+function mappedClassification(route) {
   const domain = domainFor(route);
   const risk = route.method === 'GET'
     ? 'read'
@@ -527,7 +587,6 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
       : 'external_write');
   return {
     status: 'mapped',
-    ...(reason ? { reviewReason: reason } : {}),
     capabilityId: capabilityId(route, domain),
     domain,
     risk,
@@ -536,11 +595,15 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
     transport: transportFor(route),
     mobileSupported: true,
     classicPath: classicPathFor(domain, route.path),
-    clientReferences: matches.flatMap((match) => [...clientRefs.get(match)]).sort(),
   };
 }
 
-function classifyRoute(route, clientRefs) {
+// A route's classification reads the route and nothing else. It used to map a
+// route that some client file called before trying the rule below, and to
+// list those files on it, but for all 773 routes the rule reached the same
+// result, and the list was the committed file's one input from outside the
+// route files (see buildInventory()).
+function classifyRoute(route) {
   const fileReason = FILE_EXEMPTIONS.get(route.source);
   if (fileReason) return { status: 'exempt', reason: fileReason };
   if (route.source === 'src/routes/global-chat.js') {
@@ -554,29 +617,19 @@ function classifyRoute(route, clientRefs) {
       if (pattern.test(route.path)) return { status: 'exempt', reason };
     }
   }
-  const matches = route.path
-    ? [...clientRefs.keys()].filter((clientPath) => samePattern(route.path, clientPath))
-    : [];
-  if (matches.length) return mappedClassification(route, clientRefs, matches);
-
   // After the explicit protocol exclusions above, every resolved API route
-  // is an authenticated platform operation worth exposing through discovery.
-  // This also catches server-backed controls whose client path is assembled
-  // too dynamically for a static string scan. Authorization stays in the
-  // original route; this inventory merely gives it an auditable capability.
+  // is an authenticated platform operation worth exposing through discovery,
+  // whether or not a static scan can find the client code that calls it.
+  // Authorization stays in the original route; this inventory merely gives it
+  // an auditable capability.
   if (/^\/(?:api|challenges-api)\//.test(route.path || '')
       || /^\/app\/:slug\/(?:install|manifest\.webmanifest)$/.test(route.path || '')) {
-    return mappedClassification(
-      route,
-      clientRefs,
-      [],
-      'Reviewed platform operation with no exact static client reference.',
-    );
+    return mappedClassification(route);
   }
   return {
     status: 'review_required',
     reason: route.path
-      ? 'No statically detected Classic client reference; map or add a reviewed exemption.'
+      ? 'Not a platform API route; map it or add a reviewed exemption.'
       : 'Dynamic route path requires manual resolution and review.',
   };
 }
@@ -584,26 +637,45 @@ function classifyRoute(route, clientRefs) {
 function discoverSettings() {
   const file = path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js');
   const text = fs.readFileSync(file, 'utf8');
-  const sectionBlock = text.match(/\bSECTIONS:\s*\[([\s\S]*?)\n\s*\],\n\n\s*\/\/ The one group/);
+  // The registry is an array of one-line part entries; no entry holds a
+  // nested array, so the first `],` at the object's own indent closes it.
+  const sectionBlock = text.match(/\bSECTIONS:\s*\[([\s\S]*?)\n {4}\],/);
   if (!sectionBlock) throw new Error('Could not locate Settings.SECTIONS');
+  // One entry per PART (a [data-settings-section] wrapper). `page` groups
+  // parts into one nav row; every part's own #settings/<key> still resolves,
+  // so each part stays an inspectable settings group of its own.
+  // The registry names each part and its group by message id
+  // (`settings:nav.part.profile`); the inventory records the English.
+  const english = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'frontend', 'locales', 'en', 'settings.json'), 'utf8',
+  ));
+  const said = (id) => {
+    const entry = english[id.replace(/^settings:/, '')];
+    if (!entry) throw new Error(`No English text for ${id}`);
+    return entry.text;
+  };
   return [...sectionBlock[1].matchAll(
-    /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
+    /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
-    label: match[2],
-    group: match[3],
-    gate: match[4] || null,
+    label: said(match[2]),
+    group: said(match[3]),
+    gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,
     mobileSupported: true,
   }));
 }
 
-function buildInventory() {
-  const clientRefs = discoverClientReferences();
-  const routes = discoverRoutes().map((route) => ({
+// The scans are parameters so a test can scan the tree once and build from it
+// more than once; the script itself always scans.
+function buildInventory({
+  declaredRoutes = discoverRoutes(),
+  clientRefs = discoverClientReferences(),
+} = {}) {
+  const routes = declaredRoutes.map((route) => ({
     ...route,
-    ...classifyRoute(route, clientRefs),
+    ...classifyRoute(route),
   })).sort((a, b) => (
     a.source.localeCompare(b.source)
     || a[REGISTRATION].line - b[REGISTRATION].line
@@ -653,10 +725,19 @@ function buildInventory() {
     // had regenerated correctly (#3127 and #3133). The totals ride on the
     // Symbol key JSON.stringify skips, for this script's own report.
     [COUNTS]: { mapped: counts.mapped, reviewRequired: counts.review_required },
+    // Which client files call which route is checked on every run and never
+    // written. It was the one input spanning the frontend and the routes: a
+    // change adding a client call and a change adding a route each
+    // regenerated correctly, merged cleanly, and left main stale on the one
+    // pairing neither had seen (#3346 and #2976, fixed by #3354). A call
+    // written as `/api/me/<name>${query}` counted as a caller of every
+    // /api/me route, so one new screen touched fifty of them. Nothing at
+    // runtime read the lists. Only a call that matches no route is written,
+    // below, and then the check fails until it is fixed or exempted.
+    [REVIEWED_REFERENCES]: reviewedClientReferences.sort((a, b) => a.path.localeCompare(b.path)),
     navigation: NAVIGATION_SURFACES.map((item) => ({ ...item, mobileSupported: true })),
     settings,
     routes,
-    reviewedClientReferences: reviewedClientReferences.sort((a, b) => a.path.localeCompare(b.path)),
     unmatchedClientReferences,
     ignoredClientSources: [...CLIENT_SOURCE_EXEMPTIONS.entries()].map(([source, reason]) => ({
       source,
@@ -669,16 +750,51 @@ function serialize(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-const inventory = buildInventory();
-const output = serialize(inventory);
-if (process.argv.includes('--check')) {
-  const existing = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, 'utf8') : '';
-  if (existing !== output) {
-    console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
-    process.exit(1);
-  }
-  console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
-} else {
-  fs.writeFileSync(OUTPUT, output);
-  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+// What a person has to decide before the inventory counts as reviewed, one
+// line each. Regenerating does not clear any of these, so --check names them
+// rather than calling the file stale.
+function reviewFindings(inventory) {
+  return [
+    ...inventory.routes.filter((route) => route.status === 'review_required').map((route) => (
+      `  ${route.method} ${route.path || route.expression} in ${route.source}: ${route.reason}`
+    )),
+    ...inventory.unmatchedClientReferences.map(({ path: apiPath, sources }) => (
+      `  ${apiPath}, called from ${sources.join(', ')}, matches no route. `
+      + 'Correct the call, add the route, or add a reviewed CLIENT_REFERENCE_EXEMPTIONS entry.'
+    )),
+  ];
 }
+
+function main() {
+  const inventory = buildInventory();
+  const output = serialize(inventory);
+  const findings = reviewFindings(inventory);
+  if (process.argv.includes('--check')) {
+    if (findings.length) {
+      console.error(`Global Chat Classic inventory needs review:\n${findings.join('\n')}`);
+      process.exit(1);
+    }
+    const existing = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, 'utf8') : '';
+    if (existing !== output) {
+      console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
+      process.exit(1);
+    }
+    console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+  } else {
+    fs.writeFileSync(OUTPUT, output);
+    console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+    if (findings.length) console.error(`Needs review before --check passes:\n${findings.join('\n')}`);
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = {
+  OUTPUT,
+  REVIEWED_REFERENCES,
+  buildInventory,
+  discoverClientReferences,
+  discoverRoutes,
+  reviewFindings,
+  serialize,
+};

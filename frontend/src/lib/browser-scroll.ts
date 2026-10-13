@@ -134,9 +134,34 @@ export function strandedPan(win: Window, doc: Document, top: number): boolean {
   return true;
 }
 
+/**
+ * #3565: how far below its top the paged document must sit before its far
+ * edge may bounce again, marked on <html> as `data-browser-past-top`.
+ *
+ * app.css turns the viewport's rubber band off (`overscroll-behavior-y:
+ * none`) so neither the browser's bounce nor its own refresh can join the
+ * kit's pull at the top. On <html> that holds at the bottom as well, and iOS
+ * Safari tucks its toolbar away only when a drag moves the page: at the end
+ * of a page nothing moved, so the bar stayed. While the mark is up, app.css
+ * gives a phone's viewport `contain` instead, which bounces (and keeps
+ * Chrome's own refresh off). A drag heading back up loses the mark this far
+ * short of the top, more than a finger covers in the frame or two the new
+ * style takes to reach the scroll view, so a pull that STARTS at the top
+ * always meets `none`. A page with less than this to scroll is never marked.
+ */
+export const PAST_TOP_PX = 64;
+
 export function createBrowserScroll(doc: Document, win: Window) {
   let active: HTMLElement | null = null;
   let lastTop = 0;
+  // Written only when it changes: this runs on every document scroll.
+  const markPastTop = () => {
+    const html = doc.documentElement;
+    const past = !!active && lastTop >= PAST_TOP_PX;
+    if (past === (html.dataset.browserPastTop !== undefined)) return;
+    if (past) html.dataset.browserPastTop = '';
+    else delete html.dataset.browserPastTop;
+  };
   const positions = new Map<string, number>();
   const originalRestoration = win.history?.scrollRestoration;
   const root = () => (doc.scrollingElement || doc.documentElement) as HTMLElement;
@@ -149,6 +174,7 @@ export function createBrowserScroll(doc: Document, win: Window) {
     if (!active) return;
     lastTop = root().scrollTop;
     remember();
+    markPastTop();
   };
   const sync = () => {
     const enabled = allowsPageScroll(win, doc);
@@ -172,6 +198,9 @@ export function createBrowserScroll(doc: Document, win: Window) {
     if (previous) previous.scrollTop = previousTop;
     root().scrollTop = top;
     lastTop = root().scrollTop;
+    // A restored offset fires no scroll event when it lands where the last
+    // page left the document, and leaving the paged layout fires none at all.
+    markPastTop();
     // Notify effects which also follow the page when the offset stays at 0.
     win.dispatchEvent(new Event('usernode:page-scroll'));
   };

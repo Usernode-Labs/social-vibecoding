@@ -128,6 +128,11 @@ test('each confirmed tool\'s outcome reads as a sentence, never as its JSON', ()
   })), 'Claimed request #12 for you. Also claimed by bo.');
   assert.equal(actions.outcomeLine('release_request', ok({ number: 12, cleared: true })), 'Released your claim on request #12.');
   assert.equal(actions.outcomeLine('release_request', ok({ number: 12, cleared: false })), 'You had no claim on request #12.');
+  // A close proposal decides nothing, so its card must not read as a closure.
+  assert.equal(actions.outcomeLine('propose_close_request', ok({
+    closeProposalId: 701, number: 12, title: '<untrusted-content>Dark mode</untrusted-content>',
+    nextStep: 'The group is now voting on closing request #12.',
+  })), 'Proposed closing request #12: Dark mode. It stays open until the group votes.');
   assert.equal(actions.outcomeLine('start_change', ok({ changeId: 88, appSlug: 'recipe-box', linkedIssues: [42, 43] })),
     'Change 88 is open on recipe-box, linked to request #42, #43.');
   assert.equal(actions.outcomeLine('start_change', ok({ changeId: 88, appSlug: 'recipe-box', linkedIssues: [] })),

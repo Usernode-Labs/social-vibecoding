@@ -59,12 +59,23 @@ test('the allowlist permits exactly the routes the tools need', () => {
     ['GET', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/issues'],
+    // create_request's screenshots: one upload of the caller's own image,
+    // which only the issues route above can put on the board
+    // (tests/mcp-create-request-images.test.js).
+    ['POST', '/api/feedback/screenshot'],
+    // Specs on a request: post_spec, its list, and the spec card's own
+    // version read (tests/mcp-request-specs.test.js).
+    ['POST', '/api/apps/recipe-box/issues/12/spec'],
+    ['GET', '/api/apps/recipe-box/issues/12/specs'],
+    ['GET', '/api/sessions/412/specs/2'],
     ['GET', '/api/sessions/412'],
     ['GET', '/api/sessions/412/status'],
     ['GET', '/api/sessions/412/spec'],
     // #2028 — metadata-only deltas on the caller's own proposal. The route
     // (not this matcher) enforces ownership and the 50-issue cap.
     ['PATCH', '/api/sessions/412/linked-issues'],
+    ['GET', '/api/sessions/412/description'],
+    ['PATCH', '/api/sessions/412/description'],
     ['GET', '/api/me/active-sessions'],
     // #967 pass 2 — the proposal pipeline. Each of these is owner-scoped or
     // access-checked by its own handler; the allowlist only decides whether
@@ -77,8 +88,7 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // merge; the route refuses anything that is not the caller's own open
     // proposal.
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork'],
-    ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan'],
-    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
+    ['GET', '/api/apps/recipe-box/proposals/412/shots/diagnostics'],
     ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
     ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
@@ -123,6 +133,11 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/sessions/412/archive'],
     ['POST', '/api/sessions/412/chat'],
     ['DELETE', '/api/apps/recipe-box'],
+    // Uploading a screenshot is not filing feedback: the feedback route
+    // itself, and the caller's list of it, stay off.
+    ['POST', '/api/feedback'],
+    ['GET', '/api/feedback/mine'],
+    ['GET', '/api/feedback/screenshot'],
     // Right path, wrong method.
     ['DELETE', '/api/apps/recipe-box/issues'],
     ['POST', '/api/apps'],
@@ -158,12 +173,14 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/apps/recipe-box/proposals'],
     ['POST', '/api/apps/recipe-box/proposals//update-from-fork'],
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork/extra'],
-    ['GET', '/api/apps/recipe-box/proposals/412/evidence/plan'],
-    ['GET', '/api/apps/recipe-box/proposals/412/evidence'],
-    ['GET', '/api/apps/recipe-box/proposals/412/evidence/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
-    ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan/extra'],
-    ['POST', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
-    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics/extra'],
+    // Author replay plans were retired with the replay pipeline.
+    ['POST', '/api/apps/recipe-box/proposals/412/shots/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/shots/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/shots'],
+    ['GET', '/api/apps/recipe-box/proposals/412/shots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['POST', '/api/apps/recipe-box/proposals/412/shots/plan/extra'],
+    ['POST', '/api/apps/recipe-box/proposals/412/shots/diagnostics'],
+    ['GET', '/api/apps/recipe-box/proposals/412/shots/diagnostics/extra'],
   ];
   for (const [method, target] of refused) {
     assert.equal(
@@ -255,6 +272,22 @@ test('create_request can only ever file an ordinary request', () => {
   assert.match(TOOLS_SRC, /kind: 'general'/);
   assert.doesNotMatch(TOOLS_SRC, /kind:\s*(?:kind|args\.kind|input\.kind)/,
     'kind is never taken from tool input');
+});
+
+test('propose_close_request can only ever file a close-issue vote', () => {
+  // The same multiplexed route, and the same rule: the tool pins its one
+  // kind. A close proposal decides nothing — the group votes on it — which
+  // is what puts it on the connector beside create_request.
+  const start = TOOLS_SRC.indexOf("server.registerTool('propose_close_request'");
+  assert.ok(start > 0, 'propose_close_request is registered');
+  const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
+  const body = TOOLS_SRC.slice(start, end > 0 ? end : undefined);
+  assert.match(body, /kind: 'close_issue'/);
+  assert.equal([...body.matchAll(/kind:/g)].length, 1, 'one kind, and only that one');
+  // No connector tool files any of the other governance kinds.
+  for (const other of ['secret_change', 'maintenance_campaign', 'featured_illustration', 'rename']) {
+    assert.doesNotMatch(TOOLS_SRC, new RegExp(`kind: '${other}'`), `no tool files ${other}`);
+  }
 });
 
 test('every route the tools call is on the allowlist', () => {
@@ -352,9 +385,10 @@ test('the promoted-session cap the import route lacks is applied by the connecto
   const LIMITS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/connector-limits.js'), 'utf8'
   );
-  const wording = /You already have \$\{caps\.promotedSessions\} PRs up for vote\./;
+  // B10a: "waiting for approval", the browser's words and the connector's.
+  const wording = /You already have \$\{caps\.promotedSessions\} changes waiting for approval\./;
   assert.match(LIMITS_SRC, wording, 'the connector says what the browser says');
-  assert.match(VOTES_SRC, /You already have \$\{caps\.promotedSessions\} PRs up for vote/);
+  assert.match(VOTES_SRC, /You already have \$\{caps\.promotedSessions\} changes waiting for approval/);
   // Both count the same rows: promoted + merging, headless excluded.
   assert.match(
     LIMITS_SRC,
@@ -509,4 +543,172 @@ test('the demo routes are on the list only because every one of them is gated on
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/vote'), true);
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/promote'), true);
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
+});
+
+// #3654: the Homeroom bot benchmark's judge, and its runs. Eight routes
+// outside /api/admin (which a connector can never reach), allowed because
+// every handler refuses anybody who is not a full platform admin before it
+// reads a thing: the judge's hand out tasks from every app, private ones
+// included, and a launch spends the platform's money.
+test('the benchmark\'s eight connector routes are allowed, and every one is full-admin gated', () => {
+  for (const [method, target] of [
+    ['GET', '/api/bot-bench/queue'],
+    ['GET', '/api/bot-bench/items/abcdefgh12345678'],
+    ['POST', '/api/bot-bench/items/abcdefgh12345678/grade'],
+    ['POST', '/api/bot-bench/tasks/abcdefgh12345678/label'],
+    ['GET', '/api/bot-bench/runs'],
+    ['GET', '/api/bot-bench/runs/12'],
+    ['POST', '/api/bot-bench/runs'],
+    ['POST', '/api/bot-bench/runs/12/cancel'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['POST', '/api/bot-bench/queue'],
+    ['DELETE', '/api/bot-bench/items/abcdefgh12345678'],
+    ['POST', '/api/bot-bench/items/abcdefgh12345678'],
+    ['DELETE', '/api/bot-bench/runs/12'],
+    ['POST', '/api/bot-bench/runs/12'],
+    ['GET', '/api/bot-bench/runs/12/trials.csv'],
+    ['GET', '/api/bot-bench/runs/12/review'],
+    ['GET', '/api/admin/homeroom-bot/bench/runs'],
+    ['POST', '/api/admin/homeroom-bot/bench/trials/1/grade'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/homeroom-bench.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-bench\/[^']+)', ([a-zA-Z]+)/g)];
+  assert.equal(routes.length, 8);
+  for (const [, method, route, gate] of routes) {
+    assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
+  }
+  // Every write is rate-limited per user (admins are not exempt: only
+  // admins can call them at all), and guarded after the limiter.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-bench\/[^']+)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 4);
+  for (const [, route, chain] of writes) {
+    const limiter = route.startsWith('/api/bot-bench/runs') ? 'benchRunLimiter' : 'benchGradingLimiter';
+    assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
+  }
+});
+
+// The App bench studio, the benchmark's suites and trials, the live Homeroom
+// bot and the recent before/after screenshots (routes/bench-studio.js):
+// twenty-three routes outside /api/admin, allowed because every handler
+// refuses anybody who is not a full platform admin before it reads a thing.
+// They read builds, tasks and screenshots of every app, private ones
+// included, and a launch spends the platform's money.
+test('the studio\'s twenty-three connector routes are allowed, and every one is full-admin gated first', () => {
+  for (const [method, target] of [
+    ['GET', '/api/bot-studio'],
+    ['GET', '/api/bot-studio/gallery'],
+    ['GET', '/api/bot-studio/runs/12/watch'],
+    ['GET', '/api/bot-studio/runs/12/reference-order'],
+    ['POST', '/api/bot-studio/launch'],
+    ['POST', '/api/bot-studio/runs/12/references'],
+    ['POST', '/api/bot-studio/trials/3/rerun'],
+    ['POST', '/api/bot-studio/trials/3/cancel'],
+    ['POST', '/api/bot-studio/trials/3/keep'],
+    ['POST', '/api/bot-studio/trials/3/preview'],
+    ['GET', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs'],
+    ['GET', '/api/bot-studio/suites'],
+    ['GET', '/api/bot-studio/suites/2'],
+    ['POST', '/api/bot-studio/suites/2/tasks'],
+    ['POST', '/api/bot-studio/tasks/9/taste'],
+    ['GET', '/api/bot-studio/runs/12/trials'],
+    ['GET', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/bot/runs/5/rating'],
+    ['GET', '/api/bot-studio/shots'],
+    ['GET', '/api/bot-studio/shots/77'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/bot-studio/packs/4'],
+    ['POST', '/api/bot-studio/packs/4'],
+    ['DELETE', '/api/bot-studio/trials/3'],
+    ['POST', '/api/bot-studio/trials/3'],
+    ['GET', '/api/bot-studio/trials/3/preview'],
+    ['POST', '/api/bot-studio/bot'],
+    ['POST', '/api/bot-studio/shots/77'],
+    ['GET', '/api/bot-studio/launch'],
+    ['GET', '/api/admin/homeroom-bot/bench/studio'],
+    ['POST', '/api/admin/homeroom-bot/bench/studio/launch'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/bench-studio.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-studio[^']*)', ([a-zA-Z]+)/g)];
+  assert.equal(routes.length, 23);
+  for (const [, method, route, gate] of routes) {
+    assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
+  }
+  // Every write is rate-limited per person and guarded after the limiter. A
+  // launch shares the benchmark's launch limiter, since both spend money.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-studio[^']*)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 10);
+  for (const [, route, chain] of writes) {
+    const limiter = route === '/api/bot-studio/launch' ? 'benchRunLimiter' : 'benchStudioLimiter';
+    assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);
+  }
+});
+
+// Test accounts for first-run testing (routes/test-accounts.js). Five routes
+// outside /api/admin and /api/auth (which a connector can never reach),
+// allowed because every handler refuses anybody who is not a full platform
+// admin before anything else runs: they mint a new sign-in, send the
+// waitlist's release mail to a test address, list accounts, and delete one
+// with the apps it made. The gate comes first, then the per-admin limiter,
+// then the same-origin browser guard, on all of them; and no path carries a
+// `password` segment, which the canonical-target wall would refuse anyway.
+test('the five test-account routes are allowed, full-admin gated first, limited, and never under /password', () => {
+  for (const [method, target] of [
+    ['POST', '/api/test-accounts'],
+    ['GET', '/api/test-accounts'],
+    ['POST', '/api/test-accounts/12/retire'],
+    ['POST', '/api/test-accounts/phone-sign-ins'],
+    ['POST', '/api/test-accounts/release-emails'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['DELETE', '/api/test-accounts'],
+    ['GET', '/api/test-accounts/12'],
+    ['DELETE', '/api/test-accounts/12'],
+    ['POST', '/api/test-accounts/12'],
+    ['GET', '/api/test-accounts/12/retire'],
+    ['POST', '/api/test-accounts//retire'],
+    ['POST', '/api/test-accounts/12/retire/extra'],
+    ['POST', '/api/test-accounts/12/password'],
+    ['GET', '/api/test-accounts/password'],
+    ['GET', '/api/test-accounts/phone-sign-ins'],
+    ['DELETE', '/api/test-accounts/phone-sign-ins'],
+    ['GET', '/api/test-accounts/release-emails'],
+    ['POST', '/api/test-accounts/release-emails/12'],
+    // The admin console's own user routes stay out of reach.
+    ['POST', '/api/admin/users'],
+    ['POST', '/api/v4/admin/users'],
+    ['POST', '/api/auth/register'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/test-accounts.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post|put|patch|delete)\('(\/api\/test-accounts[^']*)', ([^(]+)handler\(/g)];
+  assert.deepEqual(routes.map(([, method, route]) => `${method.toUpperCase()} ${route}`).sort(), [
+    'GET /api/test-accounts',
+    'POST /api/test-accounts',
+    'POST /api/test-accounts/:id/retire',
+    'POST /api/test-accounts/phone-sign-ins',
+    'POST /api/test-accounts/release-emails',
+  ]);
+  for (const [, method, route, chain] of routes) {
+    assert.equal(chain, 'requireAdminWrite, testAccountLimiter, sameOriginBrowserOnly, ',
+      `${method.toUpperCase()} ${route} is full-admin gated, then limited, then guarded`);
+    assert.doesNotMatch(route, /password|credentials|secrets/, `${route} carries no credential segment`);
+  }
+  // Nothing else in the file registers a route.
+  assert.equal((src.match(/router\.(get|post|put|patch|delete|use|all)\(/g) || []).length, 5);
 });

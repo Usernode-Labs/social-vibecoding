@@ -115,11 +115,11 @@ test('runContainer: appends an explicit command after the image', async () => {
   try {
     await docker.runContainer('usernode-app-fixture', {
       image: 'capture@sha256:abc', port: 3000,
-      command: ['node', '/app/evidence-hosted-app-fixture.js'],
+      command: ['node', '/app/shots-hosted-app-fixture.js'],
     });
     const run = calls.find((call) => call.args[0] === 'run');
     assert.deepEqual(run.args.slice(-3), [
-      'capture@sha256:abc', 'node', '/app/evidence-hosted-app-fixture.js',
+      'capture@sha256:abc', 'node', '/app/shots-hosted-app-fixture.js',
     ]);
   } finally {
     restore();

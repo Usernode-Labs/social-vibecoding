@@ -14,7 +14,11 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
-import { readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import { pinnedAppsStore, readPinnedApps, setPinnedApps } from './pinned-apps-store.js';
+import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -22,6 +26,7 @@ navStore.setFlush(flushSync);
 // page from what that callback did before it returned.
 parkedStore.setFlush(flushSync);
 recentAppsStore.setFlush(flushSync);
+pinnedAppsStore.setFlush(flushSync);
 
 export { navStore, parkedStore };
 
@@ -104,8 +109,26 @@ if (typeof window !== 'undefined') {
       // is empty. Nothing to do while the name has not changed.
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
+        // Same rule for the strip's pinned part (#4935): Home's top row is
+        // the account's own arrangement.
+        pinnedAppsStore.set({ apps: readPinnedApps(viewer || null) });
       }
       navStore.set({ viewer: viewer || null });
+    },
+    /**
+     * Whether the viewer is a private member (nav-store.js): the one writer
+     * is `App._syncViewer()`, beside setViewer.
+     */
+    setPrivateMember(on: boolean) {
+      if (!!on !== navStore.get().privateMember) navStore.set({ privateMember: !!on });
+    },
+    /**
+     * Whether the verified-identity rule holds the viewer to it
+     * (nav-store.js): written by `App._syncViewer()`, and cleared by the
+     * phone sheets once a number is linked.
+     */
+    setIdentityNeeded(on: boolean) {
+      if (!!on !== navStore.get().identityNeeded) navStore.set({ identityNeeded: !!on });
     },
     /**
      * Offer `app` above the tab bar until it is resumed or dismissed, or
@@ -135,6 +158,41 @@ if (typeof window !== 'undefined') {
         iconUrl: app.iconUrl || null,
         iconEmoji: app.iconEmoji || null,
       } : null);
+    },
+    /**
+     * #3618: the app you just left shrinks into its Resume control, from
+     * `from` (where the app was drawn, measured before it was hidden). A
+     * no-op when that control is not on screen or motion is reduced. The
+     * caller parks the app first, so the control is already drawn — every
+     * store above flushes synchronously. See ./resume-motion.ts.
+     */
+    collapse(app: { slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null } | null,
+      from?: { left: number; top: number; width: number; height: number } | null) {
+      if (!app || !app.slug) return false;
+      return collapseIntoResume({ ...app, slug: app.slug }, from);
+    },
+    /** #3618: the Resume control for `slug` on screen now, or null. */
+    resumeHandle(slug: string) {
+      return resumeHandleFor(slug);
+    },
+    /** #3618: the Resume control just pressed for `slug`, once, or null. */
+    takeResumeOrigin(slug: string) {
+      return takeResumeOrigin(slug);
+    },
+    /** #3618: how long the collapse and the expand take. */
+    resumeMotionMs: RESUME_MOTION_MS,
+    /** A blocked app must disappear from both desktop Recents and mobile Resume. */
+    forget(slug: string) {
+      if (parkedStore.get().app?.slug === slug) setParked(null);
+      forgetRecentApp(slug, navStore.get().viewer);
+    },
+    /**
+     * Home's top row of My apps, as the strip's pinned part (#4935). The one
+     * writer is Home's grid render (features/home/home.js), called with the
+     * apps' display data — the strip draws them without fetching anything.
+     */
+    setPinnedApps(apps: Array<{ slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null }>) {
+      setPinnedApps(apps, navStore.get().viewer);
     },
   };
 }

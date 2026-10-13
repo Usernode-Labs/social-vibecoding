@@ -52,6 +52,49 @@ test('Dockerfile smoke-tests a headless Chromium launch at image build time, as 
   assert.ok(userNodeIdx !== -1 && smokeIdx > userNodeIdx, 'smoke test runs as node');
 });
 
+// #4087: the shots browser renders the shell's system-ui stack with a font
+// that has real weights, not a regular-only fallback.
+test('Dockerfile gives the browser a system-ui font with real weights (Inter)', () => {
+  const df = read('Dockerfile');
+  assert.match(df, /install -y --no-install-recommends \\\n\s+fontconfig fonts-inter/);
+  assert.match(df, /COPY fonts-local\.conf \/etc\/fonts\/local\.conf/);
+  assert.match(df, /fc-cache -f/);
+  // the image build fails if fontconfig would not give an 800 Inter ExtraBold
+  assert.ok(df.includes(`test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|Extra Bold'`));
+  // ...and if the bundled Chromium itself does not draw the shell's stack in
+  // Inter: the font check rides the Chromium smoke test, as node.
+  assert.match(df, /COPY verify-shots-browser-fonts\.js \/usr\/local\/bin\/verify-shots-browser-fonts\.js/);
+  assert.match(df, /chromium\.launch\([^\n]*\n\s+&& node \/usr\/local\/bin\/verify-shots-browser-fonts\.js\n/);
+  assert.ok(df.indexOf('&& node /usr/local/bin/verify-shots-browser-fonts.js\n') > df.lastIndexOf('USER node'));
+  // before the daily cache-bust layer, so it stays cached
+  assert.ok(df.indexOf('fonts-inter') < df.indexOf('ARG CLAUDE_CODE_CACHE_BUST'));
+
+  const conf = read('fonts-local.conf');
+  for (const family of ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'ui-sans-serif']) {
+    assert.match(conf, new RegExp(`<test name="family" qual="any"><string>${family}</string></test>\\s*` +
+      '<edit name="family" mode="assign" binding="strong"><string>Inter</string></edit>'));
+  }
+  assert.match(conf, /<family>sans-serif<\/family>\s*<prefer><family>Inter<\/family><\/prefer>/);
+  // Chromium reaches its bare system-ui font only through this preference.
+  // fontconfig rejects the whole file on a malformed comment ("--" inside one)
+  for (const comment of conf.match(/<!--([\s\S]*?)-->/g) || []) {
+    assert.doesNotMatch(comment.slice(4, -3), /--/);
+  }
+
+  // The verifier checks the shell's real stack and bare system-ui at the
+  // weights the shell draws with, by the face Chromium actually used.
+  const fonts = require(path.join(WORKER_DIR, 'verify-shots-browser-fonts.js'));
+  assert.equal(fonts.SHELL_STACK.split(',')[0], 'ui-sans-serif');
+  assert.match(fonts.SHELL_STACK, /^ui-sans-serif, system-ui, sans-serif,/);
+  assert.deepEqual(fonts.STACKS, [fonts.SHELL_STACK, 'system-ui']);
+  assert.deepEqual(fonts.EXPECTED, { 400: 'Inter-Regular', 650: 'Inter-Bold', 700: 'Inter-Bold', 800: 'Inter-ExtraBold' });
+  assert.match(read('verify-shots-browser-fonts.js'), /CSS\.getPlatformFontsForNode/);
+  const good = { 400: ['Inter|Inter-Regular'], 650: ['Inter|Inter-Bold'], 700: ['Inter|Inter-Bold'], 800: ['Inter Extra Bold|Inter-ExtraBold'] };
+  assert.deepEqual(fonts.wrongFaces(good), []);
+  assert.equal(fonts.wrongFaces({ ...good, 800: ['DejaVu Sans|DejaVuSans-Bold'] }).length, 1);
+  assert.equal(fonts.wrongFaces({ ...good, 400: ['Inter|Inter-Regular', 'DejaVu Sans|DejaVuSans'] }).length, 1);
+});
+
 // ── worker-run.sh: seed the MCP config at bootstrap ──────────────────────
 
 test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json restore', () => {
@@ -66,6 +109,56 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /--headless/);
   assert.match(wr, /--isolated/);
   assert.match(wr, /--no-sandbox/);
+  // Saved screenshots/snapshots land outside the app checkout; the MCP
+  // default (./.playwright-mcp) put them where `git add -A` committed them.
+  assert.match(wr, /BROWSER_OUTPUT_DIR=\/tmp\/usernode-playwright-output/);
+  assert.match(wr, /"--output-dir", "\$BROWSER_OUTPUT_DIR"/);
+});
+
+test('worker-run.sh keeps agent tool output out of every checkout, old apps included', () => {
+  const wr = read('worker-run.sh');
+  // The local exclude file, not the app's .gitignore: it is never committed,
+  // and it covers apps scaffolded before the template carried these entries.
+  const block = wr.slice(wr.indexOf('for USERNODE_EXCLUDE in'), wr.indexOf('# Idempotent submodule sync'));
+  assert.ok(block.length > 0, 'exclude block present before the submodule sync');
+  for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+    assert.ok(block.includes(`'${entry}'`), `excludes ${entry}`);
+  }
+  assert.match(block, /grep -qxF "\$USERNODE_EXCLUDE" \.git\/info\/exclude/, 'idempotent across warm re-bootstraps');
+  assert.match(block, />> \.git\/info\/exclude/);
+  // After both checkout branches (cold clone and existing checkout), so a
+  // re-warmed container gets it too.
+  assert.ok(wr.indexOf('for USERNODE_EXCLUDE in') > wr.indexOf('checkout (existing)'));
+});
+
+test('the exclude block really keeps agent output out of `git add -A`, and runs twice cleanly', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const wr = read('worker-run.sh');
+  const block = wr.slice(wr.indexOf('for USERNODE_EXCLUDE in'), wr.indexOf('# Idempotent submodule sync'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-exclude-'));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    fs.mkdirSync(path.join(dir, '.playwright-mcp'));
+    fs.writeFileSync(path.join(dir, '.playwright-mcp', 'page.png'), 'x');
+    fs.mkdirSync(path.join(dir, 'test-results'));
+    fs.writeFileSync(path.join(dir, 'test-results', 'r.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'app.js'), '1');
+    const script = path.join(dir, '.exclude.sh');
+    fs.writeFileSync(script, `set -u\n${block}\n`);
+    execFileSync('/bin/sh', [script], { cwd: dir });
+    execFileSync('/bin/sh', [script], { cwd: dir });
+    fs.unlinkSync(script);
+    const lines = fs.readFileSync(path.join(dir, '.git', 'info', 'exclude'), 'utf8').split('\n');
+    for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+      assert.equal(lines.filter((l) => l === entry).length, 1, `${entry} appears exactly once`);
+    }
+    git('add', '-A');
+    assert.deepEqual(git('diff', '--cached', '--name-only').trim().split('\n'), ['app.js']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── run-cc.sh: purpose-bound MCP flags, strict config, scout/sync untouched ─
@@ -104,11 +197,11 @@ test('the sync-branch claude invocation does NOT get browser tooling', () => {
 test('scout/sync stay browser-free while evidence gets only its purpose-bound MCP config', () => {
   const cc = read('run-cc.sh');
   // The shared read-only terminal branch reports the actual lightweight mode.
-  assert.match(cc, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "evidence" \]; then[\s\S]*mode=\$MODE/);
+  assert.match(cc, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "shots" \]; then[\s\S]*mode=\$MODE/);
   // The flag starts empty, build may receive the general config, and evidence
   // replaces it only after creating its isolated run-scoped configuration.
   assert.match(cc, /BROWSER_MCP_FLAGS=""\s*\nif \[ "\$MODE" = "build" \]/);
-  assert.match(cc, /if \[ "\$MODE" = "evidence" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$EVIDENCE_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
+  assert.match(cc, /if \[ "\$MODE" = "shots" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$SHOTS_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
 });
 
 test('build commit + push + RESULT are emitted unconditionally, not under any browser guard', () => {
@@ -119,5 +212,7 @@ test('build commit + push + RESULT are emitted unconditionally, not under any br
   // reports. Assert the phases exist at column 0 (top-level), unguarded.
   assert.match(cc, /\necho "__USERNODE_PHASE__ commit"/);
   assert.match(cc, /\necho "__USERNODE_PHASE__ push"/);
-  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build"/);
+  // The line may end with the branch_mismatch field (worker/session-branch.sh)
+  // and the stop guard's stop_hook_blocks field (worker/build-stop-hook.js).
+  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build(\$BRANCH_MISMATCH_FIELD)?(\$STOP_HOOK_BLOCKS_FIELD)?"/);
 });

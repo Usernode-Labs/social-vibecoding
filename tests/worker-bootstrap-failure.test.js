@@ -75,6 +75,7 @@ function loadWorker({ scripts = [], repoPrivate = false, dockerLogs = '' } = {})
   stub(ids.logger, {
     info: record('info'), warn: record('warn'),
     error: record('error'), debug: record('debug'),
+    redactString: require('../src/services/logger').redactString,
   });
 
   let spawnCount = 0;
@@ -304,5 +305,81 @@ test('a second ensure joins the in-flight bootstrap instead of retrying alongsid
     // gets the same error the first one did.
     assert.equal(spawns(), 3);
     assert.match(results[1].reason.message, /^clone failed: /);
+  } finally { restore(); }
+});
+
+// ── 5. Kubernetes workers get the same bounded retry ────────────────────
+//
+// The Kubernetes path used to make exactly one attempt, so a single slow
+// setup reached the user as "Setting up the coding agent timed out" while
+// the Docker path would have quietly tried again.
+
+function loadKubernetesWorker(outcomes) {
+  const kubernetes = require('../src/services/kubernetes');
+  const prevRuntime = process.env.WORKER_RUNTIME;
+  process.env.WORKER_RUNTIME = 'kubernetes';
+  const saved = { ensureWorker: kubernetes.ensureWorker, getWorkerStatus: kubernetes.getWorkerStatus };
+  const calls = [];
+  kubernetes.getWorkerStatus = async () => 'not_found';
+  kubernetes.ensureWorker = async (_config, opts) => {
+    calls.push({ timeoutMs: opts.timeoutMs, retryAttempt: opts.retryAttempt });
+    const outcome = outcomes[Math.min(calls.length - 1, outcomes.length - 1)];
+    if (outcome instanceof Error) throw outcome;
+    return { runtimeKind: 'kubernetes', runtimeName: `sv-worker-s${opts.sessionId}`, pvcName: null };
+  };
+  const loaded = loadWorker();
+  return {
+    ...loaded,
+    calls,
+    restore: () => {
+      Object.assign(kubernetes, saved);
+      if (prevRuntime === undefined) delete process.env.WORKER_RUNTIME;
+      else process.env.WORKER_RUNTIME = prevRuntime;
+      loaded.restore();
+    },
+  };
+}
+
+function couldNotStart(reason) {
+  const err = new Error('worker could not start (ImagePullBackOff)');
+  Object.defineProperty(err, 'bootstrapReason', { value: reason });
+  return err;
+}
+
+test('a Kubernetes warm-ready timeout is retried on a fresh Pod, then succeeds', async () => {
+  const { worker, calls, restore } = loadKubernetesWorker([
+    new Error('warm-ready timeout for sv-worker-s11'), 'ok',
+  ]);
+  try {
+    const progress = [];
+    await worker.ensureWorker(11, { ...ENSURE_ARGS, onProgress: (t) => progress.push(t) });
+    assert.equal(calls.length, 2);
+    // The first attempt applies the Deployment as a first dispatch would;
+    // the retry stamps its attempt so the stuck Pod is replaced.
+    assert.equal(calls[0].retryAttempt, null);
+    assert.equal(calls[1].retryAttempt, 2);
+    assert.equal(calls[1].timeoutMs, Math.round(calls[0].timeoutMs / 2), 'later attempts get half the budget');
+    assert.deepEqual(progress, ['[retrying setup (attempt 2 of 3)]']);
+  } finally { restore(); }
+});
+
+test('a Kubernetes warm-ready timeout gives up after three attempts', async () => {
+  const { worker, calls, restore } = loadKubernetesWorker([new Error('warm-ready timeout for sv-worker-s12')]);
+  try {
+    const err = await expectReject(() => worker.ensureWorker(12, ENSURE_ARGS));
+    assert.equal(calls.length, 3);
+    assert.equal(err.bootstrapAttempts, 3);
+    assert.ok(worker.isBootstrapError(err));
+  } finally { restore(); }
+});
+
+test('a Kubernetes worker that cannot start at all is not retried', async () => {
+  const { worker, calls, restore } = loadKubernetesWorker([couldNotStart('image_unavailable')]);
+  try {
+    const err = await expectReject(() => worker.ensureWorker(13, ENSURE_ARGS));
+    assert.equal(calls.length, 1);
+    assert.equal(err.bootstrapReason, 'image_unavailable');
+    assert.ok(worker.isBootstrapError(err));
+    assert.ok(!worker.isRetryableBootstrapError(err));
   } finally { restore(); }
 });

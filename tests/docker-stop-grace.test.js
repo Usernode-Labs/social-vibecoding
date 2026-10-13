@@ -35,7 +35,8 @@ function stub(id, exports) {
 // `inspectError` models a daemon that cannot answer at all (as opposed to
 // answering "no such container"), which is the case inspectContainer must
 // report as null rather than as a verdict.
-function loadDocker({ stopDelayMs = 0, rmFails = false, inspectError = null } = {}) {
+function loadDocker({ stopDelayMs = 0, rmFails = false, inspectError = null,
+  inspectStdout = 'running\n', imageInspect = null } = {}) {
   const ids = {
     childProcess: require.resolve('child_process'),
     logger: require.resolve('../src/services/logger'),
@@ -61,6 +62,14 @@ function loadDocker({ stopDelayMs = 0, rmFails = false, inspectError = null } = 
       exists = false;
       return { stdout: '', stderr: '' };
     }
+    if (args[0] === 'image' && args[1] === 'inspect') {
+      if (!imageInspect) {
+        const err = new Error('Command failed: docker image inspect');
+        err.stderr = 'Error: No such image: x';
+        throw err;
+      }
+      return { stdout: imageInspect, stderr: '' };
+    }
     if (args[0] === 'inspect') {
       if (inspectError) {
         const err = new Error('Command failed: docker inspect');
@@ -72,7 +81,7 @@ function loadDocker({ stopDelayMs = 0, rmFails = false, inspectError = null } = 
         err.stderr = 'Error: No such object: x';
         throw err;      // → 'not_found', the container is definitely gone
       }
-      return { stdout: 'running\n', stderr: '' };
+      return { stdout: inspectStdout, stderr: '' };
     }
     return { stdout: '', stderr: '' };
   };
@@ -269,7 +278,53 @@ test('inspectContainer returns status and labels together', async () => {
     assert.ok(state, 'a live container inspects fine');
     assert.equal(typeof state.status, 'string');
     assert.deepEqual(state.labels, {}, 'no labels is an empty object, not null');
+    assert.equal(state.imageId, null, 'no image column is null, not a guess');
     assert.equal(calls.filter((c) => c.args[0] === 'inspect').length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('inspectContainer parses the immutable image id from the third column (#3368)', async () => {
+  const id = 'sha256:' + 'a'.repeat(64);
+  const { docker, calls, restore } = loadDocker({
+    inspectStdout: `running\t{"social.usernode.io/source-revision":"${'b'.repeat(40)}"}\t${id}\n`,
+  });
+  try {
+    const state = await docker.inspectContainer('usernode-app-demo');
+    assert.deepEqual(state, {
+      status: 'running',
+      labels: { 'social.usernode.io/source-revision': 'b'.repeat(40) },
+      imageId: id,
+    });
+    const inspect = calls.find((c) => c.args[0] === 'inspect');
+    assert.deepEqual(inspect.args, ['inspect', '--format',
+      '{{.State.Status}}\t{{json .Config.Labels}}\t{{.Image}}', 'usernode-app-demo']);
+  } finally {
+    restore();
+  }
+});
+
+test('imageId resolves a tag with docker image inspect, and is null when it cannot', async () => {
+  const id = 'sha256:' + 'c'.repeat(64);
+  let { docker, calls, restore } = loadDocker({ imageInspect: `${id}\n` });
+  try {
+    assert.equal(await docker.imageId('usernode-app-demo:latest'), id);
+    const run = calls.find((c) => c.args[0] === 'image');
+    assert.equal(run.cmd, 'docker');
+    assert.deepEqual(run.args, ['image', 'inspect', '--format', '{{.Id}}', 'usernode-app-demo:latest']);
+  } finally {
+    restore();
+  }
+  ({ docker, restore } = loadDocker({ imageInspect: null }));
+  try {
+    assert.equal(await docker.imageId('usernode-app-demo:latest'), null, 'a missing image is null');
+  } finally {
+    restore();
+  }
+  ({ docker, restore } = loadDocker({ imageInspect: '\n' }));
+  try {
+    assert.equal(await docker.imageId('usernode-app-demo:latest'), null, 'empty output is null');
   } finally {
     restore();
   }

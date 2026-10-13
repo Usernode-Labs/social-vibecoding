@@ -210,7 +210,16 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
   });
 }
 
-async function provisionWallet(client, userId, { allowWalletless = false } = {}) {
+async function provisionWallet(client, userId, { allowWalletless = false, testAccount = false } = {}) {
+  // A test account (services/test-accounts.js) never takes a season wallet:
+  // deleting an account leaves its wallet assigned, so retired testers would
+  // slowly drain the pool. A build that accepts walletless credentials gets
+  // one; an older build cannot decode account:null, so it gets the same
+  // recoverable refusal its replay would (web access still works).
+  if (testAccount === true) {
+    if (allowWalletless === true) return null;
+    protocolError(409, 'native_session_wallet_required', 'This native session needs a wallet. Web access is still available.');
+  }
   const { rows: seasonRows } = await client.query(
     `SELECT id FROM seasons
       WHERE internal = FALSE AND is_active = TRUE
@@ -592,7 +601,7 @@ class NativeSessionProtocol {
       // and both close paths serialize without a late credential crossing the
       // close boundary.
       const { rows: userRows } = await client.query(
-        'SELECT id, bp_released_at FROM users WHERE id = $1 FOR UPDATE',
+        'SELECT id, bp_released_at, test_account_created_at FROM users WHERE id = $1 FOR UPDATE',
         [row.user_id]
       );
       if (!userRows.length) protocolError(401, 'unauthenticated', 'Unauthenticated.');
@@ -661,6 +670,7 @@ class NativeSessionProtocol {
 
       const account = await provisionWallet(client, row.user_id, {
         allowWalletless: row.walletless_supported === true,
+        testAccount: userRows[0].test_account_created_at != null,
       });
       const bearerToken = crypto.randomBytes(40).toString('hex');
       const bearerHash = sha256Hex(bearerToken);

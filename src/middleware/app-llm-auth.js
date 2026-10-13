@@ -131,6 +131,28 @@ function unverifiedAudienceAppId(token) {
   }
 }
 
+// A guest (P15): a visitor with no Homeroom account at a public app that
+// welcomes them. Their token names no person, so nothing here can bill,
+// store or look anything up as them; the answer says why, in the code the
+// app and the bridge already turn into "Make an account to continue".
+const ACCOUNT_REQUIRED = Object.freeze({
+  ok: false, code: 'account_required', message: 'Make an account to continue.',
+});
+function isGuestToken(token, appId) {
+  return !!platformJwt.orNull(() => platformJwt.verifyGuestToken(token, { appId }));
+}
+// The unverified audience of a token, for the user-token-only path below:
+// a guest audience is refused outright (refusing needs no proof).
+function unverifiedGuestAudience(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8'));
+    const aud = Array.isArray(payload.aud) ? payload.aud[0] : payload.aud;
+    return /^usernode:app:\d+:guest$/.test(String(aud || ''));
+  } catch {
+    return false;
+  }
+}
+
 function appPlatformAuth(pool, opts = {}) {
   const requireUser = !!opts.requireUser;
   const allowUserTokenOnly = !!opts.allowUserTokenOnly && requireUser;
@@ -170,6 +192,7 @@ function appPlatformAuth(pool, opts = {}) {
     if (userTokenOnly) {
       // The signature is what authenticates the app identity; the
       // unverified aud only selects which audience the verifier pins.
+      if (unverifiedGuestAudience(userToken)) return res.status(401).json(ACCOUNT_REQUIRED);
       const candidateAppId = unverifiedAudienceAppId(userToken);
       if (!candidateAppId) {
         return res.status(401).json({ ok: false, code: 'bad_user_token' });
@@ -209,6 +232,7 @@ function appPlatformAuth(pool, opts = {}) {
       try {
         claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
       } catch (err) {
+        if (isGuestToken(userToken, app.id)) return res.status(401).json(ACCOUNT_REQUIRED);
         return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
       }
       if (!claims || typeof claims.id !== 'number' || claims.scope) {
@@ -277,6 +301,7 @@ function appLlmAuth(pool, config) {
     try {
       claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
     } catch (err) {
+      if (isGuestToken(userToken, app.id)) return res.status(401).json(ACCOUNT_REQUIRED);
       return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
     }
     // Belt-and-braces on the identity shape. `pur`/audience/algorithm are

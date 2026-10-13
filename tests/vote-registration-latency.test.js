@@ -74,7 +74,7 @@ function makePool({ epoch = 2 } = {}) {
         inserted.push(params);
         return { rows: [{ id: 1, reason: params[4] }], rowCount: 1 };
       }
-      if (/SELECT reviewed_head_sha, approval_epoch FROM chat_sessions/.test(text)) {
+      if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: HEAD, approval_epoch: state.epoch }], rowCount: 1 };
       }
       if (/approval_epoch = approval_epoch \+ CASE/.test(text)) {

@@ -1,4 +1,5 @@
 const log = require('./logger');
+const budget = require('./github-budget');
 
 let App;
 let app;
@@ -29,11 +30,77 @@ const GITHUB_USER_AGENT = 'usernode-platform';
 // (every issue panel then degraded to "Couldn't load open issues").
 // Without a PAT they stay anonymous and the cache/stale-fallback layers
 // below remain the only defense.
+//
+// The first three now go through the GitHub App installation on the repo's
+// owner first, when there is one (publicReadFetch, GITHUB_READS_VIA_APP),
+// and these headers are what a refused installation read falls back to.
+// The connector's fork inspection reads repositories in people's own
+// accounts, where the App is not installed, so it keeps these headers.
 function publicFetchHeaders() {
   const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) headers['Authorization'] = `Bearer ${pat}`;
   return headers;
+}
+
+// The budget a publicFetchHeaders() read spends: the bot token's when one is
+// configured, else the anonymous per-IP one.
+function publicFetchCredential() {
+  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'anonymous';
+}
+
+// Record one response's rate-limit headers (services/github-budget.js), and
+// count the request against the caller that asked for it (`request`:
+// { method, url, caller, status }). Bookkeeping only: it never throws into
+// the request it describes, and a stub without headers records nothing.
+function recordHeaders(credential, headers, request = null) {
+  try {
+    if (!headers) return;
+    budget.record(credential, headers);
+    if (request) budget.noteRequest(credential, { ...request, headers });
+  } catch (_) { /* bookkeeping only */ }
+}
+
+// For the raw fetch paths. `method` and `url` are what was sent; the caller
+// is read off the stack here, which still holds the awaiting callers.
+function recordFetchResponse(credential, resp, { method = 'GET', url = null } = {}) {
+  let caller = 'unknown';
+  try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
+  recordHeaders(credential, resp && resp.headers, {
+    method,
+    url: url || (resp && resp.url) || '',
+    caller,
+    status: resp && resp.status,
+  });
+}
+
+// Record every response an Octokit client gets, success or error, against
+// the credential it authenticates as, and count it against the code that
+// asked (read off the stack before the request is sent, while the asking
+// frames are still on it). A client without Octokit's hook API (a test
+// double) is returned untouched.
+function instrument(octokit, credential) {
+  if (!octokit || !octokit.hook || typeof octokit.hook.wrap !== 'function') return octokit;
+  octokit.hook.wrap('request', async (request, options) => {
+    let caller = 'unknown';
+    try { caller = budget.callerFromStack(); } catch (_) { /* bookkeeping only */ }
+    const sent = { method: options && options.method, url: options && options.url, caller };
+    try {
+      const response = await request(options);
+      recordHeaders(credential, response && response.headers, { ...sent, status: response && response.status });
+      return response;
+    } catch (err) {
+      recordHeaders(credential, err && err.response && err.response.headers, { ...sent, status: err && err.status });
+      throw err;
+    }
+  });
+  return octokit;
+}
+
+// A REST client on the bot's personal access token, recorded as 'pat'.
+async function patOctokit(pat) {
+  const { Octokit } = await import('@octokit/rest');
+  return instrument(new Octokit({ auth: pat }), 'pat');
 }
 
 // Read-only open-issues fetch (fetchPublicIssues) tunables. The 5-minute
@@ -454,13 +521,17 @@ function isEnabled() {
   return !!app;
 }
 
+// GitHub logins are case-insensitive, and an owner parsed out of a stored
+// repo URL keeps whatever case the URL was written in, so the installation
+// is matched without regard to case.
 async function resolveInstallationId(owner) {
-  const cached = installationCache.get(owner);
+  const key = String(owner || '').toLowerCase();
+  const cached = installationCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.id;
 
   for await (const { installation } of app.eachInstallation.iterator()) {
-    if (installation.account?.login === owner) {
-      installationCache.set(owner, { id: installation.id, expiresAt: Date.now() + CACHE_TTL_MS });
+    if (String(installation.account?.login || '').toLowerCase() === key) {
+      installationCache.set(key, { id: installation.id, expiresAt: Date.now() + CACHE_TTL_MS });
       return installation.id;
     }
   }
@@ -469,7 +540,7 @@ async function resolveInstallationId(owner) {
 
 async function getInstallationOctokit(owner) {
   const id = await resolveInstallationId(owner);
-  return app.getInstallationOctokit(id);
+  return instrument(await app.getInstallationOctokit(id), `installation:${owner}`);
 }
 
 async function getInstallationToken(owner) {
@@ -509,8 +580,7 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
     throw new Error('GITHUB_BOT_TOKEN env var required for repo creation on user accounts');
   }
 
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
+  const octokit = await patOctokit(pat);
 
   try {
     const { data } = await octokit.rest.repos.createForAuthenticatedUser({
@@ -537,7 +607,10 @@ async function createRepo(owner, name, { description = '', adoptExisting = false
       throw err;
     }
     log.info('github', 'Adopting existing repo', { repo: data.full_name });
-    return data;
+    // `adopted`: its main may hold more than a fresh repository's one README,
+    // so a caller cannot take what it pushes next for the whole tree
+    // (services/app-creator.js clones it back instead).
+    return { ...data, adopted: true };
   }
 }
 
@@ -552,11 +625,244 @@ async function getOctokit(owner) {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
   // Prefer PAT for repos owned by the bot (avoids App installation sync issues)
   const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) {
-    const { Octokit } = await import('@octokit/rest');
-    return new Octokit({ auth: pat });
-  }
+  if (pat) return patOctokit(pat);
   return getInstallationOctokit(owner);
+}
+
+// ── Reads through the GitHub App (GITHUB_READS_VIA_APP) ────────────────
+//
+// Nearly everything the platform does on GitHub used to spend ONE budget:
+// the bot token's 5,000 requests an hour (getOctokit above prefers it), and
+// on 2026-10-04 that ran out. A GitHub App installation has a budget of its
+// own (5,000 an hour, more for a larger installation, up to 12,500), so the
+// everyday READS go through it, and the bot token is left for writes.
+//
+// The rule, per request:
+//
+//   - A read (GET or HEAD) on a repository whose OWNER has an installation
+//     of the App goes through that installation.
+//   - Anything else goes through the bot token: every write (pull requests,
+//     comments, issues, merges, refs, commits, repositories), so who
+//     authored what on GitHub does not change; and every read for an owner
+//     the App is not installed on. getReadOctokit sends a non-GET request on
+//     its client to the bot token too, so a write can never move by
+//     accident.
+//   - When the installation cannot answer, the same request is sent again
+//     with the bot token: no installation token could be had, GitHub
+//     refused it (401, 403, 404: the App lacks the permission, or cannot see
+//     the repository), or the installation's hourly budget is used up (a
+//     429, a 403 saying so, or services/github-budget.js already knowing).
+//     A 304 is an answer, never a reason to fall back.
+//
+// Which credential answered is recorded like every response
+// (services/github-budget.js), with a count of reads by source and of
+// fallbacks by reason.
+//
+// GITHUB_READS_VIA_APP: on by default whenever the App is configured;
+// `off` (or false, 0, no) restores the bot-token-only behaviour exactly:
+// getReadOctokit is then getOctokit.
+const READS_VIA_APP_OFF = new Set(['off', 'false', '0', 'no']);
+
+function readsViaApp() {
+  const raw = String(process.env.GITHUB_READS_VIA_APP || '').trim().toLowerCase();
+  if (READS_VIA_APP_OFF.has(raw)) return false;
+  return !!(app || (_readClientsForTests && _readClientsForTests.appConfigured));
+}
+
+// Statuses after which an installation's read is sent again with the bot
+// token. 401: its token was refused; 403/404: the App lacks the permission
+// or cannot see the repository; 429: its budget is spent.
+const READ_FALLBACK_STATUSES = new Set([401, 403, 404, 429]);
+
+function readFallbackReason(err) {
+  if (!err) return null;
+  if (budget.isRateLimitError(err)) return 'rate_limited';
+  const status = Number(err.status || (err.response && err.response.status)) || 0;
+  return READ_FALLBACK_STATUSES.has(status) ? `status_${status}` : null;
+}
+
+// Owners the App is not installed on, remembered for as long as a found
+// installation is (CACHE_TTL_MS): finding out walks every installation with
+// the App's own credentials, which no read should repeat.
+const installationMisses = new Map();
+
+async function readInstallationId(owner) {
+  const key = String(owner || '').toLowerCase();
+  const miss = installationMisses.get(key);
+  if (miss && miss > Date.now()) return null;
+  try {
+    return await resolveInstallationId(owner);
+  } catch (err) {
+    // Only a completed walk that found nothing is remembered; a transient
+    // failure of the walk itself is tried again on the next read.
+    if (/No GitHub App installation found/.test(String(err && err.message))) {
+      installationMisses.set(key, Date.now() + CACHE_TTL_MS);
+    }
+    return null;
+  }
+}
+
+// An installation access token for `owner`, or null. @octokit/auth-app
+// caches it until shortly before it expires, so this costs a request about
+// once an hour per installation, on the App's own credentials.
+async function readInstallationToken(owner) {
+  const id = await readInstallationId(owner);
+  if (!id) return null;
+  const auth = await app.octokit.auth({ type: 'installation', installationId: id });
+  return auth && typeof auth.token === 'string' ? auth.token : null;
+}
+
+// A full REST client (with .rest, unlike @octokit/app's own installation
+// client) on the installation for `owner`, recorded as
+// 'installation:<owner>'. Null when there is none to be had.
+async function installationReadOctokit(owner) {
+  if (_readClientsForTests) {
+    const client = await _readClientsForTests.installation(owner);
+    return client ? instrument(client, `installation:${owner}`) : null;
+  }
+  let token = null;
+  try {
+    token = await readInstallationToken(owner);
+  } catch (err) {
+    log.warn('github', 'No installation token for a read; using the bot token', {
+      owner, ...describeGithubError(err),
+    });
+    return null;
+  }
+  if (!token) return null;
+  const { Octokit } = await import('@octokit/rest');
+  // Octokit reports every 4xx on console.error. A refusal here is answered
+  // by the bot token a moment later, so its line goes to the debug log.
+  const quiet = (msg) => log.debug('github', 'Installation read', { detail: String(msg).slice(0, 300) });
+  const octokitLog = { debug() {}, info() {}, warn: quiet, error: quiet };
+  return instrument(new Octokit({ auth: token, log: octokitLog }), `installation:${owner}`);
+}
+
+// Send one request the installation client was given to the bot token's
+// client instead. The options are the installation client's own endpoint
+// options; its `request` (fetch and hook) stays behind, so the bot token's
+// own auth and recording apply.
+function forwardRequest(client, options) {
+  const { request: _ownRequest, method, url, ...params } = options;
+  return client.request(`${method} ${url}`, params);
+}
+
+// Wrap an installation client so each request follows the rule above.
+function withBotTokenFallback(installation, botToken, owner) {
+  const credential = `installation:${owner}`;
+  installation.hook.wrap('request', async (request, options) => {
+    const method = String(options.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      budget.noteRead('pat', 'not_a_read');
+      return forwardRequest(botToken, options);
+    }
+    if (budget.isExhausted(credential)) {
+      budget.noteRead('pat', 'budget_used_up');
+      return forwardRequest(botToken, options);
+    }
+    try {
+      const response = await request(options);
+      budget.noteRead('installation');
+      return response;
+    } catch (err) {
+      if (err && err.status === 304) {
+        budget.noteRead('installation');
+        throw err;
+      }
+      const reason = readFallbackReason(err);
+      if (!reason) throw err;
+      budget.noteRead('pat', reason);
+      log.debug('github', 'Installation read refused; sent with the bot token', {
+        owner, reason, url: options.url,
+      });
+      return forwardRequest(botToken, options);
+    }
+  });
+  return installation;
+}
+
+// Test seam (null in every real deploy): { appConfigured, installation(owner)
+// -> client | null, installationToken(owner) -> string | null, pat() ->
+// client } stand in for the App, its tokens and the bot token's client, so
+// the rule above runs against fake fetches. The clients are recorded as the
+// real ones are.
+let _readClientsForTests = null;
+function _setReadClientsForTests(clients) { _readClientsForTests = clients; }
+
+/**
+ * The client for a READ against `owner`'s repositories: the App installation
+ * when the rule above says so, with a per-request fallback to the bot token,
+ * else exactly getOctokit(owner).
+ */
+async function getReadOctokit(owner) {
+  if (!_readClientsForTests && _octokitFactoryForTests) return _octokitFactoryForTests(owner);
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat || !readsViaApp() || !owner) return getOctokit(owner);
+  const botToken = _readClientsForTests
+    ? instrument(await _readClientsForTests.pat(), 'pat')
+    : await patOctokit(pat);
+  const installation = await installationReadOctokit(owner);
+  if (!installation) {
+    budget.noteRead('pat', 'no_installation', { owner });
+    return botToken;
+  }
+  return withBotTokenFallback(installation, botToken, owner);
+}
+
+// The headers for one raw read of `owner`'s repository through its
+// installation, with the credential to record it under, or null when the
+// rule above says the bot token (or nobody) reads it. For the fetch paths
+// below (fetchPublicIssues and friends), which do not use Octokit.
+async function installationReadHeaders(owner) {
+  if (!readsViaApp() || !owner) return null;
+  const credential = `installation:${owner}`;
+  if (budget.isExhausted(credential)) {
+    budget.noteRead('pat', 'budget_used_up');
+    return null;
+  }
+  let token = null;
+  try {
+    token = _readClientsForTests
+      ? await _readClientsForTests.installationToken(owner)
+      : await readInstallationToken(owner);
+  } catch (err) {
+    log.warn('github', 'No installation token for a read; using the bot token', {
+      owner, ...describeGithubError(err),
+    });
+  }
+  if (!token) {
+    budget.noteRead('pat', 'no_installation', { owner });
+    return null;
+  }
+  return {
+    credential,
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': GITHUB_USER_AGENT,
+      'Authorization': `Bearer ${token}`,
+    },
+  };
+}
+
+// One raw GET for the public read paths: through the installation when the
+// rule says so, again with publicFetchHeaders() (the bot token, or
+// anonymous) when that is refused, as the Octokit reads do. Returns the
+// fetch Response the caller would have had.
+async function publicReadFetch(owner, url, { signal } = {}) {
+  const viaApp = await installationReadHeaders(owner);
+  if (viaApp) {
+    const resp = await fetch(url, { headers: viaApp.headers, signal });
+    recordFetchResponse(viaApp.credential, resp, { url });
+    const refused = READ_FALLBACK_STATUSES.has(resp.status);
+    if (!refused) {
+      budget.noteRead('installation');
+      return resp;
+    }
+    budget.noteRead('pat', `status_${resp.status}`);
+  }
+  const resp = await fetch(url, { headers: publicFetchHeaders(), signal });
+  recordFetchResponse(publicFetchCredential(), resp, { url });
+  return resp;
 }
 
 async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initial commit' } = {}) {
@@ -590,12 +896,27 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   return newCommit;
 }
 
+// #3737: a commit with NO parent holding exactly `files`, written to the
+// repository's object store with no branch pointing at it; the caller names
+// it (services/bench/runner.js, the benchmark's scaffold, which only ever
+// points a `bench/` branch at it). Without a parent, a checkout of it holds
+// that one commit and none of the repository's history. Resolves its sha.
+async function createRootCommit(owner, repo, files, { message = 'Initial commit' } = {}) {
+  const octokit = await getOctokit(owner);
+  const tree = files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.content }));
+  const { data: newTree } = await octokit.rest.git.createTree({ owner, repo, tree });
+  const { data: commit } = await octokit.rest.git.createCommit({
+    owner, repo, message: safeMention(message), tree: newTree.sha, parents: [],
+  });
+  return commit.sha;
+}
+
 // Read a single file's decoded text contents from a repo at `ref`
 // (default the repo's default branch). Returns the string, or null when
 // the file doesn't exist (404) so callers can branch on "create vs
 // edit" without try/catch noise. Other errors propagate.
 async function getFileContent(owner, repo, filePath, ref) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   try {
     const params = { owner, repo, path: filePath };
     if (ref) params.ref = ref;
@@ -608,6 +929,33 @@ async function getFileContent(owner, repo, filePath, ref) {
     if (err.status === 404) return null;
     throw err;
   }
+}
+
+// #4145: every file path in a repo at `ref` (default the repo's default
+// branch), one request through the read client: [{ path, size }], blobs
+// only, and `truncated` when GitHub cut a very large tree short. Null when
+// the repository or ref does not exist; other errors propagate.
+async function listRepoFiles(owner, repo, ref) {
+  const octokit = await getReadOctokit(owner);
+  try {
+    const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
+    const files = (data.tree || [])
+      .filter((entry) => entry.type === 'blob')
+      .map((entry) => ({ path: entry.path, size: entry.size || 0, sha: entry.sha }));
+    return { files, truncated: data.truncated === true };
+  } catch (err) {
+    if (err.status === 404 || err.status === 409) return null;
+    throw err;
+  }
+}
+
+// One blob's decoded text, by its sha (listRepoFiles gives each file's). The
+// contents API stops returning a file's bytes at 1 MB; the blob API does not,
+// which is what a large generated file needs (services/language-sync-runner.js).
+async function getBlobContent(owner, repo, sha) {
+  const octokit = await getReadOctokit(owner);
+  const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: sha });
+  return Buffer.from(data.content || '', data.encoding || 'base64').toString('utf-8');
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
@@ -692,7 +1040,7 @@ async function ensureBranchAtSha(owner, repo, branchName, sha) {
 // Callers use this for both the immutable handoff base and the branch's
 // current head, preventing history rewrites on a later submission.
 async function compareCommitAncestry(owner, repo, baseSha, headSha) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/compare/{basehead}',
     { owner, repo, basehead: `${baseSha}...${headSha}`, per_page: 1 }
@@ -705,6 +1053,32 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
   };
 }
 
+// The commits of one pull request, as its Commits tab lists them: the ones on
+// its head that its base did not have. GitHub keeps the list after a squash
+// merge, so for a merged pull request it is what the change brought to main,
+// and an open change whose head is on it was built on (included in) this one
+// (services/included-changes.js). GitHub lists at most 250, so `complete` is
+// false when the list may be short. Lowercase SHAs. Throws on transport
+// errors.
+const PR_COMMITS_CAP = 250;
+
+async function listPullRequestCommitShas(owner, repo, prNumber) {
+  const octokit = await getReadOctokit(owner);
+  const shas = [];
+  for (let page = 1; page <= 3; page += 1) {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}/commits',
+      { owner, repo, pull_number: prNumber, per_page: 100, page }
+    );
+    const batch = Array.isArray(data) ? data : [];
+    for (const commit of batch) {
+      if (typeof commit?.sha === 'string') shas.push(commit.sha.toLowerCase());
+    }
+    if (batch.length < 100) break;
+  }
+  return { shas, complete: shas.length < PR_COMMITS_CAP };
+}
+
 // #955: the parent SHAs of one commit, oldest-first as Git stores them —
 // so `[0]` is the FIRST parent, i.e. the branch the merge was made ONTO.
 // The platform's sync turn merges origin/main into a proposal branch, so a
@@ -713,7 +1087,7 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
 // commit. Throws on transport errors; callers fail closed (skip the vote
 // carry) rather than guessing provenance.
 async function getCommitParents(owner, repo, sha) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
     { owner, repo, commit_sha: sha }
@@ -730,7 +1104,7 @@ async function getCommitParents(owner, repo, sha) {
 // uses, deliberately not repos.getCommit: that carries the commit's whole
 // file list, which on a merge runs to hundreds of entries.
 async function getCommitTree(owner, repo, sha) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
     { owner, repo, commit_sha: sha }
@@ -740,7 +1114,7 @@ async function getCommitTree(owner, repo, sha) {
 }
 
 async function getBranchSha(owner, repo, branchName) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data: ref } = await octokit.request(
     'GET /repos/{owner}/{repo}/git/ref/{+ref}',
     { owner, repo, ref: `heads/${branchName}` }
@@ -762,7 +1136,7 @@ async function getBranchSha(owner, repo, branchName) {
 // entries. `listCommits` with `per_page: 1` returns the same sha and date in
 // a fixed-size payload.
 async function getRepoHead(owner, repo) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data: info } = await octokit.rest.repos.get({ owner, repo });
   const defaultBranch = info.default_branch || 'main';
   const { data: commits } = await octokit.rest.repos.listCommits({
@@ -775,6 +1149,32 @@ async function getRepoHead(owner, repo) {
     headCommittedAt: top && top.commit && top.commit.committer
       ? (top.commit.committer.date || null)
       : null,
+  };
+}
+
+// The commit a repository's default branch was at, at a moment in the past:
+// the newest commit on it dated at or before `until` (GitHub's `until` reads
+// the commit date). Read-only, for the benchmark's historical snapshots
+// (services/bench/backfill.js). Resolves { sha, committedAt, branch }, or
+// null when the branch has no commit that old.
+async function getCommitAt(owner, repo, until, { branch = null } = {}) {
+  const at = new Date(until);
+  if (Number.isNaN(at.getTime())) throw new Error('getCommitAt needs a valid time');
+  const octokit = await getReadOctokit(owner);
+  let ref = branch;
+  if (!ref) {
+    const { data: info } = await octokit.rest.repos.get({ owner, repo });
+    ref = info.default_branch || 'main';
+  }
+  const { data: commits } = await octokit.rest.repos.listCommits({
+    owner, repo, sha: ref, until: at.toISOString(), per_page: 1,
+  });
+  const top = Array.isArray(commits) && commits[0] ? commits[0] : null;
+  if (!top || typeof top.sha !== 'string') return null;
+  return {
+    sha: top.sha.toLowerCase(),
+    committedAt: (top.commit && top.commit.committer && top.commit.committer.date) || null,
+    branch: ref,
   };
 }
 
@@ -810,11 +1210,14 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
 // Move a branch to an exact commit whether or not that is a fast-forward.
 //
 // This is deliberately not the module's general ref-update path. It exists
-// for exactly one caller, demo mode's reset (routes/demo-mode.js),
-// which puts a demo app's main back to where it stood before a recorded
-// take. That app is in demo mode, its creator asked, and the commits being
-// discarded are the partner's own demo proposals — the one situation where
-// rewinding main is the point rather than an accident.
+// for two callers. Demo mode's reset (routes/demo-mode.js) puts a demo
+// app's main back to where it stood before a recorded take. That app is in
+// demo mode, its creator asked, and the commits being discarded are the
+// partner's own demo proposals — the one situation where rewinding main is
+// the point rather than an accident. And the Homeroom bot's first-version
+// review (homeroom-bot-live.js rollbackReviewBranch) puts the bot's own
+// session branch, never a default branch, back on the last commit that
+// booted when a review fix broke the app, before anything is proposed.
 async function forceBranchToSha(owner, repo, branchName, sha) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -1236,7 +1639,7 @@ async function createPR(owner, repo, {
 // connector with an explicit `headOwner` to find the cross-fork PR for a
 // branch in the user's own fork.
 async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
     owner, repo, head: `${headOwner || owner}:${branch}`, state: 'open', per_page: 1,
   });
@@ -1249,7 +1652,7 @@ async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
 // head, base, html_url, …); callers shape what they need. Same-repo scope —
 // fork heads are out of scope for the import flow (see spec Deferred work).
 async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
     owner, repo, state: 'open', sort: 'created', direction: 'desc',
     per_page: perPage,
@@ -1344,7 +1747,7 @@ async function mergePR(owner, repo, prNumber, sha = null) {
 // linked-issues backfill to parse closing keywords out of historical PR
 // bodies that predate the #75/#79 linkage plumbing.
 async function getPR(owner, repo, prNumber) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.pulls.get({
     owner, repo,
     pull_number: prNumber,
@@ -1381,7 +1784,7 @@ async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
 // exists yet. The compare endpoint returns at most 300 files per page —
 // plenty for a "does anything frontend-ish appear?" check.
 async function listChangedFiles(owner, repo, basehead) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
   });
@@ -1401,7 +1804,7 @@ async function listChangedFiles(owner, repo, basehead) {
 const COMPARE_FILES_CAP = 300;
 
 async function compareRefs(owner, repo, basehead) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
   });
@@ -1410,6 +1813,28 @@ async function compareRefs(owner, repo, basehead) {
     mergeBaseSha: data.merge_base_commit?.sha || null,
     files,
     filesComplete: files.length < COMPARE_FILES_CAP,
+  };
+}
+
+// "Suggest this back" (services/suggest-back.js): the commits on `head`
+// since `base`, oldest first, each as { sha, subject } (the message's first
+// line), with the total GitHub counted and the changed file paths. The
+// compare endpoint lists at most 250 commits and 300 files, so `totalCommits`
+// is the figure to show and `files` may be short of a very large change.
+// Throws on transport errors, like compareRefs.
+async function compareCommitSubjects(owner, repo, base, head) {
+  const octokit = await getReadOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead: `${base}...${head}`, per_page: 100,
+  });
+  const commits = (data.commits || []).map((c) => ({
+    sha: c.sha,
+    subject: String((c.commit && c.commit.message) || '').split('\n')[0].trim(),
+  }));
+  return {
+    commits,
+    totalCommits: Number.isInteger(data.total_commits) ? data.total_commits : commits.length,
+    files: (data.files || []).map((f) => f.filename),
   };
 }
 
@@ -1427,7 +1852,7 @@ async function compareRefs(owner, repo, basehead) {
 const PROPOSAL_DIFF_CHAR_BUDGET = 12000;
 
 async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
     owner, repo, basehead, per_page: 100,
   });
@@ -1453,6 +1878,55 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
     out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
   }
   return { diff: out, fileCount: files.length, truncated };
+}
+
+// #3654: the files a compare touched, with their status and patch, for the
+// Homeroom bot benchmark's diff-scope grader and its judge. One call gives
+// both the list and the diff text (capped like getProposalDiff's), and
+// `complete` says whether GitHub's 300-file page held everything. Also read
+// by the small-change tag (services/small-change.js), which needs the merge
+// base to read dapp.json as the change found it.
+async function compareFiles(owner, repo, basehead, charBudget = 60000) {
+  const octokit = await getReadOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = (data.files || []).map((f) => ({
+    filename: f.filename,
+    status: f.status,
+    additions: f.additions || 0,
+    deletions: f.deletions || 0,
+    previous: f.previous_filename || null,
+  }));
+  let diff = '';
+  let truncated = false;
+  for (const f of data.files || []) {
+    const block = `diff --git a/${f.filename} b/${f.filename}\n${f.patch ? `${f.patch}\n` : `(no textual diff: ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`}`;
+    if (diff.length + block.length > charBudget) { truncated = true; break; }
+    diff += block;
+  }
+  return {
+    files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null,
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+  };
+}
+
+// #3654: delete a branch the Homeroom bot benchmark made. Refuses any name
+// outside the benchmark's own `bench/` prefix, so a bug in the caller can
+// never take a person's or a proposal's branch with it. A branch already
+// gone is not an error.
+async function deleteBenchBranch(owner, repo, branchName) {
+  if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
+    throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
+  }
+  const octokit = await getOctokit(owner);
+  try {
+    await octokit.rest.git.deleteRef({ owner, repo, ref: `heads/${branchName}` });
+    return true;
+  } catch (err) {
+    if (err.status === 404 || err.status === 422) return false;
+    throw err;
+  }
 }
 
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
@@ -1503,6 +1977,7 @@ async function patchIssueTitle(owner, repo, issueNumber, title) {
       },
       body: JSON.stringify({ title: safeMention(title) }),
     });
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
     if (res.ok) return;
     log.warn('github', 'PAT issue PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -1527,6 +2002,7 @@ async function patchIssueBody(owner, repo, issueNumber, body) {
       },
       body: JSON.stringify({ body: safeBody }),
     });
+    recordFetchResponse('pat', res, { method: 'PATCH', url: `/repos/${owner}/${repo}/issues/${issueNumber}` });
     if (res.ok) return;
     log.warn('github', 'PAT issue body PATCH failed; trying installation token', {
       repo: `${owner}/${repo}`, issueNumber, status: res.status,
@@ -1550,7 +2026,7 @@ async function closeIssue(owner, repo, issueNumber) {
 // one sequence — callers must check the `pull_request` key on the response
 // to tell them apart.
 async function getIssue(owner, repo, issueNumber) {
-  const octokit = await getOctokit(owner);
+  const octokit = await getReadOctokit(owner);
   const { data } = await octokit.rest.issues.get({
     owner, repo, issue_number: issueNumber,
   });
@@ -1598,39 +2074,10 @@ async function getCloneUrl(owner, repo) {
 // existing apps go through createRepo/pushFiles unchanged.
 // ---------------------------------------------------------------------------
 
-// Parse the variants we want to accept from the user. Returns
-// { owner, repo } or null. We deliberately don't accept arbitrary git
-// hosts: this is GitHub-specific to match the rest of the platform.
-function parseGithubUrl(input) {
-  if (typeof input !== 'string') return null;
-  const s = input.trim();
-  if (!s) return null;
-
-  // Match the create-app field's helpful default on the server so direct or
-  // stale clients get the same result. Preserve explicit schemes so invalid
-  // protocols remain invalid, and preserve the long-supported SSH spelling.
-  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(s);
-  const normalized = !hasScheme && !/^git@github\.com:/i.test(s)
-    ? `https://${s}`
-    : s;
-
-  // Strip an optional .git suffix and any trailing slash so all four URL
-  // shapes (https, https/, https.git, ssh) collapse to "owner/repo".
-  const cleaned = normalized.replace(/\.git$/i, '').replace(/\/+$/, '');
-
-  // https://github.com/owner/repo
-  let m = cleaned.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/i);
-  if (!m) {
-    // git@github.com:owner/repo
-    m = cleaned.match(/^git@github\.com:([^/]+)\/([^/]+)$/i);
-  }
-  if (!m) return null;
-  const owner = m[1];
-  const repo = m[2];
-  // Guard against query strings or fragments leaking into the repo name.
-  if (!/^[\w.\-]+$/.test(owner) || !/^[\w.\-]+$/.test(repo)) return null;
-  return { owner, repo };
-}
+// Parse the variants we want to accept from the user: { owner, repo } or
+// null (src/workflow/rules/github-url.ts, which the workflow machines read
+// repositories with).
+const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
 
 // The bot's own PAT client for the import pre-flight. The test seam
 // (_setOctokitFactoryForTests) stands in for it so the invitation and
@@ -1639,8 +2086,7 @@ async function botPatOctokit() {
   if (_octokitFactoryForTests) return _octokitFactoryForTests(null);
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (!pat) return null;
-  const { Octokit } = await import('@octokit/rest');
-  return new Octokit({ auth: pat });
+  return patOctokit(pat);
 }
 
 // GET /user/repository_invitations returns 30 invitations per page by
@@ -1788,18 +2234,27 @@ async function verifyBotAccess(owner, repo) {
 // on failure. Callers decide whether to treat "couldn't determine" as
 // fatal (bootstrap) or just log (audit).
 async function checkRepoPublic(owner, repo) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) {
+  if (!process.env.GITHUB_BOT_TOKEN && !_octokitFactoryForTests && !_readClientsForTests) {
     return { ok: false, code: 'no_token', message: 'GitHub bot token not configured.' };
   }
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
+  // A read, on every worker start: through the App installation when
+  // GITHUB_READS_VIA_APP says so (getReadOctokit), else the bot token. A
+  // repository the installation cannot see is asked again with the bot
+  // token, so one that went private still reads as private.
+  const octokit = await getReadOctokit(owner);
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo });
     return { ok: true, private: data.private === true };
   } catch (err) {
     if (err.status === 404) {
       return { ok: false, code: 'not_found', message: `Repo ${owner}/${repo} not accessible.` };
+    }
+    // GitHub's own "API rate limit exceeded for user ID ..." told a person
+    // nothing about what to do. Say it in plain words, with when it resets.
+    const notice = budget.rateLimitNotice(err);
+    if (notice) {
+      const retryAfterSeconds = budget.rateLimitRetryAfterSeconds(err);
+      return { ok: false, code: 'rate_limited', message: notice, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
     return { ok: false, code: 'github_error', message: err.message };
   }
@@ -1816,6 +2271,7 @@ async function fetchPublicRepoInfo(owner, repo) {
     const resp = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
       headers: { 'Accept': 'application/vnd.github+json' },
     });
+    recordFetchResponse('anonymous', resp, { url: `/repos/${owner}/${repo}` });
     if (!resp.ok) return null;
     const data = await resp.json();
     return { name: data.name || null, description: data.description || null };
@@ -2001,10 +2457,7 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
       const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
       let resp;
       try {
-        resp = await fetch(url, {
-          headers: publicFetchHeaders(),
-          signal: controller.signal,
-        });
+        resp = await publicReadFetch(owner, url, { signal: controller.signal });
       } finally {
         clearTimeout(timer);
       }
@@ -2100,7 +2553,12 @@ async function refreshPublicIssues(owner, repo) {
 // shape or null, with `note` naming why ('bad issue number',
 // 'not found', 'not an issue (pull request)', 'rate limited',
 // 'fetch failed').
-async function fetchPublicIssue(owner, repo, number) {
+//
+// `fresh` skips the cache, the overlay and the stale fallback: the issue as
+// GitHub has it now, or none. The Homeroom bot reads its updated_at right
+// after commenting (homeroom-bot-live.js advanceSeen), and a cached copy
+// up to five minutes old would answer with the time before its comment.
+async function fetchPublicIssue(owner, repo, number, { fresh = false } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { issue: null, note: 'bad issue number' };
@@ -2115,7 +2573,7 @@ async function fetchPublicIssue(owner, repo, number) {
   const suppressed = liveSuppressions(owner, repo);
   const knownClosed = !!(suppressed && suppressed.has(n));
   const cached = issuesCache.get(cacheKey);
-  if (!knownClosed && cached && cached.expiresAt > Date.now()) {
+  if (!fresh && !knownClosed && cached && cached.expiresAt > Date.now()) {
     const hit = cached.result.issues.find((i) => i.number === n);
     if (hit) return { issue: hit };
   }
@@ -2123,7 +2581,7 @@ async function fetchPublicIssue(owner, repo, number) {
   // #192: a just-created issue may predate both the cache and GitHub's
   // lagging anonymous endpoints — the overlay carries its full body, so
   // serving from it costs no network call (and no rate-limit budget).
-  const overlay = knownClosed ? null : liveCreatedOverlay(owner, repo);
+  const overlay = knownClosed || fresh ? null : liveCreatedOverlay(owner, repo);
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 
@@ -2132,12 +2590,10 @@ async function fetchPublicIssue(owner, repo, number) {
     const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
     let resp;
     try {
-      resp = await fetch(
+      resp = await publicReadFetch(
+        owner,
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}`,
-        {
-          headers: publicFetchHeaders(),
-          signal: controller.signal,
-        }
+        { signal: controller.signal }
       );
     } finally {
       clearTimeout(timer);
@@ -2147,7 +2603,7 @@ async function fetchPublicIssue(owner, repo, number) {
       // Same stale-cache fallback fetchPublicIssues uses: an expired list
       // entry still beats returning nothing.
       log.warn('github', 'Single-issue fetch rate-limited', { repo: cacheKey, issue: n });
-      const stale = issuesCache.get(cacheKey);
+      const stale = fresh ? null : issuesCache.get(cacheKey);
       const hit = stale && stale.result.issues.find((i) => i.number === n);
       if (hit) return { issue: hit, note: 'rate limited' };
       return { issue: null, note: 'rate limited' };
@@ -2192,17 +2648,27 @@ async function fetchPublicIssue(owner, repo, number) {
 // recent answers were invisible despite the seed's "most recent" wording.)
 //
 // NEVER throws: every outcome resolves to
-// `{ comments: [{ author, body, createdAt }], truncated, note? }` — on any
-// failure the list is empty, `truncated` false, and `note` names why. No
+// `{ comments: [{ author, body, createdAt, id? }], truncated, note? }` — on
+// any failure the list is empty, `truncated` false, and `note` names why. No
 // caching: it's an on-demand read.
-async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
+//
+// `id` is GitHub's own comment id, when it sent one (#3693): what the
+// Homeroom bot recorded for each comment it posted (homeroom_bot_posts), so
+// the request page can leave out the bot's comments its Homeroom thread
+// already carries. clipIssueComments does not pass it on.
+//
+// `since` (an ISO time) asks GitHub for the comments updated at or after it
+// only, so a caller looking for a comment it may just have posted reads the
+// recent tail instead of the oldest pages (the workflow's close-and-comment).
+async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX, since = null } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
     return { comments: [], truncated: false, note: 'bad issue number' };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
-    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`;
+    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`
+    + (since ? `&since=${encodeURIComponent(since)}` : '');
   const collected = [];
   let page = 0;
 
@@ -2213,10 +2679,7 @@ async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MA
       const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
       let resp;
       try {
-        resp = await fetch(url, {
-          headers: publicFetchHeaders(),
-          signal: controller.signal,
-        });
+        resp = await publicReadFetch(owner, url, { signal: controller.signal });
       } finally {
         clearTimeout(timer);
       }
@@ -2241,6 +2704,7 @@ async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MA
           author: (c && c.user && c.user.login) || '',
           body: (c && c.body) || '',
           createdAt: (c && c.created_at) || '',
+          ...(c && c.id != null ? { id: c.id } : {}),
         });
       }
       // Hit the total cap mid-thread: stop and flag the rest as omitted.
@@ -2360,19 +2824,29 @@ module.exports = {
   isEnabled,
   getBotUsername,
   getOctokit,
+  // The client for a read (GITHUB_READS_VIA_APP): the App installation with
+  // a per-request fallback to the bot token, else getOctokit.
+  getReadOctokit,
+  readsViaApp,
+  _setReadClientsForTests,
   getInstallationOctokit,
   getInstallationToken,
   createRepo,
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
+  createRootCommit,
   getFileContent,
+  listRepoFiles,
+  getBlobContent,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,
+  listPullRequestCommitShas,
   getCommitParents,
   getCommitTree,
   getBranchSha,
   getRepoHead,
+  getCommitAt,
   advanceBranchToSha,
   forceBranchToSha,
   createProposalCommit,
@@ -2392,7 +2866,10 @@ module.exports = {
   markPrReadyForReview,
   listChangedFiles,
   compareRefs,
+  compareCommitSubjects,
   getProposalDiff,
+  compareFiles,
+  deleteBenchBranch,
   getIssue,
   createIssue,
   createIssueComment,
@@ -2412,6 +2889,12 @@ module.exports = {
   // services (services/external-agent-tasks) inherit the bot-PAT-when-present
   // rate-limit posture instead of re-implementing it anonymously.
   publicApiHeaders: publicFetchHeaders,
+  // The budget those reads spend ('pat' or 'anonymous'), and the recorder
+  // for a raw fetch response (services/github-budget.js), for the same
+  // services.
+  publicApiCredential: publicFetchCredential,
+  recordFetchResponse,
+  _instrumentForTests: instrument,
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,

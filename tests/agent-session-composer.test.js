@@ -18,10 +18,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -188,7 +190,7 @@ function withBrowser(fn) {
       id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, busy: false,
       activeChange: null, changes: [], lastActivityAt: null, createdAt: null,
     };
-    globalThis.fetch = async (url, init = {}) => {
+    globalThis.fetch = withStateRead(async (url, init = {}) => {
       const method = init.method || 'GET';
       const body = init.body ? JSON.parse(init.body) : null;
       requests.push([method, url, body]);
@@ -207,7 +209,7 @@ function withBrowser(fn) {
       else if (/\/turns$/.test(url)) return { ok: false, status: 409, json: async () => ({ error: 'busy', busy: true }) };
       else answer = { session, turn: null };
       return { ok: true, status: 200, json: async () => answer };
-    };
+    });
     try {
       const api = loadTsx('tests/fixtures/agent-session-api.ts');
       await fn({ api, requests, toasts });
@@ -264,16 +266,16 @@ test('Save parks the text only while the Mayor works; a draft is sent by a tap o
 
 test('Stop hands back the message still waiting, or the newest one sent', () => {
   const { stoppedText } = loadTsx('tests/fixtures/agent-session-api.ts');
-  const turn = (pendingUserText) => ({ pendingUserText });
+  const sending = (message) => [{ clientId: 'c1', message, shown: message, status: 'sending', error: '', createdAt: 1, attachmentKeys: [] }];
   const rows = [
     { role: 'user', content: 'first' },
     { role: 'assistant', content: 'ok' },
     { role: 'user', content: 'second' },
     { role: 'system', content: 'Build started' },
   ];
-  assert.equal(stoppedText({ turn: turn('waiting'), messages: rows }), 'waiting');
-  assert.equal(stoppedText({ turn: turn(null), messages: rows }), 'second');
-  assert.equal(stoppedText({ turn: turn(null), messages: [] }), null);
+  assert.equal(stoppedText({ outbox: sending('waiting'), messages: rows }), 'waiting', 'the message still on its way');
+  assert.equal(stoppedText({ outbox: [], messages: rows }), 'second');
+  assert.equal(stoppedText({ outbox: [], messages: [] }), null);
 });
 
 test('the composer keeps what was typed per conversation, and the drafts list offers its three acts', () => {
@@ -299,7 +301,7 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.match(busy, /data-agent-session-drafts="2"/);
   assert.match(busy, />Saved drafts \(2\)</);
   assert.match(busy, /on all your devices/);
-  assert.match(busy, /sending unlocks when the Mayor finishes/);
+  assert.match(busy, /sending unlocks when the agent finishes/);
   assert.equal((busy.match(/aria-label="Send this draft"[^>]*disabled=""/g) || []).length, 2, 'no send mid-turn');
   const idle = renderToHtml(createElement(SavedDrafts, { drafts, busy: false, onSend() {}, onEdit() {} }));
   assert.doesNotMatch(idle, /disabled=""/);
@@ -308,21 +310,79 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.equal(renderToHtml(createElement(SavedDrafts, { drafts: [], busy: false, onSend() {}, onEdit() {} })), '', 'no drafts, no row');
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
+  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label=\{t\('agent:session\.composer\.saveAsDraft'\)\}/, 'the one button turns into Save');
+  assert.equal(message('agent:session.composer.saveAsDraft'), 'Save as draft');
   assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
-  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
-  assert.match(panel, /The Mayor is working\. Type your next message and save it for later\./);
+  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Save mid-turn parks, never sends');
+  assert.match(panel, /event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/,
+    'only Ctrl/Cmd+Enter submits from the box, as in the dev chat');
+  assert.doesNotMatch(panel, /event\.key === 'Enter' && !event\.shiftKey/,
+    'plain Enter never sends: it is a new line');
+  assert.match(panel, /const SAVE_TITLE = 'agent:session\.composer\.saveTitle';/);
+  assert.match(panel, /title=\{t\(SAVE_TITLE\)\}/);
+  assert.equal(message('agent:session.composer.saveTitle'), 'Save this as a draft (Ctrl+Enter or ⌘+Enter). It stays here until you send it',
+    'the Save draft hint names the chord, not Enter');
+  assert.doesNotMatch(message('agent:session.composer.saveTitle'), /\(Enter\)\. It stays here until you send it/, 'the old Enter hint is gone');
+  assert.match(panel, /const BUSY_PLACEHOLDER = 'agent:session\.composer\.busyPlaceholder';/);
+  assert.match(panel, /running \? t\(BUSY_PLACEHOLDER\)/);
+  assert.equal(message('agent:session.composer.busyPlaceholder'), 'The agent is working. Type your next message and save it for later.');
 });
 
 // ── 4. What a typical change costs ─────────────────────────────────────
 
+test('the low-credits note sits between the field and the send row, whenever the pill is red (#4784, #4801)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /refused: !!s\.credits/,
+    'a refusal set on the store opens the out-of-credits card, and the note hides while it is open');
+  assert.doesNotMatch(panel, /started: s\.messages\.length > 0 \|\| s\.outbox\.length > 0/,
+    'the note is no longer gated to a new conversation: it shows mid-session too');
+  assert.match(panel, /\{!archived && !pendingSend && showLowCreditNote\(credit, snapshot\.refused\) \? <LowCreditNote credit=\{credit\} \/> : null\}/,
+    'the note shows whenever the pill is red, never in an archived conversation, and it gives way while the low-credits check is open (#4792)');
+  const field = panel.indexOf('<textarea');
+  const note = panel.indexOf('showLowCreditNote(credit, snapshot.refused)');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', note);
+  assert.ok(field !== -1 && note !== -1 && row !== -1 && field < note && note < row,
+    'the note reads between the box and the row with Send');
+  assert.equal(message('agent:session.credits.lowNote', { amount: '$0.60' }),
+    'Only $0.60 of credits left. A build can cost more than that and may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
+  assert.equal(message('agent:session.credits.lowNoteNone'),
+    'No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.');
+});
+
+test('a send with almost no credits stops for one tap first, then never again this visit (#4792)', () => {
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'text' \}\);\s*return;\s*\}\s*sendTyped\(\);/,
+    'submit asks before it clears the box, so Cancel keeps the message');
+  assert.match(panel, /const onSendDraft = \(draft: SavedDraft\) => \{\s*if \(running\) return;\s*if \(needsLowCreditCheck\(credit\)\) \{\s*setPendingSend\(\{ kind: 'draft', draft \}\);\s*return;\s*\}/,
+    'a saved draft\'s Send asks the same question');
+  assert.match(panel, /const onConfirmSend = \(\) => \{\s*const held = pendingSend;\s*confirmLowCredit\(\);\s*setPendingSend\(null\);/,
+    'Continue confirms for the rest of the visit, then runs the held send');
+  assert.match(panel, /const onCancelSend = \(\) => setPendingSend\(null\);/, 'Cancel only closes the check');
+  assert.match(panel, /setPendingSend\(null\);\s*\}, \[target, running\]\)/,
+    'a switch of conversation or a turn that starts closes the check');
+  assert.match(panel, /if \(pendingSend && !isLowCredit\(credit\)\) setPendingSend\(null\)/,
+    'figures that refresh above the threshold (a top-up) close it too');
+  assert.match(panel, /\{!archived && pendingSend && credit \? \(/, 'the check shows only where a send is held');
+  assert.match(panel, /buttonClass=\{CARD_BUTTON\}\s*primaryClass=\{CARD_PRIMARY\}/,
+    'the check reuses the composer\'s own card buttons, not a copied class string');
+  const field = panel.indexOf('<textarea');
+  const check = panel.indexOf('<LowCreditConfirm');
+  const row = panel.indexOf('<div className="flex items-center gap-2 [container-type:inline-size]">', check);
+  assert.ok(field !== -1 && check !== -1 && row !== -1 && field < check && check < row,
+    'the check sits between the box and the row with Send, in the note\'s slot');
+
+  assert.equal(message('agent:session.credits.confirmContinue'), 'Continue');
+  assert.equal(message('agent:session.credits.confirmCancel'), 'Cancel');
+});
+
+
 test('each model says what a typical change costs on it, never as a bare amount', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
   const catalog = {
-    anthropic: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }],
-    anthropicDefault: 'claude-sonnet-5',
+    anthropic: [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }],
+    anthropicDefault: 'claude-sonnet-5-5',
     defaultBackend: 'claude_code',
     savedOpenRouter: null,
     defaultReasoningEffort: null,
@@ -336,21 +396,21 @@ test('each model says what a typical change costs on it, never as a bare amount'
     notes: {
       typicalChange: { inputTokens: 2_500_000, outputTokens: 120_000 },
       models: {
-        'claude-sonnet-5': { note: 'general coding work', estimateCents: 155 },
+        'claude-sonnet-5-5': { note: 'general coding work', estimateCents: 155 },
         'z-ai/glm-5': { note: null, estimateCents: 42 },
       },
     },
   };
-  assert.deepEqual(choice.modelCost('claude-sonnet-5', catalog),
+  assert.deepEqual(choice.modelCost('claude-sonnet-5-5', catalog),
     { note: 'general coding work', perChange: 'about $1.55 for a typical change', compact: 'general coding work · about $1.55 for a typical change' });
   assert.equal(choice.modelCost('priced/model', catalog, catalog.openrouter[2]).perChange, 'about $2.98 for a typical change',
     'a model the platform does not curate: its catalog prices times the typical change');
   assert.equal(choice.modelCost('cheap/model', catalog, catalog.openrouter[1]).perChange, 'about <$0.01 for a typical change', 'never "$0.00"');
   assert.deepEqual(choice.modelCost('unknown', catalog), { note: '', perChange: '', compact: '' });
-  assert.deepEqual(choice.modelCost('claude-sonnet-5', { ...catalog, notes: null }), { note: '', perChange: '', compact: '' }, 'no notes, no figure');
+  assert.deepEqual(choice.modelCost('claude-sonnet-5-5', { ...catalog, notes: null }), { note: '', perChange: '', compact: '' }, 'no notes, no figure');
 
   const options = choice.pickerOptions(catalog, null);
-  const sonnet = options.find((o) => o.value === 'anthropic:claude-sonnet-5');
+  const sonnet = options.find((o) => o.value === 'anthropic:claude-sonnet-5-5');
   assert.equal(sonnet.detail, 'general coding work · about $1.55 for a typical change');
   assert.equal(options.find((o) => o.value === 'openrouter:z-ai/glm-5').detail, 'about $0.42 for a typical change');
 
@@ -358,26 +418,30 @@ test('each model says what a typical change costs on it, never as a bare amount'
   const sheet = renderToHtml(createElement(parts.ModelSheetBody, {
     options: parts.modelList([{ ...sonnet, isDefault: true }]), value: sonnet.value, onPick() {}, effort: null, credit: null,
   }));
-  assert.match(sheet, />Sonnet 5<span[^>]*>default<\/span><\/span><span[^>]*>general coding work · about \$1\.55 for a typical change<\/span>/,
+  assert.match(sheet, />Sonnet 5\.5<span[^>]*>default<\/span><\/span><span[^>]*>general coding work · about \$1\.55 for a typical change<\/span>/,
     'open: the cost under the name');
   const pill = renderToHtml(createElement(parts.ModelPill, { label: sonnet.label, disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
-  assert.match(pill, /aria-label="Model: Sonnet 5"/, 'closed: still "Model: X" to a screen reader');
+  assert.match(pill, /aria-label="Model: Sonnet 5\.5"/, 'closed: still "Model: X" to a screen reader');
   // #3008: the estimate is in the open list only. Beside the closed control
   // it read as a standing price under every message.
   assert.doesNotMatch(pill, /about/, 'closed: no estimate');
   assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /data-agent-session-model-cost|typical change<\/span>/,
     'and nothing beside it');
-  assert.match(read('frontend/src/features/agent-session/api.ts'), /request\('\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
+  assert.match(read('frontend/src/features/agent-session/api.ts'), /read\('notes', '\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
 });
 
 // ── 5. Reply costs, and a turn that did not finish ─────────────────────
 
 test('a reply says what it cost, and a turn that did not finish offers to try again', () => {
   const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
-  assert.equal(transcript.replyCostLabel({ costCents: 1.2, metadata: {} }), 'reply $0.012');
-  assert.equal(transcript.replyCostLabel({ costCents: '0.5', metadata: { costEstimated: true } }), 'reply ~$0.005', 'an estimate says so');
-  assert.equal(transcript.replyCostLabel({ costCents: 0, metadata: {} }), '');
-  assert.equal(transcript.replyCostLabel({ costCents: null, metadata: {} }), '');
+  // The amount is the model's; the words around it ("reply $0.012") are one
+  // catalog message, the reply's label.
+  assert.equal(transcript.replyCostAmount({ costCents: 1.2, metadata: {} }), '$0.012');
+  assert.equal(transcript.replyCostAmount({ costCents: '0.5', metadata: { costEstimated: true } }), '~$0.005', 'an estimate says so');
+  assert.equal(transcript.replyCostAmount({ costCents: 0, metadata: {} }), '');
+  assert.equal(transcript.replyCostAmount({ costCents: null, metadata: {} }), '');
+  assert.equal(message('agent:session.reply.agentWithCost', { cost: '$0.012' }), 'Agent<0> · reply $0.012</0>');
+  assert.match(read('frontend/src/features/agent-session/index.tsx'), /id="agent:session\.reply\.agentWithCost"\s+values=\{\{ cost: item\.cost \}\}/);
 
   const row = (id, role, content, metadata = {}, extra = {}) => ({ id, role, content, metadata, changeId: null, createdAt: null, ...extra });
   const items = transcript.buildTranscript([
@@ -385,7 +449,7 @@ test('a reply says what it cost, and a turn that did not finish offers to try ag
     row(2, 'assistant', 'Hello', { quickReplies: ['Make it blue'] }, { costCents: 1.25 }),
   ]);
   const mayor = items.find((i) => i.kind === 'mayor');
-  assert.equal(mayor.cost, 'reply $0.013');
+  assert.equal(mayor.cost, '$0.013');
   assert.equal(mayor.ended, null);
   assert.deepEqual(transcript.latestReplies(items), ['Make it blue'], 'its own suggestions first');
 
@@ -419,7 +483,8 @@ test('the outline is the card\'s in every engine; the Mayor at work is three dot
   assert.match(panel, /className="agent-session-composer-input /);
   assert.doesNotMatch(panel, /rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700/, 'the full-width bubble is gone');
   assert.match(panel, /<TypingDots \/>/);
-  assert.match(panel, /<span className="sr-only">The Mayor is thinking<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.match(panel, /<span className="sr-only">\{t\('agent:session\.live\.thinking'\)\}<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.equal(message('agent:session.live.thinking'), 'The agent is thinking');
 
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /\|\| \(DevChat\._agentSessionThinking \? 'thinking' : null\)/, 'one title writer, one marker');

@@ -39,6 +39,7 @@ const ACTION_LABELS = Object.freeze({
   create_request: 'File a request',
   claim_request: 'Claim the request',
   release_request: 'Release the request',
+  propose_close_request: 'Propose closing the request',
   update_proposal_issues: 'Update the requests the proposal addresses',
 });
 
@@ -237,6 +238,11 @@ function outcomeLine(toolName, stored, { forModel = false } = {}) {
       return s.cleared
         ? `Released your claim on request #${requestNumber(s.number)}.`
         : `You had no claim on request #${requestNumber(s.number)}.`;
+    }
+    if (toolName === 'propose_close_request' && requestNumber(s.number)) {
+      const title = member(s.title);
+      return `Proposed closing request #${requestNumber(s.number)}${title ? `: ${title}` : ''}. `
+        + 'It stays open until the group votes.';
     }
     if (toolName === 'start_change' && requestNumber(s.changeId)) {
       const linked = requestList(s.linkedIssues);

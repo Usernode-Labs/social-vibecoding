@@ -44,6 +44,55 @@ const BACKENDS = {
   },
 };
 
+// Which CLI runs an OpenRouter turn (#3296). `codex_openrouter` is the
+// OpenRouter VENUE — the user's key, the per-turn ledger, the catalog, the
+// picker — and its id is persisted everywhere, so it does not change. The
+// harness is a second, narrower choice inside that venue: the Codex CLI (the
+// runner above) or the Claude Code CLI talking to OpenRouter's Anthropic-
+// compatible Messages endpoint through a worker-local adapter. Some models
+// do measurably better in one than the other, so the platform picks it per
+// model from config.openrouterModelHarnesses; a model nobody listed keeps
+// Codex, which is what every OpenRouter turn ran before this existed.
+const OPENROUTER_HARNESSES = Object.freeze(['codex', 'claude']);
+const DEFAULT_OPENROUTER_HARNESS = 'codex';
+const OPENROUTER_CLAUDE_RUNNER = '/usr/local/bin/run-cc.sh';
+
+function isOpenRouterHarness(h) {
+  return typeof h === 'string' && OPENROUTER_HARNESSES.includes(h);
+}
+
+// Parse OPENROUTER_MODEL_HARNESSES: comma-separated `model=harness` pairs.
+// An entry that names an unknown harness is dropped rather than guessed at,
+// and `none` (or an empty value) means "every model on Codex".
+function parseOpenRouterHarnessMap(raw) {
+  const map = {};
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text || text.toLowerCase() === 'none') return map;
+  for (const entry of text.split(',')) {
+    const at = entry.lastIndexOf('=');
+    if (at <= 0) continue;
+    const model = entry.slice(0, at).trim();
+    const harness = entry.slice(at + 1).trim().toLowerCase();
+    if (model && isOpenRouterHarness(harness)) map[model] = harness;
+  }
+  return Object.freeze(map);
+}
+
+function openRouterHarnessForModel(modelId, config = {}) {
+  const map = config.openrouterModelHarnesses || {};
+  const harness = Object.prototype.hasOwnProperty.call(map, String(modelId || ''))
+    ? map[String(modelId)]
+    : null;
+  return isOpenRouterHarness(harness) ? harness : DEFAULT_OPENROUTER_HARNESS;
+}
+
+// A persisted or caller-supplied harness value, failing SAFE to Codex: an
+// OpenRouter turn recorded before harnesses existed ran Codex, and a value
+// this build does not know must never select a runner it has no env for.
+function resolveOpenRouterHarness(h) {
+  return isOpenRouterHarness(h) ? h : DEFAULT_OPENROUTER_HARNESS;
+}
+
 function isBackend(b) {
   return typeof b === 'string' && Object.prototype.hasOwnProperty.call(BACKENDS, b);
 }
@@ -78,17 +127,28 @@ function providerFor(b) {
 // `docker exec ... sh -c ...$RUNNER...`). Backend-neutral callers should
 // prefer this over a hardcoded /usr/local/bin/run-cc.sh so the Codex
 // runner can be selected in PR5 without touching worker.js dispatch.
-function runnerFor(b) {
-  return getBackend(b)?.runner || null;
+function runnerFor(b, harness = null) {
+  const backend = getBackend(b);
+  if (!backend) return null;
+  if (backend.provider === 'openrouter' && resolveOpenRouterHarness(harness) === 'claude') {
+    return OPENROUTER_CLAUDE_RUNNER;
+  }
+  return backend.runner || null;
 }
 
 module.exports = {
   DEFAULT_BACKEND,
   BACKENDS,
+  OPENROUTER_HARNESSES,
+  DEFAULT_OPENROUTER_HARNESS,
   isBackend,
   resolveBackend,
   getBackend,
   listBackends,
   providerFor,
   runnerFor,
+  isOpenRouterHarness,
+  parseOpenRouterHarnessMap,
+  openRouterHarnessForModel,
+  resolveOpenRouterHarness,
 };

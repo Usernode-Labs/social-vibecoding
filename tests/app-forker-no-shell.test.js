@@ -42,7 +42,12 @@ stubModule('../src/services/github', {
 stubModule('../src/services/docker', {
   execFileAsync: async (command, args, options = {}) => {
     calls.push({ command, args, options });
-    if (command === 'git' && args[0] === 'rev-parse') return { stdout: 'abc123def\n', stderr: '' };
+    // Two rev-parses: the clone's HEAD (the source commit copied), read
+    // before the flatten, then the copy's own squashed commit after the push.
+    if (command === 'git' && args[0] === 'rev-parse') {
+      const n = calls.filter((c) => c.command === 'git' && c.args[0] === 'rev-parse').length;
+      return { stdout: n === 1 ? 'source0sha\n' : 'abc123def\n', stderr: '' };
+    }
     return { stdout: '', stderr: '' };
   },
 });
@@ -74,7 +79,13 @@ function clonedTree(dir) {
   fs.writeFileSync(path.join(dir, 'vendor', 'lib', '.gitmodules'), '[submodule "deep"]\n');
   fs.writeFileSync(path.join(dir, 'vendor', 'lib', 'deep', 'a.txt'), 'a\n');
   fs.writeFileSync(path.join(dir, '.gitmodules'), '[submodule "vendor/lib"]\n');
-  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({ name: 'Source App', admins: ['someone'] }));
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify({
+    name: 'Source App',
+    admins: ['someone'],
+    visibility: { build: 'public', view: 'public' },
+    governance: { approvers: 'invited', approvals: { atLeast: 2 } },
+    icon: { emoji: '📚' },
+  }));
   fs.writeFileSync(path.join(dir, 'README.md'), '# source\n');
 }
 
@@ -127,13 +138,21 @@ test('copyRepoTree: one git process per step, in the fork tree, with the PAT in 
       sourceApp: { slug: 'source-app', repo_url: 'https://github.com/source-owner/source-app' },
       botUsername: 'usernode-bot', forkSlug: 'forked-app', forkName: 'Forked App', tempDir,
     });
-    assert.deepEqual(result, { repoUrl: 'https://github.com/usernode-bot/forked-app', mainSha: 'abc123def' });
+    assert.deepEqual(result, {
+      repoUrl: 'https://github.com/usernode-bot/forked-app',
+      mainSha: 'abc123def',
+      sourceSha: 'source0sha',
+    });
 
     assert.ok(calls.every((c) => c.command !== 'bash' && c.command !== 'sh'), 'no shell was spawned');
     const git = calls.filter((c) => c.command === 'git');
     assert.deepEqual(git.map((c) => c.args[0] === '-c' ? c.args.find((a, i) => i > 0 && !git[0].args.includes(a) && !a.includes('=') && !a.startsWith('-') && a !== c.args[i - 1]) : c.args[0]),
-      ['clone', 'init', 'add', 'commit', 'push', 'rev-parse'], 'the steps, in order');
-    const [clone, init, add, commit, push, revParse] = git;
+      ['clone', 'rev-parse', 'init', 'add', 'commit', 'push', 'rev-parse'], 'the steps, in order');
+    const [clone, sourceRev, init, add, commit, push, revParse] = git;
+    // The source commit is read from the clone, before the flatten removes
+    // its .git: the commit actually copied, not the source row's main_sha.
+    assert.deepEqual(sourceRev.args, ['rev-parse', 'HEAD']);
+    assert.equal(sourceRev.options.cwd, tempDir);
     assert.deepEqual(init.args, ['init', '-q', '-b', 'main']);
     assert.deepEqual(add.args, ['add', '-A']);
     assert.ok(commit.args.includes('Forked from source-app'), 'the commit message names the source');
@@ -151,12 +170,16 @@ test('copyRepoTree: one git process per step, in the fork tree, with the PAT in 
     }
     assert.ok(push.args.some((a) => a.includes('password=$PAT')), 'the helper reads it by name');
 
-    // The tree the commit was made from: flattened, renamed, admins stripped.
+    // The tree the commit was made from: flattened, renamed, and the
+    // original's admins, visibility and governance stripped.
     assert.equal(fs.existsSync(path.join(tempDir, '.git')), false);
     assert.equal(fs.existsSync(path.join(tempDir, 'vendor', 'lib', '.git')), false);
     const manifest = JSON.parse(fs.readFileSync(path.join(tempDir, 'dapp.json'), 'utf8'));
     assert.equal(manifest.name, 'Forked App');
     assert.equal(manifest.admins, undefined);
+    assert.equal(manifest.visibility, undefined);
+    assert.equal(manifest.governance, undefined);
+    assert.deepEqual(manifest.icon, { emoji: '📚' }, 'the look comes with the code');
   } finally {
     process.env.GITHUB_BOT_TOKEN = previousToken;
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -2,14 +2,16 @@
 //
 // Writes rows into the `events` table (see schema.sql) that power the
 // admin /dashboard growth, retention, and funnel views. Emission is
-// deliberately fire-and-forget: a missed analytics row must NEVER break
-// or slow down the user action that produced it, so `record()` swallows
-// every error (logging at debug) and callers do not await it on the hot
-// path — they invoke it and move on.
+// `record()` is deliberately fire-and-forget: a missed ordinary analytics row
+// must NEVER break or slow down the user action that produced it, so it
+// swallows every error (logging at debug). A dapp_opened signal is the one
+// delivery exception: services/app-openings.js awaits an idempotent insert so
+// its client retry queue can distinguish "durable" from "try again".
 //
-// Historical rows (everything that happened before these emitters
-// shipped) are synthesized once by backfillEvents() in src/db/migrate.js,
-// so the dashboard curves are continuous across the cutover.
+// Historical rows for the original event vocabulary are synthesized once
+// by backfillEvents() in src/db/migrate.js. Newer action types can have no
+// complete historical source; callers must treat this as a best-effort log,
+// and analytics may combine it with the corresponding domain table.
 
 const { getPool } = require('../db/pool');
 const log = require('./logger');
@@ -24,10 +26,14 @@ const EVENT_TYPES = Object.freeze({
   // shared #leaderboard/users/<name> link used to mean — `username_history`
   // holds the reservation, this holds the WHEN and the audit trail.
   USERNAME_CHANGED: 'username_changed',
+  // A successful top-level App-tab entry. Written through app-openings.js;
+  // created_at is the bounded occurrence time, while metadata.receivedAt is
+  // the server receipt time after any retry.
   DAPP_OPENED: 'dapp_opened',
   DAPP_ACTIVE_DAY: 'dapp_active_day',
   CHAT_MESSAGE_SENT: 'chat_message_sent',
   PR_VOTE_CAST: 'pr_vote_cast',
+  ISSUE_VOTE_CAST: 'issue_vote_cast',
   PR_VOTE_RECEIVED: 'pr_vote_received',
   KUDOS_GIVEN: 'kudos_given',
   // Retraction of a previously given PR kudos (issue #197). Append-only
@@ -54,6 +60,23 @@ const EVENT_TYPES = Object.freeze({
   APP_ADMINS_CHANGED: 'app_admins_changed',
   APPROVER_INVITED: 'approver_invited',
   APPROVER_JOINED: 'approver_joined',
+  // The app's lock toggled (POST /api/apps/:slug/lock), with { locked }.
+  // Read back by services/app-notices.js with the settings changes above.
+  APP_LOCK_CHANGED: 'app_lock_changed',
+  // A project's custom domain (#4405, services/app-domains.js): metadata
+  // carries { hostname, action } with action one of added | live | removed
+  // | failed | disabled | enabled. Read back by services/app-notices.js.
+  APP_DOMAIN_CHANGED: 'app_domain_changed',
+  // The Friday card (services/weekly-digest.js), its data as metadata. A
+  // channel carries no activity, so this is where the card lives, and a
+  // project's Workshop shows it for a few days (services/app-notices.js).
+  WEEKLY_DIGEST: 'weekly_digest',
+  // Invite links (services/community-invites.js): made, turned off, and
+  // followed, with { inviteId, ... }. The redemption rows are the record of
+  // who followed whose link; these are the analytics trail.
+  INVITE_LINK_CREATED: 'invite_link_created',
+  INVITE_LINK_REVOKED: 'invite_link_revoked',
+  INVITE_LINK_REDEEMED: 'invite_link_redeemed',
   // Sync-with-main completed (issue: make sync emit session activity).
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
@@ -88,6 +111,13 @@ const EVENT_TYPES = Object.freeze({
   // the provider accepted it. No backfill — the button didn't exist
   // before this shipped.
   MAIL_TEST_SENT: 'mail_test_sent',
+  // An admin sent a diagnostic text from Admin → SMS delivery
+  // (src/routes/admin.js POST /api/admin/sms/test). Metadata carries
+  // { status, providerCode, phoneLast4 } — the last four digits only,
+  // never the whole number, the code or a credential. Emitted for every
+  // outcome Firebase gave, including `refused` and `unreachable`. No
+  // backfill — the button didn't exist before this shipped.
+  SMS_TEST_SENT: 'sms_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally
@@ -131,6 +161,134 @@ const EVENT_TYPES = Object.freeze({
   // services/llm-telemetry.js; OpenRouter's existing agent_turns ledger is
   // normalized alongside these rows by the admin aggregate report.
   LLM_INVOCATION: 'llm_invocation',
+  // Privacy-bounded client experience records. `services/ui-telemetry.js`
+  // owns the entire metadata vocabulary and rejects arbitrary keys before a
+  // row reaches this table. There is deliberately no historical backfill:
+  // these are observations from instrumented builds, not inferred actions.
+  UI_EXPERIENCE: 'ui_experience',
+  // One server receipt per accepted client batch. This is separate from the
+  // observations so the admin report can say how much telemetry arrived,
+  // how much was retried/dropped locally, and when reporting last worked.
+  UI_TELEMETRY_DELIVERY: 'ui_telemetry_delivery',
+  // The admin Journey's creation path, written by services/journey-events.js
+  // and read by services/journey.js creationPath. No backfill: nothing
+  // recorded these moments before.
+  //   app_running    a project's first successful run (once, beside
+  //                  apps.first_running_at). metadata: { secondsFromCreation }
+  //   preview_opened a preview answered as ready to somebody, once per
+  //                  viewer per change. metadata: { sessionId, viewerRole }
+  //   change_live    a change merged and deployed, once per change.
+  //                  metadata: { sessionId, requesterIds, firstVersion, live, sha }
+  APP_RUNNING: 'app_running',
+  PREVIEW_OPENED: 'preview_opened',
+  CHANGE_LIVE: 'change_live',
+  // Where a new project's time to running went (#4895): one row per
+  // creation attempt, whatever its outcome, written by
+  // services/app-creation-timing.js and read by journey.js creationPath.
+  // No backfill: nothing timed creation before.
+  //   app_creation_timed  metadata: { outcome ('running' | 'awaiting_secrets'
+  //                       | 'error'), kind ('new_repo' | 'existing_repo'),
+  //                       starter, totalMs, stages: { name: ms }, failedIn?,
+  //                       build?, pod? }
+  APP_CREATION_TIMED: 'app_creation_timed',
+  // The admin Journey's first session (services/journey.js firstSession).
+  // No backfill: nothing recorded these moments before.
+  //   first_artefact_shown  the first thing of theirs a maker sees: the sketch
+  //                         of a project made from the first session, shown
+  //                         to its maker (once per project, written by
+  //                         journey-events.noteFirstArtefactShown).
+  //                         metadata: { artefact, secondsFromCreation }
+  //   invite_opened         a live invite link opened, once per person
+  //                         (an account, else a browser) and maker and
+  //                         project (services/invite-activity.js); user_id
+  //                         is the visitor when signed in. Recorded signed
+  //                         out too, though only a signed-in open tells the
+  //                         maker (#4176). metadata: { inviteId, signedIn }
+  //   invite_signed_in      the invite funnel's middle step: somebody signed
+  //                         up or in from a live invite link (the sign-in
+  //                         carried it: communityInvites.redeemCarried, or
+  //                         dropCarried when it does not follow it), or
+  //                         opened one already signed in, before joining.
+  //                         Once per person per link (the unique index in
+  //                         schema.sql), written by
+  //                         journey-events.noteInviteSignedIn. metadata:
+  //                         { inviteId, how: 'signed_up' | 'signed_in' |
+  //                         'was_signed_in' }; the first two are the
+  //                         sign-ins the link brought, the last somebody
+  //                         already signed in (#4272)
+  //   first_session_looked_around
+  //                         the first session's question, "What do you want
+  //                         to make?", answered with "Look around first"
+  //                         (#4039): the other outcome beside a project made
+  //                         from it (app_created with from 'first-session').
+  //                         Written once, with the answer itself
+  //                         (services/first-session.js answerJoinScreen).
+  //                         metadata: { via } (how the question reached
+  //                         them: 'story' or 'sign_in')
+  FIRST_ARTEFACT_SHOWN: 'first_artefact_shown',
+  INVITE_OPENED: 'invite_opened',
+  INVITE_SIGNED_IN: 'invite_signed_in',
+  FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
+  // Something on the platform that should not happen, kept for admins
+  // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
+  // kind names the incident ('build_interrupted': a bot build a restart or
+  // a lost worker cut short; { runId, issueNumber, why, outcome }.
+  // 'checks_not_change': a bot change's red check that its fix turn found the
+  // change did not cause; { runId, issueNumber, prNumber, head, failing, why }).
+  PLATFORM_INCIDENT: 'platform_incident',
+  // The Homeroom bot's build turns that quit early, and their nudges
+  // (homeroom-bot-live.js recordNoChange), so a weekly query can read the
+  // early-quit rate per OpenRouter provider and how often a nudge saves the
+  // build. Both carry the turn's facts: { lane, runId, trialId,
+  // issueNumber, turn ('build' | 'nudge'), ended, provider, providers,
+  // model, harness, requests, toolCalls, fileEdits, outputTokens, seconds,
+  // recovered }. Never what the agent said: that is kept on its run.
+  //   bot_build_no_change  a build turn that ended cleanly and pushed
+  //                        nothing new; the build's own adds { nudged,
+  //                        notNudged }
+  //   bot_build_nudged     a nudge, once it ended; adds { committed }
+  BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
+  BOT_BUILD_NUDGED: 'bot_build_nudged',
+  // #4449: Live, the new app shown taking shape while its first version is
+  // built (services/first-version-live.js). Written to compare build times
+  // with and without the watcher, and to see how often Live showed nothing.
+  //   first_version_build_turn  every first version's build turn, once it
+  //                        ends: { runId, buildTurnMs (its first turn),
+  //                        turnsMs (with a nudge), nudged, watcher (whether
+  //                        the watcher ran), setting (whether Live was on) }
+  //   live_build_stream    per run, when its watcher stops: { runId,
+  //                        restartsKept, restartsFailed, goodFrame (ever had
+  //                        one), memoryStop, stoppedWhy, bytes }
+  //   live_build_opened    a member opened Live: { runId }
+  //   live_build_watched   how long they watched, sent when they close or
+  //                        hide it: { runId, seconds, goodFrame }
+  FIRST_VERSION_BUILD_TURN: 'first_version_build_turn',
+  LIVE_BUILD_STREAM: 'live_build_stream',
+  LIVE_BUILD_OPENED: 'live_build_opened',
+  LIVE_BUILD_WATCHED: 'live_build_watched',
+  // Somebody was refused a session because a session cap was full
+  // (services/session-lifecycle.js recordCapacityRefusal): { cap: 'global'
+  // | 'user', path: where they asked }. The infra topic's "Turned away at a
+  // session cap" figure counts these (services/topic-figures.js).
+  SESSION_CAPACITY_REFUSED: 'session_capacity_refused',
+  // An app's merges paused by a red main, and the pause ending
+  // (services/main-watch.js notePauseChange): { sha, confirming } and
+  // { sha, by: 'green' | 'flakes' | 'admin' }. The proposal-pipeline
+  // topic's "Merges paused by a red main" figure pairs them.
+  MAIN_PAUSED: 'main_paused',
+  MAIN_RESUMED: 'main_resumed',
+  // A merged commit of Homeroom itself that did not become the running
+  // release in time (services/release-watch.js, once per commit and kind):
+  // { sha, kind: 'workflow_failed' | 'workflow_running' | 'rollout_missing'
+  // | 'unknown', prNumber }. The infra topic's "Homeroom releases that
+  // stalled" counts the commits.
+  RELEASE_STALLED: 'release_stalled',
+  // A Homeroom server process came up on Kubernetes
+  // (services/platform-release.js recordBoot): { sha, pod }. A second boot
+  // in the same pod is its container started again after the process died
+  // (a crash, the memory limit, a failed liveness probe): the infra topic's
+  // "Homeroom crashes" counts those. A rollout starts new pods instead.
+  PLATFORM_BOOTED: 'platform_booted',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

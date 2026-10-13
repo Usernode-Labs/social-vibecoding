@@ -45,6 +45,19 @@ test('failing rows render with name, route, reason and blocking/advisory power',
   assert.doesNotMatch(block, /ok row/, 'passing rows stay out of the block');
 });
 
+test('a unit suite that never ran is not handed to the fix turn as a failing test', () => {
+  const unitSuiteRow = require('../src/services/unit-suite-row');
+  const notRun = {
+    index: unitSuiteRow.UNIT_CHECK_INDEX, name: unitSuiteRow.UNIT_CHECK_NAME, path: unitSuiteRow.UNIT_CHECK_PATH,
+    status: 'fail', advisory: true, couldNotRun: true, consoleErrors: [],
+    failureReason: "The unit suite could not start: the cluster's job quota was full. | exceeded quota: count/jobs.batch=1",
+  };
+  assert.equal(buildFailingChecksBlock('failing', [notRun]), '', 'nothing failed that a fix turn could fix');
+  const block = buildFailingChecksBlock('failing', [failRow(), notRun]);
+  assert.match(block, /feedback queue survives offline/);
+  assert.doesNotMatch(block, /could not start|Repo unit suite/);
+});
+
 test('an all-advisory failure set says so instead of claiming a blocked merge count', () => {
   const block = buildFailingChecksBlock('failing', [failRow({ advisory: true })]);
   assert.match(block, /all advisory for now/);
@@ -105,4 +118,26 @@ test('the unit suite row leads the block, whole, however many checks fail', () =
 
 test('without a unit suite row the block does not mention re-running test files', () => {
   assert.doesNotMatch(buildFailingChecksBlock('failing', [failRow()]), /Re-run just those files/);
+});
+
+test('#3978: the unit row also carries its first failing test\'s error', () => {
+  // The grouped reason names files; the excerpt says what the first failure
+  // actually asserted, so the fix turn starts from the assertion.
+  const block = buildFailingChecksBlock('failing', [Object.assign(unitRow(), {
+    failureDetails: [{
+      file: 'tests/agent-sessions-postgres.test.js',
+      test: 'one Mayor turn at a time',
+      excerpt: "error: 'expected 42 to equal 41',\n  code: 'ERR_ASSERTION',\n  stack: |-\n    TestContext.<anonymous> (…)",
+    }],
+  })]);
+  assert.match(block, /first failing test's error: error: 'expected 42 to equal 41', code: 'ERR_ASSERTION', stack: \|-\s+TestContext/,
+    'flattened onto one line, indented under the row');
+  // It sits beside the reason, not instead of it.
+  assert.ok(block.includes(UNIT_REASON));
+});
+
+test('#3978: a unit row without excerpts keeps the reason-only line', () => {
+  const block = buildFailingChecksBlock('failing', [unitRow()]);
+  assert.ok(block.includes(UNIT_REASON));
+  assert.doesNotMatch(block, /first failing test's error/);
 });

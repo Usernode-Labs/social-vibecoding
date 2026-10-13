@@ -69,7 +69,7 @@ test('a warm Kubernetes worker on an old image is reconciled without deleting it
   }]);
 });
 
-test('a temporary evidence worker reconciles a persistent warm worker without deleting its PVC first', async (t) => {
+test('a temporary shots worker reconciles a persistent warm worker without deleting its PVC first', async (t) => {
   const sessionId = 9103;
   const calls = mockWarmWorker(t, { imageRef: process.env.KUBERNETES_WORKER_IMAGE });
   worker.adoptWarmWorker(sessionId, runtimeName(sessionId));
@@ -81,7 +81,7 @@ test('a temporary evidence worker reconciles a persistent warm worker without de
   }]);
 });
 
-test('a temporary evidence worker is reused for a repair turn', async (t) => {
+test('a temporary shots worker is reused for a repair turn', async (t) => {
   const sessionId = 9104;
   const calls = mockWarmWorker(t, {
     imageRef: process.env.KUBERNETES_WORKER_IMAGE, storageMode: 'temporary',

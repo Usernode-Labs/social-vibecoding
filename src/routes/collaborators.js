@@ -21,7 +21,11 @@ const { userDirectoryLimiter } = require('../middleware/rate-limits');
 
 // Shared with POST /api/apps, which sends a Group's invites at creation
 // (services/collab-invites.js).
-const { acceptInvite, sendInvite } = require('../services/collab-invites');
+const { acceptInvite, sendInvite, welcomeFor } = require('../services/collab-invites');
+const communities = require('../services/communities');
+const { cleanNote } = require('../services/community-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function collaboratorRoutes(config) {
   const router = Router();
@@ -157,10 +161,19 @@ function collaboratorRoutes(config) {
   });
 
   // Invite a user as a collaborator. Any collaborator (or admin) may
-  // invite; only meaningful on collab-private apps.
+  // invite; only meaningful on collab-private apps. `note` is the inviter's
+  // own words, shown on the invite (the first session's invite sheet sends
+  // the one it shows; collab-invites.js). A refusal carries a `code` beside
+  // its message, so a screen can say it in its own words:
+  //   unknown_user     no account has that username
+  //   self             the inviter named themself
+  //   already_member   they are in it already
+  //   already_invited  they have an invite waiting
   router.post('/api/apps/:slug/invites', drainGuard, async (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     if (!username) return res.status(400).json({ error: 'username is required' });
+    const cleaned = cleanNote(req.body?.note);
+    if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
     try {
       const app = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS + ', name'
@@ -177,18 +190,20 @@ function collaboratorRoutes(config) {
         'SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)',
         [username]
       );
-      if (!userRows.length) return res.status(404).json({ error: 'User not found' });
+      if (!userRows.length) return res.status(404).json({ error: 'User not found', code: 'unknown_user' });
       const target = userRows[0];
       if (target.id === req.user.id) {
-        return res.status(400).json({ error: 'You are already a collaborator' });
+        return res.status(400).json({ error: 'You are already a collaborator', code: 'self' });
       }
 
-      const sent = await sendInvite(pool, { app, target, inviterId: req.user.id });
+      const sent = await sendInvite(pool, { app, target, inviterId: req.user.id, note: cleaned.note });
       if (!sent.ok) {
         return res.status(409).json({
           error: sent.status === 'member'
             ? `@${target.username} is already a collaborator`
             : `@${target.username} already has a pending invite`,
+          code: sent.status === 'member' ? 'already_member' : 'already_invited',
+          username: target.username,
         });
       }
 
@@ -204,20 +219,40 @@ function collaboratorRoutes(config) {
 
   // Accept a pending invite. Invitee-only; idempotent (accepting when
   // already a member is a no-op success, for two-tab races).
-  router.post('/api/invites/:appId/accept', drainGuard, async (req, res) => {
+  //
+  // An accept that has just brought somebody into the project answers with
+  // `welcome`: what "You're in" and its tour need (collab-invites.js
+  // welcomeFor), the same welcome an invite link ends on (App._followInvite),
+  // so the notification's Accept opens it rather than dropping them in the
+  // chat. Homeroom bot greets them as it greets a link's joiner. Somebody
+  // who was in the community already (a public project, now theirs to
+  // build) joined nothing, and gets no welcome.
+  router.post('/api/invites/:appId/accept', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
+      const wasMember = await communities.isMember(pool, appId, req.user.id);
       // The whole acceptance lives in services/collab-invites.js, which the
       // first-run join screen calls too (communities, stage 5): an invite
       // accepted there is this same accept, with the same notification to
       // the inviter and the same "joined" line in the app's chat.
       const result = await acceptInvite(pool, { appId, user: req.user });
       if (!result.ok) return res.status(result.status).json({ error: result.error });
+      // An accepted invite is a join: count its challenge now (#3564).
+      if (!result.alreadyMember) await challengeScorer.scoreOnJoin(pool, config);
+      const welcome = !result.alreadyMember && !wasMember
+        ? await welcomeFor(pool, { appId, userId: req.user.id }).catch(() => null)
+        : null;
+      if (welcome) {
+        void require('../services/homeroom-bot-dm').greetJoiner(pool, {
+          user: req.user, app: { id: appId, slug: welcome.slug, name: welcome.name },
+        });
+      }
       res.json({
         ok: true,
         appSlug: result.appSlug,
         ...(result.alreadyMember ? { alreadyMember: true } : null),
+        ...(welcome ? { welcome } : null),
       });
     } catch (err) {
       log.error('collab', 'accept failed', { appId, message: err.message });
@@ -227,7 +262,7 @@ function collaboratorRoutes(config) {
 
   // Decline a pending invite. Deletes the row (re-invites allowed).
   // Success even when nothing was pending — races are fine.
-  router.post('/api/invites/:appId/decline', drainGuard, async (req, res) => {
+  router.post('/api/invites/:appId/decline', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
@@ -251,7 +286,7 @@ function collaboratorRoutes(config) {
   // Remove a member or revoke a pending invite. Allowed for admins, the
   // app creator, and the user removing themself (leave). The creator
   // cannot be removed.
-  router.delete('/api/apps/:slug/collaborators/:userId', drainGuard, async (req, res) => {
+  router.delete('/api/apps/:slug/collaborators/:userId', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const targetId = parseInt(req.params.userId, 10);
     if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
     try {

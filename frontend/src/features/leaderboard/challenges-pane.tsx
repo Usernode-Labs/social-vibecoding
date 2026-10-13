@@ -46,13 +46,17 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressCadence, ProgressRail } from './challenge-card';
+import { ActivityRow } from './activity-row';
+import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { ChallengesIntro } from './challenges-intro';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -71,6 +75,9 @@ const controller = () => (window as {
     _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
+    requestBlockProduction(): void;
+    retryBpState(): void;
+    openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
     handleBack(): boolean;
@@ -107,8 +114,8 @@ type CardView = {
   // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
   // under a group header that carries the clock.
   deadline: string | null;
-  // "Updates every 15 min · last 10:42" (TopochainChallenges._cadenceOf) on a
-  // challenge the background scorer counts; null draws no line.
+  // "next count 10:42" (TopochainChallenges._cadenceOf), the meta line's last
+  // part, on a challenge the background scorer counts; null says nothing.
   cadence: string | null;
 };
 
@@ -119,6 +126,8 @@ type GroupView = {
   key: string;
   heading: string | null;
   meta?: string | null;
+  // #3203: "Ends Mon 12 Oct, 02:00", the header clock's moment, as its tooltip.
+  metaTitle?: string | null;
   allDone?: boolean;
   collapsed?: boolean;
   cards: CardView[];
@@ -133,9 +142,11 @@ type GridView =
     progress: SeasonProgressView;
     notice?: string;
     onboardingEventId?: number | null;
-    // While setup gates the event: how many challenges it hides (0 = none
-    // to show, and on an older server without the count).
+    // While Getting started gates the event: how many challenges it hides
+    // (0 = none to show, and on an older server without the count), and the
+    // first few of their names.
     lockedCount?: number;
+    lockedNames?: string[];
     groups: GroupView[];
   };
 
@@ -154,16 +165,40 @@ type CtaView =
   | { kind: 'route'; href: string; label: string }
   | { kind: 'text'; label: string };
 
+// The block-production challenge's step for THIS viewer (#2493), shaped by
+// TopochainChallenges.blockProductionStep. Null on every other challenge,
+// which keep the organiser's CTA.
+type BlockProductionView =
+  | { step: 'checking' }
+  | { step: 'locked' | 'pending'; title: string; text: string }
+  | { step: 'request'; title: string; text: string; action: { label: string; pending: boolean } }
+  | { step: 'error'; title: string; text: string; action: { label: string } }
+  | {
+    step: 'account';
+    title: string;
+    delegation: { title: string; text: string };
+    onDevice: { title: string; text: string; warning: string } | null;
+    onDeviceNote: string | null;
+    action: { label: string } | null;
+    appNote: string | null;
+  };
+
 type DetailView = {
   key: string;
   eyebrow: string | null;
   goal: string;
   task: string | null;
+  // #3253/#3248: under the task, what the scoring rule counts (a proposal
+  // once it is put to the vote; nothing past a counted measure's target).
+  countNote?: string | null;
   // The template's illustration slug and an upload's tone, for the artwork
   // well (see DetailPage).
   illustration: string | null;
   illustrationTone: string | null;
   deadline: string | null;
+  // #3203: "ends Mon 12 Oct, 02:00" (TopochainChallenges._endsText), the
+  // moment this challenge closes in the viewer's zone; null when done.
+  ends?: string | null;
   amount: { text: string; earned: boolean } | null;
   state: ChallengeState;
   stateLabel: string;
@@ -173,6 +208,7 @@ type DetailView = {
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
+  blockProduction?: BlockProductionView | null;
   description: string | null;
   requirements: string | null;
   scoring: string | null;
@@ -189,7 +225,7 @@ type ProfileView =
     kind: 'profile';
     name: string;
     stats: { label: string; value: string }[];
-    activities: { key: string; text: string; points: string }[] | null;
+    activities: { key: string; text: string; points: string; at: string | null }[] | null;
   };
 
 // ── Class strings ───────────────────────────────────────────────────────
@@ -229,6 +265,7 @@ const PAGE_BODY = 'flex flex-col gap-3.5 pb-8';
 const EYEBROW = 'min-w-0 truncate text-[0.8125rem] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400';
 const PAGE_TITLE = 'text-[1.625rem] font-semibold leading-tight tracking-tight text-balance text-zinc-900 dark:text-zinc-100';
 const PROSE = 'text-sm text-zinc-600 dark:text-zinc-400';
+const NOTE = 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
 // The artwork well: the registry's tone class sets `--tint-art` for both
 // themes, so the one background reads it in either.
 const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]';
@@ -306,8 +343,9 @@ function Card({ view }: { view: CardView }): ReactNode {
  * full rows at the two columns this pane usually has.
  */
 function GridSkeleton(): ReactNode {
+  const t = useMessages('leaderboard');
   return (
-    <SkeletonGroup label="Loading challenges">
+    <SkeletonGroup label={t('leaderboard:challenges.loading')}>
       <div className="flex flex-col gap-2 mb-4">
         <Skeleton className="w-40" />
         <Skeleton shape="muted" className="h-[5px] w-full rounded-full" />
@@ -331,20 +369,21 @@ function GridSkeleton(): ReactNode {
 }
 
 function Grid({ view }: { view: GridView | null }): ReactNode {
+  const t = useMessages('leaderboard');
   // Before the first load there is nothing to say — the pane opens, the fetch
   // starts and the placeholders arrive on the very next render.
   if (!view) return null;
   if (view.kind === 'loading') return <GridSkeleton />;
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">{t('leaderboard:challenges.empty')}</p>;
   }
   // The card's own threshold, so a count it would not draw never hides the note.
   const locked = Math.floor(Number(view.lockedCount) || 0) >= 1;
   return (
     <>
       {/*
-          The progress Home's block shares ("3/9 done in Season 2" over one
+          The progress Home's block shares ("3/9 done in this event" over one
           segment per challenge). The id rides its text line, where the
           declared dapp.json check anchors.
       */}
@@ -354,7 +393,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
         >
-          Go to onboarding challenges
+          {t('leaderboard:challenges.toFirst')}
         </button>
       ) : null}
       {/*
@@ -375,6 +414,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           <GroupHeader
             heading={g.heading}
             meta={g.meta}
+            metaTitle={g.metaTitle}
             allDone={!!g.allDone}
             expanded={!g.collapsed}
             controlsId={`tc-se-group-${g.key}`}
@@ -394,9 +434,9 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         </Fragment>
       )))}
       {/*
-          After the challenges, what setup still hides and what opens it: the
-          locked placeholder, whose second line IS the unlock note, so the
-          note paragraph draws only when there is no placeholder (a locked
+          After the challenges, what Getting started still hides and what
+          opens it: the locked placeholder, whose first line IS the unlock
+          note, so the note paragraph draws only when there is no placeholder (a locked
           event on a server without the count; unlocked, there is no note). Both
           sit under the last card at the grid's own 12px gap. The placeholder's
           wrapper is a GRID too, so on a wide pane it takes one column like a
@@ -404,7 +444,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       */}
       {locked ? (
         <div className={`mt-3 ${GRID}`}>
-          <LockedChallengesCard count={view.lockedCount!} />
+          <LockedChallengesCard count={view.lockedCount!} names={view.lockedNames} />
         </div>
       ) : null}
       {view.notice && !locked ? (
@@ -420,7 +460,11 @@ function Cta({ view }: { view: CtaView }): ReactNode {
   if (view.kind === 'text') {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        {view.label} <span className="italic">(link unavailable)</span>
+        <RichMessage
+          id="leaderboard:challenges.detail.linkUnavailable"
+          values={{ label: view.label }}
+          components={[<span className="italic" />]}
+        />
       </p>
     );
   }
@@ -445,6 +489,71 @@ function Cta({ view }: { view: CtaView }): ReactNode {
   );
 }
 
+// The block-production step's boxes: the plain card the wallet sheet's
+// block-production section draws, and its title/body type.
+const BP_CARD = 'rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm';
+const BP_TITLE = 'text-base font-semibold text-zinc-900 dark:text-zinc-100';
+const BP_TEXT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+const BP_BUTTON = `${CTA_LINK} disabled:cursor-wait`;
+
+function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode {
+  const t = useMessages('leaderboard');
+  if (view.step === 'checking') {
+    return (
+      <p data-bp-step="checking" className={PROSE}>{t('leaderboard:bp.checking')}</p>
+    );
+  }
+  if (view.step === 'account') {
+    return (
+      <section data-bp-step="account" className="flex flex-col gap-3">
+        <SectionHeading className="mb-0" title={view.title} />
+        <div data-bp-option="delegate" className={BP_CARD}>
+          <div className={BP_TITLE}>{view.delegation.title}</div>
+          <div className={BP_TEXT}>{view.delegation.text}</div>
+        </div>
+        {view.onDevice ? (
+          <div data-bp-option="on-device" className={BP_CARD}>
+            <div className={BP_TITLE}>{view.onDevice.title}</div>
+            <div className={BP_TEXT}>{view.onDevice.text}</div>
+            <Alert variant="notice" density="compact" className="mt-2" data-bp-warning="on-device">
+              {view.onDevice.warning}
+            </Alert>
+          </div>
+        ) : null}
+        {view.onDeviceNote ? <p className={PROSE}>{view.onDeviceNote}</p> : null}
+        {view.action ? (
+          <button
+            type="button" id="tc-bp-manage" className={BP_BUTTON}
+            onClick={() => controller()?.openWallet()}
+          >{view.action.label}</button>
+        ) : null}
+        {view.appNote ? <p className={PROSE}>{view.appNote}</p> : null}
+      </section>
+    );
+  }
+  return (
+    <section data-bp-step={view.step} className="flex flex-col gap-3">
+      <div className={BP_CARD}>
+        <div className={BP_TITLE}>{view.title}</div>
+        <div className={BP_TEXT}>{view.text}</div>
+      </div>
+      {view.step === 'request' ? (
+        <button
+          type="button" id="tc-bp-request" className={BP_BUTTON}
+          disabled={view.action.pending}
+          onClick={() => controller()?.requestBlockProduction()}
+        >{view.action.label}</button>
+      ) : null}
+      {view.step === 'error' ? (
+        <button
+          type="button" id="tc-bp-retry" className={BP_BUTTON}
+          onClick={() => controller()?.retryBpState()}
+        >{view.action.label}</button>
+      ) : null}
+    </section>
+  );
+}
+
 /**
  * The participant list's loading state, at the ENTRY row's own geometry.
  *
@@ -457,8 +566,9 @@ function Cta({ view }: { view: CtaView }): ReactNode {
  * leading few and puts the rest behind "Show all N →".
  */
 function EntriesSkeleton(): ReactNode {
+  const t = useMessages('leaderboard');
   return (
-    <SkeletonGroup label="Loading participants" className="flex flex-col">
+    <SkeletonGroup label={t('leaderboard:challenges.detail.loadingParticipants')} className="flex flex-col">
       {Array.from({ length: 3 }, (_, i) => (
         <div key={i} className={ENTRY_BOX}>
           <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
@@ -470,9 +580,10 @@ function EntriesSkeleton(): ReactNode {
 }
 
 function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }): ReactNode {
+  const t = useMessages('leaderboard');
   if (view.kind === 'loading') return <EntriesSkeleton />;
   if (view.kind === 'error') return <p className={PROSE}>{view.message}</p>;
-  if (view.kind === 'empty') return <p className={PROSE}>No participants yet.</p>;
+  if (view.kind === 'empty') return <p className={PROSE}>{t('leaderboard:challenges.detail.noParticipants')}</p>;
   return (
     <>
       <ul className="flex flex-col">
@@ -487,11 +598,16 @@ function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }):
               }}
             >
               <span className="min-w-0 truncate text-zinc-900 dark:text-zinc-100">
-                {row.name}
-                {/* The leading space lived between the two spans in the old
-                    string; it is inside this one now, for the reason the header
-                    gives. */}
-                {row.nonPodium ? <span className="font-normal text-zinc-500 dark:text-zinc-400"> (non-podium)</span> : null}
+                {row.nonPodium ? (
+                  /* The leading space lived between the two spans in the old
+                     string; it is inside this one now, for the reason the header
+                     gives. One message holds the name and the note. */
+                  <RichMessage
+                    id="leaderboard:challenges.detail.nonPodium"
+                    values={{ name: row.name }}
+                    components={[<span className="font-normal text-zinc-500 dark:text-zinc-400" />]}
+                  />
+                ) : row.name}
               </span>
               <span className="shrink-0 tabular-nums text-zinc-700 dark:text-zinc-300">{row.points}</span>
             </button>
@@ -545,12 +661,12 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 
 // The board's order, below the platform header that carries the way back and
 // the name: the category, the title with the card's meta line ("3d left · 720
-// pts so far") and the task, the artwork well, the clean rail (with the
-// card's cadence line under it on a challenge the background scorer counts),
-// the action, then the reading — description,
+// pts so far", plus "next count 9:37" on a challenge the background scorer
+// counts) and the task, the artwork well, the clean rail, the action, then the reading — description,
 // Requirements, Scoring — and Participants under a rule. The board's
 // "Next: …" hint under the action is deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <>
       <div className="flex flex-col gap-1.5">
@@ -559,10 +675,13 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         <ChallengeMeta
           size="lg"
           deadline={view.deadline}
+          ends={view.ends}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
+          cadence={view.cadence}
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
+        {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
       </div>
       <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
       <ProgressRail
@@ -573,19 +692,19 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
-      <ProgressCadence size="lg" text={view.cadence} />
+      {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
           this is where each one is listed with whether it counted, by the
           address Profile.open() honours. A constant, so it needs no guard. */}
       {view.feedbackLink ? (
         <a id="tc-se-feedback-mine" href="#profile?feedback" className={FEEDBACK_LINK}>
-          See your feedback
+          {t('leaderboard:challenges.detail.seeFeedback')}
         </a>
       ) : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
-      {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
-      {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
+      {view.requirements ? <PageSection heading={t('leaderboard:challenges.detail.requirements')}>{view.requirements}</PageSection> : null}
+      {view.scoring ? <PageSection heading={t('leaderboard:challenges.detail.scoring')}>{view.scoring}</PageSection> : null}
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <div className="flex items-baseline justify-between gap-3">
           {/* `mb-0`: this heading is an ITEM on a shared baseline with the
@@ -615,8 +734,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
  * the right end where the real ones carry their points.
  */
 function ProfileSkeleton(): ReactNode {
+  const t = useMessages('leaderboard');
   return (
-    <SkeletonGroup label="Loading the profile">
+    <SkeletonGroup label={t('leaderboard:challenges.profile.loading')}>
       <Skeleton shape="block" className="h-5 w-40 mb-3" />
       <div className="grid grid-cols-2 gap-2 mb-4">
         {Array.from({ length: 4 }, (_, i) => (
@@ -640,6 +760,7 @@ function ProfileSkeleton(): ReactNode {
 }
 
 function ProfileBody({ view }: { view: ProfileView }): ReactNode {
+  const t = useMessages('leaderboard');
   if (view.kind === 'loading') return <ProfileSkeleton />;
   if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
   return (
@@ -653,18 +774,15 @@ function ProfileBody({ view }: { view: ProfileView }): ReactNode {
           </div>
         ))}
       </div>
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:challenges.profile.activities')}</div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
-            <li key={a.key} className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-zinc-600 dark:text-zinc-300">{a.text}</span>
-              <span className="font-mono text-zinc-500 dark:text-zinc-400">{a.points}</span>
-            </li>
+            <ActivityRow key={a.key} text={a.text} points={a.points} at={a.at} />
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('leaderboard:challenges.profile.noActivities')}</p>
       )}
     </>
   );
@@ -694,6 +812,7 @@ export function ChallengesPane(): ReactNode {
     detail: DetailView | null;
     profile: ProfileView | null;
   };
+  const t = useMessages('leaderboard');
 
   // A page is a level of the screen, so the screen's scroller is the page's:
   // it opens at its top, and going back up returns the grid to where it was
@@ -752,9 +871,15 @@ export function ChallengesPane(): ReactNode {
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
         {/*
-            The viewer's own standing leads the tab, as the prototype's
-            Challenges page does — the points, rank, breakdown and token
-            allocation the Me screen used to carry (./your-standing.tsx).
+            What challenges are for, above everything else on the tab, until
+            the viewer closes it on this device (./challenges-intro.tsx). It
+            is inside the grid so a challenge's page hides it too.
+        */}
+        <ChallengesIntro />
+        {/*
+            The viewer's own standing leads the rest of the tab, as the
+            prototype's Challenges page does — the points, rank, breakdown and
+            token allocation the Me screen used to carry (./your-standing.tsx).
         */}
         <YourStanding />
         <Grid view={state.grid} />
@@ -789,7 +914,7 @@ export function ChallengesPane(): ReactNode {
               <button
                 id="tc-se-profile-close"
                 className={`${CLOSE_X} shrink-0`}
-                aria-label="Close"
+                aria-label={t('core:common.close')}
                 onClick={() => controller()?.closeUserProfile()}
               >
                 {TIMES}

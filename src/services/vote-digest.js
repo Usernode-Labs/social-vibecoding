@@ -27,14 +27,18 @@
  * everybody gets one a day, near the time of day they first became
  * eligible, with no timezone anywhere in the code.
  *
- * The count is what a person is actually able to act on: promoted proposals
- * in apps they can see, that they have not already voted on, and that they
- * did not write. Somebody with nothing to do gets nothing, which is what
- * keeps a daily notification from becoming the noise it was meant to avoid.
+ * The count is the open proposals waiting on a person: promoted proposals
+ * in apps they have pinned or created, that they did not write, have not
+ * already voted on, and are not in an app they blocked. Somebody with
+ * nothing to do gets nothing, which is what keeps a daily notification
+ * from becoming the noise it was meant to avoid. Who counts as having a
+ * stake is spelled out on PENDING_SQL below, including what it does not
+ * check.
  */
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
+const { firstVersionSql } = require('./first-version-rule');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
 const FIRST_SWEEP_DELAY_MS = 5 * 60_000; // let boot settle first
@@ -50,11 +54,26 @@ let timer = null;
 /**
  * Users who owe at least one vote, with the count.
  *
- * Stakeholder is the same definition the notifications themselves use —
- * creator, favoriters, and (for non-self-hosted apps) active users — so
- * "who cares about this app" does not get a third answer here. Collaborator
- * filtering is what keeps a collab-private app's proposals out of a
- * favoriter's count when they could not vote on them anyway.
+ * A stakeholder is one of exactly two things: someone with an
+ * app_favorites row for the app, or the app's creator. Nothing else is
+ * read. In particular:
+ *
+ *   - Active users are NOT included. The per-proposal notification
+ *     (services/notifications.js) also asks the members active on the app
+ *     lately; this query does not, so a member who never pinned the app
+ *     gets no digest for it. That is why Join (communities.join), an
+ *     invite link (apply_community_invite in src/db/schema.sql) and an
+ *     accepted invite (collab-invites.acceptInvite) all write the pin.
+ *   - There is NO collaborator or visibility filter. A favoriter of a
+ *     collab-private app they cannot vote on is still counted.
+ *   - `hidden` is not read, so a hidden opt-out row counts like a pin.
+ *
+ * Excluded: the proposal's own author, apps the person blocked, proposals
+ * they already voted on, a change Homeroom bot built for a request they
+ * asked for, a change they were told is ready to try in the last 24 hours,
+ * a project's first version (it goes live without a vote:
+ * services/first-version-rule.js), and anyone who had a digest in the last
+ * MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
  * the platform, and per-user round trips would make an hourly sweep a
@@ -73,14 +92,37 @@ const PENDING_SQL = `
     SELECT cs.id, cs.app_id, cs.user_id AS author_id
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
+       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
+       AND NOT ${firstVersionSql('cs')}
   )
-  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending
+  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
+         -- The one change, when there is exactly one: the row names it, so a
+         -- tap opens it rather than a list of one.
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.id) END AS only_session_id,
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.app_id) END AS only_app_id
     FROM open_proposals p
     JOIN stakeholders s ON s.app_id = p.app_id
    WHERE s.user_id IS DISTINCT FROM p.author_id
+     AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = s.user_id AND b.app_id = p.app_id)
      AND NOT EXISTS (
        SELECT 1 FROM pr_votes v
         WHERE v.session_id = p.id AND v.user_id = s.user_id
+     )
+     -- "One story": not a change Homeroom bot built for a request this
+     -- person asked for. The bot is its author, so they would otherwise
+     -- "owe" a vote on their own change; the bot's own message asks them.
+     AND NOT EXISTS (
+       SELECT 1 FROM homeroom_bot_runs r
+         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+        WHERE r.proposal_session_id = p.id AND q.user_id = s.user_id
+     )
+     -- Nor one they were told is ready to try in the last day: that ping
+     -- already asked them.
+     AND NOT EXISTS (
+       SELECT 1 FROM notifications n
+        WHERE n.user_id = s.user_id AND n.session_id = p.id
+          AND n.kind IN ('change_ready', 'build_ready')
+          AND n.created_at > NOW() - INTERVAL '24 hours'
      )
      AND NOT EXISTS (
        SELECT 1 FROM notifications n
@@ -137,12 +179,16 @@ async function sweep(pool) {
       if (!allowedSet.has(userId)) continue;
       const pending = Math.min(Number(row.pending) || 0, MAX_COUNT);
       if (!pending) continue;
+      // One change waiting: the row carries its app and session, and opens
+      // it (notifications.js). Several: no app, and a tap opens the
+      // Communities screen's Needs you, which lists them all.
+      const one = pending === 1 && row.only_session_id && row.only_app_id;
       try {
         const { rows: created } = await pool.query(
-          `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
-           VALUES ($1, NULL, NULL, 'vote_digest', $2)
-           RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
-          [userId, String(pending)]
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+           VALUES ($1, $3, $4, NULL, 'vote_digest', $2)
+           RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+          [userId, String(pending), one ? Number(row.only_app_id) : null, one ? Number(row.only_session_id) : null]
         );
         if (created[0]) {
           result.sent += 1;

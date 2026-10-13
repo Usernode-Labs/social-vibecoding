@@ -15,6 +15,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -198,8 +199,9 @@ test('the section renders above the invites, and only when non-empty', () => {
   const invitesIdx = LIST_SRC.indexOf('id="notifications-invites"');
   assert.ok(savedIdx > 0 && invitesIdx > savedIdx,
     'the saved section is the TOP pinned section');
-  assert.match(LIST_SRC, /saved\.length \? \([\s\S]{0,400}Saved\n/,
+  assert.match(LIST_SRC, /saved\.length \? \([\s\S]{0,400}\{t\('notifications:saved\.heading'\)\}\n/,
     'the "Saved" header only renders when something is saved');
+  assert.equal(message('notifications:saved.heading'), 'Saved');
   assert.match(STORE_SRC, /saved: null,/,
     'the prerendered state is empty, so the SSG pass and hydration agree');
 });
@@ -236,7 +238,8 @@ test('unsaving is possible from the section as well as from the message', () => 
   assert.match(SRC, /GroupChat\._paintBookmark/,
     "unsaving in the drawer repaints the message's own button when that chat is open");
   assert.match(LIST_SRC, /data-saved-unsave=/, 'the row carries a visible Unsave control');
-  assert.match(LIST_SRC, /label: 'Unsave'/, 'and a swipe action on touch');
+  assert.match(LIST_SRC, /label: t\('notifications:saved\.unsave'\)/, 'and a swipe action on touch');
+  assert.equal(message('notifications:saved.unsave'), 'Unsave');
 });
 
 test('clicking a saved row opens the message rather than consuming it', () => {

@@ -42,7 +42,8 @@
  * Improve panel, and came back as an App | Workshop segmented control when
  * that panel retired (#2718 review). The owner's call in #2761 was that it
  * should not be a toggle at all: the Workshop is one more place this menu
- * goes, so it is a "Go to workshop" row in the list like the others, and
+ * goes, so it is a row in the list like the others ("Go to community hub"
+ * since #3287, the page it opens on), and
  * nothing replaces the App segment — the parked app on the bar (#2762) is
  * how you get back to a running app.
  *
@@ -117,29 +118,34 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  BoardIcon,
-  ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FlagIcon,
   InfoCircleIcon,
+  PhonePlusIcon,
   PlusWideIcon,
-  SparklesIcon,
   TerminalIcon,
+  UserGroupIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
+import { offeringGoToHomeroom } from './about-data';
+import { InvitePane } from './invite-pane';
+import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
+import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { prepareComment } from '../improve/suggest-shortcut';
+import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
+import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
-import { continueRows } from './continue-model';
-import { AgentActivityIcon } from '../agent-session/activity-mark';
-import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
-import { setFilter as setMessagesFilter } from '../messages/store';
+import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
+import { navStore } from '../nav/nav-store.js';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -159,6 +165,16 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
 const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
 
+/**
+ * A second pane's way back: the header's back disc (BACK_BTN_CLASS in
+ * ../header/platform-header.tsx, and the Workshop's `.dev-ws-page-back`),
+ * drawn at 36px with the kit's 44pt hit box. `un-touch-target` last, as
+ * there: its ::after grows the hit box, never the disc.
+ */
+const BACK_DISC = 'shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full'
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)] un-touch-target';
+
 /** A section label that owns its whole row. */
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
 
@@ -172,17 +188,15 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
 /**
  * A row's INSIDES — the glyph, the label, anything trailing, the chevron.
  *
- * Split out because this menu has three row shapes and they have to read as
- * one kind of thing: two of them are <button>s (About, which is a second pane
+ * Split out because this menu has row shapes that have to read as one kind
+ * of thing: two of them are <button>s (About, which is a second pane
  * of this sheet rather than an address, and Improve, which opens a panel) and
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
- * links" true by construction rather than by three copies staying in step.
+ * links" true by construction rather than by copies staying in step.
  */
-function RowBody({ icon, label, lead, trailing }: {
+function RowBody({ icon, label, trailing }: {
   icon: ReactNode;
   label: string;
-  // A mark drawn just before the label: an agent session's state (#3013).
-  lead?: ReactNode;
   trailing?: ReactNode;
 }): ReactNode {
   return (
@@ -190,7 +204,6 @@ function RowBody({ icon, label, lead, trailing }: {
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
         {icon}
       </span>
-      {lead}
       <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
       {trailing}
       <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
@@ -235,7 +248,7 @@ function followThenDismiss(e: React.MouseEvent, href: string): void {
 }
 
 function MenuRow({
-  id, href, icon, label, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
+  id, href, icon, label, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
   id: string;
   // Names the destination for selectors that key on it rather than on the id.
@@ -243,7 +256,6 @@ function MenuRow({
   href: string;
   icon: ReactNode;
   label: string;
-  lead?: ReactNode;
   trailing?: ReactNode;
   onClick?: (e: React.MouseEvent) => void;
   elRef?: React.Ref<HTMLAnchorElement>;
@@ -264,13 +276,21 @@ function MenuRow({
         followThenDismiss(e, href);
       }}
     >
-      <RowBody icon={icon} label={label} lead={lead} trailing={trailing} />
+      <RowBody icon={icon} label={label} trailing={trailing} />
     </a>
   );
 }
 
+/**
+ * The agent chats that sat here — Build it now and the session rows — left
+ * the menu (#4729): Messages' Agents list is their one home, where the "+"
+ * starts a new one and "Show archived" reaches the archived ones. A menu
+ * that lists an inbox's CONTENTS was the decay this file's header warns of;
+ * the section was that, and it is gone whole. Nothing replaces it here.
+ */
 
 export function AppsSwitcherSheet(): ReactNode {
+  const t = useMessages('agent');
   const { open, adopted, view } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
@@ -278,17 +298,22 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted,
+    slug, name, showTerminal, restricted, canReport, readOnly: writeBarred,
   } = useStoreState(improveStore);
-  const agentSessions = useAgentSessions();
+  // A PRIVATE MEMBER (../nav/nav-store.js): an invite link let them into this
+  // app's group before they were let in off the waitlist. Their menu has
+  // "Go to Homeroom", which is their way out of the app until they have used
+  // it once (App._privateNoClose), and no Developer terminal: they suggest
+  // changes to Homeroom bot instead.
+  const { privateMember } = useStoreState(navStore);
+  const readOnly = writeBarred || privateMember;
   // Votes this viewer owes on the app in context — the badge on the
-  // "Go to workshop" row. See the fetch below.
+  // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
-  // off, not an admin): the platform's workshop and discussion answer them
-  // 404, so the two rows that go there are hidden rather than left leading
-  // nowhere — feedback on the platform and About Homeroom are theirs as much
+  // off, not an admin): the platform's workshop answers them 404, so the row
+  // that goes there is hidden rather than left leading nowhere — feedback on the platform and About Homeroom are theirs as much
   // as anyone's (./platform-target.js, Home._restrictedPlatformTarget).
   //
   // THROUGH A REF, NOT A RENDERED CLASS. Both rows are in the prerendered
@@ -299,52 +324,47 @@ export function AppsSwitcherSheet(): ReactNode {
   // than calling it because the rows unmount under About and mount again on
   // the way back: `view` has to re-run the effect, or a row that came back
   // would come back without its `hidden`.
-  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
-  const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
-  useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current, discussionRowRef.current]) {
-      if (el && el.classList.contains('hidden') !== !!restricted) {
-        el.classList.toggle('hidden', !!restricted);
-      }
-    }
-  }, [restricted, view]);
-  // AFTER MOUNT ONLY, for the one new piece of store-derived TEXT below (the
-  // platform discussion's label): the hydrating render must print what the
-  // prerender printed whatever the store says by then, or it is React #418
-  // on every route. The class toggle above is an effect for the same reason.
+  // The discussion and invite rows that went with it left the menu in the UI
+  // overhaul: the project's channel is on its hub, and invite links are the
+  // hub's Invite (#3362).
+  //
+  // A NEWCOMER WHILE "GO TO HOMEROOM" IS OFFERED (#4216): a private member
+  // who has not used it yet has that one way onward, and the community page
+  // comes after it, so "Go to community" is hidden through the same seam
+  // until they have used it or are let in (./about-data.ts
+  // offeringGoToHomeroom). Hidden, never renamed or dropped: the row is in
+  // the prerender, and its id is the Workshop's.
+  // AFTER MOUNT ONLY, for the viewer's own rows below (their agent
+  // sessions): the hydrating render must print what the prerender printed
+  // whatever the store says by then, or it is React #418 on every route. The
+  // class toggle below is an effect for the same reason.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  const newcomer = mounted && offeringGoToHomeroom(!!privateMember);
+  // #4399: the home-screen offer that rides in the Go to Homeroom card while
+  // it is offered (the banner is held down meanwhile). Asked only while the
+  // menu is open, so a closed menu costs no request.
+  const homeScreenOs = useHomeScreenOffer(open && newcomer);
+  const [homeScreenSteps, setHomeScreenSteps] = useState(false);
+  const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    const hide = !!restricted || newcomer;
+    for (const el of [workshopRowRef.current]) {
+      if (el && el.classList.contains('hidden') !== hide) {
+        el.classList.toggle('hidden', hide);
+      }
+    }
+  }, [restricted, newcomer, view, open]);
 
   // "About Notes", not "About this app". The name is what the viewer is
   // looking at and it is already on the bar above; "this app" is what you
   // write when you do not have it. It falls back to the slug and then to a
   // bare "this app", because the menu opens on Home too — where the context
   // is the platform's own self-hosted row and the name may not have landed.
-  const appLabel = name || slug || 'this app';
+  const appName = name || slug || null;
+  const appLabel = appName || t('agent:appContext.thisApp');
 
   const close = useCallback(() => AppContext.close(), []);
-
-  /*
-      CONTINUE (#2779 follow-up): your five most recent agent sessions, on
-      any app, below this app's own rows, so going back to one is a tap from
-      anywhere (Home included), each with the lists' mark (a spinner while it
-      works, a green dot once it finished unseen); then, when there are more,
-      "Show more", which opens Messages' Agents list.
-      The rules are ./continue-model.ts's.
-
-      AFTER MOUNT and after the list loads, never in the prerender: the rows
-      are the viewer's own data, and the hydrating render has to print what
-      the prerender printed. The conversations are read on open, for any
-      signed-in viewer, the flag or not — Messages' rule: turning agent
-      sessions off never hides a conversation that already exists.
-  */
-  useEffect(() => {
-    if (open && window.App?.user) void loadAgentSessions();
-  }, [open]);
-  const continuing = mounted && view !== 'about'
-    ? continueRows(agentSessions || [])
-    : { rows: [], more: false };
-
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here counts a home tile, an /app/<slug> deep link and a
@@ -403,7 +423,13 @@ export function AppsSwitcherSheet(): ReactNode {
         const res = await fetch(`/api/workshop/counts${demo}`);
         if (!res.ok) return;
         const data = await res.json();
-        const n = data?.counts?.[slug]?.needs;
+        const c = data?.counts?.[slug];
+        // #3526: less the votes swiped past in a Needs you feed, as every
+        // other count of them is (../workshop/needs-seen.ts).
+        hydrateNeedsSeen();
+        const n = c && typeof c.needs === 'number'
+          ? unseenNeeds(slug, c.needs, Array.isArray(c.owed) ? c.owed : null)
+          : null;
         if (live && typeof n === 'number' && n > 0) setOwed(n);
       } catch {
         // Offline is a state, not a failure: no figure, the row still works.
@@ -411,6 +437,15 @@ export function AppsSwitcherSheet(): ReactNode {
     })();
     return () => { live = false; };
   }, [open, slug]);
+
+  // The menu's blue "Suggest an improvement" opens comment mode where the
+  // device's switch is on, and the page under the menu is still while it is
+  // open: the mode's picture of it is drawn now, once the sheet has slid in,
+  // so the mode opens on it the moment the menu has gone
+  // (../comment-pin/comment-pin.tsx `prepareCommentView`).
+  useEffect(() => {
+    if (open) prepareComment();
+  }, [open]);
 
 
   return (
@@ -428,7 +463,7 @@ export function AppsSwitcherSheet(): ReactNode {
       <div
         id="apps-switcher-sheet"
         role="dialog"
-        aria-label="Menu"
+        aria-label={t('agent:appContext.sheetLabel')}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
@@ -439,23 +474,33 @@ export function AppsSwitcherSheet(): ReactNode {
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
           {/*
-              THE BACK ARROW IS THE ABOUT PANE'S, and it replaces the label
+              THE BACK ARROW IS THE SECOND PANES' (About, Invite), and it
+              replaces the label
               rather than sitting beside it: About is one level inside this
               sheet, so the row that names the level has to be the row that
               leaves it. On the menu it is the "Apps" label it has always
               been.
           */}
-          {view === 'about' ? (
-            <button
-              id="app-about-back"
-              type="button"
-              className={'flex-1 min-w-0 flex items-center gap-1.5 text-left un-touch-target '
-                + SECTION_TYPE}
-              onClick={() => AppContext.showMenu()}
-            >
-              <ChevronLeftIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{appLabel}</span>
-            </button>
+          {/*
+              THE PLATFORM'S BACK DISC (#4218), not a chevron in the label's
+              small caps: the header's own disc, in its brand ink, at the
+              size the Workshop's page heads draw it one level down (36px),
+              with the kit's 44pt hit box (`un-touch-target`). The name
+              beside it says where it goes back to.
+          */}
+          {view !== 'menu' ? (
+            <div className="flex-1 min-w-0 flex items-center gap-2.5">
+              <button
+                id="app-about-back"
+                type="button"
+                aria-label={appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu')}
+                className={BACK_DISC}
+                onClick={() => AppContext.showMenu()}
+              >
+                <ChevronLeftIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+              </button>
+              <span className={'min-w-0 truncate ' + SECTION_TYPE}>{appLabel}</span>
+            </div>
           ) : (
             /*
                 IT SAID "Apps" while a strip of every app sat under it. With
@@ -472,7 +517,7 @@ export function AppsSwitcherSheet(): ReactNode {
             id="apps-switcher-close"
             type="button"
             className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             onClick={close}
           >
             <XIcon className="w-5 h-5" />
@@ -511,12 +556,12 @@ export function AppsSwitcherSheet(): ReactNode {
             scroll as it is. Back on the menu pane they are where they were.
             `view` is 'menu' in the prerender, so the hydrating render is the
             same markup. */}
-        {view === 'about' ? null : <UpdateStatus />}
-        {view === 'about' ? null : <ImproveQuickActions />}
+        {view !== 'menu' ? null : <UpdateStatus />}
+        {view !== 'menu' ? null : <ImproveQuickActions />}
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this
             menu is a list of places, and the strip's one real job was
-            getting you to the Workshop. That is the "Go to workshop" row at
+            getting you to the Workshop. That is the "Go to community hub" row at
             the top of the list below now, carrying the vote-count badge the
             strip's Workshop segment carried. Nothing replaces the App
             segment — the parked app on the bar (#2762) is the way back to a
@@ -528,7 +573,9 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {view === 'about' ? <AboutPane label={appLabel} /> : (
+          {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
+          ) : (
           <>
           {/*
               ── THE APP'S OPTIONS, and nothing else ────────────────────
@@ -550,6 +597,85 @@ export function AppsSwitcherSheet(): ReactNode {
               Tabs, Safari's view controller, Discord, Slack, Teams. Nobody
               nests a mini-app's menu.
           */}
+          {/*
+              GO TO HOMEROOM, for a private member only, and only after mount
+              (the store says who is signed in after hydration, so the
+              prerender has no such row). Home, and the first time its tour
+              (features/first-session goHome).
+
+              A CARD, NOT A ROW (#4401): as a plain row among the app's own it
+              was easy to miss, and it is the one door a private member has to
+              the rest of Homeroom. So it leads the list, right under the blue
+              "Suggest an improvement" (which stays the menu's one filled
+              button): a white card in the shell's card shape (20px, one inset
+              hairline), the Homeroom mark as the header's mark button draws
+              it, and the row type, 15 over 13. It sits INSIDE #switcher-nav
+              so `#improve-quick-actions + #switcher-nav` still holds.
+
+              ADD TO HOME SCREEN, IN THE SAME CARD (#4399): while Go to
+              Homeroom is still offered, the install banner stays down over
+              the app they were invited into, and the offer is a second row
+              here under a hairline instead. It opens the banner's How sheet
+              for their OS, and only when the banner itself would offer the
+              home-screen install (../mobile-install/home-screen-offer.ts).
+              Once they have been Home the row goes and the banner is back.
+          */}
+          {mounted && privateMember ? (
+            <div
+              id="app-menu-homeroom-card"
+              className="mx-4 mt-1 mb-2 w-[calc(100%_-_2rem)] rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]"
+            >
+              <button
+                id="app-menu-row-homeroom"
+                type="button"
+                className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                onClick={() => {
+                  const info = { slug: slug || null, name: name || null };
+                  void AppContext.dismissForNav().then(() => {
+                    (window as any).UsernodeReact?.firstSession?.goHome?.(info);
+                  });
+                }}
+              >
+                <span className="shrink-0 inline-flex w-10 h-10 rounded-[11px] overflow-hidden bg-zinc-950" aria-hidden="true">
+                  <img
+                    src="/brand/homeroom-mark.png"
+                    alt=""
+                    draggable="false"
+                    width={40}
+                    height={40}
+                    className="platform-mark-tile w-10 h-10 rounded-[11px]"
+                  />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.goToHomeroom.title')}</span>
+                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">{t('agent:appContext.goToHomeroom.sub')}</span>
+                </span>
+                <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+              </button>
+              {newcomer && homeScreenOs ? (
+                <>
+                  <div aria-hidden="true" className="mx-3.5 h-px bg-[color:var(--app-sheet-line)]" />
+                  <button
+                    id="app-menu-row-add-home"
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={homeScreenSteps}
+                    className="flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    onClick={() => setHomeScreenSteps(true)}
+                  >
+                    <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
+                      <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addHomeroomToHomeScreen')}</span>
+                    <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+                  </button>
+                  {open && homeScreenSteps ? (
+                    <InstallStepsSheet os={homeScreenOs} onClose={() => setHomeScreenSteps(false)} />
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {/*
               GIVE FEEDBACK IS NOT A ROW HERE ANY MORE (#2718 review). It led
               this list, on the reading that it is the thing somebody who is
@@ -618,6 +744,12 @@ export function AppsSwitcherSheet(): ReactNode {
               `data-context-row="workshop"` is the key the strip's segment
               carried, kept so the row still names its destination.
 
+              GO TO COMMUNITY HUB is its words since #3287: a project's page
+              opens on its hub (the project's channel, Needs you, who is
+              here) beside its Workshop, so the row says where it lands, with
+              the Communities tab's glyph. The address, id and key are the
+              Workshop's still, as every other door to the hub's are.
+
               THE BADGE IS THE ONE THING CONDITIONAL, and only in a subtree
               React already owns: `owed` is null in the prerender and arrives
               from the fetch above after the sheet opens.
@@ -627,40 +759,34 @@ export function AppsSwitcherSheet(): ReactNode {
             dataContextRow="workshop"
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
-            icon={<BoardIcon />}
-            label="Go to workshop"
+            icon={<UserGroupIcon />}
+            label={t('agent:appContext.row.community')}
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
-                title={`${owed} to vote`}
-                aria-label={`${owed} to vote`}
-                className="shrink-0 rounded-full bg-violet-600 px-1.5 text-[0.6875rem] font-semibold leading-5 text-white"
+                title={t('agent:appContext.row.toVote', { count: owed })}
+                aria-label={t('agent:appContext.row.toVote', { count: owed })}
+                className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {owed}
+                {t('agent:appContext.row.toVote', { count: owed })}
               </span>
             ) : null}
+            // It says community, so it opens the hub, not whichever tab
+            // the page was last left on (AppView._landOnHub).
+            onClick={(e) => {
+              if (slug) (window as any).AppView?._landOnHub?.(slug);
+              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+            }}
           />
           {/*
-              #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
-              full-screen discussion; `#messages/app/<slug>` opens the same
-              thread in the Messages screen's right pane with the
-              conversation list still on the left at desktop widths (the
-              router's `parts[1] === 'app'` branch in public/js/app.js calls
-              App.navigateToMessages(null, slug)). It is what the inbox's own
-              rows link to, so the menu and the inbox now agree.
+              GO TO APP DISCUSSION and INVITE TO COMMUNITY LEFT THE MENU (UI
+              overhaul). The project's channel is on its hub now, one row
+              above, so a second way to it was a row that said the same thing;
+              and invite links are the hub's Invite (#3362), beside the people
+              they add. #app-menu-row-discussion and #app-menu-row-invite are
+              retired with them; the invite PANE is unchanged and opens from
+              there.
           */}
-          {/* On a platform tab the discussion is the PLATFORM's, and the row
-              says so — the design's "Go to platform discussion". Decided
-              after mount (`mounted` above): the prerender and the hydrating
-              render both print the app wording, and the platform's arrives
-              one commit later. */}
-          <MenuRow
-            id="app-menu-row-discussion"
-            elRef={discussionRowRef}
-            href={slug ? `#messages/app/${encodeURIComponent(slug)}` : '#messages'}
-            icon={<ChatIcon />}
-            label={mounted && target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
-          />
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather
               than moving into About: it is something you do, not a fact about
@@ -668,12 +794,12 @@ export function AppsSwitcherSheet(): ReactNode {
               want it one tap away. Same id, same gate (`showTerminal`, which
               DevConsole publishes), same method.
           */}
-          {showTerminal ? (
+          {showTerminal && !privateMember ? (
             <MenuRow
               id="improve-row-terminal"
               href="#"
               icon={<TerminalIcon />}
-              label="Developer terminal"
+              label={t('agent:appContext.row.terminal')}
               onClick={(e) => {
                 e.preventDefault();
                 void AppContext.dismissForNav().then(() => {
@@ -702,51 +828,30 @@ export function AppsSwitcherSheet(): ReactNode {
             className={`${ROW} w-full text-left`}
             onClick={() => AppContext.showAbout()}
           >
-            <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
+            <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
+          {/* AGENT CHATS left the menu (#4729): see the note above
+              AppsSwitcherSheet. */}
           {/*
-              CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
-              workshop, the discussion and About are this app's section, and
-              your agent sessions, on every app, follow under their own
-              heading. See the comment on `continuing` above.
+              REPORT APP IS SMALL TEXT AT THE FOOT (UI overhaul), not a row in
+              the list: it is the one thing here that is about the app rather
+              than for it, and a row of the same weight as Go to community
+              read as one more place to go. Same id, same gate, same dialog.
           */}
-          {continuing.rows.length ? (
-            <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
-              <div className={SECTION}>Continue</div>
-              {continuing.rows.map((row, index) => (
-                <MenuRow
-                  key={row.key}
-                  id={`app-menu-continue-${index}`}
-                  dataContextRow="continue-agent"
-                  href={row.href}
-                  // Working, the spinner takes the icon's place (#3028);
-                  // finished unseen, the green dot does (#3076). The icon
-                  // slot is aria-hidden, so the state rides in the lead as
-                  // words.
-                  icon={row.activity
-                    ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
-                    : <SparklesIcon />}
-                  label={row.title}
-                  lead={row.activity
-                    ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
-                    : null}
-                  trailing={(
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
-                  )}
-                />
-              ))}
-              {continuing.more ? (
-                <MenuRow
-                  id="app-menu-continue-all"
-                  href="#messages"
-                  icon={<ChatIcon />}
-                  label="Show more"
-                  onClick={(e) => {
-                    setMessagesFilter('agents');
-                    followThenDismiss(e, '#messages');
-                  }}
-                />
-              ) : null}
+          {slug && canReport ? (
+            <div className="px-5 pt-3 pb-1">
+              <button
+                id="improve-row-report"
+                type="button"
+                className="inline-flex items-center gap-1.5 min-h-[32px] text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
+                onClick={async () => {
+                  await AppContext.close();
+                  openReport({ targetType: 'app', target: slug, label: appLabel });
+                }}
+              >
+                <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('agent:appContext.reportApp')}
+              </button>
             </div>
           ) : null}
           </>

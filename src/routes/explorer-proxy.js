@@ -104,6 +104,15 @@ function explorerProxyRoutes(config = {}) {
     || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
       upstream.replace(/:\d+$/, '')
     );
+  // Timeout overrides exist for tests: the hanging-upstream test passes a
+  // short idle timeout so it finishes in well under a second instead of
+  // waiting out the production 10s. Plain config options, not environment
+  // variables, so a deployment cannot change them by accident. Only a
+  // positive finite number is honoured; anything else keeps the constants.
+  const timeoutOverride = (v, fallback) =>
+    (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback);
+  const idleTimeoutMs = timeoutOverride(config.upstreamIdleTimeoutMs, UPSTREAM_IDLE_TIMEOUT_MS);
+  const deadlineMs = timeoutOverride(config.upstreamDeadlineMs, UPSTREAM_DEADLINE_MS);
 
   router.use('/explorer-api', explorerProxyLimiter, (req, res) => {
     if (req.method === 'OPTIONS') {
@@ -159,7 +168,7 @@ function explorerProxyRoutes(config = {}) {
           port,
           path: upstreamPath,
           method: req.method,
-          timeout: UPSTREAM_IDLE_TIMEOUT_MS,
+          timeout: idleTimeoutMs,
           headers: {
             'content-type': 'application/json',
             accept: 'application/json',
@@ -213,7 +222,7 @@ function explorerProxyRoutes(config = {}) {
       const deadline = setTimeout(() => {
         log.warn('explorer-proxy', 'upstream past deadline', { upstreamPath });
         upReq.destroy(new Error('upstream exceeded deadline'));
-      }, UPSTREAM_DEADLINE_MS);
+      }, deadlineMs);
       deadline.unref?.();
       finish = () => clearTimeout(deadline);
 

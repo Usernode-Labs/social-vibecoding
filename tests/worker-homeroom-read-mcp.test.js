@@ -19,6 +19,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { z } = require('zod');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -40,21 +41,22 @@ const GRANT = `svmcd_${'A'.repeat(43)}`;
 test('the grant rides only on build and scout turns, on either backend', () => {
   const claude = (mode) => worker.buildTurnSecretEnv({
     mode, agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i', anthropicProxyJwt: 'p',
-    evidenceJwt: 'e', evidenceMemberToken: 'm', evidenceAdminToken: 'a',
-    evidenceFullAdminToken: 'f', homeroomMcpToken: GRANT,
+    shotsJwt: 'e', shotsMemberToken: 'm', shotsAdminToken: 'a',
+    shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
   const codex = (mode) => worker.buildTurnSecretEnv({
     mode, agentBackend: 'codex_openrouter', workerPushJwt: 'w', issuesReadJwt: 'i', openrouterApiKey: 'k',
-    evidenceJwt: 'e', evidenceMemberToken: 'm', evidenceAdminToken: 'a',
-    evidenceFullAdminToken: 'f', homeroomMcpToken: GRANT,
+    shotsJwt: 'e', shotsMemberToken: 'm', shotsAdminToken: 'a',
+    shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
   for (const mode of ['build', 'scout']) {
     assert.equal(claude(mode).HOMEROOM_MCP_TOKEN, GRANT);
     assert.equal(codex(mode).HOMEROOM_MCP_TOKEN, GRANT);
   }
   assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('sync')));
-  assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('evidence')));
-  assert.ok(!('HOMEROOM_MCP_TOKEN' in codex('evidence')));
+  assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('shots')));
+  // Every shots turn runs on Claude Code; Codex has no shots mode.
+  assert.throws(() => codex('shots'), /Codex shots mode is not supported/);
   const without = worker.buildTurnSecretEnv({
     mode: 'build', agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i', anthropicProxyJwt: 'p',
   });
@@ -78,9 +80,35 @@ test('execInWorker issues the grant after the prompt is written and revokes it o
   assert.match(helper, /catch \(err\) \{[\s\S]*return null;/, 'best effort: a turn never fails for want of it');
 });
 
+test('a benchmark trial\'s turn gets no read grant: the platform now would give the answer away', async (t) => {
+  const poolMod = require('../src/db/pool');
+  const oauth = require('../src/services/mcp-oauth');
+  const realPool = poolMod.getPool;
+  const realIssue = oauth.issueDelegatedAccess;
+  t.after(() => { poolMod.getPool = realPool; oauth.issueDelegatedAccess = realIssue; });
+  let owner = null;
+  const issued = [];
+  poolMod.getPool = () => ({
+    async query(sql) {
+      assert.match(String(sql), /JOIN users u ON u\.id = cs\.user_id/);
+      return { rows: [{ user_id: 5, app_id: 9, ...owner }] };
+    },
+  });
+  oauth.issueDelegatedAccess = async (_pool, opts) => { issued.push(opts); return { accessToken: 'svmcd_x', grantId: 1 }; };
+
+  owner = { username: 'homeroom_bench', user_is_synthetic: true };
+  assert.equal(await worker._mintHomeroomReadGrantForTests(77, 'scout'), null);
+  assert.equal(await worker._mintHomeroomReadGrantForTests(77, 'build'), null);
+  assert.equal(issued.length, 0);
+
+  owner = { username: 'homeroom_bot', user_is_synthetic: true };
+  assert.deepEqual(await worker._mintHomeroomReadGrantForTests(78, 'build'), { token: 'svmcd_x', grantId: 1 }, 'the live bot keeps its tools');
+  assert.equal(issued[0].kind, 'worker_read');
+});
+
 test('the bridge offers exactly the worker_read tools the platform allows', () => {
   const src = fs.readFileSync(BRIDGE, 'utf8');
-  const list = src.match(/HOMEROOM_READ_TOOLS = Object\.freeze\(\[([\s\S]*?)\]\)/)[1];
+  const list = src.match(/ALL_READ_TOOLS = Object\.freeze\(\[([\s\S]*?)\]\)/)[1];
   const names = [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual([...names].sort(), [...WORKER_READ_TOOLS].sort());
   const codex = fs.readFileSync(CODEX_RUNNER, 'utf8');
@@ -188,7 +216,7 @@ exit 1
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     MODE: mode,
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'z-ai/glm-5.3-flash', AGENT_MODEL_NAME: 'GLM',
     AGENT_MODEL_CONTEXT_WINDOW: '200000', AGENT_MODEL_SUPPORTS_TOOLS: '1',
@@ -215,13 +243,15 @@ test('Codex gets the bridge on build and scout, with the grant named but never w
   assert.match(config, /exclude = \["OPENROUTER_API_KEY"\]\n/);
 });
 
-function claudeArgs(mode, { grant = true, browser = true } = {}) {
+function claudeArgs(mode, { grant = true, browser = true, profile = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homeroom-claude-'));
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });
   const argsLog = path.join(dir, 'args.log');
+  const toolsLog = path.join(dir, 'tools.log');
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh
 printf '%s\\n' "$@" > "${argsLog}"
+printf '%s' "\${HOMEROOM_READ_TOOLS:-}" > "${toolsLog}"
 cat >/dev/null
 echo '{"type":"result","result":"ok","session_id":"cc-1"}'
 exit 0
@@ -240,18 +270,24 @@ exit 0
   fs.copyFileSync(path.join(ROOT, 'worker', 'homeroom-mcp.json'), homeroomConfig);
   const browserConfig = path.join(dir, 'browser-mcp.json');
   if (browser) fs.writeFileSync(browserConfig, '{"mcpServers":{}}');
+  const browserOnlyConfig = path.join(dir, 'browser-only-mcp.json');
+  if (browser) fs.writeFileSync(browserOnlyConfig, '{"mcpServers":{}}');
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
-    PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PROMPT_FILE: prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: mode, WORKSPACE_DIR: ws, WORKER_JWT: 'jwt',
     ...(mode === 'build' ? { SYSTEM_PROMPT_FILE: systemPrompt } : {}),
-    HOMEROOM_MCP_CONFIG: homeroomConfig, BROWSER_MCP_CONFIG: browserConfig,
+    HOMEROOM_MCP_CONFIG: homeroomConfig, BROWSER_MCP_CONFIG: browserConfig, BROWSER_ONLY_MCP_CONFIG: browserOnlyConfig,
+    ...(profile ? { BUILD_PROFILE: profile } : {}),
   };
+  delete env.HOMEROOM_READ_TOOLS;
+  if (!profile) delete env.BUILD_PROFILE;
   if (grant) env.HOMEROOM_MCP_TOKEN = GRANT; else delete env.HOMEROOM_MCP_TOKEN;
   spawnSync('sh', [CLAUDE_RUNNER], { env, encoding: 'utf8' });
   const args = fs.existsSync(argsLog) ? fs.readFileSync(argsLog, 'utf8').split('\n') : [];
-  return { args, homeroomConfig, browserConfig };
+  const readTools = fs.existsSync(toolsLog) ? fs.readFileSync(toolsLog, 'utf8') : null;
+  return { args, homeroomConfig, browserConfig, browserOnlyConfig, readTools };
 }
 
 test('Claude loads the bridge beside the browser on a build, and alone on a scout', () => {
@@ -270,6 +306,55 @@ test('Claude loads the bridge beside the browser on a build, and alone on a scou
   const p = plainBuild.args.indexOf('--mcp-config');
   assert.deepEqual(plainBuild.args.slice(p, p + 3), ['--mcp-config', plainBuild.browserConfig, '--strict-mcp-config']);
   assert.ok(!claudeArgs('build').args.join(' ').includes(GRANT), 'the grant is never an argument');
+});
+
+// Run four (13 Oct 2026): a first version's build loads only the tools one
+// uses. A brand-new app has nothing to read but the conventions, and is
+// never asked to declare its visible changes.
+test('a first version\'s build loads the browser alone, the conventions alone, and no web or notebook tools', () => {
+  const first = claudeArgs('build', { profile: 'first_version' });
+  const at = first.args.indexOf('--mcp-config');
+  assert.deepEqual(first.args.slice(at, at + 4), ['--mcp-config', first.browserOnlyConfig, first.homeroomConfig, '--strict-mcp-config']);
+  assert.ok(!first.args.includes(first.browserConfig), 'not the config with visible_changes');
+  const d = first.args.indexOf('--disallowed-tools');
+  assert.deepEqual(first.args.slice(d, d + 4), ['--disallowed-tools', 'WebSearch', 'WebFetch', 'NotebookEdit']);
+  for (const kept of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill']) assert.ok(!first.args.slice(d).includes(kept), kept);
+  assert.equal(first.readTools, 'get_platform_conventions', 'the bridge is told to offer the conventions alone');
+
+  // Any other build, and a scout given the profile, load what they did.
+  const other = claudeArgs('build');
+  assert.ok(other.args.includes(other.browserConfig));
+  assert.ok(!other.args.includes('--disallowed-tools'));
+  assert.equal(other.readTools, '');
+  const scout = claudeArgs('scout', { profile: 'first_version' });
+  const sd = scout.args.indexOf('--disallowed-tools');
+  assert.deepEqual(scout.args.slice(sd, sd + 4), ['--disallowed-tools', 'Edit', 'Write', 'NotebookEdit']);
+  assert.equal(scout.readTools, '');
+});
+
+test('the bridge offers only the read tools its runner names, never one outside the set', async (t) => {
+  const platform = await standInPlatform(t);
+  const client = await bridgeClient(t, {
+    PLATFORM_URL: platform.url, HOMEROOM_MCP_TOKEN: GRANT, HOMEROOM_READ_TOOLS: 'get_platform_conventions,start_change',
+  });
+  const { tools } = await client.listTools();
+  assert.deepEqual(tools.map((tool) => tool.name), ['get_platform_conventions']);
+  const read = await client.request({ method: 'tools/call', params: { name: 'get_app', arguments: {} } }, CallToolResultSchema);
+  assert.equal(JSON.parse(read.content[0].text).code, 'not_allowed');
+});
+
+test('Codex: a first version\'s build has no visible_changes server, and the conventions alone', () => {
+  const first = { ...codexEnv('build'), HOMEROOM_MCP_TOKEN: GRANT, BUILD_PROFILE: 'first_version' };
+  spawnSync('sh', [CODEX_RUNNER], { env: first, encoding: 'utf8' });
+  const config = fs.readFileSync(path.join(first.CODEX_HOME, 'config.toml'), 'utf8');
+  assert.doesNotMatch(config, /mcp_servers\.visible_changes/);
+  assert.match(config, /\[mcp_servers\.playwright\]/, 'the browser stays');
+  assert.match(config, /\[mcp_servers\.homeroom\][\s\S]*?enabled_tools = \["get_platform_conventions"\]\n/);
+  const other = { ...codexEnv('build'), HOMEROOM_MCP_TOKEN: GRANT };
+  spawnSync('sh', [CODEX_RUNNER], { env: other, encoding: 'utf8' });
+  const plain = fs.readFileSync(path.join(other.CODEX_HOME, 'config.toml'), 'utf8');
+  assert.match(plain, /mcp_servers\.visible_changes/);
+  assert.match(plain, /enabled_tools = \["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"\]/);
 });
 
 test('the image carries the bridge and its secret-free config', () => {

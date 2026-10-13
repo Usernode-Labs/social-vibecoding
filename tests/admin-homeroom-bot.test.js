@@ -66,9 +66,15 @@ poolMod.getPool = () => ({
       return { rows: botExists ? [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] : [] };
     }
     if (/COUNT\(\*\)::int AS runs/.test(s)) return { rows: [{ runs: 3, questions: 1, ready: 1, person: 1, failed: 0, rated: 2, agreed: 1, suppressed: 0, cost_usd: 0.12 }] };
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: [] };
-    if (/COUNT\(\*\)::int AS depth/.test(s)) return { rows: [{ depth: 4 }] };
-    if (/FROM homeroom_bot_runs r/.test(s)) {
+    // The queue's one snapshot (queueSnapshot): its counts ride on its rows.
+    if (/FROM snap q/.test(s)) {
+      return { rows: [{
+        id: 3, app_id: 9, issue_number: 7, priority: 1, reason: 'new', started_at: null,
+        app_slug: 'todo', app_name: 'Todo', waiting_total: 4, running_total: 1,
+      }] };
+    }
+    // (Not the move offers' read of the week's platform verdicts.)
+    if (/FROM homeroom_bot_runs r/.test(s) && !/move_offer/.test(s)) {
       runsParams.push(params);
       // [app, verdict, cursor, limit] — the export walks the cursor, so the
       // mock answers from a fixture ledger the way Postgres would.
@@ -141,9 +147,12 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.bot.model, 'z-ai/glm-5.3-flash');
   assert.equal(data.totals.runs, 3);
   assert.equal(data.queue.depth, 4);
+  assert.equal(data.queue.running, 1, 'waiting and running counted in the one snapshot the items come from');
+  assert.deepEqual(data.queue.items.map((i) => [i.issue_number, i.waiting && i.waiting.reason]), [[7, 'bot_paused']], 'the bot is off');
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
-  assert.deepEqual(data.caps, { proposalsPerApp: 2, questionsPerAppPerDay: 10 });
+  assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 100, questionsPerAppPerDay: 10 });
+  assert.deepEqual(data.pairsWaiting, { first_version: 0, later: 0 }, 'the configurations\' pairs waiting, per scope');
 
   // adminMiddleware sends a non-admin back to the shell (a redirect, since
   // the mounted router sees a path without the /api prefix).
@@ -375,7 +384,10 @@ test('the section is registered everywhere the console reads, inside the registr
   assert.match(tsx, /window as any\)\.AdminHomeroomBot = AdminHomeroomBot/);
   assert.match(tsx, /canWrite\(\)/, 'the writes are gated in the UI too');
   assert.ok(!/target="_blank"/.test(tsx), 'nothing in the console opens a new tab');
-  assert.match(tsx, /<option value="live" disabled>/, 'live is shown but not offered');
+  // #3710: an app is set Live; the bot itself is on or off. A greyed-out
+  // "Live (not in this build)" mode beside a live list read as a contradiction.
+  assert.doesNotMatch(tsx, /<option value="live"/, 'live is not a mode');
+  assert.match(tsx, /<option value="off">Off<\/option>\s*<option value="shadow">On<\/option>/);
 
   // #2726. The declared-check manifest is on its 20-slot floor, so the export
   // control is pinned from source here rather than spending a dapp.json slot.
@@ -393,7 +405,7 @@ test('the section is registered everywhere the console reads, inside the registr
 
   // #2742: a budget stop is findable without expanding rows or exporting.
   // The tiles take their id as an argument rather than writing it inline.
-  assert.match(tsx, /'admin-homeroom-bot-tile-budget'/, 'a tile counts them');
+  assert.match(tsx, /id="admin-homeroom-bot-total-budget"/, 'the totals line counts them');
   assert.match(tsx, /totals\?\.budgetStopped/, 'from its own total, not the failure count');
   assert.match(tsx, /<option value="budget">Stopped on budget<\/option>/, 'the filter finds them');
   assert.match(tsx, /run\.budget_stop \? `Stopped: \$\{run\.budget_stop\}`/, 'and the row says so unexpanded');
@@ -430,21 +442,22 @@ test('every verdict opens to its own detail, and only a real failure shows the f
   assert.match(empty.slice(0, 200), /run\.reason/, 'and an empty verdict shows the reason the bot gave');
 });
 
-test('the live list is set from the dashboard, and a proposal the bot opened is one click away (#3146)', () => {
+test('the paused apps are set from the dashboard, and a proposal the bot opened is one click away (#3146)', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-live-apps"/);
-  // #3152: one row per app, picked from the running apps, and an explicit
-  // Save through the same settings route as every other knob.
-  assert.match(tsx, /id=\{`admin-homeroom-bot-live-app-\$\{i\}`\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-live-apps-add"/);
-  assert.match(tsx, /id="admin-homeroom-bot-live-apps-save"/);
-  assert.match(tsx, /disabled=\{!liveDirty \|\| !!busy\}/, 'Save is live only when the list differs from what is saved');
-  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/settings', 'PUT', \{ liveApps: liveChosen \}/);
-  // The rows are the SAVED list until someone edits them, so a refresh shows
-  // what the bot will act on, and the 30-second poll never wipes an edit.
-  assert.match(tsx, /const liveRows = liveDraft \?\? savedLive;/);
-  assert.match(tsx, /const savedLive = payload\?\.settings\.liveApps \|\| \[\];/);
-  assert.match(tsx, /setLiveDraft\(null\);\s*apply\(data as Payload\);/, 'a successful save goes back to showing the saved list');
+  // #3710: one row per app, Live or Paused, in the Settings form: the edit
+  // waits for Save changes, one PUT through the same settings route as
+  // every other knob.
+  assert.match(tsx, /data-app-mode=\{slug\}/);
+  assert.match(tsx, /data-app-mode-choice=\{`\$\{slug\}:\$\{o\.key\}`\}/);
+  assert.match(tsx, /onChange=\{\(paused\) => setField\('pausedApps', paused\)\}/);
+  assert.match(tsx, /else if \(key === 'pausedApps'\) patch\.pausedApps = /);
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/settings', 'PUT', patch,/);
+  // The form is the SAVED settings plus the fields somebody touched, so a
+  // refresh shows what the bot will act on, and the 30-second poll never
+  // wipes an edit.
+  assert.match(tsx, /const form: Form \| null = saved \? \{ \.\.\.saved, \.\.\.edits \} : null;/);
+  assert.match(tsx, /setEdits\(\{\}\);\s*setFormRound\(\(n\) => n \+ 1\);\s*apply\(data as Payload\);/, 'a successful save goes back to showing the saved settings');
   assert.match(tsx, /id="admin-homeroom-bot-live-apps-state"/);
   assert.match(tsx, /id="admin-homeroom-bot-live-apps-note"/);
   assert.match(tsx, /a staging copy never acts/);
@@ -459,7 +472,8 @@ test('the ledger, the dashboard and the filter agree on every verdict, follow-up
   const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
   const labelled = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]).sort();
   const schema = read('src/db/schema.sql');
-  const checks = [...schema.matchAll(/CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
+  // The ledger's own constraint by name: other tables have a `verdict` too.
+  const checks = [...schema.matchAll(/homeroom_bot_runs_verdict_check\s+CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
   assert.equal(checks.length, 2, 'the CREATE TABLE and the widening on boot');
   for (const list of checks) {
     const allowed = [...list.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
@@ -471,4 +485,259 @@ test('the ledger, the dashboard and the filter agree on every verdict, follow-up
   const admin = read('src/routes/admin.js');
   assert.match(admin, /\['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\]\.includes\(q\.verdict\)/);
   assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\}>follow-up<\/span>/);
+});
+
+test('a saved live app has a "Triage again" button that queues its open issues (#3480)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  // Only on an app whose saved mode is live: the route refuses a paused app
+  // anyway.
+  assert.match(tsx, /\{canWrite && !savedPaused\.includes\(slug\) \? \(\s*<button[\s\S]{0,200}data-live-app-retriage=\{slug\}[\s\S]{0,300}onClick=\{\(\) => onRetriage\(slug\)\}\s*>\s*Triage again\s*<\/button>/);
+  assert.match(tsx, /onRetriage=\{retriageApp\}/);
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/retriage-app', 'POST', \{ slug \}, 'Queued\.'\)/);
+  assert.match(tsx, /will be triaged again, one at a time, oldest first\./, 'the status says what will happen, and how');
+  const admin = read('src/routes/admin.js');
+  assert.match(admin, /router\.post\('\/api\/admin\/homeroom-bot\/retriage-app', requireAdminWrite, drainGuard, async \(req, res\) => \{/);
+  assert.match(admin, /homeroomBot\.retriageApp\(pool, \{ slug: req\.body\?\.slug, actorId: req\.user\.id \}\)/);
+});
+
+function loadBotSection() {
+  globalThis.window = globalThis.window || globalThis;
+  const { loadTsx } = require('./lib/render-tsx');
+  return loadTsx('frontend/src/features/admin/admin-homeroom-bot.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, {
+          get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)),
+        }),
+      },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+}
+
+test('every app is Live or Paused, paused first, and the rest behind a toggle (#3710)', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { AppModes, appMode, withAppMode } = loadBotSection();
+  const apps = [
+    { slug: 'chore-wheel', name: 'Chore wheel' }, { slug: 'old-blog', name: 'Old blog' },
+    { slug: 'todo', name: 'Todo' }, { slug: 'notes', name: 'Notes' },
+  ];
+  const props = { apps, paused: ['old-blog'], savedPaused: ['old-blog'], canWrite: true, onChange() {}, onRetriage() {} };
+  const html = renderToHtml(createElement(AppModes, props));
+  const order = [...html.matchAll(/data-app-mode="([^"]+)" data-mode="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(order, ['old-blog:paused']);
+  assert.match(html, /id="admin-homeroom-bot-live-apps-more"[^>]*>Show the 3 live apps</);
+  assert.doesNotMatch(html, /:shadow"|>Shadow</, 'there is no Shadow to choose');
+  assert.doesNotMatch(html, /data-live-app-retriage="old-blog"/, 'not while the app is paused');
+  const none = renderToHtml(createElement(AppModes, { ...props, paused: [], savedPaused: [] }));
+  assert.match(none, /id="admin-homeroom-bot-live-apps-none"[^>]*>No app is paused: it is live on all of them\.</);
+  const viewOnly = renderToHtml(createElement(AppModes, { ...props, canWrite: false }));
+  assert.doesNotMatch(viewOnly, /data-live-app-retriage=/);
+  assert.equal((viewOnly.match(/data-app-mode-choice="old-blog:[a-z]+"[^>]*disabled=""/g) || []).length, 2, 'a view-only admin changes nothing');
+  // An unsaved pause shows, and the app keeps Triage again until it is saved.
+  const draft = renderToHtml(createElement(AppModes, { ...props, paused: ['old-blog', 'todo'] }));
+  assert.match(draft, /data-app-mode="todo" data-mode="paused"/);
+  assert.match(draft, /data-live-app-retriage="todo"[^>]*>Triage again</);
+  assert.match(draft, /not saved/);
+
+  // The one stored list, from one choice per app.
+  assert.equal(appMode('todo', []), 'live');
+  assert.equal(appMode('old-blog', ['old-blog']), 'paused');
+  assert.deepEqual(withAppMode('todo', 'paused', ['old-blog']), ['old-blog', 'todo']);
+  assert.deepEqual(withAppMode('old-blog', 'live', ['old-blog']), []);
+
+  const src = read('src/services/homeroom-bot.js');
+  // Triage again: refused on a paused app first, and on a staging copy.
+  assert.match(src, /if \(\(settings\.pausedApps \|\| \[\]\)\.includes\(slug\)\) \{\s*return \{ ok: false, status: 409, error: 'The app is paused for the bot' \};\s*\}[\s\S]{0,300}if \(!live\.inScope\(live\.liveScope\(\{ \.\.\.settings, mode: 'shadow' \}\), slug\)\) \{/);
+});
+
+test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person']) {
+    assert.ok(tsx.includes(`id="${id}"`), id);
+  }
+  assert.ok(!tsx.includes('id="admin-homeroom-bot-concurrency"'), 'no Shadow apps at once: no app is a shadow app');
+  assert.match(tsx, /onChange=\{\(v\) => setField\('liveAtOnce', v\)\}/);
+  assert.match(tsx, /onChange=\{\(v\) => setField\('perPerson', v\)\}/);
+  assert.match(tsx, /onChange=\{\(e\) => setField\('dmChat', e\.target\.checked\)\}/);
+  assert.match(tsx, /id="admin-homeroom-bot-dm-chat"/);
+  assert.match(tsx, /<WorkingNow items=\{payload\?\.workingNow \|\| \[\]\} \/>/);
+
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { WorkingNow, buildPatch, savedForm, dirtyFields } = loadBotSection();
+  // #3710: what Save changes sends for those fields, and what it refuses.
+  const saved = savedForm({ settings: { mode: 'shadow', liveAtOnce: 12, perPerson: 3, dmChat: true }, bot: null });
+  const form = { ...saved, liveAtOnce: '20', perPerson: '5', dmChat: false };
+  const dirty = dirtyFields({ liveAtOnce: '20', perPerson: '5', dmChat: false }, saved);
+  assert.deepEqual(dirty, ['liveAtOnce', 'perPerson', 'dmChat']);
+  assert.deepEqual(buildPatch(form, saved, dirty), { patch: { liveAtOnce: 20, perPerson: 5, dmChat: false }, error: null });
+  assert.match(buildPatch({ ...form, liveAtOnce: '99' }, saved, ['liveAtOnce']).error, /Live requests at once must be a whole number from 1 to 24\./);
+  assert.match(buildPatch({ ...form, perPerson: '7' }, saved, ['perPerson']).error, /Per person at once must be a whole number from 1 to 6\./);
+  assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).liveAtOnce, '12', 'the server\'s defaults when unset');
+  assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).perPerson, '3');
+  const html = renderToHtml(createElement(WorkingNow, { items: [
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', kind: 'read', person: 'ada' },
+    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', kind: 'read', person: null },
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 9, since: '2026-10-02T09:40:00Z', lane: 'live', kind: 'build', person: 'ada' },
+  ] }));
+  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">reading<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(html, /data-working="notes#3"[^>]*><span class="badge-default">background<\/span><span>Notes #3<\/span><span class="muted">since /);
+  assert.match(html, /data-working="todo#9"[^>]*><span class="badge-success">building<\/span><span>Todo #9<\/span><span class="muted">for @ada<\/span>/);
+
+  // Running now and Waiting in the queue count builds too, and say which is
+  // which: builds run from their runs, not the queue, and were counted in
+  // neither (0 running while six builds ran).
+  const { workingFor, waitingFor } = loadBotSection();
+  const item = (kind) => ({ appSlug: 'a', appName: 'A', issueNumber: 1, since: '', lane: 'live', kind, person: null });
+  assert.equal(workingFor([item('read'), item('build'), item('build'), item('build')]), '1 reading, 3 building');
+  assert.equal(workingFor([item('build'), item('build')]), '2 building', 'a zero says nothing');
+  assert.equal(workingFor([{ ...item(), kind: undefined }]), '1 reading', 'a row without a kind is a read');
+  assert.equal(waitingFor(4, 2), '4 to read, 2 to build');
+  assert.equal(waitingFor(0, 0), '');
+  assert.match(tsx, /tile\('Waiting in the queue',\s*payload \? String\(payload\.queue\.depth \+ \(payload\.queue\.buildsWaiting \|\| 0\)\) : '–', 'admin-homeroom-bot-tile-queue',/);
+  const botSrc = read('src/services/homeroom-bot.js');
+  assert.match(botSrc, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \}/);
+  assert.match(botSrc, /workingNow: \[\.\.\.await workingNow\(pool, settings\), \.\.\.builds\.building\]/);
+  assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
+
+  who = FULL_ADMIN;
+  const res = await call('PUT', '/api/admin/homeroom-bot/settings', { liveAtOnce: 20, perPerson: 5, dmChat: false });
+  assert.equal(res.status, 200);
+  assert.equal(settings.get('homeroom_bot_live_at_once'), '20');
+  assert.equal(settings.get('homeroom_bot_per_person'), '5');
+  assert.equal(settings.get('homeroom_bot_dm_chat'), 'off');
+  const bad = await call('PUT', '/api/admin/homeroom-bot/settings', { liveAtOnce: 99 });
+  assert.equal(bad.status, 400);
+  who = VIEW_ADMIN;
+  const refused = await call('PUT', '/api/admin/homeroom-bot/settings', { perPerson: 1 });
+  assert.equal(refused.status, 403);
+  who = FULL_ADMIN;
+});
+
+// ── #3710: one form, one Save; the header says what the bot does ─────────
+
+test('the header says on or off and where it is live, and the chip says when it is not working', () => {
+  const { modeLabel, health } = loadBotSection();
+  assert.equal(modeLabel({ mode: 'off', pausedApps: ['a'] }), 'Off');
+  assert.equal(modeLabel({ mode: 'shadow', pausedApps: [] }), 'On: live on every app');
+  assert.equal(modeLabel({ mode: 'shadow' }), 'On: live on every app');
+  assert.equal(modeLabel({ mode: 'shadow', pausedApps: ['a', 'b'] }), 'On: live on every app but 2 paused');
+  const on = { mode: 'shadow' };
+  assert.deepEqual(health({ mode: 'off' }, null), { tone: 'off', text: 'Not running' });
+  assert.equal(health(on, null).tone, 'warn');
+  assert.deepEqual(health(on, { at: '2026-10-03T10:00:00Z', paused: 'budget' }), { tone: 'warn', text: 'Paused: the weekly budget is spent' });
+  assert.equal(health(on, { at: '2026-10-03T10:00:00Z', paused: 'infra', retryInMs: 60_000 }).tone, 'bad');
+  assert.match(health(on, { at: '2026-10-03T10:00:00Z', paused: 'infra', retryInMs: 60_000 }).text, /^Platform fault, trying again at /);
+  assert.deepEqual(health(on, { at: '2026-10-03T10:00:00Z', paused: null, refusals: [{ app: 'a', error: 'session_busy' }] }),
+    { tone: 'warn', text: '1 app backing off' });
+  assert.equal(health(on, { at: '2026-10-03T10:00:00Z', paused: null, refusals: [] }).tone, 'ok');
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /id="admin-homeroom-bot-health"/);
+  assert.match(tsx, /It works for everyone with platform access and acts on every app but the\s+paused ones, Homeroom&apos;s own included/, 'the intro says where it acts');
+  assert.doesNotMatch(tsx, /On Shadow apps/);
+  assert.doesNotMatch(tsx, /It posts nothing and claims nothing/);
+});
+
+test('Save changes sends only what changed, in the route\'s own shape, or says what is wrong first', () => {
+  const { savedForm, dirtyFields, buildPatch } = loadBotSection();
+  const saved = savedForm({
+    settings: {
+      mode: 'shadow', pausedApps: ['todo', 'notes'], userWeeklyCents: 5000,
+      models: { triage: '', spec: '', build: 'z-ai/glm-5.3-flash', followup: '' }, turnSeconds: 1200, turnInputTokens: 10_000_000,
+    },
+    bot: { weeklyLimitCents: 15000 },
+  });
+  assert.equal(saved.botCap, '150.00');
+  assert.equal(saved.turnMinutes, '20');
+  assert.deepEqual(dirtyFields({ pausedApps: ['notes', 'todo'] }, saved), [], 'the list is a set: order is not a change');
+  const edits = {
+    pausedApps: ['notes'], models: { ...saved.models, triage: 'xiaomi/mimo-v2.6-pro' }, botCap: '200', userCap: '0',
+    turnMinutes: '30', turnTokens: '12', mode: 'off',
+  };
+  const form = { ...saved, ...edits };
+  const dirty = dirtyFields(edits, saved);
+  assert.deepEqual(buildPatch(form, saved, dirty), {
+    patch: {
+      pausedApps: ['notes'], models: { triage: 'xiaomi/mimo-v2.6-pro' }, weeklyLimitCents: 20000, userWeeklyCents: 0,
+      turnSeconds: 1800, turnInputTokens: 12_000_000, mode: 'off',
+    },
+    error: null,
+  }, 'one stage changed, so one stage is sent; dollars as cents, minutes as seconds');
+  assert.match(buildPatch({ ...form, models: { ...form.models, build: 'not a model' } }, saved, ['models']).error, /^Build: a model is an OpenRouter id/);
+  assert.match(buildPatch({ ...form, botCap: '' }, saved, ['botCap']).error, /^The bot's weekly budget: enter a dollar amount\.$/);
+  assert.match(buildPatch({ ...form, userCap: '-1' }, saved, ['userCap']).error, /0 for no limit/);
+  assert.equal(saved.adminCap, '100.00', 'an admin\'s budget is $100 until it is saved');
+  assert.deepEqual(buildPatch({ ...form, adminCap: '250' }, saved, ['adminCap']).patch, { adminWeeklyCents: 25000 });
+  assert.match(buildPatch({ ...form, adminCap: '-1' }, saved, ['adminCap']).error, /^The budget per admin: .*0 for no limit/);
+  assert.deepEqual(buildPatch({ ...form, models: { ...saved.models, build: '' } }, saved, ['models']).patch, { models: { build: '' } },
+    'back to the platform default is a blank');
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /id="admin-homeroom-bot-savebar"/);
+  assert.match(tsx, /id="admin-homeroom-bot-save"[^>]*>Save changes</);
+  assert.match(tsx, /id="admin-homeroom-bot-discard"[^>]*>Discard</);
+  assert.equal((tsx.match(/'\/api\/admin\/homeroom-bot\/settings', 'PUT'/g) || []).length, 1, 'one place saves settings');
+  assert.doesNotMatch(tsx, /onBlur=/, 'nothing saves when a field loses focus any more');
+});
+
+test('a model picked in the Benchmark fills the form in and waits for Save', () => {
+  const { benchHint } = loadBotSection();
+  const best = {
+    stages: ['triage', 'checks_fix'], models: ['a/glm'],
+    cells: {
+      'triage|a/glm': { stage: 'triage', model: 'a/glm', graded: 28, accuracy: 0.75, costPerSuccess: 0.041 },
+      'checks_fix|a/glm': { stage: 'checks_fix', model: 'a/glm', graded: 2, accuracy: 1, costPerSuccess: 0.27 },
+    },
+    best: { triage: 'triage|a/glm' },
+    enough: { triage: 10, checks_fix: 2 },
+  };
+  assert.equal(benchHint(best, 'triage', 'a/glm'), 'Benchmark: 75% of 28 graded, $0.041 a success, the best value.');
+  assert.equal(benchHint(best, 'followup', 'a/glm'), 'Benchmark (checks fix): 100% of 2 graded, $0.270 a success.');
+  assert.equal(benchHint(best, 'build', 'a/glm'), 'Not benchmarked at this stage yet.');
+  assert.equal(benchHint(null, 'build', 'a/glm'), '');
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /<BenchmarkArea canWrite=\{canWrite\} active=\{tab === 'benchmark'\} inUse=\{payload\?\.bot\?\.models \|\| null\}\s+defaultModel=\{payload\?\.defaultModel \|\| null\} onUseModel=\{applyBenchModel\} \/>/,
+    'the Benchmark reads the model in use from this section\'s own data, and writes its address only while it is the tab on screen');
+  const fn = tsx.slice(tsx.indexOf('const applyBenchModel = '), tsx.indexOf('const liveNow = '));
+  assert.match(fn, /setModel\(stage, id\);/);
+  assert.match(fn, /showTab\('settings'\);/);
+  assert.doesNotMatch(fn, /write\(|fetch\(/, 'nothing is saved until a person presses Save changes');
+});
+
+// The configurations' blind pairs are picked only through the connector,
+// and nothing told an admin one was waiting: the Overview says so, per
+// scope, beside the spend and the verdicts, and a zero says nothing.
+test('the Overview says how many configuration pairs wait for a pick, and where they are picked', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const { pairsWaitingLine } = loadBotSection();
+  assert.equal(pairsWaitingLine(null), '');
+  assert.equal(pairsWaitingLine(undefined), '');
+  assert.equal(pairsWaitingLine({ first_version: 0, later: 0 }), '', 'zero says nothing');
+  const how = 'Pairs are picked through the Homeroom connector: list_bot_configs, then get_bot_config_pair.';
+  assert.equal(pairsWaitingLine({ first_version: 0, later: 1 }), `Bot configurations: 1 later-change pair waits for a pick. ${how}`);
+  assert.equal(pairsWaitingLine({ first_version: 2, later: 0 }), `Bot configurations: 2 first-version pairs wait for a pick. ${how}`);
+  assert.equal(pairsWaitingLine({ first_version: 1, later: 5 }),
+    `Bot configurations: 1 first-version pair and 5 later-change pairs wait for a pick. ${how}`);
+  // Under the totals line, on the Overview, hidden when there is nothing to say.
+  const overview = tsx.slice(tsx.indexOf('id="admin-homeroom-bot-panel-overview"'), tsx.indexOf('id="admin-homeroom-bot-panel-settings"'));
+  assert.match(overview, /id="admin-homeroom-bot-totals"[\s\S]*<p className=\{pairsLine \? `\$\{AdminUI\.muted\} mt-1` : 'hidden'\} id="admin-homeroom-bot-pairs-waiting">\{pairsLine\}<\/p>/);
+  assert.match(tsx, /const pairsLine = pairsWaitingLine\(payload\?\.pairsWaiting\);/);
+  const botSrc = read('src/services/homeroom-bot.js');
+  assert.match(botSrc, /pairsWaiting: await botConfigs\(\)\.pairsWaitingByScope\(pool\),/, 'from the payload the Overview already loads');
+});
+
+test('the tabs have addresses of their own, and Settings and the Overview stay rendered', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /settings: '#admin\/homeroom-bot\/settings',/);
+  assert.match(tsx, /benchmark: '#admin\/homeroom-bot\/benchmark',/);
+  assert.match(tsx, /history\.replaceState\(null, '', TAB_HASH\[next\]\)/, 'replaced, never pushed');
+  assert.match(tsx, /id="admin-homeroom-bot-panel-overview" role="tabpanel"[^>]*hidden=\{tab !== 'overview'\}/);
+  assert.match(tsx, /id="admin-homeroom-bot-panel-settings" role="tabpanel"[^>]*hidden=\{tab !== 'settings'\}/);
+  const audit = read('scripts/audit-react-ownership.mjs');
+  assert.match(audit, /'#admin\/homeroom-bot\/settings'/, 'the ownership audit walks the new address');
+  for (const place of ['benchmark/runs', 'benchmark/runs/936551', 'benchmark/runs/936550', 'benchmark/suites', 'benchmark/suites/936542']) {
+    assert.ok(audit.includes(`'#admin/homeroom-bot/${place}'`), `the ownership audit walks the Benchmark's ${place}`);
+  }
 });

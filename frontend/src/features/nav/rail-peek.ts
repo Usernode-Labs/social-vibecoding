@@ -61,3 +61,30 @@ export function leavePeek(): void {
     }, PEEK_FADE_MS);
   }, PEEK_GRACE_MS);
 }
+
+/**
+ * ── Only a real mouse peeks ───────────────────────────────────────────
+ *
+ * A phone has no pointer to hover with, but iOS WebKit still fires the
+ * compatibility mouse events (`mouseenter`, `mouseleave`) around every tap.
+ * Bound to those, every tap on the phone's bar entered a peek and the next
+ * tap somewhere else left it, so the grace and fade timers above ran in the
+ * middle of taps, and each store update they made re-rendered the bar while
+ * WebKit was still deciding whether to deliver the click. Taps that needed
+ * two or three tries were reported on exactly that bar (first-session test,
+ * #27).
+ *
+ * Pointer events say which device moved, so every peek target listens to
+ * `pointerenter` / `pointerleave` through this filter and answers only
+ * `pointerType === 'mouse'` (a trackpad reports as one). A finger or a pen
+ * does nothing here, and its compatibility mouse events have no listener.
+ */
+export function mouseOnly(handler: () => void): (event: { pointerType?: string }) => void {
+  return (event) => {
+    if (event.pointerType === 'mouse') handler();
+  };
+}
+
+export const enterPeekByMouse = mouseOnly(enterPeek);
+export const leavePeekByMouse = mouseOnly(leavePeek);
+export const clearPeekTimerByMouse = mouseOnly(clearPeekTimer);

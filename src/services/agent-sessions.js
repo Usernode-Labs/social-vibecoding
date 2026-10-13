@@ -20,11 +20,27 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const models = require('./models');
 
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
 const MESSAGES_LIMIT_MAX = 200;
-const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner']);
+const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner', 'global-chat']);
+
+// The stored choice as it is shown and run. A Claude model the platform has
+// retired (#3579: Sonnet 5, saved before Sonnet 5.5 replaced it) reads as its
+// successor, so the composer's picker ticks the model the conversation now
+// runs on rather than listing a name it no longer offers. The row keeps the
+// id it was written with until the owner picks again.
+function choiceFromRow(row) {
+  const backend = row.agent_backend;
+  let model = row.agent_model || null;
+  if (backend === 'claude_code' && model
+    && Object.prototype.hasOwnProperty.call(models.RETIRED_MODELS, model)) {
+    model = models.RETIRED_MODELS[model];
+  }
+  return { backend, model, reasoningEffort: row.agent_reasoning_effort || null };
+}
 
 class AgentSessionError extends Error {
   constructor(status, message) {
@@ -112,6 +128,48 @@ async function previewDraft(pool, { user, hint = null }) {
 // (or never will: see the proposal's "not started" reason).
 const CAPTURING_STATES = new Set(['provisioning', 'exploring', 'replaying', 'reviewing']);
 
+// #3755: the active change's failing checks, by name, so the conversation can
+// say which ones failed and offer to have them fixed (the screen's fix-checks
+// offer, frontend/src/features/agent-session/fix-checks.ts). Read only while
+// the verdict is 'failing'. A failure is the merge gate's own kind: a row
+// that did not pass and is not advisory (visuals.classifyTests, and
+// homeroom-bot-followup.failingChecks for the bot's own fix turn). At most
+// FAILING_CHECKS_SHOWN rows, each clipped, with how many there are in all;
+// and when the verdict was stored, which makes the offer one per run.
+const FAILING_CHECKS_SHOWN = 5;
+const FAILING_CHECKS_SQL = `CASE WHEN c.check_state = 'failing' THEN (
+              SELECT jsonb_build_object('total', MAX(f.total), 'checks',
+                       jsonb_agg(jsonb_build_object('name', f.name, 'reason', f.reason) ORDER BY f.n))
+                FROM (SELECT e.n, COUNT(*) OVER () AS total, row_number() OVER (ORDER BY e.n) AS k,
+                             LEFT(COALESCE(NULLIF(e.t->>'name', ''), NULLIF(e.t->>'path', ''), 'Unnamed check'), 200) AS name,
+                             LEFT(COALESCE(NULLIF(e.t->>'failureReason', ''), e.t->'consoleErrors'->0->>'message', ''), 300) AS reason
+                        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END)
+                             WITH ORDINALITY AS e(t, n)
+                       WHERE jsonb_typeof(e.t) = 'object' AND COALESCE(e.t->>'status', '') <> 'pass'
+                         AND COALESCE(e.t->>'advisory', 'false') <> 'true') f
+               WHERE f.k <= ${FAILING_CHECKS_SHOWN}
+            ) END AS change_failing_checks,
+            c.checks_checked_at AS change_checks_at`;
+
+// The failing checks as the screen takes them, or null: none read (not
+// failing, or a row from the changes list, which does not read them).
+function shapeFailingChecks(row) {
+  const raw = row.change_failing_checks;
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.checks)) return null;
+  const checks = raw.checks
+    .filter((check) => check && typeof check === 'object' && typeof check.name === 'string' && check.name.trim())
+    .map((check) => ({ name: check.name.trim(), reason: typeof check.reason === 'string' ? check.reason.trim() : '' }));
+  if (!checks.length) return null;
+  const at = row.change_checks_at ? new Date(row.change_checks_at) : null;
+  return {
+    at: at && !Number.isNaN(at.valueOf()) ? at.toISOString() : null,
+    total: Math.max(Number(raw.total) || 0, checks.length),
+    checks,
+  };
+}
+
+// A merged change that is not live yet (chat_sessions.live_at) comes out of
+// the queries above as 'merging': the drawer and pills say "Going live".
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -132,17 +190,37 @@ function shapeChangeRow(row) {
     // say in words. Read only for 'skipped': an error's detail is the
     // checks panel's to show.
     checkSkipReason: row.change_check_skip_reason || null,
+    // #3755: which checks failed on the last run, and when it ran.
+    failingChecks: shapeFailingChecks(row),
     appSelfHosted: !!row.change_app_self_hosted,
-    // The visual change preview being captured now, which the conversation
+    // The before/after shots being taken now, which the conversation
     // shows with a Stop. Null once it settles, and on the changes-list rows,
     // which do not read it.
-    previewCapture: CAPTURING_STATES.has(row.change_evidence_state)
+    previewCapture: CAPTURING_STATES.has(row.change_shots_state)
       ? {
-        state: row.change_evidence_state,
-        startedAt: row.change_evidence_started_at ? new Date(row.change_evidence_started_at).toISOString() : null,
+        state: row.change_shots_state,
+        startedAt: row.change_shots_started_at ? new Date(row.change_shots_started_at).toISOString() : null,
       }
       : null,
   };
+}
+
+// A merged change of the platform's own app that is not live yet reads
+// 'merging' here, as one still being merged does (shapeChangeRow). What it
+// waits for is the platform's next release, and when that comes
+// (services/release-watch.js) is set on it as `release`, which the
+// conversation's pill, its changes drawer and the inbox's row say in words
+// ("Merged; goes live in the next release (about 8 minutes)"). A change
+// still being merged, or a child app's, has none. One read, only when one
+// of `changes` is a Homeroom change going live.
+async function withReleases(pool, changes) {
+  const waiting = changes.filter((change) => change && change.status === 'merging' && change.appSelfHosted);
+  if (!waiting.length) return;
+  const releases = await require('./release-watch').releasesFor(pool, waiting.map((change) => change.id));
+  for (const change of waiting) {
+    const release = releases.get(Number(change.id));
+    if (release) change.release = release;
+  }
 }
 
 function shapeSession(row) {
@@ -165,13 +243,7 @@ function shapeSession(row) {
       : null,
     focusContext: row.focus_context || {},
     // The composer's model choice; null follows the user's default.
-    agent: row.agent_backend
-      ? {
-        backend: row.agent_backend,
-        model: row.agent_model || null,
-        reasoningEffort: row.agent_reasoning_effort || null,
-      }
-      : null,
+    agent: row.agent_backend ? choiceFromRow(row) : null,
     activeChange: shapeChangeRow(row),
     // A lease its turn stopped renewing is not work in progress: the
     // process holding it died, and the next message takes it over.
@@ -182,6 +254,10 @@ function shapeSession(row) {
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+    // Bumped by the database on every write a screen draws (schema.sql,
+    // "Keeping every screen of a conversation in step"). A screen holding an
+    // older one re-reads GET .../state.
+    version: Number(row.state_version) || 0,
   };
 }
 
@@ -218,21 +294,22 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at, s.state_version,
             (s.active_turn IS NOT NULL
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
-                 >= NOW() - make_interval(mins => $5)) AS turn_live,
+                 >= NOW() - make_interval(secs => $5)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
-            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing,
+            ${FAILING_CHECKS_SQL}
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
@@ -241,13 +318,33 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
         AND ($3::timestamptz IS NULL OR s.last_activity_at < $3::timestamptz)
       ORDER BY s.last_activity_at DESC, s.id DESC
       LIMIT $4`,
-    [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_MINUTES]
+    [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_SECONDS]
   );
   const page = rows.slice(0, bounded).map(shapeSession);
+  await withReleases(pool, page.map((session) => session.activeChange));
   return {
     sessions: page,
     nextBefore: rows.length > bounded ? page[page.length - 1].lastActivityAt : null,
+    started: page.length > 0 || await hasStartedAgentSession(pool, userId),
   };
+}
+
+/**
+ * Whether `userId` has ever had an agent session, archived ones included:
+ * whether they have built something themselves with a coding agent. The
+ * Homeroom menu's Agent chats section (Build it now and their
+ * sessions) is shown only then, so a first-time user's menu stays short
+ * (first-session run-through, 5 Oct 2026; ../../frontend/src/features/
+ * app-context/app-context-sheet.tsx). A list page with a session in it
+ * already says so; this one indexed read is for an empty page, which is
+ * a newcomer, or somebody whose sessions are all archived.
+ */
+async function hasStartedAgentSession(pool, userId) {
+  const { rows } = await pool.query(
+    'SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE user_id = $1) AS started',
+    [userId]
+  );
+  return !!(rows[0] && rows[0].started);
 }
 
 async function getAgentSession(pool, { userId, id }) {
@@ -257,34 +354,35 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at, s.state_version,
             (s.active_turn IS NOT NULL
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
-                 >= NOW() - make_interval(mins => $3)) AS turn_live,
+                 >= NOW() - make_interval(secs => $3)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
-            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
+            (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing,
+            ${FAILING_CHECKS_SQL}
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
        LEFT JOIN apps ca ON ca.id = c.app_id
       WHERE s.id = $1 AND s.user_id = $2`,
-    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
   );
   if (!rows.length) return null;
   const session = shapeSession(rows[0]);
   // Every change this conversation has started, newest first: the active one,
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
-    `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+    `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -297,6 +395,7 @@ async function getAgentSession(pool, { userId, id }) {
     [sessionId, userId]
   );
   session.changes = changes.map(shapeChangeRow);
+  await withReleases(pool, [session.activeChange, ...session.changes]);
   return session;
 }
 
@@ -329,11 +428,7 @@ async function getAgentChoice(pool, agentSessionId) {
   );
   const row = rows[0];
   if (!row || !row.agent_backend) return null;
-  return {
-    backend: row.agent_backend,
-    model: row.agent_model || null,
-    reasoningEffort: row.agent_reasoning_effort || null,
-  };
+  return choiceFromRow(row);
 }
 
 async function renameAgentSession(pool, { userId, id, title }) {
@@ -347,6 +442,80 @@ async function renameAgentSession(pool, { userId, id, title }) {
     [clean, positiveInt(Number(id)), userId]
   );
   return rows.length ? getAgentSession(pool, { userId, id }) : null;
+}
+
+// ── A conversation opened on a request is named after it (#3752) ──────
+//
+// A conversation takes its name from its first message (the turn route,
+// agentTurn.titleFromMessage). One opened on a request (Start work) is ABOUT
+// that request, and its first message is often a reply to the screen ("can
+// you implement this?"), so the name said nothing about the request. It is
+// named after the request instead: "#N · <title>", the name a session about
+// an issue already gets (session-title.js headlessTitle).
+//
+// The request is read the way its own page reads it (GET
+// /api/apps/:slug/github-issues/:number): GitHub first, cache-first, and in
+// staging the board's mock requests when GitHub has nothing. That read can
+// be slow, and a message never waits on it, so the turn route starts this
+// once the first message is written, and the request's name replaces the
+// message's moments later. Only after the first message: a conversation with
+// no name is one nothing was said in yet, which the lists leave out
+// (continue-model.ts). Only an automatic name is replaced: one the owner
+// chose ('manual') stays, and when the request cannot be read the first
+// message's name stays too.
+
+function parseRepoUrl(url) {
+  const m = String(url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+// The request's title, or null when it cannot be read.
+async function lookupRequestTitle(repoUrl, issueNumber, deps = {}) {
+  const github = deps.github || require('./github');
+  const staging = deps.staging != null ? deps.staging : process.env.USERNODE_ENV === 'staging';
+  const repo = parseRepoUrl(repoUrl);
+  if (repo && github.isEnabled()) {
+    const { issue } = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
+    if (issue && issue.title) return String(issue.title);
+  }
+  if (staging) {
+    const mocks = deps.stagingMockIssues || require('../routes/issues').stagingMockIssues;
+    const mock = mocks(repoUrl).find((i) => i.number === issueNumber);
+    if (mock) return mock.title;
+  }
+  return null;
+}
+
+// Resolves to the new name, or null when there is none to give. Never
+// rejects: a name is never worth failing a turn over.
+async function nameFromRequest(pool, { agentSessionId, userId, lookupTitle = lookupRequestTitle }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.focus_context, a.repo_url
+         FROM agent_sessions s JOIN apps a ON a.id = s.focus_app_id
+        WHERE s.id = $1 AND s.user_id = $2 AND s.title_source = 'auto'`,
+      [agentSessionId, userId]
+    );
+    if (!rows.length) return null;
+    const issueNumber = positiveInt(Number((rows[0].focus_context || {}).issueNumber));
+    if (!issueNumber) return null;
+    // At most 256 characters, the column's (and TITLE_MAX's) width.
+    const { headlessTitle } = require('./session-title');
+    const title = headlessTitle(issueNumber, await lookupTitle(rows[0].repo_url, issueNumber));
+    if (!title) return null;
+    const { rows: named } = await pool.query(
+      `UPDATE agent_sessions SET title = $1
+        WHERE id = $2 AND user_id = $3 AND title_source = 'auto'
+        RETURNING id`,
+      [title, agentSessionId, userId]
+    );
+    return named.length ? title : null;
+  } catch (err) {
+    log.warn('agent-sessions', 'Could not name the conversation after its request', {
+      agentSessionId, err: err.message,
+    });
+    return null;
+  }
 }
 
 // Archiving parks the active change and hides the session. It never
@@ -390,7 +559,7 @@ async function listMessages(pool, { userId, id, afterId = 0, limit = 100 }) {
   const bounded = Math.max(1, Math.min(MESSAGES_LIMIT_MAX, Number(limit) || 100));
   const after = Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0;
   const { rows } = await pool.query(
-    `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at
+    `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at, client_message_id, rev
        FROM chat_session_messages
       WHERE agent_session_id = $1 AND id > $2
       ORDER BY id ASC
@@ -399,31 +568,152 @@ async function listMessages(pool, { userId, id, afterId = 0, limit = 100 }) {
   );
   const page = rows.slice(0, bounded);
   return {
-    messages: page.map((row) => ({
-      id: row.id,
-      changeId: row.session_id || null,
-      role: row.role,
-      content: row.content,
-      model: row.model || null,
-      costCents: row.cost_cents == null ? null : Number(row.cost_cents),
-      metadata: row.metadata || {},
-      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
-    })),
+    messages: page.map(shapeMessage),
     nextAfter: rows.length > bounded ? page[page.length - 1].id : null,
   };
 }
 
-// A row that belongs to the conversation itself rather than to any one
-// change: a change starting, a change closing. `session_id` is NULL on
-// purpose, so a change's own transcript slice stays exactly what it wrote.
-async function appendConversationEvent(pool, { agentSessionId, content, event, metadata = {} }) {
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
-     VALUES (NULL, $1, 'system', $2, $3::jsonb)`,
-    [agentSessionId, content, JSON.stringify({ ...metadata, agentSessionEvent: event })]
-  );
-  await pool.query('UPDATE agent_sessions SET last_activity_at = NOW() WHERE id = $1', [agentSessionId]);
+function shapeMessage(row) {
+  return {
+    id: row.id,
+    changeId: row.session_id || null,
+    role: row.role,
+    content: row.content,
+    model: row.model || null,
+    costCents: row.cost_cents == null ? null : Number(row.cost_cents),
+    metadata: row.metadata || {},
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    // The id the sending screen gave the message, so its "Sending" copy is
+    // replaced by this row in place.
+    clientMessageId: row.client_message_id || null,
+    // When the row was written or last edited, in the order the database
+    // did it: a screen asks for rows past the newest rev it holds.
+    rev: row.rev == null ? 0 : Number(row.rev),
+  };
 }
+
+// ── One consistent read of a conversation (GET .../state) ──────────────
+//
+// What a screen draws, read together: the session with its changes, whether
+// a turn is running, the messages, the cards, and the version and rev they
+// were read at, so none of them can be from before another. `version` is the
+// screen's own; when it is still current the answer is only that, and
+// `busy`, which can change with no write (a dead process's lease going
+// stale). `rev` asks for the rows written or edited since.
+const STATE_ROWS_MAX = 500;
+
+function leaseTurn(activeTurn) {
+  const turn = activeTurn || {};
+  const startedAt = Date.parse(turn.startedAt || '');
+  const phaseStartedAt = Number(turn.phaseStartedAt);
+  const phase = ['mayor', 'cc', 'mayor2'].includes(turn.phase) ? turn.phase : 'mayor';
+  return {
+    id: typeof turn.id === 'string' ? turn.id : null,
+    phase,
+    stopping: !!turn.stopRequestedAt,
+    stopRequestedAt: Date.parse(turn.stopRequestedAt || '') || null,
+    // What the screen's clock counts from: the build once one was
+    // dispatched, else the turn (agent-turn.js turnState's rule).
+    startedAt: phase !== 'mayor' && Number.isFinite(phaseStartedAt) && phaseStartedAt > 0
+      ? phaseStartedAt
+      : (Number.isFinite(startedAt) ? startedAt : null),
+  };
+}
+
+async function readState(pool, { userId, id, version = null, rev = null }) {
+  const sessionId = positiveInt(Number(id));
+  if (!sessionId) return null;
+  const { rows: head } = await pool.query(
+    `SELECT state_version, active_turn, active_change_id,
+            (active_turn IS NOT NULL
+             AND COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                 >= NOW() - make_interval(secs => $3)) AS turn_live
+       FROM agent_sessions WHERE id = $1 AND user_id = $2`,
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
+  );
+  if (!head.length) return null;
+  const current = Number(head[0].state_version) || 0;
+  // The running turn as its lease records it, for a screen on any pod.
+  const lease = head[0].turn_live && head[0].active_turn ? leaseTurn(head[0].active_turn) : null;
+  // A lease nobody renews any more: its process died mid-turn, and nothing
+  // has said so yet (the route ends it before answering).
+  const stale = !!head[0].active_turn && !head[0].turn_live;
+  const activeChangeId = head[0].active_change_id == null ? null : Number(head[0].active_change_id);
+  if (version != null && Number(version) === current) {
+    return { unchanged: true, version: current, busy: !!head[0].turn_live, lease, stale, activeChangeId };
+  }
+  const since = rev == null || !Number.isSafeInteger(Number(rev)) || Number(rev) < 0 ? null : Number(rev);
+  const read = async (db) => {
+    const session = await getAgentSession(db, { userId, id: sessionId });
+    if (!session) return null;
+    const { rows: top } = await db.query(
+      'SELECT COALESCE(MAX(rev), 0) AS rev FROM chat_session_messages WHERE agent_session_id = $1',
+      [sessionId]
+    );
+    let messages;
+    let nextAfter = null;
+    let full = true;
+    if (since != null) {
+      const { rows } = await db.query(
+        `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at, client_message_id, rev
+           FROM chat_session_messages
+          WHERE agent_session_id = $1 AND rev > $2
+          ORDER BY id ASC
+          LIMIT $3`,
+        [sessionId, since, STATE_ROWS_MAX + 1]
+      );
+      // More changed than one answer carries: the screen reads it whole.
+      if (rows.length <= STATE_ROWS_MAX) {
+        messages = rows.map(shapeMessage);
+        full = false;
+      }
+    }
+    if (!messages) {
+      const page = await listMessages(db, { userId, id: sessionId, afterId: 0, limit: MESSAGES_LIMIT_MAX });
+      // Gone between the two reads (deleted with its account): not found.
+      if (!page) return null;
+      messages = page.messages;
+      nextAfter = page.nextAfter;
+    }
+    const actions = await require('./agent-session-actions').listActions(db, { userId, agentSessionId: sessionId });
+    return {
+      unchanged: false,
+      version: session.version,
+      lease,
+      stale,
+      activeChangeId,
+      session,
+      messages,
+      // true: `messages` is the transcript from its first row (with
+      // `nextAfter` to page the rest from GET .../messages); false: only the
+      // rows written or edited since `rev`, to merge by id.
+      full,
+      nextAfter,
+      rev: Number(top[0].rev) || 0,
+      actions,
+    };
+  };
+  // One snapshot for all of it. A test pool without connect() reads each
+  // statement as it comes, which is all a fake needs.
+  if (typeof pool.connect !== 'function') return read(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const state = await read(client);
+    await client.query('COMMIT');
+    return state;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// A row that belongs to the conversation itself rather than to any one
+// change (src/workflow/rules/agent-notes.ts).
+const agentNotes = require('../workflow/rules/agent-notes.ts');
+const { appendConversationEvent, closedSentence } = agentNotes;
 
 // ── Changes ────────────────────────────────────────────────────────────
 
@@ -496,18 +786,6 @@ async function linkChange(pool, { agentSessionId, userId, change }) {
   return true;
 }
 
-// The sentence the conversation gets when one of its changes closes.
-function closedSentence({ prNumber, outcome }) {
-  const ref = prNumber ? `PR #${prNumber}` : 'The change';
-  switch (outcome) {
-    case 'merged': return `${ref} merged. It is part of the app now.`;
-    case 'rejected': return `${ref} was set aside by the group's vote.`;
-    case 'withdrawn': return `${ref} was withdrawn.`;
-    case 'replaced': return `${ref} was replaced by a newer proposal.`;
-    default: return `${ref} was closed.`;
-  }
-}
-
 // How an archive reason reads to the person whose conversation it was.
 function outcomeForArchiveReason(reason) {
   if (reason === 'auto-rejected') return 'rejected';
@@ -518,39 +796,11 @@ function outcomeForArchiveReason(reason) {
 
 // Called when a change closes, from the merge path and the archive path.
 // Posts a note to the parent conversation and, if the change was the active
-// one, clears it so the next dispatch has to name a change. Best-effort and
-// never throws: a merge or an archive must not fail over a conversation note.
-//
-// `change` is the row the caller already holds. A classic session carries
-// `agent_session_id: null`, and returns here without a query; a row that did
-// not select the column (undefined) is looked up.
+// one, clears it (src/workflow/rules/agent-notes.ts). Best-effort and never
+// throws: a merge or an archive must not fail over a conversation note.
 async function noteChangeClosed(pool, { change, outcome }) {
-  if (!change || change.agent_session_id === null) return false;
   try {
-    let agentSessionId = change.agent_session_id;
-    let prNumber = change.pr_number || null;
-    if (agentSessionId === undefined) {
-      const { rows } = await pool.query(
-        `SELECT agent_session_id, pr_number FROM chat_sessions
-          WHERE id = $1 AND agent_session_id IS NOT NULL`,
-        [change.id]
-      );
-      agentSessionId = rows.length ? rows[0].agent_session_id : null;
-      prNumber = prNumber || (rows.length ? rows[0].pr_number : null);
-    }
-    if (!positiveInt(Number(agentSessionId))) return false;
-    await pool.query(
-      `UPDATE agent_sessions SET active_change_id = NULL
-        WHERE id = $1 AND active_change_id = $2`,
-      [agentSessionId, change.id]
-    );
-    await appendConversationEvent(pool, {
-      agentSessionId,
-      content: closedSentence({ prNumber, outcome }),
-      event: 'change_closed',
-      metadata: { changeId: change.id, outcome },
-    });
-    return true;
+    return await agentNotes.changeClosed(pool, { change, outcome });
   } catch (err) {
     log.warn('agent-sessions', 'Could not note a closed change', {
       changeId: change && change.id, outcome, err: err.message,
@@ -623,26 +873,108 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 //
 // One Mayor turn at a time per conversation. The lease is a row write, not a
 // process-local lock, so two tabs (or two pods) cannot both start a turn. A
-// running turn renews it every half minute (a dispatch can run far longer
-// than the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
-// belongs to a turn whose process died without releasing it: it is not
-// busy, and it is taken over. A restart kills every turn in the process, so
+// running turn renews it every 15 seconds (a dispatch can run far longer than
+// the stale window), so a lease not renewed for TURN_LEASE_STALE_SECONDS
+// belongs to a turn whose process died without releasing it: it is not busy,
+// it is taken over, and the sweeper (services/mayor/agent-turn.js,
+// sweepInterruptedTurns) tells the conversation the turn was interrupted.
+// Every deploy replaces the platform's one pod and kills the turns in it, so
 // this window is how long a conversation can look busy with nobody working.
-const TURN_LEASE_STALE_MINUTES = 3;
+// schema.sql's agent_session_state_announce reads the same 90 seconds.
+const TURN_LEASE_STALE_SECONDS = 90;
 
 async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
   const { rows } = await pool.query(
     `UPDATE agent_sessions
-        SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW()),
+        SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW(), 'phase', 'mayor'),
             last_activity_at = NOW()
       WHERE id = $1 AND user_id = $2 AND status = 'open'
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_sessions c WHERE c.id = agent_sessions.active_change_id
+            AND c.user_id = $2 AND c.active_turn IS NOT NULL
+            AND COALESCE(c.active_turn->>'mode', 'build') <> 'shots'
+        )
         AND (active_turn IS NULL
              OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
-                < NOW() - make_interval(mins => $4))
+                < NOW() - make_interval(secs => $4))
       RETURNING id`,
-    [agentSessionId, userId, turnId, TURN_LEASE_STALE_MINUTES]
+    [agentSessionId, userId, turnId, TURN_LEASE_STALE_SECONDS]
   );
   return rows.length > 0;
+}
+
+// The message and the turn that answers it, in one transaction: the lease
+// is taken and the user's row written together, before the stream opens, so
+// a message the server answered "accepted" to is in the conversation however
+// the connection ends, and a refusal (busy) writes nothing. `clientMessageId`
+// makes a retried send safe: a message already written answers
+// `{ duplicate }` and starts no second turn.
+//
+// Resolves to `{ ok: true, messageId }`, `{ duplicate: true, messageId,
+// turnId }` or `{ busy: true }`.
+async function startTurnWithMessage(pool, {
+  agentSessionId, userId, turnId, changeId = null, text, attachments = [], clientMessageId = null, title = null,
+}) {
+  const findSent = async (db) => {
+    if (!clientMessageId) return null;
+    const { rows } = await db.query(
+      `SELECT id, metadata->>'agentTurnId' AS turn_id FROM chat_session_messages
+        WHERE agent_session_id = $1 AND client_message_id = $2`,
+      [agentSessionId, clientMessageId]
+    );
+    return rows[0] ? { duplicate: true, messageId: rows[0].id, turnId: rows[0].turn_id || null } : null;
+  };
+  const write = async (db) => {
+    const sent = await findSent(db);
+    if (sent) return sent;
+    if (!await acquireTurnLease(db, { agentSessionId, userId, turnId })) return { busy: true };
+    const { rows } = await db.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, client_message_id)
+       VALUES ($1, $2, 'user', $3, $4::jsonb, $5)
+       RETURNING id`,
+      [changeId, agentSessionId, text,
+        JSON.stringify({ agentTurnId: turnId, ...(attachments.length ? { attachments } : {}) }),
+        clientMessageId]
+    );
+    const messageId = rows[0].id;
+    // The files belong to this message now: out of the orphan sweep's
+    // reach, and what the Mayor's history reads back.
+    if (attachments.length) {
+      await db.query(
+        `UPDATE chat_session_attachments SET message_id = $1
+          WHERE id = ANY($2) AND agent_session_id = $3 AND message_id IS NULL`,
+        [messageId, attachments.map((att) => att.id), agentSessionId]
+      );
+    }
+    if (title) {
+      await db.query(
+        `UPDATE agent_sessions SET title = $1
+          WHERE id = $2 AND title IS NULL AND title_source = 'auto'`,
+        [title, agentSessionId]
+      );
+    }
+    return { ok: true, messageId };
+  };
+  if (typeof pool.connect !== 'function') return write(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const outcome = await write(client);
+    if (outcome.ok) await client.query('COMMIT');
+    else await client.query('ROLLBACK');
+    return outcome;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // Two sends of the same message at once: the second one's insert meets
+    // the first one's row.
+    if (err && err.code === '23505' && clientMessageId) {
+      const sent = await findSent(pool);
+      if (sent) return sent;
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Only the turn holding the lease renews it.
@@ -655,6 +987,39 @@ async function renewTurnLease(pool, { agentSessionId, turnId }) {
     [agentSessionId, turnId]
   );
   return rows.length > 0;
+}
+
+async function markTurnStopRequested(pool, { agentSessionId, userId, turnId, by }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object(
+       'stopRequestedAt', COALESCE(active_turn->>'stopRequestedAt', NOW()::text),
+       'stopRequestedBy', COALESCE(active_turn->>'stopRequestedBy', $4::text))
+     WHERE id = $1 AND user_id = $2 AND active_turn->>'id' = $3
+       AND COALESCE(active_turn->>'phase', 'mayor') <> 'mayor2'
+     RETURNING active_turn`,
+    [agentSessionId, userId, turnId, by || null],
+  );
+  return rows[0]?.active_turn || null;
+}
+
+async function readTurnStopRequest(pool, { agentSessionId, turnId }) {
+  const { rows } = await pool.query(
+    `SELECT active_turn FROM agent_sessions WHERE id = $1 AND active_turn->>'id' = $2`,
+    [agentSessionId, turnId],
+  );
+  return rows[0]?.active_turn?.stopRequestedAt ? rows[0].active_turn : null;
+}
+
+// Where the turn is (the Mayor, the coding agent, the wrap-up), on the lease
+// every screen reads, so one on another pod, or opened mid-turn, shows it.
+async function setTurnPhase(pool, { agentSessionId, turnId, phase, startedAt = null }) {
+  await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = active_turn || jsonb_strip_nulls(jsonb_build_object(
+              'phase', $3::text, 'phaseStartedAt', $4::bigint))
+      WHERE id = $1 AND active_turn->>'id' = $2`,
+    [agentSessionId, turnId, phase, startedAt]
+  );
 }
 
 // `finished` is a turn that ran, ending: it stamps last_done_at, which the
@@ -680,11 +1045,80 @@ async function releaseStaleTurnLease(pool, { agentSessionId, userId, finished = 
             last_done_at = CASE WHEN $4::boolean THEN NOW() ELSE last_done_at END
       WHERE id = $1 AND user_id = $2 AND active_turn IS NOT NULL
         AND COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
-            < NOW() - make_interval(mins => $3)
+            < NOW() - make_interval(secs => $3)
       RETURNING id`,
-    [agentSessionId, userId, TURN_LEASE_STALE_MINUTES, !!finished]
+    [agentSessionId, userId, TURN_LEASE_STALE_SECONDS, !!finished]
   );
   return rows.length > 0;
+}
+
+// The leases whose turn stopped renewing them: the process died (a deploy,
+// a crash). `changeTurn` says whether the active change still has a run of
+// its own on record: a build the dead turn dispatched, which restart recovery
+// adopts and hands back itself (agent-turn.js handBackAfterRecovery).
+async function staleTurnLeases(pool, { limit = 50, agentSessionId = null } = {}) {
+  const { rows } = await pool.query(
+    `SELECT s.id, s.user_id, s.active_turn->>'id' AS turn_id, s.active_change_id,
+            (c.active_turn IS NOT NULL) AS change_turn
+       FROM agent_sessions s
+       LEFT JOIN chat_sessions c ON c.id = s.active_change_id
+      WHERE s.active_turn IS NOT NULL
+        AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
+            < NOW() - make_interval(secs => $1)
+        AND ($3::bigint IS NULL OR s.id = $3::bigint)
+      ORDER BY s.id
+      LIMIT $2`,
+    [TURN_LEASE_STALE_SECONDS, limit, agentSessionId == null ? null : Number(agentSessionId)]
+  );
+  return rows.map((row) => ({
+    agentSessionId: Number(row.id),
+    userId: Number(row.user_id),
+    turnId: row.turn_id,
+    activeChangeId: row.active_change_id == null ? null : Number(row.active_change_id),
+    changeTurn: !!row.change_turn,
+  }));
+}
+
+// A turn that ended without finishing (its process died, or is shutting
+// down): the lease is handed back and the conversation says so, together,
+// so a screen never sees one without the other. `stale` only takes a lease
+// nobody has renewed within the window; a shutting-down process ends its own
+// live one. The note carries `retryable`, which the screen offers as Retry.
+// True when this call ended it (a second caller finds it already ended).
+async function endInterruptedTurn(pool, { agentSessionId, turnId, content, stale = true }) {
+  const run = async (db) => {
+    const { rows } = await db.query(
+      `UPDATE agent_sessions
+          SET active_turn = NULL
+        WHERE id = $1 AND active_turn->>'id' = $2
+          AND (NOT $3::boolean
+               OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                  < NOW() - make_interval(secs => $4))
+        RETURNING id`,
+      [agentSessionId, turnId, !!stale, TURN_LEASE_STALE_SECONDS]
+    );
+    if (!rows.length) return false;
+    await db.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
+       VALUES (NULL, $1, 'system', $2, $3::jsonb)`,
+      [agentSessionId, content, JSON.stringify({ agentSessionEvent: 'turn_interrupted', agentTurnId: turnId, retryable: true })]
+    );
+    return true;
+  };
+  if (typeof pool.connect !== 'function') return run(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ended = await run(client);
+    if (ended) await client.query('COMMIT');
+    else await client.query('ROLLBACK');
+    return ended;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // The open conversations a change is the active change of: the ones whose
@@ -700,6 +1134,8 @@ async function conversationsOfChange(pool, changeId) {
 
 // The owner read the conversation: whatever it finished is seen. True when
 // that cleared a green dot, so the caller can tell the owner's other tabs.
+// Written only when there is something unseen: an open screen re-reads its
+// conversation every few seconds while the Mayor works.
 async function markSeen(pool, { userId, id }) {
   const sessionId = positiveInt(Number(id));
   if (!sessionId) return false;
@@ -708,16 +1144,15 @@ async function markSeen(pool, { userId, id }) {
        SELECT id, seen_at, last_done_at, active_turn
          FROM agent_sessions
         WHERE id = $1 AND user_id = $2
+          AND last_done_at IS NOT NULL AND (seen_at IS NULL OR last_done_at > seen_at)
      )
      UPDATE agent_sessions s SET seen_at = NOW()
        FROM prev
       WHERE s.id = prev.id
-     RETURNING ((prev.active_turn IS NULL
-                 OR COALESCE(prev.active_turn->>'renewedAt', prev.active_turn->>'startedAt')::timestamptz
-                    < NOW() - make_interval(mins => $3))
-                AND prev.last_done_at IS NOT NULL
-                AND (prev.seen_at IS NULL OR prev.last_done_at > prev.seen_at)) AS cleared`,
-    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
+     RETURNING (prev.active_turn IS NULL
+                OR COALESCE(prev.active_turn->>'renewedAt', prev.active_turn->>'startedAt')::timestamptz
+                   < NOW() - make_interval(secs => $3)) AS cleared`,
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
   );
   return !!(rows[0] && rows[0].cleared);
 }
@@ -734,11 +1169,19 @@ module.exports = {
   setAgentChoice,
   getAgentChoice,
   listAgentSessions,
+  hasStartedAgentSession,
   getAgentSession,
   renameAgentSession,
+  lookupRequestTitle,
+  nameFromRequest,
   archiveAgentSession,
   unarchiveAgentSession,
   listMessages,
+  shapeMessage,
+  readState,
+  leaseTurn,
+  markTurnStopRequested,
+  readTurnStopRequest,
   appendConversationEvent,
   parkChange,
   prepareChangeStart,
@@ -748,11 +1191,15 @@ module.exports = {
   noteChangeClosed,
   switchActiveChange,
   setFocusApp,
-  TURN_LEASE_STALE_MINUTES,
+  TURN_LEASE_STALE_SECONDS,
   acquireTurnLease,
+  startTurnWithMessage,
   renewTurnLease,
+  setTurnPhase,
   releaseTurnLease,
   releaseStaleTurnLease,
+  staleTurnLeases,
+  endInterruptedTurn,
   conversationsOfChange,
   markSeen,
 };

@@ -52,6 +52,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -112,7 +113,8 @@ test('a run in flight offers neither a clone nor a re-run', () => {
   const model = AppView._issueCardModel(issue({ status: 'generating', sessionId: 93 }));
   const html = cardHtml(model);
   assert.equal(primaryCount(model), 1);
-  assert.match(html, /disabled[^>]*>Generating proposal/);
+  // Homeroom's words: a change, never a proposal.
+  assert.match(html, /disabled[^>]*>Drafting a change…/);
   assert.ok(!menuLabels(AppView, model).some((l) => /^Generate proposal$/.test(l)),
     'nothing to generate while one is already running');
 });
@@ -128,6 +130,27 @@ test('every other outcome also yields exactly one primary', () => {
   const fresh = AppView._issueCardModel(issue(null));
   assert.equal(primaryCount(fresh), 1);
   assert.ok(hasAction(fresh, 'chooseIssueWork', 5));
+});
+
+// #17: the Homeroom bot building the request is the same shape as a run in
+// flight: one primary, disabled, and nothing that would start the work a
+// second time beside it.
+test('the Homeroom bot building the request: one disabled primary, and no Start work anywhere', () => {
+  const AppView = makeAppView();
+  const bot = { what: 'building', since: '2026-10-03T10:00:00Z' };
+  for (const [surface, opts] of [['board', undefined], ['head', { noNav: true }]]) {
+    const model = AppView._issueCardModel({ ...issue(null), bot }, opts);
+    assert.equal(primaryCount(model), 1, `${surface}: one primary`);
+    assert.match(cardHtml(model), /disabled[^>]*>Homeroom bot is building…</, `${surface}: and it waits`);
+    assert.ok(!hasAction(model, 'chooseIssueWork'), `${surface}: no Start work`);
+    assert.ok(!menuLabels(AppView, model).some((l) => /^(Start more work|Generate proposal)$/.test(l)),
+      `${surface}: none in ⋯ either`);
+  }
+  // Even beside a finished auto-solve run, whose primary would offer one.
+  const model = AppView._issueCardModel({ ...issue({ status: 'ready', outcome: 'spec', sessionId: 90 }), bot });
+  assert.equal(primaryCount(model), 1);
+  assert.ok(!hasAction(model, 'startFromAutoSession'), 'the bot is building it already');
+  assert.ok(!menuLabels(AppView, model).includes('Start more work'), 'nor in ⋯');
 });
 
 // ── Where "Answer & regenerate" goes ──────────────────────────────────

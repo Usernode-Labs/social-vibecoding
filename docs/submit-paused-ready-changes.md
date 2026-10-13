@@ -27,7 +27,7 @@ requirements for review.
 Submission remains owner-only and excludes headless, archived, merged, or
 otherwise ineligible sessions. Native submissions retain exact checked-commit
 validation against both the branch and PR head. Submission records the reviewed
-head, retains existing vote/evidence/merge gates, and observes the promoted
+head, retains existing vote/shots/merge gates, and observes the promoted
 proposal cap. It must not turn a concurrent pause or archive into an unintended
 promotion. Reading readiness must not mutate session state or start work.
 

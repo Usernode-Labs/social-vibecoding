@@ -66,6 +66,8 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { listText, t as translate } from '../../lib/i18n/runtime';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { normalizeMadeUrl } from './made-url';
 import { AUTH_SCREEN_IDS, hiddenFirst, hiddenLast, useAuthScreensPatch } from './shared';
@@ -233,8 +235,7 @@ function SignupEmail({ email }: { email: string }) {
       id="more-signup-email"
       className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
     >
-      {'Registered with '}
-      <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
+      <RichMessage id="auth:more.registeredWith" values={{ email }} components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]} />
     </p>
   );
 }
@@ -242,6 +243,7 @@ function SignupEmail({ email }: { email: string }) {
 export function MoreScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.more, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -253,7 +255,7 @@ export function MoreScreen() {
   // 'throttled' is a rate-limited load — the token may be perfectly fine, so
   // it gets its own copy instead of the bad-link notice (#1296).
   const [status, setStatus] = useState<'idle' | 'invalid' | 'throttled' | 'ready'>('idle');
-  const [retryText, setRetryText] = useState('a few minutes');
+  const [retryMins, setRetryMins] = useState<number | null>(null);
   const [opts, setOpts] = useState<WaitlistOptions | null>(null);
   const [tools, setTools] = useState<string[]>([]);
   const [lossHad, setLossHad] = useState<string | null>(null);
@@ -320,13 +322,13 @@ export function MoreScreen() {
     } catch {
       outcome = null;
     }
-    if (outcome === 'ok') return { text: 'Account verified. Thanks.', tone: 'ok' };
+    if (outcome === 'ok') return { text: translate('auth:more.connect.ok'), tone: 'ok' };
     if (outcome === 'failed' || outcome === 'denied' || outcome === 'unavailable') {
       return {
         text:
           outcome === 'unavailable'
-            ? 'That sign-in is not available yet.'
-            : 'Could not verify that account. Please try again.',
+            ? translate('auth:more.connect.unavailable')
+            : translate('auth:more.connect.failed'),
         tone: 'warn',
       };
     }
@@ -409,9 +411,9 @@ export function MoreScreen() {
         const secs = Number(body?.retryAfterSeconds);
         if (Number.isFinite(secs) && secs > 0) {
           const mins = Math.ceil(secs / 60);
-          setRetryText(mins > 1 ? `about ${mins} minutes` : 'about a minute');
+          setRetryMins(mins);
         } else {
-          setRetryText('a few minutes');
+          setRetryMins(null);
         }
         setStatus('throttled');
         return;
@@ -572,7 +574,7 @@ export function MoreScreen() {
       // answer a question that only matters once. Every question stays
       // optional — this asks for one of them, not for any particular one.
       if (!hasAnyAnswer(answers)) {
-        setMsg({ text: 'Answer at least one question before saving.', tone: 'warn' });
+        setMsg({ text: translate('auth:more.save.empty'), tone: 'warn' });
         return;
       }
 
@@ -598,12 +600,12 @@ export function MoreScreen() {
           clearDraft(value);
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong. Try again.',
+            text: (data && data.error) || translate('auth:more.save.failed'),
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+        setMsg({ text: translate('auth:more.save.network'), tone: 'error' });
       }
       setSaving(false);
     },
@@ -655,7 +657,7 @@ export function MoreScreen() {
         className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
-        &larr; Back
+        {t('auth:more.back')}
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         <p
@@ -664,10 +666,10 @@ export function MoreScreen() {
             'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
           )}
         >
-          Optional (moves you up the list)
+          {t('auth:more.eyebrow')}
         </p>
         <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
-          Want in sooner?
+          {t('auth:more.title')}
         </h1>
         {/*
             #1541: two sentences, from four. The middle one said the same
@@ -676,8 +678,7 @@ export function MoreScreen() {
             already the label directly above this heading.
         */}
         <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Four questions, about three minutes. These are what we read when we
-        pick the next group, and you can come back and add to them any time.
+          {t('auth:more.intro')}
         </p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
         {/*
@@ -696,17 +697,15 @@ export function MoreScreen() {
         >
           {status === 'throttled' ? (
             <>
-              Your link is fine, we&rsquo;re limiting requests from your
-              address right now. Try again in {retryText}, or just reopen the
-              link from your waitlist email then.
+              {retryMins === null
+                ? t('auth:more.throttled.fewMinutes')
+                : retryMins > 1
+                  ? t('auth:more.throttled.aboutMinutes', { count: retryMins })
+                  : t('auth:more.throttled.aboutAMinute')}
             </>
           ) : (
             <>
-              {"This link doesn't look right. Use the one from your waitlist email, or "}
-              <a href="#landing" className="underline">
-                join the waitlist
-              </a>
-              {' first.'}
+              <RichMessage id="auth:more.invalid" components={[<a href="#landing" className="underline" />]} />
             </>
           )}
         </Alert>
@@ -725,16 +724,16 @@ export function MoreScreen() {
               of the things that helps you move up instead. */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 1 of 4
+              {t('auth:more.question', { number: 1, total: 4 })}
             </p>
             <label
               htmlFor="more-made-url"
               className={SURVEY_LABEL}
             >
-              Link something you&rsquo;ve made
+              {t('auth:more.made.label')}
             </label>
             <p className={SURVEY_HINT}>
-              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
+              {t('auth:more.made.hint')}
             </p>
             {/*
                 Every field on this screen and on `#waitlist` spreads
@@ -763,7 +762,7 @@ export function MoreScreen() {
               id="more-made-note"
               type="text"
               maxLength={140}
-              placeholder="What is it, in one line? (optional)"
+              placeholder={t('auth:more.made.notePlaceholder')}
               {...SURVEY_FIELD}
               spacing="mt2"
             />
@@ -771,20 +770,20 @@ export function MoreScreen() {
           {/* 5 · The group */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 2 of 4
+              {t('auth:more.question', { number: 2, total: 4 })}
             </p>
             <label className={SURVEY_LABEL}>
-              Tell us about a group you&rsquo;re part of that could use its own app.
+              {t('auth:more.group.label')}
             </label>
             <p className={SURVEY_HINT_WIDE}>
-              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one, a real group you&rsquo;re actually in.
+              {t('auth:more.group.hint')}
             </p>
             <Input
               ref={groupName}
               id="more-group-name"
               type="text"
               maxLength={255}
-              placeholder="A 200-person Discord for indie game devs in Lagos"
+              placeholder={t('auth:more.group.placeholder')}
               {...SURVEY_FIELD}
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -794,7 +793,7 @@ export function MoreScreen() {
                 {...SURVEY_SELECT}
               >
                 <option value="">
-                  Roughly how many people?
+                  {t('auth:more.group.size')}
                 </option>
                 {optionList(opts?.group_sizes)}
               </Select>
@@ -804,13 +803,13 @@ export function MoreScreen() {
                 {...SURVEY_SELECT}
               >
                 <option value="">
-                  Your role in it
+                  {t('auth:more.group.role')}
                 </option>
                 {optionList(opts?.group_roles)}
               </Select>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
-              What does it run on today? (pick any)
+              {t('auth:more.group.tools')}
             </p>
             <MultiChipRow
               id="more-group-tools"
@@ -824,7 +823,7 @@ export function MoreScreen() {
               rows={3}
               onInput={(e) => autoGrow(e.currentTarget)}
               maxLength={800}
-              placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
+              placeholder={t('auth:more.group.needPlaceholder')}
               {...SURVEY_FIELD}
               spacing="mt3"
             />
@@ -832,13 +831,13 @@ export function MoreScreen() {
           {/* 6 · The loss */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 3 of 4
+              {t('auth:more.question', { number: 3, total: 4 })}
             </p>
             <label className={SURVEY_LABEL}>
-              Ever had a tool you relied on get killed, paywalled, or ruined?
+              {t('auth:more.loss.label')}
             </label>
             <p className={SURVEY_HINT_WIDE}>
-              An app, a platform, a service, a game, a community. The kind of thing that made you look for something like this in the first place.
+              {t('auth:more.loss.hint')}
             </p>
             <ChipRow
               id="more-loss-had"
@@ -855,11 +854,11 @@ export function MoreScreen() {
                 id="more-loss-product"
                 type="text"
                 maxLength={255}
-                placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
+                placeholder={t('auth:more.loss.productPlaceholder')}
                 {...SURVEY_FIELD}
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-                What happened? (pick any)
+                {t('auth:more.loss.kinds')}
               </p>
               <MultiChipRow
                 id="more-loss-kinds"
@@ -873,7 +872,7 @@ export function MoreScreen() {
                 rows={3}
                 onInput={(e) => autoGrow(e.currentTarget)}
                 maxLength={800}
-                placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
+                placeholder={t('auth:more.loss.storyPlaceholder')}
                 {...SURVEY_FIELD}
               />
             </div>
@@ -881,13 +880,13 @@ export function MoreScreen() {
           {/* 7 · Handles */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              Question 4 of 4
+              {t('auth:more.question', { number: 4, total: 4 })}
             </p>
             <label className={SURVEY_LABEL}>
-              Where else are you?
+              {t('auth:more.elsewhere.label')}
             </label>
             <p className={SURVEY_HINT_WIDE}>
-              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
+              {t('auth:more.elsewhere.hint')}
             </p>
             {/*
                 GitHub / X / LinkedIn: a verified pill when connected, a connect
@@ -911,7 +910,7 @@ export function MoreScreen() {
                     key={provider}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
                   >
-                    {'✓ ' + label + ' · ' + connect.verified[provider]}
+                    {t('auth:more.connect.verified', { provider: label, account: connect.verified[provider] })}
                   </span>
                 ) : connect.oauth[provider] ? (
                   <a
@@ -949,7 +948,7 @@ export function MoreScreen() {
                     rel="noopener noreferrer"
                     onClick={() => saveDraft(token.current, snapshotDraft())}
                   >
-                    {'Connect ' + label}
+                    {t('auth:more.connect.start', { provider: label })}
                   </a>
                 ) : null,
               )}
@@ -960,7 +959,7 @@ export function MoreScreen() {
                 id="more-handle-farcaster"
                 type="text"
                 maxLength={255}
-                placeholder="Farcaster (@handle)"
+                placeholder={t('auth:more.elsewhere.farcaster')}
                 {...SURVEY_FIELD}
               />
               <Input
@@ -968,7 +967,7 @@ export function MoreScreen() {
                 id="more-handle-discord"
                 type="text"
                 maxLength={255}
-                placeholder="Discord (username)"
+                placeholder={t('auth:more.elsewhere.discord')}
                 {...SURVEY_FIELD}
               />
               <Input
@@ -976,7 +975,7 @@ export function MoreScreen() {
                 id="more-handle-telegram"
                 type="text"
                 maxLength={255}
-                placeholder="Telegram (@handle)"
+                placeholder={t('auth:more.elsewhere.telegram')}
                 {...SURVEY_FIELD}
               />
               <Input
@@ -984,7 +983,7 @@ export function MoreScreen() {
                 id="more-handle-other"
                 type="text"
                 maxLength={255}
-                placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
+                placeholder={t('auth:more.elsewhere.other')}
                 {...SURVEY_FIELD}
               />
             </div>
@@ -1018,7 +1017,7 @@ export function MoreScreen() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:border-zinc-400 dark:hover:border-zinc-500"
                   >
-                    {'Follow on ' + label}
+                    {t('auth:more.follow.link', { network: label })}
                   </a>
                 ) : null,
               )}
@@ -1035,7 +1034,7 @@ export function MoreScreen() {
                 type="checkbox"
                 className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
               />
-              I followed along
+              {t('auth:more.follow.done')}
             </label>
           </div>
           {/* 8 · Friends. The typed-address rows that used to live here sent
@@ -1045,16 +1044,16 @@ export function MoreScreen() {
               render still matches the prerender. */}
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
-              One more thing
+              {t('auth:more.invite.eyebrow')}
             </p>
             <label
               htmlFor="more-invite-url"
               className={SURVEY_LABEL}
             >
-              Bring someone you&rsquo;d build with
+              {t('auth:more.invite.label')}
             </label>
             <p className={SURVEY_HINT_WIDE}>
-              We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
+              {t('auth:more.invite.hint')}
             </p>
             <div className="flex gap-2">
               <input
@@ -1062,7 +1061,7 @@ export function MoreScreen() {
                 type="text"
                 readOnly={true}
                 value={inviteUrl}
-                placeholder="Your link appears here"
+                placeholder={t('auth:more.invite.placeholder')}
                 className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <Button
@@ -1072,16 +1071,17 @@ export function MoreScreen() {
                 size="narrow"
                 onClick={onCopyInvite}
               >
-                {copied ? 'Copied' : 'Copy'}
+                {copied ? t('core:common.copied') : t('core:common.copy')}
               </Button>
             </div>
             <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
               {inviteCount > 0 ? (
                 <>
-                  <span className="font-medium text-zinc-700 dark:text-zinc-200">
-                    {`${inviteCount} ${inviteCount === 1 ? 'person' : 'people'} from your invite joined 🎉 `}
-                  </span>
-                  {inviteEmails.join(', ')}
+                  <RichMessage
+                    id="auth:more.invite.joined"
+                    values={{ count: inviteCount, emails: listText(inviteEmails) }}
+                    components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]}
+                  />
                 </>
               ) : null}
             </div>
@@ -1094,13 +1094,13 @@ export function MoreScreen() {
               disabledStyle="dim"
               size="xl"
             >
-              Save my answers
+              {t('auth:more.save.submit')}
             </Button>
             <p id="more-msg" className={msgClass(msg ? msg.tone : null)}>
               {msg ? msg.text : null}
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
-              A blank answer just means we have less to go on, and nothing here is required.
+              {t('auth:more.save.note')}
             </p>
           </div>
         </form>
@@ -1112,17 +1112,13 @@ export function MoreScreen() {
         <div id="more-saved" className={hiddenFirst(!saved, 'mt-6')}>
           <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-5">
             <h2 className="text-xl font-bold text-emerald-700 dark:text-emerald-400">
-              Saved, thanks &#127881;
+              {t('auth:more.saved.title')}
             </h2>
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              These are the answers we actually read when we pick the next
-            group. Your spot is safe either way, and we&rsquo;ll email you when
-            it opens.
+              {t('auth:more.saved.body')}
             </p>
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              Thought of something later? The link in your waitlist email
-            reopens this form, and answers merge, so nothing you already typed
-            is lost.
+              {t('auth:more.saved.later')}
             </p>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1134,14 +1130,14 @@ export function MoreScreen() {
               size="narrow"
               onClick={onEditAgain}
             >
-              Edit my answers
+              {t('auth:more.saved.edit')}
             </Button>
             <a
               id="more-saved-back"
               href="#landing"
               className="text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
             >
-              Back to Homeroom
+              {t('auth:more.saved.backHome')}
             </a>
           </div>
         </div>

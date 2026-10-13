@@ -669,6 +669,8 @@ function settingsHarness(credentialStatus) {
         : credentialStatus),
     }),
     setTimeout, clearTimeout, setInterval, clearInterval, console,
+    // settings.js reads its text through this global; the real English catalog.
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
   });
   context.window.window = context.window;
   context.window.document = context.document;
@@ -768,8 +770,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   // action and its success copy are gone with the button.
   assert.doesNotMatch(settings, /_claimManagedOpenRouterKey/);
   assert.doesNotMatch(settingsSection, /Create my included key/);
-  assert.match(settingsSection, /GLM 5\.3 Flash/);
-  assert.match(settings, /GLM 5\.3 Flash/);
+  assert.match(settingsSection, /\{t\('settings:openrouter\.intro'\)\}/);
+  assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /GLM 5\.3 Flash/);
+  // The runtime copy is that same message: settings.js writes it over the static markup.
+  assert.match(settings, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
   assert.ok(
     settings.indexOf("{ key: 'openrouter'") < settings.indexOf("{ key: 'api-key'"),
     'OpenRouter precedes the Anthropic key in the AI settings group',
@@ -828,8 +832,10 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(routes, /syncAllowance\(\{/);
   assert.match(admin, /users\/:id\/weekly-limit'[\s\S]*?syncAllowance\(\{/,
     'setting a user\'s weekly cap re-limits their included key');
-  assert.match(settings, /limitNoun\(managed\.limitReset\)/);
-  assert.match(settings, /limitNoun\(provisioning\.limitReset, 'allowance'\)/);
+  // `limitNoun()` built the phrase; `limitCadence()` now picks the whole
+  // catalog sentence from the same stored cadence.
+  assert.match(settings, /limitCadence\(managed\.limitReset\)/);
+  assert.match(settings, /limitCadence\(provisioning\.limitReset\)/);
   assert.match(settingsSection, /settings-openrouter-included-status/,
     'the claim card is a status line now (#2568)');
   assert.match(settings, /provisioning\.reason === 'no_allowance'/);
@@ -853,14 +859,14 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
 });
 
 test('configured GLM 5.3 Flash is preferred without filtering the remaining model catalog', async (t) => {
-  const original = require('../src/services/openrouter-client').fetchUserModels;
-  require('../src/services/openrouter-client').fetchUserModels = async () => [
+  const original = require('../src/services/openrouter-client').fetchModels;
+  require('../src/services/openrouter-client').fetchModels = async () => [
     { id: 'vendor/cheap', pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'], context_length: 64000 },
     { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.000000075', completion: '0.00000025' }, supported_parameters: ['tools'], context_length: 1310720 },
     { id: 'vendor/other', pricing: { prompt: '0.000003', completion: '0.000004' }, supported_parameters: ['tools'], context_length: 64000 },
   ];
   t.after(() => {
-    require('../src/services/openrouter-client').fetchUserModels = original;
+    require('../src/services/openrouter-client').fetchModels = original;
     agentModels.invalidateAll();
   });
   agentModels.invalidateAll();

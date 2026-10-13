@@ -22,6 +22,7 @@
 
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { sessionListStore } from './session-list-store';
@@ -64,6 +65,28 @@ async function call(fn: string, args: unknown[]): Promise<string | null> {
   return (await dc[fn](...args)) || null;
 }
 
+/**
+ * One action button's click: the busy label while the call runs, then its
+ * answer. A null answer means the row is about to be replaced (or was
+ * restored on failure) — either way the label goes back. A handler that
+ * THROWS restores it too: without this the button sat on its busy label,
+ * disabled, until the next publish, which a failed call never sends.
+ */
+export async function runSessionAction(
+  a: Pick<SessionAction, 'fn' | 'args' | 'busy'>,
+  setPending: (label: string | null) => void,
+): Promise<void> {
+  setPending(a.busy);
+  let flash: string | null = null;
+  try {
+    flash = await call(a.fn, a.args);
+  } catch (err) {
+    console.warn(`[session-list] ${a.fn} failed`, err);
+  } finally {
+    setPending(flash);
+  }
+}
+
 function ActionButton({ a }: { a: SessionAction }): ReactNode {
   const [pending, setPending] = useState<string | null>(null);
   return (
@@ -75,10 +98,7 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
       onClick={async (e) => {
         e.stopPropagation();
         if (pending) return;
-        setPending(a.busy);
-        // A null answer means the row is about to be replaced (or was
-        // restored on failure) — either way the label goes back.
-        setPending(await call(a.fn, a.args));
+        await runSessionAction(a, setPending);
       }}
     >
       {pending || a.label}
@@ -98,11 +118,12 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
  */
 function Row({ row }: { row: SessionRow }): ReactNode {
   const open = () => { void call('openSessionFromList', [row.id]); };
+  const t = useMessages('devchat');
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`Open session: ${row.title} (${row.status})`}
+      aria-label={t('devchat:sessions.row.open', { title: row.title, status: row.status })}
       className="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 flex items-center gap-2"
       data-id={row.id}
       onClick={open}
@@ -119,7 +140,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
       {row.busy ? (
         <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400">
           <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
-          {'working…'}
+          {t('devchat:sessions.row.working')}
         </span>
       ) : null}
       {row.pr ? (
@@ -129,7 +150,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           rel="noopener"
           className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           onClick={(e) => e.stopPropagation()}
-        >{`PR#${row.pr.number}`}</a>
+        >{t('devchat:sessions.row.pr', { number: row.pr.number })}</a>
       ) : null}
       {row.actions.map((a) => <ActionButton key={a.key} a={a} />)}
       <SessionDate createdAt={row.createdAt} />
@@ -157,30 +178,58 @@ function SessionDate({ createdAt }: { createdAt: string }) {
 }
 
 function EmptyPitch(): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div className="text-center px-6 py-12">
       <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-        Want to change this app? Just ask.
+        {t('devchat:sessions.empty.title')}
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-        {"Describe what you'd like different in plain English. An AI writes the code and opens a "
-          + 'real pull request. No coding required. The app’s users then vote it in.'}
+        {t('devchat:sessions.empty.body')}
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-500">
-        {'Hit '}
-        <span className="font-medium text-emerald-700 dark:text-emerald-400">+ New Session</span>
-        {' above to start, e.g. '}
-        <span className="italic">&quot;make the header dark blue&quot;</span>
-        {'.'}
+        <RichMessage
+          id="devchat:sessions.empty.howTo"
+          components={[
+            <span className="font-medium text-emerald-700 dark:text-emerald-400" />,
+            <span className="italic" />,
+          ]}
+        />
       </p>
     </div>
   );
 }
 
-export function SessionListView({ rows }: SessionListState): ReactNode {
+/**
+ * The list's last row when it left finished sessions out: one quiet line,
+ * the same weight as a row's own actions, that reads the whole history.
+ */
+function OlderRow({ older }: { older: number }): ReactNode {
+  const [pending, setPending] = useState(false);
+  const t = useMessages('devchat');
+  return (
+    <button
+      type="button"
+      className="dc-session-older w-full px-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+      disabled={pending}
+      onClick={async () => {
+        if (pending) return;
+        setPending(true);
+        await call('showOlderSessions', []);
+        setPending(false);
+      }}
+    >
+      {pending ? t('devchat:sessions.older.loading') : t('devchat:sessions.older.show', { count: older, number: older.toLocaleString() })}
+    </button>
+  );
+}
+
+export function SessionListView({ rows, older = 0 }: SessionListState): ReactNode {
   if (!rows) return null;
-  if (!rows.length) return <EmptyPitch />;
-  return <>{rows.map((row) => <Row key={row.id} row={row} />)}</>;
+  if (!rows.length && !older) return <EmptyPitch />;
+  const listed = rows.map((row) => <Row key={row.id} row={row} />);
+  if (!older) return <>{listed}</>;
+  return <>{listed}<OlderRow older={older} /></>;
 }
 
 export function SessionList(): ReactNode {

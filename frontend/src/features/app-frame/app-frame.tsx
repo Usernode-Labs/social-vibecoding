@@ -39,8 +39,10 @@
 
 import { memo, useEffect, useRef, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { appActivity } from './app-activity.js';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
@@ -57,10 +59,11 @@ function LaunchCover({
   iconKind: string;
   iconHtml: string;
   name: string;
-  note: string;
+  note: string | null;
   spinner: boolean;
   out: boolean;
 }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="app-launch-cover"
@@ -80,7 +83,7 @@ function LaunchCover({
       >
       </div>
       <p className="app-launch-cover-name">{name}</p>
-      <p className="app-launch-cover-note" id="app-launch-cover-note">{note}</p>
+      <p className="app-launch-cover-note" id="app-launch-cover-note">{note == null ? t('agent:appFrame.cover.opening') : note}</p>
       <div
         className={
           spinner
@@ -164,6 +167,8 @@ const AppFrame = memo(function AppFrame({ slug }: { slug: string }): ReactNode {
         inert={!active}
         aria-hidden={active ? undefined : 'true'}
         tabIndex={active ? undefined : -1}
+        onLoad={(event) => appActivity.frameLoaded(event.currentTarget)}
+        onError={(event) => appActivity.frameFailed(event.currentTarget)}
       >
       </iframe>
       {cover ? (

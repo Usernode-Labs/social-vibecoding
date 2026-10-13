@@ -49,6 +49,16 @@
  * all (app deleted, FK cascade). The container list is the only complete
  * inventory, so this sweep starts from `docker ps` and joins BACK to the DB.
  *
+ * ON KUBERNETES THE INVENTORY IS THE PREVIEW DEPLOYMENTS. The same reasoning
+ * holds with `sv-preview-<appId>-s<sessionId>` Deployments in place of
+ * containers (kubernetes.listPreviews), and their rows name them by
+ * staging_runtime_name rather than by container id. Until this existed the
+ * sweep simply stood down on Kubernetes, and in production (2026-10-02) 43 of
+ * 98 previews were still running for sessions that had merged or no longer
+ * existed: every merge whose teardown came back busy, or whose merge never
+ * reached the teardown step, was "left for the stale-preview sweeper" that
+ * never ran.
+ *
  * SHAPE — mirrors services/app-rollover.js deliberately, so the two admin
  * sweeps read the same way:
  *
@@ -75,9 +85,20 @@
  *     everything, and it never touches a promoted/merging preview (that is
  *     Pass 3's job — see selectStale).
  *
- * The admin-triggered sweep stays as the bigger hammer: it tears down every
- * preview it can enumerate, stale or not, which is what you want immediately
- * after a platform env change rather than waiting out the interval.
+ * The automatic pass also takes ABANDONED previews whatever their env: the
+ * session merged, was archived, or is gone (selectAbandoned). Merge and
+ * archive tear their preview down themselves, and the idle reclaim skips
+ * merged rows on the strength of that, so a merge whose teardown failed had
+ * no other way out. A preview like that backs nothing, current env or not.
+ *
+ * The admin-triggered sweep takes the same selection (selectReapable), all of
+ * it at once instead of `limit` per interval: what you want right after a
+ * platform env change. It used to take every preview it could enumerate,
+ * which made sense for the one-off cleanup after the RSA cutover (#850), when
+ * every preview was broken. Once staleness had a fingerprint, that only added
+ * downtime: Pass 3 rebuilds an out-of-date vote-backed preview in place, and
+ * a live session's current preview has nothing wrong with it. An env change
+ * the fingerprint cannot express is what FINGERPRINT_VERSION is for.
  */
 
 const log = require('./logger');
@@ -86,6 +107,7 @@ const dbManager = require('./db-manager');
 const events = require('./events');
 const stagingEnv = require('./staging-env');
 const applicationRuntime = require('./application-runtime');
+const kubernetes = require('./kubernetes');
 const { getPool } = require('../db/pool');
 
 // Preview teardown is cheaper and less disruptive than a production
@@ -119,6 +141,11 @@ const DEFAULT_PRESSURE_SWEEP_LIMIT = 3;
 // cooldown) and a reviewer finds a working preview instead of a dead link.
 const VOTE_BACKED_STATUSES = new Set(['promoted', 'merging']);
 
+// Statuses whose preview backs nothing any more: the change is in production,
+// or the proposal was withdrawn. A preview reopened after unarchive is built
+// again on demand, as after any other teardown.
+const FINISHED_STATUSES = new Set(['merged', 'archived']);
+
 // `usernode-staging-<slug>--<sessionId>`, built by staging.js
 // buildAndDeployStagingInner. The slug itself contains hyphens (and for the
 // self-app starts with `usernode-`), so anchor on the DOUBLE hyphen before a
@@ -150,6 +177,19 @@ function isStagingEnv() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
+// The Kubernetes calls need the app namespace; fall back the same way
+// staging.teardownStaging does when the caller's config does not carry one.
+function kubernetesConfig(config) {
+  return {
+    ...(config || {}),
+    appRuntime: 'kubernetes',
+    kubernetes: {
+      ...(config?.kubernetes || {}),
+      appNamespace: config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps',
+    },
+  };
+}
+
 function concurrency() {
   const raw = parseInt(process.env.STAGING_REAP_CONCURRENCY || '', 10);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_CONCURRENCY;
@@ -179,6 +219,7 @@ function snapshot(job) {
       slug: p.slug,
       sessionId: p.sessionId,
       classification: p.classification,
+      outOfDate: !!p.outOfDate,
       state: p.state,
       ms: p.ms,
       error: p.error,
@@ -246,9 +287,45 @@ async function listStagingContainers() {
       // container (it genuinely is) but would sweep the fleet on a docker
       // too old to answer — hence the verify step in sweepStale below.
       fingerprint: fingerprint || null,
+      runtimeKind: 'docker',
     });
   }
   return out;
+}
+
+/**
+ * Every preview Deployment in the app namespace, in the same item shape as
+ * listStagingContainers. The slug is not part of a Deployment's name, so it
+ * stays null until classify() reads it off the session's app.
+ *
+ * Same failure contract: [] when the API cannot be read, so an unreadable
+ * cluster is a no-op sweep rather than a blind one.
+ */
+async function listKubernetesPreviews(config) {
+  try {
+    const previews = await kubernetes.listPreviews(kubernetesConfig(config));
+    return previews.map((preview) => ({
+      name: preview.name,
+      slug: null,
+      sessionId: preview.sessionId,
+      state: preview.state || null,
+      image: preview.image || null,
+      // The label comes from the API object itself, so null here really does
+      // mean the Deployment carries none.
+      fingerprint: preview.labels?.[stagingEnv.LABEL_ENV_FP] || null,
+      runtimeKind: 'kubernetes',
+    }));
+  } catch (err) {
+    log.warn('staging-reap', 'Kubernetes preview list failed', { err: err.message });
+    return [];
+  }
+}
+
+// The complete preview inventory for the runtime this platform deploys to.
+async function listPreviews(config) {
+  return applicationRuntime.mode(config) === 'kubernetes'
+    ? listKubernetesPreviews(config)
+    : listStagingContainers();
 }
 
 /**
@@ -278,19 +355,57 @@ function selectStale(items, expectedFp, { isInFlight = null } = {}) {
 }
 
 /**
+ * Which of these previews outlived their session? Selection = the session
+ * merged or was archived, or its row is gone entirely. The env does not
+ * matter: a merged change's preview is waste on today's platform too.
+ *
+ * Under the coordinated preview lifecycle neither status can even start a
+ * preview run (its request accepts only active/paused/promoted/merging), so
+ * nothing is building one of these back. The in-flight exclusion still
+ * applies, for the same reason as in selectStale.
+ */
+function selectAbandoned(items, { isInFlight = null } = {}) {
+  return (items || []).filter((item) => {
+    const status = item.session ? item.session.status : null;
+    if (status && !FINISHED_STATUSES.has(status)) return false;
+    if (isInFlight && isInFlight(item.sessionId)) return false;
+    return true;
+  });
+}
+
+/**
+ * Everything a sweep takes, in the order it takes it: abandoned previews
+ * first (they back nothing at all), then out-of-date ones (one may still be
+ * reopened). `abandoned` leaves out what `stale` already holds, so the two
+ * counts add up to `selected`. Neither ever holds a vote-backed preview or a
+ * session with a turn in flight.
+ */
+function selectReapable(items, expectedFp, { isInFlight = null } = {}) {
+  const stale = selectStale(items, expectedFp, { isInFlight });
+  const staleNames = new Set(stale.map((item) => item.name));
+  const abandoned = selectAbandoned(items, { isInFlight })
+    .filter((item) => !staleNames.has(item.name));
+  return { stale, abandoned, selected: [...abandoned, ...stale] };
+}
+
+/**
  * Join the container inventory back to `chat_sessions`, attaching the row
  * (when there is one) plus a human-readable classification for the console.
  *
- * The classification is presentational: this sweep tears down everything it
- * enumerates. It exists so an admin can see WHY each preview was picked, and
- * so the tally distinguishes "merged proposal, expected leftover" from
+ * The classification is presentational: what a sweep takes is decided by
+ * selectReapable. It exists so an admin can see WHY each preview was picked,
+ * and so the tally distinguishes "merged proposal, expected leftover" from
  * "session row is gone entirely".
  */
 async function classify(pool, containers) {
   if (!containers.length) return [];
   const ids = containers.map((c) => c.sessionId);
+  // The runtime columns and staging_commit_sha are what teardownStaging
+  // works from (and what the preview lifecycle compares) when the reap unit
+  // hands it this row.
   const { rows } = await pool.query(
     `SELECT cs.id, cs.status, cs.pr_number, cs.staging_container_id, cs.staging_url,
+            cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha,
             a.slug AS app_slug
        FROM chat_sessions cs
        LEFT JOIN apps a ON a.id = cs.app_id
@@ -302,39 +417,46 @@ async function classify(pool, containers) {
     const session = bySession.get(c.sessionId) || null;
     let classification;
     if (!session) classification = 'no_session_row';
-    else if (!session.staging_container_id) classification = `${session.status}_unlinked`;
+    else if (!namesPreview(c, session)) classification = `${session.status}_unlinked`;
     else classification = session.status;
-    return { ...c, session, classification };
+    return { ...c, slug: c.slug || session?.app_slug || null, session, classification };
   });
 }
 
-// How many previews the ADMIN sweep would act on right now — it takes
-// everything it can enumerate, so this is just the parsed container count.
-// Docker is the whole inventory (see the header).
-async function staleCount() {
-  const containers = await listStagingContainers();
+// Does the session row still point at this preview? A Docker row records the
+// container id; a Kubernetes row records the Deployment name, which is the
+// name the inventory lists.
+function namesPreview(item, session) {
+  if (!session) return false;
+  if (item.runtimeKind === 'kubernetes') return session.staging_runtime_name === item.name;
+  return !!session.staging_container_id;
+}
+
+// How many previews exist right now: the runtime's own listing, which is the
+// whole inventory (see the header). What a sweep would take is
+// previewCounts' `stale` + `abandoned`.
+async function staleCount(config = {}) {
+  const containers = await listPreviews(config);
   return containers.length;
 }
 
 /**
- * Counts for the admin console: how many previews exist, and how many of
- * those the AUTOMATIC pass considers out of date. Both from one docker call
- * plus one DB round-trip. Never throws; returns nulls when docker is
- * unreadable so the console renders "—" rather than a bogus zero.
+ * Counts for the admin console: how many previews exist, how many are out of
+ * date, and how many more are abandoned. A sweep takes `stale` + `abandoned`.
+ * All from one inventory call plus one DB round-trip. Never throws; returns
+ * nulls when the counts cannot be computed so the console renders "—" rather
+ * than a bogus zero.
  */
 async function previewCounts(config) {
-  if (applicationRuntime.mode(config) !== 'docker') return { open: null, stale: null };
   try {
-    const containers = await listStagingContainers();
-    if (!containers.length) return { open: 0, stale: 0 };
+    const containers = await listPreviews(config);
+    if (!containers.length) return { open: 0, stale: 0, abandoned: 0 };
     const items = await classify(getPool(config), containers);
-    return {
-      open: items.length,
-      stale: selectStale(items, stagingEnv.expectedStagingFingerprint(config)).length,
-    };
+    const { stale, abandoned } = selectReapable(items, stagingEnv.expectedStagingFingerprint(config));
+    return { open: items.length, stale: stale.length, abandoned: abandoned.length };
   } catch (err) {
     log.warn('staging-reap', 'previewCounts failed', { err: err.message });
-    return { open: null, stale: null };
+    return { open: null, stale: null, abandoned: null };
   }
 }
 
@@ -374,14 +496,18 @@ function staleSweepDue(nowMs = Date.now()) {
 function readAutomatic() {
   return _lastAutomatic
     ? { ..._lastAutomatic, intervalMs: staleSweepIntervalMs(), limit: staleSweepLimit() }
-    : { lastRunAt: null, examined: null, stale: null, tornDown: null, failed: null,
+    : { lastRunAt: null, examined: null, stale: null, abandoned: null, tornDown: null, failed: null,
         intervalMs: staleSweepIntervalMs(), limit: staleSweepLimit() };
 }
 
 /**
- * The automatic pass. Tears down up to `limit` previews whose env fingerprint
- * does not match the platform's current one, skipping vote-backed and busy
- * sessions (see selectStale).
+ * The automatic pass. Tears down up to `limit` previews that are abandoned
+ * (selectAbandoned) or whose env fingerprint does not match the platform's
+ * current one (selectStale), skipping vote-backed and busy sessions.
+ *
+ * The summary's `stale` is the out-of-date count, the number the console's
+ * "Out of date" tile shows; `abandoned` counts the previews taken on top of
+ * those, current env and all, because their session finished or is gone.
  *
  * NEVER THROWS and never runs concurrently with itself or with an admin
  * sweep — the caller is a sweeper tick, and a rejected promise there would be
@@ -392,24 +518,24 @@ function readAutomatic() {
  */
 async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
   const cap = limit || staleSweepLimit();
-  const summary = { examined: 0, stale: 0, tornDown: 0, failed: 0, skipped: 0 };
+  const summary = { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 };
   // Arm the throttle up front: a pass that takes minutes must not let the next
   // sweeper tick start a second one alongside it.
   _lastStaleSweepStartedAt = Date.now();
   try {
-    if (isStagingEnv()) return summary;      // no docker socket in a preview
-    if (applicationRuntime.mode(config) !== 'docker') return summary;
+    if (isStagingEnv()) return summary;      // a preview manages no other previews
     if (isActive(_job)) return summary;      // an admin sweep owns the fleet
 
-    const containers = await listStagingContainers();
+    const containers = await listPreviews(config);
     summary.examined = containers.length;
     if (!containers.length) return summary;
 
     // Guard against a docker whose `{{.Label}}` verb yielded nothing for
     // EVERY container: that looks identical to "the whole fleet is stale" and
     // would tear down every preview on the host. Verify one container with a
-    // real inspect before acting on a 100%-unlabelled reading.
-    if (containers.every((c) => c.fingerprint === null)) {
+    // real inspect before acting on a 100%-unlabelled reading. A Kubernetes
+    // label is read off the API object itself, so there is nothing to verify.
+    if (containers[0].runtimeKind === 'docker' && containers.every((c) => c.fingerprint === null)) {
       const probe = await docker.inspectContainer(containers[0].name);
       const probed = probe && probe.labels ? probe.labels[stagingEnv.LABEL_ENV_FP] : undefined;
       if (probed) {
@@ -424,28 +550,32 @@ async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
     }
 
     const items = await classify(getPool(config), containers);
-    const stale = selectStale(items, stagingEnv.expectedStagingFingerprint(config), { isInFlight });
+    const { stale, abandoned, selected } = selectReapable(
+      items, stagingEnv.expectedStagingFingerprint(config), { isInFlight }
+    );
     summary.stale = stale.length;
-    if (!stale.length) return summary;
+    summary.abandoned = abandoned.length;
+    if (!selected.length) return summary;
 
-    const batch = stale.slice(0, cap);
-    if (stale.length > batch.length) {
+    const batch = selected.slice(0, cap);
+    if (selected.length > batch.length) {
       // Never let a cap look like completeness.
       log.info('staging-reap', 'Stale pass capped — remainder waits for the next pass', {
-        stale: stale.length, limit: cap, deferred: stale.length - batch.length,
+        selected: selected.length, limit: cap, deferred: selected.length - batch.length,
       });
-      summary.skipped = stale.length - batch.length;
+      summary.skipped = selected.length - batch.length;
     }
 
     log.info('staging-reap', 'Automatic stale-preview pass started', {
-      examined: summary.examined, stale: summary.stale, acting: batch.length,
+      examined: summary.examined, stale: summary.stale, abandoned: summary.abandoned,
+      acting: batch.length,
     });
 
     await drain(batch, concurrency(), async (item) => {
       let outcome = FAILED;
       let error = null;
       try {
-        const result = await reapOne(item);
+        const result = await reapOne(item, config);
         outcome = result.outcome;
         error = result.error || null;
       } catch (err) {
@@ -472,6 +602,7 @@ async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
         failed: summary.failed,
         examined: summary.examined,
         stale: summary.stale,
+        abandoned: summary.abandoned,
         deferred: summary.skipped,
       },
     });
@@ -484,6 +615,7 @@ async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
       lastRunAt: new Date().toISOString(),
       examined: summary.examined,
       stale: summary.stale,
+      abandoned: summary.abandoned,
       tornDown: summary.tornDown,
       failed: summary.failed,
     };
@@ -497,8 +629,9 @@ async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
  * empty. Never persisted; the route serves it only behind
  * IS_STAGING && ?demo=1, and POST stays refused in staging regardless.
  *
- * Covers one row of each classification plus a `failed` one, so the error
- * styling is screenshot-covered too.
+ * Covers one row of each kind a sweep takes (abandoned, out of date, leaked
+ * past teardown, session gone) plus a `failed` one, so the error styling is
+ * screenshot-covered too.
  */
 function demoJob() {
   return {
@@ -544,7 +677,8 @@ function demoJob() {
         name: 'usernode-staging-staging-demo-recipebot--900104',
         slug: 'staging-demo-recipebot',
         sessionId: 900104,
-        classification: 'promoted',
+        classification: 'paused',
+        outOfDate: true,
         state: TORN_DOWN,
         ms: 2600,
         error: null,
@@ -573,20 +707,22 @@ function demoJob() {
 
 /**
  * Staging demo counters + automatic-pass history to accompany demoJob(),
- * so the "Out of date" tile and the "last automatic sweep" line are
+ * so the "To shut down" tile and the "last automatic sweep" line are
  * screenshot-covered in a preview too (#851). Same rules as demoJob: fixed
  * timestamps, obviously-fake values, never persisted, served only behind
  * IS_STAGING && ?demo=1.
  */
 function demoCounts() {
   return {
-    open: 6,
+    open: 9,
     stale: 4,
+    abandoned: 2,
     expectedFingerprint: 'stagingdemofp0000',
     automatic: {
       lastRunAt: '2026-01-01T11:45:00.000Z',
-      examined: 6,
+      examined: 9,
       stale: 4,
+      abandoned: 2,
       tornDown: 3,
       failed: 1,
       intervalMs: 900000,
@@ -601,9 +737,10 @@ function demoCounts() {
  * answer immediately — same fire-and-forget shape as app-rollover.start.
  *
  * Returns { started, job }. `started: false` means a job was already in
- * flight and `job` is that one.
+ * flight and `job` is that one. `isInFlight` is the same guard the automatic
+ * pass gets (see selectStale).
  */
-function start(config, { userId = null, username = null } = {}) {
+function start(config, { userId = null, username = null, isInFlight = null } = {}) {
   if (isActive(_job)) return { started: false, job: snapshot(_job) };
 
   const job = {
@@ -622,7 +759,7 @@ function start(config, { userId = null, username = null } = {}) {
 
   // Detached: errors are contained here so an unhandled rejection can never
   // escape into the request that started the sweep.
-  run(config, job).catch((err) => {
+  run(config, job, { isInFlight }).catch((err) => {
     log.error('staging-reap', 'Sweep crashed', { jobId: job.id, err: err.message });
     if (!job.finishedAt) {
       job.finishedAt = new Date().toISOString();
@@ -633,24 +770,30 @@ function start(config, { userId = null, username = null } = {}) {
   return { started: true, job: snapshot(job) };
 }
 
-async function run(config, job) {
+async function run(config, job, { isInFlight = null } = {}) {
   const pool = getPool(config);
   const startedMs = Date.now();
 
-  const containers = await listStagingContainers();
-  const items = await classify(pool, containers);
+  const containers = await listPreviews(config);
+  const { stale, selected: items } = selectReapable(
+    await classify(pool, containers), stagingEnv.expectedStagingFingerprint(config), { isInFlight }
+  );
+  // The classification says what the session is doing; for a live session's
+  // preview the reason it was taken is its env, so the row says that too.
+  const staleNames = new Set(stale.map((item) => item.name));
   job.total = items.length;
   job.previews = items.map((item) => ({
     name: item.name,
     slug: item.slug,
     sessionId: item.sessionId,
     classification: item.classification,
+    outOfDate: staleNames.has(item.name),
     state: 'pending',
     ms: null,
     error: null,
   }));
   log.info('staging-reap', 'Stale preview sweep started', {
-    jobId: job.id, total: job.total, concurrency: job.concurrency,
+    jobId: job.id, examined: containers.length, total: job.total, concurrency: job.concurrency,
     by: job.startedBy || null,
   });
   broadcast(job);
@@ -663,7 +806,7 @@ async function run(config, job) {
     let outcome = FAILED;
     let error = null;
     try {
-      const result = await reapOne(item);
+      const result = await reapOne(item, config);
       outcome = result.outcome;
       error = result.error || null;
     } catch (err) {
@@ -825,24 +968,67 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     ]);
     summary.examined = dbs.rows.length;
 
+    const liveSessionIds = new Set(live.rows.map((r) => Number(r.id)));
     const orphans = selectOrphanDbs({
       dbNames: dbs.rows.map((r) => r.datname),
-      liveSessionIds: new Set(live.rows.map((r) => Number(r.id))),
+      liveSessionIds,
       connectedDbNames: new Set(connected.rows.map((r) => r.datname)),
       hasInFlightBuild: staging.hasInFlightBuild,
     });
-    summary.orphaned = orphans.length;
-    if (!orphans.length) return summary;
 
-    const batch = orphans.slice(0, cap);
+    // The preview server, when there is one (STAGING_DB_ADMIN_URL): the same
+    // classification over ITS databases and ITS connections. Each orphan
+    // remembers the server it was found on and is dropped there only, so a
+    // database of the same name that is in use on the other server is never
+    // reached by this pass. A preview server that cannot be read contributes
+    // nothing this time; the main server's pass goes on.
+    const onPreviewServer = new Set();
+    const previewServer = dbManager.previewServerConfigured?.() ? dbManager.PREVIEW_SERVER : null;
+    if (previewServer) {
+      try {
+        const there = await dbManager.listPreviewServerStagingDatabases();
+        summary.examined += there.dbNames.length;
+        for (const name of selectOrphanDbs({
+          dbNames: there.dbNames,
+          liveSessionIds,
+          connectedDbNames: there.connectedDbNames,
+          hasInFlightBuild: staging.hasInFlightBuild,
+        })) onPreviewServer.add(name);
+      } catch (err) {
+        log.warn('staging-reap', 'Could not list the preview database server; skipping it this pass', { err: err.message });
+      }
+      // Templates of apps that have not built since previews moved.
+      const retired = await dbManager.retireStrayTemplates();
+      if (retired.dropped || retired.failed) log.info('staging-reap', 'Stray staging templates retired', retired);
+    }
+    // One entry per (database, server). With one server this is the list it
+    // always was.
+    const work = [
+      ...[...onPreviewServer].map((dbName) => ({ dbName, server: previewServer })),
+      ...orphans.map((dbName) => ({ dbName, server: previewServer ? dbManager.PRIMARY_SERVER : null })),
+    ];
+    summary.orphaned = work.length;
+    if (!work.length) return summary;
+    const dropOrphan = ({ dbName, server }) => (server
+      ? dbManager.dropDatabase(dbName, { server })
+      : dbManager.dropDatabase(dbName));
+    // Is anything connected to it, on the server it is on?
+    const hasSessions = async ({ dbName, server }) => {
+      if (server && server === previewServer) return dbManager.previewServerDatabaseHasSessions(dbName);
+      const { rows } = await pool.query('SELECT 1 FROM pg_stat_activity WHERE datname = $1', [dbName]);
+      return rows.length > 0;
+    };
+
+    const batch = work.slice(0, cap);
     log.info('staging-reap', 'Orphan staging-DB pass started', {
-      examined: summary.examined, orphaned: orphans.length,
-      acting: batch.length, deferred: orphans.length - batch.length,
+      examined: summary.examined, orphaned: work.length,
+      acting: batch.length, deferred: work.length - batch.length,
     });
 
     // Serial on purpose: DROP DATABASE forces WAL/checkpoint work, and this
     // pass must stay invisible in host I/O next to live staging restores.
-    for (const dbName of batch) {
+    for (const item of batch) {
+      const { dbName } = item;
       try {
         const lifecycle = require('./preview-lifecycle');
         if (lifecycle.enabled(config)) {
@@ -851,15 +1037,14 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
             require('./advisory-locks').PREVIEW_LIFECYCLE_LOCK, sessionId, async () => {
               // The census predates lock acquisition. Recheck durable ownership
               // and connections after every competing build/capture has stopped.
-              const { rows } = await pool.query(`SELECT 1 FROM chat_sessions
-                WHERE id = $1 AND staging_url IS NOT NULL
-                UNION ALL SELECT 1 FROM pg_stat_activity WHERE datname = $2`, [sessionId, dbName]);
-              if (rows.length) return;
-              await dbManager.dropDatabase(dbName);
+              const { rows } = await pool.query(
+                'SELECT 1 FROM chat_sessions WHERE id = $1 AND staging_url IS NOT NULL', [sessionId]);
+              if (rows.length || await hasSessions(item)) return;
+              await dropOrphan(item);
               summary.dropped++;
             });
         } else {
-          await dbManager.dropDatabase(dbName);
+          await dropOrphan(item);
           summary.dropped++;
         }
       } catch (err) {
@@ -874,6 +1059,89 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
   } catch (err) {
     log.warn('staging-reap', 'Orphan staging-DB pass errored', { err: err.message });
     return summary;
+  }
+}
+
+// ─── What still depends on a preview server that is being drained ───────
+//
+// Draining (STAGING_DB_SERVER_DRAIN) is the step before a preview database
+// server is removed, and "may it be removed yet" needs a real answer. Open
+// connections are not one: a preview holds none between requests or once its
+// pool's idle timeout passes, and it still breaks when its server goes. So
+// this counts what depends on the server, erring towards "still in use":
+//
+//   - every preview runtime that EXISTS, in any state (running, starting,
+//     restarting, stopped), whose labels say its database is there. A
+//     runtime that is restarting today is serving again tomorrow;
+//   - every session row that names a runtime it could not read;
+//   - the builds it can see: sessions whose checks are pending in their
+//     build phase (a row, so other platform replicas' builds of that kind
+//     count), and this process's own builds. NOT every build: a rebuild
+//     another replica starts from recovery while a checks commit is already
+//     pinned leaves the phase empty and is in neither;
+//   - every before & after shots run that has not finished, and every shots
+//     database still on the server.
+//
+// What it CANNOT see: the rebuilds just named, and a platform replica that
+// has not yet been restarted with the drain setting, which keeps making
+// previews on the preview server; a build it starts a moment after this
+// count is not in it. A replica that HAS the drain setting builds on the
+// main server, so once the rollout is over an unseen build no longer adds a
+// dependent, and one that finished shows up as a labelled runtime on the
+// next pass: hence two passes. So the line this
+// logs is "none found", not "safe to remove": the procedure in
+// docs/kubernetes-operations.md also requires the rollout that set the
+// drain to have finished, and the line to hold for two passes. Logged every
+// ten minutes while draining. Null when not draining or when something could
+// not be read. Never throws.
+const DRAIN_STATUS_INTERVAL_MS = 10 * 60 * 1000;
+let _lastDrainStatusAt = 0;
+
+async function previewServerDrainStatus(config, { now = Date.now(), force = false } = {}) {
+  try {
+    if (isStagingEnv()) return null;
+    if (!dbManager.previewServerConfigured?.() || !dbManager.previewServerDraining?.()) return null;
+    if (!force && now - _lastDrainStatusAt < DRAIN_STATUS_INTERVAL_MS) return null;
+    _lastDrainStatusAt = now;
+    const pool = getPool(config);
+    const staging = require('./staging');
+    const stagingRecovery = require('./staging-recovery');
+    const { rows } = await pool.query(
+      `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id,
+              (check_state = 'pending' AND check_phase = 'building') AS building
+         FROM chat_sessions
+        WHERE staging_url IS NOT NULL OR staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL
+           OR (check_state = 'pending' AND check_phase = 'building')
+        ORDER BY id`
+    );
+    const status = { previews: [], unread: 0, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0 };
+    for (const session of rows) {
+      if (session.building || staging.hasInFlightBuild(Number(session.id))) status.buildsInFlight += 1;
+      if (!session.staging_runtime_name && !session.staging_container_id) continue;
+      const state = await stagingRecovery.inspectPreviewRuntime(session, config);
+      if (!state) { status.unread += 1; continue; }
+      if (state.status === 'not_found') continue;
+      if (dbManager.previewDatabaseServerOf(state.labels) === dbManager.PREVIEW_SERVER) status.previews.push(Number(session.id));
+    }
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM shot_runs
+        WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')`
+    );
+    status.shotsRuns = Number(runs.rows[0]?.n) || 0;
+    status.shotsDatabases = (await dbManager.previewServerShotsDatabases()).length;
+    const clear = !status.previews.length && !status.unread && !status.buildsInFlight
+      && !status.shotsRuns && !status.shotsDatabases;
+    log.info('staging-reap', clear
+      ? 'Preview database server drain: no dependent preview, build or shots run found'
+      : 'Preview database server drain: still in use', {
+      previews: status.previews.length, sessionIds: status.previews.slice(0, 50),
+      previewsNotRead: status.unread, buildsInFlight: status.buildsInFlight,
+      shotsRuns: status.shotsRuns, shotsDatabases: status.shotsDatabases,
+    });
+    return { ...status, clear };
+  } catch (err) {
+    log.warn('staging-reap', 'Preview database server drain status could not be read', { err: err.message });
+    return null;
   }
 }
 
@@ -946,8 +1214,15 @@ function selectPressureVictims({ rows, isBusy = null, hasInFlightBuild = null })
  * down with it. Generated apps frequently have no such listener, so the
  * platform would be crash-looping other people's production apps to make
  * room for a preview.
+ *
+ * `server` picks whose budget is read. The main server's is read through the
+ * platform's pool, as always. With a preview database server
+ * (STAGING_DB_ADMIN_URL) there are two budgets, and a preview only holds
+ * connections on the server its database is on: each pass then considers
+ * only the previews that live on the server it measured, since tearing down
+ * one on the other server would free nothing here.
  */
-async function sweepConnectionPressure(config, { limit = null } = {}) {
+async function sweepConnectionPressure(config, { limit = null, server = null } = {}) {
   const cap = limit || pressureSweepLimit();
   const summary = { saturated: false, candidates: 0, tornDown: 0, failed: 0, freed: 0 };
   _lastPressureSweepStartedAt = Date.now();
@@ -958,7 +1233,12 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
 
     const pool = getPool(config);
     const { connectionCensus } = require('../db/connection-census');
-    const before = await connectionCensus(pool);
+    const twoServers = !!dbManager.previewServerConfigured?.();
+    const onPreviewServer = twoServers && server === 'preview';
+    // Asked about a preview server there is not: nothing to read.
+    if (server === 'preview' && !twoServers) return summary;
+    const reader = onPreviewServer ? dbManager.previewServerQueryable() : pool;
+    const before = await connectionCensus(reader);
     // A null census means the query itself could not run, which on this
     // path most likely means the server is ALREADY refusing connections.
     // Acting on a reading we do not have would be guessing, and the stale
@@ -979,15 +1259,37 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
         ORDER BY last_activity_at ASC
         LIMIT 50`
     );
-    const victims = selectPressureVictims({
+    const where = twoServers ? { server: onPreviewServer ? 'preview' : 'main' } : {};
+    // With two servers a preview only holds connections where its CURRENT
+    // runtime's database is, which its labels say (staging.js writes them at
+    // deploy). Not the session's number in some database name: a session can
+    // keep an old clone on one server while its preview runs on the other.
+    // A runtime without labels was built before the setting and is on the
+    // main server. One that cannot be read is left alone.
+    const holdsConnectionsHere = async (row) => {
+      if (!twoServers) return true;
+      const session = await pool.query(
+        `SELECT id, staging_runtime_kind, staging_runtime_name, staging_container_id
+           FROM chat_sessions WHERE id = $1`, [row.id]);
+      const state = session.rows[0]
+        ? await require('./staging-recovery').inspectPreviewRuntime(session.rows[0], config) : null;
+      if (!state || state.status === 'not_found') return false;
+      const labelled = dbManager.previewDatabaseServerOf(state.labels) || dbManager.PRIMARY_SERVER;
+      return labelled === (onPreviewServer ? dbManager.PREVIEW_SERVER : dbManager.PRIMARY_SERVER);
+    };
+    const eligible = selectPressureVictims({
       rows,
       isBusy: activeWorkers.isSessionBusy,
       hasInFlightBuild: staging.hasInFlightBuild,
     });
+    const victims = [];
+    for (const row of eligible) {
+      if (await holdsConnectionsHere(row)) victims.push(row);
+    }
     summary.candidates = victims.length;
     if (!victims.length) {
       log.warn('staging-reap', 'Postgres near its connection limit, no reclaimable preview', {
-        used: before.used, max: before.max, topDatabases: before.topDatabases,
+        used: before.used, max: before.max, topDatabases: before.topDatabases, ...where,
       });
       return summary;
     }
@@ -995,11 +1297,13 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
     log.warn('staging-reap', 'Connection-pressure pass started', {
       used: before.used, max: before.max, free: before.free,
       candidates: victims.length, cap,
-      topDatabases: before.topDatabases,
+      topDatabases: before.topDatabases, ...where,
     });
 
     for (const victim of victims.slice(0, cap)) {
       try {
+        // Looked at again: a rebuild since the selection may have moved it.
+        if (twoServers && !(await holdsConnectionsHere(victim))) continue;
         const res = await sessionLifecycle.teardownStagingForSession({
           pool, sessionId: Number(victim.id), reason: 'connection-pressure',
         });
@@ -1013,7 +1317,7 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
       // Stop at the first reading that clears: this pass is allowed to
       // reclaim previews to relieve pressure, not to keep reclaiming them
       // once the pressure is gone.
-      const now = await connectionCensus(pool);
+      const now = await connectionCensus(reader);
       if (now) {
         summary.freed = Math.max(0, now.free - before.free);
         if (!now.saturated) break;
@@ -1043,12 +1347,18 @@ async function sweepConnectionPressure(config, { limit = null } = {}) {
  *   - No session row, or the row no longer names it → by-name teardown,
  *     because teardownStaging would derive the wrong database name from a
  *     NULL staging_url (its regex falls back to the literal '000000').
+ *
+ * A Kubernetes item takes the same two paths; "names it" means its row's
+ * staging_runtime_name is this Deployment (see namesPreview).
  */
-async function reapOne(item) {
-  const exists = await docker.containerExists(item.name).catch(() => true);
+async function reapOne(item, config = {}) {
+  const kube = item.runtimeKind === 'kubernetes';
+  const exists = kube
+    ? await kubernetesPreviewExists(config, item.name)
+    : await docker.containerExists(item.name).catch(() => true);
   if (!exists) return { outcome: 'skipped_gone' };
 
-  const linked = !!(item.session && item.session.staging_container_id);
+  const linked = namesPreview(item, item.session);
 
   if (linked) {
     try {
@@ -1074,6 +1384,22 @@ async function reapOne(item) {
   }
 
   // By-name path. The container is the only thing we are sure about.
+  if (kube) {
+    try {
+      await applicationRuntime.remove(kubernetesConfig(config), {
+        runtimeKind: 'kubernetes', runtimeName: item.name,
+      });
+    } catch (err) {
+      log.warn('staging-reap', 'Kubernetes preview removal failed', { name: item.name, err: err.message });
+      return { outcome: FAILED, error: err.message };
+    }
+    // A Kubernetes image is addressed by digest, so nothing left here names
+    // the commit this preview's staging database was cloned for. Its row no
+    // longer points at a live preview, so the orphan-database pass
+    // (sweepOrphanDbs) drops the clone once nothing is connected to it.
+    return { outcome: TORN_DOWN_NO_DB };
+  }
+
   try {
     await docker.stopAndRemove(item.name, {
       stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
@@ -1105,6 +1431,19 @@ async function reapOne(item) {
       name: item.name, dbName, err: err.message,
     });
     return { outcome: TORN_DOWN_NO_DB };
+  }
+}
+
+// Same stance as the Docker probe's catch: an unreadable API must not read as
+// "already gone", or a preview would be reported reaped while still running.
+async function kubernetesPreviewExists(config, name) {
+  try {
+    const found = await applicationRuntime.inspect(kubernetesConfig(config), {
+      runtimeKind: 'kubernetes', runtimeName: name,
+    });
+    return found?.status !== 'not_found';
+  } catch (_) {
+    return true;
   }
 }
 
@@ -1147,8 +1486,11 @@ module.exports = {
   staleCount,
   previewCounts,
   listStagingContainers,
+  listPreviews,
   classify,
   selectStale,
+  selectAbandoned,
+  selectReapable,
   sweepStale,
   readAutomatic,
   staleSweepDue,
@@ -1158,6 +1500,7 @@ module.exports = {
   selectOrphanDbs,
   // Connection-pressure pass (#1771).
   sweepConnectionPressure,
+  previewServerDrainStatus,
   selectPressureVictims,
   pressureSweepDue,
   pressureSweepIntervalMs,
@@ -1167,6 +1510,7 @@ module.exports = {
   reapOne,
   CONTAINER_NAME_RE,
   VOTE_BACKED_STATUSES,
+  FINISHED_STATUSES,
   TORN_DOWN,
   TORN_DOWN_NO_DB,
   FAILED,

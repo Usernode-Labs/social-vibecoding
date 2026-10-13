@@ -301,6 +301,31 @@ test('wallet provisioning preserves build 1250 errors without a season or accoun
   assert.equal(responses.length, 0);
 });
 
+test('a test account never takes a season wallet, whatever the pool holds (D2)', async () => {
+  // A season and a free wallet are both there; a test account must not
+  // reach either query. Walletless on a build that accepts it, the
+  // recoverable wallet_required refusal on one that cannot decode account:null.
+  const queries = [];
+  const wallets = { query: async (sql) => { queries.push(sql); return { rows: [{ id: 7 }] }; } };
+  assert.equal(await provisionWallet(wallets, 41, { allowWalletless: true, testAccount: true }), null);
+  await assert.rejects(provisionWallet(wallets, 41, { allowWalletless: false, testAccount: true }), {
+    status: 409, code: 'native_session_wallet_required',
+  });
+  assert.equal(queries.length, 0, 'no season or pool query ran');
+  // An ordinary account on the same pool still gets its wallet.
+  const responses = [
+    { rows: [{ id: 7 }] },
+    { rows: [] },
+    { rows: [{ id: 3, address: 'ut1-pool', public_key: 'pk', secret_key: 'sk', season_event_id: null }] },
+    { rows: [] },
+    { rows: [] },
+  ];
+  const pool = { query: async () => responses.shift() };
+  const account = await provisionWallet(pool, 41, { allowWalletless: true });
+  assert.equal(account.id, 3);
+  assert.equal(account.newlyAllocated, true);
+});
+
 class TicketPool {
   constructor(now) {
     this.now = now;
@@ -506,8 +531,8 @@ test('walletless exchange fails before issuing a bearer or credential on build 1
             queries.push(sql);
             if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
             if (sql.startsWith('SELECT a.attempt_id')) return { rows: [row] };
-            if (sql.startsWith('SELECT id, bp_released_at FROM users')) {
-              return { rows: [{ id: 41, bp_released_at: null }] };
+            if (sql.startsWith('SELECT id, bp_released_at, test_account_created_at FROM users')) {
+              return { rows: [{ id: 41, bp_released_at: null, test_account_created_at: null }] };
             }
             if (sql.startsWith('SELECT token FROM sessions')) {
               return { rows: [{ token: 'web-session-still-valid' }] };

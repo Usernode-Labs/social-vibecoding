@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">Plan a potluck and say what you are bringing, so the table is not six salads.</p>
+    </header>
+
+    <p id="status" class="text-small text-danger" role="alert" hidden></p>
+
+    <!-- Loading: shapes where the potlucks will be. -->
+    <div id="loading" class="flex flex-col gap-2" aria-label="Loading">
+      <div class="skeleton h-6 w-2/3"></div>
+      <div class="skeleton h-4 w-1/2"></div>
+      <div class="skeleton mt-2 h-40 w-full"></div>
+    </div>
+
+    <!-- Error: only when the load failed. -->
+    <div id="error" class="state-error card" hidden>
+      <p class="text-heading">The potlucks did not load</p>
+      <p class="text-body text-muted">Nothing is lost. Check your connection and try again.</p>
+      <button id="retry" type="button" class="btn-secondary">Retry</button>
+    </div>
+
+    <!-- Empty: only when the load worked and nothing is coming up. -->
+    <div id="empty" class="state-empty card" hidden>
+      <p class="text-heading">No potluck planned yet</p>
+      <p class="text-body text-muted">Plan one below: pick a day, a time and a place, and everyone can say what they will bring.</p>
+    </div>
+
+    <div id="potlucks" class="flex flex-col gap-10" hidden></div>
+
+    <form id="plan-form" class="flex flex-col gap-3" autocomplete="off">
+      <h2 class="section-label mb-0">Plan a potluck</h2>
+      <div class="flex flex-col gap-1">
+        <label for="plan-title" class="px-1 text-small text-muted">What is it called?</label>
+        <input id="plan-title" name="title" type="text" maxlength="80" required class="field"
+          placeholder="e.g. Friday night potluck">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div class="flex flex-col gap-1">
+          <label for="plan-date" class="px-1 text-small text-muted">Day</label>
+          <input id="plan-date" name="date" type="date" required class="field">
+        </div>
+        <div class="flex flex-col gap-1">
+          <label for="plan-time" class="px-1 text-small text-muted">Time</label>
+          <input id="plan-time" name="time" type="time" required class="field" value="18:00">
+        </div>
+      </div>
+      <div class="flex flex-col gap-1">
+        <label for="plan-place" class="px-1 text-small text-muted">Where, if you know</label>
+        <input id="plan-place" name="place" type="text" maxlength="120" class="field"
+          placeholder="e.g. Ana's place">
+      </div>
+      <button type="submit" class="btn-primary">Plan it</button>
+      <p id="plan-status" class="text-small text-danger" role="alert" hidden></p>
+    </form>
+
+    <section id="past-section" class="flex flex-col" hidden>
+      <h2 class="section-label">Past potlucks</h2>
+      <ul id="past" class="list"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

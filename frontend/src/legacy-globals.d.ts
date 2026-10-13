@@ -16,6 +16,22 @@
 export {};
 
 declare global {
+  /**
+   * An agent session's hint as a legacy caller hands it over
+   * (features/agent-session/api.ts AgentHint). `message` and `handoff` are
+   * the screen's alone: the unsent conversation's first message, and the
+   * "Build with" tab it opens on.
+   */
+  interface LegacyAgentHint {
+    slug?: string;
+    issueNumber?: number;
+    proposalId?: number;
+    entry?: string;
+    issueTitle?: string;
+    message?: string;
+    handoff?: 'claude-code' | 'codex';
+  }
+
   /** What a kit presentation returns; `el` is the shell it built. */
   interface KitHandle {
     el?: HTMLElement | null;
@@ -48,6 +64,8 @@ declare global {
       markConversationRead(conversationId: number): void;
       /** The same, for one reply thread's alerts (#2387). */
       markConversationThreadRead(conversationId: number, rootId: number): void;
+      /** One row's descriptor: its kind line and subject segments (#3233). */
+      _rowView?(row: Record<string, unknown>): unknown;
       open: boolean;
       [key: string]: unknown;
     };
@@ -90,6 +108,7 @@ declare global {
       restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
+      setRailPinned?(on: boolean): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
         options?: unknown): string;
       _rootUrl?(hash?: string): string;
@@ -140,6 +159,17 @@ declare global {
         items: Array<{ label: string; title?: string; destructive?: boolean; handler: () => void }>;
       }): Promise<unknown>;
       copyText?(text: string): Promise<boolean>;
+      /**
+       * The kit's swipe-to-act row (unNative.attachSwipeActions): it wraps
+       * `row` in a container of its own beside the action tray, so the
+       * element handed in must not be one React places among siblings. The
+       * last action, when destructive, is also the full swipe, and it takes
+       * the row out of the document BEFORE its handler runs. An inert
+       * handle without the kit.
+       */
+      swipeActions?(row: HTMLElement, opts: {
+        actions: Array<{ label: string; color?: string; destructive?: boolean; handler: () => void }>;
+      }): { close(): void; detach(): void };
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -190,6 +220,8 @@ declare global {
     /** public/js/app-view.js — the app screen. The dialogs read its appData. */
     AppView?: {
       appData?: { slug?: string; name?: string; url?: string; [key: string]: unknown } | null;
+      /** Let `slug`'s kept-alive frame go, so its next open loads afresh; true when one went. */
+      evictKeptApp?(slug: string): boolean;
       /**
        * POST /api/apps/:slug/main-check/resume — the admin's "I know, let
        * them through" while main's unit suite is red. One implementation,
@@ -198,6 +230,8 @@ declare global {
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
       /** The "Proposal checks" dialog for one change: its checks, Refresh and Re-run. */
       openSessionChecks?(sessionId: number): void;
+      /** The Members dialog (features/dialogs/members-controller.js). */
+      openMembersModal?(opts?: { focus?: 'approvals' }): void;
       /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
       castRecheck?(sessionId: number): Promise<boolean | undefined>;
       /**
@@ -261,6 +295,16 @@ declare global {
         string,
         { isOpen(): boolean; open(payload?: unknown): void; close(): void } | undefined
       >;
+      /**
+       * features/first-session: the first session's screens, and the one
+       * front door for a new project. `create` opens "What do you want to
+       * make?" from the Create button, or its import form (`import`); false
+       * when another of its screens holds the view.
+       */
+      firstSession?: {
+        create?(opts?: { import?: boolean }): boolean;
+        [key: string]: unknown;
+      };
       messages?: {
         open(conversationId?: number | null): void;
         route(conversationId?: number | null): void;
@@ -273,6 +317,19 @@ declare global {
         /** Repaint one row's save state — the notifications drawer's unsave. */
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
+        /** #3705: the inbox and the conversation on screen, from the server. */
+        resync(): Promise<void> | void;
+        /** The Messages screen, or a room embedded in its community's page, is on screen. */
+        showing(): boolean;
+      };
+      /** lib/live-reads.ts (#4177): re-read what is on screen after a gap. */
+      liveReads?: {
+        watch(
+          reread: (resync: { reason: string; reasons: string[]; urls: string[] | null }) => unknown,
+          options?: { reads?: (url: URL) => boolean },
+        ): () => void;
+        resync(reason: string, url?: string | null): void;
+        FRESH: RequestInit;
       };
       /**
        * features/agent-session/store.ts (#2779). `new` is the conversation
@@ -281,12 +338,8 @@ declare global {
       agentSession?: {
         open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
         route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
-        start(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
-        prepareDraft(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
+        start(hint?: LegacyAgentHint | null): void;
+        prepareDraft(hint?: LegacyAgentHint | null): void;
         deactivate(): void;
         isOpen(): boolean;
         currentId(): number | 'new' | null;

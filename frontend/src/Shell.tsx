@@ -43,7 +43,7 @@
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
 //    semantics, same data-*/aria-* attributes — public/js/** looks these up by
-//    getElementById and dapp.json's 315 declared tests select against these
+//    getElementById and dapp.json's declared checks select against these
 //    exact structures. tests/baselines/shell-markup.json is the frozen
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
@@ -77,22 +77,26 @@ import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
 import { OnboardingTour } from './features/home/tour';
+import { FirstSession } from './features/first-session';
+import { InvitePreview } from './features/invite-preview';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
-import { ParkedStrip, PlatformTabs, SkipToNavigation } from './features/nav';
+import { ParkedStrip, PlatformTabs, SectionColumn, SkipToNavigation } from './features/nav';
 import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
+import { ProfileProposalsScreen } from './features/profile/my-proposals';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
 import { Island } from './lib/island-boundary';
 import { assetUrl } from './lib/asset-url';
@@ -121,6 +125,14 @@ export function Shell() {
           Hidden the moment the probe succeeds.
       */}
       <Island name="OfflineBanner"><OfflineBanner /></Island>
+      {/*
+          "Showing Homeroom in Español · Switch to English": shown once, the
+          first time the language was picked from the device, fixed above
+          the tab bar where a toast rests (app.css). Renders nothing until
+          then, and never while only English ships. See
+          features/shell/language-notice.tsx.
+      */}
+      <Island name="LanguageNotice"><LanguageNotice /></Island>
       {/*
           Mobile-browser install strip (#1372) — a React island in
           features/mobile-install. Offers the native app to a visitor who
@@ -191,6 +203,16 @@ export function Shell() {
           App.REACT_SCREEN_IDS).
       */}
       <Island name="WorkshopScreen"><WorkshopScreen /></Island>
+      {/*
+          The Your work screen (hidden by default; "Your proposals" #5310
+          until the UI overhaul): Your changes, Your requests or Your votes,
+          the three rows of Profile's "Your work", one view at a time
+          (#profile/your-changes, /your-requests, /your-votes). Fully
+          React-owned like #workshop-screen, shipped hidden and empty; the
+          rows arrive in the controller's open(). Mounted by
+          App.navigateToProfileProposals(kind).
+      */}
+      <Island name="ProfileProposalsScreen"><ProfileProposalsScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -455,6 +477,14 @@ export function Shell() {
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
+          #4417: #platform-section-column, the column beside the desktop
+          strip that belongs to the section on screen: a project's places
+          under Communities (features/nav/section-column.tsx). New markup,
+          shipped hidden and empty; never drawn on a phone, where the places
+          are the tray behind the page's place bar.
+      */}
+      <Island name="SectionColumn"><SectionColumn /></Island>
+      {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same
           chrome, same top-right position, one icon apart. THE UI OVERHAUL
@@ -550,6 +580,21 @@ export function Shell() {
       */}
       <Island name="OnboardingTour"><OnboardingTour /></Island>
       {/*
+          "You're in" and the first-session tour after an invite
+          (features/first-session). Renders nothing until
+          App._followInvite opens it, so it adds nothing to the
+          prerendered document.
+      */}
+      <Island name="FirstSession"><FirstSession /></Island>
+      {/*
+          A private community's invite preview (#3700,
+          features/invite-preview): its page as a live link shows it to
+          somebody not in it yet, drawn from the link alone. Renders nothing
+          until App._followInvite opens it, so it adds nothing to the
+          prerendered document.
+      */}
+      <Island name="InvitePreview"><InvitePreview /></Island>
+      {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets
           features/dev-board portal React subtrees into hosts the legacy
@@ -574,6 +619,12 @@ export function Shell() {
       */}
       <script src={assetUrl('/js/nav-link.js')} />
       <script src={assetUrl('/js/platform-ui.js')} />
+      {/**
+          Privacy-bounded UI experience collector. It has no dependencies and
+          listens for the session event app.js publishes, so load it before
+          every instrumented journey and before app.js begins boot.
+      */}
+      <script src={assetUrl('/js/ui-telemetry.js')} />
       {/*
           /js/offline.js used to load here. #1078 retired it: the banner it
           owned is a React island (features/shell/banners.tsx), the

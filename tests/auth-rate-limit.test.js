@@ -50,6 +50,9 @@ async function withAuthLimiters(fn) {
     app.post('/otp/request', L.otpRequestLimiter, L.otpRequestEmailLimiter, stand);
     app.post('/otp/verify', L.otpVerifyLimiter, stand);
     app.post('/otp/set-password', L.otpVerifyLimiter, stand);
+    // The phone request's pair, mounted the same way routes/phone-auth.js does.
+    app.post('/phone/request', L.phoneOtpRequestLimiter, L.phoneOtpRequestPhoneLimiter, stand);
+    app.post('/phone/verify', L.phoneVerifyLimiter, stand);
     app.post('/reset/request', L.passwordResetRequestLimiter, L.passwordResetRequestEmailLimiter, stand);
     app.post('/reset/confirm', L.passwordResetConfirmLimiter, stand);
 
@@ -208,6 +211,45 @@ test('one mailbox cannot be flooded, while other recipients are unaffected', asy
       (await post(base, '/otp/request', { email: 'someone-else@example.invalid' })).status,
       429,
       'a different recipient must have its own budget',
+    );
+  });
+});
+
+test('one phone number cannot be flooded, while other numbers are unaffected', async () => {
+  await withAuthLimiters(async (base) => {
+    for (let i = 0; i < 5; i += 1) {
+      const res = await post(base, '/phone/request', { phoneNumber: '+15557654321' });
+      assert.notEqual(res.status, 429, `code request #${i + 1} was throttled early`);
+    }
+    assert.equal(
+      (await post(base, '/phone/request', { phoneNumber: '+15557654321' })).status,
+      429,
+      'a sixth code to one number in the window must be refused',
+    );
+    assert.notEqual(
+      (await post(base, '/phone/request', { phoneNumber: '+15556543210' })).status,
+      429,
+      'a different recipient must have its own budget',
+    );
+  });
+});
+
+test('confirmed phone sign-ins are not counted, fumbled codes are', async () => {
+  await withAuthLimiters(async (base) => {
+    // A success never fills the bucket, however many it takes an honest
+    // relogin behind one NAT to reach.
+    for (let i = 0; i < 25; i += 1) {
+      const res = await post(base, '/phone/verify', { code: '123456' });
+      assert.notEqual(res.status, 429, `confirmed sign-in #${i + 1} was throttled`);
+    }
+    // Fifteen fumbles fit; the sixteenth is the one the bucket refuses.
+    for (let i = 0; i < 15; i += 1) {
+      const res = await post(base, '/phone/verify?fail=1', { code: '000000' });
+      assert.notEqual(res.status, 429, `fumble #${i + 1} was throttled early`);
+    }
+    assert.equal(
+      (await post(base, '/phone/verify?fail=1', { code: '000000' })).status,
+      429,
     );
   });
 });

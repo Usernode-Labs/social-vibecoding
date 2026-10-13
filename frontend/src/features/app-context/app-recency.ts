@@ -3,21 +3,20 @@
  *
  * ── Why this is localStorage and not a column ──────────────────────────
  *
- * The platform had no per-user app recency signal at all. The two candidates
- * both fail the question the strip asks:
+ * The server now records exact `events.dapp_opened` timestamps (see
+ * ./app-openings.ts), but this strip deliberately keeps answering a different
+ * question: which apps this person reaches for on THIS device.
  *
  *   - `app_activity` (src/db/schema.sql) is UNIQUE(app_id, user_id, date) with
  *     a DATE, not a timestamp. It cannot rank two apps opened the same day,
  *     which is exactly the case the strip has to get right.
- *   - `events.dapp_opened` is declared in src/services/events.js and has never
- *     been emitted, so there is no history to sort by even if it were.
+ *   - `events.dapp_opened` is durable cross-device analytics history. Using it
+ *     here would merge phone and laptop habits and add a hot-path server join
+ *     to a device shortcut.
  *
- * Giving either one the resolution this needs is a migration plus a join on
- * the /api/apps hot path, to reorder a strip whose whole job is to be a
- * shortcut. "Which apps do I reach for on THIS device" is also genuinely local
- * — the ordering people want on a phone is not the one they want on a laptop —
- * so the device-scoped store is the more faithful answer, not just the cheaper
- * one.
+ * "Which apps do I reach for on THIS device" is genuinely local — the ordering
+ * people want on a phone is not the one they want on a laptop — so the
+ * device-scoped store remains the more faithful answer.
  *
  * ── The read is deliberately post-mount ────────────────────────────────
  *

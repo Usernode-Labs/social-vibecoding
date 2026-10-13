@@ -36,6 +36,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const appsJs = fs.readFileSync(path.join(root, 'src/routes/apps.js'), 'utf8');
@@ -264,13 +265,15 @@ test('the console no longer carries a Platform variables section', () => {
 // ── Panel UI ──────────────────────────────────────────────────────────
 
 test('the panel says a change takes effect on the next deploy', () => {
-  assert.match(secretsJs, /applied by the platform.{1,2}s next deploy/,
+  assert.match(secretsJs, /subtitle\.innerHTML = isPlatform\s*\? htmlRich\('dialogs:secrets\.subtitle\.platform'/);
+  assert.match(message('dialogs:secrets.subtitle.platform'), /applied by the platform.{1,2}s next deploy/,
     'the single most surprising thing about this screen — a value set here is '
     + 'inert until the next deploy — has to be on the screen itself');
 });
 
 test('a private value is never rendered', () => {
-  assert.match(secretsJs, /never displayed/,
+  assert.match(secretsJs, /s\.hasValue && s\.private && s\.state\) \{\s*valueDisplay = `<span[^`]*\$\{htmlText\('dialogs:secrets\.value\.private'\)\}<\/span>`/);
+  assert.match(message('dialogs:secrets.value.private'), /never displayed/,
     'a private row shows a placeholder, not a value');
 });
 
@@ -283,7 +286,8 @@ test('an unwritable row offers neither a direct nor a propose button', () => {
   assert.match(row.slice(0, 8000), /else if \(s\.unwritable\) \{\s*\n\s*actions = '';/,
     'both button groups are suppressed — a vote that cannot be honoured is '
     + 'worse than no button at all');
-  assert.match(secretsJs, /can't be edited here/,
+  assert.match(secretsJs, /!isGithubRow && s\.unwritable \? `<p[^`]*\$\{htmlText\('dialogs:secrets\.row\.deployManaged'\)\}<\/p>`/);
+  assert.match(message('dialogs:secrets.row.deployManaged'), /can't be edited here/,
     'and the row says why');
 });
 

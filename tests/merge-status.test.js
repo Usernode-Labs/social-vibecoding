@@ -12,6 +12,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+
 const MergeStatus = require('../public/js/merge-status.js');
 
 // Convenience: derive just the canonical key.
@@ -101,6 +105,34 @@ test('state 6 — checks pending is neutral + spinner (not amber)', () => {
   assert.equal(life.spinner, true);
 });
 
+test('state 6 — a run older than a minute says how long it has been going (#3232)', () => {
+  const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', checks_checked_at: minsAgo(12.5),
+  });
+  assert.equal(life.key, 'checks_running');
+  assert.equal(life.label, 'Checks running · 12 min');
+  assert.equal(life.tone, 'neutral');
+  assert.equal(life.spinner, true);
+  assert.match(MergeStatus.pillHtml(life), /Checks running · 12 min/);
+  assert.equal(MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', checks_checked_at: minsAgo(1),
+  }).label, 'Checks running · 1 min');
+});
+
+test('state 6 — under a minute, or with no usable start time, keeps "Checks running…" (#3232)', () => {
+  const at = (ms) => new Date(Date.now() + ms).toISOString();
+  for (const checks_checked_at of [at(-30 * 1000), at(5 * 60000), 'not-a-date', null, undefined]) {
+    const life = MergeStatus.lifecycle({ status: 'promoted', check_state: 'pending', checks_checked_at });
+    assert.equal(life.label, 'Checks running…', String(checks_checked_at));
+  }
+  // A deferred run is not running, so it never carries a duration.
+  assert.equal(MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', check_phase: 'deferred',
+    checks_checked_at: at(-20 * 60000),
+  }).label, 'Checks deferred');
+});
+
 test('state 6b — checks skipped (#461) is neutral, terminal (no spinner) and carries the reason', () => {
   const life = MergeStatus.lifecycle({
     status: 'promoted', check_state: 'skipped',
@@ -111,7 +143,7 @@ test('state 6b — checks skipped (#461) is neutral, terminal (no spinner) and c
   assert.equal(life.tone, 'neutral');
   assert.equal(life.spinner, false);
   assert.ok(/nothing to test/.test(life.title), 'tooltip carries the recorded reason');
-  assert.ok(/does not block/.test(life.title), 'tooltip says the merge is not blocked');
+  assert.ok(/can still go live/.test(life.title), 'tooltip says it is not blocked');
   // No recorded reason → generic non-blocking tooltip, never "undefined".
   const bare = MergeStatus.lifecycle({ status: 'promoted', check_state: 'skipped' });
   assert.equal(bare.key, 'checks_skipped');
@@ -133,7 +165,7 @@ test('state 10b — active draft with green checks says checks passed', () => {
   assert.equal(life.label, 'Checks passed');
   assert.equal(life.tone, 'green');
   assert.equal(life.spinner, false);
-  assert.match(life.title, /ready to propose/);
+  assert.match(life.title, /ready to send for approval/);
 });
 
 test('state 7 — behind main, with the commit count in the label', () => {
@@ -160,7 +192,7 @@ test("state 4b — 'conflict' (merge attempt failed) is red and says the creator
   assert.equal(life.key, 'merge_conflict');
   assert.equal(life.label, 'Merge failed: conflict');
   assert.equal(life.tone, 'red');
-  assert.match(life.title, /creator needs to finish the merge/);
+  assert.match(life.title, /creator needs to bring it up to date/);
   assert.match(life.title, /Sync with main/);
   // While the auto-resolver actually runs, the in-flight state wins so the
   // card shows progress, not a stale failure.
@@ -195,7 +227,7 @@ test('state 9 — ready: passed the vote with green checks and not behind', () =
     { majority: 3 }
   );
   assert.equal(life.key, 'ready');
-  assert.equal(life.label, 'Passed, merging shortly');
+  assert.equal(life.label, 'Approved, going live shortly');
   assert.equal(life.tone, 'green');
   // Past threshold but checks NOT passing → not ready (the gate blocks it).
   // #607: with no verdict recorded at all the row reads as checks-starting
@@ -231,7 +263,7 @@ test('state 10 — in vote (below majority)', () => {
     { majority: 3 }
   );
   assert.equal(life.key, 'in_vote');
-  assert.equal(life.label, 'In vote');
+  assert.equal(life.label, 'Waiting for approval');
   assert.equal(life.tone, 'violet');
   // votes ride along for the pill renderer.
   assert.deepEqual(life.votes, { yes: 1, majority: 3, reached: false });
@@ -276,10 +308,10 @@ test('pillHtml: in-vote pill appends the tally; badgeHtml does not', () => {
   );
   const pill = MergeStatus.pillHtml(life);
   assert.match(pill, /ms-pill-violet/);
-  assert.match(pill, /In vote · 2\/5/);
+  assert.match(pill, /Waiting for approval · 2\/5/);
   // The text-style badge stays compact (the surfaces that use it show a
   // separate vote pill), so it must NOT carry the tally.
-  assert.match(MergeStatus.badgeHtml(life), /In vote/);
+  assert.match(MergeStatus.badgeHtml(life), /Waiting for approval/);
   assert.doesNotMatch(MergeStatus.badgeHtml(life), /2\/5/);
 });
 
@@ -337,7 +369,7 @@ test('#695 — pillHtml appends the muted +N advisory suffix to the in-vote tall
   });
   assert.equal(life.key, 'in_vote');
   const pill = MergeStatus.pillHtml(life);
-  assert.match(pill, /In vote · 1\/2/);
+  assert.match(pill, /Waiting for approval · 1\/2/);
   assert.match(pill, /ms-advisory/);
   assert.match(pill, /\+2</);
   // The compact text badge (separate vote pill beside it) stays tally-free.
@@ -467,4 +499,21 @@ test('#1442 — junk in the freshness block cannot throw', () => {
   for (const freshness of ['nope', 42, [], { mergeabilityFiles: 'oops' }, null]) {
     assert.doesNotThrow(() => MergeStatus.lifecycle({ status: 'promoted', freshness }));
   }
+});
+
+// B10a: one word for a change that waits on its Yes votes, and the
+// creator's own words on a project that is just them.
+test('B10a: waiting for approval, and for your approval on a project that is just you', () => {
+  const p = { status: 'promoted', check_state: 'passing', yes_count: 0, votes_required: 1 };
+  assert.equal(MergeStatus.lifecycle(p).label, 'Waiting for approval');
+  assert.equal(MergeStatus.lifecycle({ ...p, app_audience: 'solo' }).label, 'Waiting for your approval');
+  assert.equal(MergeStatus.lifecycle(p, { audience: 'solo' }).label, 'Waiting for your approval');
+  assert.equal(MergeStatus.lifecycle({ ...p, app_audience: 'solo', votes_required: 2 }).label, 'Waiting for approval',
+    'a rule asking for two Yes votes is not one tap of yours');
+  assert.equal(MergeStatus.lifecycle({ ...p, app_audience: 'invited' }).label, 'Waiting for approval');
+});
+
+test('B10a: the session payload says whose project it is, so the header pill can say "your approval"', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
+  assert.match(src, /const membership = await communities\.getMembership\(pool, \{ id: rows\[0\]\.app_id \}, req\.user\.id\);\n\s+rows\[0\]\.app_audience = membership \? membership\.audience : null;/);
 });

@@ -5,9 +5,10 @@
  *
  * A feed row is not a stable thing to key on: the stream re-sorts as work
  * happens, "Show more" grows it, and a filter can drop a row out and bring it
- * back. The THREAD is stable — `${type}:${ref}` is the same conversation
- * wherever its row currently sits — so that is the key, and a row that comes
- * back finds its messages already loaded rather than re-fetching them.
+ * back. The THREAD is stable — `${slug}/${type}:${ref}` is the same
+ * conversation wherever its row currently sits — so that is the key, and a
+ * row that comes back finds its messages already loaded rather than
+ * re-fetching them.
  *
  * It also means the board and the feed cannot disagree: both address the same
  * entry, so a comment posted from the feed is in hand if the same thread is
@@ -58,8 +59,13 @@ export const EMPTY_FEED_THREAD: FeedThreadState = {
  */
 export const feedThreadStore = createStore<Record<string, FeedThreadState>>({});
 
-export function threadKey(type: string, ref: number | string): string {
-  return `${type}:${ref}`;
+/**
+ * The app is part of the key (#4178). A thread's ref is an issue number or a
+ * session id, and issue numbers repeat across apps; the Workshop draws rows
+ * from several apps on one screen, and this store lives for the whole page.
+ */
+export function threadKey(slug: string, type: string, ref: number | string): string {
+  return `${slug}/${type}:${ref}`;
 }
 
 export function readThread(key: string): FeedThreadState {

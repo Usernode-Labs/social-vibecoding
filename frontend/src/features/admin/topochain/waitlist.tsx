@@ -7,7 +7,8 @@ import { fetchJson, send } from './api.ts';
 import { countryLabel } from './countries.ts';
 import { BTN } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, List, Pager, Panel, ScreenHeader, Select, Skeleton, fmt,
+  Badge, CheckField, EmptyState, ErrorState, Field, FormError, Input, List, Pager, Panel, ScreenHeader,
+  Select, Skeleton, Textarea, fmt,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 import { useWaitlistOptions } from '../../auth/waitlist-shared.tsx';
@@ -50,7 +51,8 @@ import type { WaitlistOptions } from '../../auth/waitlist-shared.tsx';
 // Ids are like-for-like — `admin-topo-wl-*` and `admin-topo-bpq-*`, including
 // the two status selects and the `data-release-wl` / `data-release-bp` hooks.
 // The sort select and the Export CSV button are the additions, and they
-// follow the same naming.
+// follow the same naming, as do the search box (`admin-topo-wl-search`) and
+// the batch-admit tool (`admin-topo-wl-batch*`) that came after them.
 
 const STATUSES = ['pending', 'released', 'all'] as const;
 type Status = typeof STATUSES[number];
@@ -99,7 +101,13 @@ const canWrite = () => !!topo()?.canWrite();
 
 type WaitlistRow = {
   id: number;
-  email: string;
+  /** Null on a phone row (#4223): joined from Home with a verified phone, no email. */
+  email: string | null;
+  phone_only?: boolean;
+  /** The phone row's number, its last four digits at most. */
+  phone_last4?: string | null;
+  /** A phone row waiting on outbound SMS (#4096): it cannot be admitted yet. */
+  needs_sms?: boolean;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -355,9 +363,11 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
       </summary>
       <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
         {detail('Signed up', fmt(row.submitted_at))}
-        {detail('Address confirmed', row.confirmed_at
-          ? fmt(row.confirmed_at)
-          : 'Never. The link in the join email was not followed.')}
+        {row.phone_only
+          ? detail('Joined with', `A verified phone${row.phone_last4 ? ` ending ${row.phone_last4}` : ''}, no email`)
+          : detail('Address confirmed', row.confirmed_at
+            ? fmt(row.confirmed_at)
+            : 'Never. The link in the join email was not followed.')}
         {detail('Admitted', row.released_at ? fmt(row.released_at) : 'Not yet.')}
         {detail('Invite email', mail)}
         {detail('Invite link used by', row.signals?.invited
@@ -376,7 +386,7 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, statusLabels, endpoint, columns,
   rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId, exportCsv,
-  deleteAction, analytics, panel,
+  deleteAction, analytics, panel, search, toolbar, refreshKey,
 }: {
   hostId: string;
   title: string;
@@ -394,7 +404,7 @@ function Queue<T>({
    * was "nobody waiting has confirmed their address" — and the way out (widen
    * the filter) was exactly what the message failed to mention.
    */
-  empty: (state: { status: Status; only: Only }) => { title: string; body: string };
+  empty: (state: { status: Status; only: Only; q: string }) => { title: string; body: string };
   errorTitle: string;
   actions?: (item: T, reload: () => void) => ReactNode;
   extra?: (item: T) => ReactNode;
@@ -430,10 +440,20 @@ function Queue<T>({
    * onchain-accounts.tsx's `#admin-topo-oa-form` fills for its import panel.
    */
   panel?: ReactNode;
+  /**
+   * Set to render a search box directly above the table, sent as `?q=` with
+   * the other filters (and so carried into Export CSV too). Omitted: none.
+   */
+  search?: { id: string; label: string; placeholder: string };
+  /** More header controls, rendered ahead of Analytics. */
+  toolbar?: ReactNode;
+  /** Bump to reload the page on screen, e.g. after something else admitted rows. */
+  refreshKey?: number;
 }) {
   const [status, setStatus] = useState<Status>('pending');
   const [only, setOnly] = useState<Only>('any');
   const [sort, setSort] = useState<Sort>('waiting');
+  const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
@@ -443,7 +463,7 @@ function Queue<T>({
   useEffect(() => () => { alive.current = false; }, []);
   // A new page or a changed filter is a different set of rows, so a
   // selection made under the old ones no longer means anything.
-  useEffect(() => { setSelected(new Set()); }, [status, only, sort, page]);
+  useEffect(() => { setSelected(new Set()); }, [status, only, sort, q, page]);
 
   // The filters alone, shared by the page fetch and the export so the file
   // always holds the rows the selects describe.
@@ -451,8 +471,9 @@ function Queue<T>({
     const params = new URLSearchParams();
     if (status !== 'all') params.set('status', status);
     if (onlyFilterId && only !== 'any') params.set('only', only);
+    if (search && q) params.set('q', q);
     return params;
-  }, [only, onlyFilterId, status]);
+  }, [only, onlyFilterId, q, search, status]);
 
   const load = useCallback(async () => {
     const params = filterParams();
@@ -473,7 +494,18 @@ function Queue<T>({
     setError({ status: res.status, message: (res.data && res.data.error) || null });
   }, [endpoint, filterParams, page, sort, sortId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  // The search box drives a paged server query, so it commits on Enter or
+  // blur rather than on every keystroke (AGENTS.md, "The console is React").
+  // Emptying it is the one exception: that commits at once, since the way
+  // back to the whole list should not need a second gesture.
+  const commitSearch = useCallback((value: string) => {
+    const next = value.trim();
+    if (next === q) return;
+    setQ(next);
+    setPage(1);
+  }, [q]);
 
   const runBulkDelete = useCallback(async () => {
     if (!canWrite() || !deleteAction || !selected.size) return;
@@ -493,7 +525,7 @@ function Queue<T>({
     load();
   }, [deleteAction, load, selected]);
 
-  const blank = empty({ status, only });
+  const blank = empty({ status, only, q });
 
   return (
     <>
@@ -545,6 +577,7 @@ function Queue<T>({
                 ))}
               </Select>
             ) : null}
+            {toolbar}
             {analytics ? (
               <button
                 id={analytics.id}
@@ -578,6 +611,27 @@ function Queue<T>({
         )}
       />
       {panel}
+      {search ? (
+        <div className="mb-3">
+          <Input
+            id={search.id}
+            type="search"
+            aria-label={search.label}
+            placeholder={search.placeholder}
+            maxLength={320}
+            autoComplete="off"
+            spellCheck={false}
+            onBlur={(e) => commitSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitSearch(e.currentTarget.value);
+              }
+            }}
+            onChange={(e) => { if (!e.currentTarget.value) commitSearch(''); }}
+          />
+        </div>
+      ) : null}
       <div id={hostId}>
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (
@@ -822,12 +876,399 @@ function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Invites: retired ─────────────────────────────────────────────────────
+//
+// The switch for invite links skipping the waitlist ("the invite tree")
+// lived here. Private membership replaced it: anyone new an invite link
+// brings in joins its community straight away as a private member, and is
+// admitted from this queue like anybody else (services/community-invites.js).
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// ── The story landing: what a signed-out visitor is asked to do ─────────
+//
+// On (the default), the landing tells the first-session story and asks them
+// to get started: an account is made on the spot (services/first-session.js).
+// Off, it points at the waitlist ("Join the waitlist"). It belongs beside the
+// invite setting because it is the same valve.
+
+type StoryLanding = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
+
+function StoryLandingPanel() {
+  const [story, setStory] = useState<StoryLanding | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/story-landing');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setStory(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (next: boolean) => {
+    if (!canWrite() || saving.current) return;
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/story-landing', { enabled: next });
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the landing setting.'); return; }
+    setStory(data.data);
+  }, []);
+
+  const help = 'Signed-out visitors see what Homeroom is and "Make an account", which then asks '
+    + 'them what to make. Off, they are sent to the waitlist instead. Anyone new still '
+    + 'waits here until admitted unless they already have access.';
+  return (
+    <div id="admin-topo-wl-story">
+      <Panel title="Landing">
+        {error ? (
+          <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !story ? <Skeleton rows={1} /> : null}
+        {!error && story ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-story-enabled" label="Signed-out landing asks people to get started" help={help} checked={story.enabled} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{story.enabled ? 'The landing asks people to get started.' : 'The landing points at the waitlist.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {story?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.`}
+          </p>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
+// ── Batch admit: paste a list, see who is there, admit them together ────
+//
+// For the case the one-row Admit button handles badly: a list of addresses
+// that came from somewhere else (a sign-up sheet, an event, a spreadsheet)
+// and needs letting in. The panel resolves the paste against the waitlist
+// first (POST …/waitlist/resolve), shows what each address turned out to be,
+// and only then offers to admit the ones actually waiting
+// (POST …/waitlist/bulk-release). Nothing is admitted by the lookup.
+//
+// The lookup answers from the text it was GIVEN, and Admit acts on the rows
+// that answer listed — not on whatever the box holds now. Editing the paste
+// after looking it up therefore cannot slip an unreviewed address into the
+// admit; it shows as unchecked until "Look up" runs again.
+
+type ResolvedEntry = {
+  input: string;
+  email: string | null;
+  match: 'waiting' | 'admitted' | 'not_found' | 'invalid';
+  signup?: {
+    id: number;
+    email: string;
+    submitted_at?: string | null;
+    released_at?: string | null;
+    confirmed_at?: string | null;
+    linked_username?: string | null;
+    has_platform_access?: boolean | null;
+  };
+  account?: { username: string | null; has_platform_access: boolean } | null;
+};
+
+type Resolution = {
+  entries: ResolvedEntry[];
+  skipped: number;
+  duplicates: number;
+  admit_max: number;
+};
+
+type AdmitOutcome = {
+  admitted: number[];
+  already_admitted: number[];
+  not_found: number[];
+  /** Phone rows skipped: they wait on outbound SMS (#4096). */
+  needs_sms?: number[];
+  failed: number[];
+};
+
+const MATCH_BADGE: Record<ResolvedEntry['match'], { tone: string; label: string }> = {
+  waiting: { tone: 'amber', label: 'Waiting' },
+  admitted: { tone: 'green', label: 'Already admitted' },
+  not_found: { tone: 'zinc', label: 'Not on the waitlist' },
+  invalid: { tone: 'zinc', label: 'Not an address' },
+};
+
+// What else is worth knowing about one resolved address, in a sentence.
+function resolvedDetail(e: ResolvedEntry): string {
+  if (e.match === 'invalid') return 'This doesn’t look like an email address.';
+  if (e.match === 'not_found') {
+    if (!e.account) return 'Nobody with this address has joined the waitlist or made an account.';
+    const who = e.account.username ? ` (${e.account.username})` : '';
+    return e.account.has_platform_access
+      ? `Not on the waitlist, but has an account${who} that already has access.`
+      : `Not on the waitlist, but has an account${who} without access. Grant it from Users.`;
+  }
+  const s = e.signup;
+  if (!s) return '';
+  if (e.match === 'admitted') return `Admitted ${fmt(s.released_at)}.`;
+  const bits = [
+    s.confirmed_at ? 'Confirmed address' : 'Never confirmed their address',
+    s.linked_username ? `account ${s.linked_username}` : 'no account yet',
+  ];
+  const waited = ago(s.submitted_at);
+  if (waited) bits.push(`joined ${waited}`);
+  return `${bits.join(' · ')}.`;
+}
+
+const RESOLVED_COLUMNS: Column<ResolvedEntry>[] = [
+  {
+    // Same treatment as the queue's Signup column, so an address reads the
+    // same in both tables.
+    label: 'Address',
+    primary: true,
+    tdClass: 'font-mono',
+    cell: (e) => e.email || e.input,
+  },
+  {
+    label: 'Found',
+    tdClass: 'whitespace-nowrap',
+    cell: (e) => <Badge tone={MATCH_BADGE[e.match].tone} label={MATCH_BADGE[e.match].label} />,
+  },
+  {
+    label: 'Details',
+    tdClass: 'text-xs text-zinc-600 dark:text-zinc-300',
+    cell: (e) => resolvedDetail(e),
+  },
+];
+
+// The result of the lookup in one line, counts first. (`plural` is the
+// Invites panel's, above.)
+function resolutionSummary(r: Resolution): string {
+  const count = (m: ResolvedEntry['match']) => r.entries.filter((e) => e.match === m).length;
+  const parts = [
+    `${count('waiting')} waiting`,
+    `${count('admitted')} already admitted`,
+    `${count('not_found')} not on the waitlist`,
+  ];
+  const invalid = count('invalid');
+  if (invalid) parts.push(`${invalid} not ${invalid === 1 ? 'an address' : 'addresses'}`);
+  const aside: string[] = [];
+  if (r.duplicates) aside.push(`${plural(r.duplicates, 'repeat', 'repeats')} dropped`);
+  if (r.skipped) aside.push(`${plural(r.skipped, 'word', 'words')} without an @ ignored`);
+  return `${plural(r.entries.length, 'address', 'addresses')}: ${parts.join(' · ')}.`
+    + (aside.length ? ` (${aside.join(', ')}.)` : '');
+}
+
+function admitOutcomeLine(o: AdmitOutcome): string {
+  const parts = [`Admitted ${plural(o.admitted.length, 'signup', 'signups')}.`];
+  const already = o.already_admitted.length;
+  if (already) parts.push(`${already} ${already === 1 ? 'was' : 'were'} already in.`);
+  if (o.not_found.length) parts.push(`${o.not_found.length} had been deleted from the waitlist.`);
+  const sms = o.needs_sms?.length || 0;
+  if (sms) parts.push(`${sms} joined by phone and ${sms === 1 ? 'waits' : 'wait'} for texts (#4096).`);
+  if (o.failed.length) {
+    parts.push(`${o.failed.length} could not be admitted; look the list up again and retry.`);
+  }
+  return parts.join(' ');
+}
+
+function BatchAdmitPanel({ onClose, onAdmitted }: { onClose: () => void; onAdmitted: () => void }) {
+  const [text, setText] = useState('');
+  const [resolvedText, setResolvedText] = useState<string | null>(null);
+  const [result, setResult] = useState<Resolution | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'resolve' | 'admit' | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const resolve = useCallback(async (source: string) => {
+    // A read, but behind the write gate on the server (see the route), so
+    // it is guarded like the admit it exists for.
+    if (!canWrite()) return;
+    setBusy('resolve');
+    setError(null);
+    const { ok, data } = await send('POST', '/api/v4/admin/waitlist/resolve', { text: source });
+    if (!alive.current) return;
+    setBusy(null);
+    if (!ok || !data?.success) {
+      setResult(null);
+      setResolvedText(null);
+      setError(data?.error || 'Could not look these addresses up.');
+      return;
+    }
+    setResult(data.data);
+    setResolvedText(source);
+  }, []);
+
+  const waiting = result ? result.entries.filter((e) => e.match === 'waiting' && e.signup) : [];
+  const admitMax = result ? result.admit_max : 0;
+  const batch = waiting.slice(0, admitMax);
+  const stale = result !== null && resolvedText !== text;
+
+  const admitAll = async () => {
+    if (!canWrite() || !batch.length || resolvedText === null) return;
+    const n = batch.length;
+    const unconfirmed = batch.filter((e) => !e.signup?.confirmed_at).length;
+    const okd = await topo()._confirm({
+      title: `Admit ${plural(n, 'signup', 'signups')} off the waitlist?`,
+      message: `Each gets platform access straight away if they already have an account, `
+        + `otherwise the moment they create one, and is emailed a link to sign in or create `
+        + `their account.${unconfirmed
+          ? ` ${plural(unconfirmed, 'address was', 'addresses were')} never confirmed, so `
+            + `${unconfirmed === 1 ? 'that email' : 'those emails'} may not reach anyone.`
+          : ''} This cannot be undone from here.`,
+      confirmLabel: `Admit ${n}`,
+    });
+    if (!okd) return;
+    setBusy('admit');
+    setError(null);
+    setNotice(null);
+    const { ok, data } = await send('POST', '/api/v4/admin/waitlist/bulk-release', {
+      ids: batch.map((e) => e.signup!.id),
+    });
+    if (!alive.current) return;
+    setBusy(null);
+    if (!ok || !data?.success) {
+      setError(data?.error || 'Could not admit these signups.');
+      return;
+    }
+    setNotice(admitOutcomeLine(data.data));
+    onAdmitted();
+    // Look the same list up again, so every row reads what it is now and a
+    // list longer than one batch shows the rest still waiting.
+    resolve(resolvedText);
+  };
+
+  const clear = () => {
+    setText('');
+    setResult(null);
+    setResolvedText(null);
+    setError(null);
+    setNotice(null);
+  };
+
+  return (
+    <div id="admin-topo-wl-batch-panel">
+      <Panel
+        title="Batch admit"
+        subtitle="Paste a list of email addresses to see which of them are on the waitlist, then admit everyone who is waiting in one go."
+        onClose={onClose}
+        closeLabel="Close the batch admit tool"
+        footer={(
+          <>
+            <button
+              id="admin-topo-wl-batch-resolve"
+              type="button"
+              className={result && !stale ? BTN.secondary : BTN.primary}
+              disabled={busy !== null || !text.trim()}
+              onClick={() => resolve(text)}
+            >
+              {busy === 'resolve' ? 'Looking up…' : 'Look up'}
+            </button>
+            {result && batch.length ? (
+              <button
+                id="admin-topo-wl-batch-admit"
+                type="button"
+                className={BTN.primary}
+                disabled={busy !== null || stale}
+                title={stale ? 'The list changed since it was looked up. Look it up again first.' : undefined}
+                onClick={admitAll}
+              >
+                {busy === 'admit'
+                  ? 'Admitting…'
+                  : (waiting.length > admitMax
+                    ? `Admit the first ${batch.length} waiting`
+                    : `Admit all ${batch.length} waiting`)}
+              </button>
+            ) : null}
+            <button
+              id="admin-topo-wl-batch-clear"
+              type="button"
+              className={BTN.secondary}
+              disabled={busy !== null || (!text && !result)}
+              onClick={clear}
+            >
+              Clear
+            </button>
+          </>
+        )}
+      >
+        <Field
+          label="Email addresses"
+          htmlFor="admin-topo-wl-batch-input"
+          help="One per line, or separated by commas or spaces. A copied spreadsheet column or a mail client’s “Name <address>” list works too."
+        >
+          <Textarea
+            id="admin-topo-wl-batch-input"
+            rows={6}
+            spellCheck={false}
+            placeholder={'jane@example.com\nsam@example.com'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </Field>
+        <FormError message={error} />
+        {notice ? (
+          <p
+            id="admin-topo-wl-batch-notice"
+            role="status"
+            className="mt-3 rounded-lg bg-green-50 dark:bg-green-950/40 px-3 py-2 text-xs text-green-700 dark:text-green-400"
+          >
+            {notice}
+          </p>
+        ) : null}
+        {result ? (
+          <div id="admin-topo-wl-batch-results" className="mt-4">
+            <p className="mb-2 text-xs text-zinc-600 dark:text-zinc-300">{resolutionSummary(result)}</p>
+            {stale ? (
+              <p className="mb-2 text-xs text-amber-800 dark:text-amber-400">
+                The list has changed since it was looked up. Look it up again before admitting.
+              </p>
+            ) : null}
+            {waiting.length > admitMax ? (
+              <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                {`Admitting sends each person an email, and the hourly email budget is shared with sign-in codes, so one batch admits at most ${admitMax}. Run it again for the rest.`}
+              </p>
+            ) : null}
+            <List
+              items={result.entries}
+              rowKey={(e, i) => `${i}:${e.input}`}
+              columns={RESOLVED_COLUMNS}
+            />
+          </div>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
+// How a row is named in a sentence: its address, or for a phone row its
+// account, since that row has no address to show.
+function signupLabel(w: WaitlistRow): string {
+  if (w.email) return w.email;
+  return w.linked_username ? `@${w.linked_username}` : `signup #${w.id}`;
+}
+
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
     label: 'Signup',
     primary: true,
     tdClass: 'font-mono',
-    cell: (w) => (
+    cell: (w) => (w.phone_only ? (
+      <>
+        {signupLabel(w)}
+        <span
+          className="text-zinc-500 dark:text-zinc-400 text-xs"
+          title="Joined from Home with the account's verified phone number, without an email"
+        >
+          {` Phone${w.phone_last4 ? ` ···${w.phone_last4}` : ''}`}
+        </span>
+      </>
+    ) : (
       <>
         {w.email}
         {w.confirmed_at ? (
@@ -846,7 +1287,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
           </span>
         )}
       </>
-    ),
+    )),
   },
   {
     // Where the row is in the one process this screen runs, said in the two
@@ -933,8 +1374,20 @@ const BP_COLUMNS: Column<BpRow>[] = [
 // The empty states, per filter combination. Each says what this VIEW is
 // empty of and how to widen it, because "No waitlist entries" under
 // `only=confirmed` was reporting the filter as if it were the database.
-function waitlistEmpty({ status, only }: { status: Status; only: Only }) {
+function waitlistEmpty({ status, only, q }: { status: Status; only: Only; q: string }) {
   const scope = status === 'pending' ? 'waiting' : (status === 'released' ? 'admitted' : 'listed');
+  // The search goes first: it is the narrowing an admin applied last, and
+  // the one most likely to be why the view is empty.
+  if (q) {
+    const narrowed = status !== 'all' || only !== 'any';
+    return {
+      title: `No ${scope} signup matches “${q}”`,
+      body: 'Search looks for this text anywhere in the address or the account’s username. '
+        + (narrowed
+          ? 'Clear the search, or set the filters to All and Everyone, to see the rest.'
+          : 'Clear the search to see the rest.'),
+    };
+  }
   if (only === 'confirmed') {
     return {
       title: 'Nobody here has confirmed their address',
@@ -986,19 +1439,34 @@ function bpEmpty({ status }: { status: Status; only: Only }) {
   };
 }
 
+// A module constant rather than an inline literal: the Queue's page fetch
+// depends on it, so a fresh object per render would re-fetch the page every
+// time this screen re-rendered (opening a panel, say).
+const WAITLIST_SEARCH = {
+  id: 'admin-topo-wl-search',
+  label: 'Search the waitlist by email or username',
+  placeholder: 'Search by email or username',
+};
+
 function WaitlistScreen() {
   const write = canWrite();
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showBatch, setShowBatch] = useState(false);
+  // Bumped when the batch-admit panel admits rows, so the queue under it
+  // re-reads the page it is on instead of listing them as still waiting.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const onBatchAdmitted = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   // "Admit", not "Release". The route, the column and the mail kind keep
   // their names; this is the only place a person reads the word.
   const admitWaitlist = useCallback(async (w: WaitlistRow, reload: () => void) => {
-    if (!canWrite()) return;
+    // A phone row waits on outbound SMS (#4096); its Admit is disabled too.
+    if (!canWrite() || w.needs_sms) return;
     const unconfirmed = !w.confirmed_at
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
     const okd = await topo()._confirm({
-      title: `Admit ${w.email} off the waitlist?`,
+      title: `Admit ${signupLabel(w)} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
         + `otherwise the moment they create one. They will be emailed a link to sign in or `
         + `create their account.${unconfirmed} This cannot be undone from here.`,
@@ -1013,7 +1481,7 @@ function WaitlistScreen() {
   const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
-      title: `Delete ${w.email} from the waitlist?`,
+      title: `Delete ${signupLabel(w)} from the waitlist?`,
       message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
         + 'link keeps their own place in line. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1053,10 +1521,29 @@ function WaitlistScreen() {
         onlyFilterId="admin-topo-wl-only"
         sortId="admin-topo-wl-sort"
         endpoint="/api/v4/admin/waitlist"
-        analytics={{ id: 'admin-topo-wl-analytics', onClick: () => setShowAnalytics((s) => !s) }}
-        panel={showAnalytics ? (
-          <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} />
+        search={WAITLIST_SEARCH}
+        refreshKey={refreshKey}
+        toolbar={write ? (
+          <button
+            id="admin-topo-wl-batch"
+            type="button"
+            className={BTN.secondarySm}
+            title="Paste a list of email addresses, check who is on the waitlist, and admit them together"
+            onClick={() => setShowBatch((s) => !s)}
+          >
+            Batch admit
+          </button>
         ) : null}
+        analytics={{ id: 'admin-topo-wl-analytics', onClick: () => setShowAnalytics((s) => !s) }}
+        panel={(
+          <>
+            {showBatch ? (
+              <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
+            ) : null}
+            {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
+            <StoryLandingPanel />
+          </>
+        )}
         exportCsv={write
           ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
           : undefined}
@@ -1069,17 +1556,23 @@ function WaitlistScreen() {
             {!w.released_at ? (
               <button
                 data-release-wl={w.id}
-                data-email={w.email}
+                data-email={w.email || undefined}
                 type="button"
                 className={BTN.rowPrimary}
+                disabled={!!w.needs_sms}
                 onClick={() => admitWaitlist(w, reload)}
               >
                 Admit
               </button>
             ) : null}
+            {!w.released_at && w.needs_sms ? (
+              <span data-needs-sms-wl={w.id} className="text-xs text-zinc-500 dark:text-zinc-400">
+                Needs SMS (#4096)
+              </span>
+            ) : null}
             <button
               data-delete-wl={w.id}
-              data-email={w.email}
+              data-email={w.email || undefined}
               type="button"
               className={BTN.rowDanger}
               onClick={() => deleteWaitlistEntry(w, reload)}
@@ -1091,7 +1584,7 @@ function WaitlistScreen() {
         extra={(w) => <WaitlistDetails row={w} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => w.email,
+          itemLabel: (w) => signupLabel(w),
           confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
           confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
             + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
@@ -1138,4 +1631,12 @@ function WaitlistScreen() {
 // shape cannot be reached by a declared browser check either: the queue opens
 // on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
 // admitted row is never in the table a check at `/#admin/waitlist` sees.
-export { SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };
+//
+// The batch-admit copy helpers and waitlistEmpty are exported for
+// tests/topochain-admin-waitlist-batch.test.js: a lookup's answer only exists
+// after a POST, so no static render or declared check reaches the sentences
+// an admin reads about each pasted address.
+export {
+  SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
+  BatchAdmitPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
+};

@@ -139,13 +139,16 @@ test('chat on a genuinely missing session still 404s', async () => {
   assert.match(body.error, /Active session not found/i);
 });
 
-test('chat on a native session is unaffected by the imported guard', async () => {
+test('chat on a native session is not refused as imported', async () => {
   const { status, body } = await postChat(makePool({ row: NATIVE_ACTIVE, importedProbe: false }));
-  assert.notEqual(status, 409, 'native session not refused as imported');
   assert.notEqual(status, 404, 'native session found');
-  // Got past the session lookup into the billing step (stubbed to stop).
-  assert.equal(status, 429);
-  assert.match(body.error, /stubbed budget stop/);
+  assert.doesNotMatch(body.error || '', /imported from GitHub/, 'native session not refused as imported');
+  // #3976: it used to get past the lookup into the billing step (stubbed to
+  // stop, 429). A native session with a chat of its own is a classic
+  // session, which is read-only now, so it is refused for THAT, by name,
+  // before anything is billed.
+  assert.equal(status, 409);
+  assert.equal(body.code, 'classic_session_read_only');
 });
 
 test("the chat lookup excludes imported rows in SQL, not just in a post-check", async () => {

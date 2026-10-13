@@ -56,9 +56,21 @@
  * draft, the typing ping, the multi-line submit semantics and the Escape rule.
  */
 
+import { useRef } from 'react';
+
+import { useMessages } from '../../lib/i18n/react';
+import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 
 const SAFE_BAR = 'platform-safe-bar';
+
+/**
+ * How near the bottom a thread counts as followed: a live reply, the reader's
+ * own included, sticks to it within 80px, and so does the composer growing
+ * (`THREAD_FOLLOW_PX`, `_handleThreadIncoming` and `_attachThreadFollow` in
+ * public/js/group-chat.js).
+ */
+export const THREAD_FOLLOW_PX = 80;
 
 export interface ThreadShellProps {
   /** The topic sub-view's full-height layout; false is the boxed one. */
@@ -71,9 +83,19 @@ export interface ThreadShellProps {
   placeholder: string;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4453: a request's page, drawn as the sheet Messages opens a reply thread
+   * in. Fill mode only. See `RequestShell` below.
+   */
+  request?: boolean;
+  /**
+   * #4455: a change's page, the same sheet (`RequestShell`) with the change
+   * as its root post. Fill mode only.
+   */
+  change?: boolean;
 }
 
-function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShellProps) {
+function Composer({ fill, readOnly, notice, placeholder, maxLength, request = false, change = false }: ThreadShellProps) {
   // `platform-safe-bar` on BOTH variants: in fill mode this block is the
   // bottom of the screen, so it carries the home-indicator inset above its own
   // padding, and the read-only notice that replaces it needs the identical
@@ -88,6 +110,14 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
       </div>
     );
   }
+  if (request || change) {
+    return (
+      <div className={`messages-composer messages-composer-thread ${SAFE_BAR}`}>
+        <ComposerSlots scope="thread" />
+        <ComposerForm scope="thread" fill={fill} placeholder={placeholder} maxLength={maxLength} messages />
+      </div>
+    );
+  }
   return (
     <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
       <ComposerSlots scope="thread" />
@@ -96,8 +126,54 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength }: ThreadShel
   );
 }
 
+/**
+ * #4453: a request's page — the sheet Messages opens a reply thread in
+ * (features/messages/index.tsx `ReplyThreadPanel`): its header, a scroller
+ * holding the request as the root post and the replies under it, and the
+ * thread's composer at its foot. The page's back chip sits above the sheet.
+ *
+ * Two more empty hosts than the topic layout, both the topic head's
+ * (features/dev-board/topic/request-head.tsx portals into them), rendered
+ * once with a constant className and never looked inside:
+ *
+ *   * `#gc-thread-back` — the "‹ Workshop" chip, above the sheet.
+ *   * `#gc-thread-bar` — the sheet's header: "Request #N", its category,
+ *     and the ⋯ disc. Outside the scroller, so it stays put.
+ *
+ * Messages' tokens (`--messages-surface` and the rest) are defined on
+ * `.dev-request` in app.css, as they are on `.messages-layout`.
+ *
+ * #4455: a change's page is the same sheet, with the change as its root post
+ * (features/dev-board/topic/change-head.tsx). `.dev-change` beside
+ * `.dev-request` is what app.css tells the two apart by.
+ */
+function RequestShell(props: ThreadShellProps) {
+  const t = useMessages('project');
+  const scroll = useRef<HTMLDivElement>(null);
+  const change = !!props.change;
+  return (
+    <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
+      <div id="gc-thread-back" className="dev-request-back" />
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
+        <div id="gc-thread-bar" className="dev-request-bar" />
+        <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
+          <div id="gc-thread-head" />
+          <div id="gc-thread-messages" />
+        </div>
+        {/* #4553: the button docks in a strip, so it never covers the change
+            or request cards (their Vote, Re-run checks, Preview) under it. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
+        <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
+        <Composer {...props} />
+      </section>
+    </div>
+  );
+}
+
 export function ThreadShell(props: ThreadShellProps) {
   const { fill, withHeader } = props;
+  const scroll = useRef<HTMLDivElement>(null);
+  if (fill && (props.request || props.change)) return <RequestShell {...props} />;
   if (fill) {
     return (
       // `platform-kb-column` is what app.css hangs the keyboard reservation
@@ -108,12 +184,18 @@ export function ThreadShell(props: ThreadShellProps) {
       // so reserving keyboard space there would be dead space mid-page.
       <div className="dev-thread dev-thread-fill platform-kb-column flex flex-col h-full min-h-0 dc-lift dc-lift-session">
         <div
+          ref={scroll}
           id="gc-thread-scroll"
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 pt-3"
         >
           {withHeader ? <div id="gc-thread-head" /> : null}
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />
         </div>
+        {/* A topic opens at its card (#363), so the way down is up from the
+            start whenever the discussion runs past the screen. #4553: the
+            button docks in a strip below the scroller, so it never covers
+            the card. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </div>

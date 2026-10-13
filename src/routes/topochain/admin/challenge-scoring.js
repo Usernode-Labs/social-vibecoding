@@ -58,7 +58,7 @@ const RUNS_SQL = `
 // are the two mistakes an operator actually makes, and without this they
 // would show up as silence.
 async function ruleStatus(pool, now = Date.now()) {
-  const { rows } = await pool.query(scorer.RULE_CHALLENGES_SQL);
+  const { rows } = await pool.query(scorer.RULE_CHALLENGES_SQL, [scorer.ONBOARDING_LIMIT]);
   const byRule = new Map();
   for (const row of rows) {
     const rule = {
@@ -259,6 +259,9 @@ function challengeScoringAdminRoutes(config) {
             // rather than being retyped in the screen, so the sentence cannot
             // drift from the behaviour it describes.
             phrase: rules.MEASURES[key].phrase,
+            // The phrase for a target of one, where the plural would not
+            // read ("Try an app", #3570). Null where `phrase` already does.
+            phrase_one: rules.MEASURES[key].phraseOne || null,
             payout: rules.MEASURES[key].payout,
             target_unit: rules.MEASURES[key].targetUnit,
             needs_target: rules.MEASURES[key].needsTarget === true,

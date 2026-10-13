@@ -42,6 +42,7 @@ function makeAppView() {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
@@ -358,3 +359,51 @@ test('the declared checks match what the demo fixture actually renders', () => {
   assert.match(sync.text.join(''),
     /Main has moved 8 commits ahead, and 7 files changed on both sides/);
 });
+
+test('the sync sentence reads as it always has for every pair of counts, and each count has its own plural', () => {
+  const AppView = makeAppView();
+  const sentence = (state, behindBy, files) => {
+    const pr = {
+      ...CONFLICTED,
+      ...(state === 'blocked' ? { integration: { blockReasons: ['unresolvable'] } }
+        : state === 'afterVote' ? { integration: { blockReasons: ['awaiting_approval'] } }
+          : state === 'resolvingNow' ? { integration: { blockReasons: ['integrating'] } }
+            : { integration: { blockReasons: [] } }),
+      freshness: {
+        ...CONFLICTED.freshness, behindBy,
+        mergeabilityFiles: Array.from({ length: files }, (_, i) => `f${i}.js`),
+      },
+    };
+    return find(rowsOf(AppView, pr), 'mergeability').text.map((part) => (typeof part === 'string' ? part : part.b)).join('');
+  };
+  // The English this row had before each count chose its own form.
+  const before = (state, behindBy, files) => {
+    const lead = state === 'blocked' ? 'Blocked.' : 'Syncing.';
+    const moved = behindBy > 0 ? `Main has moved ${behindBy} ${behindBy === 1 ? 'commit' : 'commits'} ahead` : 'Main has moved ahead';
+    const overlap = files === 1 ? '1 file changed on both sides' : files ? `${files} files changed on both sides` : 'the two changes touch the same lines';
+    const tail = {
+      blocked: ', so the automatic sync cannot finish this one.',
+      resolvingNow: '. Homeroom is resolving it now, then it tries the merge again.',
+      afterVote: '. Homeroom resolves it once the group approves, then tries the merge again.',
+      automatic: '. Homeroom resolves it automatically, then tries the merge again.',
+    }[state];
+    return `${lead} ${moved}, and ${overlap}${tail}`;
+  };
+  for (const state of ['blocked', 'resolvingNow', 'afterVote', 'automatic']) {
+    for (const behindBy of [0, 1, 2, 21, 118]) {
+      for (const files of [0, 1, 2, 5, 21]) {
+        assert.equal(sentence(state, behindBy, files), before(state, behindBy, files), `${state} ${behindBy} ${files}`);
+      }
+    }
+  }
+  // Each count is the plural `count` of its own message: no English test of "=== 1" picks a form.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.match(src, /moved: PlatformI18n\.t\('changes:ledger\.sync\.fact\.moved', \{ count: behindN \}\)/);
+  assert.match(src, /overlap: PlatformI18n\.t\('changes:ledger\.sync\.fact\.overlap', \{ count: filesN \}\)/);
+  assert.match(src, /_boldLeadText\(ids\.aheadFiles, \{ count: filesN \}, tone\)/);
+  assert.doesNotMatch(src, /conflictFiles\.length === 1 \? 'oneFile'/);
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('changes:ledger.sync.fact.overlap', { count: 1 }), '1 file changed on both sides');
+  assert.equal(message('changes:ledger.sync.fact.overlap', { count: 21 }), '21 files changed on both sides');
+});
+

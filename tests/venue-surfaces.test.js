@@ -28,6 +28,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -44,6 +45,7 @@ const APP_CSS = read('public/css/app.css');
 function loadBuildVenues() {
   const sandbox = { window: {}, module: { exports: {} }, document: undefined };
   sandbox.self = sandbox.window;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(read('public/js/build-venues.js'), sandbox, {
     filename: 'public/js/build-venues.js',
@@ -160,7 +162,8 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
     'and the component is the only thing that writes it on the render path');
   assert.match(HEADER_TSX, /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
     'the disabled state has a stable visible-check hook');
-  assert.match(HEADER_TSX, /<LockIcon[\s\S]*Thinking…/,
+  assert.equal(message('devchat:header.venue.thinking'), 'Thinking…');
+  assert.match(HEADER_TSX, /<LockIcon[\s\S]*t\('devchat:header\.venue\.thinking'\)/,
     'the disabled state explains itself without relying on a mouse cursor');
   const sites = DEV_CHAT_SRC.match(
     /getElementById\('dc-venue-select'\)/g
@@ -190,7 +193,8 @@ test('in-chat providers share one flat selector, and other venues get none', () 
     'no native optgroups, so the closed control asks about models only');
   assert.doesNotMatch(DEV_CHAT_SRC, /'OpenRouter key \u00b7 |'Anthropic key \u00b7 /,
     'no option label names a provider');
-  assert.match(DEV_CHAT_SRC, /title: 'Runs on your OpenRouter key'/,
+  assert.equal(message('devchat:model.option.openRouterKeyTitle'), 'Runs on your OpenRouter key');
+  assert.match(DEV_CHAT_SRC, /title: PlatformI18n\.t\('devchat:model\.option\.openRouterKeyTitle'\)/,
     'which key pays survives as the option title');
   assert.match(DEV_CHAT_SRC, /Add more OpenRouter models/,
     'the full catalog is reachable from the selector');
@@ -341,8 +345,10 @@ test('session card and header display the same native provider after reload', ()
     const end = source.indexOf('\n  },', start);
     return source.slice(start + signature.length, end);
   };
-  const card = new Function('s', 'window', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
-  const header = new Function('session', 'window', 'BuildVenues', 'DevChat',
+  // The chip's tooltip is a catalog message, so the body is handed the English runtime.
+  const cardBody = new Function('s', 'window', 'PlatformI18n', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+  const card = (s, window) => cardBody(s, window, englishPlatformI18n());
+  const header = new Function('session', 'window', 'BuildVenues', 'DevChat', 'PlatformI18n',
     extract(DEV_CHAT_SRC, '_headerVenue(session) {'));
   for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], [null, 'External agent']]) {
     const session = { source: 'cli_handoff', external_agent: agent, agent_backend: 'claude_code' };
@@ -350,7 +356,7 @@ test('session card and header display the same native provider after reload', ()
     assert.equal(card(session, window).label, label);
     assert.equal(header(session, window, BV, {
       _currentVenueId: () => 'local', _chatBusyForPaint: () => false, _localAgent: null,
-    }).label, label);
+    }, englishPlatformI18n()).label, label);
   }
 });
 

@@ -19,8 +19,10 @@
 //       proposal's current head
 //     → Homeroom pushes that branch onto the proposal's bot-owned branch
 //       under a `--force-with-lease`, with the platform's own credentials
-//     → the EXISTING head-moved machinery clears the votes, posts the
-//       "please re-review" note and rebuilds the preview and the checks.
+//     → the EXISTING head-moved machinery decides what the move costs the
+//       approvals (see the last paragraph below). For an ordinary revision
+//       it retires the votes, posts the "please re-review" note and rebuilds
+//       the preview and the checks.
 //
 // Three properties this file exists to keep, all of them checked by
 // tests/proposal-update.test.js:
@@ -40,16 +42,25 @@
 //      somebody else advanced in the meantime produces `branch_moved` rather
 //      than a silently discarded revision.
 //
-// Deliberately NOT here: any call to services/sync-main.js's
-// `recordPlatformPush`. The head this path installs is the AUTHOR'S work, so
-// it must classify as an `author_push` and clear the tally. Recording it as a
-// platform push would carry every existing approval onto code nobody in the
-// group has read.
+// Deliberately NOT here: any say in what the push costs the approvals. Since
+// #2038 a vote counts while its approval_epoch equals the proposal's
+// chat_sessions.approval_epoch (services/pr-vote-revision.js), and only the
+// head-moved machinery moves that epoch. It asks services/integration.js's
+// classifyHeadMove what kind of move this was (same, mechanical, resolved,
+// authored or unknown) by redoing git's merge of the approved head with the
+// slice of main the new head contains and comparing trees. Mechanical and
+// resolved keep the approvals. Anything else bumps the epoch, so every
+// earlier vote stops counting, and no vote row is deleted. The author's push
+// goes through that classifier like any other head move, and nothing here
+// vouches for it. An ordinary revision is authored and retires the votes. A
+// push that is exactly git's merge of the approved head with main keeps
+// them, because nobody wrote anything the group had not approved.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
-const visualEvidencePlan = require('./visual-evidence-plan');
-const visualEvidenceState = require('./visual-evidence-state');
+const visibleChangesContract = require('./visible-changes');
+const shotsState = require('./shots-state');
 const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -276,14 +287,21 @@ async function reloadSession(pool, sessionId) {
   }
 }
 
-// How many votes the update is about to invalidate. Counted BEFORE the write,
-// because both reconciliation paths delete the rows — and "your update
-// cleared 4 votes" is the one consequence the caller must be able to relay to
-// the user without guessing.
+// How many votes the update puts at risk: the ones counting right now,
+// counted before the push. Neither reconciliation path deletes a row. Since
+// #2038 a move that retires votes bumps chat_sessions.approval_epoch and the
+// rows stay, so counting every row would also count votes an earlier move
+// already retired. This is the count services/vote-revision.js takes before
+// a native session's authored push. "Your update cleared 4 votes" is the one
+// consequence the caller must be able to relay to the user without guessing.
 async function countVotes(pool, sessionId) {
   try {
     const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM pr_votes WHERE session_id = $1`,
+      `SELECT COUNT(*)::int AS n
+         FROM pr_votes pv
+         JOIN chat_sessions cs ON cs.id = pv.session_id
+        WHERE pv.session_id = $1
+          AND pv.approval_epoch = cs.approval_epoch`,
       [sessionId]
     );
     return Number(rows[0] && rows[0].n) || 0;
@@ -298,7 +316,8 @@ async function countVotes(pool, sessionId) {
 //   drive this without a database, a git binary or a GitHub account; the
 //   defaults are the real modules.
 //
-// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin }
+// params: { user, session, branch, forkRepo, expectedHeadSha, testing, origin,
+//           patch }
 //   `session` is the joined chat_sessions row the route loaded and
 //   access-checked. `branch` is the branch in the caller's OWN fork that
 //   carries the new work. `forkRepo` is only its NAME, for an agent that
@@ -306,6 +325,17 @@ async function countVotes(pool, sessionId) {
 //   comes from the verified GitHub link. `testing` is the revision's capture
 //   routes and steps, already validated by services/testing-notes.js's
 //   `parseSubmitted` — see applyTestingMetadata.
+//
+//   `patch` (#4263) carries the new work INSTEAD of `branch`: the same
+//   `git format-patch` / `git diff` text the connector's new-work patch path
+//   takes, applied here on the proposal's current head by that path's own
+//   machinery (services/external-agent-patch.js) and pushed onto the
+//   proposal's branch under a lease. `expectedHeadSha` is then required: it
+//   is the commit the patch was made against, and a proposal that has moved
+//   off it is `branch_moved`. Everything after the push (votes, checks,
+//   preview, testing metadata, title, description, summary) is the branch
+//   update's own tail, unchanged. Only a head in the app's repository can
+//   take one; a fork head is the author's to push.
 async function updateProposalFromForkBranch(deps, params) {
   const { pool, config } = deps;
   const gh = deps.gh || require('./github');
@@ -324,8 +354,12 @@ async function updateProposalFromForkBranch(deps, params) {
   // The branch name reaches a `git fetch` argv and the fork name reaches a
   // URL path, so both are validated by the same predicates the submit path
   // uses. One definition, in services/external-agent-head.js.
+  const patch = typeof params.patch === 'string' && params.patch.trim() ? params.patch : null;
   const branch = params.branch ? String(params.branch).trim() : '';
-  if (!head.validRef(branch)) {
+  if (patch && branch) {
+    return fail('invalid_request', 'Send the new work as a patch or as a branch, not both.');
+  }
+  if (!patch && !head.validRef(branch)) {
     return fail('invalid_request', 'branch must be the git branch you pushed to your fork.');
   }
   const forkRepoName = params.forkRepo ? String(params.forkRepo).trim() : null;
@@ -338,12 +372,21 @@ async function updateProposalFromForkBranch(deps, params) {
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
   }
-  let visualEvidence;
-  if (params.visualEvidence !== undefined) {
+  // A patch is applied AT a commit, so it has to say which one. Without it
+  // the only candidate is whatever the head is now, which is exactly the
+  // guess the lease exists to rule out.
+  if (patch && !expectedHeadSha) {
+    return fail(
+      'invalid_request',
+      'A patch needs expectedHeadSha: the proposal\'s commit it was made against, which is where it is applied.'
+    );
+  }
+  let visibleChanges;
+  if (params.visibleChanges !== undefined) {
     try {
-      visualEvidence = visualEvidencePlan.parseIntent(params.visualEvidence);
+      visibleChanges = visibleChangesContract.parseIntent(params.visibleChanges);
     } catch (err) {
-      return fail('invalid_visual_evidence', err.message);
+      return fail('invalid_visible_changes', err.message);
     }
   }
 
@@ -412,10 +455,15 @@ async function updateProposalFromForkBranch(deps, params) {
         prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        // #4263. The new work as a patch instead of a fork branch, and the
+        // new-work patch path's own apply, injectable like `head`.
+        patch,
+        applyPatch: deps.applyPatch || require('./external-agent-patch').applyPatch,
         testing: normalizeTesting(params.testing),
-        visualEvidence,
+        visibleChanges,
         title: normalizeProposedTitle(params.title),
         description: normalizeProposedDescription(params.description),
+        summary: normalizeProposedSummary(params.summary),
         // #1323. A re-run of the checks against the commit already there.
         recheck: params.recheck === true,
         linkedIssues: normalizeLinkedIssues(params.linkedIssues),
@@ -431,9 +479,26 @@ async function updateProposalFromForkBranch(deps, params) {
         lifecycle: deps.lifecycle,
         pushSessionUpdate: deps.pushSessionUpdate,
       };
-      return branchHomeOf(session) === 'user_fork'
+      // #4263. A head in the author's fork is written by the author alone:
+      // the platform holds no credential for it, so a patch has nowhere to
+      // land and the honest answer is the branch route.
+      if (patch && branchHomeOf(session) === 'user_fork') {
+        return fail(
+          'invalid_request',
+          `This proposal follows ${session.branch_name || 'a branch'} in your own fork, which only you can push to, `
+          + 'so Homeroom cannot apply a patch to it. Commit the change on that branch, push it, and submit with '
+          + 'proposalId and branch.',
+          { retryable: false }
+        );
+      }
+      const result = branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
         : await advanceAppRepoBranch(ctx);
+      // #3344. LAST, after every synchronous tail: a head move marks the
+      // summary stale (reconcileNativeReviewedHead, applyHeadChange), and the
+      // author's words sent WITH this revision describe it, so they must land
+      // after that invalidation rather than be staled by it.
+      return await withProposedSummary(ctx, result);
     } finally {
       releaseOperation();
     }
@@ -455,6 +520,7 @@ async function reconcileManagedCommitUpload(deps, params) {
     fresh: true,
     notify: true,
     deferChecks: true,
+    madeBy: 'homeroom',
   });
   if (revision.blocked) {
     return fail(
@@ -524,108 +590,108 @@ function normalizeTesting(testing) {
   return { ...parsed, dropped };
 }
 
-function storedVisualEvidenceIntent(session) {
-  const candidate = session?.visual_evidence_detail?.intent;
+function storedVisibleChanges(session) {
+  const candidate = session?.shots_detail?.intent;
   if (!candidate) return null;
   try {
-    return visualEvidencePlan.parseIntent(candidate);
+    return visibleChangesContract.parseIntent(candidate);
   } catch {
     return null;
   }
 }
 
-function visualEvidenceNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
-  if (rejected) return 'retry_visual_evidence_intent';
-  if (state === 'verified') return 'review_verified_evidence';
-  if (state === 'failed') return 'rerun_or_correct_visual_evidence';
+function shotsNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
+  if (rejected) return 'retry_visible_changes';
+  if (state === 'verified') return 'review_verified_shots';
+  if (state === 'failed') return 'rerun_or_correct_shots';
   if (state === 'overridden') return 'human_override_recorded';
-  if (state === 'not_required') return 'no_visual_evidence_run_required';
+  if (state === 'not_required') return 'no_shots_run_required';
   if (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)) {
-    return 'await_visual_evidence';
+    return 'await_shots';
   }
-  if (required) return 'provide_visual_evidence_intent';
-  if (accepted) return 'visual_evidence_intent_recorded';
+  if (required) return 'provide_visible_changes';
+  if (accepted) return 'visible_changes_recorded';
   return 'none';
 }
 
-function visualEvidenceSubmissionFields(result = {}) {
+function visibleChangesSubmissionFields(result = {}) {
   const accepted = result.accepted === true;
   const rejected = result.rejected === true;
   const required = result.required === true;
   const state = result.state || null;
   return {
-    visualEvidenceState: state,
-    visualEvidenceAccepted: accepted,
-    visualEvidenceRejected: rejected,
-    visualEvidenceRequired: required,
-    visualEvidenceNextStep: result.nextStep
-      || visualEvidenceNextStep(state, { required, accepted, rejected }),
+    shotsState: state,
+    visibleChangesAccepted: accepted,
+    visibleChangesRejected: rejected,
+    shotsRequired: required,
+    shotsNextStep: result.nextStep
+      || shotsNextStep(state, { required, accepted, rejected }),
   };
 }
 
-// Revision-scoped visual evidence metadata follows the commit through every
+// Revision-scoped before & after shots metadata follows the commit through every
 // update surface. Omission preserves the prior declaration. A head move first
 // hides old media, then re-plans the preserved (or newly supplied) intent for
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
-async function applyVisualEvidenceRevision({
-  pool, config, session, headSha, visualEvidence, headChanged = false,
+async function applyShotsRevision({
+  pool, config, session, headSha, visibleChanges, headChanged = false,
 }) {
-  const submitted = visualEvidence !== undefined;
-  if (!config?.visualEvidence?.collect) {
+  const submitted = visibleChanges !== undefined;
+  if (!config?.shots?.collect) {
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'visual_evidence_collection_disabled' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'shots_collection_disabled' : 'none',
     };
   }
-  const intent = submitted ? visualEvidence : storedVisualEvidenceIntent(session);
+  const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
-    if (headChanged && visualEvidenceState.validSha(headSha)) {
-      await visualEvidenceState.markStaleForHead(pool, Number(session.id), headSha);
+    if (headChanged && shotsState.validSha(headSha)) {
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
     }
     if (!intent) {
-      const required = session.visual_evidence_detail?.required === true;
+      const required = session.shots_detail?.required === true;
       return {
         accepted: false, rejected: false, required, changed: false,
-        state: session.visual_evidence_state || null,
-        nextStep: required ? 'provide_visual_evidence_intent' : 'none',
+        state: session.shots_state || null,
+        nextStep: required ? 'provide_visible_changes' : 'none',
       };
     }
-    const result = await visualEvidenceState.recordIntent(
+    const result = await shotsState.recordIntent(
       pool,
       Number(session.id),
       intent,
-      visualEvidenceState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha } : {}
     );
-    session.visual_evidence_state = result.state;
-    session.visual_evidence_detail = result.detail;
-    session.visual_evidence_run_id = result.runId;
+    session.shots_state = result.state;
+    session.shots_detail = result.detail;
+    session.shots_run_id = result.runId;
     return {
       accepted: submitted,
       rejected: false,
       required: result.required === true,
       changed: result.unchanged !== true,
       state: result.state,
-      nextStep: visualEvidenceNextStep(result.state, {
+      nextStep: shotsNextStep(result.state, {
         required: result.required === true,
         accepted: submitted,
       }),
     };
   } catch (err) {
-    log.error('proposal-update', 'could not store visual evidence intent', {
+    log.error('proposal-update', 'could not store before & after shots intent', {
       sessionId: Number(session.id), headSha, err: err.message,
     });
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'retry_visual_evidence_intent' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'retry_visible_changes' : 'none',
     };
   }
 }
@@ -672,6 +738,153 @@ function normalizeProposedDescription(description) {
   if (typeof description !== 'string') return null;
   const t = description.trim().slice(0, 4000);
   return t || null;
+}
+
+// #3344. The plain-English summary a voter reads first, normalized by the
+// pr-import route's own parser so an update is held to the import's cap.
+function normalizeProposedSummary(summary) {
+  if (typeof summary !== 'string') return null;
+  return require('../routes/votes').parseImportSummary({ summary });
+}
+
+// Apply the submitted summary (#3344). Until this existed the summary was
+// written once, at import, and nothing could change it afterwards: neither the
+// agent nor the proposer. It is stored as the AUTHOR's summary, fresh for the
+// head this update landed on, replacing whatever was there (author or
+// generated). The input version is bumped in the same statement, so a
+// generation that read the older inputs is discarded when it tries to
+// publish; pr-metadata.js then keeps a fresh author summary on every later
+// regeneration (the full precedence rule is at its authorSummaryHolds).
+//
+// Who may: the update path's ownershipGate has already established the caller
+// owns the row, and callerOwnsPr is the same second test the title and
+// description apply, so a pull request another GitHub account opened is
+// refused here exactly as its title and body are.
+//
+// The in-app view renders pr_summary_md through the same sanitizing markdown
+// path it always has. The PR body is rewritten too where the platform wrote
+// the summary INTO it (see syncSummaryIntoBody): otherwise GitHub, and the
+// pr_body mirror get_proposal reports, would keep the old words, and a later
+// metadata pass compares against the already-updated column and never
+// notices.
+async function applyProposedSummary({ pool, gh, owner, repo, session, summary, viewerLogin, headSha }) {
+  const nothing = { changed: false, rejected: null };
+  if (!summary) return nothing;
+  if (!callerOwnsPr(session, viewerLogin)) return { changed: false, rejected: 'imported_pr' };
+  const head = SHA_RE.test(String(headSha || '')) ? String(headSha).toLowerCase() : null;
+  const previousSummary = typeof session.pr_summary_md === 'string' ? session.pr_summary_md : null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_sessions
+          SET pr_summary_previous_md = CASE WHEN pr_summary_md IS DISTINCT FROM $1::text
+                THEN COALESCE(pr_summary_md, pr_summary_previous_md) ELSE pr_summary_previous_md END,
+              pr_summary_md = $1::text,
+              pr_summary_source = 'author',
+              pr_summary_source_head_sha = $2::varchar,
+              pr_summary_source_body_hash = $3,
+              pr_summary_input_version = pr_summary_input_version + 1,
+              pr_summary_applied_version = pr_summary_input_version + 1,
+              pr_summary_stale = FALSE
+        WHERE id = $4
+          AND NOT (pr_summary_md IS NOT DISTINCT FROM $1::text
+                   AND pr_summary_source IS NOT DISTINCT FROM 'author'
+                   AND pr_summary_stale = FALSE
+                   AND pr_summary_source_head_sha IS NOT DISTINCT FROM $2::varchar)
+        RETURNING id`,
+      [summary, head, summaryFreshness.bodyHash(session.pr_body || null), Number(session.id)]
+    );
+    if (!rows.length) {
+      // Already stored and fresh. A resend is still how a body rewrite that
+      // failed last time is retried; the words it replaced are the previous
+      // summary.
+      const bodyRejected = await syncSummaryIntoBody({
+        pool, gh, owner, repo, session, summary,
+        previousSummary: session.pr_summary_previous_md || null,
+      });
+      return { ...nothing, ...(bodyRejected ? { bodyRejected } : {}) };
+    }
+  } catch (err) {
+    log.error('proposal-update', 'could not store the submitted summary', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'write_failed' };
+  }
+  session.pr_summary_md = summary;
+  session.pr_summary_source = 'author';
+  session.pr_summary_source_head_sha = head;
+  session.pr_summary_stale = false;
+  log.info('proposal-update', 'stored the submitted summary', { sessionId: Number(session.id) });
+  const bodyRejected = await syncSummaryIntoBody({
+    pool, gh, owner, repo, session, summary, previousSummary,
+  });
+  return { changed: true, rejected: null, ...(bodyRejected ? { bodyRejected } : {}) };
+}
+
+// Only a pull request whose body the PLATFORM composes carries the summary:
+// pr-metadata leads a native proposal's body with it. An imported pull
+// request's body is its author's description (the connector files the summary
+// beside it, never in it), so there is nothing there to replace. Where the
+// body leads with the previous summary, that paragraph is swapped; where it
+// leads with none, the summary is prepended, which is the shape pr-metadata
+// gives a retained summary. Returns null on success or nothing to do, else a
+// reason. Best-effort: the summary itself is already stored.
+async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, previousSummary }) {
+  if (String(session.source) === 'imported' || !session.pr_number || !gh || !owner || !repo) return null;
+  let existing;
+  try {
+    const pr = await gh.getPR(owner, repo, session.pr_number);
+    existing = String((pr && pr.body) || '');
+  } catch (err) {
+    log.warn('proposal-update', 'could not read the pull request body to lead it with the summary', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return 'github_unreadable';
+  }
+  const alreadySynced = existing === summary || existing.startsWith(`${summary}\n\n`);
+  const prev = previousSummary ? previousSummary.trim() : '';
+  let rest = existing;
+  if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
+  else if (prev && existing === prev) rest = '';
+  const body = alreadySynced ? existing : (rest ? `${summary}\n\n${rest}` : summary);
+  if (body !== existing) {
+    try {
+      await gh.updatePR(owner, repo, session.pr_number, { body });
+    } catch (err) {
+      log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
+        sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+      });
+      return 'github_write_failed';
+    }
+  }
+  if (alreadySynced && session.pr_body === body) return null;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
+      [body, summaryFreshness.bodyHash(body), Number(session.id)]
+    );
+    session.pr_body = body;
+  } catch (err) {
+    log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return 'github_mirror_failed';
+  }
+  return null;
+}
+
+async function withProposedSummary(ctx, result) {
+  if (!ctx.summary || !result || result.ok !== true) return result;
+  const applied = await applyProposedSummary({
+    pool: ctx.pool, gh: ctx.gh, owner: ctx.owner, repo: ctx.repo,
+    session: ctx.session, summary: ctx.summary,
+    viewerLogin: ctx.expectedLogin, headSha: result.headSha,
+  });
+  return {
+    ...result,
+    summaryUpdated: applied.changed,
+    ...(applied.rejected ? { summaryRejected: applied.rejected } : {}),
+    ...(applied.bodyRejected ? { summaryBodyRejected: applied.bodyRejected } : {}),
+  };
 }
 
 // Apply the submitted title. Two cases, both author-initiated (the update
@@ -802,6 +1015,18 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   let body = closing ? `${description}\n\n${closing}` : description;
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
   if (body === existing) return nothing;
+
+  // GitHub is the body source of truth. Invalidate before touching it: a DB
+  // failure must not leave an older summary displayed beside newer prose.
+  try {
+    await summaryFreshness.invalidate(pool, Number(session.id));
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  } catch (err) {
+    log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'summary_invalidation_failed' };
+  }
 
   try {
     await gh.updatePR(owner, repo, session.pr_number, { body });
@@ -1081,8 +1306,8 @@ async function applyLinkedIssues({ pool, gh, session, owner, repo, linkedIssues 
 // whose screenshots came out wrong UNFIXABLE: the routes are only read when a
 // capture runs, a capture only runs when the head moves, and the head cannot
 // move for a change that is already correct. The advice left was "push an
-// empty commit", which clears every vote the proposal has collected to correct
-// a screenshot.
+// empty commit", which then cleared every vote the proposal had collected to
+// correct a screenshot.
 //
 // So a resubmit that carries DIFFERENT testing metadata now stores it and
 // re-runs the checks against it. What it deliberately does not do is touch the
@@ -1092,8 +1317,8 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
-    pool, config, session, headSha, visualEvidence: ctx.visualEvidence,
+  const shotsApplied = await applyShotsRevision({
+    pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
@@ -1118,7 +1343,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1130,7 +1355,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // a side effect of changing a capture route, so correcting a stale verdict
   // meant editing a route that was already right. An explicit ask reaches it
   // now, and nothing else about the path changes.
-  if (!applied.changed && !evidenceApplied.changed && !ctx.recheck) return reported;
+  if (!applied.changed && !shotsApplied.changed && !ctx.recheck) return reported;
 
   // A paused session has no container and no preview to shoot against, and
   // starting a build for one is the thing settlePausedSession exists to avoid.
@@ -1154,7 +1379,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   try {
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: evidenceApplied.changed ? 'visual-evidence-update' : 'testing-update',
+      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
@@ -1335,12 +1560,29 @@ async function advanceAppRepoBranch(ctx) {
   // inside pushForkBranchToAppBranch immediately before the push — the
   // second run is the load-bearing one, and this one is not permitted to
   // replace it.
-  const verified = await head.verifyForkBranch({
-    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
-  });
-  if (!verified.ok) return renameHeadFailure(verified, branch);
+  //
+  // #4263. A PATCH has no fork to verify: its content arrived in this
+  // request from the proposal's own author (ownershipGate, twice), and it is
+  // applied ON `liveHead`, so it cannot drop a reviewed commit and needs no
+  // ancestry check. `verified` is filled in from the commit the apply wrote,
+  // below, and everything after the push reads it exactly as for a branch.
+  let verified = null;
+  if (!ctx.patch) {
+    verified = await head.verifyForkBranch({
+      githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+    });
+    if (!verified.ok) return renameHeadFailure(verified, branch);
+  } else if (firstLanding) {
+    // Nothing has landed yet, so there is no commit to apply the patch at.
+    return fail(
+      'invalid_request',
+      'This work has no commits on its branch yet, so there is no commit to apply a patch at. Push a branch to '
+      + 'your fork and submit it with proposalId and branch.',
+      { retryable: false }
+    );
+  }
 
-  if (!firstLanding) {
+  if (!firstLanding && verified) {
     // Nothing to push — but a resubmit may still be correcting the capture
     // routes, which is the one thing that used to have no way through (#1199).
     if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
@@ -1356,8 +1598,9 @@ async function advanceAppRepoBranch(ctx) {
   const kind = isContinuableStatus(session.status);
   const promoted = kind === 'proposal';
 
-  // Votes exist only on a proposal that is up for a vote, and the count has to
-  // happen BEFORE the write that deletes them. A session nobody is voting on
+  // Votes count only on a proposal that is up for a vote, and the count has
+  // to happen BEFORE the head move that may retire them: once the epoch
+  // moves, none of them is current any more. A session nobody is voting on
   // has nothing to count and nothing to clear.
   const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
@@ -1365,23 +1608,46 @@ async function advanceAppRepoBranch(ctx) {
   // the same gate in front of it; `mirrorForkBranch` is not a second
   // implementation of anything, it is the one the mirror rung already uses,
   // pointed at the name this row recorded instead of one it mints.
-  const pushed = firstLanding
-    ? await head.mirrorForkBranch({
-      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch,
-    })
-    : await head.pushForkBranchToAppBranch({
-      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-      targetBranch, expectedRemoteSha: liveHead, sessionId,
+  //
+  // #4263. A patch is the new-work patch path's own apply (size, file-count,
+  // `.github/` and growth bounds included), aimed at THIS branch at
+  // `liveHead` and pushed under the same lease: a head that moved since the
+  // read above is `branch_moved`, never overwritten. Its refusals are already
+  // in the caller's vocabulary, so they pass through unrenamed.
+  let pushed;
+  if (ctx.patch) {
+    pushed = await ctx.applyPatch({
+      owner, repo, patch: ctx.patch, baseSha: liveHead, userId: session.user_id,
+      targetBranch, sessionId,
     });
-  if (!pushed.ok) return renameHeadFailure(pushed, branch);
+    if (!pushed.ok) return pushed;
+    verified = { ok: true, headSha: String(pushed.headSha || '').trim().toLowerCase() };
+  } else {
+    pushed = firstLanding
+      ? await head.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch,
+      })
+      : await head.pushForkBranchToAppBranch({
+        githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+        targetBranch, expectedRemoteSha: liveHead, sessionId,
+      });
+    if (!pushed.ok) return renameHeadFailure(pushed, branch);
+  }
+
+  if (session.source !== 'imported') {
+    // The push has moved this proposal's code. Keep the previous summary out
+    // of every reader even if the later PR metadata or preview work fails.
+    await summaryFreshness.invalidate(pool, sessionId);
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  }
 
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
-    visualEvidence: ctx.visualEvidence, headChanged: liveHead !== verified.headSha,
+    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1409,6 +1675,7 @@ async function advanceAppRepoBranch(ctx) {
         pool, session, repoOwner: owner, repoName: repo,
         userMessage: '', ccSummary: '', username,
         userId: session.user_id, allowModelGeneration: false,
+        sourceHeadSha: verified.headSha,
         preferredTitle: session.proposed_pr_title || session.session_title || null,
       });
     } catch (err) {
@@ -1433,17 +1700,18 @@ async function advanceAppRepoBranch(ctx) {
     previousHeadSha: liveHead,
     // What this push actually landed on, decided here and not by the work
     // order — which was written before the agent started and may be an hour
-    // out of date. `submittedVia` stays 'update_branch' in all three: the
-    // schema's widened CHECK already allows it and a third value would need a
-    // migration for no gain.
+    // out of date. `submittedVia` stays 'update_branch' in all three tails,
+    // which say what the push landed on, not how the commit arrived. A patch
+    // does say so (#4263: 'update_patch', added to the schema's CHECK), the
+    // way the create path's 'patch' and 'mirror' tell its two rungs apart.
     targetKind: promoted ? 'proposal' : 'session',
-    submittedVia: 'update_branch',
+    submittedVia: ctx.patch ? 'update_patch' : 'update_branch',
     // What the screenshots this revision's capture shoots will be of — and
     // what it will NOT be of, because a route the caller sent was unusable.
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1462,11 +1730,23 @@ async function advanceAppRepoBranch(ctx) {
   //
   // `syncImportedProposal` is that sweep's own per-proposal step: it re-reads
   // the pull request, sees the head this push just moved, and runs the
-  // existing imported-head machinery — advance the tracked SHA, clear the
-  // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
-  // about it is reimplemented here. 'unchanged' means GitHub had not caught
-  // up with the push yet, which is honest to report as "not rebuilt": the
-  // sweeper takes it from there.
+  // existing imported-head machinery — advance the tracked SHA, classify the
+  // move (an authored one retires the votes), post the note, re-run the
+  // SHA-pinned checks. Nothing about it is reimplemented here.
+  //
+  // 'unchanged' means GitHub's pull request still reads the commit before
+  // this push — it updates a PR's head a few seconds after the branch moves.
+  // Left there, the proposal showed the previous commit's verdict as current
+  // until the sweep came round, minutes later (PR #3615 sat on a stale red
+  // check for about five minutes). But the branch is in the app's own repository and
+  // the platform has just written it, so the mirror can read the new head
+  // straight off it: `reconcileImportedHead` is the re-pin the merge queue
+  // uses after ITS pushes, through the same applyHeadChange. `fresh`, because
+  // a coalesced fetch that started before the push would answer with the
+  // old tip (#2619). The rebuild runs in the background, as it does for the
+  // queue's re-pin: a submit should not hold the proposal lock across a
+  // minutes-long build. If the mirror cannot answer either, the sweeper
+  // still takes it from there, and that is reported as "not rebuilt".
   if (String(session.source) === 'imported') {
     let synced = 'skipped';
     try {
@@ -1476,23 +1756,47 @@ async function advanceAppRepoBranch(ctx) {
         sessionId, err: err.message,
       });
     }
-    const applied = synced === 'updated';
+    let repinned = null;
+    if (synced === 'unchanged') {
+      repinned = await prImportSync.reconcileImportedHead({
+        config, pool, session, checks: 'background', notify: true, fresh: true,
+      }).catch((err) => {
+        log.error('proposal-update', 'imported head re-pin failed after a successful push', {
+          sessionId, err: err.message,
+        });
+        return null;
+      });
+    }
+    const viaMirror = !!(repinned && repinned.reconciled && repinned.changed);
+    const applied = synced === 'updated' || viaMirror;
+    // A move the classifier calls mechanical keeps the approvals and can carry
+    // a green verdict. Only the re-pin reports which it was, so only it can
+    // say so; the sync's answer is the one this tail has always reported.
+    const cleared = applied && !(viaMirror && repinned.votesKept);
+    const rebuilding = applied && !(viaMirror && repinned.checksCarry);
+    let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+    if (applied) votesClearing = cleared ? 'now' : 'none';
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+      headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0, synced,
+      repinned: repinned ? (viaMirror ? 'mirror' : (repinned.reason || 'unchanged')) : 'not_needed',
+      votesClearing, votesAtRisk: votesCleared,
     });
     return {
       ...landed,
-      votesCleared: applied ? votesCleared : 0,
-      // `votesCleared` is what THIS call cleared. On the mirror path the head
-      // is advanced by the next pr-import sweep, which is when the tally
-      // resets — so a 0 here with votesClearing 'on_sync' means "not yet",
-      // not "never". votesAtRisk is the count that will go.
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+      votesCleared: cleared ? votesCleared : 0,
+      // `votesCleared` is what THIS call cleared. When neither GitHub nor the
+      // mirror could see the push yet, the head is advanced by the next
+      // pr-import sweep, which is when the tally resets — so a 0 here with
+      // votesClearing 'on_sync' means "not yet", not "never". votesAtRisk is
+      // the count that will go.
+      votesClearing,
       votesAtRisk: votesCleared,
-      checksRerun: applied,
-      previewRebuilding: applied,
+      // The classifier kept the approvals. A 0 above can also mean nobody had
+      // voted, so the connector needs this to say "they still stand".
+      votesKept: !!(viaMirror && repinned.votesKept),
+      checksRerun: rebuilding,
+      previewRebuilding: rebuilding,
     };
   }
 
@@ -1550,13 +1854,16 @@ async function advanceAppRepoBranch(ctx) {
   // already has one place that reconciles a moved native head.
   // `fresh: true` makes it re-read GitHub rather than trust the stored pin.
   //
-  // And no `recordPlatformPush` call anywhere above — which is exactly what
-  // makes classifyNativeHeadMove see an `author_push` and DELETE the tally
-  // instead of carrying it onto code the group has not read.
+  // Nothing above tells it who pushed, either. It asks services/integration.js
+  // classifyHeadMove what the move was and spends the answer on
+  // chat_sessions.approval_epoch: an authored or unknown move bumps it, so
+  // the earlier votes stop counting instead of carrying onto code the group
+  // has not read, and a mechanical or resolved one keeps them. No vote row is
+  // deleted either way.
   let reconciled = null;
   try {
     reconciled = await votes.reconcileNativeReviewedHead({
-      config, pool, session, fresh: true, notify: true,
+      config, pool, session, fresh: true, notify: true, madeBy: 'homeroom',
     });
   } catch (err) {
     // The push landed. A reconciliation that failed is caught up by the next
@@ -1570,23 +1877,35 @@ async function advanceAppRepoBranch(ctx) {
   // Boolean, not the truthy value: `checksRerun` and `previewRebuilding` are
   // reported to a client that branches on them, and `null` is neither answer.
   const settled = !!(reconciled && reconciled.updated === true);
+  // What the move actually cost, in the reconcile's own words, as Tail 1a
+  // reads them off its re-pin. A mechanical or resolved move keeps the
+  // approvals, and a mechanical one carries a green verdict onto the merged
+  // commit, so nothing rebuilds. A first binding (`changed: false`, a row
+  // with no pin yet) clears nothing and kicks nothing.
+  const moved = settled && reconciled.changed !== false;
+  const cleared = moved && reconciled.votesKept !== true;
+  const rebuilding = moved && reconciled.checksCarry !== true;
+  let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+  if (settled) votesClearing = cleared ? 'now' : 'none';
 
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-    headSha: verified.headSha, votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+    headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0,
+    votesClearing, votesAtRisk: votesCleared,
+    moveKind: settled ? (reconciled.kind || null) : null,
   });
 
   return {
     ...landed,
     // Honest about what actually happened: the votes were counted before the
-    // write and are only reported cleared when the reconciliation that
-    // clears them ran.
-    votesCleared: settled ? votesCleared : 0,
-    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+    // write and are only reported cleared when the reconciliation ran and
+    // retired them.
+    votesCleared: cleared ? votesCleared : 0,
+    votesClearing,
     votesAtRisk: votesCleared,
-    checksRerun: settled,
-    previewRebuilding: settled,
+    votesKept: moved && reconciled.votesKept === true,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
   };
 }
 
@@ -1762,10 +2081,11 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
 //
 // Here the author already has write access to the head — it is a branch in
 // their own fork — so there is nothing to push. Their push IS the update;
-// this only advances the head the platform TRACKS, which is what clears the
-// votes and rebuilds the checks. Calling it is still worth it: the sweeper
-// would get there eventually, and "eventually" is minutes of the group
-// voting on a revision that no longer exists.
+// this only advances the head the platform TRACKS, which is what retires the
+// votes (unless the move is a mechanical or resolved merge) and rebuilds the
+// checks. Calling it is still worth it: the sweeper would get there
+// eventually, and "eventually" is minutes of the group voting on a revision
+// that no longer exists.
 async function advanceForkHead(ctx) {
   const {
     pool, config, gh, head, prImportSync, githubPublic, session,
@@ -1865,9 +2185,9 @@ async function advanceForkHead(ctx) {
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visualEvidence: ctx.visualEvidence, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
@@ -1891,11 +2211,13 @@ async function advanceForkHead(ctx) {
   });
 
   // The existing imported-head machinery, unchanged: it advances the tracked
-  // SHA, clears the tally, re-classifies dapp.json admins, posts the
-  // "earlier votes were cleared" note and re-runs the SHA-pinned checks and
-  // staging build.
+  // SHA, asks the same classifier what the move cost the approvals (an
+  // authored or unknown move bumps the epoch and posts the "earlier votes
+  // were cleared" note), re-classifies dapp.json admins and re-runs the
+  // SHA-pinned checks and staging build.
+  let moved = null;
   try {
-    await prImportSync.applyHeadChange({
+    moved = await prImportSync.applyHeadChange({
       config, pool, session, pr, repo: { owner, repo }, newHead: liveHead, oldHead,
     });
   } catch (err) {
@@ -1908,8 +2230,19 @@ async function advanceForkHead(ctx) {
     );
   }
 
+  // What the move actually cost, in applyHeadChange's own words. A mechanical
+  // or resolved move keeps the approvals, and a mechanical one can carry a
+  // green verdict, so nothing rebuilds. When another pass applied this head
+  // first (`applied: false`), the answer is that pass's, so the report stays
+  // what it has always been.
+  const applied = !!(moved && moved.applied);
+  const kept = applied && moved.votesKept === true;
+  const rebuilding = !(applied && moved.checksCarry === true);
+
   log.info('proposal-update', 'advanced an imported proposal to its fork\'s head', {
-    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead, votesCleared,
+    sessionId, prNumber, previousHeadSha: oldHead, headSha: liveHead,
+    votesCleared: kept ? 0 : votesCleared, votesAtRisk: votesCleared,
+    moveKind: applied ? (moved.kind || null) : null,
   });
 
   return {
@@ -1923,9 +2256,11 @@ async function advanceForkHead(ctx) {
     branch,
     headSha: liveHead,
     previousHeadSha: oldHead,
-    votesCleared,
-    checksRerun: true,
-    previewRebuilding: true,
+    votesCleared: kept ? 0 : votesCleared,
+    votesAtRisk: votesCleared,
+    votesKept: kept,
+    checksRerun: rebuilding,
+    previewRebuilding: rebuilding,
     submittedVia: 'update_fork_head',
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
@@ -1934,7 +2269,7 @@ async function advanceForkHead(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     linkedIssuesUpdated: linkedApplied,
   };
 }
@@ -2024,12 +2359,17 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
-  applyVisualEvidenceRevision,
-  visualEvidenceSubmissionFields,
-  visualEvidenceNextStep,
+  applyShotsRevision,
+  visibleChangesSubmissionFields,
+  shotsNextStep,
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
+  // #3344's author summary, likewise.
+  applyProposedSummary,
+  // #3767: the Homeroom bot names its own proposal again after a revision.
+  applyProposedTitle,
+  syncSummaryIntoBody,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,
 };

@@ -5,6 +5,7 @@ const models = require('../services/models');
 const workshopAsk = require('../services/workshop-ask');
 const { workshopAskLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
+const { isDemoNeedsProposal } = require('./workshop-overview');
 
 // The Needs-you deck's ask box. One question about one card the viewer is
 // being asked to vote on or pick up; see services/workshop-ask.js for what
@@ -48,6 +49,9 @@ function workshopAskRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
       if (!app) return res.status(404).json({ error: 'App not found' });
+      // #4313: a ?demo=1 Needs-you card (a negative id, staging only) has
+      // no stored conversation; say so rather than refuse the read.
+      if (req.query.kind === 'proposal' && isDemoNeedsProposal(req.query.ref)) return res.json({ messages: [] });
       const target = workshopAsk.parseTarget({ kind: req.query.kind, ref: req.query.ref });
       if (!target) return res.status(400).json({ error: 'Which item is the thread about?' });
       const messages = await workshopAsk.loadThread(pool, app, req.user.id, target);

@@ -20,6 +20,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { message } = require('./lib/platform-i18n');
 
 const CSS = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
@@ -68,8 +69,9 @@ test('"Checks passing" no longer inherits the violet Merged colour', () => {
   assert.match(CSS, /\.gc-merged-badge \{[^}]*color: var\(--state-ok\)/);
   const FE = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(FE, /gc-checks-passing-badge[^>]*>✓ Checks passing/,
+  assert.match(FE, /gc-checks-passing-badge[^>]*>\$\{PlatformI18n\.htmlText\('changes:chips\.checks\.passing'\)\}/,
     'the passing badge uses its own class');
+  assert.equal(message('changes:chips.checks.passing'), '✓ Checks passing');
 });
 
 test('the tally pill and the voted box follow the theme', () => {
@@ -91,8 +93,11 @@ test('checks FAILING reads blocked, not the advisory amber', () => {
   assert.match(CSS, /\.gc-warning-badge \{[^}]*color: var\(--state-attention\)/);
   const FE = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-  assert.match(FE, /gc-blocked-badge[^>]*>⚠ \$\{escapeHtml\(label\)\}/,
+  assert.match(FE, /gc-blocked-badge[^>]*>\$\{escapeHtml\(label\)\}/,
     'checksBadgeHtml renders the failing state as blocked');
+  assert.match(FE, /const label = n\s+\? PlatformI18n\.t\('changes:chips\.checks\.failingCount', \{ count: n \}\)\s+: PlatformI18n\.t\('changes:chips\.checks\.failing'\);/);
+  assert.equal(message('changes:chips.checks.failing'), '⚠ Checks failing');
+  assert.equal(message('changes:chips.checks.failingCount', { count: 3 }), '⚠ Checks failing · 3');
 });
 
 test('the in-flight merge stages read PROGRESS, freeing amber for warnings', () => {

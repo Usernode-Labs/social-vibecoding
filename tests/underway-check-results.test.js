@@ -11,6 +11,7 @@ function appView(user = { id: 42 }) {
     localStorage: { getItem: () => null }, addEventListener() {},
     setTimeout, clearTimeout, setInterval, clearInterval };
   context.window = context;
+  context.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(context);
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8') + '\n;globalThis.av = AppView;', context);
   return context.av;
@@ -23,6 +24,14 @@ const failing = { id: 123, user_id: 42, status: 'active', check_state: 'failing'
     failureReason: 'Button missing', consoleErrors: [{ message: 'Settings crashed' }] }] };
 
 function menu(av, card) { return av._cardMenus[card.rail.menuKey] || []; }
+
+// The window the dev-card bundle is loaded under. The bundle reaches the
+// Messages screen through the Workshop's Discussion tab (#3494), and a module
+// in that graph (lib/back-stack.ts) listens for popstate when it loads, so
+// the stand-in window needs the listener methods a browser's has.
+function bundleWindow() {
+  return { AppView: appView(), addEventListener() {}, removeEventListener() {} };
+}
 
 for (const status of ['active', 'paused']) {
   test(`${status} own card renders failure reason and provides inspection and rerun`, () => {
@@ -73,7 +82,7 @@ test('passing, closed, read-only and in-flight cards cannot offer a duplicate re
 
 test('results render paths, reasons and console errors as visible escaped text', () => {
   const previous = global.window;
-  global.window = { AppView: appView() };
+  global.window = bundleWindow();
   try {
     const { SessionCheckResults } = loadTsx('tests/fixtures/dev-card-api.ts');
     const html = renderToHtml(createElement(SessionCheckResults, { session: {
@@ -92,18 +101,18 @@ test('results render paths, reasons and console errors as visible escaped text',
 // row that recorded no reason reads the fallback line.
 test('a skipped run says why in the panel, with or without a recorded reason', () => {
   const previous = global.window;
-  global.window = { AppView: appView() };
+  global.window = bundleWindow();
   try {
     const { SessionCheckResults } = loadTsx('tests/fixtures/dev-card-api.ts');
     const skipped = { id: 124, user_id: 42, status: 'active', check_state: 'skipped', test_results: [] };
     const render = (session) => renderToHtml(createElement(SessionCheckResults, { session }));
     const withReason = render({ ...skipped, check_error_detail: 'branch has no commits beyond main, so there is nothing to test' });
-    assert.match(withReason, /data-note="checks"[\s\S]*Checks skipped\.[\s\S]*Automated checks were skipped: branch has no commits beyond main, so there is nothing to test\. This does not block the merge\./);
+    assert.match(withReason, /data-note="checks"[\s\S]*Checks skipped\.[\s\S]*Checks were skipped: branch has no commits beyond main, so there is nothing to test\. It can still go live\./);
     assert.equal(withReason.split('branch has no commits beyond main').length, 2, 'said once, not repeated under the note');
     assert.doesNotMatch(withReason, /No check results have been recorded yet/);
     for (const check_error_detail of [null, undefined, '']) {
       const bare = render({ ...skipped, check_error_detail });
-      assert.match(bare, /Checks skipped\.[\s\S]*Automated checks were skipped: there was nothing to test\. This does not block the merge\./);
+      assert.match(bare, /Checks skipped\.[\s\S]*Checks were skipped: there was nothing to test\. It can still go live\./);
     }
   } finally { global.window = previous; }
 });

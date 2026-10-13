@@ -39,6 +39,7 @@
 // onto { path, viewport } so readers stay back-compatible in one place.
 
 const log = require('./logger');
+const previewClock = require('./preview-clock');
 
 const TESTING_MD_MAX = 4000;
 const TESTING_PATH_MAX = 512;
@@ -244,13 +245,25 @@ function extract(text) {
   // the list is capped at CAPTURE_MAX_PATHS (extras logged, not silently
   // truncated). The first non-blank line that isn't a `path:` line begins
   // the markdown instructions.
+  //
+  // A preview-moment declaration (`<!-- usernode:preview-at … -->`, read by
+  // services/preview-clock.js) may sit among those leading lines too. It does
+  // not end the run of paths, and it is KEPT: it travels in testingMd, which is
+  // where preview-clock reads it and how it reaches the pull request body,
+  // where an HTML comment shows to nobody.
   const testingPaths = [];
   const seenKeys = new Set();
+  const keptDeclarations = [];
   let droppedForCap = 0;
   let mdStart = 0;
   for (let i = 0; i < blockLines.length; i++) {
     const line = blockLines[i].trim();
     if (!line) { mdStart = i + 1; continue; }
+    if (previewClock.isDeclarationLine(line)) {
+      keptDeclarations.push(line);
+      mdStart = i + 1;
+      continue;
+    }
     const pm = line.match(/^path:\s*(.+)$/i);
     if (!pm) { mdStart = i; break; }
     mdStart = i + 1;
@@ -268,7 +281,8 @@ function extract(text) {
     });
   }
 
-  let testingMd = blockLines.slice(mdStart).join('\n').trim();
+  let testingMd = [...keptDeclarations, blockLines.slice(mdStart).join('\n').trim()]
+    .filter(Boolean).join('\n').trim();
   if (testingMd.length > TESTING_MD_MAX) testingMd = testingMd.slice(0, TESTING_MD_MAX);
 
   return {

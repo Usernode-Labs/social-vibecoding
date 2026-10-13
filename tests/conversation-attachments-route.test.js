@@ -15,7 +15,7 @@
 // 'html' under a sandboxing CSP; unlinked rows (message_id NULL) are
 // readable by their uploader only; a direct conversation is gated on the
 // pairwise block check; non-members never reach the attachments table;
-// and the ?demo=1 rows serve without touching the database.
+// and ?demo=1 cannot bypass those same membership checks.
 //
 // Harness shape follows tests/chat-attachments-route.test.js: override
 // getPool before requiring the route, mount on a real express app, and
@@ -255,40 +255,6 @@ test('a malformed attachment id or conversation id is a 404, not a query', async
 
 // ── Staging demo ────────────────────────────────────────────────────
 
-test('?demo=1 serves the demo group rows without touching the database', async () => {
-  const seen = fixture({ membership: false });
-  const server = await startServer();
-  try {
-    const md = await fetch(urlFor(server, '/api/conversations/910002/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?demo=1'));
-    assert.equal(md.status, 200);
-    assert.equal(md.headers.get('content-type'), 'text/plain; charset=utf-8');
-    assert.match(md.headers.get('content-disposition'), /^attachment; filename="launch-checklist\.md"/);
-    assert.match(await md.text(), /^# Launch checklist/);
-
-    // The demo screenshot carries the macOS narrow no-break space on
-    // purpose, so the staging preview renders the exact case that 500ed.
-    const img = await fetch(urlFor(server, '/api/conversations/910002/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1'));
-    assert.equal(img.status, 200);
-    assert.equal(img.headers.get('content-type'), 'image/png');
-    assert.match(img.headers.get('content-disposition'), /filename\*=UTF-8''Screenshot%202026-08-13%20at%2012\.44\.10%E2%80%AFPM\.png$/);
-    const bytes = Buffer.from(await img.arrayBuffer());
-    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'a real PNG');
-    assert.equal(seen.length, 0);
-
-    // The demo list advertises both rows under ?demo=1 urls.
-    const list = await fetch(urlFor(server, '/api/conversations/910002/messages?demo=1'));
-    assert.equal(list.status, 200);
-    const body = await list.json();
-    const atts = body.messages.flatMap((m) => m.attachments);
-    assert.deepEqual(atts.map((a) => a.id), ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']);
-    assert.equal(atts[1].name, 'Screenshot 2026-08-13 at 12.44.10 PM.png');
-    assert.equal(atts[1].contentType, 'image/png');
-    assert.match(atts[1].url, /\?demo=1$/);
-  } finally {
-    server.close();
-  }
-});
-
 test('?demo=1 never bypasses the real path for /view or other conversations', async () => {
   const seen = fixture({ membership: false });
   const server = await startServer();
@@ -303,7 +269,7 @@ test('?demo=1 never bypasses the real path for /view or other conversations', as
 
 // ── Admin evidence (reported messages) ──────────────────────────────
 
-test('admin evidence routes survive a non-Latin-1 filename too', async () => {
+test('admin shots routes survive a non-Latin-1 filename too', async () => {
   const seen = [];
   poolQueryHandler = async (sql, params) => {
     seen.push({ sql, params });
@@ -340,7 +306,7 @@ test('admin evidence routes survive a non-Latin-1 filename too', async () => {
   }
 });
 
-test('admin evidence routes stay admin-only and html-only for /view', async () => {
+test('admin shots routes stay admin-only and html-only for /view', async () => {
   let queried = false;
   poolQueryHandler = async () => {
     queried = true;

@@ -317,7 +317,9 @@ test('one model plan executes independent closed-issue and merged-work reads in 
   }));
 
   assert.equal(state.calls.filter((entry) => entry.type === 'model').length, 1);
-  assert.equal(state.calls.find((entry) => entry.type === 'model').input.parallelToolCalls, true);
+  // Never asked for, even for a model OpenRouter lists it on: providers still
+  // return several calls in one reply, as this one does.
+  assert.equal(state.calls.find((entry) => entry.type === 'model').input.parallelToolCalls, null);
   assert.equal(state.calls.find((entry) => entry.type === 'model').input.messages.at(-1).content, userPrompt);
   assert.equal(result.results.length, 2);
   assert.equal(result.presentation.resultRefs.length, 2);

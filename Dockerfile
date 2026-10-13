@@ -8,6 +8,9 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+# Builds the bundled English catalog and the language packs from
+# frontend/locales, before the bundle that imports the catalog.
+COPY scripts/language-packs.js ./scripts/language-packs.js
 # The ONE server-tree file the shell bundle imports:
 # frontend/src/features/admin/topochain/countries.ts reads the same ISO table
 # the server does rather than mirroring 249 names into a second copy that
@@ -28,8 +31,8 @@ COPY src/services/countries.json ./src/services/countries.json
 # patches .env's GIT_SHA BEFORE building. It was simply never declared here,
 # so it was dropped. Declared LAST in this stage so a new commit does not
 # invalidate the npm ci layer above.
-# `dev` is the honest default: staging previews of the platform are built
-# without a GIT_SHA and /api/version reports `dev` there too.
+# `dev` is for local development only. Hosted builds, including previews,
+# supply their exact revision and validate it against the generated release.
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
 RUN node frontend/scripts/build-shell.mjs
@@ -79,13 +82,23 @@ COPY --from=shell /build/public/index.html ./public/index.html
 # chunk 404'd in the image while every test passed locally, where the build
 # output is simply on disk.
 COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/
+# The language packs, before the release below records them. The directory is
+# empty while only English ships.
+COPY --from=shell /build/public/locales/ ./public/locales/
 COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+RUN node scripts/build-shell-release.js
+RUN node scripts/precompress-static-assets.js
 # docker-compose.dev.yml bind-mounts ./public for live source editing, which
 # hides the three generated files above on a clean checkout. Keep a protected
 # image copy that its startup helper can restore into that mount when missing.
 COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
 COPY --from=shell /build/public/shell/assets/ /opt/usernode-shell-assets/shell/assets/
+COPY --from=shell /build/public/locales/ /opt/usernode-shell-assets/locales/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
+RUN cp public/shell/release.json /opt/usernode-shell-assets/shell/release.json \
+    && cp public/shell/worker.js /opt/usernode-shell-assets/shell/worker.js
 # #2508: this image ran with NODE_ENV UNSET, and a great deal keys off it.
 # Two consequences were live in production:
 #

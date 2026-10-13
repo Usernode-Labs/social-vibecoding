@@ -58,22 +58,18 @@ function makePool(rows) {
     async query(sql, params = []) {
       const s = String(sql);
       if (/SELECT cs\.id[\s\S]*FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
-        return { rows, rowCount: rows.length };
+        const selected = params[0]
+          ? rows.filter((r) => r.status === 'merging' || r.merge_attempt_at)
+          : rows;
+        return { rows: selected, rowCount: selected.length };
       }
       if (/SET\s+status = 'merged'/.test(s)) {
         updates.push({ to: 'merged', id: params[0], mergedAt: params[1], sha: params[2] });
         return { rows: [], rowCount: 1 };
       }
       if (/SET status = 'promoted'/.test(s)) {
-        if (/WHERE id = \$1/.test(s)) {
-          // Per-row demote (GitHub-aware path).
-          updates.push({ to: 'promoted', id: params[0] });
-          return { rows: [], rowCount: 1 };
-        }
-        // Bulk demote of all 'merging' rows (no-GitHub-auth fallback).
-        const ids = rows.filter((r) => r.status === 'merging').map((r) => r.id);
-        updates.push({ to: 'promoted', bulk: true, ids });
-        return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
+        updates.push({ to: 'promoted', id: params[0] });
+        return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     },
@@ -135,14 +131,169 @@ test('recoverStuckMerges heals merged-on-GitHub rows, demotes stuck merging, lea
   assert.deepEqual(getPRCalls.sort(), [39, 52, 99]);
 });
 
-test('recoverStuckMerges without GitHub auth only demotes merging rows', async () => {
+test('recoverStuckMerges without GitHub auth keeps the unknown merge outcome unchanged', async () => {
   const pool = makePool(ROWS.map((r) => ({ ...r })));
   await withStubs(pool, {
     isEnabled: () => false,
     getPR: async () => { throw new Error('should not be called'); },
   }, () => recoverStuckMerges({}));
 
-  // Fallback path: a single bulk flip of 'merging' rows (id 2); promoted
-  // rows (1, 3) are left untouched because we can't ask GitHub the truth.
-  assert.deepEqual(pool.updates, [{ to: 'promoted', bulk: true, ids: [2] }]);
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges does not demote a claim when GitHub lookup fails', async () => {
+  const pool = makePool([ROWS[1]]);
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => { throw new Error('GitHub unavailable'); },
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges does not release a live merge claim while GitHub still shows the PR open', async () => {
+  const fresh = {
+    id: 7, status: 'merging', pr_number: 70, merge_commit_sha: null,
+    merge_attempt_at: new Date().toISOString(),
+    repo_url: 'https://github.com/acme/widget',
+  };
+  const pool = makePool([fresh]);
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => ({ merged: false }),
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges leaves a merge owned by another process untouched', async () => {
+  const pool = makePool([{ ...ROWS[1], merge_attempt_at: new Date(0).toISOString() }]);
+  let released = false;
+  pool.connect = async () => ({
+    query: async () => ({ rows: [{ acquired: false }] }),
+    release: () => { released = true; },
+  });
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => { throw new Error('the live owner still has the lock'); },
+  }, () => recoverStuckMerges({}));
+  assert.equal(released, true);
+  assert.deepEqual(pool.updates, []);
+});
+
+test('periodic reconciliation revisits a demoted attempt that GitHub completed later', async () => {
+  const attempted = { ...ROWS[0], merge_attempt_at: new Date(0).toISOString() };
+  const untouched = { ...ROWS[2] };
+  const pool = makePool([attempted, untouched]);
+  const lookedUp = [];
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async (_owner, _repo, number) => {
+      lookedUp.push(number);
+      return { merged: true, merged_at: '2026-06-13T14:40:19Z', merge_commit_sha: 'sha52' };
+    },
+  }, () => recoverStuckMerges({}, { attemptedOnly: true }));
+  assert.deepEqual(lookedUp, [52]);
+  assert.equal(pool.updates.length, 1);
+  assert.equal(pool.updates[0].id, attempted.id);
+});
+
+// ── GitHub's hourly budget (9 Oct 2026) ─────────────────────────────────────
+// The bot token ran out twice in one evening, and this sweep was among the
+// callers refused: 21 lookups in a minute against an empty budget, and every
+// open proposal that had ever attempted a merge looked up every four minutes.
+
+const budget = require('../src/services/github-budget');
+
+function withBotToken(t) {
+  const prior = process.env.GITHUB_BOT_TOKEN;
+  process.env.GITHUB_BOT_TOKEN = 'test-token';
+  budget._resetForTests();
+  t.after(() => {
+    if (prior === undefined) delete process.env.GITHUB_BOT_TOKEN;
+    else process.env.GITHUB_BOT_TOKEN = prior;
+    budget._resetForTests();
+  });
+}
+
+function rateHeaders(remaining) {
+  return {
+    'x-ratelimit-limit': '5000',
+    'x-ratelimit-remaining': String(remaining),
+    'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 30 * 60),
+    'x-ratelimit-resource': 'core',
+  };
+}
+
+function openRows(count, firstId) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: firstId + i, status: 'promoted', pr_number: 1000 + i, merge_commit_sha: null,
+    repo_url: 'https://github.com/acme/widget',
+  }));
+}
+
+test('under the reserve it is background work like any other: nothing is looked up', async (t) => {
+  withBotToken(t);
+  budget.record('pat', rateHeaders(100));
+  const pool = makePool(openRows(6, 300));
+  const lookedUp = [];
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async (_o, _r, n) => { lookedUp.push(n); return { merged: false }; },
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(lookedUp, []);
+  assert.deepEqual(pool.updates, []);
+});
+
+test('a refusal for the hourly limit ends the sweep instead of spending the rest of the queue', async (t) => {
+  withBotToken(t);
+  const rows = openRows(20, 400);
+  const pool = makePool(rows);
+  const lookedUp = [];
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async (_o, _r, n) => {
+      lookedUp.push(n);
+      const err = new Error('API rate limit exceeded for user ID 276401300.');
+      err.status = 403;
+      err.response = { status: 403, headers: rateHeaders(0) };
+      throw err;
+    },
+  }, () => recoverStuckMerges({}));
+  assert.ok(lookedUp.length <= 4, `only the lookups already in flight went out (${lookedUp.length})`);
+  assert.deepEqual(pool.updates, [], 'a refusal is not proof of anything');
+});
+
+test('the timer revisits an old attempt once an hour, a recent one or a merging row every time', async (t) => {
+  withBotToken(t);
+  let clock = Date.parse('2026-10-09T20:00:00Z');
+  const now = () => clock;
+  const minutesAgo = (m) => new Date(clock - m * 60 * 1000).toISOString();
+  const rows = [
+    { id: 501, status: 'promoted', pr_number: 51, merge_commit_sha: null, merge_attempt_at: minutesAgo(3 * 24 * 60), repo_url: 'https://github.com/acme/widget' },
+    { id: 502, status: 'promoted', pr_number: 52, merge_commit_sha: null, merge_attempt_at: minutesAgo(10), repo_url: 'https://github.com/acme/widget' },
+    { id: 503, status: 'merging', pr_number: 53, merge_commit_sha: null, merge_attempt_at: minutesAgo(1), repo_url: 'https://github.com/acme/widget' },
+  ];
+  const pool = makePool(rows);
+  const lookedUp = [];
+  const github = {
+    isEnabled: () => true,
+    getPR: async (_o, _r, n) => { lookedUp.push(n); return { merged: false }; },
+  };
+  const sweep = () => withStubs(pool, github, () => recoverStuckMerges({}, { attemptedOnly: true, now }));
+
+  await sweep();
+  assert.deepEqual(lookedUp.sort(), [51, 52, 53], 'the first sweep looks every attempt up');
+
+  lookedUp.length = 0;
+  clock += 4 * 60 * 1000;
+  await sweep();
+  assert.deepEqual(lookedUp.sort(), [52, 53], 'four minutes later the three-day-old attempt waits');
+
+  lookedUp.length = 0;
+  clock += 57 * 60 * 1000;
+  await sweep();
+  assert.deepEqual(lookedUp.sort(), [51, 53], 'an hour on it is looked up again; the other attempt is now old too');
+
+  lookedUp.length = 0;
+  await withStubs(pool, github, () => recoverStuckMerges({}, { now }));
+  assert.deepEqual(lookedUp.sort(), [51, 52, 53], 'the boot scan looks every open row up');
 });

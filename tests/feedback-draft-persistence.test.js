@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_TEXT = fs.readFileSync(
@@ -96,6 +97,8 @@ function makeHarness({
   const els = new Map();
   const fetchCalls = [];
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search, hash: '', pathname: '/' },
@@ -286,8 +289,11 @@ test('the destination is not restored (#2707)', () => {
   assert.equal(h.text(), 'Dragging a card scrolls the board back to the top.');
   assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'false');
   assert.equal(h.el('feedback-target-platform').getAttribute('aria-checked'), 'false');
-  // #2888: the question is asked again (Submit stays pressable and refuses
-  // with the row turned red until a destination is tapped).
+  // #2888: the question is asked again, quietly, by the row's own label
+  // (Post request stays pressable and refuses with the row turned red until
+  // a destination is tapped).
+  assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), true, 'no refusal before a submit');
+  h.el('feedback-submit').fire('click');
   assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), false, 'the person still has to choose');
 });
 

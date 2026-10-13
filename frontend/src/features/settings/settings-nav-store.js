@@ -40,4 +40,9 @@ export const settingsNavStore = createStore({
    * now", exactly as the empty-string innerHTML write meant before.
    */
   mobile: null,
+  /**
+   * Settings._visit — bumped by every open(). The filter box clears its
+   * query when it changes, so each visit to the screen starts unfiltered.
+   */
+  visit: 0,
 });

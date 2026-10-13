@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -119,9 +120,12 @@ test('Q16: a group listed again (invited back) opens normally', async () => {
 
 test('Q16: the pane offers the way out for a conversation that cannot come back', () => {
   // Left: plain text in the ordinary state colour, and the list.
+  assert.equal(message('messages:thread.left'), 'You left this group.');
+  assert.equal(message('messages:thread.backToMessages'), 'Back to Messages');
   assert.match(SCREEN,
-    /snap\.threadGone === 'left' \? <div className="messages-state" data-thread-gone="left"><p>You left this group\.<\/p><button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>Back to Messages<\/button><\/div>/);
+    /snap\.threadGone === 'left' \? <div className="messages-state" data-thread-gone="left"><p>\{t\('messages:thread\.left'\)\}<\/p><button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>\{t\('messages:thread\.backToMessages'\)\}<\/button><\/div>/);
   // A 404: the message stays, but Try again gives way to the list.
+  assert.equal(message('core:common.tryAgain'), 'Try again');
   assert.match(SCREEN,
-    /snap\.threadGone === 'missing'\s*\? <button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>Back to Messages<\/button>\s*: <button type="button" onClick=\{\(\) => messagesController\.route\(conversationId\)\}>Try again<\/button>/);
+    /snap\.threadGone === 'missing'\s*\? <button type="button" onClick=\{\(\) => messagesController\.open\(null\)\}>\{t\('messages:thread\.backToMessages'\)\}<\/button>\s*: <button type="button" onClick=\{\(\) => messagesController\.route\(conversationId\)\}>\{t\('core:common\.tryAgain'\)\}<\/button>/);
 });

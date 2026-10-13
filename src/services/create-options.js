@@ -10,12 +10,14 @@
  * ── Who it is for ───────────────────────────────────────────────────────
  *
  * `audience` is the create screen's first question in the platform's own
- * words (services/communities.js): `solo` (Just me), `invited` (A group) or
- * `open` (A community). It is not stored — audience is derived, never
- * stored — so it resolves here to the two visibility columns it implies:
+ * words (services/communities.js): `solo` (Just me), `invited` (A private
+ * community) or `open` (A public community). It is not stored — audience is
+ * derived, never stored — so it resolves here to the two visibility columns
+ * it implies:
  *
  *   solo, invited → collab private, view private. A private project; it
- *                   reads as a Group once anyone else is in it or invited.
+ *                   reads as a Private community once anyone else is in it
+ *                   or invited.
  *   open          → collab public, view public. Anyone can see, join and
  *                   build.
  *
@@ -27,14 +29,19 @@
  * ── Who is invited ─────────────────────────────────────────────────────
  *
  * `invitees` is a list of usernames and `inviteEmails` a list of addresses,
- * both for a Group only: an invite into a project anyone can already build
- * is meaningless (the invites route refuses it for the same reason), and
- * into a Just-me project it would make it a Group, which is a different
- * answer to the first question. An address is for somebody who may not be
+ * both for a private community only: an invite into a project anyone can
+ * already build is meaningless (the invites route refuses it for the same
+ * reason), and into a Just-me project it would make it a private community,
+ * which is a different answer to the first question. An address is for somebody who may not be
  * on Homeroom yet (services/email-invites.js); together the two lists hold
  * at most MAX_INVITEES people.
  *
  * ── Who approves ───────────────────────────────────────────────────────
+ *
+ * #4666: every new project starts on You or the group (the creator's yes, or
+ * the group's time-&-majority vote; services/governance-rules.js), unless the
+ * body says otherwise. The invite sheet says so, and its Change link proposes
+ * another preset once the project is made.
  *
  * `governance` is dapp.json's own block, in dapp.json's own shape
  * (services/app-manifest.js readGovernance), because that is where it is
@@ -55,16 +62,46 @@
  * repository's dapp.json, so a community changes it later with a vote like
  * any other line there. The join screen, Discover and the project's page
  * read it off the manifest snapshot. Whitespace collapses to single spaces;
- * at most DESCRIPTION_MAX characters, the length the join screen shows
- * whole. An import sends it on the same terms as the rule above.
+ * at most DESCRIPTION_MAX characters. An import sends it on the same terms as
+ * the rule above.
+ *
+ * #3572: DESCRIPTION_MAX is two lines on a phone, measured where the line is
+ * read largest: the project's hub hero (community-card.tsx
+ * `.dev-ws-hero-desc`, 15px over 21px, the page's full width less 16px). That
+ * column is 344px wide on a 360px Android phone and 359px on a 375px iPhone,
+ * and two lines of it hold 99 to 112 characters of real one-line
+ * descriptions in a phone's system font (measured in Chromium with a
+ * Helvetica-metric face, the nearest stand-in for SF Pro and Roboto). 90
+ * leaves a tenth of that room for long words and capitals, so a description
+ * that passes here is two lines on a common phone. It was 100, which the
+ * narrowest of those could already push onto a third line.
+ *
+ * A dapp.json can still say more: an import keeps its repository's line,
+ * and a later proposal can lengthen it (services/app-manifest.js
+ * readDescription keeps up to 280). Rejecting either would turn a sentence
+ * into a failed import or a failed deploy. Instead every surface clamps what
+ * it shows (two lines in the hub hero, on Discover and on the join screen,
+ * three beside the icon in the About pane), and the line in dapp.json stays
+ * as it was written.
+ *
+ * ── What it starts from ───────────────────────────────────────────────
+ *
+ * `template` is the starter the new repository is scaffolded from
+ * (services/app-templates.js): one of its TEMPLATE_IDS, `empty` when
+ * absent. Strict, like the rest: an unknown id is a 400, never quietly the
+ * empty starter. An import keeps its own repository, so it takes no
+ * template beyond the default.
  */
+
+const appTemplates = require('./app-templates');
+const governanceRules = require('./governance-rules');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
-const DESCRIPTION_MAX = 100;
+const DESCRIPTION_MAX = 90;
 const EMAIL_MAX = 254;
 const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 
@@ -126,8 +163,17 @@ function parseInviteEmails(raw) {
  * (absent) is the default rule: anyone approves, time and majority.
  */
 function parseGovernance(raw) {
-  if (raw == null) return { governance: null };
+  // #4666: no rule asked for is the default preset.
+  if (raw == null) return { governance: governanceRules.parseRulesBlock({ preset: governanceRules.DEFAULT_PRESET }) };
   if (typeof raw !== 'object' || Array.isArray(raw)) return { error: 'governance must be an object' };
+  // `preset`, or `groups` + `rules`: the rules value, strictly.
+  try {
+    const rules = governanceRules.parseRulesBlock(raw);
+    if (rules) return { governance: rules };
+  } catch (err) {
+    if (err instanceof governanceRules.RulesError) return { error: err.message };
+    throw err;
+  }
   const approvers = raw.approvers == null ? 'anyone' : raw.approvers;
   if (approvers !== 'anyone' && approvers !== 'invited') {
     return { error: 'governance.approvers must be "anyone" or "invited"' };
@@ -161,9 +207,9 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -183,7 +229,7 @@ function parseCreateOptions(body = {}) {
   const mail = parseInviteEmails(body.inviteEmails);
   if (mail.error) return { error: mail.error };
   if ((inv.invitees.length || mail.emails.length) && audience !== 'invited') {
-    return { error: 'Only a group is created with invites. Invite people from a project’s page.' };
+    return { error: 'Only a private community is created with invites. Invite people from a project’s page.' };
   }
   if (inv.invitees.length + mail.emails.length > MAX_INVITEES) {
     return { error: `Invite at most ${MAX_INVITEES} people when you create it; add more from its page.` };
@@ -195,6 +241,12 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = appTemplates.parseTemplate(body.template);
+  if (tpl.error) return { error: tpl.error };
+  if (imported && tpl.template !== appTemplates.DEFAULT_TEMPLATE) {
+    return { error: 'An import keeps its own repository, so it cannot start from a template.' };
+  }
+
   return {
     audience,
     collabVisibility,
@@ -203,6 +255,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
@@ -214,6 +267,8 @@ function parseCreateOptions(body = {}) {
  */
 function governanceBlock(governance) {
   if (!governance) return null;
+  // #4666: a rules value is written as dapp.json writes it.
+  if (Array.isArray(governance.rules)) return governanceRules.blockFor(governance);
   const { approverPolicy = 'anyone', approvalsRequired = null } = governance;
   if (approverPolicy === 'anyone' && approvalsRequired == null) return null;
   return {

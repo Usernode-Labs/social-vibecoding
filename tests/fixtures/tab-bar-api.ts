@@ -5,5 +5,8 @@
 // installed only where a `window` exists at load time (see ../nav-tab-bar-viewer.test.js).
 import '../../frontend/src/features/nav/mount';
 
-export { PlatformTabs, tabLabel } from '../../frontend/src/features/nav/tab-bar';
+export { PlatformTabs, tabLabel, communitiesAriaLabel } from '../../frontend/src/features/nav/tab-bar';
 export { navStore } from '../../frontend/src/features/nav/nav-store.js';
+// The community the fourth tab is on (../communities-tab-label.test.js), from
+// this same bundle for the reason above.
+export { communityScopeStore } from '../../frontend/src/features/workshop/community-scope';

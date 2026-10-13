@@ -12,7 +12,7 @@
 //     (frontend/src/features/home/home-panels.js)
 //
 // This fails the moment either copy drifts: a heading renamed on one side, a
-// group's order changed, or the "finished Get started goes last" rule
+// group's order changed, or the "finished First challenges goes last" rule
 // changed in only one file.
 //
 // Run with: node --test tests/challenge-group-parity.test.js
@@ -26,6 +26,7 @@ const vm = require('node:vm');
 
 const { PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const TAB_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
@@ -47,6 +48,7 @@ function loadTab() {
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(TAB_SRC, sandbox, { filename: 'topochain-challenges.js' });
   return sandbox.window.TopochainChallenges;
 }
@@ -66,6 +68,7 @@ function loadHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox, { filename: 'home-panels.js' });
   return sandbox.__HP;
@@ -74,15 +77,35 @@ function loadHome() {
 const TAB = loadTab();
 const HOME = loadHome();
 
+// Both tables hold message ids as their `heading` now: Home's are
+// `home:challenges.group.*` and the tab's `leaderboard:challenges.group.*`.
+// They are two places, so each has its own entries. What must agree is every
+// other field exactly, and the words each id says.
+const said = (table) => JSON.parse(JSON.stringify(table),
+  (key, value) => (key === 'heading' ? message(value) : value));
+
 test('the two group tables are the same table', () => {
-  assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), plain(TAB.GROUPS));
-  assert.deepEqual(plain(HOME.OTHER_GROUP), plain(TAB.OTHER_GROUP));
+  assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), {
+    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
+  }, 'Home holds the ids of its own headings');
+  assert.deepEqual(plain(HOME.OTHER_GROUP), { key: 'other', heading: 'home:challenges.group.other', order: 3 });
   assert.deepEqual(plain(TAB.GROUPS), {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 2 },
+  }, 'the tab holds the ids of its own');
+  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'leaderboard:challenges.group.other', order: 3 });
+  // The same table once each id is read: keys, order and words, exactly.
+  assert.deepEqual(said(HOME.CHALLENGE_GROUPS), said(TAB.GROUPS));
+  assert.deepEqual(said(HOME.OTHER_GROUP), said(TAB.OTHER_GROUP));
+  assert.deepEqual(said(TAB.GROUPS), {
+    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   }, 'the owner-decided headings, with the keys unchanged');
-  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
+  assert.deepEqual(said(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
 });
 
 test('the two rank rules agree for every group, setup unfinished and finished', () => {
@@ -96,9 +119,9 @@ test('the two rank rules agree for every group, setup unfinished and finished', 
     assert.deepEqual(homeRanks, tabRanks, `setupFinished=${String(finished)}`);
   }
   assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, false)), [0, 1, 2, 3, 3],
-    'unfinished: Get started leads; no group ranks as Season challenges');
+    'unfinished: First challenges leads; no group ranks as Season challenges');
   assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, true)), [4, 1, 2, 3, 3],
-    'finished: only Get started moves, to the end');
+    'finished: only First challenges moves, to the end');
 });
 
 test('the two "setup finished" rules agree, each fed rows in its own shape', () => {
@@ -172,7 +195,7 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
   }
   assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [4, 8, 3, 9, 6, 5, 7, 1, 2],
     "the viewer's own progress decides on every card: a finished card sinks inside its group and "
-    + 'an organiser-closed one the viewer never did does not; featured lifts; finished Get started goes last');
+    + 'an organiser-closed one the viewer never did does not; featured lifts; finished First challenges goes last');
   assert.deepEqual(tabIds(setupOpen, null), [2, 1, 4, 8, 3, 9, 6, 5, 7],
     'setup unfinished leads, its open card first');
 

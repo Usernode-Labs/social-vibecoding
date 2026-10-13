@@ -28,6 +28,7 @@ import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
 export interface BoardFilterValues {
@@ -68,6 +69,7 @@ const FIELD_LABEL_CLS =
   'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
 
 export function BoardFiltersDialog() {
+  const t = useMessages('dialogs');
   const [priority, setPriority] = useState('');
   const [category, setCategory] = useState('');
   const [assignee, setAssignee] = useState('');
@@ -118,15 +120,15 @@ export function BoardFiltersDialog() {
     >
       <DialogCard size="sm">
         <h2 className="text-lg font-bold mb-1">
-          Filters
+          {t('dialogs:boardFilters.title')}
         </h2>
         <p className="text-xs text-zinc-500 mb-4">
-          All conditions apply together.
+          {t('dialogs:boardFilters.subtitle')}
         </p>
         <div className="space-y-4">
           <div>
             <label htmlFor="board-filters-priority" className={FIELD_LABEL_CLS}>
-              Priority
+              {t('dialogs:boardFilters.priority.label')}
             </label>
             <Select
               id="board-filters-priority"
@@ -134,22 +136,22 @@ export function BoardFiltersDialog() {
               onChange={(event) => setPriority(event.target.value)}
             >
               <option value="">
-                Any priority
+                {t('dialogs:boardFilters.priority.any')}
               </option>
               <option value="high">
-                High
+                {t('dialogs:boardFilters.priority.high')}
               </option>
               <option value="medium">
-                Medium
+                {t('dialogs:boardFilters.priority.medium')}
               </option>
               <option value="low">
-                Low
+                {t('dialogs:boardFilters.priority.low')}
               </option>
             </Select>
           </div>
           <div>
             <label htmlFor="board-filters-category" className={FIELD_LABEL_CLS}>
-              Category
+              {t('dialogs:boardFilters.category.label')}
             </label>
             <Select
               id="board-filters-category"
@@ -157,7 +159,7 @@ export function BoardFiltersDialog() {
               onChange={(event) => setCategory(event.target.value)}
             >
               <option value="">
-                Any category
+                {t('dialogs:boardFilters.category.any')}
               </option>
               {categories.map((c) => (
                 <option key={c.value} value={c.value}>
@@ -168,7 +170,7 @@ export function BoardFiltersDialog() {
           </div>
           <div>
             <label htmlFor="board-filters-assignee" className={FIELD_LABEL_CLS}>
-              Assignee
+              {t('dialogs:boardFilters.assignee.label')}
             </label>
             <Select
               id="board-filters-assignee"
@@ -176,10 +178,10 @@ export function BoardFiltersDialog() {
               onChange={(event) => setAssignee(event.target.value)}
             >
               <option value="">
-                Anyone
+                {t('dialogs:boardFilters.assignee.anyone')}
               </option>
               <option value={unassigned}>
-                Unassigned
+                {t('dialogs:boardFilters.assignee.nobody')}
               </option>
               {assignees.map((name) => (
                 <option key={name} value={name}>
@@ -194,10 +196,10 @@ export function BoardFiltersDialog() {
           >
             <span className="min-w-0">
               <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                Waiting on you
+                {t('dialogs:boardFilters.waiting.title')}
               </span>
               <span className="block text-xs text-zinc-500">
-                Only proposals you haven’t weighed in on yet
+                {t('dialogs:boardFilters.waiting.description')}
               </span>
             </span>
             <Switch
@@ -220,10 +222,10 @@ export function BoardFiltersDialog() {
               >
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Assigned to you
+                    {t('dialogs:boardFilters.assigned.title')}
                   </span>
                   <span className="block text-xs text-zinc-500">
-                    Only items the group voted onto you
+                    {t('dialogs:boardFilters.assigned.description')}
                   </span>
                 </span>
                 <Switch
@@ -238,10 +240,10 @@ export function BoardFiltersDialog() {
               >
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Created by you
+                    {t('dialogs:boardFilters.created.title')}
                   </span>
                   <span className="block text-xs text-zinc-500">
-                    Only items you opened yourself
+                    {t('dialogs:boardFilters.created.description')}
                   </span>
                 </span>
                 <Switch
@@ -258,7 +260,7 @@ export function BoardFiltersDialog() {
               id="board-filters-done"
               onClick={done}
             >
-              Done
+              {t('core:common.done')}
             </Button>
           </div>
         </div>

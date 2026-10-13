@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 /**
  * Whether the native back-swipe is on: only where the page HAS a back control
- * with a destination, and never over embedded App-tab content.
+ * with a destination, and never while a dialog or sheet is open.
  *
  * That control is the header's arrow (`mode === 'arrow'` with an `href`)
  * everywhere but one family of routes. On a Workshop topic (an issue, a
@@ -10,13 +10,22 @@ import { useEffect, useRef } from 'react';
  * "‹ Workshop" chip at the top of the pane, and the header draws none (#2916),
  * so the header passes the chip's destination as `paneHref`. Without it the
  * swipe would switch off on exactly the pages whose back control moved.
+ *
+ * A running app needs no rule of its own: its bar shows ✕ (`mode: 'close'`),
+ * not an arrow. The improve target's `slug`/`tab` must not decide it either.
+ * That target outlives the app: on every platform screen it still names the
+ * platform's own app on its App tab, so a rule keyed on it kept the swipe off
+ * everywhere (#3623).
+ *
+ * An open dialog takes the swipe away too. WebKit's gesture walks to the
+ * record under the dialog and slides the whole page, so it springs back with
+ * the dialog still up; a sheet closes by its own controls and device back.
  */
-export function nativeBackEnabled({ visible, mode, href, slug, tab, paneHref = null }: {
+export function nativeBackEnabled({ visible, mode, href, paneHref = null, dialogOpen = false }: {
   visible: boolean; mode: string; href: string | null;
-  slug: string | null; tab: string | null;
-  paneHref?: string | null;
+  paneHref?: string | null; dialogOpen?: boolean;
 }): boolean {
-  if (!visible || (slug && tab === 'app')) return false;
+  if (!visible || dialogOpen) return false;
   return (mode === 'arrow' && !!href) || !!paneHref;
 }
 

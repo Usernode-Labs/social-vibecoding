@@ -105,6 +105,15 @@ const TopochainChallenges = {
   // Empty map = no personalization available (signed out, request failed);
   // the grid renders identically, just without the "you" decorations.
   _mine: new Map(),
+  // The viewer's block-production queue state from GET /challenges-api/bp/
+  // state, read when a block-production challenge's page opens (#2493).
+  // `undefined` is loading, `null` could not be read (the page offers a
+  // retry), otherwise { has_platform_access, bp_requested, bp_released }.
+  // `_bpSeq` fences each read, so a slow answer from an earlier open of the
+  // same page cannot overwrite a newer one.
+  _bpState: undefined,
+  _bpSeq: 0,
+  _bpRequesting: false,
   _onboarding: null,
   // The challenge groups the viewer opened or closed on this visit, as group
   // key ('setup', 'week', 'always', 'other') -> collapsed. A group absent here
@@ -114,6 +123,12 @@ const TopochainChallenges = {
   _collapsed: {},
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
+  // Unwatch handle from live reads (#3985), held while the pane is open.
+  _unwatchLive: null,
+  // Fences for the list and the viewer's own rows (#3985): a re-read can
+  // overlap an earlier read, and only the newest answer may land.
+  _listSeq: 0,
+  _mineSeq: 0,
   // The event id `_challenges` was last loaded for. `undefined` until the
   // first load, which is deliberately distinct from the `null` a pane with
   // no resolvable event settles on.
@@ -171,7 +186,8 @@ const TopochainChallenges = {
   formatReward(reward) {
     const s = String(reward == null ? '' : reward).trim();
     if (!s) return null;
-    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+    return /^[\d][\d.,]*$/.test(s)
+      ? PlatformI18n.t('leaderboard:challenges.points', { count: Number(s.replace(/[.,]/g, '')) || 0, points: s }) : s;
   },
 
   // "2,000 pts": a points figure with thousands separators. A value that is
@@ -180,7 +196,51 @@ const TopochainChallenges = {
   _pts(v) {
     const n = Number(v);
     return v != null && v !== '' && Number.isFinite(n)
-      ? `${n.toLocaleString('en-US')} pts` : TopochainChallenges.str(v);
+      ? PlatformI18n.t('leaderboard:challenges.points', { count: n, points: n.toLocaleString('en-US') })
+      : TopochainChallenges.str(v);
+  },
+
+  // A reward as a number of points, or null when it is organiser prose that
+  // cannot be summed ("½ of your final credits"). A copy of the server's
+  // parseRewardPoints (src/services/topochain/challenge-rules.js) — the same
+  // parser Home's panel and the scorer read, kept as a copy because this file
+  // stays import-free (see _illustrationOf).
+  _rewardPoints(reward) {
+    if (reward == null) return null;
+    const cleaned = String(reward)
+      .trim()
+      .replace(/^up\s+to\s+/i, '')
+      .replace(/\s*(?:pts?|points?)\s*$/i, '')
+      .replace(/,/g, '')
+      .trim();
+    if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  },
+
+  // The points half of the summary (#4565): what the challenges in scope
+  // offer, and what the viewer has earned on them, from the same `_mine`
+  // rows the cards' green "Earned N pts" reads. Only challenges whose reward
+  // is a plain number count; organiser prose cannot be summed and is left
+  // out of both figures, so the two numbers always describe the same set.
+  // Null when nothing in view offers a number — "0 of 0 pts earned" says
+  // nothing.
+  _pointsView(challenges) {
+    let total = 0;
+    let earned = 0;
+    for (const c of Array.isArray(challenges) ? challenges : []) {
+      const n = TopochainChallenges._rewardPoints(
+        c && c.card_preview ? c.card_preview.reward : null
+      );
+      if (n == null) continue;
+      total += n;
+      const m = TopochainChallenges._mine.get(Number(c.id)) || null;
+      earned += Math.max(0, Number(m && m.activities_total) || 0);
+    }
+    if (!(total > 0)) return null;
+    // A repeatable challenge can credit more than its reward; the figure
+    // never reads "2,400 of 2,000".
+    return { earned: Math.min(Math.max(0, earned), total), total };
   },
 
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
@@ -218,9 +278,15 @@ const TopochainChallenges = {
     return typeof tone === 'string' && TopochainChallenges.ILLUSTRATION_TONE.test(tone) ? tone : null;
   },
 
-  async fetchJson(url) {
+  // The fetch init a re-read uses, as lib/live-reads.ts's FRESH: the service
+  // worker waits for the network instead of answering from its saved copy
+  // (public/sw.js, wantsFreshAnswer). Spelled here because this file stays
+  // import-free (see _illustrationOf).
+  FRESH: Object.freeze({ cache: 'no-cache' }),
+
+  async fetchJson(url, init) {
     try {
-      const res = await fetch(url);
+      const res = await (init ? fetch(url, init) : fetch(url));
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
         return { status: res.status, ok: res.ok, data: null };
@@ -274,7 +340,24 @@ const TopochainChallenges = {
       TopochainChallenges._hashListener = (e) => TopochainChallenges._onHashChange(e);
       window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
+    TopochainChallenges._watchLiveReads();
     TopochainChallenges.loadChallenges();
+  },
+
+  // Live reads (#3985, lib/live-reads.ts): while the pane is open, coming
+  // back to the tab after a while, the socket reconnecting or the browser
+  // coming back online re-reads the challenges and the viewer's own rows, so
+  // a challenge finished elsewhere shows its new count without a reload.
+  // The service worker's corrections already reach loadChallenges through
+  // App.refreshActiveScreen, so this watcher claims no reads of its own.
+  _watchLiveReads() {
+    if (TopochainChallenges._unwatchLive) return;
+    const live = window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    TopochainChallenges._unwatchLive = live.watch(() => {
+      if (!TopochainChallenges._open) return undefined;
+      return TopochainChallenges.loadChallenges({ fresh: true });
+    });
   },
 
   close() {
@@ -293,6 +376,10 @@ const TopochainChallenges = {
     if (TopochainChallenges._unsub) {
       TopochainChallenges._unsub();
       TopochainChallenges._unsub = null;
+    }
+    if (TopochainChallenges._unwatchLive) {
+      TopochainChallenges._unwatchLive();
+      TopochainChallenges._unwatchLive = null;
     }
   },
 
@@ -318,8 +405,18 @@ const TopochainChallenges = {
 
   // ── Data loading ─────────────────────────────────────────────────────
 
-  async loadChallenges() {
+  // `fresh` (a pull, a correction, a live re-read) asks the network for the
+  // current answer rather than the service worker's saved copy, and when the
+  // same event's grid is already up it re-reads in place (_reread) instead
+  // of blanking the cards to a skeleton first.
+  async loadChallenges({ fresh = false } = {}) {
     const eventId = TopochainChallenges._eventId();
+    if (fresh && eventId != null && eventId === TopochainChallenges._loadedEventId
+        && TopochainChallenges._challenges.length && !TopochainChallenges._challengesLoading
+        && !TopochainChallenges._challengesError) {
+      return TopochainChallenges._reread(eventId);
+    }
+    const init = fresh ? TopochainChallenges.FRESH : undefined;
     // A different event starts its groups from the board's defaults; a
     // refresh of the same one (pull-to-refresh) keeps the viewer's toggles.
     if (eventId !== TopochainChallenges._loadedEventId) TopochainChallenges._collapsed = {};
@@ -345,11 +442,13 @@ const TopochainChallenges = {
     TopochainChallenges._challenges = [];
     TopochainChallenges._renderGrid();
 
+    const seq = ++TopochainChallenges._listSeq;
     const res = await TopochainChallenges.fetchJson(
-      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`
+      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`, init
     );
     if (!TopochainChallenges._open
-        || TopochainChallenges._eventId() !== eventId) return;
+        || TopochainChallenges._eventId() !== eventId
+        || seq !== TopochainChallenges._listSeq) return;
 
     TopochainChallenges._challengesLoading = false;
     if (res.ok && res.data?.success && Array.isArray(res.data.data)) {
@@ -358,23 +457,49 @@ const TopochainChallenges = {
     } else {
       TopochainChallenges._challenges = [];
       TopochainChallenges._challengesError = (res.data && res.data.error)
-        || 'Failed to load challenges.';
+        || PlatformI18n.t('leaderboard:challenges.loadFailed');
     }
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
-    TopochainChallenges._loadMine(eventId);
+    TopochainChallenges._loadMine(eventId, init);
+  },
+
+  // A re-read of the grid already on screen (#3985). The cards stay up while
+  // it runs, and a failed read leaves them as they are rather than trading
+  // real numbers for an error. An open detail page keeps its row object (the
+  // breakdown and block-production reads are fenced on it) and takes the
+  // fresh fields onto it, so its count moves with the card's.
+  async _reread(eventId) {
+    const seq = ++TopochainChallenges._listSeq;
+    const res = await TopochainChallenges.fetchJson(
+      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`, TopochainChallenges.FRESH
+    );
+    if (!TopochainChallenges._open || TopochainChallenges._eventId() !== eventId
+        || TopochainChallenges._loadedEventId !== eventId
+        || seq !== TopochainChallenges._listSeq) return;
+    if (!(res.ok && res.data?.success && Array.isArray(res.data.data))) return;
+    const open = TopochainChallenges._detailChallenge;
+    TopochainChallenges._challenges = res.data.data.map((row) => (
+      open && row && Number(row.id) === Number(open.id) ? Object.assign(open, row) : row
+    ));
+    TopochainChallenges._onboarding = res.data.onboarding || null;
+    TopochainChallenges._store?.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+    if (open) TopochainChallenges._renderDetailOverlay();
+    await TopochainChallenges._loadMine(eventId, TopochainChallenges.FRESH);
   },
 
   // Your own points per challenge, from the session-authed web read. Purely
   // additive: any failure (401 signed out, 422, network) leaves the grid as
   // rendered above — no error banner, no retry.
-  async _loadMine(eventId) {
+  async _loadMine(eventId, init) {
     if (!TopochainChallenges._challenges.length) return;
+    const seq = ++TopochainChallenges._mineSeq;
     const { ok, data } = await TopochainChallenges.fetchJson(
-      `/challenges-api/challenges?season_event_id=${encodeURIComponent(eventId)}`
+      `/challenges-api/challenges?season_event_id=${encodeURIComponent(eventId)}`, init
     );
     if (!TopochainChallenges._open
-        || TopochainChallenges._eventId() !== eventId) return;
+        || TopochainChallenges._eventId() !== eventId
+        || seq !== TopochainChallenges._mineSeq) return;
     // The /challenges-api envelope is { success, data } like /api/v4.
     const rows = (ok && data && Array.isArray(data.data)) ? data.data : null;
     if (!rows) return;
@@ -384,6 +509,8 @@ const TopochainChallenges = {
     }
     TopochainChallenges._mine = mine;
     TopochainChallenges._renderGrid();
+    // The detail page reads the viewer's own row too.
+    if (TopochainChallenges._detailChallenge) TopochainChallenges._renderDetailOverlay();
   },
 
   // ── Challenge grid ───────────────────────────────────────────────────
@@ -410,13 +537,13 @@ const TopochainChallenges = {
   // screen reader says the words. The keys are not the headings: ids
   // (`tc-se-group-<key>`) and tests name the keys, so a heading can change
   // without them. `order` is each group's rank while setup is unfinished;
-  // _groupRankOf moves a finished Get started to the end.
+  // _groupRankOf moves a finished First challenges group to the end.
   GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    ONBOARDING: { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+  OTHER_GROUP: { key: 'other', heading: 'leaderboard:challenges.group.other', order: 3 },
 
   _groupOf(c) {
     const label = c && c.card_preview ? c.card_preview.label : null;
@@ -435,7 +562,7 @@ const TopochainChallenges = {
       && list.some((c) => TopochainChallenges._groupOf(c) !== TopochainChallenges.OTHER_GROUP);
   },
 
-  // Whether setup is behind the viewer, which decides where Get started
+  // Whether setup is behind the viewer, which decides where First challenges
   // sits. With an onboarding summary the server's gate says so
   // (`unlocked === true`); without one, the list must hold at least one setup
   // card and every one of them must be done.
@@ -446,8 +573,8 @@ const TopochainChallenges = {
     return setup.length > 0 && setup.every((c) => TopochainChallenges._isDone(c));
   },
 
-  // A group's rank in the board's order: Get started while unfinished (0),
-  // This week (1), Always open (2), Season challenges (3), then Get started
+  // A group's rank in the board's order: First challenges while unfinished (0),
+  // This week (1), Always open (2), Season challenges (3), then First challenges
   // once finished (4, last), so the grid leads with what is left to do.
   // Pure: a group from GROUPS/OTHER_GROUP and the _setupFinished answer.
   // HomePanels keeps the same rule for Home's block, and
@@ -463,9 +590,9 @@ const TopochainChallenges = {
     return grouped ? TopochainChallenges._groupRankOf(TopochainChallenges._groupOf(c), setupFinished) : 0;
   },
 
-  // The group first (a grouped grid only, by _groupRankOf: Get started while
+  // The group first (a grouped grid only, by _groupRankOf: First challenges while
   // unfinished, This week, Always open, Season challenges, then a finished
-  // Get started), then unfinished challenges, then organiser-featured, then
+  // First challenges), then unfinished challenges, then organiser-featured, then
   // the public payload's order (display_order, then id) — the retired
   // #challenges screen's ordering with the completed split added in front of
   // it (#981). The group key keeps each group contiguous, so a grouped grid's
@@ -545,7 +672,7 @@ const TopochainChallenges = {
     const groups = (firstDone > 0 && doneCount > 0)
       ? [
         { key: 'open', heading: null, cards: cards.slice(0, firstDone) },
-        { key: 'done', heading: 'Completed', cards: cards.slice(firstDone) },
+        { key: 'done', heading: PlatformI18n.t('leaderboard:challenges.group.completed'), cards: cards.slice(firstDone) },
       ]
       : [{ key: 'all', heading: null, cards }];
 
@@ -554,7 +681,7 @@ const TopochainChallenges = {
       // Always present when the grid has rows (including "0/8" and "8/8"),
       // so the declared dapp.json check can anchor on #tc-se-challenge-summary
       // whatever the selected event's data happens to be.
-      progress: TopochainChallenges._progressView(doneCount, ordered.length),
+      progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
       groups,
     };
   },
@@ -585,8 +712,10 @@ const TopochainChallenges = {
     const toggled = TopochainChallenges._collapsed || {};
     const groups = slices.map((s, n) => ({
       key: s.group.key,
-      heading: s.group.heading,
+      heading: PlatformI18n.t(s.group.heading),
       meta: summaries[n].meta,
+      // #3203: the moment the clock runs out, for the meta's tooltip.
+      metaTitle: summaries[n].endsTitle || null,
       allDone: summaries[n].allDone,
       collapsed: Object.prototype.hasOwnProperty.call(toggled, s.group.key)
         ? toggled[s.group.key] === true
@@ -596,27 +725,39 @@ const TopochainChallenges = {
     const doneCount = ordered.filter((c) => TopochainChallenges._isDone(c)).length;
     const onboarding = TopochainChallenges._onboarding;
     if (!onboarding) {
-      return { kind: 'cards', progress: TopochainChallenges._progressView(doneCount, ordered.length), groups };
+      return {
+        kind: 'cards',
+        progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
+        groups,
+      };
     }
     return {
       kind: 'cards',
-      // Get started is its own scope while it gates the rest; once unlocked
+      // First challenges is its own scope while it gates the rest; once unlocked
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
-        ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
+        ? TopochainChallenges._progressView(doneCount, ordered.length, null, ordered)
+        : TopochainChallenges._progressView(
+          onboarding.completed, onboarding.total, 'first',
+          ordered.filter((c) => TopochainChallenges._groupOf(c).key === 'setup')
+        ),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
       // challenges it hides, the server's additive `hidden_count`, which the
-      // pane draws as one locked placeholder after the groups. The
-      // placeholder's second line is the note, so the pane draws the note only
-      // without one; a payload without the field (an older server) is 0,
-      // which draws no placeholder. Unlocked, nothing hides and there is
-      // nothing to say: no notice, no count.
+      // pane draws as one locked placeholder after the groups, naming the
+      // first few (`hidden_names`) as Home's does. The placeholder says what
+      // opens them, so the pane draws the note only without one; a payload
+      // without the field (an older server) is 0, which draws no placeholder.
+      // Unlocked, nothing hides and there is nothing to say: no notice, no
+      // count. Only a new account was gated at all, and what it finished was
+      // its Getting started list on Home (the tour as well as these), so
+      // that is what the words name (2026-10-01). Since #4635 no server sends
+      // a gate summary, so none of this draws.
       ...(onboarding.unlocked ? {} : {
-        notice: 'Finish these to unlock the rest of the season.',
+        notice: PlatformI18n.t('leaderboard:challenges.locked.notice'),
         lockedCount: Number(onboarding.hidden_count) || 0,
+        lockedNames: Array.isArray(onboarding.hidden_names) ? onboarding.hidden_names : [],
       }),
       groups,
     };
@@ -624,21 +765,27 @@ const TopochainChallenges = {
 
   // One group's header, from its challenges: how many are done, whether all
   // are, the clock, and the meta string composed from them: "2/2 done" for a
-  // finished group, "1/3" for Get started (which has no clock), "1/4 · 3d left"
+  // finished group, "1/3" for First challenges (which has no clock), "1/4 · 3d left"
   // or "0/2 · no deadline" for the rest. `left` is the time-left words alone,
-  // or null (Get started, a finished group, no deadline); the detail page's eyebrow
-  // reads it.
+  // or null (First challenges, a finished group, no deadline); the detail page's eyebrow
+  // reads it. `ends` is the same clock as a moment ("ends Mon 12 Oct, 02:00",
+  // _endsText), or null exactly when `left` is.
   _groupSummary(key, challenges) {
     const list = Array.isArray(challenges) ? challenges : [];
     const total = list.length;
     const done = list.filter((c) => TopochainChallenges._isDone(c)).length;
     const allDone = total > 0 && done === total;
-    const left = allDone || key === 'setup' ? null : TopochainChallenges._groupTimeLeft(key, list);
+    const clock = allDone || key === 'setup' ? null : TopochainChallenges._groupClock(key, list);
+    const left = clock ? clock.left : null;
+    const ends = clock ? TopochainChallenges._endsText(clock.at) : null;
+    // The header's tooltip says the same moment as a sentence of its own.
+    const endsTitle = clock ? TopochainChallenges._endsTitle(clock.at) : null;
     let meta;
-    if (allDone) meta = `${total}/${total} done`;
+    if (allDone) meta = PlatformI18n.t('leaderboard:challenges.group.meta.allDone', { done: total, count: total });
     else if (key === 'setup') meta = `${done}/${total}`;
-    else meta = `${done}/${total} · ${left || 'no deadline'}`;
-    return { done, total, allDone, left, meta };
+    else if (left) meta = PlatformI18n.t('leaderboard:challenges.group.meta.timed', { done, total, timeLeft: left });
+    else meta = PlatformI18n.t('leaderboard:challenges.group.meta.noDeadline', { done, total });
+    return { done, total, allDone, left, ends, endsTitle, meta };
   },
 
   // A group's clock: the earliest end among its open, unfinished challenges,
@@ -647,18 +794,77 @@ const TopochainChallenges = {
   // never borrows the event's end; only an organiser's own end date gives that
   // group a clock. Null when nothing ends in the future.
   _groupTimeLeft(key, challenges) {
-    const ctx = window.TopochainEventContext;
-    const ev = key !== 'always' && ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+    const clock = TopochainChallenges._groupClock(key, challenges);
+    return clock ? clock.left : null;
+  },
+
+  // The same clock with its moment: { at (epoch ms), left }, or null.
+  _groupClock(key, challenges) {
     let best = null;
     for (const c of challenges) {
       if (TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)) continue;
-      const raw = (c.effective && c.effective.schedule_end) || (ev && ev.ends_at);
+      const raw = TopochainChallenges._endRaw(c, key);
       const left = TopochainChallenges._timeLeft(raw);
       if (!left) continue;
       const at = Date.parse(raw);
       if (!best || at < best.at) best = { at, left };
     }
-    return best ? best.left : null;
+    return best;
+  },
+
+  // A challenge's end as the server sent it: its own `effective.schedule_end`,
+  // else the selected event's `ends_at`, except under Always open (`key`
+  // 'always'), which never borrows the event's end.
+  //
+  // A This week challenge's cap starts again every Monday 00:00 UTC, the week
+  // the scorer counts by, so its end is the end of this week when that comes
+  // first: "This week · 6d left", not the season's 90 days.
+  _endRaw(c, key = null) {
+    const own = c && c.effective && c.effective.schedule_end;
+    let raw = own || null;
+    if (!own && key !== 'always') {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      raw = (ev && ev.ends_at) || null;
+    }
+    if ((key || TopochainChallenges._groupOf(c).key) !== 'week') return raw;
+    const weekEnd = TopochainChallenges._weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+  },
+
+  // #3203: WHEN a challenge's window closes, not only how long is left, so
+  // "3d left" alone does not leave a viewer guessing whether work done
+  // tonight still counts. For a This week challenge that moment is the end
+  // of the week (_endRaw: Monday 00:00 UTC, when its cap starts again) or its
+  // organiser's end, whichever is sooner. In the viewer's own locale and time zone, lower case for
+  // the meta line it joins ("ends Mon 12 Oct, 02:00"); null once past or on
+  // an unparseable date, as _timeLeft is. `_clockFormat` lets tests pin the
+  // locale and zone.
+  _clockFormat: { locale: undefined, timeZone: undefined },
+  _endsText(raw, now = Date.now()) {
+    const when = TopochainChallenges._endsWhen(raw, now);
+    return when ? PlatformI18n.t('leaderboard:challenges.ends', { when }) : null;
+  },
+
+  // The same moment as a tooltip, which starts its own sentence ("Ends Mon 12
+  // Oct, 02:00"): its own message, not this one with a capital put on it.
+  _endsTitle(raw, now = Date.now()) {
+    const when = TopochainChallenges._endsWhen(raw, now);
+    return when ? PlatformI18n.t('leaderboard:challenges.endsTitle', { when }) : null;
+  },
+
+  _endsWhen(raw, now) {
+    if (raw == null || raw === '') return null;
+    const at = typeof raw === 'number' ? raw : Date.parse(raw);
+    if (!Number.isFinite(at) || at <= now) return null;
+    const { locale, timeZone } = TopochainChallenges._clockFormat || {};
+    const opts = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
+    if (timeZone) opts.timeZone = timeZone;
+    try {
+      return new Date(at).toLocaleString(locale, opts);
+    } catch (_) {
+      return null;
+    }
   },
 
   // A group header's tap. Flips the group's collapsed state AS DRAWN (the
@@ -708,7 +914,7 @@ const TopochainChallenges = {
       ...TopochainChallenges._stateOf(c),
       // On a grouped grid the header over This week, Always open and Season
       // challenges says when the group ends, so those cards leave it out.
-      // Get started's header has no clock, and its cards keep theirs.
+      // The First challenges header has no clock, and its cards keep theirs.
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
         || (TopochainChallenges._grouped() && TopochainChallenges._groupOf(c).key !== 'setup')
         ? null : TopochainChallenges._deadlineOf(c),
@@ -716,33 +922,70 @@ const TopochainChallenges = {
     };
   },
 
-  // The line under the rail of a challenge the background scorer counts
-  // (#3185): "Updates every 15 min · last 10:42". Progress on such a card
-  // moves only when a run writes credits, so it can sit on "1/3" for a whole
-  // interval — and a viewer who is not told that redoes what they finished.
+  // When a challenge the background scorer counts is next counted (#3185),
+  // said on the card's meta line after the reward: "500 pts · next count
+  // 9:37". Progress on such a card moves only when a run writes credits, so
+  // it can sit on "1/3" for a whole interval, and a viewer who is not told
+  // that redoes what they finished. "Next" rather than "last" because the
+  // question on a card someone just acted on is when it will move.
   //
   // From the row's `scoring` ({ interval_minutes, last_scored_at }), which
-  // the server sends only for a challenge a rule counts right now. null — no
-  // line — when it sends none, when either field is missing or malformed, and
-  // on a finished card, whose count has nothing left to move. The time is in
-  // the viewer's own locale and zone, with the date added once it is not
-  // today's, so a stalled schedule reads as stale rather than as this
-  // morning. Short on purpose: it is one truncating line, like the rail's.
+  // the server sends only for a challenge a rule counts right now. null (say
+  // nothing) when it sends none, when either field is missing or malformed,
+  // and on a finished card, whose count has nothing left to move. Times are
+  // in the viewer's own locale and zone, with the date added once it is not
+  // today's. A run that is late by less than one interval is "counting now";
+  // later than that the schedule has stalled, and the card says when it last
+  // counted, dated, rather than promise a time that has passed.
   _cadenceOf(c, now = Date.now()) {
     const s = c && c.scoring;
     if (!s || TopochainChallenges._isDone(c)) return null;
     const minutes = Number(s.interval_minutes);
     const last = s.last_scored_at ? Date.parse(s.last_scored_at) : NaN;
     if (!Number.isInteger(minutes) || minutes <= 0 || !Number.isFinite(last)) return null;
-    let every = `${minutes} min`;
-    if (minutes === 1) every = 'minute';
-    else if (minutes === 60) every = 'hour';
-    else if (minutes % 60 === 0) every = `${minutes / 60} hours`;
-    const at = new Date(last);
-    const time = at.toDateString() === new Date(now).toDateString()
-      ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-      : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    return `Updates every ${every} · last ${time}`;
+    const every = minutes * 60000;
+    const clock = (ms) => {
+      const at = new Date(ms);
+      return at.toDateString() === new Date(now).toDateString()
+        ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+    const next = last + every;
+    if (next > now) return PlatformI18n.t('leaderboard:challenges.cadence.next', { when: clock(next) });
+    if (now - next < every) return PlatformI18n.t('leaderboard:challenges.cadence.now');
+    return PlatformI18n.t('leaderboard:challenges.cadence.last', { when: clock(last) });
+  },
+
+  // The page's line under the task about what counts, from the rule the
+  // server says scores it (`counted_by`: { measure, target }), else null.
+  //   #3253 A proposal challenge counts only once the change is put to the
+  //         vote, which the organiser's task text never said.
+  //   #3248 A counted measure stops crediting at its target (the scorer's
+  //         `already >= target` cap), so once the viewer is there, say that
+  //         more before the end add nothing — while the challenge is open.
+  _countNoteOf(c) {
+    const by = c && c.counted_by;
+    if (!by || typeof by.measure !== 'string') return null;
+    if (by.measure === 'PROPOSAL_SENT') {
+      return PlatformI18n.t('leaderboard:challenges.countNote.onPropose');
+    }
+    const cap = Number(by.target);
+    const current = c.progress ? Number(c.progress.current) : NaN;
+    if (!Number.isInteger(cap) || cap < 1 || !(current >= cap)) return null;
+    if (!TopochainChallenges._isOpen(c)) return null;
+    const accepted = by.measure === 'PROPOSAL_ACCEPTED';
+    const figures = { count: cap, cap: cap.toLocaleString('en-US') };
+    // A This week challenge's cap is this week's (the scorer counts per week,
+    // and `progress` is this week's credits), so the limit is the week, and
+    // it starts again on Monday.
+    if (TopochainChallenges._groupOf(c).key === 'week') {
+      return accepted
+        ? PlatformI18n.t('leaderboard:challenges.countNote.weekAccepted', figures)
+        : PlatformI18n.t('leaderboard:challenges.countNote.week', figures);
+    }
+    return accepted
+      ? PlatformI18n.t('leaderboard:challenges.countNote.accepted', figures)
+      : PlatformI18n.t('leaderboard:challenges.countNote.other', figures);
   },
 
   // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
@@ -765,10 +1008,15 @@ const TopochainChallenges = {
   // started's cards; the other groups' headers carry the earliest end instead
   // (_groupTimeLeft), from the same two sources.
   _deadlineOf(c) {
-    const own = c && c.effective && c.effective.schedule_end;
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    return TopochainChallenges._timeLeft(own || (ev && ev.ends_at));
+    return TopochainChallenges._timeLeft(TopochainChallenges._endRaw(c));
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string. The same rule as
+  // HomePanels.weekEnd and the scorer's challenge-rules.weekStartMs.
+  _weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
   },
 
   // The same rule and words as HomePanels.timeLeft, so a challenge says the
@@ -784,28 +1032,45 @@ const TopochainChallenges = {
     const ms = ends - Date.now();
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
-    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+    return hours < 24
+      ? PlatformI18n.t('leaderboard:challenges.timeLeft.hours', { count: hours })
+      : PlatformI18n.t('leaderboard:challenges.timeLeft.days', { count: Math.ceil(ms / 86400000) });
   },
 
   // The progress over the grid, as the board's quiet season summary draws it
-  // ("3/9 done in Season 2", one segment per challenge, in
+  // ("3/9 done in this event", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("Get started"); otherwise it is the selected event, whose name
-  // can land after the grid does. The onChange redraw in open() fills it in
-  // then, and until it has, the caption is plain "done".
+  // of its own ("First challenges"); otherwise it is the selected event. The
+  // onChange redraw in open() fills the caption in once the event has
+  // arrived, and until it has, the caption is plain "done".
   //
   // THE EVENT SAYS IT IS AN EVENT (QA 2026-09-24 Q17). This tally is one
   // event's challenges, while Home's and the profile's are the whole
   // season's; production names its season event after the season ("Season
   // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
   // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("Get started") is unchanged.
-  _progressView(done, total, scope) {
-    if (scope) return { done, total, caption: `done in ${scope}` };
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? `done in this event · ${name}` : 'done' };
+  // event" now, without the name (issue #4528): the event's own name can
+  // still be the season's, and the name added nothing the words did not say.
+  // A named scope ('first', First challenges) is unchanged. The words are the
+  // shared progress's (leaderboard:progress.*); this names the scope.
+  //
+  // `challenges` (fourth) is the list in scope, whose numeric rewards and the
+  // viewer's earned points make up the summary's points line (#4565): the
+  // event scope counts the whole ordered grid, First challenges its own
+  // cards. Absent, or no numeric reward in view, the descriptor is exactly
+  // what it was.
+  _progressView(done, total, scope, challenges) {
+    const points = TopochainChallenges._pointsView(challenges);
+    let view;
+    if (scope) {
+      view = { done, total, scope };
+    } else {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+      view = name ? { done, total, scope: 'event' } : { done, total };
+    }
+    return points ? { ...view, points } : view;
   },
 
   // The card's rail: which of the three states a challenge is in, the one
@@ -864,8 +1129,9 @@ const TopochainChallenges = {
     const points = m && Number(m.activities_total) > 0 ? Number(m.activities_total) : 0;
     const p = (c && c.progress) || null;
     if (TopochainChallenges._isDone(c)) {
-      const earned = points ? `Earned ${points.toLocaleString('en-US')} pts` : null;
-      return { state: 'done', stateLabel: 'Done', fill: 1, counted: false, earned };
+      const earned = points
+        ? PlatformI18n.t('leaderboard:challenges.earned', { count: points, points: points.toLocaleString('en-US') }) : null;
+      return { state: 'done', stateLabel: PlatformI18n.t('leaderboard:challenges.state.done'), fill: 1, counted: false, earned };
     }
     if (p) {
       const target = Number(p.target);
@@ -889,9 +1155,9 @@ const TopochainChallenges = {
         };
       }
       if (current > 0 || points > 0) {
-        return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+        return { state: 'progress', stateLabel: PlatformI18n.t('leaderboard:challenges.state.started'), fill: null, counted: false, earned: null };
       }
-      return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
+      return { state: 'new', stateLabel: PlatformI18n.t('leaderboard:challenges.state.notStarted'), fill: 0, counted: false, earned: null };
     }
     const metric = (m && m.metric) || null;
     const at = (c && c.activity_type) || null;
@@ -926,9 +1192,9 @@ const TopochainChallenges = {
         earned: null,
       };
     }
-    if (points) return { state: 'progress', stateLabel: 'Started', fill: null, counted: false, earned: null };
+    if (points) return { state: 'progress', stateLabel: PlatformI18n.t('leaderboard:challenges.state.started'), fill: null, counted: false, earned: null };
     // Points, not rows: a zero-point ledger row is not a step taken.
-    return { state: 'new', stateLabel: 'Not started', fill: 0, counted: false, earned: null };
+    return { state: 'new', stateLabel: PlatformI18n.t('leaderboard:challenges.state.notStarted'), fill: 0, counted: false, earned: null };
   },
 
   // A card click, by its index in the flat ordered array. Recomputed rather
@@ -947,7 +1213,7 @@ const TopochainChallenges = {
   // check can't reach it by URL alone. Opens one card once, right after the
   // grid first paints: the first UNFINISHED card when the event has one
   // (#981), which is the better capture either way. That is looked up, not
-  // assumed to be `ordered[0]`: a grouped grid leads with Get started while
+  // assumed to be `ordered[0]`: a grouped grid leads with First challenges while
   // the gate reads locked, even over setup cards that are all done, and a
   // finished group starts collapsed. Scoped to
   // that one param value so a real user's
@@ -1045,6 +1311,7 @@ const TopochainChallenges = {
     TopochainChallenges._breakdown = null;
     TopochainChallenges._breakdownError = null;
     TopochainChallenges._breakdownLoading = true;
+    TopochainChallenges._bpState = undefined;
     // The page's visibility IS its descriptor — _renderDetailOverlay
     // publishing a non-null `detail` is what used to be the
     // classList.remove('hidden') on this line. It is a level of the screen,
@@ -1055,6 +1322,7 @@ const TopochainChallenges = {
       TopochainChallenges._syncChrome();
     }, fromGrid ? 'push' : 'none');
     TopochainChallenges._loadBreakdown(0);
+    if (TopochainChallenges._isBlockProduction(challenge)) TopochainChallenges._loadBpState();
   },
 
   closeChallengeDetail(type = 'none') {
@@ -1101,7 +1369,7 @@ const TopochainChallenges = {
       // "Challenge", not the challenge's own name: the page's large title says
       // which one, and a generic word keeps the bar short and steady.
       app.setBackIcon('arrow', '#leaderboard/challenges');
-      app.setHeaderTitle('Challenge');
+      app.setHeaderTitle(PlatformI18n.t('leaderboard:challenges.detail.header'));
       return;
     }
     // Any section: the screen names the SECTION you are on, and a page left
@@ -1113,7 +1381,7 @@ const TopochainChallenges = {
     // comes from App.LEADERBOARD_TITLES, which is the table both entries into
     // this screen read — restating the word here is how the two drift.
     app.setBackIcon('arrow', '#profile');
-    app.setHeaderTitle(app._leaderboardTitle?.(lb?.section) || 'Leaderboard');
+    app.setHeaderTitle(app._leaderboardTitle?.(lb?.section) || PlatformI18n.t('leaderboard:challenges.detail.headerFallback'));
   },
 
   // The platform header's back chevron (and Escape), claimed the way Settings
@@ -1217,7 +1485,7 @@ const TopochainChallenges = {
         };
       }
     } else {
-      TopochainChallenges._breakdownError = (data && data.error) || 'Failed to load the breakdown.';
+      TopochainChallenges._breakdownError = (data && data.error) || PlatformI18n.t('leaderboard:challenges.detail.breakdownFailed');
     }
     TopochainChallenges._renderDetailOverlay();
   },
@@ -1247,7 +1515,7 @@ const TopochainChallenges = {
   // one section where block production lives: the root has nothing about
   // it, and the button's own label promises the section.
   ctaView(dm, challenge) {
-    const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || 'Go');
+    const label = TopochainChallenges.str(dm.cta_label || dm.cta_button || PlatformI18n.t('leaderboard:challenges.detail.go'));
     if (!dm.cta_link) return null;
     const route = TopochainChallenges._inAppRoute(dm.cta_link);
     if (route) {
@@ -1317,6 +1585,166 @@ const TopochainChallenges = {
     return !!(c && c.card_preview && c.card_preview.illustration === 'useful-feedback');
   },
 
+  // ── The block-production step (#2493) ───────────────────────────────
+  //
+  // The block-production challenge's CTA used to be one link to Settings ›
+  // Homeroom app. A browser has no such section (it fell back to the Settings
+  // root), and in the app it is a long page with block production near the
+  // bottom — while what the viewer needs depends on where THEY are: without a
+  // wallet the first step is to request one; with one, delegation is the
+  // default, and producing on the phone itself exists only in the Android app
+  // (off on iOS since v4, see NativeChrome.decideFirstRunSheet) and comes with
+  // a background service and battery cost. So the page reads the same
+  // session-authed queue state Settings' card reads and draws that step in
+  // place of the generic link.
+  //
+  // The environment below is a PRESENTATION hint only. The request is the
+  // existing POST /challenges-api/bp/request, keys are released by an admin,
+  // and delegation is the native wallet's own screen: nothing here decides
+  // what the viewer may do.
+
+  // Where this page is drawn. `native` is the Homeroom app's bridge (exactly
+  // `true`, as everywhere else); `android` needs it too, because the kit's
+  // platform skin is a user-agent guess that says 'android' for Chrome on an
+  // Android phone, which cannot produce blocks. `wallet` is the app's wallet
+  // app's wallet sheet being able to manage delegation: the row is offered
+  // (`_visible`, every native top frame) AND the bridge has `manageStaking`
+  // (`_stakingSupported`, v4+), so the button never opens a sheet with no
+  // delegation controls in it. The sheet itself handles a wallet whose setup
+  // is still running (its Retry).
+  _bpEnv() {
+    const w = typeof window !== 'undefined' ? window : {};
+    const native = !!(w.usernode && w.usernode.isNative === true);
+    const android = native && !!(w.unNative && w.unNative.platform === 'android');
+    const ws = w.WalletSheet;
+    const wallet = native && !!(ws && ws._visible === true && ws._stakingSupported === true
+      && typeof ws.openFromRow === 'function');
+    return { native, android, wallet };
+  },
+
+  // The step for a queue state and environment. Pure, so the tests pin it.
+  blockProductionStep(state, env, requesting = false) {
+    const e = env || {};
+    if (state === undefined) return { step: 'checking' };
+    if (!state) {
+      return {
+        step: 'error',
+        title: PlatformI18n.t('leaderboard:bp.error.title'),
+        text: PlatformI18n.t('leaderboard:bp.error.text'),
+        action: { label: PlatformI18n.t('leaderboard:bp.error.retry') },
+      };
+    }
+    if (state.bp_released) {
+      const onDevice = e.native && e.android ? {
+        title: PlatformI18n.t('leaderboard:bp.account.onDevice.title'),
+        text: PlatformI18n.t('leaderboard:bp.account.onDevice.text'),
+        warning: PlatformI18n.t('leaderboard:bp.account.onDevice.warning'),
+      } : null;
+      return {
+        step: 'account',
+        title: PlatformI18n.t('leaderboard:bp.account.title'),
+        delegation: {
+          title: PlatformI18n.t('leaderboard:bp.account.delegate.title'),
+          text: PlatformI18n.t('leaderboard:bp.account.delegate.text'),
+        },
+        onDevice,
+        onDeviceNote: onDevice ? null
+          : PlatformI18n.t('leaderboard:bp.account.onDeviceNote'),
+        action: e.wallet ? { label: PlatformI18n.t('leaderboard:bp.account.manage') } : null,
+        appNote: e.wallet ? null
+          : (e.native
+            ? PlatformI18n.t('leaderboard:bp.account.appNote')
+            : PlatformI18n.t('leaderboard:bp.account.webNote')),
+      };
+    }
+    if (state.bp_requested) {
+      return {
+        step: 'pending',
+        title: PlatformI18n.t('leaderboard:bp.pending.title'),
+        text: PlatformI18n.t('leaderboard:bp.pending.text'),
+      };
+    }
+    if (!state.has_platform_access) {
+      return {
+        step: 'locked',
+        title: PlatformI18n.t('leaderboard:bp.locked.title'),
+        text: PlatformI18n.t('leaderboard:bp.locked.text'),
+      };
+    }
+    return {
+      step: 'request',
+      title: PlatformI18n.t('leaderboard:bp.request.title'),
+      text: PlatformI18n.t('leaderboard:bp.request.text'),
+      action: {
+        label: requesting ? PlatformI18n.t('leaderboard:bp.request.pending') : PlatformI18n.t('leaderboard:bp.request.action'),
+        pending: !!requesting,
+      },
+    };
+  },
+
+  async _loadBpState() {
+    const challenge = TopochainChallenges._detailChallenge;
+    const seq = ++TopochainChallenges._bpSeq;
+    let next = null;
+    try {
+      const res = await window.fetch('/challenges-api/bp/state', { credentials: 'same-origin' });
+      const body = res && res.ok ? await res.json() : null;
+      next = body && body.success !== false && body.data ? body.data : null;
+    } catch { next = null; }
+    // Page closed or changed, or a newer read (a reopen, a retry) is in flight.
+    if (TopochainChallenges._detailChallenge !== challenge || seq !== TopochainChallenges._bpSeq) return;
+    TopochainChallenges._bpState = next;
+    TopochainChallenges._renderDetailOverlay();
+  },
+
+  // The request step's button. Same endpoint and follow-up as Settings'
+  // "Ask to produce blocks" (settings.js _askForBlockProduction).
+  async requestBlockProduction() {
+    if (TopochainChallenges._bpRequesting) return;
+    TopochainChallenges._bpRequesting = true;
+    TopochainChallenges._renderDetailOverlay();
+    const ui = window.PlatformUI;
+    try {
+      const res = await window.fetch('/challenges-api/bp/request', {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.success === false) {
+        throw new Error((data && data.error) || PlatformI18n.t('leaderboard:bp.request.failed'));
+      }
+      TopochainChallenges._bpState = Object.assign({}, TopochainChallenges._bpState || {}, {
+        bp_requested: true,
+        bp_released: !!(data.data && data.data.bp_released),
+      });
+      if (ui && ui.toast) ui.toast(PlatformI18n.t('leaderboard:bp.request.sent'));
+      // #2960: the Android "Set up your device" sheet waits for exactly this
+      // moment; on iOS or an already-answered device it presents nothing.
+      const nc = window.NativeChrome;
+      if (nc && typeof nc.maybeShowFirstRunPermissions === 'function') {
+        nc.maybeShowFirstRunPermissions({ force: true });
+      }
+    } catch (e) {
+      if (ui && ui.toast) ui.toast((e && e.message) || PlatformI18n.t('leaderboard:bp.request.failed'), { error: true });
+    } finally {
+      TopochainChallenges._bpRequesting = false;
+      TopochainChallenges._renderDetailOverlay();
+    }
+  },
+
+  // The error step's button.
+  retryBpState() {
+    TopochainChallenges._bpState = undefined;
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._loadBpState();
+  },
+
+  // The account step's button: the app's wallet sheet, whose block-production
+  // card holds "Manage delegation" and, on Android, the background-service note.
+  openWallet() {
+    const ws = window.WalletSheet;
+    if (ws && typeof ws.openFromRow === 'function') ws.openFromRow();
+  },
+
   _renderDetailOverlay() {
     if (!TopochainChallenges._detailChallenge) return;
     TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
@@ -1343,13 +1771,13 @@ const TopochainChallenges = {
           key: `${e.user_id}|${i}`,
           userId: e.user_id,
           // Same fallback as the standings table's User cell (#2394).
-          name: str(e.display_name) || 'Anonymous',
+          name: str(e.display_name) || PlatformI18n.t('leaderboard:challenges.detail.anonymous'),
           nonPodium: !!e.is_non_podium,
           // Points and the optional rate are ONE string, composed here: they
           // shared a single <span> in the markup this replaces, and two
           // sibling expressions in JSX are two text nodes.
           points: e.rate != null
-            ? `${TopochainChallenges._pts(e.points)} · ${str(e.rate)}%`
+            ? PlatformI18n.t('leaderboard:challenges.detail.pointsRate', { points: TopochainChallenges._pts(e.points), rate: str(e.rate) })
             : TopochainChallenges._pts(e.points),
         })),
       };
@@ -1368,8 +1796,18 @@ const TopochainChallenges = {
     const reward = TopochainChallenges.formatReward(cp.reward);
     let amount = null;
     if (rail.earned) amount = { text: rail.earned, earned: true };
-    else if (points) amount = { text: `${points.toLocaleString('en-US')} pts so far`, earned: false };
+    else if (points) {
+      amount = {
+        text: PlatformI18n.t('leaderboard:challenges.soFar', { count: points, points: points.toLocaleString('en-US') }),
+        earned: false,
+      };
+    }
     else if (reward) amount = { text: reward, earned: false };
+
+    const bpStep = TopochainChallenges._isBlockProduction(challenge)
+      ? TopochainChallenges.blockProductionStep(
+        TopochainChallenges._bpState, TopochainChallenges._bpEnv(), TopochainChallenges._bpRequesting)
+      : null;
 
     const totals = (bd && bd.totals) || {};
     const participants = Number(totals.participants) > 0 ? Number(totals.participants) : 0;
@@ -1383,17 +1821,25 @@ const TopochainChallenges = {
     // The eyebrow, uppercase on the page. Ungrouped it is the category label,
     // and the meta line carries the card's deadline. Grouped it is the
     // challenge's group with that group's clock ("This week · 3d left"), and
-    // the meta line leaves the deadline to it; Get started has no clock, so its
+    // the meta line leaves the deadline to it; First challenges has no clock, so its
     // page keeps the card's deadline.
+    //
+    // #3203: the meta line also says when THIS challenge ends, as a moment in
+    // the viewer's zone ("ends Mon 12 Oct, 02:00"), from the same end the
+    // clock reads; under Always open only an organiser's own end counts.
     let eyebrow = cp.label ? str(cp.label) : null;
-    let deadline = TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)
-      ? null : TopochainChallenges._deadlineOf(challenge);
+    const running = !TopochainChallenges._isDone(challenge) && TopochainChallenges._isOpen(challenge);
+    let deadline = running ? TopochainChallenges._deadlineOf(challenge) : null;
+    let ends = running ? TopochainChallenges._endsText(TopochainChallenges._endRaw(challenge)) : null;
     if (TopochainChallenges._grouped()) {
       const group = TopochainChallenges._groupOf(challenge);
       const members = TopochainChallenges._challenges.filter((c) => TopochainChallenges._groupOf(c) === group);
       const { left } = TopochainChallenges._groupSummary(group.key, members);
-      eyebrow = left ? `${group.heading} · ${left}` : group.heading;
+      eyebrow = left
+        ? PlatformI18n.t('leaderboard:challenges.group.timed', { group: PlatformI18n.t(group.heading), timeLeft: left })
+        : PlatformI18n.t(group.heading);
       if (group.key !== 'setup') deadline = null;
+      if (running) ends = TopochainChallenges._endsText(TopochainChallenges._endRaw(challenge, group.key));
     }
 
     return {
@@ -1401,11 +1847,14 @@ const TopochainChallenges = {
       eyebrow,
       goal: str(cp.goal || ''),
       deadline,
+      ends,
       amount,
       // The card shows only the title, its meta line and the rail, so the page
       // is where the task is read; before ITERATION 03 the card showed it and
       // the overlay never needed it.
       task: cp.task ? str(cp.task) : null,
+      // Under the task: what the rule counts, when the task cannot say it.
+      countNote: TopochainChallenges._countNoteOf(challenge),
       // The same artwork as the card's tile, for the page's well under the task.
       illustration: TopochainChallenges._illustrationOf(cp),
       illustrationTone: TopochainChallenges._illustrationToneOf(cp),
@@ -1415,20 +1864,30 @@ const TopochainChallenges = {
       counted: !!rail.counted,
       // The card's line under the rail, under the page's rail too.
       cadence: TopochainChallenges._cadenceOf(challenge),
-      cta: TopochainChallenges.ctaView(dm, challenge),
       // #3186: on the feedback challenge, the way to what the viewer sent
       // and which of it counted, beside the count that says how many did.
       // A flag, not an href: the page's one computed href stays the guarded
       // CTA, and this link's address is a constant in the pane.
       feedbackLink: TopochainChallenges._isFeedback(challenge),
+      // A block-production challenge draws the viewer's step instead of the
+      // organiser's link, which could only ever name one destination.
+      blockProduction: bpStep,
+      cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
       description: dm.description ? str(dm.description) : null,
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,
       participants: participants
-        ? `Participants · ${participants.toLocaleString('en-US')}` : 'Participants',
-      pointsTotal: totalPoints ? `${totalPoints.toLocaleString('en-US')} pts between them` : null,
+        ? PlatformI18n.t('leaderboard:challenges.detail.participantsCount',
+          { count: participants, number: participants.toLocaleString('en-US') })
+        : PlatformI18n.t('leaderboard:challenges.detail.participants'),
+      pointsTotal: totalPoints
+        ? PlatformI18n.t('leaderboard:challenges.detail.pointsBetween',
+          { count: totalPoints, points: totalPoints.toLocaleString('en-US') })
+        : null,
       moreLabel: remaining > 0 && remaining <= 25
-        ? `Show all ${participants.toLocaleString('en-US')} →` : 'Show more →',
+        ? PlatformI18n.t('leaderboard:challenges.detail.showAll',
+          { count: participants, number: participants.toLocaleString('en-US') })
+        : PlatformI18n.t('leaderboard:challenges.detail.showMore'),
       entries,
     };
   },
@@ -1464,7 +1923,7 @@ const TopochainChallenges = {
       if (ok && data?.success) {
         TopochainChallenges._profile = data.data;
       } else {
-        TopochainChallenges._profileError = (data && data.error) || 'Failed to load this profile.';
+        TopochainChallenges._profileError = (data && data.error) || PlatformI18n.t('leaderboard:challenges.profile.loadFailed');
       }
       TopochainChallenges._renderProfileOverlay();
     });
@@ -1490,17 +1949,17 @@ const TopochainChallenges = {
     const p = TopochainChallenges._profile;
     return {
       kind: 'profile',
-      name: str(p.display_name) || 'Anonymous',
+      name: str(p.display_name) || PlatformI18n.t('leaderboard:challenges.detail.anonymous'),
       // The stats grid was six hand-written cells in the same shape; one
       // ordered list of label/value pairs is the same six, and a label can no
       // longer drift away from the field it sits over.
       stats: [
-        { label: 'Rank', value: str(p.rank ?? '—') },
-        { label: 'Total points', value: str(p.total_points) },
-        { label: 'Extra points', value: str(p.extra_points) },
-        { label: 'Produced blocks', value: str(p.produced_blocks) },
-        { label: 'VRF won slots', value: str(p.vrf_won_slots) },
-        { label: 'Success rate', value: `${str(p.success_rate)}%` },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.rank'), value: str(p.rank ?? '—') },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.totalPoints'), value: str(p.total_points) },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.extraPoints'), value: str(p.extra_points) },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.producedBlocks'), value: str(p.produced_blocks) },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.wonSlots'), value: str(p.vrf_won_slots) },
+        { label: PlatformI18n.t('leaderboard:challenges.profile.successRate'), value: `${str(p.success_rate)}%` },
       ],
       // null, not [], so the renderer's "No activities recorded." branch is
       // the same explicit choice the template's ternary was.
@@ -1509,6 +1968,9 @@ const TopochainChallenges = {
           key: `${i}`,
           text: str(a.description || a.activity_type),
           points: `+${str(a.points)}`,
+          // Raw; ./activity-row.tsx formats it in the renderer (#3648),
+          // since this module stays import-free.
+          at: a.activity_at || null,
         }))
         : null,
     };
@@ -1522,3 +1984,14 @@ const TopochainChallenges = {
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
 if (typeof window !== 'undefined') window.TopochainChallenges = TopochainChallenges;
+
+// Every view here holds its words, so a new language builds them again from
+// the challenges already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!TopochainChallenges._open) return;
+    TopochainChallenges._renderGrid();
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._renderProfileOverlay();
+  });
+}

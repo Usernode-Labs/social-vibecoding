@@ -190,6 +190,14 @@
         ? e.target.closest('a[target="_blank"]')
         : null;
       if (!anchor) return;
+      // #3908: a screenshot in a request's words opens in the app's own
+      // image viewer, whose handler on the surface around it
+      // (`[data-image-viewer-scope]`, features/image-viewer) takes the tap
+      // after this capture listener. Sending one hosted elsewhere (a GitHub
+      // upload) to the system browser here would cancel that and leave the
+      // app for a picture.
+      if (typeof anchor.matches === 'function'
+        && anchor.matches('[data-image-viewer-scope] a.dc-inline-img-link')) return;
       let url;
       try { url = new URL(anchor.href, window.location.href); } catch { return; }
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return;

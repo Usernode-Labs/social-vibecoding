@@ -34,7 +34,7 @@ const SCHEMA_NAME = `unpromote_test_${process.pid}`;
 // The merge claim and the promote CAS, lifted out of routes/votes.js rather
 // than retyped, so this file keeps describing the statements that ship.
 const MERGE_CLAIM_SQL = (() => {
-  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging'\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
+  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW\(\)\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
   assert.ok(m, 'the promoted -> merging claim must be findable in routes/votes.js');
   return m[1];
 })();
@@ -89,6 +89,8 @@ async function connectPool() {
       approval_epoch INTEGER NOT NULL DEFAULT 0,
       stale_notified_at TIMESTAMPTZ,
       promoted_at TIMESTAMPTZ,
+      active_users_at_promote INTEGER,
+      merge_attempt_at TIMESTAMPTZ,
       pr_number INTEGER,
       pr_title TEXT,
       integration_block_reasons JSONB,
@@ -266,9 +268,9 @@ test('unpromote against a real PostgreSQL', async (t) => {
       assert.ok(s[0].promoted_at, 'promoted_at stays: it records that it was once proposed');
 
       assert.deepEqual(loaded.spies.destroyed, ['usernode-worker-10']);
-      assert.equal(loaded.spies.chat.length, 2, 'app chat and the proposal thread');
+      assert.equal(loaded.spies.chat.length, 1, 'the proposal thread; a channel carries no activity');
       assert.match(loaded.spies.chat[0].content, /alice moved PR #7: Tidy the header back to Underway/);
-      assert.deepEqual(loaded.spies.chat[1].thread, { type: 'session', ref: 10 });
+      assert.deepEqual(loaded.spies.chat[0].thread, { type: 'session', ref: 10 });
       assert.doesNotMatch(loaded.spies.chat[0].content, /—/, 'no em dashes in product copy');
       assert.equal(loaded.spies.sessionUpdates.at(-1).action, 'unpromoted');
       assert.equal(loaded.spies.voteUpdates.at(-1).sessionId, 10);
@@ -278,7 +280,7 @@ test('unpromote against a real PostgreSQL', async (t) => {
       const again = await srv.post(10);
       assert.equal(again.status, 200);
       assert.equal(again.body.alreadyUnderway, true);
-      assert.equal(loaded.spies.chat.length, 2, 'a repeat posts nothing');
+      assert.equal(loaded.spies.chat.length, 1, 'a repeat posts nothing');
     });
 
     await t.test('an Underway proposal cannot be voted on or claimed for a merge', async () => {
@@ -362,7 +364,7 @@ test('unpromote against a real PostgreSQL', async (t) => {
       // Session 10 was moved back above with two voided votes.
       const { rows: eligible } = await pool.query(PROMOTE_SELECT_SQL, [10, 1]);
       assert.equal(eligible.length, 1, 'the promote route finds the Underway session');
-      const cas = await pool.query(PROMOTE_CAS_SQL, [10, SHA, eligible[0].status]);
+      const cas = await pool.query(PROMOTE_CAS_SQL, [10, SHA, eligible[0].status, 4]);
       assert.equal(cas.rowCount, 1);
       assert.equal(await statusOf(pool, 10), 'promoted');
       assert.equal(await counted(pool, 10), 0, 'the fresh review starts with no votes counted');
@@ -395,12 +397,18 @@ test('the proposal menu and detail view offer the move to the author only', () =
   const menu = APP_VIEW_SRC.match(/_proposalMenuItems\(pr, state\) \{[\s\S]*?\n  \},/);
   assert.ok(menu);
   assert.match(menu[0],
-    /if \(st\.mine && !ro && !isMerged && !isMerging && pr\.status === 'promoted'\) \{\s*items\.push\(\{\s*label: 'Move back to Underway'/);
-  assert.match(APP_VIEW_SRC, /key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway'/);
+    /if \(st\.mine && !ro && !isMerged && !isMerging && pr\.status === 'promoted'\) \{\s*items\.push\(\{\s*label: PlatformI18n\.t\('changes:proposal\.menu\.moveBack'\)/);
+  assert.equal(require('./lib/platform-i18n').message('changes:proposal.menu.moveBack'), 'Move back to Underway');
+  assert.match(APP_VIEW_SRC, /key: 'unpromote', cls: 'gc-vote-btn', label: PlatformI18n\.t\('changes:card\.actions\.moveBack'\)/);
+  assert.equal(require('./lib/platform-i18n').message('changes:card.actions.moveBack'), 'Move back to Underway');
   assert.match(APP_VIEW_SRC, /fetch\(`\/api\/sessions\/\$\{sessionId\}\/unpromote`, \{ method: 'POST' \}\)/,
     'the client path is spelled literally so the Global Chat inventory can see it');
   const fn = APP_VIEW_SRC.match(/async unpromoteProposal\(sessionId\) \{[\s\S]*?\n  \},/);
   assert.ok(fn);
-  assert.match(fn[0], /Its votes are cleared and it cannot be merged until you propose it again/);
+  // The confirm copy is read from the catalog.
+  assert.match(fn[0], /message: PlatformI18n\.t\('changes:proposal\.moveBack\.message', \{ number: prNum \}\),/);
+  const confirmCopy = require('./lib/platform-i18n').message('changes:proposal.moveBack.message', { number: 7 });
+  assert.match(confirmCopy, /Its votes are cleared and it cannot be merged until you propose it again/);
   assert.doesNotMatch(fn[0], /—/, 'no em dashes in the confirm copy');
+  assert.doesNotMatch(confirmCopy, /—/, 'no em dashes in the confirm copy');
 });

@@ -13,6 +13,11 @@
 // programmable per-test and captures the follow-up INSERT so we can assert
 // the metadata column directly.
 //
+// #2779: the browser no longer clones a run into a classic dev chat; the
+// hosted connector's submit_platform_build is the one caller left, so the
+// requests here carry an external connector client (and no delegated grant).
+// The refusal of every other caller has its own test at the bottom.
+//
 // Run with: node --test tests/clone-headless-suggestions.test.js
 
 const { test } = require('node:test');
@@ -43,10 +48,15 @@ const express = require('express');
 
 const VIEWER = { id: 7, username: 'tester' };
 
-function startServer() {
+function startServer({ connectorClientId = 'hosted-connector', mcpDelegation = null } = {}) {
   const app = express();
   app.use(express.json());
-  app.use((req, res, next) => { req.user = VIEWER; next(); });
+  app.use((req, res, next) => {
+    req.user = VIEWER;
+    req.connectorClientId = connectorClientId;
+    req.mcpDelegation = mcpDelegation;
+    next();
+  });
   app.use(sessionRoutes({ maxUserSessions: 5, maxGlobalSessions: 100 }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
@@ -172,9 +182,9 @@ test('question clone with no source suggestions writes an empty-metadata follow-
 // questions) but DO carry outcome-appropriate next-step quick-reply pills,
 // so the cloned follow-up never lands with an empty pill bar.
 const EXPECTED_PILLS = {
-  spec: ['Build the spec', 'Revise the spec', 'What will this change?'],
+  spec: ['Build the plan', 'Revise the plan', 'What will this change?'],
   code: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-  spec_code: ['Propose it to the group', 'Revise the spec', 'Make a tweak'],
+  spec_code: ['Propose it to the group', 'Revise the plan', 'Make a tweak'],
 };
 
 for (const outcome of ['spec', 'code', 'spec_code']) {
@@ -295,5 +305,25 @@ test('the conversation copy stamps inheritedFrom on every copied row', async () 
       'the appended follow-up is not marked as inherited');
   } finally {
     server.close();
+  }
+});
+
+test('#2779: only the hosted connector clones a run; a browser or a delegated grant is refused', async () => {
+  for (const [who, opts] of [
+    ['a browser', { connectorClientId: null }],
+    ['the Mayor\'s delegated grant', { mcpDelegation: { kind: 'agent_mayor', agentSessionId: 5 } }],
+  ]) {
+    captured = [];
+    handler = makeHandler({ outcome: 'code', suggestionsRow: null });
+    const server = await startServer(opts);
+    try {
+      const { res, body } = await clone(server);
+      assert.strictEqual(res.status, 403, who);
+      assert.strictEqual(body.code, 'agent_sessions_only', who);
+      assert.ok(!captured.some((c) => /INSERT|UPDATE/.test(String(c.sql))), `${who}: nothing is written`);
+      assert.ok(!captured.some((c) => /is_headless = TRUE/.test(String(c.sql))), `${who}: the run is not even looked up`);
+    } finally {
+      server.close();
+    }
   }
 });

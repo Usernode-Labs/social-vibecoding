@@ -61,7 +61,10 @@ const MAX_USERNAME_LEN = 32;
 // Matched on the lowercased name with the separators stripped, so
 // `usernode_capture` and `UserNodeCapture` are refused alongside the
 // literal seeds.
-const RESERVED_PREFIXES = ['usernode', 'staging'];
+// B9 (E8): and `homeroom`, so "@Homeroom bot" (the platform's bot, mentioned
+// in a project's chat) can never notify a person who took the name. People
+// who already hold such a name keep it; only new names are refused.
+const RESERVED_PREFIXES = ['usernode', 'staging', 'homeroom'];
 
 // Accounts that may never be renamed AT ALL, in either direction. These are
 // the seeded service identities: their username IS the lookup key that
@@ -70,6 +73,9 @@ const RESERVED_PREFIXES = ['usernode', 'staging'];
 const SERVICE_IDENTITIES = new Set([
   'usernode-capture',
   'usernode-capture-admin',
+  // Exists only in disposable paired-shots databases, where the browser
+  // needs a real full-admin session to review protected surfaces.
+  'usernode-shots-full-admin',
   'staging-demo-user',
 ]);
 
@@ -118,102 +124,163 @@ function validateUsername(raw) {
   return { ok: true, value };
 }
 
-// ─── Suggesting a handle for somebody who has never had one (#2563) ────
+// ─── The stand-in a new account holds until it chooses (#2563, #3575) ──
 //
 // Email sign-up used to write the address itself into `users.username`, so
 // a member who signed in as `ada.lovelace@example.com` was that string to
-// everyone else on the platform. The address is now never stored as a
-// handle: signup stores a SUGGESTION derived here, marks the account
-// `needs_username_choice`, and the shell asks before Home.
+// everyone else on the platform. #2563 stopped that by storing a SUGGESTION
+// derived from the address's local part (`adalovelace`), marking the account
+// `needs_username_choice`, and prefilling that suggestion wherever the
+// person was asked.
 //
-// `suggestUsernameFromEmail` is the pure half — same input, same answer,
-// no pool — and it returns null rather than a name that would fail
-// `validateUsername`, because a suggestion that cannot be submitted is
-// worse than no suggestion at all.
-//
-// Padding a one- or two-character local part with `_` (`al` -> `al_`)
-// rather than a digit keeps the numeric suffix below meaning exactly one
-// thing: "somebody already has this".
-const MAX_SUGGESTION_ATTEMPTS = 50;
-
-function suggestUsernameFromEmail(rawEmail) {
-  const email = normalize(rawEmail);
-  const at = email.indexOf('@');
-  if (at <= 0) return null;
-  let stem = email
-    .slice(0, at)
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, '')
-    .slice(0, MAX_USERNAME_LEN);
-  if (!stem) return null;
-  while (stem.length < MIN_USERNAME_LEN) stem += '_';
-  // `usernode_*` and `staging_*` are platform infrastructure. An address
-  // whose local part lands there gets NO suggestion — the person types
-  // their own, which the choose endpoint validates the same way.
-  const check = validateUsername(stem);
-  return check.ok ? check.value : null;
-}
-
-// `base` truncated far enough that `base + n` still fits the ceiling.
-function withNumericSuffix(base, n) {
-  const suffix = String(n);
-  return base.slice(0, MAX_USERNAME_LEN - suffix.length) + suffix;
-}
+// #3575 removed the suggestion too. A prefilled field that one press of
+// "Create account" accepts is a username generated from the email in all
+// but name — the thing the request asked us not to do ("They should have to
+// manually set a username") — and the name it generated was a public copy of
+// the private half of the address. So nothing on the platform derives a
+// handle from an email address any more: a new account holds the opaque
+// placeholder below, and every field that asks for the handle starts EMPTY
+// (the set-password step in frontend/src/features/auth/login.tsx, and the
+// first-run gate in frontend/src/features/auth/username-first-run.js).
 
 /**
- * The suggestion a first-run screen actually prefills: derived from the
- * email, then walked past anything already taken with a numeric suffix.
- *
- * `db` is a pool OR an open client — email-signup.js calls this INSIDE the
- * transaction that creates the row, so it must be able to hand over the
- * client it already holds.
- *
- * `userId` is the account asking, when there is one: a handle this same
- * person already holds counts as available to them (see checkAvailability).
- * Returns null when no valid handle could be derived, which is the caller's
- * cue to fall back to an opaque placeholder rather than to the address.
- */
-async function suggestAvailableUsernameFromEmail(db, rawEmail, userId = null) {
-  const base = suggestUsernameFromEmail(rawEmail);
-  if (!base) return null;
-  for (let n = 1; n <= MAX_SUGGESTION_ATTEMPTS; n += 1) {
-    const candidate = n === 1 ? base : withNumericSuffix(base, n);
-    const free = await checkAvailability(db, candidate, userId);
-    if (free.available) return candidate;
-  }
-  // Fifty people share this local part. A random tail beats both a
-  // fifty-first sequential probe and handing back the address.
-  for (let i = 0; i < 5; i += 1) {
-    const candidate = withNumericSuffix(base, crypto.randomInt(1000, 1000000));
-    const free = await checkAvailability(db, candidate, userId);
-    if (free.available) return candidate;
-  }
-  return null;
-}
-
-/**
- * The handle an account gets when no suggestion could be derived at all
- * (an address whose local part is entirely punctuation, or one that lands
- * in the reserved namespace). Opaque ON PURPOSE — the point of #2563 is
- * that the placeholder must not be the email address, and the account
- * carries `needs_username_choice` either way, so nobody wears this for
- * longer than one sign-in.
+ * The handle a new account holds between being created and choosing one.
+ * Opaque ON PURPOSE: it must not be the email address (#2563), must not be
+ * derived from it (#3575), and must not read as anybody's real name. The
+ * account carries `needs_username_choice` alongside it, and the email
+ * sign-up will not finish without a choice (completePassword in
+ * email-signup.js), so a person signing up never enters Homeroom wearing it.
  *
  * Shaped like the `topochain_<hex>` handles admin-created accounts get
  * (src/routes/topochain/admin/users.js), for the same reason: it satisfies
- * a NOT NULL UNIQUE column without doubling as anybody's real name.
+ * a NOT NULL UNIQUE column without doubling as anybody's real name. 72 bits
+ * of randomness, so the retry around email-signup.js's insert is a backstop
+ * that should never run, not a loop that expects to.
  */
 function placeholderUsername() {
   return `member_${crypto.randomBytes(9).toString('hex')}`;
 }
 
-// Is `name` exactly the shape placeholderUsername() mints? A placeholder is
-// a stand-in, never a suggestion: offering it back in a first-run field
-// would ask the person to keep a random string as their name.
-const PLACEHOLDER_RE = /^member_[0-9a-f]{18}$/;
-function isPlaceholderUsername(name) {
-  return typeof name === 'string' && PLACEHOLDER_RE.test(name);
+/**
+ * Handles to try, in order, for somebody who gave their NAME rather than a
+ * handle: an invite's phone sign-up, whose sheet asks "Your name" and no
+ * username (firebase-phone-auth.js finishWithName). Not the derivation
+ * #3575 removed: that one published the private half of an email address,
+ * and this is the name the person just typed for the group to see. The
+ * first is the name folded to the handle alphabet (accents dropped, every
+ * other run of characters an underscore); the rest add digits, for when it
+ * is taken or reserved. A name with nothing foldable (a script the handle
+ * alphabet lacks) starts from `member`. The handle is PROVISIONAL: seen in
+ * the private groups that invited them, and replaced by one they pick
+ * before anything public shows it (replaceProvisionalUsername).
+ */
+function handlesFromName(rawName, tries = 6) {
+  const folded = String(rawName || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24)
+    .replace(/_+$/, '');
+  const base = folded.length >= MIN_USERNAME_LEN ? folded : (folded ? `${folded}_member` : 'member');
+  const out = [];
+  if (validateUsername(base).ok) out.push(base);
+  while (out.length < tries) {
+    const next = `${isReserved(base) ? 'member' : base}_${crypto.randomInt(100, 10000)}`;
+    if (validateUsername(next).ok && !out.includes(next)) out.push(next);
+  }
+  return out;
 }
+
+/**
+ * The handle an email sign-up's username field arrives holding (#4596):
+ * the letters and digits before the @, lowercased, with dots and every
+ * other character dropped, cut to the 32 a handle may hold. `Ada.Lovelace+hr@`
+ * is `adalovelace`: a "+" starts a subaddress, the person's own filing tag
+ * rather than their name, so the address is cut there first (#4891:
+ * `evan.a.shapiro+test1012a@` suggested `evanashapirotest1012a`). Null when
+ * what is left is too short or reserved, and the field then starts empty.
+ * #4596 deliberately overturns #3575 for this flow: the field is
+ * prefilled, the person can change it, and set-password still takes only
+ * what the field sends.
+ */
+function usernameFromEmail(rawEmail) {
+  const local = (String(rawEmail || '').split('@')[0] || '').split('+')[0];
+  const base = local
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toLowerCase()
+    .slice(0, MAX_USERNAME_LEN);
+  return validateUsername(base).ok ? base : null;
+}
+
+/**
+ * `usernameFromEmail`, made free for `userId`: the name itself when nobody
+ * holds it, else the name with the smallest number that is (`alex2`,
+ * `alex3`, …), cut so the number still fits. Free means what
+ * checkAvailability means: case-insensitive, over the live table and the
+ * retired ledger, and a name this account holds or retired is its own. One
+ * query for the first 100 candidates; null when none of them is free, and
+ * the field then starts empty.
+ */
+async function suggestUsernameForEmail(pool, rawEmail, userId, tries = 100) {
+  const base = usernameFromEmail(rawEmail);
+  if (!base) return null;
+  const candidates = [base];
+  for (let n = 2; candidates.length < tries; n += 1) {
+    const suffix = String(n);
+    const name = `${base.slice(0, MAX_USERNAME_LEN - suffix.length)}${suffix}`;
+    if (validateUsername(name).ok) candidates.push(name);
+  }
+  const { rows } = await pool.query(
+    `SELECT LOWER(username) AS name FROM users
+      WHERE LOWER(username) = ANY($1::text[]) AND id IS DISTINCT FROM $2
+     UNION
+     SELECT LOWER(username) AS name FROM username_history
+      WHERE LOWER(username) = ANY($1::text[]) AND user_id IS DISTINCT FROM $2`,
+    [candidates, userId == null ? null : userId]
+  );
+  const taken = new Set(rows.map((r) => r.name));
+  return candidates.find((name) => !taken.has(name)) || null;
+}
+
+/**
+ * Replace a PROVISIONAL handle (users.username_provisional_since: made from
+ * an invite phone sign-up's name, seen only in private groups) with the one
+ * the person picks before going anywhere public. Like chooseFirstUsername,
+ * not a rename: no ledger row and no cooldown, because this is the first
+ * handle they chose. Keeping the provisional one is a choice too (it is
+ * theirs, so checkAvailability lets them). Returns null when the account's
+ * handle is not provisional.
+ */
+async function replaceProvisionalUsername(pool, userId, nextName) {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET username = $1, username_provisional_since = NULL, updated_at = NOW()
+      WHERE id = $2 AND username_provisional_since IS NOT NULL
+      RETURNING username`,
+    [nextName, userId]
+  );
+  return rows.length ? { username: rows[0].username } : null;
+}
+
+/** Whether `userId` holds a provisional handle (see replaceProvisionalUsername). */
+async function isProvisional(pool, userId) {
+  if (!userId) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM users WHERE id = $1 AND username_provisional_since IS NOT NULL',
+    [userId]
+  );
+  return rows.length > 0;
+}
+
+/** The refusal a public place answers a provisional handle with. */
+const USERNAME_REQUIRED = Object.freeze({
+  error: 'Pick a username first. Public places show your username, not your name.',
+  code: 'username_required',
+});
 
 /**
  * Take the first handle. NOT a rename: this account has never had one.
@@ -463,10 +530,13 @@ module.exports = {
   validateUsername,
   isReserved,
   isServiceIdentity,
-  suggestUsernameFromEmail,
-  suggestAvailableUsernameFromEmail,
   placeholderUsername,
-  isPlaceholderUsername,
+  handlesFromName,
+  usernameFromEmail,
+  suggestUsernameForEmail,
+  replaceProvisionalUsername,
+  isProvisional,
+  USERNAME_REQUIRED,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

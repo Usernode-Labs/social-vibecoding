@@ -36,9 +36,13 @@ function refused(text, reason, label) {
 
 // ─── Acceptance ─────────────────────────────────────────────────────────
 
-test('all nine built-in challenge illustrations pass untouched', () => {
+test('every built-in challenge illustration passes untouched', () => {
   const files = fs.readdirSync(BUILT_IN_DIR).filter((f) => f.endsWith('.svg'));
-  assert.equal(files.length, 9, 'the nine committed drawings');
+  // One drawing per registry entry, so the count follows the registry.
+  const registry = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/lib/challenge-illustrations.ts'), 'utf8');
+  const slugs = [...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]);
+  assert.ok(slugs.length >= 9, 'the registry keys parse out of the source');
+  assert.equal(files.length, slugs.length, 'one committed drawing per built-in');
   for (const file of files) {
     assert.deepEqual(validateSvg(fs.readFileSync(path.join(BUILT_IN_DIR, file))), { ok: true }, file);
   }

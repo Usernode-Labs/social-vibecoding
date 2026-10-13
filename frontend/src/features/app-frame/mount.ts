@@ -26,8 +26,9 @@
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
-import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { legacyPortalNode, mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { navStore } from '../nav/nav-store.js';
+import { appActivity } from './app-activity.js';
 import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
@@ -62,6 +63,21 @@ export const appStatusBridge = {
     unmountLegacyPortal(host);
   },
   /**
+   * N6: a new view for the placeholder already on `host`, re-rendered in
+   * place: nothing under it is unmounted, so a first version's card keeps
+   * its Live (AppView._repaintFirstVersion, on every 10 s recheck). False,
+   * and nothing done, unless this placeholder is still what `host` shows:
+   * its portal live there and a view published (`clear` and `unmount` drop
+   * it whenever something else takes the host over).
+   */
+  update(host: Element | null, view: AppStatusView): boolean {
+    if (!host || !host.isConnected || !appStatusStore.get().view) return false;
+    const shown = legacyPortalNode(host) as { type?: unknown } | null;
+    if (!shown || shown.type !== AppStatus) return false;
+    appStatusStore.set({ view });
+    return true;
+  },
+  /**
    * Forget the published placeholder without touching portals.
    * `_teardownDevRoots` drops every portal in one sweep — including this
    * one — so the host is already gone by the time anything else claims
@@ -78,8 +94,16 @@ export { appFrameBridge };
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
+  bridge.appActivity = appActivity;
   bridge.appFrame = appFrameBridge;
   bridge.appStatus = appStatusBridge;
+
+  // The phone wallet relay in the shared bridge (public/usernode-bridge.js)
+  // forwards a frame's calls only when this names the frame as one of the
+  // shell's production apps. A page without it relays nothing, so this is the
+  // one place that decides. See `appForSource` in ./app-frame-bridge.js.
+  (window as unknown as { __usernodeAppFrameFor?: (source: unknown) => unknown })
+    .__usernodeAppFrameFor = (source: unknown) => appFrameBridge.appForSource(source);
 
   // #1945: the head's theme module rewrites the theme-color meta from the
   // shell's own mode on every theme change (Theme.set, an OS flip, another

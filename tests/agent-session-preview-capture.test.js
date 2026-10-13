@@ -16,8 +16,8 @@ function sessionRow(overrides = {}) {
     last_activity_at: new Date(), created_at: new Date(), turn_live: false,
     change_id: 50, change_status: 'active', change_title: 'Solarized theme',
     change_app_slug: 'rss', change_app_name: 'RSS',
-    change_evidence_state: 'exploring',
-    change_evidence_started_at: new Date('2026-09-25T12:00:00Z'),
+    change_shots_state: 'exploring',
+    change_shots_started_at: new Date('2026-09-25T12:00:00Z'),
     ...overrides,
   };
 }
@@ -31,7 +31,7 @@ test('the active change carries its preview only while one is being captured', a
   const capturing = await readSession(sessionRow());
   assert.deepEqual(capturing.activeChange.previewCapture, { state: 'exploring', startedAt: '2026-09-25T12:00:00.000Z' });
   for (const state of ['planned', 'failed', 'verified', null]) {
-    const settled = await readSession(sessionRow({ change_evidence_state: state }));
+    const settled = await readSession(sessionRow({ change_shots_state: state }));
     assert.equal(settled.activeChange.previewCapture, null, `${state} is not capturing`);
   }
 });

@@ -105,7 +105,7 @@ function makeMockPool(users) {
     }
 
     // bp/state's user-row read.
-    if (sql.includes('SELECT is_admin, has_platform_access, bp_requested_at, bp_released_at FROM users')) {
+    if (sql.includes('SELECT is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at FROM users')) {
       const u = users[params[0]];
       return { rows: u ? [{ ...u }] : [] };
     }
@@ -119,7 +119,7 @@ function makeMockPool(users) {
     }
 
     // /me's full user-row read.
-    if (sql.includes('is_admin, has_platform_access, bp_requested_at, bp_released_at FROM users WHERE id = $1')) {
+    if (sql.includes('is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at FROM users WHERE id = $1')) {
       const u = users[params[0]];
       return { rows: u ? [{ ...u }] : [] };
     }

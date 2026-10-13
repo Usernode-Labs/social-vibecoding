@@ -44,8 +44,9 @@ const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
+const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
@@ -53,6 +54,7 @@ const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
+const { sameOriginBrowserOnly } = require('../../middleware/same-site-browser');
 const {
   mobileWalletClaimLimiter, topochainMobileReadLimiter,
 } = require('../../middleware/rate-limits');
@@ -527,8 +529,34 @@ function effectiveCategory(rawCategory) {
 // /seasons ... v4 should pick one behavior" — v4's ONE behavior is this
 // fallback applied on BOTH endpoints, documented here at the one shared
 // call site both builders below go through.
-function effectiveCtaLabel(rawCtaLabel) {
-  return rawCtaLabel != null ? rawCtaLabel : 'Get Started';
+//
+// A CTA is its link (#3202). With no link at all, web or mobile, there is
+// nothing for a button to open, and the fallback label made the app draw a
+// "Get Started" that did nothing on the weekly challenges whose templates
+// carry no link. So such a challenge sends no CTA: all six fields null, the
+// way the web challenge page (TopochainChallenges.ctaView) and the Home
+// panel (home-panels.js buildChallengeRow) already draw none. While either
+// link is usable the fields pass through as before, since a mobile label
+// may ride the web link and the web label a mobile one.
+function hasCtaLink(link) {
+  return typeof link === 'string' && link.trim() !== '';
+}
+
+function effectiveCta(eff) {
+  if (!hasCtaLink(eff.cta_link) && !hasCtaLink(eff.mobile_cta_link)) {
+    return {
+      cta_type: null, cta_label: null, cta_link: null,
+      mobile_cta_type: null, mobile_cta_label: null, mobile_cta_link: null,
+    };
+  }
+  return {
+    cta_type: eff.cta_type,
+    cta_label: eff.cta_label != null ? eff.cta_label : 'Get Started',
+    cta_link: eff.cta_link,
+    mobile_cta_type: eff.mobile_cta_type,
+    mobile_cta_label: eff.mobile_cta_label,
+    mobile_cta_link: eff.mobile_cta_link,
+  };
 }
 
 // Full per-challenge item for GET /challenges (SPEC 1934-1974): every
@@ -557,12 +585,7 @@ function buildMobileChallengeItem(r, { activities, activitiesTotal }) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
@@ -591,12 +614,7 @@ function buildSeasonChallengeItem(r) {
     description: eff.description,
     requirements: eff.requirements,
     reward_logic: eff.reward_logic,
-    cta_type: eff.cta_type,
-    cta_label: effectiveCtaLabel(eff.cta_label),
-    cta_link: eff.cta_link,
-    mobile_cta_type: eff.mobile_cta_type,
-    mobile_cta_label: eff.mobile_cta_label,
-    mobile_cta_link: eff.mobile_cta_link,
+    ...effectiveCta(eff),
     schedule_start: iso(eff.schedule_start),
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
@@ -699,7 +717,7 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+  return rows.filter((r) => r.t_id != null)
     .map((r) => {
       const item = buildSeasonChallengeItem(r);
       item.category = challengeCategory(item.challenge_id, item.category, onboarding);
@@ -777,7 +795,7 @@ function topochainMobileRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
-                is_admin, has_platform_access, bp_requested_at, bp_released_at
+                is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -802,8 +820,9 @@ function topochainMobileRoutes(config) {
           // Onboarding flow alignment. `has_platform_access` mirrors the
           // web gate; `bp_released` is what the mobile app's node gates
           // block production on (bp_requested surfaces "request pending"
-          // in the SV settings UI). Admins implicitly have access.
-          has_platform_access: !!user.has_platform_access || !!user.is_admin,
+          // in the SV settings UI). Admins implicitly have access, and so
+          // does a private member, as on the web (routes/auth.js /me).
+          has_platform_access: !!user.has_platform_access || !!user.is_admin || user.private_member_since != null,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
           // The stable account namespace used by legacy mobile `/me`
@@ -832,7 +851,7 @@ function topochainMobileRoutes(config) {
   async function bpStateHandler(req, res) {
     try {
       const { rows } = await pool.query(
-        `SELECT is_admin, has_platform_access, bp_requested_at, bp_released_at
+        `SELECT is_admin, has_platform_access, private_member_since, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -840,7 +859,7 @@ function topochainMobileRoutes(config) {
       const u = rows[0];
       return ok(res, {
         data: {
-          has_platform_access: !!u.has_platform_access || !!u.is_admin,
+          has_platform_access: !!u.has_platform_access || !!u.is_admin || u.private_member_since != null,
           bp_requested: !!u.bp_requested_at,
           bp_released: !!u.bp_released_at,
         },
@@ -1300,9 +1319,11 @@ function topochainMobileRoutes(config) {
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      // The season's First challenges: their ids (for the category) and the
+      // viewer's lifetime progress on them. Since #4635 they hide nothing, so
+      // the list is the whole event or season.
       const onboarding = await loadOnboarding(pool, req.user.id,
         { seasonId: resolvedSeasonId, eventId: seasonEventId });
-      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1355,11 +1376,19 @@ function topochainMobileRoutes(config) {
         // ring with no words beside it while Home, reading the snapshot,
         // showed the real number. The snapshot count is passed in here, and
         // the done rule, the clamp and the target stay the shared ones.
+        // A WEEKLY challenge counts this week's credits only (from Monday
+        // 00:00 UTC), the week the scorer caps by, like every other surface
+        // (challenge-onboarding COUNTS_THIS_WEEK_SQL).
         const metricKind = item.metric ? item.metric.kind : null;
+        const credits = activitiesByChallenge.get(Number(item.id)) || [];
+        const thisWeek = weekStartMs(Date.now());
+        const counted = isWeekly({ category: item.category })
+          ? credits.filter((a) => new Date(a.activity_at).getTime() >= thisWeek)
+          : credits;
         item.progress = resolveProgress({
           metricKind,
           metricTarget: item.metric ? item.metric.target : null,
-          activityCount: (activitiesByChallenge.get(Number(item.id)) || []).length,
+          activityCount: counted.length,
           blocks: blocksByEvent.get(Number(item.season_event_id)),
         });
       }
@@ -1380,7 +1409,9 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      return ok(res, { data: items, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and the
+      // app already reads a missing summary as "not gated".
+      return ok(res, { data: items });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1461,7 +1492,6 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
-          ...(onboarding ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
@@ -1496,7 +1526,15 @@ function topochainMobileRoutes(config) {
   // (mobileTokenAuth's own "never trust a client-supplied id" rule,
   // Constraint #12, now holds on the web surface too).
   const webSessionAuth = optionalSessionAuth(config);
+  // A session lookup that threw (a DB error or pool timeout, which
+  // optionalSessionAuth swallows for the public reads) is a server fault,
+  // not "signed out": answer 500 as authMiddleware does, so the Profile
+  // screen never tells a signed-in person to sign in (#4808).
   const requireSessionUser = (req, res, next) => {
+    if (req.sessionLookupError) {
+      log.warn('topochain-mobile', 'web session lookup failed', { message: req.sessionLookupError.message });
+      return fail(res, 500, 'Internal server error.');
+    }
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };
@@ -1515,7 +1553,7 @@ function topochainMobileRoutes(config) {
   // shows "Ask to produce blocks" and its pending/released state with
   // the platform session.
   router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
-  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, bpRequestHandler);
+  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, sameOriginBrowserOnly, bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
@@ -1541,6 +1579,14 @@ function topochainMobileRoutes(config) {
         [req.user.id, current.id]
       );
       const consent = consentRows[0] || null;
+      // Has this person accepted an earlier version? The first-run gate tells
+      // them, once, that the terms changed when it accepts a new version by
+      // their continuing (frontend/src/features/settings/terms-first-run.js).
+      const { rows: earlierRows } = consent ? { rows: [] } : await pool.query(
+        `SELECT 1 FROM user_terms_consents
+          WHERE user_id = $1 AND terms_version_id <> $2 AND status = 'accepted' LIMIT 1`,
+        [req.user.id, current.id]
+      );
 
       return ok(res, {
         data: {
@@ -1553,6 +1599,7 @@ function topochainMobileRoutes(config) {
             status: consent ? consent.status : null,
             accepted: !!(consent && consent.status === 'accepted'),
             responded_at: consent ? iso(consent.responded_at) : null,
+            earlier_accepted: earlierRows.length > 0,
           },
         },
       });
@@ -1580,6 +1627,21 @@ function topochainMobileRoutes(config) {
       const status = body.status;
       if (status !== 'accepted' && status !== 'refused') {
         details.status = ['The status field must be one of: accepted, refused.'];
+      }
+
+      // 'continued': accepted by carrying on past the sign-in screens'
+      // "By continuing, you agree" notice (the first-run gate posts it).
+      // Only an acceptance can be given that way, and it never replaces an
+      // answer already on record.
+      let method = 'sheet';
+      if (body.method !== undefined && body.method !== null && body.method !== 'sheet') {
+        if (body.method !== 'continued') {
+          details.method = ['The method field must be one of: sheet, continued.'];
+        } else if (status !== 'accepted') {
+          details.method = ['Only an acceptance can be given by continuing.'];
+        } else {
+          method = 'continued';
+        }
       }
 
       let appVersion = null;
@@ -1611,17 +1673,39 @@ function topochainMobileRoutes(config) {
       const ip = clientIp(req) || null;
       const respondedAt = new Date();
 
-      const { rows } = await pool.query(
-        `INSERT INTO user_terms_consents
-           (user_id, terms_version_id, status, responded_at, ip, app_version, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-         ON CONFLICT (user_id, terms_version_id) DO UPDATE
-           SET status = EXCLUDED.status, responded_at = EXCLUDED.responded_at,
-               ip = EXCLUDED.ip, app_version = EXCLUDED.app_version, updated_at = NOW()
-         RETURNING user_id, terms_version_id, status, responded_at`,
-        [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
-      );
-      const row = rows[0];
+      let row;
+      if (method === 'continued') {
+        const { rows } = await pool.query(
+          `INSERT INTO user_terms_consents
+             (user_id, terms_version_id, status, responded_at, ip, app_version, method, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'continued', NOW(), NOW())
+           ON CONFLICT (user_id, terms_version_id) DO NOTHING
+           RETURNING user_id, terms_version_id, status, responded_at`,
+          [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
+        );
+        row = rows[0];
+        if (!row) {
+          const { rows: kept } = await pool.query(
+            `SELECT user_id, terms_version_id, status, responded_at FROM user_terms_consents
+              WHERE user_id = $1 AND terms_version_id = $2`,
+            [req.user.id, termsVersionId]
+          );
+          row = kept[0];
+        }
+      } else {
+        const { rows } = await pool.query(
+          `INSERT INTO user_terms_consents
+             (user_id, terms_version_id, status, responded_at, ip, app_version, method, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'sheet', NOW(), NOW())
+           ON CONFLICT (user_id, terms_version_id) DO UPDATE
+             SET status = EXCLUDED.status, responded_at = EXCLUDED.responded_at,
+                 ip = EXCLUDED.ip, app_version = EXCLUDED.app_version,
+                 method = EXCLUDED.method, updated_at = NOW()
+           RETURNING user_id, terms_version_id, status, responded_at`,
+          [req.user.id, termsVersionId, status, respondedAt, ip, appVersion]
+        );
+        row = rows[0];
+      }
 
       return ok(res, {
         data: {

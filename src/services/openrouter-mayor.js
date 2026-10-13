@@ -34,6 +34,7 @@ const agentModels = require('./agent-models');
 const managedOpenRouter = require('./openrouter-managed-keys');
 const { platformHeaders } = require('./openrouter-client');
 const llmTelemetry = require('./llm-telemetry');
+const { withoutDocuments } = require('./attachments');
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Reasoning models spend part of this on thinking before the visible reply
@@ -48,10 +49,46 @@ const REASONING_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'medium', 'high'
 // rows and the coding agent's rows do, so model-costs normalizes all three.
 const MODEL_LABEL_PREFIX = 'openrouter/';
 
-// The Codex runner gives OpenRouter models text input only
-// (worker/build-codex-model-catalog.js). The Mayor follows the same rule, so
-// an image attachment reaches it as a line naming the image, not its bytes.
+// The Codex runner gives an OpenRouter model image input only when the
+// catalog lists it (#3426, worker/build-codex-model-catalog.js). The Mayor
+// follows the same rule: for any other model a picture (a user's attachment,
+// or a request's screenshot in a tool result) reaches it as a line, not bytes.
 const IMAGE_PLACEHOLDER = '[image attachment omitted: this model reads text only]';
+// The line instead when the model takes pictures but the provider refused a
+// request that carried some, and it was sent again without them.
+const IMAGE_REFUSED_PLACEHOLDER = '[image omitted: the model provider could not read it]';
+
+function isBase64Image(block) {
+  return !!block && block.type === 'image' && block.source?.type === 'base64'
+    && typeof block.source.media_type === 'string' && typeof block.source.data === 'string';
+}
+
+function imagePart(block) {
+  return { type: 'image_url', image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` } };
+}
+
+// #3557: a PDF the user attached reaches the Mayor as an Anthropic document
+// block (attachments.js). It is passed on as an OpenRouter file part only
+// when the catalog lists file input for the model; otherwise it becomes a
+// line naming the file, so no PDF bytes go to a model that cannot read
+// them and OpenRouter never falls back to a paid OCR engine.
+function documentPlaceholder(block) {
+  const title = typeof block?.title === 'string' && block.title.trim() ? block.title.trim() : 'a PDF';
+  return `[PDF attachment omitted: ${title} — this model cannot read PDFs]`;
+}
+
+function isPdfDocument(block) {
+  return !!block && block.type === 'document' && block.source?.type === 'base64'
+    && block.source.media_type === 'application/pdf' && typeof block.source.data === 'string';
+}
+
+function filePart(block) {
+  const title = typeof block.title === 'string' && block.title.trim() ? block.title.trim() : 'document.pdf';
+  return {
+    type: 'file',
+    file: { filename: title, file_data: `data:application/pdf;base64,${block.source.data}` },
+  };
+}
 
 class OpenRouterMayorError extends Error {
   constructor(code, message, { status = null } = {}) {
@@ -71,14 +108,15 @@ function bareModelId(modelId) {
   return String(modelId || '').trim().replace(/^openrouter\//, '');
 }
 
-function textOfBlocks(content) {
+function textOfBlocks(content, imagePlaceholder = IMAGE_PLACEHOLDER) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.map((block) => {
     if (typeof block === 'string') return block;
     if (!block || typeof block !== 'object') return '';
     if (block.type === 'text' && typeof block.text === 'string') return block.text;
-    if (block.type === 'image') return IMAGE_PLACEHOLDER;
+    if (block.type === 'image') return imagePlaceholder;
+    if (block.type === 'document') return documentPlaceholder(block);
     return '';
   }).filter(Boolean).join('\n\n');
 }
@@ -105,7 +143,14 @@ function toolCallArguments(input) {
 //     they must come FIRST, straight after the assistant message whose calls
 //     they answer. Any text in the same user turn follows as a user message.
 // Thinking blocks are the provider's own and never replayed.
-function toChatMessages(systemPrompt, messages) {
+//
+// With `imageInput`, pictures go to the model as image parts. A `tool`
+// message carries text only, so a tool result's pictures (a request's
+// screenshots, each after the line that names it) move to the user message
+// that follows the results, and the tool message says they are coming.
+function toChatMessages(systemPrompt, messages, {
+  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
+} = {}) {
   const out = [];
   const system = systemText(systemPrompt);
   if (system) out.push({ role: 'system', content: system });
@@ -138,9 +183,28 @@ function toChatMessages(systemPrompt, messages) {
       continue;
     }
     const rest = [];
+    const shown = [];
     for (const block of content) {
       if (block && block.type === 'tool_result') {
-        const resultText = textOfBlocks(block.content);
+        const blocks = Array.isArray(block.content) ? block.content : [];
+        const pictures = imageInput ? blocks.filter(isBase64Image) : [];
+        let resultText;
+        if (pictures.length) {
+          const isLabel = (b, i) => b && b.type === 'text' && isBase64Image(blocks[i + 1]);
+          blocks.forEach((b, i) => {
+            if (!isBase64Image(b)) return;
+            if (isLabel(blocks[i - 1], i - 1)) shown.push({ type: 'text', text: blocks[i - 1].text });
+            shown.push(imagePart(b));
+          });
+          resultText = [
+            textOfBlocks(blocks.filter((b, i) => !isBase64Image(b) && !isLabel(b, i)), imagePlaceholder),
+            pictures.length === 1
+              ? '[Homeroom: 1 picture from this result follows after the tool results.]'
+              : `[Homeroom: ${pictures.length} pictures from this result follow after the tool results.]`,
+          ].filter(Boolean).join('\n\n');
+        } else {
+          resultText = textOfBlocks(block.content, imagePlaceholder);
+        }
         out.push({
           role: 'tool',
           tool_call_id: String(block.tool_use_id || ''),
@@ -150,8 +214,20 @@ function toChatMessages(systemPrompt, messages) {
         rest.push(block);
       }
     }
-    const text = textOfBlocks(rest);
-    if (text) out.push({ role: 'user', content: text });
+    const files = fileInput ? rest.filter(isPdfDocument) : [];
+    const own = imageInput ? rest.filter(isBase64Image) : [];
+    const text = textOfBlocks(
+      rest.filter((block) => !files.includes(block) && !own.includes(block)), imagePlaceholder,
+    );
+    const parts = [...files.map(filePart), ...own.map(imagePart), ...shown];
+    if (parts.length) {
+      out.push({
+        role: 'user',
+        content: [...(text ? [{ type: 'text', text }] : []), ...parts],
+      });
+    } else if (text) {
+      out.push({ role: 'user', content: text });
+    }
   }
   return out;
 }
@@ -198,13 +274,34 @@ function reasoningEffortFor(catalogModel) {
   return above[0] || advertised[advertised.length - 1];
 }
 
+function hasFileParts(request) {
+  return hasParts(request, 'file');
+}
+
+function hasParts(request, type) {
+  return Array.isArray(request?.messages) && request.messages.some((m) => (
+    Array.isArray(m.content) && m.content.some((part) => part && part.type === type)
+  ));
+}
+
+// `chatMessages`, when given, are messages already in the Chat Completions
+// shape, sent as they are after the system prompt instead of translating
+// `messages`: for a caller that has to place each part itself (the first
+// version's reviewer puts every screenshot right after its caption,
+// services/bot-review.js), which toChatMessages does not keep.
 function buildRequest({
-  model, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId,
+  model, reasoningEffort, systemPrompt, messages, chatMessages: given = null, tools, toolChoice, maxTokens, sessionId,
+  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
 }) {
   const chatTools = toChatTools(tools);
+  const chatMessages = Array.isArray(given)
+    ? [...toChatMessages(systemPrompt, []), ...given]
+    : toChatMessages(systemPrompt, messages, {
+      fileInput: fileInput === true, imageInput: imageInput === true, imagePlaceholder,
+    });
   const request = {
     model: bareModelId(model),
-    messages: toChatMessages(systemPrompt, messages),
+    messages: chatMessages,
     max_tokens: Number.isInteger(maxTokens) && maxTokens > 0
       ? Math.min(maxTokens, DEFAULT_MAX_OUTPUT_TOKENS)
       : DEFAULT_MAX_OUTPUT_TOKENS,
@@ -218,6 +315,11 @@ function buildRequest({
     if (choice !== undefined) request.tool_choice = choice;
   }
   if (reasoningEffort) request.reasoning = { effort: reasoningEffort };
+  // #3557: a PDF is read by the model itself, never by OpenRouter's paid
+  // OCR fallback.
+  if (chatMessages.some((m) => Array.isArray(m.content) && m.content.some((part) => part.type === 'file'))) {
+    request.plugins = [{ id: 'file-parser', pdf: { engine: 'native' } }];
+  }
   if (sessionId != null && /^[A-Za-z0-9._:-]{1,256}$/.test(String(sessionId))) {
     request.session_id = String(sessionId);
   }
@@ -359,6 +461,11 @@ function createClient({
   billingPath = 'unknown',
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  // Whether a request whose pictures the provider refused (HTTP 400) is
+  // sent again with each picture replaced by a line saying so (#3557). A
+  // caller for whom the pictures ARE the question (the first version's
+  // reviewer) passes false, and the refusal is an error instead.
+  imageFallback = true,
 }) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new OpenRouterMayorError('authentication', 'OpenRouter key is unavailable');
@@ -367,21 +474,28 @@ function createClient({
   if (!boundModel) throw new OpenRouterMayorError('model_required', 'OpenRouter model is unavailable');
   const base = String(apiBase || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
   const reasoningEffort = reasoningEffortFor(catalogModel);
+  // #3557: PDFs go through only for a model the catalog lists as taking files.
+  const fileInput = catalogModel?.supportsFiles === true;
+  // Pictures likewise, for a model it lists as taking images.
+  const imageInput = catalogModel?.supportsImages === true;
 
   async function streamChat({
-    messages, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
+    messages, chatMessages = null, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
   } = {}) {
     // `model` and `apiKey` from the caller are deliberately ignored: this
     // client is bound to the session's OpenRouter model and key, and a
     // Claude id or an Anthropic key must never reach OpenRouter.
-    const body = buildRequest({
-      model: boundModel, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId,
+    const request = (history, { images = imageInput } = {}) => buildRequest({
+      model: boundModel, reasoningEffort, systemPrompt, messages: history, chatMessages, tools, toolChoice, maxTokens, sessionId, fileInput,
+      imageInput: images, imagePlaceholder: images === imageInput ? IMAGE_PLACEHOLDER : IMAGE_REFUSED_PLACEHOLDER,
     });
+    const body = request(messages);
     const startedAt = Date.now();
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
-    try {
+    // One request, from send to parsed completion.
+    const send = async (payload) => {
       let response;
       try {
         response = await fetchImpl(`${base}/chat/completions`, {
@@ -391,7 +505,7 @@ function createClient({
             'Content-Type': 'application/json',
             ...platformHeaders(origin),
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(payload),
           signal: combined,
         });
       } catch (err) {
@@ -424,6 +538,31 @@ function createClient({
           { status: Number.isInteger(status) ? status : null },
         );
       }
+      return completion;
+    };
+    try {
+      let completion;
+      try {
+        completion = await send(body);
+      } catch (err) {
+        // #3557: a PDF the provider cannot take fails the whole request, and
+        // the Mayor replays it on later turns. A request that carried one
+        // and was refused as invalid is retried ONCE with each PDF replaced
+        // by a line naming it. A picture is treated the same way.
+        // Not for messages sent as built (`chatMessages`), and not for
+        // pictures when the caller said so (`imageFallback`): a model
+        // answering about pictures it never saw is worse than no answer.
+        const files = hasFileParts(body);
+        const pictures = hasParts(body, 'image_url');
+        if (!(err instanceof OpenRouterMayorError) || err.status !== 400 || (!files && !pictures)) throw err;
+        if (pictures && (!imageFallback || Array.isArray(chatMessages))) {
+          throw new OpenRouterMayorError(
+            'images_refused', 'The model provider refused the request\'s images (HTTP 400)', { status: 400 },
+          );
+        }
+        if (Array.isArray(chatMessages)) throw err;
+        completion = await send(request(files ? withoutDocuments(messages) : messages, { images: !pictures && imageInput }));
+      }
       const result = fromChatCompletion(completion, { requestedModel: boundModel });
       recordTelemetry({
         context: telemetryContext, billingPath, requestedModel: boundModel, result, startedAt,
@@ -447,6 +586,9 @@ function createClient({
     model: boundModel,
     modelLabel: modelLabel(boundModel),
     reasoningEffort,
+    // Read by the agent-session Mayor to decide whether the platform tools
+    // fetch a request's screenshots for this model at all.
+    imageInput,
     isEnabled: () => true,
     streamChat,
     estimateCostCents: (usage) => estimateCostCents(usage, catalogModel),
@@ -508,6 +650,7 @@ module.exports = {
   DEFAULT_MAX_OUTPUT_TOKENS,
   MAYOR_REASONING_EFFORT,
   IMAGE_PLACEHOLDER,
+  IMAGE_REFUSED_PLACEHOLDER,
   OpenRouterMayorError,
   modelLabel,
   toChatMessages,

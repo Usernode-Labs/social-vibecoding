@@ -111,6 +111,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton } from './back-button';
@@ -204,11 +206,12 @@ function formatJoinedOn(iso: string | null | undefined): string {
  * One string for both sites, because two copies is how the two stop
  * agreeing with each other and with the rule.
  */
-const CODE_CAP_NOTE = 'You can ask for up to 10 codes a day.';
+// The cap's words are auth:waitlist.request.cap, and the last sentence of auth:waitlist.resend.*.
 
 export function WaitlistScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waitlist, false);
+  const t = useMessages('auth');
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -515,7 +518,7 @@ export function WaitlistScreen() {
       // branch being reachable at all.
       setSentTo('');
       setRequestNote({
-        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        text: translate('auth:waitlist.request.notFound'),
         tone: 'error',
       });
       setNotFound(true);
@@ -556,7 +559,7 @@ export function WaitlistScreen() {
     // Mirror into the tab title so the Flutter WebView's AppBar follows the
     // screen, same as the landing header does for the landing page.
     try {
-      document.title = 'Join the waitlist';
+      document.title = translate('auth:waitlist.documentTitle');
     } catch {
       /* ignore */
     }
@@ -601,7 +604,7 @@ export function WaitlistScreen() {
       // Client preflight mirroring the server's stage-1 rules. Only the
       // address is required now, so this is the only miss worth catching
       // without a round trip.
-      if (!emailVal) return setMsg({ text: 'Please enter your email.', tone: 'error' });
+      if (!emailVal) return setMsg({ text: translate('auth:waitlist.join.emailMissing'), tone: 'error' });
 
       setSubmitting(true);
       try {
@@ -670,12 +673,12 @@ export function WaitlistScreen() {
           }
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong. Try again.',
+            text: (data && data.error) || translate('auth:waitlist.join.failed'),
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+        setMsg({ text: translate('auth:waitlist.join.network'), tone: 'error' });
       }
       setSubmitting(false);
     },
@@ -739,7 +742,7 @@ export function WaitlistScreen() {
     if (resending || cooldownLeft > 0) return;
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setResendNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setResendNote({ text: translate('auth:waitlist.resend.emailMissing'), tone: 'error' });
     }
     setResending(true);
     setResendNote(null);
@@ -753,7 +756,7 @@ export function WaitlistScreen() {
       if (res.ok) {
         setResendNote({
           text: (data && data.message)
-            || 'If that address is on our waitlist, a six-digit code is on its way.',
+            || translate('auth:waitlist.resend.sent'),
           tone: 'ok',
         });
         // Name the address the confirm copy is about, now that we have one.
@@ -761,12 +764,12 @@ export function WaitlistScreen() {
         startCooldown();
       } else {
         setResendNote({
-          text: (data && data.error) || 'Something went wrong. Try again.',
+          text: (data && data.error) || translate('auth:waitlist.resend.failed'),
           tone: 'error',
         });
       }
     } catch {
-      setResendNote({ text: 'Connection issue. Try again.', tone: 'error' });
+      setResendNote({ text: translate('auth:waitlist.resend.network'), tone: 'error' });
     }
     setResending(false);
   }, [confirmAddress, cooldownLeft, resending, startCooldown]);
@@ -798,7 +801,7 @@ export function WaitlistScreen() {
     if (resending || cooldownLeft > 0) return;
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setRequestNote({ text: translate('auth:waitlist.request.emailMissing'), tone: 'error' });
     }
     setRequestNote(null);
     setNotFound(false);
@@ -824,7 +827,7 @@ export function WaitlistScreen() {
 
     if (known && !known.onList) {
       setRequestNote({
-        text: 'We can\u2019t find that address on the waitlist. Check the spelling, or join with it.',
+        text: translate('auth:waitlist.request.notFound'),
         tone: 'error',
       });
       setNotFound(true);
@@ -860,7 +863,7 @@ export function WaitlistScreen() {
       if (res.ok) {
         setResendNote({
           text: (data && data.message)
-            || 'If that address is on our waitlist, a six-digit code is on its way.',
+            || translate('auth:waitlist.request.sent'),
           tone: 'ok',
         });
         // Name the address the next step's copy is about, now that we have one.
@@ -871,11 +874,11 @@ export function WaitlistScreen() {
         return;
       }
       setRequestNote({
-        text: (data && data.error) || 'Something went wrong. Try again.',
+        text: (data && data.error) || translate('auth:waitlist.request.failed'),
         tone: 'error',
       });
     } catch {
-      setRequestNote({ text: 'Connection issue. Try again.', tone: 'error' });
+      setRequestNote({ text: translate('auth:waitlist.request.network'), tone: 'error' });
     }
     setResending(false);
   }, [confirmAddress, cooldownLeft, goToCodeStep, resending, startCooldown]);
@@ -893,7 +896,7 @@ export function WaitlistScreen() {
   const onHaveCode = useCallback(() => {
     const emailVal = confirmAddress();
     if (!emailVal) {
-      return setRequestNote({ text: 'Enter your email address first.', tone: 'error' });
+      return setRequestNote({ text: translate('auth:waitlist.request.emailMissing'), tone: 'error' });
     }
     setRequestNote(null);
     setNotFound(false);
@@ -969,10 +972,10 @@ export function WaitlistScreen() {
     // deliberately says nothing.
     if (codeOnly && !confirmAddress()) {
       backToAddress();
-      return setMsg({ text: 'Enter the email address you joined with first.', tone: 'error' });
+      return setMsg({ text: translate('auth:waitlist.confirm.emailMissing'), tone: 'error' });
     }
     if (!/^[0-9]{6}$/.test(codeVal)) {
-      return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
+      return setMsg({ text: translate('auth:waitlist.confirm.codeMissing'), tone: 'error' });
     }
     busy.current = true;
     setSubmitting(true);
@@ -1001,10 +1004,10 @@ export function WaitlistScreen() {
         // offer worth making to somebody already off it.
         setOffer(!next?.admitted);
       } else {
-        setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
+        setMsg({ text: (data && data.error) || translate('auth:waitlist.confirm.rejected'), tone: 'error' });
       }
     } catch {
-      setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
+      setMsg({ text: translate('auth:waitlist.confirm.network'), tone: 'error' });
     }
     busy.current = false;
     setSubmitting(false);
@@ -1076,14 +1079,14 @@ export function WaitlistScreen() {
           )}
         >
           {confirmed
-            ? (codeOnly ? 'Your status' : 'All done')
+            ? (codeOnly ? t('auth:waitlist.step.status') : t('auth:waitlist.step.done'))
             : joined
               ? codeOnly
                 ? flowStep === 'code'
-                  ? 'Step 2 of 2 · Enter your code'
-                  : 'Step 1 of 2 · Your email address'
-                : 'Step 1 complete · Joined the waitlist'
-              : 'Step 1 of 2 · Your email'}
+                  ? t('auth:waitlist.step.enterCode')
+                  : t('auth:waitlist.step.emailAddress')
+                : t('auth:waitlist.step.joined')
+              : t('auth:waitlist.step.email')}
         </p>
         {/*
             The pitch. It answers "why would I join", so it belongs to step 1
@@ -1091,7 +1094,7 @@ export function WaitlistScreen() {
             on top of the one instruction that still matters.
         */}
         <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
-          Join the waitlist
+          {t('auth:waitlist.title')}
         </h1>
         {/*
             #1541: the same four facts, as a lead and a list.
@@ -1104,8 +1107,7 @@ export function WaitlistScreen() {
             and what does joining cost me" was having to take them as prose.
         */}
         <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Describe the app you want in chat, an AI builds it, and the group
-        votes the changes in.
+          {t('auth:waitlist.intro')}
         </p>
         <ul
           className={hiddenLast(
@@ -1114,18 +1116,17 @@ export function WaitlistScreen() {
           )}
         >
           <li>
-            Every app in the directory was built here, by the people who use it.
+            {t('auth:waitlist.points.builtHere')}
           </li>
           <li>
-            They run on the Homeroom chain, and contributors own a share of what
-          they build.
+            {t('auth:waitlist.points.chain')}
           </li>
           <li>
-            Access opens in batches. The public apps are open to everyone now.
+            {t('auth:waitlist.points.gradual')}
           </li>
         </ul>
         <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
-          Just your email to join.
+          {t('auth:waitlist.justEmail')}
         </p>
         {/*
             Stage-1 waitlist survey (two-stage waitlist, ported from the
@@ -1144,13 +1145,13 @@ export function WaitlistScreen() {
               {/* #1877: the marker sits a hair off the word rather than
                   touching it, and is hidden from screen readers — the input's
                   own `required` is what announces the field as required. */}
-              Your email address
+              {t('auth:waitlist.email.label')}
               <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
                 *
               </span>
             </label>
             <p className={SURVEY_HINT}>
-              We only email you when your spot comes up. No newsletter.
+              {t('auth:waitlist.email.hint')}
             </p>
             {/*
                 Every field on this screen and on `#more` spreads SURVEY_FIELD
@@ -1165,7 +1166,7 @@ export function WaitlistScreen() {
               type="email"
               required={true}
               maxLength={255}
-              placeholder="you@example.com"
+              placeholder={t('auth:waitlist.email.placeholder')}
               autoComplete="email"
               {...SURVEY_FIELD}
             />
@@ -1175,13 +1176,13 @@ export function WaitlistScreen() {
                 span after it, so without its own margin "Optional" rendered
                 glued to the word ("CountryOptional"). */}
             <label className={SURVEY_LABEL} htmlFor="waitlist-country">
-              Country
+              {t('auth:waitlist.country.label')}
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                Optional
+                {t('auth:waitlist.optional')}
               </span>
             </label>
             <p className={SURVEY_HINT}>
-              We&rsquo;re building early groups across different regions.
+              {t('auth:waitlist.country.hint')}
             </p>
             {/*
                 #1529: the focused state COLOURS the border rather than making
@@ -1203,7 +1204,7 @@ export function WaitlistScreen() {
               {...SURVEY_SELECT}
             >
               <option value="">
-                Select a country&hellip;
+                {t('auth:waitlist.country.placeholder')}
               </option>
               {/* One flat alphabetical list of all 249 ISO 3166-1 countries
                   and territories. It was six <optgroup> region buckets until
@@ -1216,13 +1217,13 @@ export function WaitlistScreen() {
           </div>
           <div>
             <label className={SURVEY_LABEL}>
-              How did you find us?
+              {t('auth:waitlist.discovery.label')}
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                Optional
+                {t('auth:waitlist.optional')}
               </span>
             </label>
             <p className={SURVEY_HINT}>
-              Pick the closest one.
+              {t('auth:waitlist.discovery.hint')}
             </p>
             <ChipRow
               id="waitlist-discovery-chips"
@@ -1238,7 +1239,7 @@ export function WaitlistScreen() {
             disabledStyle="dim"
             size="lg"
           >
-            Join the waitlist
+            {t('auth:waitlist.submit')}
           </Button>
         </form>
         <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
@@ -1257,15 +1258,14 @@ export function WaitlistScreen() {
             errand people arrive with rather than the mechanism.
         */}
         <p className={hiddenLast(hasSession || joined, 'mt-4 text-sm text-zinc-500 dark:text-zinc-400')}>
-          {'Already joined? '}
+          <RichMessage id="auth:waitlist.alreadyJoined" components={[
           <button
             id="waitlist-enter-code"
             type="button"
             onClick={onEnterCode}
             className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-          >
-            Check your status
-          </button>
+          />,
+            ]} />
         </p>
         {/*
             Acknowledge the saved signup first, then present confirmation.
@@ -1280,10 +1280,10 @@ export function WaitlistScreen() {
                 which hides this line and the whole code block with it.
             */}
             {codeOnly
-              ? 'Check your status'
+              ? t('auth:waitlist.joined.titleStatus')
               : rejoined
-                ? 'You\u2019re already on the waitlist'
-                : "You're on the waitlist!"}
+                ? t('auth:waitlist.joined.titleAgain')
+                : t('auth:waitlist.joined.title')}
           </h2>
           <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
             {/*
@@ -1296,11 +1296,11 @@ export function WaitlistScreen() {
             */}
             {codeOnly
               ? flowStep === 'code'
-                ? 'This shows where you stand, and confirms your address if it still needs it.'
-                : 'Enter the address you joined with and we\u2019ll email you a code. It shows where you stand, and confirms your address if it still needs it.'
+                ? t('auth:waitlist.joined.leadStatusCode')
+                : t('auth:waitlist.joined.leadStatusAddress')
               : rejoined
-                ? 'Your spot was already saved, so nothing is lost. This address still needs confirming, so use the code below and we\u2019ll email you when your spot opens.'
-                : 'Your signup is saved. Next, confirm your email so we can let you know when your spot opens.'}
+                ? t('auth:waitlist.joined.leadAgain')
+                : t('auth:waitlist.joined.lead')}
           </p>
           {/*
               Confirming by code, for the phone: leaving for the mail app and
@@ -1328,10 +1328,10 @@ export function WaitlistScreen() {
                 htmlFor="waitlist-confirm-email"
                 className={SURVEY_LABEL}
               >
-                Your email address
+                {t('auth:waitlist.request.label')}
               </label>
               <p className={SURVEY_HINT}>
-                Enter the address you joined with. We will email you a six-digit code.
+                {t('auth:waitlist.request.hint')}
               </p>
               {/*
                   Which address, when this step was reached without a join.
@@ -1346,7 +1346,7 @@ export function WaitlistScreen() {
                 id="waitlist-confirm-email"
                 type="email"
                 maxLength={255}
-                placeholder="you@example.com"
+                placeholder={t('auth:waitlist.request.placeholder')}
                 autoComplete="email"
                 {...SURVEY_FIELD}
                 // `hidden` and the bottom margin are this call site's own, so
@@ -1364,13 +1364,13 @@ export function WaitlistScreen() {
                 onClick={onRequestCode}
               >
                 {cooldownLeft > 0
-                  ? `Email me a code (${cooldownLeft}s)`
+                  ? t('auth:waitlist.request.cooldown', { count: cooldownLeft })
                   : resending
-                    ? 'Sending\u2026'
-                    : 'Email me a code'}
+                    ? t('auth:waitlist.request.sending')
+                    : t('auth:waitlist.request.submit')}
               </Button>
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {CODE_CAP_NOTE}
+                {t('auth:waitlist.request.cap')}
               </p>
               {/*
                   For the reader who arrived from the status mail, which
@@ -1385,7 +1385,7 @@ export function WaitlistScreen() {
                   onClick={onHaveCode}
                   className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
                 >
-                  I already have a code
+                  {t('auth:waitlist.request.haveCode')}
                 </button>
               </p>
               {/*
@@ -1429,7 +1429,7 @@ export function WaitlistScreen() {
                 className={hiddenLast(!notFound, 'mt-3')}
                 onClick={onJoinInstead}
               >
-                Join the waitlist
+                {t('auth:waitlist.request.joinInstead')}
               </Button>
             </div>
             {/*
@@ -1453,14 +1453,14 @@ export function WaitlistScreen() {
                   onClick={backToAddress}
                   className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
                 >
-                  {'\u2190 Back to your email address'}
+                  {t('auth:waitlist.confirm.back')}
                 </button>
               </p>
               <label
                 htmlFor="waitlist-code"
                 className={SURVEY_LABEL}
               >
-                {codeOnly ? 'Your six-digit code' : 'Step 2 of 2 · Confirm your email'}
+                {codeOnly ? t('auth:waitlist.confirm.labelStatus') : t('auth:waitlist.confirm.label')}
               </label>
               <p className={SURVEY_HINT}>
                 {/*
@@ -1474,10 +1474,10 @@ export function WaitlistScreen() {
                     matters once more than one code has been asked for.
                 */}
                 {codeOnly && !sentTo
-                  ? 'Enter the six-digit code from your email. Codes work for 15 minutes, so if yours has expired, ask for a new one below.'
+                  ? t('auth:waitlist.confirm.hintStatus')
                   : sentTo
-                    ? `Check ${sentTo} for a six-digit code, and use the newest email. You can also just click the link in it. Codes work for 15 minutes.`
-                    : 'Check your email for a six-digit code, and use the newest one. You can also just click the link in it. Codes work for 15 minutes.'}
+                    ? t('auth:waitlist.confirm.hintSentTo', { email: sentTo })
+                    : t('auth:waitlist.confirm.hint')}
               </p>
               <div className="flex gap-2">
                 <Input
@@ -1503,7 +1503,7 @@ export function WaitlistScreen() {
                   size="narrow"
                   onClick={onConfirmCode}
                 >
-                  Confirm
+                  {t('auth:waitlist.confirm.submit')}
                 </Button>
               </div>
               {/*
@@ -1513,21 +1513,19 @@ export function WaitlistScreen() {
                   countdown cannot be read off the page as a membership test.
               */}
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {"Didn't get it, or has it expired? "}
+                <RichMessage
+                  id={cooldownLeft > 0 ? 'auth:waitlist.resend.cooldown' : resending ? 'auth:waitlist.resend.sending' : 'auth:waitlist.resend.ready'}
+                  values={cooldownLeft > 0 ? { count: cooldownLeft } : {}}
+                  components={[
                 <button
                   id="waitlist-resend"
                   type="button"
                   disabled={resending || cooldownLeft > 0}
                   onClick={onResend}
                   className="font-medium text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-50 disabled:no-underline disabled:cursor-default"
-                >
-                  {cooldownLeft > 0
-                    ? `Send a new code (${cooldownLeft}s)`
-                    : resending
-                      ? 'Sending\u2026'
-                      : 'Send a new code'}
-                </button>
-                {` ${CODE_CAP_NOTE}`}
+                />,
+                ]}
+                />
               </p>
               {/*
                   The resend's own answer. Separate from #waitlist-msg so a
@@ -1577,14 +1575,14 @@ export function WaitlistScreen() {
                 'text-sm font-medium text-emerald-700 dark:text-emerald-400',
               )}
             >
-              {admitted ? "You\u2019re in \ud83c\udf89" : 'You\u2019re on the list \ud83c\udf89'}
+              {admitted ? t('auth:waitlist.status.titleIn') : t('auth:waitlist.status.titleListed')}
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               {admitted
                 ? (status?.has_account
-                  ? 'Your account already has access. Sign in any time.'
-                  : 'Access is open for you. Create your account with this address and you\u2019re straight in.')
-                : 'We\u2019re opening access in small groups. We\u2019ll email you when yours comes up.'}
+                  ? t('auth:waitlist.status.leadHasAccount')
+                  : t('auth:waitlist.status.leadAdmitted'))
+                : t('auth:waitlist.status.leadWaiting')}
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from
@@ -1614,7 +1612,7 @@ export function WaitlistScreen() {
                 'mt-2 text-sm text-zinc-500 dark:text-zinc-400',
               )}
             >
-              {joinedOn ? 'On the list since ' + joinedOn : null}
+              {joinedOn ? t('auth:waitlist.status.since', { date: joinedOn }) : null}
             </p>
             {/*
                 Which address that mail goes to (#1537). Always in the markup and
@@ -1632,8 +1630,7 @@ export function WaitlistScreen() {
                 'mt-2 text-sm text-zinc-500 dark:text-zinc-400 break-words',
               )}
             >
-              {'Registered with '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-200">{sentTo}</span>
+              <RichMessage id="auth:waitlist.status.registeredWith" values={{ email: sentTo }} components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]} />
             </p>
             {/*
                 The one thing a released signup can act on (#1538). Before
@@ -1661,7 +1658,7 @@ export function WaitlistScreen() {
                 'mt-3 inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors',
               )}
             >
-              {status?.has_account ? 'Sign in' : 'Create my account'}
+              {status?.has_account ? t('auth:waitlist.status.signIn') : t('auth:waitlist.status.createAccount')}
             </a>
           </div>
           <div
@@ -1674,15 +1671,15 @@ export function WaitlistScreen() {
             )}
           >
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-              Optional (moves you up the list)
+              {t('auth:waitlist.more.eyebrow')}
             </p>
             <h3 className="mt-1 text-base font-semibold">
-              Want in sooner?
+              {t('auth:waitlist.more.title')}
             </h3>
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
               {surveyAnswered
-                ? 'Your answers are saved. Add to them any time, and they merge, so nothing you already wrote is lost.'
-                : 'Four more questions, about three minutes: the group you\u2019d bring, a tool you\u2019ve lost, where else you are. These are the answers we actually read when we pick the next group.'}
+                ? t('auth:waitlist.more.answered')
+                : t('auth:waitlist.more.offer')}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <a
@@ -1690,10 +1687,10 @@ export function WaitlistScreen() {
                 href={moreToken ? '#more/' + moreToken : '#landing'}
                 className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
               >
-                {surveyAnswered ? 'Edit my answers' : 'Answer them now'}
+                {surveyAnswered ? t('auth:waitlist.more.edit') : t('auth:waitlist.more.start')}
               </a>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Or stop here. You&rsquo;re on the list either way, and the link is in your email.
+                {t('auth:waitlist.more.skip')}
               </span>
             </div>
           </div>
@@ -1707,7 +1704,7 @@ export function WaitlistScreen() {
           id="waitlist-queued"
           className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
         >
-          You're already on the waitlist. We'll email you when your spot opens.
+          {t('auth:waitlist.queued')}
         </p>
       </div>
         </>

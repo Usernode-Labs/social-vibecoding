@@ -61,7 +61,16 @@ test('OpenRouter request uses strict tools without conflicting response_format',
     sort: 'latency',
   });
   assert.equal(Object.hasOwn(request, 'response_format'), false);
-  assert.equal(request.parallel_tool_calls, true);
+  // Not sent unless asked for by name: with require_parameters it would route
+  // the call only to providers that list it (#3772, #3949).
+  assert.equal(Object.hasOwn(request, 'parallel_tool_calls'), false);
+});
+
+test('parallel_tool_calls is sent only for true: false and null leave every provider in', () => {
+  const base = { model: MODEL.id, reasoning: 'low', messages: [], tools: [] };
+  assert.equal(provider.buildRequest({ ...base, parallelToolCalls: true }).parallel_tool_calls, true);
+  assert.equal(Object.hasOwn(provider.buildRequest({ ...base, parallelToolCalls: false }), 'parallel_tool_calls'), false);
+  assert.equal(Object.hasOwn(provider.buildRequest({ ...base, parallelToolCalls: null }), 'parallel_tool_calls'), false);
 });
 
 test('unsupported optional model parameters are omitted instead of weakening required routing', () => {
@@ -235,6 +244,50 @@ test('provider HTTP failures expose status but never echo response or credential
       && !error.message.includes('sk-or-secret')
       && !error.message.includes('private prompt'),
   );
+});
+
+test('#3772: a refusal names the provider that refused and when to ask again, never its message', async () => {
+  const body = JSON.stringify({
+    error: { code: 429, message: 'sk-or-secret is rate-limited upstream', metadata: { provider_name: 'Inceptron', raw: 'private prompt' } },
+  });
+  await assert.rejects(
+    provider.streamChat({
+      apiKey: 'sk-or-secret',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: MODEL.id,
+      reasoning: 'low',
+      messages: [],
+      tools: [],
+      fetchImpl: async () => new Response(body, { status: 429, headers: { 'Retry-After': '7' } }),
+    }),
+    (error) => error.code === 'rate_limited'
+      && error.provider === 'Inceptron'
+      && error.retryAfterMs === 7000
+      && !error.message.includes('sk-or-secret')
+      && !error.message.includes('private prompt'),
+  );
+  // A provider name that is not a name is left out.
+  await assert.rejects(
+    provider.streamChat({
+      apiKey: 'sk-or-secret',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: MODEL.id,
+      reasoning: 'low',
+      messages: [],
+      tools: [],
+      fetchImpl: async () => new Response(JSON.stringify({ error: { metadata: { provider_name: '<script>' } } }), { status: 503 }),
+    }),
+    (error) => error.code === 'provider_unavailable' && error.provider === null && error.retryAfterMs === null,
+  );
+});
+
+test('#3772: Retry-After reads seconds or a date, and is capped', () => {
+  const now = Date.parse('2026-10-03T12:00:00Z');
+  assert.equal(provider.retryAfterMs('3', now), 3000);
+  assert.equal(provider.retryAfterMs('Sat, 03 Oct 2026 12:00:10 GMT', now), 10_000);
+  assert.equal(provider.retryAfterMs('86400', now), 5 * 60 * 1000);
+  assert.equal(provider.retryAfterMs('soon', now), null);
+  assert.equal(provider.retryAfterMs(null, now), null);
 });
 
 function reservationPool({ cap = '1', spent = '0.1' } = {}) {

@@ -28,6 +28,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -117,7 +118,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
     // Every agent writes this row's content as "Claude Code progress"; only
     // its metadata says which one ran, so its words are never shown.
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js', 'Drafting the spec'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', {
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', {
       specPreview: '## Thumbnails\nShow an image per item.', specLines: 93, specVersion: 2, durationMs: 81000, ...codex,
     }, 12),
     row(6, 'assistant', 'The spec is drafted.'),
@@ -128,7 +129,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
   assert.equal(run.status, 'done');
   assert.equal(run.agent, 'Codex · glm-5.3-flash', 'an OpenRouter change runs Codex, and says so');
   assert.deepEqual(run.log, ['Reading src/feed.js', 'Drafting the spec']);
-  assert.equal(transcript.runHeading(run), 'Wrote the spec');
+  assert.equal(transcript.runHeading(run), 'Wrote the plan');
   assert.equal(transcript.durationLabel(run.durationMs), '1m 21s');
   assert.ok(!JSON.stringify(scout).includes('Claude Code progress'));
   assert.deepEqual([spec.changeId, spec.version, spec.lines], [12, 2, 93]);
@@ -178,11 +179,11 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
     row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
     row(3, 'system', 'Scout reading the codebase...', codex, 12),
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
   ];
   const requests = [];
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     requests.push(url);
     const body = /\/messages\?/.test(url) ? { messages, nextAfter: null }
       : /\/actions$/.test(url) ? { actions: [] }
@@ -190,7 +191,7 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
           : url === '/api/sessions/12/specs/2' ? { spec: { version: 2, content: '# Thumbnails v2' } }
             : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'screen' });
@@ -202,11 +203,11 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
       : createElement(api.SpecCard, { item }))).join('');
     assert.match(html, /class="dc-cc-attached"/, 'the dev chat\'s own run card');
     assert.match(html, /data-agent-session-run="done"/);
-    assert.match(html, /Wrote the spec/);
+    assert.match(html, /Wrote the plan/);
     assert.match(html, /Codex · glm-5\.3-flash/, 'captioned with the agent that ran');
     assert.doesNotMatch(html, /Claude Code progress|Scout reading the codebase/, 'no loose lines');
     assert.match(html, /class="dc-spec-preview-card"[^>]*data-agent-session-spec="2"/);
-    assert.match(html, /Spec v2 · 93 lines/);
+    assert.match(html, /Plan v2 · 93 lines/);
 
     // The card opens the version it names, over the conversation.
     await api.openSpec(12, 2);
@@ -236,7 +237,7 @@ test('reply suggestions belong to the last thing said, and only while it is last
 test('the header pill and the live line say where things stand in words', () => {
   assert.equal(transcript.changeStatusLabel('active'), 'In progress');
   assert.equal(transcript.changeStatusLabel('paused'), 'In progress', 'paused is bookkeeping, never shown');
-  assert.equal(transcript.changeStatusLabel('promoted'), 'In vote');
+  assert.equal(transcript.changeStatusLabel('promoted'), 'Waiting for approval');
   assert.equal(transcript.changeStatusLabel(null), 'No active change');
   assert.equal(transcript.changeStatusLabel('active', true), 'Building');
   assert.equal(transcript.toolActivity('dispatch_coding_agent'), 'The coding agent is building');
@@ -288,10 +289,10 @@ test('New change opens an UNSENT conversation: nothing is created, in the side p
   };
   const requests = [];
   globalThis.window = win;
-  globalThis.fetch = async (url, init) => {
+  globalThis.fetch = withStateRead(async (url, init) => {
     requests.push([url, init && init.method]);
     return { ok: true, status: 200, json: async () => ({}) };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     store.startAgentSession({ slug: 'notes-ab12', entry: 'improve' });
@@ -328,7 +329,7 @@ test('the first message creates the session with the hint and the model picked m
   const requests = [];
   globalThis.window = win;
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     requests.push([url, init.method || 'GET', init.body ? JSON.parse(init.body) : null]);
     const body = url.startsWith('/api/agent-sessions/draft')
       ? { draft: { focusApp: session.focusApp, focusContext: { entry: 'improve' } } }
@@ -337,7 +338,7 @@ test('the first message creates the session with the hint and the model picked m
           : /\/actions$/.test(url) ? { actions: [] }
             : { session, turn: null };
     return { ok: true, status: 200, body: null, json: async () => body };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     store.prepareAgentDraft({ slug: 'notes-ab12', entry: 'improve' });
@@ -360,7 +361,10 @@ test('the first message creates the session with the hint and the model picked m
     });
     const turn = requests.findIndex(([url]) => url === '/api/agent-sessions/7/turns');
     assert.ok(turn > requests.indexOf(create), 'created first, then the message is posted to it');
-    assert.deepEqual(requests[turn][2], { message: 'Add dark mode' });
+    assert.equal(requests[turn][2].message, 'Add dark mode');
+    assert.match(requests[turn][2].clientMessageId, /^c[0-9a-z]{8,63}$/,
+      'with the screen\'s own id for it, so a retried send is recognised, not answered twice');
+    assert.deepEqual(Object.keys(requests[turn][2]).sort(), ['clientMessageId', 'message']);
     assert.deepEqual(replaced, ['#agent/7'], 'the unsent address becomes the session\'s own, in place');
     assert.equal(restored, 1, 'and the router hears it');
     state = store.getAgentSessionState();
@@ -369,10 +373,14 @@ test('the first message creates the session with the hint and the model picked m
     assert.equal(store.agentSessionController.currentId(), 7);
 
     // Routed again by that address, the store keeps what it has: the same
-    // conversation, not a reload that would drop a turn in flight.
+    // conversation, not a reload that would drop a turn in flight. It only
+    // reads what it may have missed.
     const before = requests.length;
+    const kept = store.getAgentSessionState();
     await store.openAgentSession({ id: 7, host: 'screen' });
-    assert.equal(requests.length, before);
+    assert.ok(requests.slice(before).every(([, method]) => (method || 'GET') === 'GET'), 'reads, and nothing sent again');
+    assert.equal(store.getAgentSessionState().id, 7);
+    assert.equal(store.getAgentSessionState().messages, kept.messages, 'nothing it held was dropped for the read');
 
     // New change again from here starts a fresh unsent conversation, even
     // where the address it goes to does not change.
@@ -383,9 +391,9 @@ test('the first message creates the session with the hint and the model picked m
     await store.openAgentSession({ id: 7, host: 'screen' });
 
     // On a session, a pick is saved at once and applies from the next turn.
-    await store.chooseAgent({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    await store.chooseAgent({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
     const patch = requests.find(([url, method]) => url === '/api/agent-sessions/7/agent' && method === 'PATCH');
-    assert.deepEqual(patch[2], { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    assert.deepEqual(patch[2], { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
   } finally {
     delete globalThis.window;
     delete globalThis.fetch;
@@ -456,7 +464,7 @@ test('Start work: the title never reaches the server, and the box drops what an 
   const requests = [];
   globalThis.window = win;
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     requests.push([url, init.method || 'GET', init.body ? JSON.parse(init.body) : null]);
     const body = url.startsWith('/api/agent-sessions/draft')
       ? { draft: { focusApp, focusContext: { entry: 'issue', issueNumber: 12 } } }
@@ -465,7 +473,7 @@ test('Start work: the title never reaches the server, and the box drops what an 
           : /\/actions$/.test(url) ? { actions: [] }
             : { session, turn: null };
     return { ok: true, status: 200, body: null, json: async () => body };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     const hint = { slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: 'Dark mode toggle' };
@@ -504,13 +512,13 @@ test('an unsent conversation routed twice still takes its preview (the phone sho
   const pending = new Promise((resolve) => { answer = resolve; });
   globalThis.window = { location: { hash: '#messages/agent/new' }, App: { setHeaderTitle: () => {} }, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     if (url.startsWith('/api/agent-sessions/draft')) {
       await pending;
       return { ok: true, status: 200, json: async () => ({ draft: { focusApp, focusContext: { entry: 'issue', issueNumber: 12 } } }) };
     }
     return { ok: true, status: 200, json: async () => ({}) };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     store.prepareAgentDraft({ slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: 'Dark mode toggle' });
@@ -531,25 +539,29 @@ test('an unsent conversation routed twice still takes its preview (the phone sho
   }
 });
 
-test('a message the server refuses goes back to the composer instead of vanishing', async () => {
+test('a message the server refuses stays in the conversation as Not sent, with the reason, instead of vanishing', async () => {
   const session = { id: 7, title: null, status: 'open', focusApp: null, focusContext: {}, agent: null, activeChange: null, busy: false, lastActivityAt: null, createdAt: null };
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     if (/\/turns$/.test(url)) return { ok: false, status: 503, json: async () => ({ error: 'LLM not configured' }) };
     const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null } : /\/actions$/.test(url) ? { actions: [] } : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     await store.openAgentSession({ id: 7, host: 'screen' });
     await store.sendAgentMessage('Add dark mode');
     const state = store.getAgentSessionState();
-    assert.equal(state.error, 'LLM not configured');
-    assert.equal(state.returnedText, 'Add dark mode');
+    // Said once, under the message it is about, not as a red line of its own.
+    assert.equal(state.error, '');
+    assert.deepEqual(state.outbox.map((item) => [item.shown, item.status, item.error]), [['Add dark mode', 'failed', 'LLM not configured']]);
+    assert.equal(state.returnedText, null, 'nothing is put back in the box behind the user\'s back');
     assert.equal(state.turn.running, false);
-    store.clearReturnedText();
-    assert.equal(store.getAgentSessionState().returnedText, null);
+    // Edit puts it back to reword; the row goes.
+    const clientId = state.outbox[0].clientId;
+    assert.equal(store.editOutbox(clientId), 'Add dark mode');
+    assert.deepEqual(store.getAgentSessionState().outbox, []);
   } finally {
     delete globalThis.window;
     delete globalThis.fetch;
@@ -560,7 +572,7 @@ test('a message the server refuses goes back to the composer instead of vanishin
 test('the picker offers the platform\'s models, keeps the conversation\'s own, and carries reasoning only where offered', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
   const catalog = {
-    anthropic: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }],
+    anthropic: [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }],
     anthropicDefault: 'claude-opus-5-5',
     defaultBackend: 'claude_code',
     savedOpenRouter: { model: 'moonshot/kimi-k3', reasoningEffort: 'low' },
@@ -575,13 +587,13 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     recommendedOpenRouterId: 'z-ai/glm-5',
   };
   assert.deepEqual(choice.pickerOptions(catalog, null).map((o) => o.value), [
-    'openrouter:z-ai/glm-5', 'anthropic:claude-sonnet-5', 'anthropic:claude-opus-5-5',
+    'openrouter:z-ai/glm-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5',
     'openrouter:moonshot/kimi-k3', 'openrouter:plain/model',
   ], 'recommended first, then Claude, then what this account uses; not the whole catalog');
   assert.ok(choice.pickerOptions(catalog, { backend: 'codex_openrouter', model: 'gone/model', reasoningEffort: null })
     .some((o) => o.value === 'openrouter:gone/model'), 'the conversation\'s own model is always an option');
   assert.deepEqual(choice.pickerOptions({ ...catalog, codexAvailable: false }, null).map((o) => o.value),
-    ['anthropic:claude-sonnet-5', 'anthropic:claude-opus-5-5'], 'no OpenRouter where it is not offered');
+    ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5'], 'no OpenRouter where it is not offered');
 
   // No choice of its own: the default, as the server resolves it.
   assert.deepEqual(choice.effectiveChoice(null, catalog), { backend: 'claude_code', model: 'claude-opus-5-5', reasoningEffort: null });
@@ -594,11 +606,11 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }, 'the effort carries to a model that offers one');
   assert.deepEqual(choice.choiceFromValue('openrouter:plain/model', catalog, onKimi),
     { backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: null }, 'and is dropped where it is not');
-  assert.deepEqual(choice.choiceFromValue('anthropic:claude-sonnet-5', catalog, onKimi),
-    { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+  assert.deepEqual(choice.choiceFromValue('anthropic:claude-sonnet-5-5', catalog, onKimi),
+    { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
   assert.equal(choice.choiceFromValue('bogus', catalog, null), null);
   assert.equal(choice.offersReasoning(onKimi, catalog), true);
-  assert.equal(choice.offersReasoning({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), false);
+  assert.equal(choice.offersReasoning({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null }, catalog), false);
   assert.deepEqual(choice.effortOptions(catalog).map((o) => [o.value, o.label, !!o.isDefault]), [
     ['minimal', 'Minimal', false], ['low', 'Low', false], ['', 'Medium', true], ['high', 'High', false], ['xhigh', 'Extra high', false],
   ], 'the server\'s own effort list; the default effort IS the follow-the-default option, not a second entry');
@@ -611,7 +623,7 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
   assert.equal(choice.effortLabel(onKimi, catalog), 'High');
   assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, catalog), 'Medium', 'following the default names it');
   assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, { ...catalog, defaultReasoningEffort: null }), '', 'no level known, no placeholder');
-  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
+  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
   assert.equal(choice.effortLabel({ backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: 'high' }, catalog), '', 'nor one that does not reason');
   assert.deepEqual(choice.pickerOptions(catalog, null).filter((o) => o.isDefault).map((o) => o.value), ['anthropic:claude-opus-5-5'],
     'the model a conversation with no choice runs on is the one marked default');
@@ -626,18 +638,18 @@ test('the model pill names the model; the sheet lists the models, marks the defa
   assert.match(pill, /<span class="truncate">Opus 5\.5<\/span>/, 'closed: the model alone, no "(default)"');
 
   const options = [
-    { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5', detail: 'about $6.20 for a typical change' },
+    { value: 'anthropic:claude-sonnet-5-5', label: 'Sonnet 5.5', detail: 'about $6.20 for a typical change' },
     { value: 'anthropic:claude-opus-5-5', label: 'Opus 5.5', isDefault: true },
     { value: 'openrouter:z-ai/glm-5', label: 'GLM 5' },
   ];
   const list = parts.modelList(options);
-  assert.deepEqual(list.map((o) => o.label), ['Sonnet 5', 'Opus 5.5', 'GLM 5'], 'Claude, then OpenRouter, in one list');
+  assert.deepEqual(list.map((o) => o.label), ['Sonnet 5.5', 'Opus 5.5', 'GLM 5'], 'Claude, then OpenRouter, in one list');
   const body = renderToHtml(createElement(parts.ModelSheetBody, {
-    options: list, value: 'anthropic:claude-sonnet-5', onPick() {}, credit: null,
+    options: list, value: 'anthropic:claude-sonnet-5-5', onPick() {}, credit: null,
     effort: { value: 'high', options: [{ value: 'high', label: 'High', isDefault: true }, { value: 'xhigh', label: 'Extra high' }], onPick() {} },
   }));
-  assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5"[^>]*>[\s\S]*?Sonnet 5[\s\S]*?about \$6\.20 for a typical change/);
-  assert.match(body, /aria-pressed="true"[^>]*data-agent-session-model-option="anthropic:claude-sonnet-5"/, 'the model in use is ticked');
+  assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5-5"[^>]*>[\s\S]*?Sonnet 5\.5[\s\S]*?about \$6\.20 for a typical change/);
+  assert.match(body, /aria-pressed="true"[^>]*data-agent-session-model-option="anthropic:claude-sonnet-5-5"/, 'the model in use is ticked');
   assert.equal((body.match(/aria-pressed="true"/g) || []).length, 1, 'and only it');
   assert.match(body, /Opus 5\.5<span[^>]*>default<\/span>/, 'open: "default" after the default');
   assert.match(body, /data-agent-session-effort[^>]*>[\s\S]*?Thinking level[\s\S]*?High</, 'the thinking level is one row, closed');
@@ -748,11 +760,11 @@ test('QA Q23: opened twice by a cold deep link, a missing session still says it 
   globalThis.window = { location: { hash: '#agent/404' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
   globalThis.EventSource = class { close() {} };
   const requests = [];
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     requests.push(url);
     await new Promise((resolve) => setTimeout(resolve, 5));
     return { ok: false, status: 404, json: async () => ({ error: 'Agent session not found' }) };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     const first = store.openAgentSession({ id: 404, host: 'screen' });

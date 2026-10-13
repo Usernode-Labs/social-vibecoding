@@ -131,31 +131,70 @@ const PASSWORD_REQUIRED_MESSAGE =
 const ADMIN_PASSWORD_REQUIRED_MESSAGE =
   'This admin account signs in with a password. Enter it below to continue.';
 
-// How many times a colliding suggestion is replaced before the insert gives
-// up on deriving anything and takes an opaque placeholder.
+// The refusal a release link's on-load spend gets for an account already set
+// up (continueProvenEmail `newAccountOnly`): the page then waits for a tap.
+const ACCOUNT_SET_UP_MESSAGE =
+  'This account is already set up. Tap Get started to sign in.';
+
+// How many times a colliding placeholder is replaced before the insert
+// gives up and lets the error through.
 const USERNAME_INSERT_ATTEMPTS = 3;
+
+/**
+ * Whether proving a mailbox would leave its account at the account step
+ * rather than sign it in (continueProvenEmail below): no account yet, or one
+ * that is not an admin's, has no password and has not chosen its username
+ * (the unfinished account a spent release link may reopen, #4682). Anything
+ * else is "set up": proving its mailbox signs it straight in, or is refused.
+ * `user` is a users row with those three columns, or null.
+ */
+function isUnfinishedAccount(user) {
+  return !user || (!user.is_admin && !user.password_set && user.needs_username_choice === true);
+}
+
+/**
+ * isUnfinishedAccount for the account an address would prove, read and
+ * nothing else: no row is written, locked or spent, and no session is made.
+ * The page asks it before it spends a release link on load
+ * (services/release-links.js isNewAccount). False for an address that is not
+ * one.
+ */
+async function accountIsUnfinished(pool, rawEmail) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  const { rows } = await pool.query(
+    `SELECT is_admin, password_set, needs_username_choice
+       FROM users
+      WHERE lower(email) = lower($1)`,
+    [email]
+  );
+  return isUnfinishedAccount(rows[0] || null);
+}
 
 /**
  * Create the account an email code just proved the mailbox for (#2563).
  *
- * `username` is a SUGGESTION, never the address. `needs_username_choice`
- * is TRUE, so the shell asks before Home and the person can replace it
- * with anything the platform's rules allow. `needs_communities_choice` is
- * TRUE for the same reason one step later: a new account is asked which
- * communities to join before its first Home (communities, stage 5;
- * src/services/onboarding.js).
+ * `username` is an opaque PLACEHOLDER (`member_<hex>`), never the address
+ * and, since #3575, never a name derived from it either: the person types
+ * their own at the set-password step, which will not finish without one
+ * (completePassword below). `needs_username_choice` is TRUE, which is what
+ * makes that step ask. `needs_communities_choice` is TRUE for the same
+ * reason one step later: a new account is asked which communities to join
+ * before its first Home (communities, stage 5; src/services/onboarding.js).
+ * `getting_started_gate` is TRUE because it is a NEW account: its Getting
+ * started card is the season's First challenges, and the rest of the season
+ * waits on them (the note beside the column in src/db/schema.sql).
  *
- * The retry loop is not belt-and-braces. `suggestAvailableUsernameFromEmail`
- * reads the table and the INSERT writes it, so two people signing up from
- * `ada@` addresses at different domains in the same instant can both be
- * handed `ada`. SAVEPOINT, because a failed statement poisons the whole
- * transaction otherwise and this one still has the consumed OTP in it.
- * A collision on the EMAIL index is a different race with a different
- * answer — a new username would not resolve it — so it is re-thrown.
+ * The retry loop is a backstop for a 72-bit placeholder colliding, which
+ * should never happen; it was load-bearing when the first candidate was a
+ * derived suggestion two simultaneous `ada@` sign-ups could both be handed.
+ * SAVEPOINT, because a failed statement poisons the whole transaction
+ * otherwise and this one still has the consumed OTP in it. A collision on
+ * the EMAIL index is a different race with a different answer — a new
+ * username would not resolve it — so it is re-thrown.
  */
 async function insertEmailUser(client, email, passwordHash) {
-  let candidate = await usernames.suggestAvailableUsernameFromEmail(client, email)
-    || usernames.placeholderUsername();
+  let candidate = usernames.placeholderUsername();
 
   for (let attempt = 0; ; attempt += 1) {
     await client.query('SAVEPOINT email_signup_username');
@@ -163,8 +202,9 @@ async function insertEmailUser(client, email, passwordHash) {
       const { rows } = await client.query(
         `INSERT INTO users
            (username, password, email, email_confirmed, email_confirmed_at,
-            password_set, is_admin, needs_username_choice, needs_communities_choice)
-         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE, TRUE)
+            password_set, is_admin, needs_username_choice, needs_communities_choice,
+            getting_started_gate)
+         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE, TRUE, TRUE)
          RETURNING id, username, is_admin, password_set, needs_username_choice`,
         [candidate, passwordHash, email]
       );
@@ -178,7 +218,7 @@ async function insertEmailUser(client, email, passwordHash) {
         throw error;
       }
       await client.query('ROLLBACK TO SAVEPOINT email_signup_username');
-      log.warn('email-signup', 'Suggested username was taken; retrying', {
+      log.warn('email-signup', 'Placeholder username was taken; retrying', {
         attempt: attempt + 1,
       });
       candidate = usernames.placeholderUsername();
@@ -221,70 +261,64 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       [otp.id]
     );
 
-    const { rows: existingRows } = await client.query(
-      `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed,
-              needs_username_choice
-         FROM users
-        WHERE lower(email) = lower($1)
-        FOR UPDATE`,
-      [email]
-    );
-    let user = existingRows[0] || null;
+    return continueProvenEmail(client, email, { createSession });
+  });
 
-    // The code is already consumed at this point, on every branch below. A
-    // correct code must never be replayable, and neither refusal is
-    // retry-able with the same code anyway.
-    if (user && user.is_admin) return { refuse: 'admin_password_required' };
-    if (user && user.password_set && !user.email_confirmed) {
-      return { refuse: 'password_required' };
-    }
+  return finishProvenEmail(pool, email, result);
+}
 
-    // An account with a password and a confirmed email address is signed
-    // straight in: whoever reads that mailbox can already take the account
-    // over through "Forgot password?", so this grants no new capability.
-    if (user && user.password_set) {
-      if (typeof createSession !== 'function') {
-        // Programming error: throwing rolls the transaction back, so the code
-        // stays unconsumed and the person can retry it.
-        throw new Error('verifyCode requires createSession to sign an existing account in');
-      }
-      const session = await createSession(client, user.id);
-      return {
-        next: 'signed-in',
-        session,
-        userId: user.id,
-        user: {
-          id: user.id,
-          username: user.username,
-          isAdmin: !!user.is_admin,
-          adminReadonly: !!user.admin_readonly,
-        },
-      };
-    }
+/**
+ * The mailbox is proven (a right email code, or a waitlist release's
+ * one-time link, services/release-links.js): sign the account in, or make it
+ * and hand back the continuation for the account step. Runs inside the
+ * caller's transaction, after the proof has been spent, so a proof is never
+ * replayable on any branch below.
+ *
+ * `newAccountOnly` is a release link spent as the page opens, before anybody
+ * has tapped anything (features/auth/landing.tsx). It signs nobody in: an
+ * account that is set up (isUnfinishedAccount false) is refused with
+ * `account_set_up` before any branch below runs, and the throw rolls the
+ * caller's transaction back, so the link stays unspent for the person's own
+ * tap and no session is made. A mail scanner or an app's own browser that
+ * runs the page can therefore only ever reach the account step, which mints
+ * no session (completePassword does, on the person's Continue).
+ */
+async function continueProvenEmail(client, email, { createSession, newAccountOnly = false } = {}) {
+  const { rows: existingRows } = await client.query(
+    `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed,
+            needs_username_choice
+       FROM users
+      WHERE lower(email) = lower($1)
+      FOR UPDATE`,
+    [email]
+  );
+  let user = existingRows[0] || null;
 
-    let created = false;
-    if (!user) {
-      const unusablePasswordHash = await bcrypt.hash(
-        crypto.randomBytes(32).toString('hex'),
-        12
-      );
-      // #2563: the address is NOT the handle. It used to be — `VALUES
-      // ($1, …)` with `email` in both slots — so every member who signed
-      // up by email code wore their own address in front of everyone else
-      // on the platform. What goes in now is a suggestion derived from the
-      // local part (src/services/usernames.js), or an opaque placeholder
-      // when nothing valid can be derived from it, and the row is marked
-      // `needs_username_choice` so the shell asks before Home.
-      //
-      // The flag, not the string, is what drives the gate: the server
-      // knows this account has never chosen, and no client has to infer it
-      // from what the name looks like.
-      user = await insertEmailUser(client, email, unusablePasswordHash);
-      created = true;
-    } else if (!user.email_confirmed) {
-      // Reading the code proves the mailbox. Stamping it here stops
-      // password-less rows from ageing into the refusal branch above, and
-      // unlocks "Forgot password?" for them.
+  if (newAccountOnly && !isUnfinishedAccount(user)) {
+    throw new EmailSignupError('account_set_up', ACCOUNT_SET_UP_MESSAGE);
+  }
+
+  // The code is already consumed at this point, on every branch below. A
+  // correct code must never be replayable, and neither refusal is
+  // retry-able with the same code anyway.
+  if (user && user.is_admin) return { refuse: 'admin_password_required' };
+  if (user && user.password_set && !user.email_confirmed) {
+    return { refuse: 'password_required' };
+  }
+
+  // An account with a password and a confirmed email address is signed
+  // straight in: whoever reads that mailbox can already take the account
+  // over through "Forgot password?", so this grants no new capability.
+  //
+  // #4595: so is an account WITHOUT a password that has already chosen
+  // its username. The password is optional now ("Skip for now" on the
+  // account step), and an email code is how such an account signs in.
+  // It has nothing left to set up, so sending it back to the account step
+  // would only ask for a password it chose not to have. Proving the
+  // mailbox also confirms the address, as below.
+  const passwordless = user && !user.password_set && user.needs_username_choice !== true;
+  if (user && (user.password_set || passwordless)) {
+    if (passwordless && !user.email_confirmed) {
       await client.query(
         `UPDATE users
             SET email_confirmed = TRUE, email_confirmed_at = NOW()
@@ -292,37 +326,89 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
         [user.id]
       );
     }
-
-    // QA 2026-09-24 Q12: the handle the account still owes a choice of, so
-    // the password step can ask for it (prefilled) instead of the person
-    // meeting a name they never chose in the waiting room. Null when the
-    // account has already chosen.
-    const suggestedUsername = user.needs_username_choice
-      ? await firstRunSuggestion(client, user, email)
-      : null;
-
-    const signupToken = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + SIGNUP_TTL_MS);
-    await client.query(
-      `INSERT INTO web_signup_sessions (token_hash, user_id, expires_at, created_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (user_id) DO UPDATE
-         SET token_hash = EXCLUDED.token_hash,
-             expires_at = EXCLUDED.expires_at,
-             created_at = NOW()`,
-      [tokenHash(signupToken), user.id, expiresAt]
-    );
+    if (typeof createSession !== 'function') {
+      // Programming error: throwing rolls the transaction back, so the code
+      // stays unconsumed and the person can retry it.
+      throw new Error('verifyCode requires createSession to sign an existing account in');
+    }
+    const session = await createSession(client, user.id);
     return {
-      next: 'set-password',
-      signupToken,
-      expiresAt,
+      next: 'signed-in',
+      session,
       userId: user.id,
-      created,
-      needsUsernameChoice: user.needs_username_choice === true,
-      suggestedUsername,
+      user: {
+        id: user.id,
+        username: user.username,
+        isAdmin: !!user.is_admin,
+        adminReadonly: !!user.admin_readonly,
+      },
     };
-  });
+  }
 
+  let created = false;
+  if (!user) {
+    const unusablePasswordHash = await bcrypt.hash(
+      crypto.randomBytes(32).toString('hex'),
+      12
+    );
+    // #2563: the address is NOT the handle. It used to be — `VALUES
+    // ($1, …)` with `email` in both slots — so every member who signed
+    // up by email code wore their own address in front of everyone else
+    // on the platform. What goes in now is an opaque placeholder (#3575:
+    // not a name derived from the local part either), and the row is
+    // marked `needs_username_choice`, so the set-password step asks for
+    // the handle and refuses to finish without one.
+    //
+    // The flag, not the string, is what drives the ask: the server
+    // knows this account has never chosen, and no client has to infer it
+    // from what the name looks like.
+    user = await insertEmailUser(client, email, unusablePasswordHash);
+    created = true;
+  } else if (!user.email_confirmed) {
+    // Reading the code proves the mailbox. Stamping it here stops
+    // password-less rows from ageing into the refusal branch above, and
+    // unlocks "Forgot password?" for them.
+    await client.query(
+      `UPDATE users
+          SET email_confirmed = TRUE, email_confirmed_at = NOW()
+        WHERE id = $1`,
+      [user.id]
+    );
+  }
+
+  const signupToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + SIGNUP_TTL_MS);
+  await client.query(
+    `INSERT INTO web_signup_sessions (token_hash, user_id, expires_at, created_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id) DO UPDATE
+       SET token_hash = EXCLUDED.token_hash,
+           expires_at = EXCLUDED.expires_at,
+           created_at = NOW()`,
+    [tokenHash(signupToken), user.id, expiresAt]
+  );
+  return {
+    next: 'set-password',
+    signupToken,
+    expiresAt,
+    userId: user.id,
+    created,
+    // QA 2026-09-24 Q12: the account still owes a choice of handle, so the
+    // password step asks for it rather than the person meeting a name
+    // they never chose in the waiting room. #4596: the field arrives
+    // holding a suggestion from the address (`suggestedUsername`, below),
+    // which the person can change; set-password still takes only what
+    // the field sends.
+    needsUsernameChoice: user.needs_username_choice === true,
+  };
+}
+
+/**
+ * After the transaction: the refusals as errors, and the best-effort follow-
+ * ups a new or newly proven account gets. Shared by the email code and the
+ * release link, so both leave an account in the same state.
+ */
+async function finishProvenEmail(pool, email, result) {
   if (result.invalid) {
     throw new EmailSignupError('invalid_or_expired_code', 'Invalid or expired code.');
   }
@@ -333,7 +419,12 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
     throw new EmailSignupError('admin_password_required', ADMIN_PASSWORD_REQUIRED_MESSAGE);
   }
   if (result.created) {
-    await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
+    await waitlist.linkUserByEmail(pool, { userId: result.userId, email, newAccount: true });
+  }
+  // #4083: an account the code proved and nothing let in has a waitlist
+  // spot of its own, so an admin can find it there and let it in.
+  if (result.next === 'set-password') {
+    await waitlist.ensureAccountSignup(pool, { userId: result.userId });
   }
   // The code proved this mailbox, on a new account or an unconfirmed one:
   // any project invites waiting on the address become this account's.
@@ -344,24 +435,24 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   if (result.next === 'set-password') {
     result.waitlisted = await isWaitlisted(pool, result.userId);
   }
+  if (result.next === 'set-password' && result.needsUsernameChoice) {
+    result.suggestedUsername = await suggestedUsername(pool, email, result.userId);
+  }
   return result;
 }
 
 /**
- * What the set-password step prefills for an account that has never chosen
- * a handle. The rule GET /api/me/username/suggestion uses for the first-run
- * gate (routes/profile.js): the handle the row already holds when it is a
- * real suggestion, else one derived from the address. Never the address,
- * and (unlike that route) never an opaque `member_…` placeholder either.
+ * The handle the set-password step's username field arrives holding
+ * (#4596, usernames.suggestUsernameForEmail). Best effort: a failed read
+ * answers null, an empty field, rather than failing the code that worked.
  */
-async function firstRunSuggestion(client, user, email) {
-  const current = String(user.username || '');
-  const isAddress = current.toLowerCase() === String(email).toLowerCase();
-  if (!isAddress && !usernames.isPlaceholderUsername(current)) {
-    const check = usernames.validateUsername(current);
-    if (check.ok) return check.value;
+async function suggestedUsername(pool, email, userId) {
+  try {
+    return await usernames.suggestUsernameForEmail(pool, email, userId);
+  } catch (error) {
+    log.warn('email-signup', 'Username suggestion failed', { message: error.message });
+    return null;
   }
-  return usernames.suggestAvailableUsernameFromEmail(client, email, user.id);
 }
 
 /**
@@ -385,20 +476,23 @@ async function isWaitlisted(pool, userId) {
 }
 
 /**
- * Set the password, and optionally the first handle, then sign in.
+ * Set the password (optional since #4595) and the first handle, then sign in.
  *
- * `username` is OPTIONAL and additive (QA 2026-09-24 Q12). The set-password
- * step now asks a brand-new account for its handle, prefilled with the
- * suggestion, so nobody meets a name they never chose in the waiting room;
- * before, it was asked only at release, by the first-run gate. A caller
- * that sends no `username` gets exactly the old behaviour and the gate asks
- * later. It takes the same path POST /api/me/username/choose does
- * (validateUsername, checkAvailability, chooseFirstUsername's
- * `needs_username_choice` guard), and it is ignored for an account that has
- * already chosen.
+ * `username` is REQUIRED for an account that has never chosen one (#3575)
+ * and ignored for an account that has. QA 2026-09-24 Q12 made the
+ * set-password step ask a new account for its handle, prefilled with a
+ * suggestion derived from the address, but left the field optional: a
+ * caller that sent none finished sign-up under that suggestion, and the
+ * first-run gate asked only later, at release. "Do not just generate a
+ * username from their email. They should have to manually set a username"
+ * is a rule about the SERVER, not about one form, so the refusal is here: a
+ * new email account cannot get a session until it has typed a handle. It
+ * takes the same path POST /api/me/username/choose does (validateUsername,
+ * checkAvailability, chooseFirstUsername's `needs_username_choice` guard).
  *
- * A username refusal is thrown BEFORE the signup session is spent, so the
- * person fixes the field and submits again with the same cookie.
+ * Every username refusal — missing, malformed or taken — is raised BEFORE
+ * the signup session is spent, so the person fixes the field and submits
+ * again with the same cookie.
  */
 async function completePassword(pool, { signupToken, password, username = null, createSession }) {
   if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) {
@@ -410,10 +504,14 @@ async function completePassword(pool, { signupToken, password, username = null, 
     if (!check.ok) throw new EmailSignupError('invalid_username', check.error);
     chosen = check.value;
   }
-  if (typeof password !== 'string' || password.length < 8) {
+  // #4595: the password is optional. An account that skips it signs in
+  // with an email code (verifyCode) and can add one later in Settings. A
+  // password that IS sent is held to the usual rule.
+  const skipPassword = password == null || password === '';
+  if (!skipPassword && (typeof password !== 'string' || password.length < 8)) {
     throw new EmailSignupError('invalid_password', 'Password must be at least 8 characters.');
   }
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = skipPassword ? null : await bcrypt.hash(password, 12);
 
   let result;
   try {
@@ -432,6 +530,13 @@ async function completePassword(pool, { signupToken, password, username = null, 
         return { invalid: true };
       }
 
+      // #3575: an account that has never chosen a handle does not finish
+      // sign-up without one. Returned, not thrown, like the taken case
+      // below: nothing has been written, so the signup session survives
+      // for the submit that carries a name.
+      if (!chosen && signup.needs_username_choice === true) {
+        return { usernameRequired: true };
+      }
       const choosing = chosen && signup.needs_username_choice === true;
       if (choosing) {
         const free = await usernames.checkAvailability(client, chosen, signup.user_id);
@@ -443,10 +548,12 @@ async function completePassword(pool, { signupToken, password, username = null, 
       await client.query('DELETE FROM web_signup_sessions WHERE token_hash = $1', [tokenHash(signupToken)]);
       if (signup.is_admin || signup.password_set) return { invalid: true };
 
-      await client.query(
-        'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
-        [passwordHash, signup.user_id]
-      );
+      if (passwordHash) {
+        await client.query(
+          'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
+          [passwordHash, signup.user_id]
+        );
+      }
       let handle = signup.username;
       if (choosing) {
         const taken = await usernames.chooseFirstUsername(client, signup.user_id, chosen);
@@ -473,6 +580,11 @@ async function completePassword(pool, { signupToken, password, username = null, 
     throw error;
   }
 
+  if (result.usernameRequired) {
+    // The sentence validateUsername gives an empty field, so the step reads
+    // the same whether the browser or the server caught it.
+    throw new EmailSignupError('username_required', usernames.validateUsername('').error);
+  }
   if (result.usernameTaken) {
     throw new EmailSignupError('username_taken', result.usernameTaken);
   }
@@ -484,8 +596,20 @@ async function completePassword(pool, { signupToken, password, username = null, 
 
 module.exports = {
   EmailSignupError,
+  // The release link (services/release-links.js) proves the mailbox the way
+  // a code does, and continues exactly as verifyCode does from there.
+  continueProvenEmail,
+  finishProvenEmail,
+  // Whether that would sign the address's account in or leave it at the
+  // account step: the page's check before a release link's on-load spend.
+  isUnfinishedAccount,
+  accountIsUnfinished,
+  withTransaction,
   OTP_TTL_MS,
   SIGNUP_TTL_MS,
+  // Shared with Apple and Google sign-in (services/sign-in-providers.js),
+  // which makes the same account for an address the provider vouched for.
+  insertEmailUser,
   normalizeEmail,
   requestCode,
   verifyCode,

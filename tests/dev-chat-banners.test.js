@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
 const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
@@ -79,6 +80,7 @@ function makeDevChat(over = {}) {
       publishBanners: (state) => published.push({ mounted: false, state }),
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${CREDIT_OPTIONS_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -195,31 +197,36 @@ test('the new-change banner appears only past the active-editing stage', () => {
   const { DevChat, view } = makeDevChat();
   for (const [status, expected] of [
     ['active', null], ['paused', null],
-    ['promoted', 'proposed to the group (PR #7)'],
-    ['merging', 'proposed to the group (PR #7)'],
-    ['merged', 'merged (PR #7)'],
+    ['promoted', 'proposed'],
+    ['merging', 'proposed'],
+    ['merged', 'merged'],
   ]) {
     DevChat.currentSession = { ...SESSION, status, pr_number: 7 };
     const got = view().newChange;
-    assert.equal(got ? got.stateLabel : null, expected, status);
+    // The model names which of the banner's two sentences, and the PR; the
+    // component reads the sentence from the catalog.
+    assert.equal(got ? got.state : null, expected, status);
+    if (got) assert.equal(got.prNumber, 7, status);
   }
+  assert.match(message('devchat:banner.newChange.proposed', { number: 7 }), /^This change has been proposed to the group \(PR #7\)\./);
+  assert.match(message('devchat:banner.newChange.merged', { number: 7 }), /^This change has been merged \(PR #7\)\./);
   // No PR yet — nothing to say about bundling work into one.
   DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: null };
   assert.equal(view().newChange, null);
 });
 
-test('its button\'s busy state is published, not written onto the element', () => {
-  // It was `btn.disabled` + `btn.textContent` by id — a second author on a
-  // node the component renders now, and React would clobber both on its next
-  // paint.
-  assert.doesNotMatch(DEV_CHAT_SRC, /btn\.textContent = 'Starting…'/);
-  assert.match(DEV_CHAT_SRC, /DevChat\._newChangePending = true;\s*\n\s*DevChat\._publishBanners\(\)/);
+test('its button starts an agent session, so it has no busy state to publish (#2779)', () => {
+  // It used to navigate to the classic unsent-change screen, awaiting the
+  // switch with a published "Starting…" state. An agent session opens at
+  // once, so there is nothing to wait for, and nothing written onto the node.
+  assert.doesNotMatch(DEV_CHAT_SRC, /_newChangePending/);
+  assert.match(DEV_CHAT_SRC, /agent\.start\(\{ slug, entry: 'banner' \}\)/);
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'merged (PR #7)', pending: true },
+    sync: null, newChange: { stateLabel: 'merged (PR #7)' },
     credits: null, creditsLow: null,
   });
-  assert.match(html, /id="dc-new-change-btn"[^>]*disabled=""/);
-  assert.match(html, />Starting…</);
+  assert.doesNotMatch(html, /id="dc-new-change-btn"[^>]*disabled=""/);
+  assert.match(html, />Start a new change</);
 });
 
 test('the one primary-filled button routes through <Button>, byte for byte', () => {
@@ -229,7 +236,7 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
   // same order, same attribute order. `disabledStyle: 'dim60'` was added for
   // this call site, which is the only thing the table could not already say.
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'merged (PR #7)', pending: false },
+    sync: null, newChange: { stateLabel: 'merged (PR #7)' },
     credits: null, creditsLow: null,
   });
   const tag = html.match(/<button[^>]*>/)[0];
@@ -244,7 +251,7 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
 
 test('the new-change explanation owns the phone row before its action', () => {
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false },
+    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)' },
     credits: null, creditsLow: null,
   });
   assert.match(html,
@@ -359,7 +366,9 @@ test('the three reasons the red banner can appear each state their own remedy', 
   DevChat._creditState = () => ({ level: 'locked' });
   let v = view().credits;
   assert.equal(v.icon, 'person');
-  assert.match(v.lead, /Connect GitHub or X/);
+  assert.equal(v.lead, 'You\u2019re out of this week\u2019s free AI credits.');
+  // A whole sentence; the space before it is the banner's markup.
+  assert.equal(v.tail, 'Verify your account to get more: add your phone number, or link GitHub and X.');
   assert.equal(v.reset, null, 'there is no allowance to reset yet');
 
   DevChat._creditState = () => ({ level: 'unavailable' });
@@ -388,7 +397,7 @@ test('the new-change banner offers the proposal card, in every state it shows', 
   const { DevChat, view } = makeDevChat();
   for (const status of ['promoted', 'merging', 'merged']) {
     DevChat.currentSession = { ...SESSION, status, pr_number: 7, app_slug: 'demo-app' };
-    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/proposals/5', status);
+    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/changes/7', status);
   }
 });
 
@@ -397,7 +406,7 @@ test('no slug, no link — the banner still renders the rest', () => {
   DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: 7 };
   const got = view().newChange;
   assert.equal(got.cardHref, null, 'a dead href is worse than no link');
-  assert.match(got.stateLabel, /proposed to the group/, 'the rest of the banner is unaffected');
+  assert.equal(got.state, 'proposed', 'the rest of the banner is unaffected');
 
   const html = bannersHtml({ sync: null, newChange: got, credits: null, creditsLow: null });
   assert.doesNotMatch(html, /dc-open-card-link/);
@@ -407,10 +416,10 @@ test('no slug, no link — the banner still renders the rest', () => {
 test('the link is an anchor to the hash route, not a button', () => {
   const html = bannersHtml({
     sync: null,
-    newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false, cardHref: '#app/demo-app/dev/proposals/5' },
+    newChange: { state: 'proposed', prNumber: 7, cardHref: '#app/demo-app/dev/changes/7' },
     credits: null, creditsLow: null,
   });
-  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/proposals\/5"/);
+  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/changes\/7"/);
   assert.match(html, />Open proposal card</);
   // An anchor so it middle-clicks and copies, and so the byte-for-byte
   // <button> assertion above still reads the primary action.

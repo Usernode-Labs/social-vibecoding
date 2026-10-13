@@ -114,7 +114,7 @@ test('a row the gate has never run against still says what it can', () => {
   assert.equal(block.evaluated, false);
   assert.deepEqual(block.gates.map((g) => `${g.key}:${g.state}`),
     ['approvals:waiting', 'integration:done', 'checks:done', 'github:pending']);
-  assert.equal(requirements.summarize(block.gates, { hasVoted: false }).headline, 'Waiting on your vote');
+  assert.equal(requirements.summarize(block.gates, { hasVoted: false }).headline, 'Waiting for your approval');
 });
 
 test('the provisional list never guesses a gate only the merge gate can answer', () => {
@@ -129,11 +129,12 @@ test('the provisional list never guesses a gate only the merge gate can answer',
 
 test('an unmeasured row does not read as finished', () => {
   // "Nothing left to check" on a row nothing has looked at is the exact
-  // misreading the feature exists to stop, in a new place.
+  // misreading the feature exists to stop, in a new place. Nor is it
+  // "Nothing needs you", the headline for the platform actively working.
   const block = requirements.readRequirements({ votes_required: 3, yes_count: 3 });
   const s = requirements.summarize(block.gates, {});
-  assert.notEqual(s.headline, 'Merging now');
-  assert.match(s.detail || '', /working out/);
+  assert.equal(s.headline, 'Checking what this needs');
+  assert.equal(s.detail, null);
 });
 
 test('every knowable requirement met reads as about to merge, not as unresolved', () => {
@@ -142,8 +143,44 @@ test('every knowable requirement met reads as about to merge, not as unresolved'
     integration_behind_by: 0, integration_merges_clean: true,
   });
   const s = requirements.summarize(block.gates, {});
-  assert.equal(s.headline, 'Nothing needs you');
+  assert.equal(s.headline, 'Merging');
   assert.match(s.detail || '', /merging shortly/);
+});
+
+test('the labels are short nouns, the same on the card and the page', () => {
+  assert.deepEqual(requirements.GATES.map((g) => g.label), [
+    'Votes', 'A Yes from another member', 'Admin approval', 'No conflicts with main', 'Checks',
+    'Before & after shots', 'Platform variables', 'Main is healthy', 'Merge',
+  ]);
+  const prov = requirements.provisional({ votes_required: 1, yes_count: 1, app_main_check_state: 'passing' });
+  for (const g of prov) {
+    assert.equal(g.label, requirements.GATES.find((x) => x.key === g.key).label, `${g.key} is labelled as the gate is`);
+  }
+});
+
+test('a blocked step never reads as "Nothing needs you"', () => {
+  // GitHub refusing a merge the platform will not resolve names the author;
+  // one the gate cannot attribute keeps the automatic actor and says Blocked.
+  const t = requirements.trace();
+  t.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active', { note: 'merging now' });
+  t.revise('github', 'blocked', { note: 'GitHub refused the merge', actor: 'author' });
+  const refused = requirements.describe(t.toRecord());
+  assert.equal(refused.find((g) => g.key === 'github').actor, 'author');
+  assert.equal(requirements.summarize(refused, { isAuthor: false }).headline, 'Waiting on the author');
+  const u = requirements.trace();
+  u.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active', { note: 'merging now' });
+  u.revise('github', 'blocked', { note: 'the merge failed' });
+  const s = requirements.summarize(requirements.describe(u.toRecord()), {});
+  assert.equal(s.headline, 'Blocked');
+  assert.equal(s.detail, 'the merge failed');
+});
+
+test('waiting on the daily budget is automatic, not an admin\'s turn', () => {
+  const step = requirements.integrationStep({
+    integration_merges_clean: false, integration_block_reasons: ['budget'], integration_conflict_paths: ['a.js'],
+  });
+  assert.deepEqual([step.state, step.actor], ['active', 'auto']);
+  assert.match(step.note, /resumes after the daily budget reset/);
 });
 
 test('a recording supersedes the provisional list wholesale', () => {
@@ -158,6 +195,137 @@ test('a recording supersedes the provisional list wholesale', () => {
   assert.deepEqual(block.gates.map((g) => g.key), ['approvals', 'admin_yes', 'integration', 'checks', 'main_healthy', 'github']);
   assert.equal(block.gates.find((g) => g.key === 'approvals').state, 'done',
     'the recording wins: the gate saw the real tally, the columns are a snapshot');
+});
+
+// ── #3669: a vote cast AFTER the recording neither bumps the epoch nor
+// moves the head, so the recording is current by every test above — and the
+// card kept saying "Votes waiting, 0 of 1" after the vote landed, until the
+// background run re-stamped and another refresh read it. The live approval
+// columns the serializers attach are the reconciliation.
+
+test('a waiting approvals recording loses to a live tally that has since met the bar', () => {
+  const t = requirements.trace().context({ locked: false, selfHosted: false });
+  t.pass('integration').pass('checks').stop('approvals', 'waiting', { note: '0 of 1' });
+  const block = requirements.readRequirements({
+    merge_requirements: t.toRecord(),
+    // The same live columns the /promoted and by-id serializers attach:
+    // the approver's vote counted since the run.
+    votes_required: 1, qualified_yes_count: 1, qualified_no_count: 0,
+  });
+  const approvals = block.gates.find((g) => g.key === 'approvals');
+  assert.equal(approvals.state, 'done', 'the vote has landed');
+  assert.equal(approvals.detail && approvals.detail.note, '1 of 1');
+  assert.equal(block.gates.find((g) => g.key === 'integration').state, 'done',
+    'only the contradicted step is rewritten');
+});
+
+test('a live tally below the bar leaves a waiting recording standing, and done wins as before', () => {
+  const waiting = requirements.trace().context({ locked: false, selfHosted: false });
+  waiting.stop('approvals', 'waiting', { note: '0 of 1' });
+  const below = requirements.readRequirements({
+    merge_requirements: waiting.toRecord(),
+    votes_required: 1, qualified_yes_count: 0,
+  });
+  assert.equal(below.gates.find((g) => g.key === 'approvals').state, 'waiting');
+  assert.equal(below.gates.find((g) => g.key === 'approvals').detail.note, '0 of 1',
+    'the recording detail stands when the columns agree');
+
+  const done = requirements.trace().context({ locked: false, selfHosted: false });
+  done.pass('approvals');
+  const stillDone = requirements.readRequirements({
+    merge_requirements: done.toRecord(),
+    // Columns that would have produced a different provisional list.
+    votes_required: 3, yes_count: 0,
+  });
+  assert.equal(stillDone.gates.find((g) => g.key === 'approvals').state, 'done',
+    'a done recording keeps winning: the gate saw the real tally');
+});
+
+test('without live approval columns nothing is reconciled', () => {
+  const t = requirements.trace().context({ locked: false, selfHosted: false });
+  t.stop('approvals', 'waiting', { note: '0 of 1' });
+  const block = requirements.readRequirements({ merge_requirements: t.toRecord() });
+  const approvals = block.gates.find((g) => g.key === 'approvals');
+  assert.equal(approvals.state, 'waiting');
+  assert.equal(approvals.detail.note, '0 of 1');
+});
+
+// ── The member floor: "A Yes from another member" ─────────────────────
+//
+// A flagged proposal (it changes who runs the app, how changes are
+// approved, who can see it, its platform settings or its keys) needs a Yes
+// from someone other than its author whenever the community has more than
+// one member. The row says so before any run, after a run, and after the
+// Yes lands.
+
+const flaggedRow = (extra) => ({
+  votes_required: 1, qualified_yes_count: 1, check_state: 'passing',
+  integration_behind_by: 0, integration_merges_clean: true,
+  requires_explicit_approval: true, explicit_approval_reason: 'visibility',
+  needs_other_member_yes: true, other_member_yes_count: 0,
+  ...extra,
+});
+
+test('provisional: a flagged row with only its author\'s Yes waits on another member', () => {
+  const block = requirements.readRequirements(flaggedRow());
+  assert.equal(block.provisional, true);
+  assert.deepEqual(block.gates.map((g) => `${g.key}:${g.state}`), [
+    'approvals:done', 'explicit:waiting', 'integration:done', 'checks:done', 'github:pending',
+  ], 'the merge is not promised while the floor is unmet');
+  const explicit = block.gates.find((g) => g.key === 'explicit');
+  assert.equal(explicit.label, 'A Yes from another member');
+  assert.equal(explicit.actor, 'group');
+  assert.equal(explicit.detail.reason, 'visibility');
+  assert.equal(explicit.detail.note, 'Changes to who can see this app need a Yes from another member.');
+  const s = requirements.summarize(block.gates, { hasVoted: false });
+  assert.equal(s.headline, 'Waiting for your approval', 'a member who has not voted is who can clear it (B10a)');
+  assert.equal(s.current, 'explicit');
+  assert.equal(requirements.summarize(block.gates, { isAuthor: true, hasVoted: true }).headline,
+    'Waiting on the group');
+});
+
+test('provisional: one Yes from another member clears the row', () => {
+  const block = requirements.readRequirements(flaggedRow({ qualified_yes_count: 2, votes_required: 2, other_member_yes_count: 1 }));
+  const explicit = block.gates.find((g) => g.key === 'explicit');
+  assert.equal(explicit.state, 'done');
+  assert.equal(block.gates.find((g) => g.key === 'github').state, 'active', 'now it is about to merge');
+});
+
+test('provisional: no row where the floor does not apply, or nobody said', () => {
+  const solo = requirements.provisional(flaggedRow({ needs_other_member_yes: false }));
+  assert.ok(!solo.some((g) => g.key === 'explicit'), 'a one-member community has nobody else to ask');
+  const unflagged = requirements.provisional(flaggedRow({ requires_explicit_approval: false }));
+  assert.ok(!unflagged.some((g) => g.key === 'explicit'));
+  const unknown = requirements.provisional(flaggedRow({ needs_other_member_yes: undefined }));
+  assert.ok(!unknown.some((g) => g.key === 'explicit'), 'a serializer that did not read it is not guessed for');
+});
+
+test('describe: the row is omitted when the run found a one-member community', () => {
+  const solo = requirements.trace().context({ locked: false, selfHosted: false, explicitApproval: true, memberFloor: false });
+  solo.pass('approvals');
+  assert.ok(!requirements.describe(solo.toRecord()).some((g) => g.key === 'explicit'));
+  const many = requirements.trace().context({ locked: false, selfHosted: false, explicitApproval: true, memberFloor: true });
+  many.pass('approvals');
+  assert.ok(requirements.describe(many.toRecord()).some((g) => g.key === 'explicit'));
+});
+
+test('a waiting member-floor recording loses to a live Yes from another member', () => {
+  const t = requirements.trace().context({ locked: false, selfHosted: false, explicitApproval: true, memberFloor: true });
+  t.pass('approvals').stop('explicit', 'waiting', { reason: 'governance', note: 'x' });
+  const before = requirements.readRequirements({
+    merge_requirements: t.toRecord(),
+    ...flaggedRow({ explicit_approval_reason: 'governance' }),
+  });
+  assert.equal(before.provisional, false);
+  assert.equal(before.gates.find((g) => g.key === 'explicit').state, 'waiting');
+
+  const after = requirements.readRequirements({
+    merge_requirements: t.toRecord(),
+    ...flaggedRow({ explicit_approval_reason: 'governance', other_member_yes_count: 1 }),
+  });
+  const explicit = after.gates.find((g) => g.key === 'explicit');
+  assert.equal(explicit.state, 'done', 'the Yes has landed since the run');
+  assert.deepEqual(explicit.detail, { reason: 'governance', otherYes: 1 });
 });
 
 // ── #2100 / #2095: a recording is about one (head, epoch) ──────────────
@@ -281,7 +449,8 @@ test('every step done reads as merging, not as an empty checklist', () => {
   t.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active');
   t.revise('github', 'done', { note: 'merged' });
   const s = requirements.summarize(requirements.describe(t.toRecord()), {});
-  assert.equal(s.headline, 'Merging now');
+  assert.equal(s.headline, 'Live');
+  assert.equal(s.detail, null);
   assert.equal(s.done, 5);
   assert.equal(s.total, 5);
 });
@@ -316,8 +485,8 @@ test('a conflict names who resolves it, from what the conflict lane wrote on the
   // The author's, two ways.
   assert.deepEqual([step(['unresolvable']).state, step(['unresolvable']).actor], ['blocked', 'author']);
   assert.deepEqual([step(['fork_head']).state, step(['fork_head']).actor], ['waiting', 'author']);
-  // Out of budget: an admin's.
-  assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['waiting', 'admin']);
+  // Out of budget: a clock's, not an admin's, who has nothing to press.
+  assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['active', 'auto']);
 });
 
 test('the provisional list reads a deferred verdict as waiting on the conflict, not on a runner', () => {
@@ -380,9 +549,16 @@ test('the main-health step names the test, and says when the red is provisional'
   assert.equal(blocked.detail.confirming, false);
   assert.match(blocked.detail.note, /^main's unit suite is failing since fffffff \(shared-sessions returns linked_issues per row\); merges are paused/);
 
+  assert.equal(blocked.detail.sha, 'fffffff', 'the short line reads the red commit off the detail');
+  assert.equal(blocked.detail.test, 'shared-sessions returns linked_issues per row');
+
+  // A first red being re-run is in flight: still a pause, but nobody's turn —
+  // no control is offered until it is confirmed.
   const confirming = requirements.mainStep({ ...PAUSED, app_main_check_state: 'confirming', app_main_check_confirming: true, integration_behind_by: 2 });
-  assert.equal(confirming.state, 'blocked', 'a provisional pause is still a pause');
+  assert.deepEqual([confirming.state, confirming.actor], ['active', 'auto']);
+  assert.equal(confirming.detail.paused, true, 'a provisional pause is still a pause');
   assert.equal(confirming.detail.confirming, true);
+  assert.equal(requirements.summarize([{ key: 'approvals', state: 'done' }, confirming], { isAdmin: true }).headline, 'Nothing needs you');
   assert.match(confirming.detail.note, /failed once since fffffff \(shared-sessions returns linked_issues per row\) and is being re-run to confirm; merges are paused/);
 
   // The flag, not the state, is the pause: a red the admin resumed, or that a
@@ -532,7 +708,7 @@ function loadVotes(over) {
   });
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.worker, { destroyCcVolume: async () => {}, isInFlight: () => false });
+  stub(ids.worker, { destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }), isInFlight: () => false });
   stub(ids.mergeDebug, { startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {} });
   stub(ids.integration, {
     ...require('../src/services/integration'),

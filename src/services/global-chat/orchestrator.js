@@ -689,7 +689,11 @@ function createGlobalChatOrchestrator({
                   ? 1_800
                   : (suggestionOnly ? 800 : 1_000),
                 temperature: model.supportsTemperature === false ? null : 0.1,
-                parallelToolCalls: model.supportsParallelToolCalls === true ? true : null,
+                // Never asked for: OpenRouter lists parallel_tool_calls for a
+                // model when ANY of its providers takes it (GLM 5.3 Flash:
+                // one of thirty-three), and asking for it routes only there.
+                // Left out, providers still return several calls at once.
+                parallelToolCalls: null,
                 toolChoice: suggestionOnly
                   ? { type: 'function', function: { name: BASE_TOOL_NAMES.PRESENT } }
                   : 'auto',

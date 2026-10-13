@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -101,13 +102,14 @@ function makePool() {
     }
     // The PUBLIC read. Keyed on id since  (the name was resolved a
     // query earlier), so it is told apart from the owner read below by its
-    // publish/disable filters rather than by its WHERE column.
+    // disable filter rather than by its WHERE column. Publication is decided
+    // in the route since #3554 (a friend request reaches an unpublished
+    // profile), so the row carries profile_published instead of filtering it.
     if (/SELECT u\.id, u\.username, u\.display_name/.test(s)
         && /WHERE u\.id = \$1/.test(s)
-        && /profile_published = TRUE/.test(s)) {
+        && /profile_disabled_at IS NULL/.test(s)) {
       const user = state.users.find((candidate) => (
         candidate.id === params[0]
-        && candidate.profile_published
         && !candidate.profile_disabled_at
       ));
       return { rows: user ? [{ ...user }] : [] };
@@ -534,9 +536,11 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(publicCard, /verifiedSocialLinksView/);
   assert.match(publicCard, /target="_blank"/);
   assert.match(publicCard, /rel="noopener noreferrer"/);
-  assert.match(profileSheet, /#settings\/connectors/);
-  assert.match(profileSheet, /Connect or change social accounts/);
-  assert.match(profileSheet, /Provider verification and public visibility are managed separately/);
+  assert.match(profileSheet, /#settings\/linked-accounts/);
+  assert.match(profileSheet, /\{t\('profile:edit\.social\.manage'\)\}/);
+  assert.equal(message('profile:edit.social.manage'), 'Connect or change social accounts');
+  assert.match(profileSheet, /\{t\('profile:edit\.social\.note'\)\}/);
+  assert.match(message('profile:edit.social.note'), /Provider verification and public visibility are managed separately/);
   assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
   assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
   assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);

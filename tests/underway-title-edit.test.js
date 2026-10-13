@@ -30,6 +30,7 @@ function context(user = { id: 42, username: 'Builder' }) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   vm.runInContext(fs.readFileSync('public/js/merge-status.js', 'utf8'), c);
   vm.runInContext(fs.readFileSync('public/js/app-view.js', 'utf8'), c);
@@ -100,6 +101,7 @@ test('edit mode renders the session editor and protects both unified URL kinds f
   assert.equal(card.title.editing.initial, 'Original proposal title');
   const html = cardHtml(card);
   assert.match(html, /id="dev-session-title-input"/);
+  assert.match(html, /aria-label="Proposal title"/);
   assert.match(html, /maxlength="256"/i);
   for (const kind of ['session', 'proposal']) {
     assert.equal(av._titleEditBlocksRepaint(

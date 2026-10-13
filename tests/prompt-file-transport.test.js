@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const docker = require('../src/services/docker');
 const kubernetes = require('../src/services/kubernetes');
@@ -69,10 +70,44 @@ test('hosted Claude receives conventions once as system context, while unchanged
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
 });
 
-test('hosted build guidance keeps proposal submission with the harness and evidence intent with the agent', () => {
+test('the CLI that runs an OpenRouter turn decides the transport, not the backend (#3296)', () => {
+  const conventions = 'SENTINEL platform rule';
+  // Claude Code driving an OpenRouter model reads --append-system-prompt-file
+  // like hosted Claude does, so the handbook travels the same way.
+  const claudeHarness = buildCodingAgentConventionsContext({ isCodexSession: true, harness: 'claude', conventions });
+  assert.match(claudeHarness.systemPrompt, /SENTINEL platform rule/);
+  assert.doesNotMatch(claudeHarness.promptBlock, /SENTINEL platform rule/);
+  assert.deepEqual(claudeHarness, buildCodingAgentConventionsContext({ conventions }));
+  // Codex has no system-prompt file; absent means Codex.
+  for (const harness of ['codex', null]) {
+    const inline = buildCodingAgentConventionsContext({ isCodexSession: true, harness, conventions });
+    assert.equal(inline.systemPrompt, null);
+    assert.match(inline.promptBlock, /SENTINEL platform rule/);
+  }
+  // A local run keeps it inline whatever the harness.
+  const local = buildCodingAgentConventionsContext({ runLocally: true, isCodexSession: true, harness: 'claude', conventions });
+  assert.equal(local.systemPrompt, null);
+
+  const sessionsSource = read('src/routes/sessions.js');
+  assert.match(sessionsSource, /if \(runLocally \|\| \(isCodexSession && harness !== 'claude'\)\) \{/);
+  assert.match(sessionsSource, /const transport = buildTransport\(agentIdentity\.harness, !isCodexSession\);/);
+  // An OpenRouter attempt's prompt is rendered from the runtime it resolved:
+  // the CLI that runs it (the harness map can move between the prompt render
+  // and dispatch) and what its model can see.
+  assert.match(sessionsSource, /const openRouterBuildFor = isCodexSession && !runLocally\n\s+\? \(ctx\) => \{\n\s+const t = buildTransport\(ctx\.agentHarness === 'claude' \? 'claude' : 'codex', runtimeReadsImages\(ctx\)\);/);
+  assert.match(sessionsSource, /const openRouterBuild = !isClaudeDispatch && openRouterBuildFor\n\s+\? openRouterBuildFor\(ctx\)/);
+  assert.match(sessionsSource, /prompt: openRouterBuild \? openRouterBuild\.prompt : claudePrompt,/);
+  assert.match(sessionsSource, /systemPrompt: isClaudeDispatch\n\s+\? conventionsContext\.systemPrompt\n\s+: \(openRouterBuild \? openRouterBuild\.systemPrompt : null\),/);
+  // The worker takes a system prompt from any turn that runs Claude Code, and
+  // run-cc.sh treats the file as optional for an OpenRouter turn.
+  const workerSource = read('src/services/worker.js');
+  assert.match(workerSource, /runsClaude/);
+});
+
+test('hosted build guidance keeps proposal submission with the harness and shots intent with the agent', () => {
   const hosted = buildHostedCodingWorkflowGuidance();
   assert.match(hosted, /HOSTED WORKER LIFECYCLE/);
-  assert.match(hosted, /record_visual_evidence_intent/);
+  assert.match(hosted, /declare_visible_changes/);
   assert.match(hosted, /harness handles push, pull request/);
   assert.match(hosted, /Do not run\s+that skill, the social-vibecoding CLI/);
   assert.match(hosted, /Do not create platform users or tokens/);
@@ -93,7 +128,7 @@ test('hosted Claude references system build guidance while local and Codex share
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    '2d33bc686d8ae4c2b5de08358078cd9503522891162926343c98be19b0ad905a',
+    'df23834071c27331c2cdb3d4638688d52df79667ff239a5c9d4eceb8121799e8',
     'the non-system-prompt backends retain their exact reviewed guidance',
   );
   assert.match(localText, /falls back to the home page and records that\n\s+default/);
@@ -355,22 +390,24 @@ test('execInWorker writes the prompt file before the detached dispatch and never
   // No `PROMPT: <value>` env entry anywhere — the env carries only the
   // short constant path.
   assert.doesNotMatch(src, /PROMPT:\s*prompt/);
-  assert.match(src, /PROMPT_FILE:\s*TURN_PROMPT_PATH/);
+  // #4575: the turn's own files, named by its id (turnPromptPaths).
+  assert.match(src, /const promptPaths = turnPromptPaths\(durableTurnId\);/);
+  assert.match(src, /PROMPT_FILE:\s*promptPaths\.prompt/);
   assert.match(src, /RESUME_FALLBACK_PROMPT_FILE:\s*resumeFallbackPrompt/);
-  assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? TURN_SYSTEM_PROMPT_PATH : ''/);
+  assert.match(src, /SYSTEM_PROMPT_FILE:\s*systemPrompt \? promptPaths\.system : ''/);
 
   // Ordering: the file write happens before the `docker exec -d`
   // dispatch inside execInWorker.
-  const writeIdx = src.indexOf('await writeTurnPrompt(sessionId, prompt)');
+  const writeIdx = src.indexOf('await writeTurnPrompt(sessionId, prompt, promptPaths.prompt)');
   const dispatchIdx = src.indexOf("'exec', '-d',");
   assert.ok(writeIdx !== -1, 'execInWorker awaits writeTurnPrompt');
   assert.ok(dispatchIdx !== -1, 'detached dispatch present');
   assert.ok(writeIdx < dispatchIdx, 'prompt file is written before the dispatch args are built');
-  const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt)');
+  const writeSystemIdx = src.indexOf('await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system)');
   assert.ok(writeSystemIdx !== -1 && writeSystemIdx < dispatchIdx,
     'required system context is written before detached dispatch');
   const writeFallbackIdx = src.indexOf(
-    'await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt)',
+    'await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt, promptPaths.resumeFallback)',
   );
   assert.ok(writeFallbackIdx !== -1 && writeFallbackIdx < dispatchIdx,
     'the complete fresh fallback is written before detached dispatch');
@@ -419,8 +456,8 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
 
   // A supplied system-prompt path is required and applied to every physical
   // Claude invocation, including resume failure's fresh retry.
-  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "evidence" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
-    'hosted builds and evidence turns fail closed if system context is omitted');
+  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "shots" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
+    'hosted builds and shots turns fail closed if system context is omitted');
   assert.match(cc, /\[ -s "\$SYSTEM_PROMPT_FILE" \]/);
   const systemPromptInvocations = cc.match(/\$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
   assert.equal(systemPromptInvocations.length, 3,
@@ -479,7 +516,7 @@ exit 0
       BRANCH: 'test',
       SESSION_ID: '1',
       WORKER_JWT: 'test-worker-jwt',
-      PLATFORM_URL: 'http://platform',
+      ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
       WORKSPACE_DIR: workspace,
     },
   });
@@ -522,7 +559,7 @@ exit 0
     BRANCH: 'test',
     SESSION_ID: '1',
     WORKER_JWT: 'test-worker-jwt',
-    PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: workspace,
   };
   const omitted = spawnSync('sh', [path.join(__dirname, '..', 'worker', 'run-cc.sh')], {

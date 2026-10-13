@@ -46,10 +46,10 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, app_quota) VALUES
        ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10),
-       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10)
+       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10), ('starter', 'x', TRUE, 10)
      RETURNING id, username`
   );
-  const [maker, ada, grace, other, writer, mailer] = people;
+  const [maker, ada, grace, other, writer, mailer, starter] = people;
   // Ada has an address confirmed on her account; nobody has sam@.
   await pool.query(`UPDATE users SET email = 'ada@example.com', email_confirmed = TRUE WHERE id = $1`, [ada.id]);
   // Mutable: the create limiter allows five an hour per user, so the last
@@ -92,14 +92,14 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(res.data.invited, 0);
   });
 
-  await t.test('A community is open to see and build, and reads as a Community', async () => {
+  await t.test('A public community is open to see and build, and reads as a Public community', async () => {
     const res = await create({ name: 'Town square', audience: 'open' });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     assert.deepEqual([res.data.app.collab_visibility, res.data.app.view_visibility], ['public', 'public']);
     assert.equal(await audienceOf(res.data.app.id), 'open');
   });
 
-  await t.test('A group sends its invites at creation, and reads as a Group straight away', async () => {
+  await t.test('A private community sends its invites at creation, and reads as a Private community straight away', async () => {
     const res = await create({ name: 'Book club', audience: 'invited', invitees: ['@ada', 'Grace', 'maker'] });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     const appId = res.data.app.id;
@@ -110,7 +110,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
       [maker.id, 'member'], [ada.id, 'invited'], [grace.id, 'invited'],
     ]);
     assert.ok(rows.filter((r) => r.status === 'invited').every((r) => r.invited_by === maker.id));
-    assert.equal(await audienceOf(appId), 'invited', 'a pending invite already makes it a Group');
+    assert.equal(await audienceOf(appId), 'invited', 'a pending invite already makes it a Private community');
     const notes = await pool.query(
       `SELECT user_id FROM notifications WHERE app_id = $1 AND kind = 'collab_invite' ORDER BY user_id`, [appId]);
     assert.deepEqual(notes.rows.map((r) => r.user_id), [ada.id, grace.id],
@@ -158,8 +158,11 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     const plain = await create({ name: 'Undescribed', audience: 'open' });
     const bare = await pool.query(`SELECT manifest_snapshot FROM apps WHERE id = $1`, [plain.data.app.id]);
     assert.equal(bare.rows[0].manifest_snapshot, null, 'no line, no seeded snapshot');
-    const long = await create({ name: 'Too long', audience: 'open', description: 'x'.repeat(101) });
+    // #3572: 90 is the limit now (two lines of the hub hero on a phone), so
+    // 91 is the first length refused, with the sentence that says so.
+    const long = await create({ name: 'Too long', audience: 'open', description: 'x'.repeat(91) });
     assert.equal(long.status, 400);
+    assert.match(long.data.error, /90 characters or fewer/);
   });
 
   await t.test('a group invited by address: an account is invited as itself, anyone else is stored and mailed', async () => {
@@ -178,6 +181,45 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.deepEqual(mailed, [{ email: 'sam@example.com', inviter: 'mailer', project: 'Mail club' }]);
     const wrong = await create({ name: 'Mail club two', audience: 'open', inviteEmails: ['sam@example.com'] });
     assert.equal(wrong.status, 400, 'only a group is created with invites');
+  });
+
+  await t.test('Empty is stored as nothing, a ready-made app as itself, and a deleted starter is refused before anything exists (#3521)', async () => {
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    const plain = await create({ name: 'Plain', audience: 'solo' });
+    assert.equal(plain.status, 201, JSON.stringify(plain.data));
+    assert.equal(plain.data.app.template, null, 'no template is the empty starter, stored as nothing');
+    const named = await create({ name: 'Named empty', audience: 'solo', template: 'empty' });
+    assert.equal(named.status, 201, JSON.stringify(named.data));
+    assert.equal(named.data.app.template, null, 'naming the empty starter stores nothing either');
+    assert.equal(built.find((row) => row.id === named.data.app.id).template, null,
+      'the build reads no template as the empty starter');
+    // A ready-made app (services/app-templates.js) is stored, built from, and
+    // has nothing for Homeroom bot to build or sketch, even with a description.
+    // (Made by mailer: the create limiter allows five an hour each.)
+    viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
+    const groceries = await create({
+      name: 'Groceries', audience: 'invited', template: 'grocery-list', description: 'A grocery list',
+      brief: 'An app to organize our groceries: one shared list.', from: 'first-session',
+    });
+    assert.equal(groceries.status, 201, JSON.stringify(groceries.data));
+    assert.equal(groceries.data.app.template, 'grocery-list');
+    assert.equal(built.find((row) => row.id === groceries.data.app.id).template, 'grocery-list', 'the build makes the ready-made app');
+    assert.equal(groceries.data.homeroomBot, undefined, 'no first version is started');
+    const { rows: firsts } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(firsts, [], 'nor recorded for anyone to build');
+    const { rows: sketches } = await pool.query('SELECT 1 FROM app_sketches WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(sketches, [], 'and nothing is sketched: it has its own icon');
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    // The four general starters went with the create dialog.
+    const game = await create({ name: 'Star catch', audience: 'solo', template: 'game-2d' });
+    assert.equal(game.status, 400);
+    assert.match(game.data.error, /^template must be one of: empty, tier-list-restaurants, /);
+    const unknown = await create({ name: 'Mystery', audience: 'solo', template: 'chess' });
+    assert.equal(unknown.status, 400);
+    const imported = await create({ name: 'Imported', audience: 'solo', template: 'game-3d', repoUrl: 'https://github.com/o/r' });
+    assert.equal(imported.status, 400);
+    const { rows } = await pool.query(`SELECT name FROM apps WHERE name IN ('Star catch', 'Mystery', 'Imported')`);
+    assert.deepEqual(rows, [], 'a refused template creates nothing');
   });
 
   await t.test('an older client\'s body still works, and a bad choice is a 400 before anything exists', async () => {

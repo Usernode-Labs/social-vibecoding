@@ -68,6 +68,67 @@ function install() {
 
 const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 5)); };
 
+test('canonical conversation redirects preserve thread and message destinations', async () => {
+  for (const [extras, suffix] of [
+    [{ threadRootId: 9100404 }, '/thread/9100404'],
+    [{ focusMessageId: 9100202 }, '/m/9100202'],
+  ]) {
+    install();
+    try {
+      const fetch = global.fetch;
+      global.fetch = (url, init) => String(url) === '/api/conversations/910004'
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ conversation: {
+          id: CONVERSATION, kind: 'group', title: 'Stored room', membershipStatus: 'member', members: [],
+        } }) }) : fetch(url, init);
+      const store = loadTsx('frontend/src/features/messages/store.ts');
+      store.route(910004, null, null, extras);
+      await settle();
+      assert.equal(window.location.hash, `#messages/${CONVERSATION}${suffix}`);
+      store.close();
+    } finally {
+      delete global.window; delete global.localStorage; delete global.fetch;
+    }
+  }
+});
+
+test('legacy message and thread ids redirect to the stored rows returned by the API', async () => {
+  install();
+  try {
+    const fetch = global.fetch;
+    global.fetch = (url, init) => {
+      const path = String(url);
+      const json = body => Promise.resolve({ ok: true, status: 200, json: async () => body });
+      if (path.includes('/threads/9100404') || path.includes('/threads/10')) {
+        return json({ root: row(10), messages: [{ ...row(11), thread_root_id: 10 }], next_before: null });
+      }
+      if (path.includes('around=9100202')) return json(around(5));
+      return fetch(url, init);
+    };
+    const store = loadTsx('frontend/src/features/messages/store.ts');
+    let snap;
+    const read = () => {
+      renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
+      return snap;
+    };
+    store.route(CONVERSATION, null, null, { threadRootId: 9100404 });
+    await settle();
+    assert.equal(window.location.hash, `#messages/${CONVERSATION}/thread/10`);
+    // The shell router follows the canonical address.
+    store.route(CONVERSATION, null, null, { threadRootId: 10 });
+    await settle();
+    assert.equal(read().thread.rootId, 10);
+    assert.equal(read().thread.root.id, 10);
+    assert.equal(read().thread.messages[0].threadRootId, 10);
+    store.close();
+    store.route(CONVERSATION, null, null, { focusMessageId: 9100202 });
+    await settle();
+    assert.equal(window.location.hash, `#messages/${CONVERSATION}/m/5`);
+    store.close();
+  } finally {
+    delete global.window; delete global.localStorage; delete global.fetch;
+  }
+});
+
 test('a message link anchors the first read; later refreshes keep the reader\'s window, then the present', async () => {
   const reads = install();
   try {

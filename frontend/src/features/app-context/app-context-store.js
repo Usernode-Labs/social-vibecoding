@@ -19,7 +19,8 @@ export const appContextStore = createStore({
    * Which of the sheet's two panes is showing (#2718).
    *
    * `'menu'` is the app's options; `'about'` is the facts about it — the
-   * repository, sharing, the version, adding it to a home screen. Two PANES
+   * repository, sharing, the version, adding it to a home screen; `'invite'`
+   * is a link to it anyone can use to join (./invite-pane.tsx). PANES
    * of one sheet rather than two sheets, because the kit cannot present a
    * sheet while it is still dismissing another (the ordering
    * app-context-controller.js already works around for the wallet row), and

@@ -285,14 +285,19 @@ test('the three unmounting surfaces close with release(); the dialogs keep dismi
 
 // ── 3. Full-screen Create app has nothing behind it ──────────────────────
 
-test('on a phone the create screen\'s own backdrop is its ground, and it casts no shadow', () => {
-  const phone = /@media \(max-width: 767px\), \(hover: none\) and \(pointer: coarse\) \{\s*html \.un-backdrop:has\(\+ \.un-modal > #create-card\) \{\s*background: var\(--create-modal-fill\);\s*\}\s*html \.un-modal:has\(> #create-card\) \{\s*box-shadow: none;\s*\}\s*\}/;
-  assert.match(APP_CSS, phone);
-  assert.match(APP_CSS, /html\.in-native-webview \.un-backdrop:has\(\+ \.un-modal > #create-card\) \{\s*background: var\(--create-modal-fill\);\s*\}/);
-  // --create-modal-fill is set only where the dialog is full screen, and the
-  // backdrop is the kit's own sibling right before the card's shell.
-  assert.match(read('public/usernode-native/v1/native.js'),
-    /document\.body\.appendChild\(backdrop\);\s*document\.body\.appendChild\(card\);/);
+// The create dialog's full-screen layouts (an opaque backdrop, no lift
+// shadow, the status bar's band as a border) are retired with it. Create
+// opens "What do you want to make?", which is its own full-screen surface
+// on the wallpaper (tests/first-session-make.test.js pins its bar and the
+// status bar's inset).
+test('Create\'s screen covers the page under the header in its own ground, and the dialog\'s layouts are gone', () => {
+  const make = read('frontend/src/features/first-session/make.tsx');
+  // The first session's covers the whole page; from Create it starts at the
+  // platform header's foot (#4195). Both are one opaque box, never a dialog card.
+  assert.match(make, /export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-\[9000\] flex flex-col /);
+  assert.match(make, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-\[9000\] flex flex-col /);
+  assert.match(make, /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/);
+  assert.doesNotMatch(APP_CSS, /#create-card|--create-modal-/);
 });
 
 // ── 4. The launch cover holds room for its spinner ───────────────────────

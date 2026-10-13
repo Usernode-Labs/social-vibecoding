@@ -1,19 +1,25 @@
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
+import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
-import type { AppDiscussion, InboxFilter } from './inbox';
+import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
+import { savedInboxFilter, type AppDiscussion, type InboxFilter } from './inbox';
+import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
   DiscussionContext,
   ConversationEvent,
   ConversationMessage,
   ConversationSummary,
+  HomeroomBotAction,
   MessagesAgentThread,
   MessagesSnapshot,
   ReplyThreadState,
   SharedObjectReference,
+  StagedObject,
 } from './types';
 
 const MAX_ID = 2_147_483_647;
@@ -28,8 +34,17 @@ interface PendingSend {
   idempotencyKey: string;
 }
 
+/**
+ * A name on the typing line. The line shows each name once, as it always has:
+ * two people shown by the same word are one entry, and that word leaves when
+ * either of them stops (see `typingHolders`). `unnamed` says the word is only
+ * the stand-in for a member with no username; it is worked out from who is
+ * typing under the word now, so it leaves with that person.
+ */
+export interface Typist { name: string; unnamed: boolean }
+
 interface InternalState extends MessagesSnapshot {
-  typing: Record<number, string[]>;
+  typing: Record<number, Typist[]>;
 }
 
 type Listener = () => void;
@@ -60,7 +75,10 @@ let state: InternalState = {
   thread: null,
   nextAfter: null,
   listCollapsed: false,
+  listCrowded: false,
   showMoreChannels: false,
+  unreadMark: null,
+  threadFocusId: null,
 };
 
 /*
@@ -96,12 +114,39 @@ const pendingByConversation = new Map<number, PendingSend[]>();
  * idempotency key so the server never stores it twice — and `sentKeys` maps a
  * confirmed server id back to the client key the row was drawn under, so the
  * row keeps its React key and is updated in place rather than remounted.
+ * `after` is the newest server id the transcript held when the row was drawn:
+ * the server's copy of that send can only be newer (withLocalRows).
  */
-const unsent = new Map<string, { conversationId: number; payload: PendingSend }>();
+const unsent = new Map<string, { conversationId: number; payload: PendingSend; after: number }>();
 const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
+/**
+ * #4220: a "stopped typing" that waits for its message. The bot sends its
+ * message and then stops typing (services/homeroom-bot-dm.js whileTyping),
+ * but realtime carries ids only, so the message shows once the re-read it
+ * started publishes, and in the bot's DM that read is the slow one: the line
+ * went away and the conversation sat still before the answer came. So while
+ * a re-read for a new message is in flight in a conversation (`landing`, by
+ * how many), a stop there holds its name (`heldTyping`, by the typingExpiry
+ * key) until that read publishes, and never longer than TYPING_HOLD_MS.
+ */
+const landing = new Map<number, number>();
+const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+/**
+ * Who is typing under each shown word: `conversationId:word` to user id to
+ * whether that person has no username. The word is the stand-in only while
+ * everybody typing under it is nameless; one real account makes it a name.
+ * Emptied when the word leaves the line, so nothing outlives the person.
+ */
+const typingHolders = new Map<string, Map<number, boolean>>();
+const TYPING_HOLD_MS = 5000;
 let pendingShare: SharedObjectReference | null | undefined;
+/**
+ * A change the change page's Ask for changes put straight on the chat with
+ * Homeroom bot's composer (see openBot), for that conversation only.
+ */
+let pendingAttach: { conversationId: number; object: StagedObject; placeholder: string } | null = null;
 /** A `#messages/channel/<handle>` link followed before the lists landed. */
 let pendingChannel: string | null = null;
 let listRequest = 0;
@@ -198,7 +243,7 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   const user = typeof window !== 'undefined' ? window.App?.user : null;
   return {
     id: Number(user?.id) || 0,
-    username: typeof user?.username === 'string' ? user.username : 'You',
+    username: typeof user?.username === 'string' ? user.username : t('messages:store.you'),
     avatarUrl: typeof user?.avatarUrl === 'string' ? user.avatarUrl : null,
   };
 }
@@ -213,23 +258,23 @@ function isAwaitingAcceptance(error: unknown): boolean {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
-    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
-    if (error.status === 404) return 'This conversation is no longer available.';
-    if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
+    if (isAwaitingAcceptance(error)) return t('messages:store.error.awaitingAcceptance');
+    if (error.status === 404) return t('messages:store.error.gone');
+    if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /**
- * Which of the four kinds the list is showing (#2718).
- *
- * Presentation, so it is not persisted and not in the route: a filter that
- * survives a reload is a filter somebody has to remember turning on, and the
- * one thing this screen must always be able to say is "here is everything".
+ * Which kind the list is showing (#2718), remembered per device since #4783:
+ * a daily voter coming back keeps their choice instead of landing on All.
+ * Still presentation, so not in the route, and a fresh device starts on All;
+ * an unknown saved value (`savedInboxFilter`) falls back to All too.
  */
 export function setFilter(next: InboxFilter): void {
   if (state.filter === next) return;
+  try { localStorage.setItem('usernode:messages-filter', next); } catch { /* storage unavailable */ }
   publish({ filter: next });
 }
 
@@ -285,6 +330,66 @@ export function openChannel(raw: string): void {
   resolvePendingChannel();
 }
 
+/**
+ * The address a `#handle` names, when the lists already know it — the
+ * router follows it at once rather than drawing the inbox on the way
+ * (#3653) — or null, and openChannel waits for the lists.
+ */
+export function channelTarget(raw: string): string | null {
+  const handle = normalizeHandle(raw);
+  if (!handle) return null;
+  return channels().find((item) => item.handle === handle)?.target || null;
+}
+
+/**
+ * #3653: A CHANNEL IS ITS COMMUNITY'S DISCUSSION TAB, #general included.
+ *
+ * #general is a conversation of this store, of kind `channel`, and the
+ * Homeroom community's room: Homeroom's Discussion tab draws it in place
+ * (EmbeddedConversation, #3494). Its address here, `#messages/<id>` (and a
+ * thread or a message in it), is what its notifications, message links and
+ * `#general` references open — and they opened it on this screen, with a
+ * chevron up to the hub, a page apart from the community it belongs to.
+ *
+ * The project whose tab it is: the platform's, once anything has said its
+ * slug (channelHub's answer). Null for any other conversation, while nothing
+ * knows the conversation is a channel or the platform's slug, and for a
+ * viewer the platform's page is not served to, whose room stays here.
+ */
+export function channelHubSlug(conversationId: number): string | null {
+  if (!validId(conversationId) || typeof window === 'undefined') return null;
+  const row = state.active && state.active.id === conversationId
+    ? state.active
+    : state.conversations.find((item) => item.id === conversationId) || null;
+  if (!row || row.kind !== 'channel' || !platformHubServed()) return null;
+  return platformSlug();
+}
+
+/**
+ * The conversation on this screen turned out to be a channel (its detail or
+ * the list landed, or the platform's slug did): take the reader to its tab,
+ * at the thread or the message the address named, replacing the address
+ * (App.openDiscussionInHub). The router does the same at once when it
+ * already knows; this is a cold link's half.
+ */
+function channelToHub(): boolean {
+  if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return false;
+  const hub = channelHubSlug(conversationId);
+  const door = (window as { App?: { openDiscussionInHub?: (slug: string, target: unknown) => void } }).App?.openDiscussionInHub;
+  if (!hub || !door) return false;
+  // Only from this conversation's own address: a route that has already
+  // moved on is not this redirect's to take.
+  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  door(hub, {
+    conversationId,
+    threadRootId: state.route.threadRootId,
+    focusMessageId: state.route.focusMessageId,
+  });
+  return true;
+}
+
 function resolvePendingChannel(): void {
   if (!pendingChannel || typeof window === 'undefined') return;
   const found = channels().find((item) => item.handle === pendingChannel);
@@ -334,7 +439,8 @@ export async function loadConversations(force = false): Promise<void> {
   const request = ++listRequest;
   publish({ loadingList: true, error: null, demo: browserDemo() });
   try {
-    const conversations = await api.listConversations();
+    // A forced read follows a change, so it asks the server (api.ts ReadOptions).
+    const conversations = await api.listConversations({ fresh: force });
     if (request !== listRequest) return;
     for (const item of conversations) leftConversations.delete(item.id);
     publish({
@@ -344,13 +450,14 @@ export async function loadConversations(force = false): Promise<void> {
       online: true,
     });
     resolvePendingChannel();
+    channelToHub();
   } catch (error) {
     if (request !== listRequest) return;
     publish({
       loadingList: false,
       listLoaded: true,
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, 'Couldn’t load your conversations.'),
+      error: errorMessage(error, t('messages:store.error.loadList')),
     });
     resolvePendingChannel();
   }
@@ -370,12 +477,14 @@ let focusLoaded: number | null = null;
  * The newest message of the conversation itself on screen — the read cursor's
  * position. Since the #2387 follow-up the main stream also carries its
  * threads' replies as lines, and a reply is no position in it: the server
- * reads a thread when handed one, and leaves the cursor where it was.
+ * reads a thread when handed one, and leaves the cursor where it was. One
+ * request, one story: a moment the chat with Homeroom bot also lists in its
+ * main stream (`alsoInChat`) is a position in it, as the server counts it.
  */
 function newestMainId(messages: ConversationMessage[]): number | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const item = messages[i];
-    if (item.id > 0 && !item.threadRootId) return item.id;
+    if (item.id > 0 && inMainStream(item)) return item.id;
   }
   return null;
 }
@@ -395,7 +504,20 @@ function transcriptOrder(a: ConversationMessage, b: ConversationMessage): number
  */
 const leftConversations = new Set<number>();
 
-export async function loadThread(conversationId: number, force = false): Promise<void> {
+/**
+ * #4243: whether the browser says it is offline. Only a `false` counts: where
+ * the property is missing nothing says the network is gone.
+ */
+function browserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+/**
+ * `offlineCopy` is the retry of an open whose read from the server failed
+ * (#4243): the one read that takes the service worker's offline copy while
+ * the browser says it is online.
+ */
+export async function loadThread(conversationId: number, force = false, offlineCopy = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
     threadRequest += 1;
@@ -429,25 +551,75 @@ export async function loadThread(conversationId: number, force = false): Promise
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
     nextAfter: preserveVisibleThread ? state.nextAfter : null,
   });
+  // A FORCED READ RE-READS WHAT IS ON SCREEN BECAUSE SOMETHING CHANGED — a
+  // realtime event, a send, a reconnect — so it goes to the server, past the
+  // service worker's offline copy (#3705, #3706; api.ts ReadOptions). That
+  // copy was the page from before the change, and drawing it lost the very
+  // message the event was about.
+  // AN OPEN GOES TO THE SERVER TOO WHILE THE BROWSER IS ONLINE (#4243). Its
+  // offline copy is the last visit's transcript: on a read slower than the
+  // worker's second it was drawn, and the newest messages snapped in under
+  // the reader when the worker's correction came. The skeleton stays a beat
+  // longer instead. Offline, or once that read has failed, the open takes
+  // the copy (`offlineCopy`, from the catch below).
+  const fresh = force || (!offlineCopy && !browserOffline());
+  const read = { fresh };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
-    const active = await api.getConversation(conversationId);
+    const active = await api.getConversation(conversationId, read);
+    if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    // Old Preview links resolve to the viewer's persisted sample thread.
+    // Use its canonical address for messages, writes, drafts and WS events.
+    if (active.id !== conversationId) {
+      const suffix = state.route.threadRootId ? `/thread/${state.route.threadRootId}`
+        : state.route.focusMessageId ? `/m/${state.route.focusMessageId}` : '';
+      openAddress(`#messages/${active.id}${suffix}`);
+      return;
+    }
+    // #3653: a channel opened on this screen goes to its community's tab as
+    // soon as this says it is one, before its messages are read here.
+    if (active.kind === 'channel' && state.route.open && !state.route.embedded) {
+      publish({ active });
+      if (channelToHub()) return;
+    }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
-    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null } = !member
+    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
       ? { messages: [], nextBefore: null, nextAfter: null }
       : anchor
-        ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
-          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter, threadRootId: around.focus.threadRootId,
-        })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId)), nextAfter: null };
+        ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
+          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
+          threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
-    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
+    if (focus && page.focusMessageId && page.focusMessageId !== focus) {
+      // In its community's page the room has no address of its own (#3653):
+      // the message it lands on moves in place.
+      if (state.route.embedded) {
+        publish({ route: { ...state.route, focusMessageId: page.focusMessageId } });
+        void loadThread(conversationId);
+        return;
+      }
+      openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
+      return;
+    }
+    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id), member && !page.nextAfter);
     if (focus) focusLoaded = focus;
-    publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
+    // WHERE READING HAD STOPPED, taken from this read of the conversation
+    // and before anything below reads it (readMainWhenThere), so the
+    // transcript can open there and draw its "New" line (./unread-anchor.ts).
+    // Once per open: a refresh of the conversation on screen is not an open,
+    // and the line stays where it was until the conversation closes (route,
+    // close and embed let it go).
+    const unreadMark = state.unreadMark?.conversationId === conversationId
+      ? state.unreadMark
+      : preserveVisibleThread ? null : markFor(conversationId, active);
+    publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true, unreadMark });
     upsertConversation(active);
+    applyPendingQuote();
     // A link to a reply inside a thread opens that thread beside it.
     if (focus && page.threadRootId && state.route.threadRootId !== page.threadRootId) {
       publish({ route: { ...state.route, threadRootId: page.threadRootId } });
@@ -457,16 +629,25 @@ export async function loadThread(conversationId: number, force = false): Promise
     // Read up to the newest message DRAWN — and only once the transcript
     // reaches the present, or a message link would mark everything after it
     // read. Never straight after "Mark unread" (#2387): the reader asked for
-    // this conversation to stay unread, and it is still open.
-    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last);
+    // this conversation to stay unread, and it is still open. And only with
+    // somebody there to read it (readWhenThere): a message that lands in a
+    // conversation left open on an unattended screen waits for them.
+    if (last && member && !page.nextAfter && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
     if (request !== threadRequest) return;
+    // An open that failed on the network or the server, not with an answer
+    // like a 404, reads again and takes the offline copy (#4243).
+    const answered = error instanceof api.MessagesApiError && error.status < 500;
+    if (fresh && !force && !answered) {
+      await loadThread(conversationId, false, true);
+      return;
+    }
     publish({
       // A failed open says so on its own, as it did before the inbox row
       // stood in: no header or composer for a conversation that did not load.
       ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
-      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      threadError: errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
@@ -474,26 +655,46 @@ export async function loadThread(conversationId: number, force = false): Promise
 }
 
 /**
- * A page read from the server, with the viewer's still-local rows kept.
+ * A page read from the server, with the viewer's own rows it cannot know of
+ * kept.
  *
  * Confirmed rows get back the client key they were first drawn under. A
  * local row (pending or failed) stays at the end unless the page already
  * holds it: the realtime echo can land before the POST that caused it
- * returns, and then the server's copy — the viewer's, same words, not yet
- * claimed by another local row — IS that row, so it takes its key and the
- * local one goes.
+ * returns, and then the server's copy — the viewer's, same words, NEWER than
+ * anything the transcript held when the row was drawn, not yet claimed by
+ * another local row — IS that row, so it takes its key and the local one
+ * goes. Newer, because the same words are sent again and again in the
+ * Homeroom bot's DM, whose suggested answers are "Yes" and "File it" every
+ * time (#3706): matched on the words alone, the OLDEST such message on the
+ * page took the new row's key, the next confirmation took that old message
+ * off the screen, and two rows went on sharing one React key.
+ *
+ * And a row the POST already confirmed stays when the page is older than it
+ * (#3706): a page that reaches the present and holds nothing as new was read
+ * before the send landed — a refresh already in flight, or a cached copy —
+ * and taking its word took the sender's message away until a reload. A
+ * later page that holds it, or anything newer, settles it as usual.
  */
-function withLocalRows(conversationId: number, page: ConversationMessage[]): ConversationMessage[] {
+function withLocalRows(conversationId: number, page: ConversationMessage[], reachesPresent = true): ConversationMessage[] {
   const me = currentUser().id;
   const claimed = new Set(sentKeys.values());
   const messages = page.map((item) => {
     const key = sentKeys.get(item.id);
     return key ? { ...item, clientKey: key } : item;
   });
+  const newest = newestServerId(messages);
   const local: ConversationMessage[] = [];
   for (const row of state.messages) {
-    if (row.id >= 0 || row.conversationId !== conversationId || !row.clientKey || claimed.has(row.clientKey)) continue;
-    const match = messages.find((item) => !item.clientKey && item.sender.id === me && item.content === row.content);
+    if (row.conversationId !== conversationId || !row.clientKey) continue;
+    if (row.id > 0) {
+      if (reachesPresent && row.id > newest && sentKeys.get(row.id) === row.clientKey) local.push(row);
+      continue;
+    }
+    if (claimed.has(row.clientKey)) continue;
+    const after = unsent.get(row.clientKey)?.after || 0;
+    const match = messages.find((item) => !item.clientKey && item.id > after
+      && item.sender.id === me && item.content === row.content);
     if (match && row.pending) {
       sentKeys.set(match.id, row.clientKey);
       match.clientKey = row.clientKey;
@@ -501,13 +702,19 @@ function withLocalRows(conversationId: number, page: ConversationMessage[]): Con
     }
     local.push(row);
   }
-  return messages.concat(local);
+  return messages.concat(local.sort(transcriptOrder));
+}
+
+/** The newest message the server has given these rows, or 0. */
+function newestServerId(rows: ConversationMessage[]): number {
+  return rows.reduce((top, item) => Math.max(top, item.id), 0);
 }
 
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
   await loadThread(conversationId, true);
   if (state.route.conversationId !== conversationId) return;
-  if (state.threadError === 'This conversation is no longer available.') {
+  // The reload answered 404: read from state, not from the sentence shown.
+  if (state.threadGone === 'missing') {
     await finishDirectBlock(conversationId);
   }
 }
@@ -528,9 +735,9 @@ export async function loadNewer(): Promise<void> {
     const messages = [...state.messages, ...newer].sort(transcriptOrder);
     publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
     const last = newestMainId(messages);
-    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last);
+    if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
   }
 }
 
@@ -557,7 +764,7 @@ export async function loadOlder(): Promise<void> {
       loadingOlder: false,
     });
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load older messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
   }
 }
 
@@ -624,6 +831,9 @@ export function route(
     route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
     thread: null,
     nextAfter: null,
+    // A conversation opened again is read afresh: its "New" line was the
+    // last visit's (loadThread takes the next one).
+    unreadMark: null,
     threadError: null,
     discussionError: null,
     // The previous thread's app, if there was one. Held until the next one
@@ -715,15 +925,27 @@ function validSlug(slug?: string | null): string | null {
 export async function loadDiscussion(slug: string): Promise<void> {
   const want = validSlug(slug);
   if (!want) return;
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('app_discussion', { appSlug: want });
+  const attemptId = telemetry?.attempt?.('app_discussion_load', {
+    screen: 'app_discussion', appSlug: want, timeoutMs: 10_000, abandonOnHide: true,
+  });
+  let errorCode = 'network';
   try {
-    const response = await fetch(`/api/apps/${encodeURIComponent(want)}`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // `manifest=summary`: the same address AppView and the Improve target read,
+    // so the service worker's cached copy is shared rather than kept twice;
+    // nothing here reads the manifest's declared tests or platform env.
+    const response = await fetch(`/api/apps/${encodeURIComponent(want)}?manifest=summary`);
+    if (!response.ok) {
+      errorCode = telemetry?.errorCodeFor?.(response.status) || 'unavailable';
+      throw new Error(`HTTP ${response.status}`);
+    }
     const data = await response.json().catch(() => null);
     const app = (data && (data.app || data)) || null;
-    if (!app || !app.slug) throw new Error('No such app');
+    if (!app || !app.slug) { errorCode = 'invalid_response'; throw new Error('No such app'); }
     // A slower request for a thread the reader has already left must not
     // paint over the one they are looking at.
-    if (state.route.appSlug !== want) return;
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     publish({
       discussionContext: {
         slug: app.slug,
@@ -741,9 +963,11 @@ export async function loadDiscussion(slug: string): Promise<void> {
       },
       discussionError: null,
     });
+    telemetry?.outcome?.(attemptId, 'success');
   } catch {
-    if (state.route.appSlug !== want) return;
-    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+    if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
+    telemetry?.outcome?.(attemptId, 'failure', { errorCode });
+    publish({ discussionContext: null, discussionError: t('messages:store.error.discussion') });
   }
 }
 
@@ -753,13 +977,66 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
+  pendingAttach = null;
   replyThreadRequest += 1;
   unreadHold = null;
   publish({
     route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
     active: null, messages: [], loadingThread: false, threadError: null,
-    discussionContext: null, discussionError: null, thread: null, nextAfter: null,
+    discussionContext: null, discussionError: null, thread: null, nextAfter: null, unreadMark: null,
   });
+}
+
+/**
+ * #3494: a conversation open IN ITS COMMUNITY'S PAGE rather than on this
+ * screen. #general is the Homeroom community's channel, and Homeroom's
+ * Discussion tab mounts it in place (ConversationThread, `embedded`) the way
+ * any other project's tab mounts its own chat, so the page keeps its header
+ * and its tabs. It is the same thread, drafts and realtime included — the
+ * store has one route, so the page takes it and the Messages screen shows
+ * none while it does (MessagesScreen).
+ *
+ * `open` stays false: this screen's chrome, Back and the router all ask
+ * whether Messages is ON SCREEN, and it is not. Any route here takes the
+ * store back (route() never short-circuits an embedded route), and the page
+ * gives it back when it leaves the screen (release).
+ */
+export function embed(
+  conversationId: number,
+  at: { threadRootId?: number | null; focusMessageId?: number | null } | null = null,
+): void {
+  if (!validId(conversationId) || state.route.open) return;
+  // #3653: a door into the room can name a place in it — a reply thread to
+  // open beside it, or a message to land on — as its addresses here do.
+  const askedRoot = at?.threadRootId;
+  const askedFocus = at?.focusMessageId;
+  const root = validId(askedRoot) ? askedRoot : null;
+  const focus = validId(askedFocus) ? askedFocus : null;
+  if (state.route.embedded && state.route.conversationId === conversationId) {
+    // Already in place: the room stays, and moves to what the door names.
+    if (root && state.route.threadRootId !== root) {
+      publish({ thread: null, route: { ...state.route, threadRootId: root } });
+    }
+    if (focus && state.route.focusMessageId !== focus) {
+      focusLoaded = null;
+      publish({ route: { ...state.route, focusMessageId: focus } });
+      void loadThread(conversationId);
+    }
+    return;
+  }
+  focusLoaded = null;
+  unreadHold = null;
+  publish({
+    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus },
+    thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null, unreadMark: null,
+  });
+  void loadConversations();
+  void loadThread(conversationId);
+}
+
+/** The page is leaving: close the room it embedded, unless Messages has since taken the store. */
+export function release(conversationId: number): void {
+  if (state.route.embedded && state.route.conversationId === conversationId) close();
 }
 
 export function isOpen(): boolean {
@@ -768,14 +1045,18 @@ export function isOpen(): boolean {
 
 export function handleBack(): boolean {
   const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
-  if (!state.route.open || !onThread || !isMobile()) return false;
+  if (!state.route.open || !onThread || !listAside()) return false;
   // A CHANNEL is not a level of this list: it is its community's room, and
   // its way back is that community's hub, which the header's arrow names
   // (syncChrome). Declining leaves the press to follow it.
   if (!state.route.threadRootId && channelHub()) return false;
+  // #4229: wider than a phone a channel's reply thread sits beside it, and
+  // the arrow still names the hub.
+  if (!isMobile() && channelHub()) return false;
   // #2387: on a phone a reply thread is a level of its own over the
-  // conversation, so Back closes it first.
-  if (state.route.threadRootId) {
+  // conversation, so Back closes it first. Wider than a phone it sits beside
+  // its chat, and the arrow goes to the list (#4229).
+  if (state.route.threadRootId && isMobile()) {
     const parent = state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`;
@@ -799,6 +1080,31 @@ export function isMobile(): boolean {
 }
 
 /**
+ * #4229: the narrowest strip an open conversation still reads well beside the
+ * list in: the list column (22rem and its 8px) plus the sheet's margins
+ * (8px and 12px) plus a 480px sheet, the width its cards are drawn at.
+ */
+export const LIST_BESIDE_MIN_WIDTH = 860;
+
+/**
+ * The strip's width, from the screen's ResizeObserver (#4229). It is the
+ * strip's own width rather than the window's, so folding the platform rail
+ * counts. A hidden screen measures 0 and changes nothing.
+ */
+export function measureLayout(width: number): void {
+  if (!(width > 0)) return;
+  const crowded = !isMobile() && width < LIST_BESIDE_MIN_WIDTH;
+  if (crowded === state.listCrowded) return;
+  publish({ listCrowded: crowded });
+  if (state.route.open) syncChrome();
+}
+
+/** One pane at a time: a phone, or a strip too narrow for both (#4229). */
+function listAside(): boolean {
+  return isMobile() || state.listCrowded;
+}
+
+/**
  * The hub a CHANNEL on screen belongs to, or null when the route is not a
  * channel. A project's channel (`#messages/app/<slug>`) is its own hub's;
  * #general (a conversation of kind `channel`) is the Homeroom community's,
@@ -816,10 +1122,22 @@ export function channelHub(): string | null {
     ? state.active
     : state.conversations.find((item) => item.id === id) || null;
   if (!row || row.kind !== 'channel') return null;
-  const platform = (typeof window !== 'undefined'
-    ? (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.()
-    : null) || null;
+  // The same read the pane's own disc draws from (channel-hub.ts), so the
+  // header's arrow and the disc name one hub.
+  const platform = typeof window !== 'undefined' ? platformSlug() : null;
   return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+}
+
+/**
+ * #general's hub is found late on a cold load (#3407): the platform's slug
+ * lands after the header was set, and the disc in the pane hears it through
+ * PlatformTarget.onSlug. This keeps the header's arrow hearing the same
+ * thing, so the two never point at different places. Returns the
+ * unsubscribe; the screen holds it for as long as it is mounted.
+ */
+export function followPlatformSlug(): () => void {
+  // #3653: and once it is known, a channel on screen goes to that hub's tab.
+  return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
 export function syncChrome(): void {
@@ -835,7 +1153,7 @@ export function syncChrome(): void {
   if (hub && !(isMobile() && state.route.threadRootId)) {
     app.setBackIcon?.('arrow', hub);
     app.setHeaderTitle?.(state.route.appSlug
-      ? state.discussionContext?.name || 'Channel'
+      ? state.discussionContext?.name || t('messages:store.header.channel')
       : `#${chromeTitle(state.active)}`);
     return;
   }
@@ -844,14 +1162,16 @@ export function syncChrome(): void {
   // where the list is still beside it. It used to be a route into #app-view,
   // which is why backing out of one landed wherever that screen's slot
   // pointed — the Workshop, when that is where the app had been opened from.
-  const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  // #4229: and on a strip too narrow for the list beside it, where the list
+  // has stepped aside just as it does on a phone.
+  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".
   if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
     app.setBackIcon?.('arrow', state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`);
-    app.setHeaderTitle?.('Thread');
+    app.setHeaderTitle?.(t('messages:store.header.thread'));
     return;
   }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
@@ -862,9 +1182,9 @@ export function syncChrome(): void {
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
-      ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : chromeTitle(state.active))
-    : 'Messages');
+      ? state.discussionContext?.name || t('messages:store.header.discussion')
+      : state.route.agent ? t('messages:store.header.messages') : chromeTitle(state.active))
+    : t('messages:store.header.messages'));
 }
 
 /**
@@ -874,11 +1194,11 @@ export function syncChrome(): void {
  * so it takes its requester's name instead, as its header and row do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
-  if (!active) return 'Messages';
+  if (!active) return t('messages:store.header.messages');
   if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
     return active.requester.username;
   }
-  return active.title || 'Messages';
+  return active.title || t('messages:store.header.messages');
 }
 
 /**
@@ -899,12 +1219,113 @@ function sidePanelTakes(target: string): boolean {
   }
 }
 
+/**
+ * #3653: a channel's address — an app's, or #general's — while its project
+ * page is the page on screen: the page turns to its Discussion tab, at the
+ * place the address names, instead of a second address for the page the
+ * reader is already on (App._discussionInPlace). False whenever that is not
+ * the moment, and the caller navigates, which the router takes to the tab.
+ */
+function turnsPageInPlace(href: string): boolean {
+  try {
+    return !!(window as { App?: { _discussionInPlace?: (href: string) => boolean } }).App?._discussionInPlace?.(href);
+  } catch {
+    return false;
+  }
+}
+
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
+}
+
+/**
+ * B8: open the signed-in person's chat with Homeroom bot, from any door that
+ * says "ask Homeroom bot". It is made the first time; until the server
+ * answers, Messages opens on its list.
+ */
+export async function openBot(reference?: StagedObject | null): Promise<void> {
+  let id: number | null = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  if (!id) {
+    try { id = await api.openBotConversation(); } catch { id = null; }
+  }
+  // B8: a change to write about ("Ask for changes"). One that names its
+  // project and itself is attached on the composer as it is, with the caret
+  // in the box and the box asking what should change: no dialog to fill in
+  // (the change page knows both). Anything less is chosen in the Share item
+  // dialog, as Share stages one (see share below).
+  const attach = !!id && !!reference && stagedComplete(reference);
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
+  else if (reference) pendingShare = reference;
+  const already = !!id && state.route.conversationId === id;
+  open(id);
+  if (reference && already && typeof window !== 'undefined') {
+    if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
+    else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
+  }
+}
+
+/** What the composer's box asks once Ask for changes has attached a change. */
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'messages:store.askForChangesPlaceholder';
+
+/** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
+export function stagedComplete(reference: SharedObjectReference): boolean {
+  const app = validId(reference.appId) || (typeof reference.appSlug === 'string' && reference.appSlug.trim() !== '');
+  if (!app) return false;
+  if (reference.type === 'app') return true;
+  if (reference.type === 'issue') return validId(reference.issueNumber);
+  if (reference.type === 'governance') return validId(reference.proposalId);
+  if (reference.type === 'spec') return validId(reference.sessionId) && validId(reference.version);
+  return validId(reference.sessionId);
+}
+
+/**
+ * The change Ask for changes staged for `conversationId`'s composer, once:
+ * null for any other conversation, which leaves it waiting for its own.
+ */
+export function takePendingAttach(conversationId: number): { object: StagedObject; placeholder: string } | null {
+  if (!pendingAttach || pendingAttach.conversationId !== conversationId) return null;
+  const { object, placeholder } = pendingAttach;
+  pendingAttach = null;
+  return { object, placeholder };
+}
+
+// B6: a message of the bot's to quote in the composer once its chat has
+// loaded: the App tab's Change something, under a first version's plan.
+let pendingQuote: { conversationId: number; messageId: number } | null = null;
+
+/**
+ * B6: open the chat with Homeroom bot with one of its messages quoted in the
+ * composer, as a reply to it, and the caret after it. A message not in the
+ * chat's newest page is not quoted: the chat still opens.
+ */
+export async function quoteBotMessage(conversationId?: number | null, messageId?: number | null): Promise<void> {
+  let id: number | null = validId(conversationId) ? Number(conversationId) : null;
+  if (!id) id = state.conversations.find((item) => item.homeroomBot)?.id || null;
+  if (!id) {
+    try { id = await api.openBotConversation(); } catch { id = null; }
+  }
+  pendingQuote = id && validId(messageId) ? { conversationId: id, messageId: Number(messageId) } : null;
+  open(id);
+  applyPendingQuote();
+}
+
+/** Quote the pending message once its chat is the one on screen with it loaded. */
+function applyPendingQuote(): void {
+  const wanted = pendingQuote;
+  if (!wanted || state.route.conversationId !== wanted.conversationId || state.active?.id !== wanted.conversationId) return;
+  pendingQuote = null;
+  const message = state.messages.find((item) => item.id === wanted.messageId);
+  if (!message) return;
+  setReply(scopeKey(wanted.conversationId, null), message);
+  if (typeof window !== 'undefined') {
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
+    });
+  }
 }
 
 /** The app-channel message link last revealed (see revealAppFocus). */
@@ -920,6 +1341,7 @@ let revealedAppFocus: string | null = null;
  */
 export function openAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (turnsPageInPlace(href)) return;
   if (sidePanelTakes(href)) return;
   if (window.location.hash !== href) { window.location.hash = href; return; }
   revealedAppFocus = null;
@@ -949,6 +1371,7 @@ export function openDiscussion(slug: string): void {
   const safe = validSlug(slug);
   if (!safe) return;
   const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (turnsPageInPlace(target)) return;
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
   else window.location.hash = target;
@@ -1017,8 +1440,8 @@ export async function renameConversation(title: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   const next = title.trim().replace(/\s+/g, ' ');
-  if (!next) throw new Error('A group needs a name.');
-  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (!next) throw new Error(t('messages:store.error.groupNeedsName'));
+  if (next.length > 80) throw new Error(t('messages:store.error.groupNameTooLong'));
   if (next === state.active?.title) return;
   try {
     upsertConversation(await api.updateConversation(id, { title: next }));
@@ -1119,15 +1542,115 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
   publish({});
 }
 
+/**
+ * One request, one story: the request thread a bot message belongs to in the
+ * chat with Homeroom bot (a reply's root), or null: the main stream, and
+ * any chat that keeps no threads (bot-shared.ts threadsAllowed).
+ */
+function botThreadOf(message: ConversationMessage): number | null {
+  if (!message.sender.bot || !threadsAllowed(state.active) || state.active?.kind !== 'direct') return null;
+  return validId(message.threadRootId) ? message.threadRootId as number : null;
+}
+
+/**
+ * Quote a bot message in the composer and put the caret there, for an
+ * answer of one's own (Write my own, Change something, a `reply` button).
+ * A message in a request's thread is quoted in that thread's composer, the
+ * thread opened beside the chat first when it is not the one open.
+ */
+export function quoteInComposer(message: ConversationMessage, conversationId: number): void {
+  const rootId = conversationId === state.route.conversationId ? botThreadOf(message) : null;
+  setReply(scopeKey(conversationId, rootId), message);
+  if (rootId && state.route.threadRootId !== rootId) openThread(rootId);
+  if (typeof window === 'undefined') return;
+  // The thread's composer is drawn once its pane is: look for it a few frames.
+  const selector = rootId ? '.messages-reply-pane .messages-composer-input' : '.messages-composer-input';
+  let tries = 10;
+  const focus = () => {
+    const input = document.querySelector<HTMLTextAreaElement>(selector);
+    if (input) { input.focus({ preventScroll: true }); return; }
+    tries -= 1;
+    if (tries > 0) window.requestAnimationFrame(focus);
+  };
+  window.requestAnimationFrame(focus);
+}
+
+/**
+ * #3624: answer the Homeroom bot's question with one of its suggested
+ * answers. Sent as an ordinary message quoting the question, which is how
+ * the server knows which request it answers; whatever the person had
+ * typed, and any other reply they had staged, is left as it was.
+ */
+export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId || conversationId !== question.conversationId) return;
+  // One request, one story: the answer goes in the request's thread,
+  // whether it was tapped there or on the moment the main chat also shows.
+  const rootId = botThreadOf(question);
+  const scope = scopeKey(conversationId, rootId);
+  const draft = draftFor(scope);
+  const staged = replyFor(scope);
+  replyTargets.set(scope, question);
+  const sending = send({ content: answer, threadRootId: rootId, anyThread: true });
+  if (draft) setDraft(scope, draft);
+  if (staged && staged.id !== question.id) setReply(scope, staged);
+  await sending;
+}
+
+/**
+ * B3: press one of a bot message's buttons (types.ts HomeroomBotAction).
+ * A `server` one is decided once on the server (api.decideBotAction), which
+ * updates the message on every device; `prompt` sends its words as the
+ * person's own message, quoting nothing; `open` goes to its in-app address,
+ * a project's app the way the shell opens one (bot-shared.ts openAppTarget).
+ * Rejects when a `server` press was refused (a 409: decided already).
+ */
+export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
+  if (action.type === 'open') {
+    openAppTarget(action.target);
+    return;
+  }
+  if (action.type === 'prompt') {
+    const conversationId = state.route.conversationId;
+    if (!conversationId || conversationId !== message.conversationId) return;
+    // In the chat with Homeroom bot, a button on a message in a request's
+    // thread says its words in that thread.
+    const rootId = botThreadOf(message);
+    const scope = scopeKey(conversationId, rootId);
+    const staged = replyFor(scope);
+    // A `quote` prompt replies to the message it sits on, so it is about what
+    // that message is about; any other is sent on its own. Either way a
+    // reply they had staged is theirs again after.
+    if (action.quote) setReply(scope, message);
+    else if (staged) setReply(scope, null);
+    const sending = send({ content: action.label, threadRootId: rootId, anyThread: true });
+    if (action.quote || staged) setReply(scope, staged || null);
+    await sending;
+    return;
+  }
+  const actionId = message.metadata?.homeroomBot?.actionId;
+  if (!actionId) throw new Error('This choice has nothing to decide');
+  await api.decideBotAction(actionId, action.id);
+}
+
 function idempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null }): Promise<void> {
+export async function send(input: {
+  content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null;
+  /**
+   * Send into `threadRootId`'s thread even when it is not the one open: an
+   * answer tapped on a moment the chat with Homeroom bot also shows in its
+   * main stream goes in its request's thread (answerBotQuestion).
+   */
+  anyThread?: boolean;
+}): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const threadRootId = input.threadRootId && state.thread?.rootId === input.threadRootId ? input.threadRootId : null;
+  const open = !!input.threadRootId && state.thread?.rootId === input.threadRootId;
+  const threadRootId = input.threadRootId && (open || (input.anyThread && validId(input.threadRootId))) ? input.threadRootId : null;
   const scope = scopeKey(conversationId, threadRootId);
   const content = input.content.slice(0, 8000);
   const reply = replyFor(scope);
@@ -1151,11 +1674,14 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
     threadRootId,
   };
-  unsent.set(pending.idempotencyKey, { conversationId, payload: pending });
+  unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
   setDraft(scope, '');
   setReply(scope, null);
-  if (threadRootId && state.thread) {
+  if (threadRootId && open && state.thread) {
     publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
+  } else if (threadRootId) {
+    // Into a thread that is not open: drawn in that thread once it lands,
+    // and the row it answers says so meanwhile (its own pressed state).
   } else {
     publish({ messages: [...state.messages, optimistic], threadError: null });
     // Sending from a linked window part-way back (#2387) goes to the present,
@@ -1213,7 +1739,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     publish({
       online: !offline,
       messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
+      threadError: offline ? t('messages:store.error.queued') : errorMessage(error, t('messages:store.error.send')),
     });
   }
 }
@@ -1247,9 +1773,15 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
         thread: {
           ...thread,
           messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, 'Your reply wasn’t sent.'),
+          error: errorMessage(error, t('messages:store.error.sendReply')),
         },
       });
+    } else if (state.route.conversationId === conversationId) {
+      // Sent into a thread that is not open (send `anyThread`): it has no
+      // row of its own to fail on, so the conversation says it.
+      unsent.delete(key);
+      publish({ threadError: errorMessage(error, t('messages:store.error.sendReply')) });
+      throw error;
     }
   }
 }
@@ -1367,9 +1899,17 @@ export async function markUnread(messageId: number): Promise<void> {
   if (!conversationId) return;
   const { unreadCount } = await api.markUnread(conversationId, messageId);
   unreadHold = conversationId;
-  publish({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item) });
+  publish({
+    conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item),
+    // The "New" line moves to the message, as the reader asked: the first
+    // unread is now the first message from somebody else at or after it.
+    ...(unreadCount > 0 && state.route.conversationId === conversationId
+      ? { unreadMark: { conversationId, lastReadId: messageId - 1, count: unreadCount } }
+      : {}),
+  });
   void loadConversations(true);
-  if (isMobile()) open(null);
+  // Not from a community's page (#3494): there is no list there to return to.
+  if (isMobile() && !state.route.embedded) open(null);
 }
 
 /** The address a message link opens (#2387): the conversation, scrolled to it. */
@@ -1382,13 +1922,51 @@ export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
 }
 
+/**
+ * Open a request's thread at one of its messages (the strip's buttons, a
+ * news line in the chat with Homeroom bot): the thread pane scrolls to it
+ * and flashes it (`threadFocusId`). Without a root it opens the message
+ * itself, wherever it is, by its link.
+ */
+export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
+  const conversationId = state.route.conversationId;
+  if (typeof window === 'undefined' || !conversationId) return;
+  if (!validId(rootId)) {
+    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
+    return;
+  }
+  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
+  openThread(rootId);
+}
+
+/** The thread pane has shown the message it was opened at. */
+export function clearThreadFocus(): void {
+  if (state.threadFocusId) publish({ threadFocusId: null });
+}
+
 /** Open the thread that hangs off a message of the open conversation. */
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  // #3494: in its community's page the thread opens beside the room there,
+  // with no address of its own: the page's address is the page's.
+  if (state.route.embedded) {
+    if (state.route.threadRootId !== rootId) publish({ thread: null, route: { ...state.route, threadRootId: rootId } });
+    return;
+  }
   const target = threadAddress(conversationId, rootId);
   if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
   else window.location.hash = target;
+}
+
+/**
+ * #3701: is a reply thread open beside `conversationId`'s room in its
+ * community's page (#general on Homeroom's)? The Communities tab pressed
+ * while it is lit closes it before it goes any higher
+ * (features/workshop/tab-ladder.ts).
+ */
+export function embeddedThreadOpen(conversationId: number): boolean {
+  return !!state.route.embedded && state.route.conversationId === conversationId && !!state.route.threadRootId;
 }
 
 /** Close the thread beside the conversation, keeping the conversation open. */
@@ -1396,7 +1974,7 @@ export function closeThread(): void {
   const conversationId = state.route.conversationId;
   replyThreadRequest += 1;
   publish({ thread: null, route: { ...state.route, threadRootId: null } });
-  if (typeof window === 'undefined' || !conversationId) return;
+  if (typeof window === 'undefined' || !conversationId || state.route.embedded) return;
   const target = `#messages/${conversationId}`;
   if (window.location.hash !== target) {
     try { history.replaceState(null, '', target); } catch { window.location.hash = target; }
@@ -1419,8 +1997,20 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
   });
   try {
-    const page = await api.listThread(conversationId, rootId);
+    // Forced: a re-read after a change, from the server (see loadThread).
+    const page = await api.listThread(conversationId, rootId, null, { fresh: force });
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
+    if (page.root?.id && page.root.id !== rootId) {
+      // In its community's page the thread has no address of its own
+      // (#3653): it moves to its canonical root in place.
+      if (state.route.embedded) {
+        publish({ thread: null, route: { ...state.route, threadRootId: page.root.id } });
+        void loadReplyThread(conversationId, page.root.id);
+        return;
+      }
+      openAddress(threadAddress(conversationId, page.root.id));
+      return;
+    }
     const local = (state.thread?.messages || []).filter((item) => item.id < 0 && item.threadRootId === rootId
       && !page.messages.some((row) => row.sender.id === item.sender.id && row.content === item.content));
     const known = page.messages.map((item) => {
@@ -1435,12 +2025,19 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       },
     });
     const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
-    if (newest) void markThreadRead(conversationId, rootId, newest);
+    if (newest) {
+      readWhenThere(`thread:${conversationId}:${rootId}`, conversationId, () => {
+        // The newest reply drawn when they are back, in the thread still open.
+        if (state.thread?.conversationId !== conversationId || state.thread.rootId !== rootId) return;
+        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), 0);
+        if (now > 0) void markThreadRead(conversationId, rootId, now);
+      });
+    }
   } catch (error) {
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
     publish({
-      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, t('messages:store.error.loadReplies')) } : null,
     });
   }
 }
@@ -1465,7 +2062,7 @@ export async function loadOlderReplies(): Promise<void> {
     });
   } catch (error) {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
   }
 }
 
@@ -1531,6 +2128,70 @@ async function markThreadRead(conversationId: number, rootId: number, replyId: n
   try { await api.markRead(conversationId, replyId); } catch { /* the next open reads it again */ }
 }
 
+/**
+ * A MESSAGE IS READ WHEN SOMEBODY IS THERE TO READ IT (5 October, Page
+ * Turners). A conversation open on screen used to be read up to its newest
+ * message the moment one landed, whoever was looking: a background tab, an
+ * app whose socket outlived the screen, a phone left on the table. Alex
+ * approved his first version from his chat with Homeroom bot and put the
+ * phone down; "Page Turners is live" landed in that open chat four minutes
+ * later and was read on the spot, which cleared its bell row and the
+ * Messages badge (both read off the same cursor,
+ * services/conversations.js markRead) before he ever looked.
+ *
+ * Now a read waits while the page is hidden or nobody has touched it for
+ * PRESENCE_MS, and happens when they are back: their next touch, key,
+ * scroll or return to the page (initializeMessagesStore), if that
+ * conversation is still on screen and not marked unread. Opening a
+ * conversation is touching the page, so an open still reads at once; a
+ * conversation left before they came back stays unread, as it should.
+ */
+const PRESENCE_MS = 2 * 60 * 1000;
+let lastPresence = Date.now();
+const heldReads = new Map<string, { conversationId: number; read: () => void }>();
+
+function pageHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+function someoneThere(): boolean {
+  return !pageHidden() && Date.now() - lastPresence < PRESENCE_MS;
+}
+
+/** Run `read` now if somebody is there, or when they are back (notePresence). The newest wins per `key`. */
+function readWhenThere(key: string, conversationId: number, read: () => void): void {
+  if (someoneThere()) {
+    heldReads.delete(key);
+    read();
+    return;
+  }
+  heldReads.set(key, { conversationId, read });
+}
+
+/** The open conversation read up to its newest message drawn, then. */
+function readMainWhenThere(conversationId: number): void {
+  readWhenThere(`main:${conversationId}`, conversationId, () => {
+    if (state.route.conversationId !== conversationId || state.nextAfter) return;
+    const last = newestMainId(state.messages);
+    if (last) void markRead(last);
+  });
+}
+
+/**
+ * Somebody used the page (or came back to it): reads that waited for them
+ * happen now, for the conversation still on screen.
+ */
+export function notePresence(): void {
+  if (pageHidden()) return;
+  lastPresence = Date.now();
+  if (!heldReads.size) return;
+  const held = [...heldReads.values()];
+  heldReads.clear();
+  for (const item of held) {
+    if (onScreen(item.conversationId) && unreadHold !== item.conversationId) item.read();
+  }
+}
+
 export async function markRead(messageId: number): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
@@ -1542,6 +2203,49 @@ export async function markRead(messageId: number): Promise<void> {
 
 function eventConversationId(event: ConversationEvent): number | null {
   return api.strictId(event.conversationId ?? event.conversation_id);
+}
+
+/** Is this conversation's thread drawn — on this screen, or in its community's page (#3494)? */
+function onScreen(conversationId: number): boolean {
+  return showing() && state.route.conversationId === conversationId;
+}
+
+/** Is anything of this store's on screen: the Messages screen, or a room embedded in its community's page? */
+function showing(): boolean {
+  return state.route.open || !!state.route.embedded;
+}
+
+/**
+ * Re-read everything this store draws, from the server (#3705): the inbox
+ * and, when one is on screen, the conversation and the thread open beside it.
+ *
+ * Two callers, both of which used to stop at the inbox. A reconnect of the
+ * events socket (App.resyncCurrentView): a message that arrived while it was
+ * down — a phone locked, a network handed over — had its event dropped, and
+ * the conversation open in front of the reader never read it. And the service
+ * worker's late-answer correction (App.refreshActiveScreen): a conversation
+ * opened on a slow link is drawn from the worker's offline copy after a
+ * second, and the worker's word that the server has since said otherwise had
+ * nothing on this screen listening to it.
+ *
+ * #8 (WP3): and, in the Homeroom bot's DM, its activity tray and cards
+ * (./bot-work.tsx, ./bot-activity-store.ts): their reads are the worker's to
+ * correct too, and the header's status line read from a stale copy said
+ * "Working on…" for work long done. Through the window event both already
+ * re-read on, fresh: this module cannot import them, since the cards' store
+ * imports this one.
+ */
+export async function resync(): Promise<void> {
+  void loadAppDiscussions();
+  const reads = [loadConversations(true)];
+  const conversationId = state.route.conversationId;
+  if (conversationId && onScreen(conversationId)) {
+    reads.push(loadThread(conversationId, true));
+    const rootId = state.route.threadRootId;
+    if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
+    if (typeof window !== 'undefined' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(WORK_CHANGED_EVENT));
+  }
+  await Promise.all(reads);
 }
 
 export function handleEvent(raw: ConversationEvent): void {
@@ -1557,8 +2261,18 @@ export function handleEvent(raw: ConversationEvent): void {
       // one open, and the conversation either way — the reply count on the
       // message the thread hangs off is the conversation's to draw.
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
-      if (state.route.open && state.route.conversationId === conversationId) {
-        void loadThread(conversationId, true);
+      if (onScreen(conversationId)) {
+        const load = loadThread(conversationId, true);
+        if (event.type === 'conversation_message_created') {
+          landing.set(conversationId, (landing.get(conversationId) || 0) + 1);
+          const landed = () => {
+            const left = (landing.get(conversationId) || 1) - 1;
+            if (left > 0) { landing.set(conversationId, left); return; }
+            landing.delete(conversationId);
+            releaseHeldTyping(conversationId);
+          };
+          void load.then(landed, landed);
+        }
         if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
@@ -1569,7 +2283,7 @@ export function handleEvent(raw: ConversationEvent): void {
       if (!messageId) break;
       // Like message create/edit, reaction realtime is intentionally id-only.
       // Rehydrate under this viewer's current membership/block permissions.
-      if (state.route.open && state.route.conversationId === conversationId) {
+      if (onScreen(conversationId)) {
         void loadThread(conversationId, true);
         // A reply in the open thread pane (#2387), or its first message.
         const thread = state.thread;
@@ -1607,23 +2321,52 @@ export function handleEvent(raw: ConversationEvent): void {
       const userId = api.strictId(event.userId ?? event.user_id);
       // The wire event carries no profile data. Resolve the active member
       // locally so a typing event cannot smuggle a stale/unauthorized name.
-      const username = state.active?.id === conversationId
-        ? state.active.members.find((member) => member.id === userId && member.status === 'member')?.username || ''
-        : '';
+      const typist = state.active?.id === conversationId
+        ? state.active.members.find((member) => member.id === userId && member.status === 'member') || null
+        : null;
+      const username = typist?.username || '';
+      // B5: the bot types as its name, "Homeroom bot is typing…".
+      const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
+        ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = new Set(state.typing[conversationId] || []);
+      const current = state.typing[conversationId] || [];
       const expiryKey = `${conversationId}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
-      if (event.typing === false) current.delete(username); else current.add(username);
-      publish({ typing: { ...state.typing, [conversationId]: [...current] } });
+      heldTyping.delete(expiryKey);
+      const shown = botPeer || username;
+      const isShown = current.some((entry) => entry.name === shown);
+      // #4220: a stop while the message it typed is still being read keeps
+      // the line until that read publishes (releaseHeldTyping), or the cap.
+      if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
+        heldTyping.set(expiryKey, { conversationId, shown });
+        typingExpiry.set(expiryKey, window.setTimeout(() => {
+          typingExpiry.delete(expiryKey);
+          heldTyping.delete(expiryKey);
+          dropTyping(conversationId, shown);
+        }, TYPING_HOLD_MS));
+        break;
+      }
+      const holdersKey = `${conversationId}:${shown}`;
+      let next: Typist[];
+      if (event.typing === false) {
+        // The word leaves the line, and with it everybody typing under it.
+        typingHolders.delete(holdersKey);
+        next = current.filter((entry) => entry.name !== shown);
+      } else {
+        const holders = typingHolders.get(holdersKey) || new Map<number, boolean>();
+        holders.set(userId, !botPeer && !!typist?.unnamed);
+        typingHolders.set(holdersKey, holders);
+        // The stand-in only while every holder is nameless: a real account under the same word is named.
+        const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
+        next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
+      }
+      publish({ typing: { ...state.typing, [conversationId]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          const next = new Set(state.typing[conversationId] || []);
-          if (!next.delete(username)) return;
-          publish({ typing: { ...state.typing, [conversationId]: [...next] } });
+          dropTyping(conversationId, shown);
         }, 6000));
       }
       break;
@@ -1631,7 +2374,28 @@ export function handleEvent(raw: ConversationEvent): void {
   }
 }
 
-export function typingUsers(conversationId: number): string[] {
+function dropTyping(conversationId: number, shown: string): void {
+  const now = state.typing[conversationId] || [];
+  const next = now.filter((entry) => entry.name !== shown);
+  if (next.length === now.length) return;
+  typingHolders.delete(`${conversationId}:${shown}`);
+  publish({ typing: { ...state.typing, [conversationId]: next } });
+}
+
+/** #4220: the message the held names were typing has been drawn. */
+function releaseHeldTyping(conversationId: number): void {
+  for (const [key, held] of [...heldTyping]) {
+    if (held.conversationId !== conversationId) continue;
+    heldTyping.delete(key);
+    const timer = typingExpiry.get(key);
+    if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
+    typingExpiry.delete(key);
+    dropTyping(conversationId, held.shown);
+  }
+}
+
+/** The names on a conversation's typing line, in the order they came. */
+export function typingUsers(conversationId: number): Typist[] {
   return state.typing[conversationId] || [];
 }
 
@@ -1664,6 +2428,34 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
   }
 }
 
+/**
+ * #3660: a card posted straight into a conversation from outside it — the
+ * Share to… dialog (./share-to-dialog.tsx) — with the sharer's note as its
+ * words. Not `send()`, which writes into whichever conversation is open:
+ * this one names its destination. The server checks the sharer can see the
+ * card, and each reader's view of it, exactly as for a card shared from the
+ * composer. When that conversation is the one on screen the message is
+ * drawn at once, as the composer's own send draws it; either way the inbox
+ * is re-read so the conversation moves to the top.
+ */
+export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
+  if (!validId(conversationId)) throw new Error(t('messages:store.error.chooseConversation'));
+  const message = await api.sendMessage(conversationId, {
+    content: note.trim().slice(0, 8000),
+    object,
+    idempotencyKey: idempotencyKey(),
+  });
+  if (state.route.conversationId === conversationId && message.id > 0) {
+    publish({
+      messages: state.messages
+        .filter((item) => item.id !== message.id)
+        .concat(message)
+        .sort(transcriptOrder),
+    });
+  }
+  await loadConversations(true);
+}
+
 export function takePendingShare(): SharedObjectReference | null | undefined {
   const value = pendingShare;
   pendingShare = undefined;
@@ -1693,6 +2485,10 @@ function paintSaved(messageId: number, saved: boolean): void {
 
 export const messagesController = {
   open,
+  // B8: the chat with Homeroom bot (app-view.js's doors to it).
+  openBot: (reference?: StagedObject | null) => { void openBot(reference); },
+  // B6: the App tab's Change something, under a first version's plan.
+  quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,
   openDiscussion,
   openThread,
@@ -1703,6 +2499,7 @@ export const messagesController = {
   isOpen,
   handleBack,
   syncChrome,
+  measureLayout,
   handleEvent,
   refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,
@@ -1711,10 +2508,16 @@ export const messagesController = {
   // `#` autocomplete (public/js/group-chat.js), and the link resolver.
   channels,
   openChannel,
+  // #3653: what the router asks before it draws a channel on this screen.
+  channelTarget,
+  channelHubSlug,
   refresh: () => {
     void loadAppDiscussions();
     return loadConversations(true);
   },
+  // #3705: the inbox AND the conversation on screen (see resync).
+  resync,
+  showing,
 };
 
 export function initializeMessagesStore(): () => void {
@@ -1725,6 +2528,17 @@ export function initializeMessagesStore(): () => void {
   const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); };
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+  // 5 October: somebody using the page, or coming back to it, is somebody
+  // there to read what is open (notePresence, readWhenThere). Captured and
+  // passive: it only notes the time, and never stands in a gesture's way.
+  const PRESENCE_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel', 'scroll', 'focus'];
+  const presence = { capture: true, passive: true };
+  const onPresence = () => { notePresence(); };
+  for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
+  document.addEventListener('visibilitychange', onPresence);
+  // The header's title is written from here: say it again in the language on screen.
+  const onLanguage = () => { if (state.route.open) syncChrome(); };
+  document.addEventListener('homeroom:language-changed', onLanguage);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -1737,17 +2551,23 @@ export function initializeMessagesStore(): () => void {
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
   // #2387 / #2967: the two layout preferences, read after mount so the first
-  // render matches the prerendered shell.
+  // render matches the prerendered shell. #4783: the chosen filter is the
+  // third, remembered the same way.
   let listCollapsed = false;
   let showMoreChannels = false;
+  let filter: InboxFilter = 'all';
   try {
     listCollapsed = localStorage.getItem('usernode:messages-list-collapsed') === '1';
     showMoreChannels = localStorage.getItem('usernode:messages-more-channels') === '1';
+    filter = savedInboxFilter(localStorage.getItem('usernode:messages-filter'));
   } catch { /* storage unavailable */ }
-  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels });
+  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels, filter });
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
+    for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
+    document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

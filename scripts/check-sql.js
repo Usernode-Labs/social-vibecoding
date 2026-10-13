@@ -18,12 +18,15 @@ const DYNAMIC_BASELINE = path.join(ROOT, 'sql-dynamic-baseline.json');
 const DEFAULT_CONNECTION_URL = 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const VALIDATION_CONCURRENCY = 8;
 
+// The backend's sources: CommonJS .js, plus the workflow foundation's .ts
+// (src/workflow/, loaded through Node's type stripping).
 function walkJs(dir) {
   const files = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...walkJs(full));
-    else if (entry.isFile() && entry.name.endsWith('.js')) files.push(full);
+    else if (entry.isFile() && (entry.name.endsWith('.js')
+      || (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')))) files.push(full);
   }
   return files;
 }

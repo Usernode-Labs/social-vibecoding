@@ -13,6 +13,7 @@ const path = require('path');
 const http = require('node:http');
 const { execFileSync, spawnSync, spawn } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 const {
   AUTO_COMPACT_TOKEN_LIMIT,
   DEFAULT_BASE_INSTRUCTIONS,
@@ -81,7 +82,7 @@ function makeEnv(run) {
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     MODE: 'scout',
-    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
+    ...RUNNER_TEST_ENV, WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'openai/gpt-5.3-codex',
     AGENT_MODEL_NAME: 'GPT-5.3 Codex via OpenRouter',
@@ -155,6 +156,50 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
   assert.ok(requests.every(r => r.body.model === 'z-ai/glm-5.3-flash'));
   assert.ok(requests.every(r => r.url === '/api/v1/responses'));
   assert.ok(requests.every(r => r.key === 'Bearer sk-or-v1-test'));
+});
+
+// Every shots turn runs on Claude Code through run-cc.sh. The
+// Codex runner has no shots mode, so it refuses one before it touches the
+// workspace, writes a config, or starts Codex.
+test('runner: MODE=shots is refused before anything starts', () => {
+  const { dir, env } = makeEnv('#!/bin/sh\necho "$*" >> "$INVOKE_LOG"\n');
+  try {
+    Object.assign(env, {
+      MODE: 'shots',
+      SHOTS_JWT: 'test-shots-jwt', SHOTS_RUN_ID: '1'.repeat(32),
+      SHOTS_MEMBER_TOKEN: 'member-token',
+    });
+    const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /__USERNODE_ERROR__ shots turns run on Claude Code \(run-cc\.sh\)/);
+    assert.doesNotMatch(r.stdout, /__USERNODE_PHASE__/, 'no phase ran');
+    assert.doesNotMatch(r.stdout + r.stderr, /member-token|test-shots-jwt/);
+    assert.equal(fs.existsSync(env.INVOKE_LOG), false, 'Codex never ran');
+    assert.equal(fs.existsSync(path.join(env.CODEX_HOME, 'config.toml')), false, 'no config was written');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // Nothing of the retired evidence path is left: no origin proxy or browser
+  // bootstrap, no shots bridge, no per-persona browsers, no shots-only
+  // Codex settings. The build turn's intent tool (visible-changes-mcp.js) is
+  // a different server and stays.
+  const source = fs.readFileSync(RUNNER, 'utf8');
+  assert.doesNotMatch(source,
+    /SHOTS_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_shots|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin|browser_guest)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
+  assert.match(source, /args = \["\/usr\/local\/bin\/visible-changes-mcp\.js"\]/);
+});
+
+test('runner: only build and scout are accepted modes', () => {
+  const { dir, env } = makeEnv('#!/bin/sh\necho "$*" >> "$INVOKE_LOG"\n');
+  try {
+    env.MODE = 'sync';
+    const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /__USERNODE_ERROR__ unsupported MODE: sync/);
+    assert.equal(fs.existsSync(env.INVOKE_LOG), false, 'Codex never ran');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('request wrapper forwards Stop to Codex and releases its listener', async t => {
@@ -442,15 +487,15 @@ exit 1
     '',
     '[mcp_servers.playwright]',
     'command = "/usr/local/bin/mcp-server-playwright"',
-    'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json"]',
+    'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json", "--output-dir", "/tmp/usernode-playwright-output"]',
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',
-    '[mcp_servers.visual_intent]',
+    '[mcp_servers.visible_changes]',
     'command = "node"',
-    'args = ["/usr/local/bin/build-evidence-mcp.js"]',
+    'args = ["/usr/local/bin/visible-changes-mcp.js"]',
     'env_vars = ["WORKER_JWT", "SESSION_ID", "PLATFORM_URL"]',
-    'enabled_tools = ["record_visual_evidence_intent"]',
+    'enabled_tools = ["declare_visible_changes", "declare_diagram"]',
     'startup_timeout_sec = 15',
     'tool_timeout_sec = 30',
     '',
@@ -677,7 +722,7 @@ exit 0
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
     SESSION_ID: '1',
-    PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PLATFORM_URL: 'http://platform',
     MODE: 'scout',
     WORKSPACE_DIR: ws,
   };
@@ -770,4 +815,17 @@ test('the reply ceiling is taken from the environment the host already sets', ()
     AGENT_MODEL_MAX_OUTPUT_TOKENS: '12000',
   });
   assert.equal(catalog.models[0].max_output_tokens, 12_000);
+});
+
+test('#3426: the Codex catalog declares image input only for a model that takes images', () => {
+  const modalities = (supportsImages) => buildCodexModelCatalog({ modelId: 'z-ai/glm-5.3-flash', supportsImages })
+    .models[0].input_modalities;
+  assert.deepEqual(modalities('1'), ['text', 'image'], 'view_image is allowed');
+  assert.deepEqual(modalities(true), ['text', 'image']);
+  for (const off of [undefined, '', '0', 'false', false, 'yes']) assert.deepEqual(modalities(off), ['text'], String(off));
+  const { buildCatalogFromEnvironment } = require('../worker/build-codex-model-catalog');
+  assert.deepEqual(buildCatalogFromEnvironment({ AGENT_MODEL: 'z-ai/glm-5.3-flash', AGENT_MODEL_SUPPORTS_IMAGES: '1' })
+    .models[0].input_modalities, ['text', 'image']);
+  assert.deepEqual(buildCatalogFromEnvironment({ AGENT_MODEL: 'z-ai/glm-5.3-flash' })
+    .models[0].input_modalities, ['text']);
 });

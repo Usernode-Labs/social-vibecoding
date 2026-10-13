@@ -274,3 +274,21 @@ test('destroy() makes in-flight responses harmless', () => {
   assert.ok(guards >= awaits && awaits >= 3,
     `every awaited request must be followed by an alive check (${guards} guards, ${awaits} requests)`);
 });
+
+test('delivered, bounced and complained show only when Resend can report them', () => {
+  // Only Resend's webhook writes those three events, and only for mail the
+  // `http` transport sent; Gmail has no delivery webhook. Anywhere else the
+  // columns could only ever read 0, which looks like "nothing was delivered".
+  const { deliveryEventsAvailable } = require('../src/services/mail/reports');
+  const secret = { PLATFORM_MAIL_RESEND_WEBHOOK_SECRET: 'whsec_dGVzdA==' };
+  assert.equal(deliveryEventsAvailable('http', secret), true);
+  assert.equal(deliveryEventsAvailable('http', {}), false, 'no webhook secret, no events');
+  assert.equal(deliveryEventsAvailable('gmail', secret), false);
+  assert.equal(deliveryEventsAvailable('log', secret), false);
+  assert.equal(deliveryEventsAvailable(null, secret), false);
+  assert.match(adminJs, /readReports\(pool, \{\s*provider: \(config && \(config\.mailProvider/,
+    'the activity route tells the report which transport is sending');
+  assert.match(moduleJs, /DELIVERY_METRICS = new Set<string>\(\['delivered', 'bounced', 'complained'\]\)/);
+  assert.match(moduleJs, /METRICS\.filter\(\(\[key\]\) => reports\.deliveryEvents \|\| !DELIVERY_METRICS\.has\(key\)\)/);
+  assert.match(moduleJs, /id="admin-mail-delivery-off"/, 'the card says why the columns are missing');
+});
