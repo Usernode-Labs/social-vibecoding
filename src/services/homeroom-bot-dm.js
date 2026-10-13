@@ -47,6 +47,8 @@
 
 const log = require('./logger');
 const conversations = require('./conversations');
+// Newcomer run five: a first version's stages, as they happen.
+const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
 
 const BOT_USERNAME = 'homeroom_bot';
@@ -3188,6 +3190,7 @@ function laterChatLive(pool, run, { config, sha, deps = {} }) {
     try {
       if (await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps })) {
         await noteChatLive(pool, run);
+        void timeline.record(pool, { runId: run.run_id, stage: 'live', detail: { late: true } });
         return;
       }
     } catch (err) {
@@ -3253,7 +3256,7 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id);
   if (!session?.id) return null;
   const { rows } = await pool.query(
-    `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
+    `SELECT r.id AS run_id, r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
       WHERE r.proposal_session_id = $1
       ORDER BY r.id DESC LIMIT 1`,
@@ -3261,6 +3264,9 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   );
   if (!rows.length) return null;
   const run = rows[0];
+  // A first version's timeline (first-version-timeline.js): merged now, and
+  // live once its app answers on what was deployed, below.
+  void timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id });
   const platform = !!run.self_hosted;
   const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
   // B9: the chat message it was asked in, if it was, says it is live, once
@@ -3269,6 +3275,8 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   // chip moves on the merge, as it always did.
   if (live || platform) await noteChatLive(pool, run, deps);
   else laterChatLive(pool, run, { config, sha, deps });
+  // Live now; one that did not answer yet is recorded live by the later look.
+  if (live || platform) void timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);

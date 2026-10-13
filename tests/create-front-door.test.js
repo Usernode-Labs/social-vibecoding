@@ -122,7 +122,8 @@ test('from Create: nothing is answered, the grid is refreshed, and it ends on th
   assert.match(door, /onClose=\{\(\) => leaveDoor\(false\)\}/);
   // The made screen's way on: the hub from Create, the tour on the first session.
   const made = src.slice(src.indexOf("if (mode.kind === 'made') {"), src.indexOf("if (mode.kind === 'welcome') {"));
-  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+enterScreen\('home', made\.slug\);\s+setMode\(\{ kind: 'tour', info, path: 'maker' \}\);/);
+  // The maker's tour tells its cards to the server (made-moments.ts, run five).
+  assert.match(made, /if \(fromCreate\) \{\s+leaveDoor\(true\);\s+enterScreen\('hub', made\.slug\);\s+return;\s+\}\s+enterScreen\('home', made\.slug\);\s+setMode\(\{ kind: 'tour', info, path: 'maker', moments: true \}\);/);
   assert.match(made, /onSetSecrets=\{\(\) => \{\s+leaveDoor\(true\);\s+legacy\(\)\.Secrets\?\.open\?\.\(made\.slug\);\s+\}\}/);
   assert.match(made, /if \(fromCreate\) leaveDoor\(true\);\s+enterScreen\('bot', made\.slug, conversationId\);/);
 });

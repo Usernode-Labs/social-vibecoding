@@ -734,6 +734,39 @@ function noteFileRead(state, path) {
 function noteFileChange(state, path) {
   state.fileChangeCount += 1;
   addObservedValue(state.telemetryFileChanges, path);
+  if (state.browserCallSeen) noteFileChangeAfterBrowser(state, path);
+}
+
+// What a build's own look-and-fix loop changed (newcomer run five, 13 Oct
+// 2026): the edits made after the turn first used the in-loop browser, which
+// first_browser_call_ms alone could not say. Counted, and the first
+// FILES_AFTER_BROWSER_MAX distinct paths kept (repository-relative), never
+// what was in them: telemetry_metrics file_change_after_first_browser_count,
+// distinct_file_change_after_first_browser_count, and on the turn's own
+// agent_turns row only, files_changed_after_first_browser (agent-turn.js).
+// Ordered by the stream, so it needs no request clock.
+const FILES_AFTER_BROWSER_MAX = 20;
+const WORKSPACE_PREFIX = '/home/node/workspace/';
+
+// The turn's first browser call: from here its edits are counted (0 until
+// one is made, so "looked and changed nothing" reads apart from "never
+// looked", which stays null).
+function noteBrowserCall(state, kind) {
+  if (kind !== 'browser' || state.browserCallSeen) return;
+  state.browserCallSeen = true;
+  if (state.fileChangeAfterFirstBrowserCount == null) state.fileChangeAfterFirstBrowserCount = 0;
+}
+
+function noteFileChangeAfterBrowser(state, path) {
+  state.fileChangeAfterFirstBrowserCount = (state.fileChangeAfterFirstBrowserCount || 0) + 1;
+  if (typeof path !== 'string' || !path) return;
+  const seen = state.telemetryFileChangesAfterBrowser instanceof Set
+    ? state.telemetryFileChangesAfterBrowser
+    : (state.telemetryFileChangesAfterBrowser = new Set());
+  seen.add(path);
+  const kept = Array.isArray(state.filesChangedAfterFirstBrowser) ? state.filesChangedAfterFirstBrowser : (state.filesChangedAfterFirstBrowser = []);
+  const relative = path.startsWith(WORKSPACE_PREFIX) ? path.slice(WORKSPACE_PREFIX.length) : path;
+  if (kept.length < FILES_AFTER_BROWSER_MAX && !kept.includes(relative)) kept.push(relative);
 }
 
 // ── Where a coding turn's time went (2026-10-07) ────────────────────────
@@ -895,6 +928,7 @@ function noteClaudeToolCall(state, block) {
       bootsApp: name === 'Bash' && APP_BOOT_COMMAND.test(String(input.command || '')),
     });
   }
+  noteBrowserCall(state, codingToolKind(name));
   state.toolCallCount += 1;
   noteToolName(state, name);
   if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
@@ -927,6 +961,7 @@ function noteCodexToolStart(state, event) {
     bootsApp: event.kind === 'command_started'
       && APP_BOOT_COMMAND.test(String(event.command || event.text || '')),
   });
+  noteBrowserCall(state, codexToolKind(event));
   state.toolCallCount += 1;
   state.responseToolCallCount += 1;
   noteToolName(state, event.toolName || event.kind);
@@ -1800,6 +1835,11 @@ function newWatchState() {
     firstAppBootMs: null,
     firstBrowserCallMs: null,
     lastBrowserCallMs: null,
+    // The edits after the turn's first browser call (noteFileChangeAfterBrowser):
+    // whether it has made one yet, how many, and the first paths.
+    browserCallSeen: false,
+    fileChangeAfterFirstBrowserCount: null,
+    filesChangedAfterFirstBrowser: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
@@ -1876,6 +1916,7 @@ function newWatchState() {
     telemetryToolNames: new Set(),
     telemetryFileReads: new Set(),
     telemetryFileChanges: new Set(),
+    telemetryFileChangesAfterBrowser: new Set(),
   };
 }
 

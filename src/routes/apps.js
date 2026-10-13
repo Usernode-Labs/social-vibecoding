@@ -21,7 +21,7 @@ const places = require('../services/places');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
 const { rateLimit } = require('express-rate-limit');
 const events = require('../services/events');
 const appOpenings = require('../services/app-openings');
@@ -2007,6 +2007,29 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.json({ ok: true, building: done.building, answers: done.answers });
     } catch (err) {
       log.error('apps', 'Failed to record a first version\'s answers', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Newcomer run five (13 Oct 2026): the made screen's moments, what it
+  // showed and what was tapped on it, as they happen
+  // (services/first-session-moments.js), for the run report. A member's
+  // own (404 for anyone else, as Live's are below: a 403 would offer them
+  // Join), rate-limited, and never waited on by the screen. 200 whether or
+  // not the account is one that is recorded.
+  router.post('/api/apps/:slug/first-version/moments', firstSessionMomentLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Sign in first' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app || !(await communities.isMember(pool, app.id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+      const moments = require('../services/first-session-moments');
+      const moment = moments.parseMoment(req.body);
+      if (!moment) return res.status(400).json({ error: 'A known kind and when it happened are required' });
+      const recorded = await moments.record(pool, { user: req.user, appId: app.id, moment });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, recorded });
+    } catch (err) {
+      log.error('apps', 'Failed to record a made screen moment', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

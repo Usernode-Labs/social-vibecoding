@@ -914,6 +914,11 @@ async function askHelperModel({
     appId: ctx.appId,
     sessionId: ctx.sessionId,
     provider: 'openrouter',
+    // Which of OpenRouter's providers served it (or refused it), on its own:
+    // `provider` above stays the ledger's 'openrouter' (llm-telemetry.js
+    // routed_provider). Run five's plan at Make it could not say which host
+    // gave the reply it could not use.
+    routedProvider: (result && result.provider) || (error && error.provider) || null,
     backend: 'helper',
     component,
     requestedModel: HELPER_MODEL,
@@ -952,6 +957,14 @@ async function askHelperModel({
       input_tokens: usage.inputTokens || 0,
       output_tokens: usage.outputTokens || 0,
       cost_usd: reported ? costUsd : null,
+    },
+    // The reply's shape, never its words: for a caller that cannot use the
+    // answer and records why (first-version-plan.js replyShape).
+    reply: {
+      finishReason: result.finishReason || null,
+      toolCallCount: Array.isArray(result.toolCalls) ? result.toolCalls.length : 0,
+      textChars: typeof result.content === 'string' ? result.content.length : 0,
+      routedProvider: result.provider || null,
     },
   };
 }
@@ -997,6 +1010,7 @@ async function helperMessage({
         },
         model: glm.model,
         answer: glm.answer,
+        reply: glm.reply,
       };
     }
     if (signal && signal.aborted) {
@@ -1019,7 +1033,18 @@ async function helperMessage({
     defaults,
     apiKey,
   });
-  return { response, model: sent.model, answer: null };
+  const blocks = Array.isArray(response && response.content) ? response.content : [];
+  return {
+    response,
+    model: sent.model,
+    answer: null,
+    reply: {
+      finishReason: (response && response.stop_reason) || null,
+      toolCallCount: blocks.filter((b) => b && b.type === 'tool_use').length,
+      textChars: blocks.filter((b) => b && b.type === 'text').reduce((n, b) => n + String(b.text || '').length, 0),
+      routedProvider: null,
+    },
+  };
 }
 
 // Test hook: { openrouter, key, config } stand in for the transport, the
@@ -2098,7 +2123,7 @@ async function generateFirstVersionPlan({
 }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
-  const { response: resp, model: served } = await helperMessage({
+  const { response: resp, model: served, reply } = await helperMessage({
     helper: 'first_version_plan',
     activeClient,
     model,
@@ -2115,7 +2140,10 @@ async function generateFirstVersionPlan({
     apiKey,
   });
   const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  return { text, usage: resp.usage, model: served };
+  // And how the reply came back (helperMessage `reply`): its finish reason,
+  // tool calls, the model's own text beside them and the routed provider,
+  // for a plan that cannot use it to record its shape.
+  return { text, usage: resp.usage, model: served, reply: reply || null };
 }
 
 // One graded unit for the challenge scorer (services/topochain/

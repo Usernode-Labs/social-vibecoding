@@ -115,6 +115,7 @@ import type { HomeroomBotPlanQuestion } from '../messages/types';
 
 import { BUILD_LINE_WORDS, type BuildLineState, buildLineOf, phaseLine, useNow } from './build-line';
 import { copyText, inviteText } from './copy-invite';
+import { noteMoment } from './made-moments';
 import type { Made, MakeEntry } from './make';
 import type { FirstVersionStage } from './tour-steps';
 import { type Person, PeopleRow } from './people-row';
@@ -1131,6 +1132,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const [answerError, setAnswerError] = useState<string | null>(null);
   const submitAnswers = useCallback(async (answers: Array<string | null>) => {
     if (answering) return;
+    noteMoment(made.slug, 'submit_tapped', { count: answers.length });
     setAnswering(true);
     setAnswerError(null);
     try {
@@ -1245,6 +1247,41 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
   // Where its first version stands, for the tour that follows (N1).
   const stage = madeStage(fv, botBuilds && !imported && !readyMade, !making);
+
+  // Newcomer run five (13 Oct 2026): when this screen first showed each
+  // thing, for the run report (./made-moments.ts). Each once per project on
+  // this page, however often a read draws it again.
+  useEffect(() => {
+    noteMoment(made.slug, 'made_shown', { entry: fromCreate ? 'create' : 'first_session' }, { once: true });
+  }, [made.slug, fromCreate]);
+  const planningShown = line === 'planning';
+  useEffect(() => {
+    if (planningShown) noteMoment(made.slug, 'planning_shown', {}, { once: true });
+  }, [made.slug, planningShown]);
+  const questionsShown = asked && !stalled ? asked.length : 0;
+  const [askedHere, setAskedHere] = useState(false);
+  useEffect(() => {
+    if (!questionsShown) return;
+    setAskedHere(true);
+    noteMoment(made.slug, 'questions_shown', { count: questionsShown }, { once: true });
+  }, [made.slug, questionsShown]);
+  // The invite line and its buttons: as the screen opens, and again once
+  // the questions that took their place are answered.
+  const inviteShown = !questionsShown;
+  useEffect(() => {
+    if (inviteShown) noteMoment(made.slug, 'invite_shown', askedHere ? { how: 'after_questions' } : {}, { once: true });
+  }, [made.slug, inviteShown, askedHere]);
+  // Share invite (Share again once the link is out) opened the sheet, and
+  // the link went out from it. Invite people later and the way on are told
+  // where they are handled (./index.tsx), Submit in submitAnswers.
+  const sentRef = useRef(sent);
+  sentRef.current = sent;
+  useEffect(() => {
+    if (inviting) noteMoment(made.slug, 'share_invite_tapped', sentRef.current ? { how: 'again' } : {});
+  }, [made.slug, inviting]);
+  useEffect(() => {
+    if (sentHow) noteMoment(made.slug, 'invite_sent', { how: sentHow });
+  }, [made.slug, sentHow]);
   return (
     <div
       ref={rootRef}

@@ -2804,7 +2804,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
     // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
-    // retire_test_account):
+    // retire_test_account, get_run_report):
     // registered only for a full platform admin, and every route behind them
     // refuses anybody else.
     'create_test_account', 'create_test_phone_sign_in',
@@ -2838,6 +2838,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_recent_shots', 'get_request',
+    // A test project's run report (services/run-report.js), beside the
+    // test-account tools: full platform admins only, like them.
+    'get_run_report',
     // Specs on a request (services/request-specs.js): reading one, and the
     // platform's own format for writing one. post_spec, below, posts it.
     'get_spec', 'get_spec_format', 'keep_bench_trial',

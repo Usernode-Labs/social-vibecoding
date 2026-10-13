@@ -79,6 +79,7 @@ const buildContract = require('./build-contract');
 const designSkill = require('./design-skill');
 const events = require('./events');
 const { redactString } = require('./log-redaction');
+const timeline = require('./first-version-timeline');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -4175,11 +4176,21 @@ async function reviewLanded({
       resumeFrom,
       recoveredFix,
       capture,
-      review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
-        pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
-        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, locale,
-        deps: deps.reviewDeps || {},
-      }),
+      review: ({ round, capture: shot, previousIssues, timeoutMs }) => {
+        // A first version's timeline: each round as its review begins
+        // (first-version-timeline.js; a run that is not one writes nothing).
+        if (owner.botRunId) {
+          void timeline.record(pool, {
+            runId: owner.botRunId, stage: 'review_round', sessionId: session.id,
+            detail: { round: Number(round), rounds: Number(reviewer.maxRounds) },
+          });
+        }
+        return botReview.reviewCapture({
+          pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
+          round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, locale,
+          deps: deps.reviewDeps || {},
+        });
+      },
       fix,
       rollback: ({ sha }) => rollbackReviewBranch({ github: deps.github, repo, branchName, sha }),
       // The bot's allowance is debited once the build is over, so a round

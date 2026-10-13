@@ -296,6 +296,10 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // the account its link makes is a test account (services/test-accounts.js
   // sendRelease), and the mail goes through the ordinary throttle.
   { method: 'POST', pattern: '/api/test-accounts/release-emails' },
+  // A test project's run report, the same gate: a read of what was recorded
+  // about its first version, or the copy retiring the account kept
+  // (services/run-report.js). Metadata and short excerpts, never a secret.
+  { method: 'GET', pattern: '/api/test-accounts/run-report' },
   // The browser languages people use, and where the translation step stands
   // (routes/ui-telemetry.js): a read, behind the same full-admin gate.
   { method: 'GET', pattern: '/api/browser-languages' },
