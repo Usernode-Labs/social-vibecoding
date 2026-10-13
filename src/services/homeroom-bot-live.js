@@ -3712,7 +3712,7 @@ async function buildAndPropose({
       try {
         // Its ledger id too: a bench trial keeps it, so a restart's next claim
         // can still name the spec turn's cost (bench/runner.js keptCosts).
-        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd, turnId: spec.turnId || null });
+        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd, ...(spec.turnId ? { turnId: spec.turnId } : {}) });
       } catch (err) {
         log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
       }
