@@ -77,9 +77,12 @@ test('run five: the shapes a model sends for "a few lines" are forgiven; a missi
   // is sent the schema without the bounds (tests/helper-model.test.js).
   assert.equal(fvPlan.PLAN_SCHEMA.properties.plan.minItems, 3);
   assert.equal(fvPlan.PLAN_SCHEMA.properties.build_note.minLength, 40);
-  // What a refused reply looked like, never what it said.
-  assert.deepEqual(fvPlan.replyShape(JSON.stringify({ plan: 'Polls for the club', build_note: [] })), { plan: 'string(18)', build_note: 'array(0)' });
-  assert.deepEqual(fvPlan.replyShape('sorry'), { reply: 'no JSON object, 5 characters' });
+  // What a refused reply looked like, never what it said (the whole shape:
+  // tests/first-version-plan-shape.test.js).
+  const refused = fvPlan.replyShape(JSON.stringify({ plan: 'Polls for the club', build_note: [] }));
+  assert.deepEqual([refused.why, refused.keys], ['no_note', [
+    { key: 'plan', type: 'string', length: 18 }, { key: 'build_note', type: 'array', length: 0, items: [] }]]);
+  assert.deepEqual([fvPlan.replyShape('sorry').why, fvPlan.replyShape('sorry').chars], ['no_json', 5]);
 });
 
 test('the prompt: the description, its creator, its real people, a game starter and the language, with the triage\'s rules', () => {
@@ -137,7 +140,7 @@ test('the plan is asked of the configuration\'s triage model through the helper 
     deps: { ...deps, llm: { ...deps.llm, async generateFirstVersionPlan() { return { text: 'sorry', usage: null }; } } },
   });
   assert.deepEqual([unusable.plan, unusable.error], [null, 'unusable_reply']);
-  assert.deepEqual(unusable.shape, { reply: 'no JSON object, 5 characters' }, 'kept for the log, not the row');
+  assert.deepEqual([unusable.shape.why, unusable.shape.chars], ['no_json', 5], 'its shape, kept for the row and the log');
   // A configuration whose triage is not a helper model still asks the helper model.
   assert.equal(await fvPlan.planModel(pool, { botConfigs: { async currentVersion() { return { recipe: { models: { triage: 'anthropic/claude-opus-5.5' } } }; } } }), fvPlan.PLAN_MODEL);
   // The helper is registered as the sketch's is (llm.js helperMessage; tests/helper-model.test.js).
