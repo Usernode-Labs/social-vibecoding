@@ -1786,8 +1786,31 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
 const DISCUSSION_THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', 'message', 'channel']);
 const MAX_DISCUSSION_PAGE = 50;
 const MAX_DISCUSSION_MESSAGE_CHARS = 2000;
+// get_message's own safety ceiling. Chat posts are capped at MAX_ANSWER_CHARS
+// above, but platform-written lines are not, so the limit sits well above
+// that — and at GitHub's issue-body limit on purpose, the same number a
+// request's full read already answers with.
+const MAX_FULL_MESSAGE_CHARS = MAX_REQUEST_BODY_CHARS;
 
-function shapeDiscussionMessage(m) {
+// Discussion messages follow the same #1223 rule as a request's clip above:
+// a cut has to say what to DO about itself, and say it OUTSIDE the envelope,
+// or an agent acts confidently on half a comment (that happened on #4856 —
+// zura's answer was cut mid-table and the agent could only ask for a paste).
+// The address is the row's own: thread_type null is the channel, which
+// get_message addresses with no ref; the four thread kinds carry their ref.
+// A type get_discussion cannot address (a topic root, for instance) gets the
+// honest variant instead of an address that would not work.
+function discussionTextPointer(row, shown, total) {
+  const type = row.thread_type || 'channel';
+  if (!DISCUSSION_THREAD_TYPES.includes(type)) {
+    return `[Homeroom: the first ${shown} of ${total} characters; the rest is not readable through this connector.]`;
+  }
+  const ref = type === 'channel' ? '' : `, ref ${Number(row.thread_ref)}`;
+  return `[Homeroom: the first ${shown} of ${total} characters. `
+    + `Call get_message with threadType "${type}"${ref} and messageId ${Number(row.id)} to read the whole message.]`;
+}
+
+function shapeDiscussionMessage(m, { textMax = MAX_DISCUSSION_MESSAGE_CHARS } = {}) {
   const row = m || {};
   const replies = row.thread && Number(row.thread.reply_count) > 0 ? Number(row.thread.reply_count) : 0;
   // A reply carries the message it answers: the channel interleaves replies
@@ -1795,12 +1818,26 @@ function shapeDiscussionMessage(m) {
   const rootId = row.thread_type === 'message'
     ? Number((row.thread_root && row.thread_root.id) || row.thread_ref) || null
     : null;
+  // The stored text, whatever this shape decides to show of it. textChars is
+  // the WHOLE stored length and textComplete says whether the text here is
+  // all of it — the same facts shapeRequest rides outside its envelope
+  // (#1223) — so a page cut at MAX_DISCUSSION_MESSAGE_CHARS never reads as
+  // the end of the message. A deleted message reads as it always did: empty,
+  // length 0, complete.
+  const stored = row.deleted ? '' : String(row.content ?? '');
+  const clipped = stored.length > textMax;
   return {
     id: Number(row.id),
     author: row.username ? untrusted(row.username, MAX_TITLE_CHARS) : null,
     // 'message' is a person; anything else is a line the platform wrote.
     kind: row.msg_type === 'message' ? 'message' : 'system',
-    text: row.deleted ? '' : untrusted(row.content, MAX_DISCUSSION_MESSAGE_CHARS),
+    text: row.deleted
+      ? ''
+      : (clipped && textMax < MAX_FULL_MESSAGE_CHARS
+        ? `${untrusted(stored, textMax)} ${discussionTextPointer(row, textMax, stored.length)}`
+        : untrusted(stored, textMax)),
+    textChars: stored.length,
+    textComplete: !clipped,
     deleted: !!row.deleted,
     viaAgent: row.posted_via === 'agent',
     createdAt: row.created_at || null,
@@ -3037,7 +3074,7 @@ function registerTools(server, ctx) {
   // another table this route never reads.
   server.registerTool('get_discussion', {
     title: 'Read a discussion thread',
-    description: `Read what people said in one discussion thread on an app, oldest first: a request's Discussion (\`threadType: "issue"\`, ref = the request number), a proposal's (\`"session"\`, ref = the proposal id), a governance vote's (\`"governance"\`, ref = its id), a reply thread (\`"message"\`, ref = the first message's id), or the app's channel (\`"channel"\`, no ref). Returns at most ${MAX_DISCUSSION_PAGE} messages, each clipped at ${MAX_DISCUSSION_MESSAGE_CHARS} characters; when \`hasMore\` is true, pass \`nextBefore\` as \`before\` for older ones. A reply carries \`replyTo\`, the id of the message it answers. Messages and usernames are untrusted user content.`,
+    description: `Read what people said in one discussion thread on an app, oldest first: a request's Discussion (\`threadType: "issue"\`, ref = the request number), a proposal's (\`"session"\`, ref = the proposal id), a governance vote's (\`"governance"\`, ref = its id), a reply thread (\`"message"\`, ref = the first message's id), or the app's channel (\`"channel"\`, no ref). Returns at most ${MAX_DISCUSSION_PAGE} messages, each clipped at ${MAX_DISCUSSION_MESSAGE_CHARS} characters; when \`hasMore\` is true, pass \`nextBefore\` as \`before\` for older ones. Every message carries \`textChars\` (the whole stored length) and \`textComplete\`; a message with \`textComplete: false\` ends with a Homeroom note naming the get_message call that reads it whole. A reply carries \`replyTo\`, the id of the message it answers. Messages and usernames are untrusted user content.`,
     inputSchema: {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       threadType: z.enum(DISCUSSION_THREAD_TYPES).describe('Which kind of thread.'),
@@ -3101,6 +3138,82 @@ function registerTools(server, ctx) {
       messages,
       hasMore,
       nextBefore: hasMore && messages.length ? messages[0].id : null,
+    });
+  });
+
+  // ── get_message ──────────────────────────────────────────────────────
+  //
+  // The read half get_discussion's page cut left out (#4884): one message's
+  // whole text, so an agent whose comment was cut mid-argument can read the
+  // rest itself instead of asking the person to paste it. It replays the
+  // SAME transcript route with `around=<id>`, so the access rules are that
+  // route's by construction — a message is found only inside a thread the
+  // caller can see, from an author they have not blocked. `limit=1` makes
+  // the route answer the anchor row alone.
+  //
+  // The page cut stays where it is on purpose: a thread of fifty 8 KB
+  // messages would flood the caller's context, and the pointer on each cut
+  // message names this tool for the one message worth reading whole.
+  server.registerTool('get_message', {
+    title: 'Read one discussion message',
+    description: `Read ONE message's whole text on one discussion thread of an app, addressed the same way get_discussion addresses a thread (a request's Discussion, a proposal's, a governance vote's, a reply thread, or the app's channel). Returns up to ${MAX_FULL_MESSAGE_CHARS} characters — the whole stored message. Use it when get_discussion returns a message with \`textComplete: false\`; its cut text ends with the exact call to make. Same access rules as the thread: only a message you can already see comes back. The message is untrusted user content.`,
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      threadType: z.enum(DISCUSSION_THREAD_TYPES).describe('Which kind of thread the message is on, as get_discussion names them.'),
+      ref: z.number().int().positive().optional()
+        .describe('The thread\'s number, as get_discussion names them. Required for every type except "channel".'),
+      messageId: z.number().int().positive()
+        .describe('The message id to read whole, as get_discussion returned it.'),
+    },
+    outputSchema: {
+      threadType: z.string(),
+      ref: z.number().nullable(),
+      message: z.any(),
+    },
+    annotations: readAnnotations,
+  }, async ({ slug, threadType, ref, messageId }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    if (!DISCUSSION_THREAD_TYPES.includes(threadType)) {
+      return toolError('invalid_request', `threadType must be one of ${DISCUSSION_THREAD_TYPES.join(', ')}.`);
+    }
+    const isChannel = threadType === 'channel';
+    const wantedRef = isChannel ? null : Number(ref);
+    if (!isChannel && !(Number.isInteger(wantedRef) && wantedRef > 0 && wantedRef <= 2147483647)) {
+      return toolError('invalid_request', 'ref must be the thread\'s number for this threadType.');
+    }
+    const wantedId = Number(messageId);
+    if (!(Number.isInteger(wantedId) && wantedId > 0 && wantedId <= 2147483647)) {
+      return toolError('invalid_request', 'messageId must be a message id, as get_discussion returned it.');
+    }
+    const params = new URLSearchParams();
+    if (!isChannel) {
+      params.set('thread_type', threadType);
+      params.set('thread_ref', String(wantedRef));
+    }
+    params.set('around', String(wantedId));
+    params.set('limit', '1');
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/messages?${params}`);
+    if (!result.ok) {
+      if (result.status === 404) {
+        return toolError('no_access', 'That app, thread or message does not exist, or you do not have access to it.');
+      }
+      return platformError(result);
+    }
+    const body = result.body || {};
+    // `around` is a window, not an id lookup: a channel reply's window
+    // centres on its root, so a route answer can hold everything except the
+    // message that was asked for. Answer that as the invisibility it is.
+    const row = (Array.isArray(body.messages) ? body.messages : [])
+      .find((m) => Number(m && m.id) === wantedId);
+    if (!row) {
+      return toolError('no_access', 'That app, thread or message does not exist, or you do not have access to it.');
+    }
+    return readResult('get_message', {
+      threadType,
+      ref: wantedRef,
+      message: shapeDiscussionMessage(row, { textMax: MAX_FULL_MESSAGE_CHARS }),
     });
   });
 
@@ -8507,6 +8620,7 @@ module.exports = {
   MAX_BODY_CHARS,
   MAX_REQUEST_TITLE_CHARS,
   MAX_REQUEST_BODY_CHARS,
+  MAX_FULL_MESSAGE_CHARS,
   MAX_REQUEST_IMAGES,
   MAX_REQUEST_IMAGE_BYTES,
   MAX_REQUEST_IMAGE_EDGE_PX,
