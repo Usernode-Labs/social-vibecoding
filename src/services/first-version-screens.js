@@ -188,7 +188,9 @@ async function renderFirstLook({ pool, worker, containerName, runId, specHtml, t
     const stdout = await worker.runBenchCapture(containerName, { source, env: {}, timeoutMs, scriptPath: SCRIPT_PATH, maxBuffer: 16 * 1024 * 1024 });
     const png = readRendered(stdout);
     if (!png) {
-      log.info('first-version-screens', 'No first look from the spec\'s screen', { runId });
+      // Warned (newcomer run five): a first look that quietly is not there
+      // was hard to tell from one that was never asked for.
+      log.warn('first-version-screens', 'No first look from the spec\'s screen', { runId });
       return false;
     }
     await storeScreens(pool, runId, 'first_look', [png]);
@@ -280,7 +282,7 @@ async function readSavedScreen(worker, containerName, n) {
     });
     return savedTemplateOf(out);
   } catch (err) {
-    log.info('first-version-screens', 'Could not read a saved screen', { n, err: err.message });
+    log.warn('first-version-screens', 'Could not read a saved screen', { n, err: err.message });
     return null;
   }
 }
@@ -299,10 +301,12 @@ function spliceSavedScreens(text, saved) {
  * off the worker (`read(n)`, tried again a few times a moment apart, since
  * the command may still be running when its line is seen) and handed to
  * `onScreen({ n, markup })`, once per change. `idle()` resolves once no
- * read is in flight. A watcher never stops a turn.
+ * read is in flight; `firstSavedAt()` is when the first screen was read
+ * (`now()`), or null. A watcher never stops a turn.
  */
-function screenWatcher({ read, onScreen = null, delayMs = 1500, tries = 4 } = {}) {
+function screenWatcher({ read, onScreen = null, delayMs = 1500, tries = 4, now = Date.now } = {}) {
   const last = new Map();
+  let firstAt = null;
   const reading = new Set();
   const inFlight = new Set();
   const look = (n, attempt = 0) => {
@@ -315,6 +319,7 @@ function screenWatcher({ read, onScreen = null, delayMs = 1500, tries = 4 } = {}
         }
         if (last.get(n) === markup) return;
         last.set(n, markup);
+        if (firstAt == null) firstAt = now();
         if (onScreen) {
           try { onScreen({ n, markup }); } catch { /* a watcher never stops a turn */ }
         }
@@ -335,6 +340,7 @@ function screenWatcher({ read, onScreen = null, delayMs = 1500, tries = 4 } = {}
     }
   };
   watch.saved = () => new Map(last);
+  watch.firstSavedAt = () => firstAt;
   return watch;
 }
 
