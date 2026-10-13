@@ -274,6 +274,8 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   assert.match(flat, /honest loading, empty and error states\. Never show the empty state while loading or after a failure; an error says what failed, what still works, and offers Retry\./);
   assert.match(flat, /Seed obviously fake staging demo data so the populated screen can be seen \("Staging mock data" in the platform conventions\)\./);
   assert.match(flat, /No cards in cards, no uppercase eyebrows, no emoji as icons\./);
+  // Run five (13 Oct 2026, fix 7): a blank lavender square in the header.
+  assert.match(flat, /A header that shows the app's own mark shows the project's icon there \(the emoji in `dapp\.json`'s `icon` block\) or no mark at all: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.match(flat, /The kit is in `styles\/tailwind-input\.css`/);
   assert.ok(section.trim().split('\n').length <= 40, 'short: the long form belongs in a design skill');
   assert.doesNotMatch(section, /—/, 'no em dashes: the agent copies the voice it is given');

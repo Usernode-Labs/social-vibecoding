@@ -2132,6 +2132,10 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   'guidance\'s "no new colours" means none beyond them, and every token the spec defines is one of them. Then fill',
   'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the signature',
   'element, the type scale, and the one fixed look if the app keeps one. Every later change follows it.',
+  // Run five (13 Oct 2026, fix 7): Club Votes' header showed a blank
+  // lavender square where its icon belonged.
+  'If the app\'s header shows its own mark, show the project\'s icon there (the emoji in `dapp.json`\'s `icon` block),',
+  'or leave the mark out: never an empty tile, and never `brand/icon.png`, which the app does not serve.',
   // The first session's card (services/app-sketch.js). Until 5 October 2026
   // it was a mock of the main screen, and this said to build that screen.
   'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
