@@ -1151,6 +1151,36 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.threadRequest(pool, { userId: ada.id, conversationId, message: underPlain.message }), null,
       'a thread under words about no request is no request\'s');
 
+    // The main list draws the bot's news as one-line rows, never their cards:
+    // it sends those rows without them, so the page answers without filling
+    // (and, for a request card, asking GitHub about) cards nobody sees there.
+    // The request's story keeps them, and so does the bot's conversation.
+    const say = async (meta, threadRoot = null) => {
+      const { rows: [m] } = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, thread_root_id)
+         VALUES ($1, $2, 'words', $3, $4) RETURNING id`,
+        [conversationId, bot.id, JSON.stringify({ homeroomBot: { appSlug: app.slug, appName: app.name, ...meta } }), threadRoot],
+      );
+      await pool.query(
+        `INSERT INTO conversation_message_objects (message_id, position, object_type, app_id, object_ref) VALUES ($1, 0, 'app', $2, $2)`,
+        [m.id, app.id],
+      );
+      return m.id;
+    };
+    const storyCard = await say({ kind: 'activity', issueNumber: 5002 });
+    const ringing = await say({ kind: 'merged', moment: 'live', alsoInChat: true, issueNumber: 5002, threadRootId: storyCard }, storyCard);
+    const talk = await say({ kind: 'chat' });
+    const listed = await conversations.listMessages(pool, viewer, conversationId, { limit: 50 });
+    const cardsOf = (id) => listed.messages.find((m) => m.id === id)?.objects?.length;
+    assert.equal(cardsOf(storyCard), 0, 'a request\'s row comes without its card');
+    assert.equal(cardsOf(ringing), 0);
+    assert.equal(cardsOf(talk), 1, 'the bot\'s conversation keeps its cards');
+    const around = await conversations.listMessages(pool, viewer, conversationId, { around: storyCard, limit: 10 });
+    assert.equal(around.messages.find((m) => m.id === storyCard).objects.length, 0, 'a permalink window too');
+    const story = await conversations.listThread(pool, viewer, conversationId, storyCard, {});
+    assert.equal(story.root.objects.length, 1, 'the story keeps the request\'s card');
+    assert.equal(story.messages.find((m) => m.id === ringing).objects.length, 1);
+
     // People-to-people direct chats keep no threads.
     const people = await conversations.createDirect(pool, ada, sam.id);
     const peopleId = people.conversationId || people.conversation?.id;

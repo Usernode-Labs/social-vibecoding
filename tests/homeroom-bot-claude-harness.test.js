@@ -1069,6 +1069,50 @@ test('run four: a first version\'s build turns ask for the first-version profile
     'the Codex runner reads it too');
 });
 
+// Build speed (L7, 13 Oct 2026): a first version's configuration with the
+// lean_turns tweak asks for LEAN_TURNS, which reaches a first version's
+// build that Claude Code runs and nothing else.
+test('lean_turns: a first version\'s build turns ask for LEAN_TURNS; the worker gives it to a Claude Code first-version build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5004, branch_name: 'dev/homeroom_bot-5004', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5004, 'usernode-worker-5004');
+  const runner = (tweaks, firstVersion = true) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5004',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion, tweaks,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(['lean_turns'])(turn)).routed?.error);
+  assert.ok(!(await runner(['one_look'])(turn)).routed?.error);
+  assert.ok(!(await runner(['lean_turns'], false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.leanTurns), [true, undefined, undefined]);
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.LEAN_TURNS), ['1', undefined, undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(831, { mode: 'build', leanTurns: true })).LEAN_TURNS, undefined, 'not without the first-version profile');
+  assert.equal((await dispatch(832, { mode: 'scout', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS, undefined);
+  assert.equal((await dispatch(833, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS,
+    undefined, 'the Codex runner has no request adapter to prune with');
+  assert.equal((await dispatch(834, { mode: 'build', buildProfile: 'first_version', leanTurns: true })).LEAN_TURNS, '1');
+});
+
 test('run four: the platform\'s host shortlist for a model reaches the turn\'s listener, checked; none sent, none set', async (t) => {
   const { worker, calls } = loadWorker(t, JOURNAL);
   const dispatch = async (id, opts) => {

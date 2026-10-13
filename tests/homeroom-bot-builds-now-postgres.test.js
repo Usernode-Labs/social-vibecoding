@@ -120,6 +120,8 @@ test('the live builds under way and waiting, for the dashboard, against the full
     assert.deepEqual({ depth: payload.queue.depth, buildsWaiting: payload.queue.buildsWaiting }, { depth: 1, buildsWaiting: 2 });
     // And the build lane says so beside the shadow lane's own counts, which
     // never count a live build (#3509).
+    // With the live build loop's own last pass, none in this process yet
+    // (run five, 13 Oct 2026: the lane's `lane` is the shadow lane's).
     assert.deepEqual(payload.builds.live, { building: 3, waiting: 2 });
     assert.equal(payload.builds.building, 0);
     // The run list says where each got to (get_homeroom_bot's build.state).

@@ -253,7 +253,7 @@ test('a first version planned at Make it: answered on the made screen, built wit
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1', [app.id])).rows[0].n, 0);
     const building = await read(app.slug);
     assert.deepEqual([building.step, building.line], [4, 'building']);
-    assert.deepEqual(building.phase && building.phase.key, 'drawing', 'N4: its build waits its turn, the screens next');
+    assert.deepEqual(building.phase && building.phase.key, 'starting', 'N4: its build waits its turn: no spec turn yet, so nothing is drawn (run five)');
   });
 
   await t.test('not answered yet: the plan waits for its maker as before, and their Submit goes ahead with it', async () => {

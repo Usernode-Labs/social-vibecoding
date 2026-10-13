@@ -328,6 +328,98 @@ function pruneOldImages(messages, { keep = KEEP_LATEST_IMAGES, step = PRUNE_STEP
   });
 }
 
+// Build speed (L7, a first version's `lean_turns` tweak, LEAN_TURNS=1):
+// every model call re-sends the whole conversation, and in a build most of
+// its bulk is tool output that has gone stale. A browser call answers with
+// the page's whole accessibility snapshot, which the next navigation
+// replaces; a build or a boot prints a log once read. Run four's build sent
+// a ~55k-token context on each of its 156 calls. So, as with images, only
+// the latest few large browser and shell results go whole; each older one
+// keeps its first lines and a note saying the rest was left out. A file the
+// agent read is never cut (it edits from it), with the Read tool or a shell
+// command that prints it, and neither is anything small.
+//
+// The same caching trade-off as images: which results are cut is a pure
+// function of the conversation, and the cut moves only every
+// PRUNE_STEP_OUTPUTS new large results, so the prefix stays the same between
+// cuts and each cut costs one cache miss from the first result it shortens.
+const KEEP_LATEST_OUTPUTS = 4;
+const PRUNE_STEP_OUTPUTS = 4;
+const PRUNE_MIN_OUTPUT_CHARS = 2000;
+const PRUNED_OUTPUT_HEAD_CHARS = 400;
+const PRUNABLE_TOOL_RE = /^(?:Bash|BashOutput|mcp__playwright__browser_\w+)$/;
+// A shell command that prints a file is a read, however it is spelt.
+const SHELL_READ_RE = /^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:cat|head|tail|sed\s+-n|nl|less|more|bat|jq)\b/;
+const prunedOutputNote = (name, left) => `\n[... ${left} more characters of this earlier ${name} output were left out to keep the request small: run it again if you need it]`;
+
+function toolResultText(block) {
+  if (typeof block.content === 'string') return block.content;
+  if (!Array.isArray(block.content)) return '';
+  return block.content.filter((part) => part?.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('\n');
+}
+
+// Whether a tool result is one the cut may shorten: a browser or shell
+// tool's, not an error, not a shell command that printed a file, and long.
+function prunableOutput(block, toolNames, shellReads) {
+  if (block?.type !== 'tool_result' || block.is_error === true) return false;
+  const name = typeof block.tool_use_id === 'string' ? toolNames.get(block.tool_use_id) : null;
+  if (!name || !PRUNABLE_TOOL_RE.test(name) || shellReads.has(block.tool_use_id)) return false;
+  return toolResultText(block).length > PRUNE_MIN_OUTPUT_CHARS;
+}
+
+// The ids of the shell calls that printed a file (SHELL_READ_RE).
+function shellReadIds(messages) {
+  const ids = new Set();
+  for (const message of messages) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block?.type === 'tool_use' && block.name === 'Bash' && typeof block.id === 'string'
+          && SHELL_READ_RE.test(String(block.input?.command || ''))) ids.add(block.id);
+    }
+  }
+  return ids;
+}
+
+// Shorten every prunable tool result before the cut to its head and a note,
+// in conversation order. Its images, if any, are left where they are (the
+// image cut has them). Messages with nothing to shorten are returned as they
+// came. `counts.pruned` and `counts.chars` say what was left out.
+function pruneStaleToolOutput(messages, {
+  keep = KEEP_LATEST_OUTPUTS, step = PRUNE_STEP_OUTPUTS, counts = null,
+} = {}) {
+  if (!Array.isArray(messages)) return messages;
+  const toolNames = toolUseNames(messages);
+  const shellReads = shellReadIds(messages);
+  let total = 0;
+  for (const message of messages) {
+    if (message?.role !== 'user' || !Array.isArray(message.content)) continue;
+    for (const block of message.content) if (prunableOutput(block, toolNames, shellReads)) total += 1;
+  }
+  const cut = total > keep ? Math.floor((total - keep) / step) * step : 0;
+  if (cut <= 0) return messages;
+  let seen = 0;
+  return messages.map((message) => {
+    if (seen >= cut || message?.role !== 'user' || !Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((block) => {
+      if (seen >= cut || !prunableOutput(block, toolNames, shellReads)) return block;
+      seen += 1;
+      changed = true;
+      const name = toolNames.get(block.tool_use_id);
+      const text = toolResultText(block);
+      const left = text.length - PRUNED_OUTPUT_HEAD_CHARS;
+      if (counts) {
+        counts.pruned = (counts.pruned || 0) + 1;
+        counts.chars = (counts.chars || 0) + left;
+      }
+      const shortened = { type: 'text', text: `${text.slice(0, PRUNED_OUTPUT_HEAD_CHARS)}${prunedOutputNote(name, left)}` };
+      const images = Array.isArray(block.content) ? block.content.filter((part) => part?.type === 'image') : [];
+      return { ...block, content: [shortened, ...images] };
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+
 function toolUseNames(messages) {
   const names = new Map();
   for (const message of messages) {
@@ -572,9 +664,15 @@ function withoutShortlist(provider, asked = {}) {
 function applyTurnPolicy(body, {
   model, maxOutputTokens, countTokens, reasoningEffort = null, imageInput = false, documentInput = false,
   imageCounts = null, providerShortlist = null,
+  // LEAN_TURNS=1 (run-cc.sh): stale browser and shell output is shortened
+  // (pruneStaleToolOutput), and `outputCounts` filled with what was cut.
+  pruneToolOutput = false, outputCounts = null,
 }) {
   body.model = model;
   if (Array.isArray(body.messages)) body.messages = pairToolIds(body.messages);
+  if (pruneToolOutput === true && Array.isArray(body.messages)) {
+    body.messages = pruneStaleToolOutput(body.messages, { counts: outputCounts });
+  }
   if (Array.isArray(body.messages)) {
     const images = imageInput === true;
     const counts = imageCounts || { sent: 0, moved: 0, omitted: 0 };
@@ -647,7 +745,7 @@ async function sendRouted({ fetchImpl, url, headers, body, serializedBody, asked
 async function startMessagesAdapter({
   baseUrl, apiKey, model, maxOutputTokens = null, reasoningEffort = null, localToken,
   onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch, imageInput = false, documentInput = false,
-  providerShortlist = null,
+  providerShortlist = null, pruneToolOutput = false,
 }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
@@ -705,11 +803,12 @@ async function startMessagesAdapter({
         return;
       }
       const images = { sent: 0, moved: 0, omitted: 0, pruned: 0 };
+      const toolOutput = { pruned: 0, chars: 0 };
       const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
         ? { ...body.provider } : {};
       applyTurnPolicy(body, {
         model, maxOutputTokens, countTokens, reasoningEffort, imageInput, documentInput,
-        imageCounts: images, providerShortlist,
+        imageCounts: images, providerShortlist, pruneToolOutput, outputCounts: toolOutput,
       });
       const serializedBody = JSON.stringify(body);
       if (onTiming && !countTokens) {
@@ -717,13 +816,16 @@ async function startMessagesAdapter({
         const ordinal = ++requestOrdinal;
         const startedAt = performance.now();
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
-          responseBytes: 0, chunks: 0, outcome: 'ok', images };
+          responseBytes: 0, chunks: 0, outcome: 'ok', images, ...(pruneToolOutput ? { toolOutput } : {}) };
         emitTiming({
           kind: 'provider_request_start', requestOrdinal: ordinal,
           atMs: Math.max(0, Math.round(startedAt - listenerStartedAt)),
           payloadBytes: Buffer.byteLength(serializedBody),
           inputBytes: body.messages == null ? 0 : Buffer.byteLength(JSON.stringify(body.messages)),
           instructionBytes: body.system == null ? 0 : Buffer.byteLength(JSON.stringify(body.system)),
+          // The tool definitions every request carries (run-cc.sh's
+          // disallowed tools are what trims them).
+          toolBytes: Array.isArray(body.tools) ? Buffer.byteLength(JSON.stringify(body.tools)) : 0,
           inputItems: Array.isArray(body.messages) ? body.messages.length : null,
           previousResponseLinked: false,
           maxOutputTokens: body.max_tokens,
@@ -824,6 +926,7 @@ async function startMessagesAdapter({
           outcome: timing.outcome,
           ...Object.fromEntries(Object.entries(timing.result || {}).filter(([, v]) => v != null)),
           images: timing.images,
+          ...(timing.toolOutput ? { toolOutput: timing.toolOutput } : {}),
         });
         const endedAt = performance.now();
         emitTiming({ kind: 'provider_request_end', requestOrdinal: timing.ordinal,
@@ -954,6 +1057,7 @@ async function runClaude(args, env = process.env) {
     imageInput: env.AGENT_MODEL_SUPPORTS_IMAGES === '1',
     documentInput: env.AGENT_MODEL_SUPPORTS_FILES === '1',
     providerShortlist: parseShortlist(env.AGENT_PROVIDER_SHORTLIST),
+    pruneToolOutput: env.LEAN_TURNS === '1',
     localToken,
     // The same content-free request timing a Codex turn reports, so a quiet
     // model call shows in the owner's progress log either way.
@@ -1003,5 +1107,6 @@ module.exports = {
   startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
   AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
   pruneOldImages, KEEP_LATEST_IMAGES, PRUNE_STEP_IMAGES, PRUNED_IMAGE_NOTE, TOOL_OUTPUT_LIMITS,
+  pruneStaleToolOutput, KEEP_LATEST_OUTPUTS, PRUNE_STEP_OUTPUTS, PRUNE_MIN_OUTPUT_CHARS, PRUNED_OUTPUT_HEAD_CHARS,
   PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist, parseShortlist, SHORTLIST_FALLBACK_STATUSES,
 };

@@ -63,6 +63,8 @@ const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
 const snapshots = require('./homeroom-bot-snapshots');
 const { withoutEmDashes } = require('./em-dashes');
 const { agentApiFailure } = require('./agent-result-text');
+// Newcomer run five: a first version's stages, as they happen.
+const timeline = require('./first-version-timeline');
 
 // A build's checkpoint as its session is linked to its run: written by the
 // link itself, keeping only what the run debited for earlier sessions.
@@ -564,7 +566,11 @@ let refreshAllRequested = false;
 let wakeRequested = false;
 // What the last pass did, for the dashboard: a loop that is on but idle
 // on budget or on a worker fault should say so rather than show nothing.
+// `startedAt` and `ms` say how long it took, and `passStartedAt` is the one
+// running now: the live loop's own, not the shadow build lane's
+// (lastBuildDrain), which run five (13 Oct 2026) first read it as.
 let lastPass = null;
+let passStartedAt = null;
 
 // Failures the platform, not the model, produced: the worker could not be
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
@@ -3116,6 +3122,8 @@ async function planFromEarly(pool, config, {
     plan: { bullets: plan.bullets, questions: plan.questions }, complicated: false, platform: false,
     // Decided already: the chat's plan card is news, not a question.
     ...(decidedNow ? { quietPlan: true } : {}),
+    // Its timeline has the plan from Make it already (first-version-timeline.js).
+    fromMakeIt: true,
   };
   const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings);
   const runId = await insertRun(pool, {
@@ -5796,10 +5804,11 @@ async function reviewRecoveredBuild({
         temporary: true, onProgress: () => {},
       });
     }
+    const tweaks = botConfigs().tweaksOf(recipe);
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
       deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)),
-      firstVersion: true,
+      firstVersion: true, tweaks,
     });
     log.info('homeroom-bot', resuming
       ? 'Carrying on a review a restart cut short'
@@ -5826,6 +5835,7 @@ async function reviewRecoveredBuild({
         }),
         onProgress: null,
         locale: requester?.locale || null,
+        tweaks,
         start: resuming ? {
           sha: resumeFrom.round0?.sha || resumeFrom.finalSha || null,
           commits: Number(resumeFrom.round0?.commits ?? resumeFrom.finalCommits) || 0,
@@ -6361,6 +6371,12 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
         });
         if (promoted.status === 200 && promoted.body?.ok) {
           await checkpoint.save(pool, plan.runId, sessionId, 'proposed', { prNumber: promoted.body.prNumber || null });
+          // A first version's timeline: proposed by recovery, as the live
+          // path's own step says it (buildLive onStep).
+          void timeline.recordStep(pool, {
+            runId: plan.runId, step: 'proposed', sessionId,
+            detail: { recovered: true, ...(promoted.body.prNumber ? { prNumber: Number(promoted.body.prNumber) } : {}) },
+          });
         }
       }
       if (promoted.status === 200 && promoted.body?.ok) {
@@ -8400,8 +8416,11 @@ async function actOnVerdict({
 // built is left alone.
 async function queueLiveBuild(pool, { runId, appId }) {
   try {
+    // Queued with no Build it to wait for: that is its go-ahead (goAhead
+    // keeps the tap's time for a plan that waited for one).
     await pool.query(
-      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW())
+      `UPDATE homeroom_bot_runs SET live_build_waiting_at = COALESCE(live_build_waiting_at, NOW()),
+              go_ahead_at = COALESCE(go_ahead_at, NOW())
         WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL`,
       [runId],
     );
@@ -8511,6 +8530,11 @@ async function awaitGo(pool, { runId, app, issueNumber, parsed, bot, deps = {} }
   } catch (err) {
     log.warn('homeroom-bot', 'Could not record a first version\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
     return 'failed';
+  }
+  // The triage wrote it just now; a plan from Make it was recorded when it
+  // was written (first-version-plan.js startEarlyPlan).
+  if (!parsed?.fromMakeIt) {
+    void timeline.record(pool, { runId, stage: 'plan_written', detail: { source: 'triage', questions: plan.questions.length } });
   }
   // A plan its maker already decided on the made screen (planFromEarly) is
   // sent without a ring: it goes ahead the moment it is sent.
@@ -8920,22 +8944,30 @@ async function goAhead(pool, { runId, answers = [] }) {
   if (!run) return { ok: false, why: 'gone' };
   const chosen = choicesFrom(run.plan?.questions, answers);
   const note = creatorChoiceNote(chosen, { bullets: run.plan?.bullets, requester: run.plan?.complicated === true });
+  // `go_ahead_at` keeps when, after live_build_waiting_at is cleared (the
+  // build's start): how long the build waited for its slot (buildLive).
   const { rows: [went] } = await pool.query(
     `UPDATE homeroom_bot_runs
-        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), build_note = CONCAT(build_note, $2::text),
+        SET awaiting_go_at = NULL, live_build_waiting_at = NOW(), go_ahead_at = NOW(),
+            build_note = CONCAT(build_note, $2::text),
             plan = COALESCE(plan, '{}'::jsonb) || jsonb_build_object('chosen', $3::jsonb)
       WHERE id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL AND build_session_id IS NULL
       RETURNING app_id, issue_number`,
     [runId, note, JSON.stringify(chosen)],
   );
   if (!went) return { ok: false, why: 'gone' };
+  void timeline.record(pool, { runId, stage: 'go_ahead', detail: { answers: chosen.length } });
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
   // to IDLE_PASS_DELAY_MS; 43 s in run four, 13 Oct 2026). The bus wake
   // reaches the leader, as an issue event's does (noteIssueActivity).
+  // Run five (13 Oct 2026): the wake only queued a pass, and a pass started
+  // builds after its refresh (46 s from Submit to the spec). The build is
+  // started on its own wake now, on the leader, even while a pass runs.
   wake({ appId: Number(went.app_id) });
-  publishWake({ appId: Number(went.app_id) });
+  wakeLiveBuilds();
+  publishWake({ appId: Number(went.app_id), buildRunId: Number(runId) });
   log.info('homeroom-bot', 'Build it: a first version\'s plan goes ahead', {
     appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length,
   });
@@ -9063,6 +9095,28 @@ async function botBudgetStop(pool, bot, deps = {}, { spentUsd = 0 } = {}) {
 }
 
 /**
+ * A live build's claim on its run (buildLive's `onSession`): its session
+ * linked, its wait over (live_build_waiting_at cleared) and its checkpoint
+ * started, only when no other build has the run and no outcome is in.
+ * Resolves { claimed, waitedMs }: how long after it went ahead
+ * (go_ahead_at, which the claim leaves) it took its slot, or null when that
+ * is not known.
+ */
+async function claimLiveBuild(pool, { runId, sessionId }) {
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL,
+            build_checkpoint = ${CHECKPOINT_START_SQL}
+      WHERE id = $1
+        AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
+      RETURNING id, ROUND(EXTRACT(EPOCH FROM (NOW() - go_ahead_at)) * 1000)::bigint AS waited_ms`,
+    [runId, sessionId],
+  );
+  if (!rows.length) return { claimed: false, waitedMs: null };
+  const waited = rows[0].waited_ms;
+  return { claimed: true, waitedMs: waited == null ? null : Math.max(0, Number(waited)) };
+}
+
+/**
  * Build a live 'ready' verdict and say what came of it on the issue: the
  * spec as it is written, then the proposal, the request found impossible,
  * or the build that did not finish. What actOnVerdict did inline until the
@@ -9174,6 +9228,9 @@ async function buildLive({
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
     const buildStartedMs = Date.now();
+    // How many times a build of this run took its slot: a first version that
+    // did not finish is tried once more (below), and claims it again.
+    let claims = 0;
     // #4645: the requester's language preference, for the prompts' wording
     // rule (localeRule); unset, everything the group reads stays English.
     const requester = await (deps.dm || require('./homeroom-bot-dm'))
@@ -9196,18 +9253,37 @@ async function buildLive({
       // another build already linked (or whose outcome is in) refuses it, so
       // a second build of one run stops before its plan (LOST_CLAIM).
       // The claim starts the build's checkpoint too (homeroom-bot-checkpoint.js).
+      // Run five (13 Oct 2026): and says how long the build waited for its
+      // slot since it went ahead (`waitedMs`, from go_ahead_at, which the
+      // claim leaves; live_build_waiting_at is the one it clears).
       onSession: async (session) => {
-        const { rows } = await pool.query(
-          `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL,
-                  build_checkpoint = ${CHECKPOINT_START_SQL}
-            WHERE id = $1
-              AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
-            RETURNING id`,
-          [runId, session.id],
-        );
-        return rows.length ? null : LOST_CLAIM;
+        const claim = await claimLiveBuild(pool, { runId, sessionId: session.id });
+        if (!claim.claimed) return LOST_CLAIM;
+        claims += 1;
+        const { waitedMs } = claim;
+        log.info('homeroom-bot', 'A live build took its slot', {
+          app: app.slug, issueNumber, runId, sessionId: session.id, waitedMs, attempt: claims,
+        });
+        if (firstVersion) {
+          void timeline.record(pool, {
+            runId, stage: 'picked_up', sessionId: session.id,
+            detail: { ...(waitedMs != null ? { waitedMs } : {}), attempt: claims },
+          });
+        }
+        return null;
       },
-      onStep: (name, data) => checkpoint.save(pool, runId, data.sessionId, name, data),
+      onStep: (name, data) => {
+        // A first version's step boundaries that are stages of its timeline
+        // (first-version-timeline.js STAGE_OF_STEP), as the build reaches them.
+        if (firstVersion) {
+          void timeline.recordStep(pool, {
+            runId, step: name, sessionId: data.sessionId,
+            detail: name === 'landed' ? { partial: !!data.landed?.partial }
+              : name === 'proposed' && data.prNumber ? { prNumber: Number(data.prNumber) } : null,
+          });
+        }
+        return checkpoint.save(pool, runId, data.sessionId, name, data);
+      },
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
       // #4387: what the people waiting on a first version watch on its App
@@ -9236,10 +9312,14 @@ async function buildLive({
               if (!drawn) return;
               drewEarly = true;
               log.info('homeroom-bot', 'A first version\'s first look is drawn from its saved main screen', { app: app.slug, runId });
+              void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'saved_screen' } });
             });
           },
           onFirstLook: ({ specHtml, containerName }) => (drewEarly ? false : firstVersionScreens().renderFirstLook({
             pool, worker: deps.worker || require('./worker'), containerName, runId, specHtml,
+          }).then((drawn) => {
+            if (drawn) void timeline.record(pool, { runId, stage: 'first_look_saved', detail: { from: 'spec' } });
+            return drawn;
           })),
         };
       })() : {}),
@@ -9248,6 +9328,8 @@ async function buildLive({
         review,
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
+        // Build speed: the configuration's tweaks, a first version's only.
+        ...(firstVersion ? { tweaks: botConfigs().tweaksOf(recipe) } : {}),
       } : {}),
       // #4662: a kept plan's screens ride along whatever the build: a
       // recovered build publishes its plan whole, as a fresh one does.
@@ -9930,8 +10012,13 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
       ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
       : null,
   };
+  // How long it waited its turn since its go-ahead (a ready verdict, or
+  // Build it under a plan): live_build_waiting_at is cleared once the build
+  // links its session, so the time is kept here (run five, 13 Oct 2026).
+  const waitingSince = run.live_build_waiting_at ? new Date(run.live_build_waiting_at).getTime() : NaN;
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
+    waitedMs: Number.isFinite(waitingSince) ? Math.max(0, Date.now() - waitingSince) : null,
   });
   try {
     const acted = await buildLive(args);
@@ -10220,24 +10307,113 @@ function track(pool, slot, entry, work) {
   })();
 }
 
+// ── Live builds, started as soon as they may ────────────────────────────
+//
+// A live build waiting its turn (a ready verdict, or a plan its creator
+// tapped Build it under) used to be started only inside a pass's dispatch,
+// after the pass's refresh, and every REFRESH_INTERVAL_MS that refresh is
+// the full sweep of every app. A wake cannot cut into a running pass, so
+// run five's Submit (13 Oct 2026) waited 46 s for its spec to begin. Now a
+// pass starts them first, before its refresh and sweeps, and Build it's
+// wake (goAhead, onBusMessage) starts them on the leader at once, even
+// while a pass runs. One dispatch at a time in this process
+// (liveDispatchRunning): a call that finds one running asks it to look
+// again rather than reading the same waiting rows beside it, so a run is
+// never started twice from the two paths; across processes only the leader
+// runs the loop, as before.
+
+// Whether a dispatch is under way in this process (set before its first
+// await), whether another call asked it to look again, and a promise that
+// settles when it ends, for those calls to wait on.
+let liveDispatchRunning = false;
+let liveDispatchAgain = false;
+let liveDispatchDone = Promise.resolve();
+// The dispatch Build it's wake started, for a test to wait on.
+let liveKick = null;
+// Test seams for the wake's dispatch: the pool and deps it uses.
+let liveKickSeams = {};
+
 /**
- * Fill the free slots, live first. Returns the promises of the work it
- * started (each resolves to its outcome). `seen` keeps one drain from
- * starting the same row twice.
+ * Start the live builds waiting their turn that have a slot, and return
+ * the promises of the work started. Guarded like drainBuilds: a call that
+ * finds a dispatch under way asks it to look again, waits for it (so what
+ * it started is in its slots before the caller counts them), and returns
+ * []. Never throws.
  */
-async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
-  if (refusingNew() || settings.mode === 'off') return [];
-  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+async function dispatchLiveBuilds(pool, config, { settings = null, bot = null, deps = {}, seen = new Set(), now = null } = {}) {
+  if (liveDispatchRunning) {
+    liveDispatchAgain = true;
+    await liveDispatchDone;
+    return [];
+  }
+  liveDispatchRunning = true;
+  let done;
+  liveDispatchDone = new Promise((resolve) => { done = resolve; });
+  const started = [];
+  try {
+    let given = settings;
+    do {
+      liveDispatchAgain = false;
+      if (refusingNew()) break;
+      const at = now ?? (deps.now ? deps.now() : Date.now());
+      // eslint-disable-next-line no-await-in-loop
+      const s = given || await readSettings(pool);
+      given = null;
+      if (s.mode === 'off' || faultBackoff(at) || budgetPausedUntil > Date.now()) break;
+      // A build reads GitHub: held, as a pass is, while its hourly budget
+      // is nearly used up (runOnce checks this before its own call).
+      if (githubBudget.backgroundHold({ now: at })) break;
+      // eslint-disable-next-line no-await-in-loop
+      const b = bot || await ensureBotUser(pool, config);
+      // eslint-disable-next-line no-await-in-loop
+      started.push(...await startLiveBuilds(pool, config, { settings: s, bot: b, deps, seen }));
+    } while (liveDispatchAgain);
+  } catch (err) {
+    log.error('homeroom-bot', 'Live build dispatch failed', { err: err.message });
+  } finally {
+    // In the same turn as the last look-again check: a call that arrives
+    // after it starts a dispatch of its own.
+    liveDispatchAgain = false;
+    liveDispatchRunning = false;
+    done();
+  }
+  return started;
+}
+
+/**
+ * Build it was tapped (goAhead here, or its bus message from another Pod):
+ * where the loop runs, start the build now rather than at the next pass.
+ * Returns whether a dispatch was started. Never throws.
+ */
+function wakeLiveBuilds() {
+  const running = timer !== null || passInFlight;
+  if (stopped || !running || !loopConfig) return false;
+  const config = loopConfig;
+  let pool;
+  try {
+    pool = liveKickSeams.pool || require('../db/pool').getPool(config);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not start a live build on its wake', { err: err.message });
+    return false;
+  }
+  liveKick = dispatchLiveBuilds(pool, config, { deps: liveKickSeams.deps || {} })
+    .then((started) => {
+      if (started.length) log.info('homeroom-bot', 'Live builds started on Build it\'s wake', { started: started.length });
+      return started;
+    });
+  return true;
+}
+
+/** One dispatch of live builds; dispatchLiveBuilds holds the guard. */
+async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen }) {
   const started = [];
   // A staging copy never acts (live.liveScope), so there every app is the
   // background lane's.
   const scope = live.liveScope(settings);
   const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
   const perPerson = settings.perPerson || DEFAULTS.perPerson;
-
-  // Live builds waiting their turn first: they are further along than
-  // anything still to be read. Up to BUILDS_PER_PROJECT per project, each in
-  // a slot of its own, so the project's read slot stays free (buildLive).
+  // Up to BUILDS_PER_PROJECT per project, each in a slot of its own, so the
+  // project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
@@ -10312,6 +10488,27 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       }
     }
   }
+
+  return started;
+}
+
+/**
+ * Fill the free slots, live first. Returns the promises of the work it
+ * started (each resolves to its outcome). `seen` keeps one drain from
+ * starting the same row twice.
+ */
+async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
+  if (refusingNew() || settings.mode === 'off') return [];
+  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+  const started = [];
+  // A staging copy never acts (live.liveScope), so there every app is the
+  // background lane's.
+  const scope = live.liveScope(settings);
+  const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
+
+  // Live builds waiting their turn first: they are further along than
+  // anything still to be read.
+  started.push(...await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now }));
 
   const running = [...inFlight.values()];
   const liveActive = running.filter((e) => e.lane === 'live');
@@ -10537,6 +10734,7 @@ async function buildsNow(pool) {
  */
 async function runOnce(pool, config, deps = {}) {
   const out = { mode: null, busy: false, refreshed: false, processed: 0, paused: null };
+  const startedAt = Date.now();
   let client;
   let locked = false;
   try {
@@ -10546,6 +10744,7 @@ async function runOnce(pool, config, deps = {}) {
     );
     if (lock.rows[0]?.acquired !== true) { out.busy = true; return out; }
     locked = true;
+    passStartedAt = new Date(startedAt).toISOString();
 
     const settings = await readSettings(pool);
     out.mode = settings.mode;
@@ -10579,6 +10778,17 @@ async function runOnce(pool, config, deps = {}) {
     // Before the refresh: on a live app it asks how much room the caps have
     // for the bot's held issues (#3152).
     const bot = await ensureBotUser(pool, config);
+    // Run five (13 Oct 2026): a build waiting its turn starts before the
+    // refresh and the sweeps, which every REFRESH_INTERVAL_MS read every app
+    // and held a Submit's spec back 46 s. The pass's dispatch below fills
+    // what is left, the slots its reads take counted after these.
+    const seen = new Set();
+    const pausedBefore = budgetPausedUntil > Date.now();
+    const early = await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now });
+    out.liveBuilds = early.length;
+    // A pass that was not already paused says what it dispatched, even when
+    // these builds found the budget spent and it stops below.
+    if (!pausedBefore) out.dispatched = early.length;
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
       // missed it is filed here, before the refresh that queues it.
@@ -10672,8 +10882,7 @@ async function runOnce(pool, config, deps = {}) {
     // #3624 stage 2: fill the free slots and, unless a test asks to drain,
     // return without waiting for the work (see "How much at once").
     const drain = deps.drain !== false;
-    const seen = new Set();
-    let started = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now });
+    let started = [...early, ...await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now })];
     out.dispatched = started.length;
     if (!drain) {
       out.inFlight = inFlight.size;
@@ -10708,7 +10917,10 @@ async function runOnce(pool, config, deps = {}) {
     log.error('homeroom-bot', 'Pass failed', { err: err.message });
     return out;
   } finally {
-    lastPass = { at: new Date().toISOString(), ...out };
+    // `at` is when it ended, as before; `startedAt` and `ms` say how long
+    // the live loop's pass took (a lock another process held is no pass).
+    if (locked) passStartedAt = null;
+    lastPass = { at: new Date().toISOString(), startedAt: new Date(startedAt).toISOString(), ms: Date.now() - startedAt, ...out };
     if (client) {
       if (locked) {
         await client.query('SELECT pg_advisory_unlock($1, $2)', [HOMEROOM_BOT_LOCK, 0]).catch(() => {});
@@ -10904,7 +11116,10 @@ function onBusMessage(data) {
   if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
   const woke = wake({ appId: data.appId, all: !!data.all });
   if (woke && SETTLE_REASONS.has(data.reason)) wakeAfterSettle(Number(data.appId));
-  return woke;
+  // Build it on another Pod (goAhead): its build starts now, not at the
+  // next pass's dispatch.
+  const built = data.buildRunId != null && wakeLiveBuilds();
+  return woke || built;
 }
 
 // ── The dashboard's read and writes ─────────────────────────────────────
@@ -11332,6 +11547,8 @@ async function adminPayload(pool, config, {
       ...lastPass,
       refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId))
         .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
+      // The pass running now, if one is: a long one is a sweep.
+      runningSince: passStartedAt,
     } : lastPass,
     totals,
     queue: { ...queue, buildsWaiting: builds.waiting },
@@ -11347,7 +11564,9 @@ async function adminPayload(pool, config, {
     // The shadow lane's own counts (buildLaneSummary, which never counts a
     // live build, #3509), and beside them the live builds under way and
     // waiting (buildsNow): first versions above all, which until run four
-    // (13 Oct 2026) the lane's figures left at 0 while one built.
+    // (13 Oct 2026) the lane's figures left at 0 while one built. The live
+    // build loop's own last pass is the loop's status (`loop`), which the
+    // connector carries as live.lastPass (bench/connector-data.js, #4993).
     builds: { ...await buildLaneSummary(pool), live: { building: builds.building.length, waiting: builds.waiting } },
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
@@ -11898,6 +12117,9 @@ module.exports = {
   workingNow,
   dmChatSummary,
   dispatch,
+  claimLiveBuild,
+  dispatchLiveBuilds,
+  wakeLiveBuilds,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -11911,6 +12133,8 @@ module.exports = {
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     readsInFlight.clear(); lastReads.clear();
     liveBuildsInFlight.clear();
+    passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();
+    liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
     pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear(); interruptedReviews.clear();
@@ -11928,7 +12152,12 @@ module.exports = {
   async _awaitInterruptedReviewsForTests() { await Promise.all([...interruptedReviews]); },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
-  _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },
+  // `seams` gives Build it's wake (wakeLiveBuilds) its pool and deps.
+  _armForTests(config, seams = {}) {
+    stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref();
+    liveKickSeams = seams;
+  },
+  async _awaitLiveKickForTests() { return liveKick ? liveKick : []; },
   _setPassInFlightForTests(v) { passInFlight = !!v; },
   _inFlightForTests() { return [...inFlight.values()].map((e) => ({ ...e })); },
 };

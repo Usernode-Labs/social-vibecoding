@@ -126,7 +126,7 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     return res.json();
   };
   const fv = (over) => ({
-    step: 1, of: 7, line: 'planning', ready: false, mine: true, creator: evan.username,
+    step: 1, of: 7, line: 'planning', phase: null, ready: false, mine: true, creator: evan.username,
     waits_on: null, conversation_id: opened.conversationId, session_id: null, plan: null, ...over,
   });
   // #4053: the build line as firstVersionState says it for this viewer: what

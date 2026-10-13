@@ -1277,6 +1277,9 @@ Rules:
 - If both `emoji` and `image` are declared, the image wins; the emoji
   is the fallback should the image file fail validation (missing,
   oversized, wrong format).
+- **Inside the app.** A header that shows the app's own mark shows
+  this icon (its emoji) or no mark at all: never an empty tile.
+  `brand/icon.png` is not served, so the app cannot load it.
 - **Changing the icon is just a PR that edits this block** (and, for
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the

@@ -28,7 +28,7 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
-import { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
+import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -1213,9 +1213,11 @@ const Home = {
     // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
     // is making says where it is in the build line, from the time it is set
     // up until it is live (Home.tileBuildLine), not "Spinning up...". In the
-    // tile's short words (run four, 13 Oct: the whole phrases were cut off).
+    // tile's short words (run four, 13 Oct: the whole phrases were cut off),
+    // and while it is built, its stage's (`first_version_phase`, run five:
+    // the tile said "Building" while the App tab said "Drawing the screens").
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? message(BUILD_LINE_TILE_WORDS[buildLine])
+    const statusLabel = buildLine ? message(buildLineTileWordsOf(buildLine, app.first_version_phase))
       : isRunning ? ''
       : app.status === 'creating' ? message('home:grid.tile.status.creating')
       : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
@@ -2698,7 +2700,7 @@ const Home = {
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
     const buildLine = Home.tileBuildLine(app);
-    const statusLabel = buildLine ? htmlText(BUILD_LINE_TILE_WORDS[buildLine])
+    const statusLabel = buildLine ? htmlText(buildLineTileWordsOf(buildLine, app.first_version_phase))
       : app.status === 'running' ? ''
       : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
       : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
