@@ -2,6 +2,11 @@
 // Materialize ignored shell artifacts for root tests and native local runs.
 // Docker builds the same files in its lockfile-pinned shell/CSS stages and
 // never calls this helper.
+//
+//   --html-only   before the tests: public/index.html alone. The bundle is
+//                 neither built nor checked; no root suite reads it.
+//   --runtime     before `npm start`, `npm run dev` and `npm run ensure:shell`:
+//                 the document and the bundle, then the CSS and the release.
 
 'use strict';
 
