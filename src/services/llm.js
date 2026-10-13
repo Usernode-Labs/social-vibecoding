@@ -646,6 +646,15 @@ const HELPER_TOOL = 'answer';
 // ceiling gets this much room on top of it.
 const HELPER_REASONING_TOKENS = 1500;
 const HELPER_MAX_OUTPUT_TOKENS = 4096;
+// A lower ceiling on GLM's output for a helper whose maker is waiting on a
+// short answer, so a runaway fails in seconds and Haiku still has time.
+const HELPER_OUTPUT_LIMIT = Object.freeze({
+  // The plan at Make it (13 Oct replay, 30 calls): usable answers took 268
+  // to 705 output tokens, reasoning included; one ran away to the 3,500
+  // ceiling and failed after 19 of the plan's 45 seconds. 1,200 leaves room
+  // for a plan written in a language that takes more tokens.
+  first_version_plan: 1200,
+});
 // How long the bot's key is reused before it is read again (one query and a
 // decrypt per minute rather than per call; the title preview fires as people
 // type).
@@ -767,6 +776,30 @@ function typeOf(value) {
   return Array.isArray(value) ? 'array' : typeof value;
 }
 
+/**
+ * Pure: the JSON object a reply's text holds, or null. GLM sometimes writes
+ * its answer as text beside a near-empty tool call (1 of 30 plans in the 13
+ * Oct replay, 1,533 characters of it).
+ */
+function helperTextAnswer(content) {
+  const text = typeof content === 'string' ? content : '';
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first === -1 || last <= first) return null;
+  try {
+    const obj = JSON.parse(text.slice(first, last + 1));
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+function acceptedAnswer(answer, validate) {
+  if (!answer) return false;
+  if (typeof validate !== 'function') return true;
+  try { return !!validate(answer); } catch { return false; }
+}
+
 // What Anthropic's structured output refuses in a schema (the SDK's own
 // parse helpers strip the same before sending). minItems is taken at 0 or 1.
 const STRUCTURED_OUTPUT_UNSUPPORTED = new Set([
@@ -804,7 +837,10 @@ function structuredOutputSchema(schema) {
  * { ok: false, reason }; never throws. `usage` is Anthropic-shaped plus
  * OpenRouter's own figure for the call (cost_usd), which estimateCostCents
  * prefers. An answer `validate` refuses is { ok: false, reason: 'unusable',
- * shape } (answerShape), and its telemetry says so.
+ * shape } (answerShape), and its telemetry says so. With `validate`, a tool
+ * call it refuses gives way to JSON in the reply's text that it accepts
+ * (helperTextAnswer); without one there is nothing to check that text by,
+ * so Haiku is asked as before.
  */
 async function askHelperModel({
   helper, component, system, messages, schema, maxTokens, signal, telemetryContext, correlationId, validate,
@@ -813,7 +849,11 @@ async function askHelperModel({
   if (!apiKey) return { ok: false, reason: 'no_key' };
   const transport = (helperTestDeps && helperTestDeps.openrouter) || require('./global-chat/openrouter');
   const cfg = (helperTestDeps && helperTestDeps.config) || helperConfig || {};
-  const maxOutputTokens = Math.min(HELPER_MAX_OUTPUT_TOKENS, (Number(maxTokens) || 0) + HELPER_REASONING_TOKENS);
+  const maxOutputTokens = Math.min(
+    HELPER_OUTPUT_LIMIT[helper] || HELPER_MAX_OUTPUT_TOKENS,
+    HELPER_MAX_OUTPUT_TOKENS,
+    (Number(maxTokens) || 0) + HELPER_REASONING_TOKENS,
+  );
   const chatMessages = [
     ...(system ? [{ role: 'system', content: String(system) }] : []),
     ...(Array.isArray(messages) ? messages : []).map((m) => ({ role: m.role, content: String(m.content == null ? '' : m.content) })),
@@ -850,10 +890,19 @@ async function askHelperModel({
   } catch (err) {
     error = err;
   }
-  const answer = result ? helperAnswer(result.toolCalls) : null;
-  let usable = !!answer;
-  if (answer && typeof validate === 'function') {
-    try { usable = !!validate(answer); } catch { usable = false; }
+  const toolAnswer = result ? helperAnswer(result.toolCalls) : null;
+  let answer = toolAnswer;
+  let usable = acceptedAnswer(toolAnswer, validate);
+  let textAnswer = null;
+  if (!usable && result && typeof validate === 'function') {
+    textAnswer = helperTextAnswer(result.content);
+    if (acceptedAnswer(textAnswer, validate)) {
+      answer = textAnswer;
+      usable = true;
+      log.info('llm', 'Helper model answered in its text, not its tool call', {
+        helper, toolShape: toolAnswer ? answerShape(toolAnswer) : null,
+      });
+    }
   }
   const usage = (result && result.usage) || {};
   const costUsd = Number(usage.costUsd);
@@ -869,6 +918,7 @@ async function askHelperModel({
     component,
     requestedModel: HELPER_MODEL,
     servedModel: (result && result.servedModel) || null,
+    servedProvider: (result && result.provider) || (error && error.provider) || null,
     billingPath: 'platform',
     inputTokens: usage.inputTokens,
     cacheReadInputTokens: usage.cachedInputTokens,
@@ -890,8 +940,10 @@ async function askHelperModel({
     maxOutputTokens,
   });
   if (error) return { ok: false, reason: String(error.code || 'failed') };
-  if (!answer) return { ok: false, reason: 'unparseable' };
-  if (!usable) return { ok: false, reason: 'unusable', shape: answerShape(answer) };
+  if (!usable) {
+    const seen = toolAnswer || textAnswer;
+    return seen ? { ok: false, reason: 'unusable', shape: answerShape(seen) } : { ok: false, reason: 'unparseable' };
+  }
   return {
     ok: true,
     answer,
@@ -3534,7 +3586,7 @@ module.exports = {
   translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
-  answerShape, structuredOutputSchema,
+  answerShape, structuredOutputSchema, helperTextAnswer, HELPER_OUTPUT_LIMIT,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,
   _setClientForTests, _setHelperDepsForTests,
 };

@@ -58,7 +58,9 @@ const STALE_PENDING_MS = 2 * 60 * 1000;
 // How long the bot's read of the request waits for a plan still being
 // written, at most, from Make it (whenReady below).
 const READ_WAIT_MS = PLAN_WAIT_MS + 5 * 1000;
-// The reply: a plan, its choices and a build note.
+// The reply: a plan, its choices and a build note. Haiku's ceiling; GLM's is
+// lower (llm.js HELPER_OUTPUT_LIMIT.first_version_plan), so a runaway fails
+// in seconds.
 const PLAN_MAX_TOKENS = 2000;
 const BRIEF_MAX = 4000;
 
