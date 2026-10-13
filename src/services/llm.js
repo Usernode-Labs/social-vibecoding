@@ -740,13 +740,74 @@ function helperAnswer(toolCalls) {
 }
 
 /**
+ * Pure: what an answer looked like, for a log line, never what it said: each
+ * top-level key with its value's type, a string's or an array's length and
+ * an array's item types, as in
+ *   { plan: 'string(212)', build_note: 'array(4: string)' }
+ * Run five's plan was refused with nothing kept to say why.
+ */
+function answerShape(answer) {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return { answer: typeOf(answer) };
+  const keys = Object.keys(answer);
+  const shape = {};
+  for (const key of keys.slice(0, 16)) {
+    const value = answer[key];
+    const items = Array.isArray(value) ? [...new Set(value.map(typeOf))].join(', ') : '';
+    shape[key.slice(0, 40)] = Array.isArray(value) ? `array(${value.length}${items ? `: ${items}` : ''})`
+      : typeof value === 'string' ? `string(${value.length})`
+        : typeOf(value) === 'object' ? `object(${Object.keys(value).length})`
+          : typeOf(value);
+  }
+  if (keys.length > 16) shape['…'] = `${keys.length - 16} more`;
+  return shape;
+}
+
+function typeOf(value) {
+  if (value === null) return 'null';
+  return Array.isArray(value) ? 'array' : typeof value;
+}
+
+// What Anthropic's structured output refuses in a schema (the SDK's own
+// parse helpers strip the same before sending). minItems is taken at 0 or 1.
+const STRUCTURED_OUTPUT_UNSUPPORTED = new Set([
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+  'minLength', 'maxLength', 'maxItems', 'uniqueItems',
+]);
+
+/**
+ * Pure: `schema` as Anthropic's structured output takes it, without the
+ * bounds it refuses. A helper's schema can carry them for GLM (a forced
+ * tool's parameters, read as guidance), and the same schema then goes to
+ * its Haiku fallback without them; the caller's parse still holds the line.
+ */
+function structuredOutputSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const out = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (STRUCTURED_OUTPUT_UNSUPPORTED.has(key)) continue;
+    if (key === 'minItems' && !(value === 0 || value === 1)) continue;
+    if (key === 'properties' || key === '$defs' || key === 'definitions') {
+      out[key] = Object.fromEntries(Object.entries(value || {}).map(([name, s]) => [name, structuredOutputSchema(s)]));
+    } else if (key === 'items' || key === 'additionalProperties' || key === 'not') {
+      out[key] = structuredOutputSchema(value);
+    } else if (key === 'anyOf' || key === 'allOf' || key === 'oneOf') {
+      out[key] = Array.isArray(value) ? value.map(structuredOutputSchema) : value;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * One GLM attempt. Resolves { ok: true, answer, usage, model } or
  * { ok: false, reason }; never throws. `usage` is Anthropic-shaped plus
  * OpenRouter's own figure for the call (cost_usd), which estimateCostCents
- * prefers.
+ * prefers. An answer `validate` refuses is { ok: false, reason: 'unusable',
+ * shape } (answerShape), and its telemetry says so.
  */
 async function askHelperModel({
-  helper, component, system, messages, schema, maxTokens, signal, telemetryContext, correlationId,
+  helper, component, system, messages, schema, maxTokens, signal, telemetryContext, correlationId, validate,
 }) {
   const apiKey = await helperKey();
   if (!apiKey) return { ok: false, reason: 'no_key' };
@@ -790,6 +851,10 @@ async function askHelperModel({
     error = err;
   }
   const answer = result ? helperAnswer(result.toolCalls) : null;
+  let usable = !!answer;
+  if (answer && typeof validate === 'function') {
+    try { usable = !!validate(answer); } catch { usable = false; }
+  }
   const usage = (result && result.usage) || {};
   const costUsd = Number(usage.costUsd);
   const reported = usage.costUsd != null && Number.isFinite(costUsd) && costUsd >= 0;
@@ -812,9 +877,9 @@ async function askHelperModel({
     costUsd: reported ? costUsd : null,
     costSource: reported ? 'provider_reported' : 'unavailable',
     durationMs: Date.now() - startedMs,
-    outcome: error ? (error.code === 'cancelled' ? 'cancelled' : 'error') : (answer ? 'success' : 'error'),
+    outcome: error ? (error.code === 'cancelled' ? 'cancelled' : 'error') : (usable ? 'success' : 'error'),
     stopReason: (result && result.finishReason) || null,
-    errorClass: error ? helperErrorClass(error.code) : (answer ? null : 'unknown'),
+    errorClass: error ? helperErrorClass(error.code) : (usable ? null : 'unknown'),
     attemptNumber: 1,
     correlationId,
     requestMode: 'single',
@@ -826,6 +891,7 @@ async function askHelperModel({
   });
   if (error) return { ok: false, reason: String(error.code || 'failed') };
   if (!answer) return { ok: false, reason: 'unparseable' };
+  if (!usable) return { ok: false, reason: 'unusable', shape: answerShape(answer) };
   return {
     ok: true,
     answer,
@@ -845,11 +911,14 @@ async function askHelperModel({
  * { response, model, answer }: `response` is Anthropic-shaped either way (a
  * GLM answer is one text block holding its JSON), `model` is the one that
  * answered and `answer` is GLM's parsed object (null from Haiku). A call the
- * caller aborted is not retried on Haiku.
+ * caller aborted is not retried on Haiku. `validate(answer)`, when given,
+ * says whether GLM's answer is one the caller can use: OpenRouter does not
+ * hold a tool call to its schema, so an answer the caller's parse would
+ * refuse is not an answer, and Haiku is asked (run five's plan at Make it).
  */
 async function helperMessage({
   helper, activeClient, params, schema, apiKey, signal, requestOptions,
-  telemetryContext, defaults, model = HELPER_MODEL,
+  telemetryContext, defaults, model = HELPER_MODEL, validate,
 }) {
   const correlationId = (telemetryContext && telemetryContext.correlationId) || crypto.randomUUID();
   let tried = false;
@@ -864,6 +933,7 @@ async function helperMessage({
       signal,
       telemetryContext,
       correlationId,
+      validate,
     });
     if (glm.ok) {
       return {
@@ -884,7 +954,8 @@ async function helperMessage({
     }
     // Without the bot's key nothing was sent, so Haiku's call is the first.
     tried = glm.reason !== 'no_key';
-    if (tried) log.info('llm', 'Helper model did not answer; asking Haiku', { helper, reason: glm.reason });
+    if (glm.reason === 'unusable') log.warn('llm', 'Helper model\'s answer was unusable; asking Haiku', { helper, shape: glm.shape });
+    else if (tried) log.info('llm', 'Helper model did not answer; asking Haiku', { helper, reason: glm.reason });
   }
   const sent = withHelperThinking(model === HELPER_MODEL ? { ...params, model: HELPER_FALLBACK_MODEL } : { ...params, model });
   const response = await createMessageWithTelemetry({
@@ -1966,9 +2037,13 @@ async function generateAppSketch({ system, user, schema, model = HELPER_MODEL, m
 // triage of its first request would plan, from the description alone, so
 // its maker can answer its questions on the made screen while the project
 // is set up. One helper call; hands back the reply's text, the plan's JSON
-// whichever model answered. THROWS with no key or on a provider error; the
-// caller then leaves the plan to the triage, as before.
-async function generateFirstVersionPlan({ system, user, schema, model = HELPER_MODEL, maxTokens = 2000, apiKey, telemetryContext }) {
+// whichever model answered. `validate` is the plan's own parse: a GLM
+// answer it refuses is asked again of Haiku, with the same schema as its
+// structured output (structuredOutputSchema). THROWS with no key or on a
+// provider error; the caller then leaves the plan to the triage, as before.
+async function generateFirstVersionPlan({
+  system, user, schema, model = HELPER_MODEL, maxTokens = 2000, apiKey, telemetryContext, validate,
+}) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
   const { response: resp, model: served } = await helperMessage({
@@ -1979,8 +2054,10 @@ async function generateFirstVersionPlan({ system, user, schema, model = HELPER_M
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: String(user || '') }],
+      ...(schema ? { output_config: { format: { type: 'json_schema', schema: structuredOutputSchema(schema) } } } : {}),
     },
     schema,
+    validate,
     telemetryContext,
     defaults: { backend: 'helper', component: 'first_version_plan' },
     apiKey,
@@ -3457,6 +3534,7 @@ module.exports = {
   translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
+  answerShape, structuredOutputSchema,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,
   _setClientForTests, _setHelperDepsForTests,
 };
