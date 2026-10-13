@@ -1,13 +1,16 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { requestKey } from './bot-request';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { isBotNews, requestKey } from './bot-request';
 import { newsIcon } from './bot-shared';
-import { ProjectTile, RequestTag, trayNow, type StripRow } from './bot-strip';
+import { FinalState, OpenState, ProjectTile, RequestTag, SettledLine, trayEnded, trayNow, type StripRow } from './bot-strip';
 import { useBotWork } from './bot-work';
 import { openThreadAt } from './store';
-import type { ConversationMessage, HomeroomBotMeta } from './types';
+import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
 
 /*
  * One request, one story: the bot's news in the main chat, ONE short line
@@ -15,13 +18,22 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * card, the moments that ring and are also shown in the main chat, and the
  * big cards from before threads) is drawn as
  *
- *     [tile] Dark mode needs your answer
+ *     [tile] #18 Dark mode                                  >
+ *            Needs your answer · 3 updates
  *
- * the project's tile, the request's title in bold and a few words. A tap
- * opens the request's thread (its root: the message's `threadRootId`, or the
- * card itself), at the message. A message from before threads, which has no
- * thread, opens in place instead: the whole message as it was drawn
- * (./message-row.tsx). Inside the thread everything stays whole.
+ * the project's tile, the request's number and title and where it stands.
+ * Every row opens the same way: a tap opens the request's story in the pane
+ * beside the chat, at the message. That is its thread (the message's
+ * `threadRootId`, or the card itself); for news from before threads, which
+ * has no thread, it is the oldest piece, which the pane draws with the
+ * pieces after it (./bot-request.ts storyRootIn). Inside, everything is whole.
+ *
+ * A row says at a glance whether it is still open. One the tray holds open
+ * is two lines with a full tile, and a badge in amber while it waits on the
+ * person (the words under the title stay grey: amber words read as an
+ * error). One
+ * that is done, or that the tray no longer holds, is SETTLED: one line, a
+ * small tile, and how it ended (a green check when it went live).
  *
  * The bot's conversational replies, its offers (File it / Not now), its
  * hellos and anything about no request stay ordinary messages
@@ -29,25 +41,13 @@ import type { ConversationMessage, HomeroomBotMeta } from './types';
  * data-message-id, so a link to it and the "New" line still find it.
  */
 
-/** The bot's own messages that are conversation, never news: they stay messages. */
-const CONVERSATION_KINDS = new Set([
-  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
-  'hello_welcome', 'hello_tour', 'hello_joiner', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
-]);
-
 function metaOf(message: ConversationMessage): HomeroomBotMeta | null {
   if (!message.sender.bot) return null;
   const meta = message.metadata?.homeroomBot;
   return meta && typeof meta === 'object' ? meta : null;
 }
 
-/** Pure: whether a message in the chat with the bot is news about a request, drawn as one line. */
-export function isBotNews(message: ConversationMessage): boolean {
-  const meta = metaOf(message);
-  if (!meta || message.deleted || !(message.id > 0)) return false;
-  if (meta.moment === 'reply' || CONVERSATION_KINDS.has(meta.kind)) return false;
-  return (Number(meta.issueNumber) > 0) || !!meta.firstVersion || meta.kind === 'activity';
-}
+export { isBotNews };
 
 /** Which words a line says: a message id, and whether it waits on the person. */
 export interface NewsWords { key: string; need: boolean }
@@ -131,21 +131,42 @@ export function foldBotNews(messages: ConversationMessage[], skip: (message: Con
   return fold;
 }
 
+/** Where a row's request stands: its words, and how it is drawn. */
+export interface NewsStatus {
+  text: string;
+  /** Waits on the person: the need colour. */
+  need: boolean;
+  /** Asks nothing any more: one line, with how it ended. */
+  settled: boolean;
+  /** How it ended, in the activity cards' words ('live', 'closed', …), when known. */
+  ended: string | null;
+  /** The tray's row for it while it is open: what its badge shows. */
+  row: StripRow | null;
+}
+
+/** What a request ended as, read from the last news about it when the tray has no record of it. */
+const KIND_ENDINGS: Record<string, string> = {
+  merged: 'live',
+  build_failed: 'build_failed', first_version_failed: 'build_failed', preview_failed: 'build_failed', followup_failed: 'build_failed',
+};
+
 /**
- * Pure: a row's second line, and whether it is in the need colour. A request
- * the tray still holds says where it stands NOW, in the drawer's own words,
- * in amber only while it waits on the person. One the tray no longer holds
- * keeps its message's words, never in amber, and an ask among them is told
- * in the past ("Asked you a question"): whatever it asked has moved on.
- * Before the tray's first read, the message's words as they rang.
+ * Pure: a row's second line, and how it is drawn. A request the tray still
+ * holds says where it stands NOW, in the drawer's own words, in amber only
+ * while it waits on the person; done today, it is settled. One the tray no
+ * longer holds is settled too, and keeps its message's words, an ask among
+ * them told in the past ("Asked you a question"): whatever it asked has moved
+ * on. Before the tray's first read, the message's words as they rang, and
+ * nothing is settled yet.
  */
-export function newsStatus(meta: HomeroomBotMeta, now: Map<string, StripRow> | null): { text: string; need: boolean } {
+export function newsStatus(meta: HomeroomBotMeta, now: Map<string, StripRow> | null, ended: Map<string, string> | null = null): NewsStatus {
   const words = newsWords(meta);
-  if (!now) return { text: translate(words.key), need: words.need };
+  if (!now) return { text: translate(words.key), need: words.need, settled: false, ended: null, row: null };
   const key = requestKey(meta);
   const row = key ? now.get(key) : undefined;
-  if (row) return { text: row.state, need: row.group === 'needs' };
-  return { text: translate(PAST_WORDS[words.key] || words.key), need: false };
+  if (row && row.group !== 'done') return { text: row.state, need: row.group === 'needs', settled: false, ended: null, row };
+  const outcome = (key && ended?.get(key)) || (meta.moment === 'live' ? 'live' : KIND_ENDINGS[meta.kind]) || null;
+  return { text: row ? row.state : translate(PAST_WORDS[words.key] || words.key), need: false, settled: true, ended: outcome, row: null };
 }
 
 /** What an ask says once it no longer waits on the person: what it was, in the past. */
@@ -154,6 +175,7 @@ const PAST_WORDS: Record<string, string> = {
   'messages:bot.news.plan': 'messages:bot.news.past.plan',
   'messages:bot.news.decision': 'messages:bot.news.past.decision',
   'messages:bot.news.detail': 'messages:bot.news.past.detail',
+  'messages:bot.news.ready': 'messages:bot.news.past.ready',
 };
 
 /** Pure: the request's name on a line: its title, "Plant Pal, first version", or "Request #12". */
@@ -165,7 +187,7 @@ export function newsTitle(meta: HomeroomBotMeta): string {
   return meta.issueNumber ? translate('messages:bot.strip.requestNumber', { number: String(meta.issueNumber) }) : project;
 }
 
-/** Pure: the thread a line opens, or null for a message from before threads (it opens in place). */
+/** Pure: the thread a line opens, or null for a message from before threads (its story opens on its oldest piece). */
 export function newsThread(message: ConversationMessage): number | null {
   if (message.threadRootId) return message.threadRootId;
   const meta = metaOf(message);
@@ -175,63 +197,171 @@ export function newsThread(message: ConversationMessage): number | null {
 /** The project's icon as the strip has it (./bot-shared.ts, where the head card reads it too). */
 export { newsIcon };
 
-const NEED_INK = 'text-amber-700 dark:text-amber-400';
+/** Pure: where a news message's request stands, from one read of the tray (null for a message that is not news). */
+export function newsStatusOf(message: ConversationMessage, work: HomeroomBotWork | null): NewsStatus | null {
+  const meta = metaOf(message);
+  return meta ? newsStatus(meta, trayNow(work), trayEnded(work)) : null;
+}
 
-export function BotNewsLine({ message, focused = false, full, earlier = [], updates: updatesIn = null }: {
+
+export function BotNewsLine({ message, focused = false, earlier = [], updates: updatesIn = null, nested = false }: {
   message: ConversationMessage;
+  /** Drawn inside an opened run, to the right of its count (SettledRun). */
+  nested?: boolean;
   /** The message a link pointed at: flashed once. */
   focused?: boolean;
-  /** The whole message, for one from before threads opened in place. */
-  full: () => ReactNode;
   /** The news about the same request folded into this row (foldBotNews). */
   earlier?: ConversationMessage[];
   /** How many updates the request's story holds, when the stream counted them. */
   updates?: number | null;
 }) {
   const t = useMessages('messages');
-  const [open, setOpen] = useState(false);
   const { work } = useBotWork();
   const meta = metaOf(message);
   if (!meta) return null;
-  if (open) return <>{full()}</>;
-  const status = newsStatus(meta, trayNow(work));
-  const rootId = newsThread(message);
+  const status = newsStatus(meta, trayNow(work), trayEnded(work));
+  // Its story: the thread, else the oldest piece from before threads.
+  const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   const icon = newsIcon(work, meta.appSlug, meta.appName);
   const updates = updatesIn ?? (meta.kind === 'activity' && message.thread ? message.thread.replyCount : 0);
   function tap() {
-    if (rootId) openThreadAt(rootId, message.threadRootId ? message.id : null);
-    else setOpen(true);
+    openThreadAt(rootId, rootId === message.id ? null : message.id);
   }
+
   return (
     <article
       id={`messages-message-${message.id}`}
       data-message-id={message.id}
-      className={`messages-bot-news px-4 py-1${focused ? ' messages-message-focus' : ''}`}
+      className={`messages-bot-news ${nested ? 'py-0' : 'px-4 py-1'}${focused ? ' messages-message-focus' : ''}`}
       data-bot-news={meta.kind}
     >
       {/* Links to the news folded in here land on this row. */}
       {earlier.map((item) => <span key={item.id} id={`messages-message-${item.id}`} aria-hidden="true" />)}
       {/* B5: the bot's hello still leads the first card it sends somebody. */}
       {meta.hello ? <p className="messages-bot-hello">{meta.hello}</p> : null}
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-3 rounded-xl py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
-        aria-expanded={rootId ? undefined : false}
-        data-bot-news-open={rootId ? 'thread' : 'inline'}
-        onClick={tap}
-      >
-        <ProjectTile name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} iconUrl={icon.iconUrl} emoji={meta.appEmoji || icon.iconEmoji} />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5">
-            {meta.firstVersion ? null : <RequestTag number={meta.issueNumber} size="line" />}
-            <strong className="truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{newsTitle(meta)}</strong>
+      {status.settled ? (
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          data-bot-news-open="thread"
+          data-bot-news-state="settled"
+          onClick={tap}
+        >
+          <SettledLine
+            name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} iconUrl={icon.iconUrl} emoji={meta.appEmoji || icon.iconEmoji}
+            number={meta.firstVersion ? null : meta.issueNumber} title={newsTitle(meta)} outcome={status.ended} fallback={status.text}
+            nested={nested}
+          />
+          <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl py-1.5 pr-1 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800/60"
+          data-bot-news-open="thread"
+          data-bot-news-state={status.need ? 'needs' : 'open'}
+          onClick={tap}
+        >
+          <ProjectTile name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} iconUrl={icon.iconUrl} emoji={meta.appEmoji || icon.iconEmoji} />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-center gap-1.5">
+              {status.row ? <OpenState row={status.row} /> : null}
+              {meta.firstVersion ? null : <RequestTag number={meta.issueNumber} size="line" />}
+              <strong className="truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{newsTitle(meta)}</strong>
+            </span>
+            {/* Grey whatever it says: the badge carries the need colour, and the words in it read as trouble. */}
+            <span className="truncate text-[13px] leading-[18px] text-zinc-500 first-letter:uppercase dark:text-zinc-400" data-bot-news-words="">
+              {status.text}
+              {updates ? <span className="text-zinc-400 dark:text-zinc-500" data-bot-thread-link={message.id}>{` ${t('messages:bot.news.updates', { count: updates })}`}</span> : null}
+            </span>
           </span>
-          <span className={`truncate text-[13px] leading-[18px] first-letter:uppercase ${status.need ? NEED_INK : 'text-zinc-500 dark:text-zinc-400'}`} data-bot-news-words="">
-            {status.text}
-            {updates ? <span className="text-violet-700 dark:text-violet-300" data-bot-thread-link={message.id}>{` ${t('messages:bot.news.updates', { count: updates })}`}</span> : null}
-          </span>
-        </span>
-      </button>
+          <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+        </button>
+      )}
     </article>
+  );
+}
+
+/** One row of a folded run: what BotNewsLine is drawn with. */
+export interface SettledRunItem {
+  message: ConversationMessage;
+  earlier: ConversationMessage[];
+  updates: number | null;
+  focused: boolean;
+}
+
+/**
+ * Settled rows in a row fold into one line (one request, one story): two or
+ * more finished requests with nothing between them on the same day are
+ *
+ *     4 finished v  [✓][✋][✋][⚠]
+ *
+ * how many, then their badges, until it is pressed. Opened, the rows take
+ * the badges' place, to the right of the count, one under another, so they
+ * read as what the count holds; on a phone, under the count, indented as
+ * far as it is, so the titles keep their room. Open requests are never folded, so what
+ * still asks something is what the eye meets. A link to a folded row lands
+ * on the line (each row's id is an anchor on it) and opens it.
+ *
+ * Pressed, the count stays where it is on the screen: the rows open below
+ * it, and `holdPlace` (the transcript's) stops it following the newest line
+ * for that press and puts the count back where it was once they are drawn.
+ */
+export const RUN_BADGES = 6;
+export function SettledRun({ items, holdPlace }: {
+  items: SettledRunItem[];
+  /** Keep an element where it is on screen across the next draw: returns what puts it back. */
+  holdPlace?: (el: HTMLElement) => () => void;
+}) {
+  const t = useMessages('messages');
+  const { work } = useBotWork();
+  const focused = items.some((item) => item.focused);
+  const [open, setOpen] = useState(focused);
+  useEffect(() => { if (focused) setOpen(true); }, [focused]);
+  const count = useRef<HTMLButtonElement>(null);
+  const putBack = useRef<(() => void) | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    putBack.current?.();
+    putBack.current = null;
+  }, [open]);
+  const statuses = items.map((item) => newsStatusOf(item.message, work));
+  const more = items.length - RUN_BADGES;
+  const toggle = () => {
+    if (count.current && holdPlace) putBack.current = holdPlace(count.current);
+    setOpen(!open);
+  };
+  return (
+    <div className="messages-bot-news px-4 py-1" data-bot-settled-run={items.length} data-bot-settled-first={items[0]?.message.id}>
+      {open ? null : items.flatMap((item) => [item.message, ...item.earlier]).map((m) => <span key={m.id} id={`messages-message-${m.id}`} aria-hidden="true" />)}
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="w-9 shrink-0" aria-hidden="true" />
+        <div className={open ? 'flex min-w-0 flex-1 flex-col sm:flex-row sm:items-start sm:gap-2' : 'flex min-w-0 flex-1 items-start gap-2'}>
+          <button
+            ref={count}
+            type="button"
+            className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-left text-[14px] font-medium leading-5 text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+            aria-expanded={open}
+            data-bot-settled-toggle=""
+            onClick={toggle}
+          >
+            <span>{t('messages:bot.news.finished', { count: items.length })}</span>
+            <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 ${open ? 'rotate-180' : ''}`} />
+          </button>
+          <div className="min-w-0 flex-1">
+            {open ? items.map((item) => (
+              <BotNewsLine key={item.message.clientKey || item.message.id} message={item.message} earlier={item.earlier} updates={item.updates} focused={item.focused} nested />
+            )) : (
+              // The same press as the count's, for a pointer; the count is the control.
+              <div className="flex h-[30px] min-w-0 cursor-pointer items-center gap-1 overflow-hidden" aria-hidden="true" data-bot-settled-badges="" onClick={toggle}>
+                {items.slice(0, RUN_BADGES).map((item, index) => (
+                  <FinalState key={item.message.id} outcome={statuses[index]?.ended} fallback={statuses[index]?.text || ''} />
+                ))}
+                {more > 0 ? <span className="shrink-0 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400">{`+${more}`}</span> : null}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

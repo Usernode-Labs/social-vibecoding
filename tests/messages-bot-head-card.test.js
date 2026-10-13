@@ -330,13 +330,14 @@ test('the staging preview’s declared check finds the demo DM’s news as one r
   // One request, one story: the request's card no longer leads a big card
   // in the main chat; each request is one row (./bot-news-line.tsx), its
   // earlier news folded into its newest, which counts the updates. The card
-  // still leads the message inside the request's thread, and an old message
-  // opened in place.
+  // still leads the message inside the request's thread. A finished request
+  // (the first version that went live) folds with the others beside it into
+  // one line, whose badges say how each ended.
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /:has\(\[data-bot-news=merged\] \[data-bot-thread-link\]\)/, 'a first version told twice is one row that counts them');
-  assert.match(check.expectSelector, /\[data-bot-news=question\] \[data-bot-thread-link\]$/);
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-badges\] \[data-bot-final=live\]\)/, 'a first version that went live is folded with the finished, said Live');
+  assert.match(check.expectSelector, /\[data-bot-news=question\] \[data-bot-news-state=needs\] \[data-bot-thread-link\]$/, 'the question still waiting counts its updates');
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   assert.equal(check.expectText, 'Ready for your yes', 'the change ready to try, where it stands now');
   // The fixture it reads (services/staging-messages.js ensureBotDmFixture):

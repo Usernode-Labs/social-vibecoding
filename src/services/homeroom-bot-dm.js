@@ -3350,9 +3350,12 @@ async function quotedTarget(pool, userId, quotedId) {
 
 /**
  * One story: the request whose thread a person's message was written in,
- * from the thread's first message, the request's card: { rootId, appId,
- * appSlug, appName, issueNumber, title, firstVersion }, or null for a
- * message in the main chat (or in a thread that is no request's).
+ * from the thread's first message: { rootId, appId, appSlug, appName,
+ * issueNumber, title, firstVersion }, or null for a message in the main chat
+ * (or in a thread that is no request's). The first message is the request's
+ * card, or for a request from before threads any of the bot's messages about
+ * it: the chat opens that request's story on its oldest one, and a reply
+ * written there is about the request all the same.
  */
 async function threadRequest(pool, { userId, conversationId, message }) {
   let rootId = Number(message?.threadRootId) || null;
@@ -3369,7 +3372,7 @@ async function threadRequest(pool, { userId, conversationId, message }) {
        FROM homeroom_bot_dm_messages d
        JOIN apps a ON a.id = d.app_id
        LEFT JOIN homeroom_bot_requesters q ON q.app_id = d.app_id AND q.issue_number = d.issue_number
-      WHERE d.message_id = $1 AND d.user_id = $2 AND d.kind = 'activity'`,
+      WHERE d.message_id = $1 AND d.user_id = $2`,
     [rootId, userId],
   );
   if (!card) return null;
