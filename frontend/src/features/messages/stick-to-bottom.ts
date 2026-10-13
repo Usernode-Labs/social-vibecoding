@@ -44,6 +44,19 @@ export function isNearBottom(el: ScrollBox, slack: number = STICK_SLACK_PX): boo
   return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
 }
 
+/** #5019: how close to the top of a conversation still counts as at the top. */
+export const LOAD_OLDER_SLACK_PX = 200;
+
+/** Whether a scroller is at, or within `slack` of, the top of its content. */
+export function isNearTop(el: ScrollBox, slack: number = LOAD_OLDER_SLACK_PX): boolean {
+  return el.scrollTop <= slack;
+}
+
+/** Whether the content drawn is shorter than the scroller needs to scroll. */
+export function needsMoreHistory(el: ScrollBox, slack: number = LOAD_OLDER_SLACK_PX): boolean {
+  return el.scrollHeight - el.clientHeight <= slack;
+}
+
 type Observer = { observe(target: Element, options?: { box: 'border-box' }): void; unobserve(target: Element): void; disconnect(): void };
 type MutationLike = { observe(target: Node, options: { childList: boolean }): void; disconnect(): void };
 type MutationRecordLike = { addedNodes: ArrayLike<Node>; removedNodes: ArrayLike<Node> };

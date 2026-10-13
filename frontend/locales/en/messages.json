@@ -3145,11 +3145,11 @@
   },
   "thread.loadingOlder": {
     "text": "Loading…",
-    "description": "Label of the \"Load earlier messages\" button while earlier messages load."
+    "description": "Line at the top of a conversation while earlier messages load after scrolling up."
   },
   "thread.loadEarlier": {
     "text": "Load earlier messages",
-    "description": "Button at the top of a conversation: fetches the messages before the ones shown."
+    "description": "Button at the top of a conversation, shown only after loading earlier messages failed: tries again."
   },
   "thread.loadingNewer": {
     "text": "Loading…",
