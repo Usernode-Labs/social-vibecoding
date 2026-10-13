@@ -463,6 +463,7 @@ async function liveFirstVersion(pool, appId, viewerId) {
     step: null,
     of: null,
     line: 'live',
+    phase: null,
     ready: false,
     mine: viewerId != null && Number(row.user_id) === Number(viewerId),
     creator: row.username || null,

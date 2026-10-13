@@ -1227,7 +1227,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const checking = !asked && !stalled && checksForQuestions(fv, { makesPlan: botBuilds && !imported && !readyMade, read: readOnce, waited: planWaited });
   // N4: the stage by its own name while it is built, and for how long.
   const now = useNow();
-  const named = phaseLine(line, fv?.phase, now);
+  // Answered here and not read since: the build starting (run five).
+  const named = phaseLine(line, fv?.phase || (answered && line === 'building' ? { key: 'starting' } : null), now);
   // The thumbnail says only what the build line does not: a quiet note when
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.

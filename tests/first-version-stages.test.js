@@ -91,12 +91,10 @@ test('the line says the stage and the time so far; zero says nothing', () => {
   assert.deepEqual(phaseLine('building', { key: 'testing', since: T(5) }, now), { words: 'Testing it', note: '4 min so far' });
   // Only while the line says it is being built; an unknown stage says the line's own words.
   assert.deepEqual(phaseLine('ready', { key: 'testing', since: T(5) }, now), { words: null, note: null });
-  // Run five: built with no stage named yet (a plan decided at Make it, its
-  // build not picked up) is the build starting, never "Building it".
-  assert.deepEqual(phaseLine('building', { key: 'queued', since: T(5) }, now), { words: 'Starting the build', note: null });
-  assert.deepEqual(phaseLine('building', null, now), { words: 'Starting the build', note: null });
+  assert.deepEqual(phaseLine('building', { key: 'queued', since: T(5) }, now), { words: null, note: null });
+  assert.deepEqual(phaseLine('building', null, now), { words: null, note: null });
+  // Run five: the build waiting its turn, before the spec turn draws anything.
   assert.deepEqual(phaseLine('building', { key: 'starting', since: T(5) }, now), { words: 'Starting the build', note: '4 min so far' });
-  assert.deepEqual(phaseLine('planning', null, now), { words: null, note: null });
   assert.equal(soFarNote(T(9), now), null, 'under a minute: nothing');
   assert.equal(soFarNote(null, now), null);
   assert.equal(phaseWords(null), null);
@@ -146,7 +144,7 @@ test('the server answers the stage and the steps, and the screens say them', () 
   assert.match(status, /\{steps \? <FirstVersionSteps steps=\{steps\} phase=\{view\.phase \|\| null\} caption=\{line === 'building' \? view\.buildNote \|\| null : null\} \/> : null\}/);
   assert.match(status, /if \(waiting \|\| steps\) \{/, 'the screen scrolls with the steps under the card');
   const made = read('frontend/src/features/first-session/made.tsx');
-  assert.match(made, /const named = phaseLine\(line, fv\?\.phase, now\);/);
+  assert.match(made, /const named = phaseLine\(line, fv\?\.phase \|\| \(answered && line === 'building' \? \{ key: 'starting' \} : null\), now\);/);
   // The stage's words come from one table (build-line-words.js), shared.
   const words = read('frontend/src/features/first-session/build-line-words.js');
   assert.match(words, /export const PHASE_WORDS = Object\.freeze\(\{/);
@@ -166,7 +164,7 @@ test('run five, 5: the Home tile, the hub card and the App tab name the same sta
   assert.deepEqual(Object.keys(PHASE_WORDS), [...progress.FIRST_VERSION_PHASES], 'every stage the server names has its words');
   // The tile, in its short word.
   const tile = (line, phase) => message(buildLineTileWordsOf(line, phase));
-  assert.equal(tile('building', null), 'Starting');
+  assert.equal(tile('building', null), 'Building', 'no stage named: the line\'s own short word');
   assert.equal(tile('building', { key: 'starting', since: T(1) }), 'Starting');
   assert.equal(tile('building', { key: 'drawing', since: T(1) }), 'Drawing');
   assert.equal(tile('building', { key: 'writing', since: T(1) }), 'Writing plan');

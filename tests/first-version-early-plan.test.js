@@ -397,4 +397,8 @@ test('the server says the bot builds it once its plan is decided, not that it pl
   assert.deepEqual(asking.steps.map((s) => [s.key, s.state]), [['plan', 'now'], ['screens', 'next'], ['build', 'next'], ['check', 'next'], ['test', 'next'], ['live', 'next']]);
   // Answered while the project is still set up: the plan is done, the screens next in hand.
   assert.deepEqual(answered.steps.slice(0, 3).map((s) => [s.key, s.state]), [['plan', 'done'], ['screens', 'now'], ['build', 'next']]);
+  // Run five: and the build is starting, named so on every screen; nothing drawn yet.
+  assert.deepEqual(answered.phase, { key: 'starting', since: '2026-10-13T10:00:30.000Z' });
+  assert.equal(asksNothing.phase.key, 'starting');
+  assert.equal(asking.phase, undefined, 'not while its questions wait');
 });

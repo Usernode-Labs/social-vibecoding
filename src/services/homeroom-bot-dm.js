@@ -4639,9 +4639,14 @@ async function firstVersionState(pool, appId, deps = {}) {
     ),
   });
   const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
+  // Run five: decided, and its build not picked up yet: the build starting,
+  // named so on every screen, never "Drawing the screens" before any are.
+  const starting = decidedEarly
+    ? { phase: { key: 'starting', since: row.answered_at ? new Date(row.answered_at).toISOString() : null } }
+    : {};
   if (row.status !== 'filed') {
     if (progress.setupOf(row).outcome) return null;
-    return { ...base, ...at('setting_up'), question: false, ready: false, ...early, ...steps(null) };
+    return { ...base, ...at('setting_up'), question: false, ready: false, ...starting, ...early, ...steps(null) };
   }
   const states = await progress.requestStates(pool, { userId: row.user_id });
   const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
@@ -4718,7 +4723,7 @@ async function firstVersionState(pool, appId, deps = {}) {
   // Filed, and nothing in progress: either it came to something, or the bot
   // has not picked it up yet (filing wakes it, and it reads it next).
   if (found && progress.outcomeOf(found.row)) return null;
-  return { ...base, ...at('queued'), question: false, ready: false, ...early, ...steps(null) };
+  return { ...base, ...at('queued'), question: false, ready: false, ...starting, ...early, ...steps(null) };
 }
 
 // N4: the stages from its spec turn on, when a first look may be drawn.

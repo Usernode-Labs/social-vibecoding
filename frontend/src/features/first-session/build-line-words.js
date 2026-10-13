@@ -110,16 +110,10 @@ export const PHASE_TILE_WORDS = Object.freeze({
   testing: 'onboarding:buildLine.tile.testing',
 });
 
-/**
- * The phase a line is in, by key, or null: the answer's own while the line
- * says it is being built, and before the server names one (a plan decided
- * at Make it, its build not picked up yet) the build starting. No other
- * line has a phase.
- */
+/** The phase a line is in, by key, or null: the answer's own, while the line says it is being built. */
 export function phaseKeyOf(line, value) {
-  if (line !== 'building') return null;
-  const phase = phaseOf(value);
-  return phase ? phase.key : 'starting';
+  const phase = line === 'building' ? phaseOf(value) : null;
+  return phase ? phase.key : null;
 }
 
 /** A Home tile's caption for a line and its phase: a message id (BUILD_LINE_TILE_WORDS, or PHASE_TILE_WORDS while it is built). */

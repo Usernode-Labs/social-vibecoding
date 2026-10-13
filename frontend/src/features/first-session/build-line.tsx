@@ -68,16 +68,13 @@ export function soFarNote(since: string | null | undefined, now: number): string
 /**
  * N4: the line's words and note for a first version at `line`, with its
  * phase: the phase's own words and how long it has run while the line says
- * it is being built ("Starting the build" before a phase is named); else
- * none, and the line says its own words. `caption`
+ * it is being built; else none, and the line says its own words. `caption`
  * (the build's "Adding the tier rows") is the note while it builds, ahead of
  * the time.
  */
 export function phaseLine(line: BuildLineState | null, value: unknown, now: number, caption: string | null = null): { words: string | null; note: string | null } {
-  if (line !== 'building') return { words: null, note: null };
-  // Run five: built, with no stage named yet (a plan decided at Make it,
-  // its build not picked up), is the build starting, on every screen.
-  const phase = (phaseOf(value) as FirstVersionPhase | null) || { key: 'starting', since: null, round: null, rounds: null };
+  const phase = line === 'building' ? (phaseOf(value) as FirstVersionPhase | null) : null;
+  if (!phase) return { words: null, note: null };
   const soFar = soFarNote(phase.since, now);
   const adding = phase.key === 'building' && caption ? caption : null;
   return {

@@ -321,7 +321,8 @@ test('card: the tile carries no users badge and no status dot', () => {
   assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'building', since: null } })).statusLabel, 'Building');
   // Run five: the stage the App tab names, in its short word; before the spec turn, Starting.
   assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'drawing', since: null } })).statusLabel, 'Drawing');
-  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Starting');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building', first_version_phase: { key: 'starting', since: null } })).statusLabel, 'Starting');
+  assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).statusLabel, 'Building');
   assert.equal(Home.appView(baseApp({ first_version_line: 'question' })).statusLabel, 'Question');
   assert.equal(Home.appView(baseApp({ first_version_line: 'ready' })).statusLabel, 'Ready to try');
   assert.equal(Home.appView(baseApp({ first_version_line: 'building' })).buildLine, 'building');
