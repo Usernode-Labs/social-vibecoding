@@ -2188,6 +2188,42 @@ const FIRST_VERSION_ORDER_LINES = Object.freeze([
   'valuable first, only while time is left.',
 ]);
 
+// Newcomer run five, item 8: a first version's build starts from the
+// screens its spec drew, written into the repository before its turn
+// (services/spec-screens-start.js). Run four's build spent about half its
+// output tokens writing those screens again. `placed` is what
+// startFromScreens resolved: { screens: [1] or [1, 2], tokens, skipped }.
+// Pure.
+function startingScreensLines(placed) {
+  if (!placed || !Array.isArray(placed.screens) || !placed.screens.includes(1)) return [];
+  const second = placed.screens.includes(2)
+    ? ['Screen 2 is inside `<template data-spec-screen="2">` after it: move its markup to where that view belongs (or',
+      'render it from your script) and delete the template. Where one of screen 2\'s rules in `public/screens.css`',
+      'restyles screen 1, scope it to `[data-spec-screen="2"]`.']
+    : (placed.skipped || []).some((s) => s && s.n === 2)
+      ? ['The spec\'s screen 2 could not be carried over, so build that view from its drawing in the spec\'s "### Screen',
+        'markup", on the same styles.']
+      : [];
+  const { KIT_TOKENS } = require('./spec-screens-start');
+  const added = (placed.tokens || []).filter((t) => !KIT_TOKENS.includes(t)).slice(0, 8);
+  return [
+    '',
+    'THE SPEC\'S SCREENS ARE IN PLACE. Before this turn the platform wrote the screens the spec drew into the repository,',
+    'as the first commit on this branch: the main screen in `public/index.html` is screen 1 exactly as drawn (inside',
+    '`<div data-spec-screen="1">`, its demo rows included), its styles are `public/screens.css` (linked after',
+    '`/tailwind.css`), and the light look\'s colours the drawing set are the kit\'s tokens in `styles/tailwind-input.css`.',
+    ...second,
+    'Do not draw, restyle or rewrite them: no second copy of the markup, no new styles for what is drawn, no redesign.',
+    'Change them only where behaviour needs it: render the drawn rows from data with the same markup (the drawn rows',
+    'are the populated demo, so make `?demo=1` show rows like them), give elements the ids and hooks your script needs,',
+    'wire every action, and add the loading, empty and error states with the kit\'s components. Set the dark look\'s',
+    'value of each token (the `.dark` block) from the spec\'s Design subsection'
+      + (added.length ? `, including the tokens the drawing added (${added.map((t) => `--${t}`).join(', ')}).` : '.'),
+    'Your look-and-fix rounds compare the running app with the drawing and fix what differs, not what you would draw',
+    'differently.',
+  ];
+}
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -2244,6 +2280,35 @@ function appChecksLines() {
   ];
 }
 
+/**
+ * Run five, item 8: a build turn whose branch is still at the commit of the
+ * screens the platform wrote before it (startingScreens.sha) changed
+ * nothing, though that commit is ahead of main: its result reads as no
+ * change (ahead 0), so it is nudged, and failed, as one that changed nothing
+ * always was. Mutates `routed.result`; returns it.
+ */
+function pastStartingScreens(routed, startingScreens) {
+  const r = routed && routed.result;
+  if (r && startingScreens?.sha && r.sha && r.sha === startingScreens.sha) r.ahead = 0;
+  return routed;
+}
+
+/**
+ * The spec as the build reads it: once every screen it drew is in the
+ * repository (startingScreensLines), without its "### Screen markup", the
+ * drawn screens' HTML (spec-html.js specHtmlToMarkdown): run five's spec drew
+ * 42,237 characters of them, which the build no longer needs to read. Pure.
+ */
+function specForBuild(specMd, startingScreens = null) {
+  const text = String(specMd ?? '');
+  if (!startingScreens || !Array.isArray(startingScreens.screens)) return text;
+  const at = text.search(/^### Screen markup\s*$/m);
+  if (at === -1) return text;
+  const drawn = (text.slice(at).match(/^```html\s*$/gm) || []).length;
+  if (drawn > startingScreens.screens.length) return text;
+  return require('./spec-screens-start').specWithoutScreenMarkup(text);
+}
+
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
@@ -2256,6 +2321,9 @@ function buildPrompt({
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
+  // Run five, item 8: the spec's screens, already written into the
+  // repository (services/spec-screens-start.js startFromScreens), or null.
+  startingScreens = null,
 }) {
   const time = clock ? clockLines({ ...clock, reviewed }) : [];
   const specBlock = spec
@@ -2281,6 +2349,7 @@ function buildPrompt({
     planNoteText(buildNote, firstVersion),
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
+    ...(firstVersion ? startingScreensLines(startingScreens) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
     ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
     ...BATCH_STEPS_LINES,
@@ -3398,6 +3467,16 @@ async function buildAndPropose({
   // starts, so a stop aimed at the build is never the one erased.
   worker.clearPendingStop?.(session.id);
 
+  // Run five, item 8: a first version's build starts from the screens its
+  // spec drew, written into the repository and pushed as its first commit
+  // (services/spec-screens-start.js), before the build's clock starts. Null
+  // when they are not carried over: the build then draws them, as before.
+  const startingScreens = firstVersion && spec.ok && !platformRepo
+    ? await require('./spec-screens-start').startFromScreens({
+      worker, containerName, sessionId: session.id, branchName, specHtml: spec.specHtml || null,
+    })
+    : null;
+
   // Read before the build's clock starts: a catalog read is not build time.
   const readsImages = typeof deps.seesImages === 'boolean'
     ? deps.seesImages
@@ -3415,11 +3494,12 @@ async function buildAndPropose({
   // timer). A nudge runs on what is left of it.
   const turnStartedMs = Date.now();
   const prompt = buildPrompt({
-    seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
+    seed, buildNote, spec: spec.ok ? specForBuild(spec.specMd, startingScreens) : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
     appChecks: appChecksOn(platformRepo),
+    startingScreens,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -3442,6 +3522,9 @@ async function buildAndPropose({
   };
   let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress });
   buildTurnMs = Date.now() - turnStartedMs;
+  // The screens the platform wrote are a commit of the branch's own: a turn
+  // that added nothing after it changed nothing (pastStartingScreens).
+  pastStartingScreens(routed, startingScreens);
 
   // What the build turns cost, a nudge's with the build's, and their ledger
   // ids. Both turns, the spec's and the build's, are the build's cost (and
@@ -3502,6 +3585,7 @@ async function buildAndPropose({
         resumeThreadId: routed?.result?.agentThreadId || null,
         budgetMs: leftMs, commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY,
       }));
+      pastStartingScreens(routed, startingScreens);
       countTurn(routed);
       const nudge = turnFacts({ routed, stopped }, { turn: 'nudge', model, seconds: (Date.now() - nudgeStartedMs) / 1000 });
       noChange.committed = nudge.ended === 'changed';
@@ -3543,7 +3627,7 @@ async function buildAndPropose({
   let partial = null;
   if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
     const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
-    if (kept?.pushed && Number(kept.commits) > 0) {
+    if (kept?.pushed && Number(kept.commits) > 0 && !(startingScreens?.sha && kept.sha === startingScreens.sha)) {
       partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
       Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
       // A stop aimed at the build would skip the review's fix turns.
@@ -3876,6 +3960,9 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  specForBuild,
+  pastStartingScreens,
+  startingScreensLines,
   buildVisibleChangesLines,
   buildDescriptionLines,
   localeRule,
