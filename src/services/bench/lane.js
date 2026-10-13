@@ -49,10 +49,13 @@
 //         same finisher a trial run start to end uses (recordTrial), held
 //         in this lane's slots while it runs;
 //       - a first version's or a configuration's side build's turn, any of
-//         them, with its worker still running it: followed to its end too,
-//         what it produced kept on the trial's checkpoint, and the trial
-//         handed back to go on from there (handBackTrial), costing it no
-//         claim;
+//         them (its triage, spec, build, or a review's fix), with its worker
+//         still running it: followed to its end too, what it produced kept
+//         on the trial's checkpoint, and the trial handed back to go on from
+//         there (handBackTrial), costing it no claim. Its next claim reviews
+//         a kept build its configuration's reviewer has not seen, or records
+//         a review the restart cut short, as recovery does a live first
+//         version's (runner.goOnFromKept);
 //       - anything else (a build's spec turn, a DM conversation, a worker
 //         that is gone): the turn is abandoned and the trial goes back to
 //         `pending` at once (releaseTrial), what the interrupted attempt
@@ -1278,8 +1281,11 @@ async function recoveryDeadline(pool, config, session, activeTurn) {
     // Each of its turns on the clock the live stage gave it: the triage a
     // turn's, the spec and the build a first version's (draftSpec takes
     // the shorter of the build's and the spec's).
+    // A review's fix turn the build's, and never past the end of the
+    // review's own minutes, as a side build's (fixDeadline).
     const first = budgets.firstVersion || budgets;
     const which = runner.firstVersionTurnOf(plan.trial.checkpoint, session.id, activeTurn);
+    if (which === 'fix') return fixDeadline(plan.trial.checkpoint, startedMs, startedMs + first.buildMs);
     const ms = which === 'build' ? first.buildMs
       : which === 'spec' ? Math.min(first.buildMs, first.specMs) : first.turnMs;
     return startedMs + ms;
@@ -1301,10 +1307,19 @@ function sideTurnDeadline(trial, budgets, activeTurn, startedMs) {
   const which = runner.sideTurnOf(trial.checkpoint, activeTurn);
   if (which === 'spec') return startedMs + Math.min(clocks.buildMs, clocks.specMs);
   const turnEnd = startedMs + clocks.buildMs;
-  const review = trial.checkpoint?.review;
+  return which === 'fix' ? fixDeadline(trial.checkpoint, startedMs, turnEnd) : turnEnd;
+}
+
+/**
+ * When a review's recovered fix turn ends: at `turnEnd` (the build's clock),
+ * and never past the end of the review's own minutes, which it was started
+ * with what was left of (live.reviewLanded). Pure.
+ */
+function fixDeadline(checkpoint, startedMs, turnEnd) {
+  const review = checkpoint?.review;
   const reviewStarted = Date.parse(review?.startedAt || '');
   const minutes = Number(review?.reviewer?.budgetMinutes);
-  if (which !== 'fix' || !Number.isFinite(reviewStarted) || !(minutes > 0)) return turnEnd;
+  if (!Number.isFinite(reviewStarted) || !(minutes > 0)) return turnEnd;
   // A fix is given at least a second (reviewLanded's Math.max(1000, ...)).
   return Math.max(startedMs + 1000, Math.min(turnEnd, reviewStarted + minutes * 60 * 1000));
 }
@@ -1382,9 +1397,9 @@ function recoveredLooks(checkpoint, step, lines) {
  * produced kept on the trial's checkpoint (runner.recoverFirstVersionTurn)
  * with the looks it took (recoveredLooks), its session put away as a
  * finished one is, and the trial handed back to the lane (releaseTrial),
- * whose next claim goes on from there. Kept work costs it no claim. A side
- * build's review fix keeps nothing of its own, but its review is kept
- * already, so it costs no claim either. Resolves 'handed_back', or 'gone'
+ * whose next claim goes on from there. Kept work costs it no claim. A
+ * review's fix keeps nothing of its own, but its review is kept already, so
+ * it costs no claim either. Resolves 'handed_back', or 'gone'
  * when the trial was no longer on this session.
  */
 async function handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines = null, deps }) {

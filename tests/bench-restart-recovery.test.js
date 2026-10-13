@@ -385,7 +385,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.claims, 0, 'the restart cost it no claim');
     assert.equal(row.session_id, null);
     assert.ok(row.recovered_at);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: specSid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: specSid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.equal(row.checkpoint.triage.parsed.verdict, 'ready', 'what it kept before is kept');
     assert.equal(row.checkpoint.handBacks, 1);
     assert.equal(row.checkpoint.handedBackAt, 2);
@@ -479,7 +481,8 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     reset();
     const fvb = await firstVersionTrial();
     const triSid = await newSession(null);
-    const buildSid = await newSession(turnOf('build'));
+    const buildTurn = turnOf('build', { logicalTurnId: crypto.randomUUID() });
+    const buildSid = await newSession(buildTurn);
     await claimAs(fvb.id, buildSid);
     // What the claim kept before the restart: what its build was told and
     // handed (kept as its build turn started), the counts its build step began
@@ -507,6 +510,8 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await fvRow(fvb.id);
     assert.equal(row.status, 'pending', 'handed back to go on');
     assert.equal(row.checkpoint.build.ok, true);
+    assert.deepEqual(row.checkpoint.build.turnIds, [buildTurn.logicalTurnId],
+      'with its turn\'s ledger id: the next claim names what it cost, and the report finds its build turn');
     assert.deepEqual(row.checkpoint.sight, sight, 'what it could see is still there for the next claim');
     assert.deepEqual(row.checkpoint.looks, { screenshots: 4, snapshots: 1, navigations: 3 },
       'the step\'s counts plus the whole turn\'s: none counted twice, none lost after the restart');
@@ -607,7 +612,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(row.claims, 0, 'the restart cost it no claim');
     assert.equal(row.session_id, null);
     assert.ok(row.recovered_at);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: sid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: sid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.equal(row.checkpoint.handBacks, 1);
     assert.deepEqual(row.checkpoint.charged, { [sid]: 0.25 }, 'charged once');
     assert.equal(row.interrupted, 0, 'none of it thrown away');
@@ -751,6 +758,42 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.deepEqual(outward, []);
   });
 
+  await t.test('a first version\'s review fix turn is told from its build, followed on what was left of the review\'s minutes, and handed back with no claim spent', async () => {
+    reset();
+    const fvf = await firstVersionTrial();
+    const triSid = await newSession(null);
+    const sid = await newSession(turnOf('build'));
+    await claimAs(fvf.id, sid);
+    const reviewStarted = new Date(Date.now() - 18 * 60 * 1000).toISOString();
+    const review = {
+      state: 'reviewing', startedAt: reviewStarted, reviewer: { model: 'anthropic/claude-opus-5.5', maxRounds: 2, budgetMinutes: 20 },
+      rounds: [{ round: 1, verdict: 'fix', reviewerCostUsd: 0.1 }], finalSha: 'd'.repeat(40), finalCommits: 2,
+      lastBooted: { sha: 'd'.repeat(40), commits: 2 },
+    };
+    // This claim kept its build as it pushed, then began the review: until
+    // 13 Oct 2026 a first version kept neither, and a restart in the review
+    // either built it again or took the fix for the build.
+    await keep(fvf.id, {
+      triageSessionId: triSid, sessions: [triSid, sid],
+      triage: { status: 'ok', session_id: triSid, parsed: { verdict: 'ready', buildNote: 'One board.' } },
+      spec: { sessionId: sid, specMd: SPEC },
+      build: { ok: true, sessionId: sid, sha: 'd'.repeat(40), commits: 2, specMd: SPEC }, review,
+    });
+    await spend(sid, 0.3);
+    const fixStart = new Date().toISOString();
+    assert.equal(await lane.recoveryDeadline(pool, {}, await sessionOf(sid), turnOf('build', { startedAt: fixStart })),
+      Date.parse(reviewStarted) + 20 * 60 * 1000, 'a fix never runs past the review\'s own minutes');
+    journalTail = async () => ({ pushOk: true, ahead: 3, sha: 'e'.repeat(40), exitCode: 0, resultSeen: true });
+    await adopt(sid);
+    assert.ok(workerCalls.some((c) => c[0] === 'resume'), 'followed to its end');
+    const row = await fvRow(fvf.id);
+    assert.equal(row.status, 'pending');
+    assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
+    assert.equal(row.checkpoint.build.sha, 'd'.repeat(40), 'a fix is not the build: nothing new kept');
+    assert.equal(row.checkpoint.review.state, 'reviewing', 'left for the next claim to record cut short');
+    assert.deepEqual(outward, []);
+  });
+
   await t.test('a later change\'s side build\'s spec turn is followed on a later build\'s clock and kept', async () => {
     reset();
     const side = await sideTrial({ scope: 'later' });
@@ -768,7 +811,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await fvRow(side.id);
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0);
-    assert.deepEqual(row.checkpoint.spec, { sessionId: sid, specMd: SPEC });
+    const { turnId: specTurnId, ...keptSpec } = row.checkpoint.spec;
+    assert.deepEqual(keptSpec, { sessionId: sid, specMd: SPEC });
+    assert.match(specTurnId, /^turn-/, 'with its turn\'s ledger id, so what it cost can still be named');
     assert.deepEqual(outward, []);
   });
 });
