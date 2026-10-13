@@ -248,6 +248,35 @@ test('the sheet prerenders as an empty, hidden root', () => {
   assert.doesNotMatch(html, /data-who-screen/, 'nothing inside until it is opened');
 });
 
+test('#4960: a waiting change is explained in the summary, not by a greyed button', () => {
+  const sheet = read('frontend/src/features/dialogs/who-decides.tsx');
+  // The waiting branch sits after the "Proposed" state and before the
+  // propose branch, so the propose button is only reached when nothing is
+  // waiting.
+  const opened = sheet.indexOf('opened ? (');
+  const waitingBranch = sheet.indexOf('waiting && changes.length ? (');
+  const propose = sheet.indexOf('data-who-propose=""');
+  assert.ok(opened > 0 && waitingBranch > opened && propose > waitingBranch, 'waiting branch between opened and propose');
+  // The top note shares some of these strings, so each is read inside the
+  // branch's own slice of the file.
+  const branch = sheet.slice(waitingBranch, propose);
+  for (const needle of [
+    'dialogs:whoDecides.waitingTitle', 'dialogs:whoDecides.waitingSub',
+    'data-who-waiting-open=""', 'changeHref(slug, waiting.session_id)',
+  ]) {
+    assert.ok(branch.includes(needle), `${needle} inside the waiting branch`);
+  }
+  // That branch carries no propose button of its own, and the propose
+  // branch is no longer greyed on `waiting`: it is unreachable then.
+  assert.doesNotMatch(branch, /data-who-propose/);
+  assert.doesNotMatch(sheet, /!!waiting/);
+  // The words are in the English catalog, as the sheet asks for them.
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('dialogs:whoDecides.waitingTitle'), 'Another change is up for a vote first');
+  assert.equal(message('dialogs:whoDecides.waitingSub'),
+    'A change to who can see and change it is already up for a vote. Once it is decided, you can propose this one.');
+});
+
 test('every way in opens the one sheet', () => {
   const card = read(CARD);
   assert.match(card, /data-ws-rules-edit=""[\s\S]{0,200}onClick=\{\(\) => window\.UsernodeReact\?\.dialogs\?\.whoDecides\?\.open\(\{ slug \}\)\}/);

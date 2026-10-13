@@ -2783,6 +2783,14 @@
     "text": "A change to who can see and change it is already up for a vote.",
     "description": "Note at the top of the sheet when such a proposal is waiting for votes; followed by a link that opens it."
   },
+  "whoDecides.waitingTitle": {
+    "text": "Another change is up for a vote first",
+    "description": "Summary heading when something was changed but another change to who can see and change it is already up for a vote, so this one cannot be proposed yet."
+  },
+  "whoDecides.waitingSub": {
+    "text": "A change to who can see and change it is already up for a vote. Once it is decided, you can propose this one.",
+    "description": "Line under the summary heading in that state; followed by a button that opens the waiting proposal."
+  },
   "whoDecides.open": {
     "text": "Open it",
     "description": "Link or button that opens the proposal the sheet is talking about."

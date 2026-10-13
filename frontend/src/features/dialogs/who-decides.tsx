@@ -450,6 +450,25 @@ export function WhoDecidesDialog() {
                 </Button>
               ) : null}
             </>
+          ) : waiting && changes.length ? (
+            // #4960: a change to who can see and change it is already up for
+            // a vote, so this one cannot be proposed yet. The card says so
+            // where the person is looking, instead of a greyed propose
+            // button whose reason is the note at the top of the sheet.
+            <>
+              <p className="text-[15px] font-[650]" data-who-summary-waiting="">{t('dialogs:whoDecides.waitingTitle')}</p>
+              {changes.map((c) => (
+                <p key={c.label} className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+                  {t('dialogs:whoDecides.changeLine', { what: c.label, from: c.from, to: c.to })}
+                </p>
+              ))}
+              <p className="mt-1 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">{t('dialogs:whoDecides.waitingSub')}</p>
+              <Button type="button" layout="full" variant="pillNeutral" size="pillLg" ink="neutral" className="mt-3 flex items-center justify-center"
+                data-who-waiting-open=""
+                onClick={() => { dialog.closeForNavigation(); window.location.hash = changeHref(slug, waiting.session_id).replace(/^#/, ''); }}>
+                {t('dialogs:whoDecides.open')}
+              </Button>
+            </>
           ) : changes.length ? (
             <>
               <p className="text-[15px] font-[650]">{t('dialogs:whoDecides.count', { count: changes.length })}</p>
@@ -459,7 +478,7 @@ export function WhoDecidesDialog() {
                 </p>
               ))}
               <Button type="button" layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="mt-3 flex items-center justify-center"
-                data-who-propose="" disabledStyle="block" disabled={busy || !!waiting} onClick={() => void propose()}>
+                data-who-propose="" disabledStyle="block" disabled={busy} onClick={() => void propose()}>
                 {busy ? t('dialogs:whoDecides.proposing') : t('dialogs:whoDecides.propose', { count: changes.length })}
               </Button>
               <p className="mt-2 text-[12.5px] leading-snug text-zinc-500 dark:text-zinc-400">
