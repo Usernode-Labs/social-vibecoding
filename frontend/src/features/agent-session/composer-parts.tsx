@@ -182,6 +182,81 @@ export function LowCreditNote({ credit }: { credit: CreditView }) {
   );
 }
 
+/**
+ * The low-credits check (#4792): when the person presses Send with almost no
+ * credits left, the composer stops for one tap first. Low means less than $1
+ * left, or less than 10% of the allowance, whichever comes first — the two
+ * thresholds together, because either alone misses a case: a small allowance
+ * can have $0.80 of it left at 16%, and a large one $2 at 4%. It is a warning
+ * only: Continue always sends, and the person is not asked again for the rest
+ * of the visit (once per page load — a module variable, never storage —
+ * shared across conversations).
+ */
+export const LOW_CREDIT_CENTS = 100;
+export const LOW_CREDIT_FRACTION = 0.10;
+
+export function isLowCredit(credit: CreditView | null): boolean {
+  return !!credit && (credit.remainingCents < LOW_CREDIT_CENTS || credit.fraction < LOW_CREDIT_FRACTION);
+}
+
+let lowCreditConfirmedOnce = false;
+
+export function lowCreditConfirmed(): boolean {
+  return lowCreditConfirmedOnce;
+}
+
+export function confirmLowCredit(): void {
+  lowCreditConfirmedOnce = true;
+}
+
+/** Tests only: the flag is per page load, and a test is a shorter page. */
+export function resetLowCreditConfirmedForTest(): void {
+  lowCreditConfirmedOnce = false;
+}
+
+export function needsLowCreditCheck(credit: CreditView | null): boolean {
+  return isLowCredit(credit) && !lowCreditConfirmedOnce;
+}
+
+/**
+ * The check itself, drawn like the composer's archived strip — a rounded
+ * strip with the buttons on its right, tinted red to match the red credits
+ * pill — in the low-credits note's slot, between the text box and the send
+ * row. Its sentence is the note's own wording, so the two always match; the
+ * buttons are the composer's card buttons, Cancel outlined and Continue the
+ * filled primary. Like Send, they keep the field focused through the press.
+ * The button classes come in as props so the composer's CARD_BUTTON /
+ * CARD_PRIMARY literals are reused, not copied.
+ */
+export function LowCreditConfirm({ credit, buttonClass, primaryClass, onContinue, onCancel }: {
+  credit: CreditView;
+  buttonClass: string;
+  primaryClass: string;
+  onContinue: () => void;
+  onCancel: () => void;
+}) {
+  const t = useMessages('agent');
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300"
+      data-agent-session-low-credit-confirm
+    >
+      <span className="min-w-0 flex-1">
+        {credit.remainingCents > 0
+          ? <RichMessage id="agent:session.credits.lowNote" values={{ amount: dollars(credit.remainingCents) }} components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />
+          : <RichMessage id="agent:session.credits.lowNoteNone" components={[<a className="font-semibold underline" href="#settings/api-key" data-agent-session-low-credit-key />]} />}
+      </span>
+      <button type="button" className={buttonClass} onMouseDown={(event) => event.preventDefault()} onClick={onCancel}>
+        {t('agent:session.credits.confirmCancel')}
+      </button>
+      <button type="button" className={primaryClass} onMouseDown={(event) => event.preventDefault()} onClick={onContinue}>
+        {t('agent:session.credits.confirmContinue')}
+      </button>
+    </div>
+  );
+}
+
 // ── The model pill and its sheet ────────────────────────────────────────
 
 /**

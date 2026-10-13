@@ -203,6 +203,14 @@
     "text": "No credits left. A build may not start, or may stop partway. To keep going, <0>add your own Anthropic API key</0> or wait for your free credits to reset.",
     "description": "Note above the send row of an agent session, shown whenever the credits pill beside Send is red and nothing at all remains of the AI allowance — before the first message and once the conversation is under way. A build may not start, or may stop partway; the note also names the two ways to keep going, as the out-of-credits card does. It is a note, not a block; the person can still send. Tag 0 links to Settings, API key."
   },
+  "session.credits.confirmContinue": {
+    "text": "Continue",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it sends the message anyway, and the check is not shown again for the rest of the visit."
+  },
+  "session.credits.confirmCancel": {
+    "text": "Cancel",
+    "description": "Button of the low-credits check in the agent session's composer, shown when Send is pressed with less than a dollar or less than 10% of the AI allowance left: it closes the check and nothing is sent; the message stays in the box."
+  },
   "session.model.pillLabel": {
     "text": "Model: {{model}}",
     "description": "Accessible name of the model button beside the message box of an agent session; pressing it opens the \"Build with\" sheet. {{model}} is the AI model's full name, for example Claude Opus 5.5."
