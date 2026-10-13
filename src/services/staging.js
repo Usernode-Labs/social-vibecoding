@@ -618,7 +618,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     } finally {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
-    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
+    // The clone says which server it was made on (the preview server when
+    // STAGING_DB_ADMIN_URL names one). The container keeps this URL for its
+    // whole life, so it goes on reaching that server whatever the setting
+    // says later.
+    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password, { server: cloned.server });
 
     // 4. Stop existing staging container if any. Short grace: a preview
     // being replaced has nothing worth draining (#767).
@@ -691,6 +695,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        // Which database this runtime was given, and on which server: what
+        // the heal pass checks when a preview database server can be wiped
+        // or drained. Empty, so nothing is added, without such a server.
+        ...(dbManager.previewDatabaseLabels?.(stagingDbNameStr, cloned.server) || {}),
       },
     });
     timings.healthMs = Date.now() - healthStartedAt;

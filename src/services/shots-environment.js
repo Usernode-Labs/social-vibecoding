@@ -517,7 +517,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         runtimeName: spec.runtimeName,
         internalOnly: true,
         env: {
-          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
+          DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
           ...spec.env,
           ...shotsEnv,
           ...shotsPhoneSignInEnv(config, pair.app, phoneTestCode),
@@ -542,7 +542,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // here, never by either side's own clock (shots-fixtures.pairMoment).
       const at = shotsFixtures.pairMoment();
       const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
-        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password, { server: cloneBySide[side].server }),
         slug: pair.app.slug, runId: pair.runId, side, at,
       }]));
       onProgress?.({ stage: 'seed_shots_identities' });

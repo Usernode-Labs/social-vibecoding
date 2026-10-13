@@ -101,6 +101,13 @@ spec:
             # Explicit empty values also override imported config when disabled.
             - {name: PREVIEW_DATABASE_NAMESPACE, value: {{ $previewNamespace | quote }}}
             - {name: PREVIEW_DATABASE_CLUSTER, value: {{ $previewCluster | quote }}}
+            {{- if .Values.previewPostgresql.enabled }}
+            # STAGING_DB_ADMIN_URL itself comes from the Secret: it carries a password.
+            - {name: STAGING_DB_SERVER_DRAIN, value: {{ ternary "1" "" (.Values.previewPostgresql.drain | default false) | quote }}}
+            {{- else }}
+            # An explicit empty value overrides a key left in the imported Secret.
+            - {name: STAGING_DB_ADMIN_URL, value: ""}
+            {{- end }}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve
             # HTTP, but only the Postgres advisory-lock leader runs singleton

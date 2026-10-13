@@ -338,6 +338,15 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
+Preview databases (staging templates, preview copies, before & after shots
+copies) can live on a second PostgreSQL server instead of the main one:
+`previewPostgresql.enabled`, with the server's address and credential in the
+Secret as `STAGING_DB_ADMIN_URL`. The chart adds the platform's egress to that
+server and does not create it. It is off by default; see "A separate server
+for preview databases" in `docs/kubernetes-operations.md` for what the cluster
+has to provide, the drain step for switching back, and the costs. The
+placement preference below still follows the main server's primary.
+
 Previews and production apps prefer to run near the external CloudNativePG
 primary by default (`config.previewFollowDatabasePrimary: true`; the name
 predates apps following it too). The chart derives

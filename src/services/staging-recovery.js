@@ -239,6 +239,23 @@ const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they wi
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
+//
+//   5. The preview's DATABASE is gone, or is on a server being emptied.
+//      Only possible with a separate preview database server
+//      (STAGING_DB_ADMIN_URL, db-manager.js), which holds nothing but copies
+//      and may be wiped and come back empty. The container built against it
+//      keeps running and answers an error for every page that reads its
+//      database, so a liveness check sees nothing wrong and a checks run
+//      would record those errors against the proposal. Detected from the
+//      runtime's own labels, which name the exact database it was given and
+//      the server it was made on (dbManager.previewDatabaseVerdict): a
+//      session can have older clones elsewhere, and they must not vouch for
+//      this one. A server that cannot be read is "cannot tell". The rebuild
+//      rebuilds the app's template on the empty server and copies again.
+//      The same look moves previews off a preview server that is being
+//      drained before it is removed. With one server the question is not
+//      asked, and a preview built before the setting has no such labels.
+//
 // `config` is optional. Without it the staleness comparison is skipped and
 // the verdict is liveness-only — the pre-#851 behaviour. Every real caller
 // passes one; the fallback keeps the function usable from a context that has
@@ -276,6 +293,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
   // exited/dead/created.
   if (state.status !== 'running') return true;
   if (previewIsOfAnotherCommit(session, headSha)) return true;
+  if (await previewDatabaseNeedsRebuild(session, state)) return true;
   if (!config) return false;
 
   const stagingEnv = require('./staging-env');
@@ -287,6 +305,43 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// The state and labels of a session's preview runtime, as stagingNeedsRebuild
+// reads them, for a caller that only wants to look (the drain status in
+// staging-reap). Null when there is no runtime to read or it could not be
+// read. Never throws.
+async function inspectPreviewRuntime(session, config = null) {
+  try {
+    if (session.staging_runtime_kind === 'kubernetes') {
+      if (!session.staging_runtime_name) return null;
+      return await require('./application-runtime').inspect({
+        ...config, appRuntime: 'kubernetes',
+        kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps', ...config?.kubernetes },
+      }, { runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name });
+    }
+    if (!session.staging_container_id) return null;
+    return await require('./docker').inspectContainer(session.staging_container_id);
+  } catch (_) { return null; }
+}
+
+// Shape 5 above. Never throws: a failed look is "cannot tell".
+async function previewDatabaseNeedsRebuild(session, state) {
+  let dbManager;
+  try { dbManager = require('./db-manager'); } catch (_) { return false; }
+  if (typeof dbManager.previewDatabaseVerdict !== 'function') return false;
+  let verdict = null;
+  try { verdict = await dbManager.previewDatabaseVerdict(state?.labels || null); } catch (_) { return false; }
+  if (verdict === 'gone') {
+    log.info('staging-recovery', 'Preview database is gone from the server it was made on, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  } else if (verdict === 'draining') {
+    log.info('staging-recovery', 'Preview database is on a server being drained, so a rebuild is needed', {
+      sessionId: session.id,
+    });
+  }
+  return !!verdict;
 }
 
 // Is the preview of a session whose checks keep erroring still inside the
@@ -863,8 +918,16 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // detail; this decides who gets told.
   const infrastructure = bootFailureIsInfrastructure(err);
 
+  // A clone that failed on the preview database server (or because of it) is
+  // the platform's fault (dbManager.cloneDatabase marks it). Stored as one,
+  // so check_error_platform is set and the platform-fault retry allowance
+  // applies (errorWithinAutoRetries, rearmPlatformFaults). Nothing else is
+  // stored differently: the connection-limit case above keeps the plain
+  // error it always had.
+  const platformFault = err?.previewDatabaseServerFault === true;
   const stored = await visuals.storeChecks(
-    pool, session.id, commitHash, { state: 'error', results: [] }, detail
+    pool, session.id, commitHash,
+    { state: 'error', results: [], ...(platformFault ? { platformFault: true } : {}) }, detail
   );
   if (stored === false) {
     log.info('staging-recovery', 'Discarded stale staging failure', {
@@ -1106,6 +1169,7 @@ module.exports = {
   rearmPlatformFaults,
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
+  inspectPreviewRuntime,
   previewIsOfAnotherCommit,
   recheckHeadSha,
   approvedHeadSha,
