@@ -1109,3 +1109,84 @@ test('#2261 nothing cached: a failed fetch is an empty list with a note, never s
     global.fetch = origFetch;
   }
 });
+
+// ------------------------------------------------------------------
+// An issue read on its own (a closed request's card) is remembered: the
+// chat with Homeroom bot asked GitHub for the same closed issues, one after
+// another, every time it opened.
+// ------------------------------------------------------------------
+
+function stubSingle(state = 'closed', { delayMs = 0, status = 200 } = {}) {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const n = Number(String(url).split('/').pop());
+    return {
+      ok: status === 200, status, headers: { get: () => null },
+      json: async () => ({ ...fakeIssue(n, `Request ${n}`, '2026-06-09T00:00:00Z'), state }),
+    };
+  };
+  return calls;
+}
+
+test('fetchPublicIssue remembers an issue it read on its own; a fresh read asks again', async () => {
+  const origFetch = global.fetch;
+  try {
+    github._resetSingleIssueCache();
+    const calls = stubSingle('closed');
+    const first = await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40);
+    assert.strictEqual(first.issue.title, 'Request 40');
+    assert.strictEqual((await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40)).issue.title, 'Request 40');
+    assert.strictEqual((await github.fetchPublicIssue('keepowner', 'KEEP-REPO', 40)).issue.title, 'Request 40', 'whatever the casing');
+    assert.strictEqual(calls.length, 1, 'asked GitHub once');
+    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 40, { fresh: true });
+    assert.strictEqual(calls.length, 2, 'a fresh read always asks');
+    await github.fetchPublicIssue('KeepOwner', 'keep-repo', 41);
+    assert.strictEqual(calls.length, 3, 'another issue is its own read');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('two reads of one issue at once ask GitHub once', async () => {
+  const origFetch = global.fetch;
+  try {
+    github._resetSingleIssueCache();
+    const calls = stubSingle('closed', { delayMs: 20 });
+    const [a, b] = await Promise.all([
+      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
+      github.fetchPublicIssue('PairOwner', 'pair-repo', 50),
+    ]);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(a.issue.title, 'Request 50');
+    assert.strictEqual(b.issue.title, 'Request 50');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('a failed single read is remembered for a minute only; a merge forgets the repo\'s reads', async () => {
+  const origFetch = global.fetch;
+  const realNow = Date.now;
+  try {
+    github._resetSingleIssueCache();
+    let calls = stubSingle('closed', { status: 500 });
+    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).note, 'fetch failed');
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 1, 'not asked again at once');
+    const start = realNow();
+    Date.now = () => start + 61 * 1000;
+    calls = stubSingle('closed');
+    assert.strictEqual((await github.fetchPublicIssue('FailOwner', 'fail-repo', 60)).issue.title, 'Request 60', 'asked again after the minute');
+    assert.strictEqual(calls.length, 1);
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 1, 'and that answer is kept');
+    github.invalidateIssuesCache('failowner', 'fail-repo');
+    await github.fetchPublicIssue('FailOwner', 'fail-repo', 60);
+    assert.strictEqual(calls.length, 2, 'the merge path forgets the repo\'s single reads');
+  } finally {
+    Date.now = realNow;
+    global.fetch = origFetch;
+  }
+});
