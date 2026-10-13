@@ -23,6 +23,16 @@
  * only), and it is laid into the frame's rectangle. An app that does not
  * answer in time gets a plain panel saying so; the comment still goes.
  *
+ * ── The side panel draws itself (#4975) ───────────────────────────────
+ *
+ * The panel beside the app is the platform itself in a same-origin frame
+ * (#side-panel-frame), and drawShell leaves every frame out — so a comment
+ * taken with the panel open carried its title bar over an empty body. The
+ * panel's document draws itself: `picture` on its embedded runtime
+ * (../side-panel/embedded.ts) answers with `drawDocument`'s blob — the same
+ * options as drawShell, run in the panel's own document — and takeBase lays
+ * it in at the frame's rectangle, beside the app's picture.
+ *
  * ── When ───────────────────────────────────────────────────────────────
  *
  * The page is drawn the moment a pin goes down (`takeBase`), so it shows the
@@ -312,6 +322,40 @@ function cleanInfo(value: unknown): ElementInfo | null {
   return info.tag ? info : null;
 }
 
+/**
+ * Ask the side panel's document for its picture (#4975). The panel is
+ * same-origin, so its runtime is read straight off the frame's window
+ * (`window.UsernodeReact.sidePanelEmbed`, mounted in ../side-panel/mount.ts)
+ * — no postMessage, unlike the app's. Null when the frame has no runtime yet
+ * (it is still booting, or gone), one that says nothing, or one that does not
+ * answer in time.
+ */
+export function requestPanelPicture(
+  frame: HTMLIFrameElement,
+  scale: number,
+  timeoutMs = APP_PICTURE_TIMEOUT_MS,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (value: Blob | null) => {
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      const win = frame.contentWindow as unknown as
+        { UsernodeReact?: { sidePanelEmbed?: { picture?: (s: number) => Promise<Blob | null> } } } | null;
+      const ask = win?.UsernodeReact?.sidePanelEmbed?.picture;
+      const said = ask && typeof ask === 'function' ? ask(scale) : null;
+      if (said && typeof said.then === 'function') {
+        said.then((blob) => finish(blob instanceof Blob ? blob : null), () => finish(null));
+      } else finish(null);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 /** The element under a point of the shell's own page, in a few words. */
 export function describeElement(el: Element | null): ElementInfo | null {
   if (!el || el === document.documentElement || el === document.body) return null;
@@ -565,6 +609,21 @@ export function pageClip(viewport?: Size | null): Rect {
 }
 
 /**
+ * The side panel's frame in this document, when it is actually on screen:
+ * found by its id, addressed, laid out and visible. Null otherwise — the
+ * panel closed, is only its title bar mid-transition, or was never open —
+ * and the picture then goes without it, as it did before #4975.
+ */
+export function panelFrame(): { frame: HTMLIFrameElement; rect: Rect } | null {
+  const frame = document.getElementById('side-panel-frame') as HTMLIFrameElement | null;
+  if (!frame || !frame.src) return null;
+  const r = frame.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  if (typeof frame.checkVisibility === 'function' && !frame.checkVisibility()) return null;
+  return { frame, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+}
+
+/**
  * The shell's own page as it is on screen, without the comment's own layer,
  * without frames, which are other documents (the app's is laid in from its
  * own picture), and without the flow's own overlays (PAGE_EXCLUDES). The
@@ -595,6 +654,39 @@ async function drawShell(scale: number, host: Element, fresh = false, viewport?:
   return capture.toCanvas();
 }
 
+/**
+ * A document's own page as a picture (#4975): the side panel's document
+ * draws ITSELF with this, answering its runtime's `picture` (embedded.ts) —
+ * drawShell cannot reach into the frame, same-origin as it is, and nothing
+ * else fills it in. The same options as drawShell, run in the panel's own
+ * document (its body, its scrollers, its overlays), but without the comment
+ * layer's host to leave out — the panel draws no comment layer — and without
+ * anything laid in; a frame shown in a panel page stays a hidden placeholder
+ * exactly as in the shell. Null on any failure: the caller draws nothing
+ * rather than a wrong claim about the page.
+ */
+export async function drawDocument(scale: number): Promise<Blob | null> {
+  try {
+    const snapdom = await loadLibrary();
+    const capture = await snapdom(document.body, {
+      scale,
+      dpr: 1,
+      cache: 'soft',
+      clip: pageClip(),
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+      exclude: ['iframe'],
+      excludeMode: 'hide',
+      filter: (el: Element) => !isPageOverlay(el),
+      filterMode: 'remove',
+      plugins: [FLAT_SCROLLERS],
+    });
+    const canvas = await capture.toCanvas();
+    return await toBlob(canvas, 'image/png');
+  } catch {
+    return null;
+  }
+}
+
 export interface Base {
   canvas: HTMLCanvasElement;
   scale: number;
@@ -603,9 +695,11 @@ export interface Base {
 }
 
 /**
- * Start drawing the page now: the shell, and the running app's own picture
- * when its frame is on screen. Resolves null when the shell itself could not
- * be drawn; the comment then goes without a picture.
+ * Start drawing the page now: the shell, the running app's own picture when
+ * its frame is on screen, and the side panel's own picture when the panel is
+ * (#4975) — all asked at once, so the slowest of them bounds the wait once.
+ * Resolves null when the shell itself could not be drawn; the comment then
+ * goes without a picture.
  */
 export function takeBase(opts: {
   host: Element;
@@ -619,26 +713,34 @@ export function takeBase(opts: {
   const { host, scale, frame, frameRect, pin, viewport } = opts;
   const width = Math.max(1, viewport?.width || window.innerWidth);
   const target = pinTarget(pin, host);
+  const panel = panelFrame();
+  const panelPicture = panel
+    ? requestPanelPicture(panel.frame, scale)
+    : Promise.resolve<Blob | null>(null);
   const app = frame && frameRect
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
   const shell = drawShell(scale, host, false, viewport).catch(() => null);
-  return Promise.all([shell, app]).then(async ([canvas, picture]) => {
+  return Promise.all([shell, app, panelPicture]).then(async ([canvas, picture, panelBlob]) => {
     if (!canvas) return null;
     // The scale the picture really has, read off it: everything drawn on it
-    // (the app, the pin, the words) is placed in CSS pixels times this.
+    // (the app, the panel, the pin, the words) is placed in CSS pixels times
+    // this.
     const actual = canvas.width / width;
     if (frameRect) await layInApp(canvas, actual, frameRect, picture);
+    await layInPanel(canvas, actual, panel?.rect, panelBlob);
     const checked = await missingUnderPin(canvas, actual, target);
     if (checked) {
       // Two frames, so an island caught mid-render has settled, then one
       // clean read of the page. Whatever it shows is used: the comment's pin
-      // data still names the element, so a second miss does not loop.
+      // data still names the element, so a second miss does not loop. The
+      // panel's blob, asked once up top, is laid in again as it was.
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
       const again = await drawShell(scale, host, true, viewport).catch(() => null);
       if (again) {
         const retaken = again.width / width;
         if (frameRect) await layInApp(again, retaken, frameRect, picture);
+        await layInPanel(again, retaken, panel?.rect, panelBlob);
         return { canvas: again, scale: retaken, app: picture };
       }
     }
@@ -691,6 +793,24 @@ async function layInApp(canvas: HTMLCanvasElement, scale: number, rect: Rect, pi
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText("The app's picture wasn't available", x + w / 2, y + h / 2);
+}
+
+/**
+ * The side panel's own picture into its frame's rectangle, beside the app's.
+ * No plate when it did not answer — the frame's rectangle keeps whatever the
+ * shell drew there (a hidden frame holds its place with `hide`), which at
+ * worst is the empty body the bug described, never a wrong claim about the
+ * page.
+ */
+async function layInPanel(canvas: HTMLCanvasElement, scale: number, rect: Rect | null, blob: Blob | null): Promise<void> {
+  if (!blob || !rect) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    ctx.drawImage(bitmap, rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+    bitmap.close?.();
+  } catch { /* the shell's own drawing of the frame's place stays */ }
 }
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
