@@ -222,6 +222,33 @@ export function askedQuestions(fv: FirstVersion): HomeroomBotPlanQuestion[] | nu
 }
 
 /**
+ * Run five (13 Oct 2026): Share invite and Invite people later showed from
+ * the first second, so a tap on either skipped the questions that came a
+ * few seconds later. While the plan from Make it is being written, or
+ * before the first read of a project the bot builds from a description,
+ * the screen says it is checking in their place (CHECKING_LINE). Once the
+ * plan is ready the questions come, or the invite buttons when it asks
+ * nothing; a plan that failed, or one still not written PLAN_CHECK_MS after
+ * the screen opened, gives the invite buttons back too.
+ */
+export const PLAN_CHECK_MS = 60000;
+
+/** The line in place of the invite buttons while the plan is checked. A message id. */
+export const CHECKING_LINE = 'onboarding:firstSession.made.checkingQuestions';
+
+/**
+ * Whether the screen is still checking for questions: `makesPlan` is a
+ * project the bot builds from its description (not an import or a
+ * ready-made app), `read` whether the project has been read once, and
+ * `waited` whether PLAN_CHECK_MS has passed. Pure.
+ */
+export function checksForQuestions(fv: FirstVersion, { makesPlan, read, waited }: { makesPlan: boolean; read: boolean; waited: boolean }): boolean {
+  if (!makesPlan || waited) return false;
+  if (!read) return true;
+  return !!fv && !fv.ready && !!fv.early && fv.early.status === 'pending';
+}
+
+/**
  * N1: where a project's first version stands as the made screen hands on to
  * the tour: on its way ('building'), built and waiting to be tried
  * ('ready'), or none (null: Homeroom bot builds nothing, or it is live
@@ -919,6 +946,16 @@ export const SETUP_DONE = 'onboarding:firstSession.made.setup.done';
 export const SETUP_SET_UP = 'onboarding:firstSession.made.setup.setUp';
 
 /**
+ * Run five (13 Oct 2026): the lines over the questions hold their height
+ * whatever they say, so a read that changes them never moves Submit from
+ * under a finger (everything dropped about 35pt between seeing Submit and
+ * tapping it). The card is one height in every state: its title one line,
+ * its note at most two, room kept for both.
+ */
+export const SETUP_ROW = 'flex h-[84px] items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const SETUP_NOTE = 'line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400';
+
+/**
  * How far the setup has got, under the project while the way on waits for it
  * (IT RUNS BEFORE THE WAY ON GOES): a ring with the step ("2/4", the bot's
  * activity cards' ring, turning while it is under way), the step in words,
@@ -940,7 +977,7 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
   if (done) {
     return (
       <section data-made-setup="done" className="mt-4">
-        <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+        <div className={SETUP_ROW}>
           <ProgressRing
             pct={100}
             label={`${total}/${total}`}
@@ -950,8 +987,8 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
             trackClassName="dark:stroke-zinc-700"
           />
           <div role="status" className="min-w-0 flex-1">
-            <p className="text-[15px] font-[650] leading-snug">{done.line}</p>
-            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t(SETUP_DONE)}</p>
+            <p className="truncate text-[15px] font-[650] leading-5">{done.line}</p>
+            <p className={SETUP_NOTE}>{t(SETUP_DONE)}</p>
           </div>
         </div>
       </section>
@@ -960,7 +997,7 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
   const at = step > 0 && step <= total ? SETUP_STEPS[step - 1] : null;
   return (
     <section data-made-setup={at || 'started'} className="mt-4">
-      <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-3 pr-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+      <div className={SETUP_ROW}>
         <ProgressRing
           pct={at ? Math.round((step / total) * 100) : 0}
           label={at ? `${step}/${total}` : undefined}
@@ -969,8 +1006,8 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
           trackClassName="dark:stroke-zinc-700"
         />
         <div role="status" className="min-w-0 flex-1">
-          <p className="text-[15px] font-[650] leading-snug">{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
-          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{setupEstimate(slow, waitedOut)}</p>
+          <p className="truncate text-[15px] font-[650] leading-5">{at ? t(SETUP_WORDS[at]) : t(GETTING_READY)}</p>
+          <p className={SETUP_NOTE}>{setupEstimate(slow, waitedOut)}</p>
         </div>
       </div>
     </section>
@@ -1063,6 +1100,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // Its plan from Make it is being written: read as often as the setup is,
   // so its questions slot in the moment they are there.
   const planComing = !!fv && !!fv.early && fv.early.status === 'pending';
+  // Whether the project has been read once (checksForQuestions).
+  const [readOnce, setReadOnce] = useState(false);
   // Read again at once after Submit (`reread`), so the line moves on.
   const [reread, setReread] = useState(0);
   useEffect(() => {
@@ -1072,6 +1111,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       .then((body) => {
         const app = madeAppOf(body);
         if (live && app) {
+          setReadOnce(true);
           setFv(app.firstVersion);
           setAppStatus(app.status);
           setSetupStep((was) => Math.max(was, setupStepOf(app.phase)));
@@ -1110,6 +1150,13 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
     }
   }, [answering, made.slug]);
   const asked = answered ? null : askedQuestions(fv);
+  // Run five: no invite buttons while the plan may still have questions
+  // (checksForQuestions), for at most PLAN_CHECK_MS.
+  const [planWaited, setPlanWaited] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setPlanWaited(true), PLAN_CHECK_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
   // How long it has waited, from the screen's opening or the last Try again
   // (`round`): longer than usual (`slow`), then long enough to let them on
@@ -1172,18 +1219,23 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   const card = !imported && !readyMade && showsCard(sketch.state);
   const served = madeLine(fv, botBuilds, !making, stalled, imported);
   // Answered here: built from now on, never planned again, until the next
-  // read says where it is.
-  const line: BuildLineState | null = answered && (served === 'planning' || served === 'plan') ? 'building' : served;
+  // read says where it is. Run five: while the questions are asked here,
+  // the line says the bot is planning it, never "Your plan is ready to
+  // review", which led to the chat's card asking the same questions.
+  const line: BuildLineState | null = answered && (served === 'planning' || served === 'plan') ? 'building'
+    : asked && served === 'plan' ? 'planning' : served;
+  const checking = !asked && !stalled && checksForQuestions(fv, { makesPlan: botBuilds && !imported && !readyMade, read: readOnce, waited: planWaited });
   // N4: the stage by its own name while it is built, and for how long.
   const now = useNow();
-  const named = phaseLine(line, fv?.phase, now);
+  // Answered here and not read since: the build starting (run five).
+  const named = phaseLine(line, fv?.phase || (answered && line === 'building' ? { key: 'starting' } : null), now);
   // The thumbnail says only what the build line does not: a quiet note when
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.
   const note = card
     ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : t(NO_BOT_NOTE))
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
-  const plainLine = named.words || (answered && line === 'building' ? translate(BUILD_LINE_WORDS.building) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
+  const plainLine = named.words || (line === 'planning' && served === 'plan' ? translate(BUILD_LINE_WORDS.planning) : buildLine(fv, appStatus, botBuilds, imported, readyMade));
   // Something is under way: the project being set up, or the bot's build
   // (not while its plan waits on them, nor on a setup that stopped: then
   // nothing is).
@@ -1227,9 +1279,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
               {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
               {/* While its setup's card is up, that card says where it is. */}
               {settingUp || ranInPlace ? null : (
-                <div className="mt-4 flex items-center gap-2 text-[14px] text-zinc-600 dark:text-zinc-300">
+                <div data-first-session-build-row="" className="mt-4 flex h-5 max-w-full items-center gap-2 text-[14px] leading-5 text-zinc-600 dark:text-zinc-300">
                   {busy ? <span className="status-dot creating" aria-hidden="true" /> : null}
-                  <span data-first-session-build="">{plainLine}</span>
+                  <span data-first-session-build="" className="min-w-0 truncate">{plainLine}</span>
                 </div>
               )}
               <p className={settingUp || ranInPlace ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
@@ -1250,6 +1302,12 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
             until they are answered. */}
         {asked && !stalled ? (
           <QuickQuestions key={asked.map((q) => q.question).join('|')} name={made.name} questions={asked} busy={answering} error={answerError} onSubmit={(answers) => { void submitAnswers(answers); }} />
+        ) : checking ? (
+          // Run five: in place of the invite line and its buttons while the
+          // plan may still have questions, so a tap cannot skip them.
+          <p role="status" data-first-session-checking="" className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
+            {t(CHECKING_LINE)}
+          </p>
         ) : (
         <>
         <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">

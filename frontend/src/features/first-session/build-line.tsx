@@ -107,7 +107,7 @@ export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
 export type BuildLineState = ServerBuildLine | 'working';
 
 /** The same lines on a Home tile (./build-line-words.js). */
-export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+export { BUILD_LINE_TILE_WORDS, PHASE_TILE_WORDS, buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, phaseKeyOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): ServerBuildLine | null {
