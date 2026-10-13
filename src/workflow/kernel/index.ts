@@ -54,7 +54,8 @@ export function createRuntime(opts: RuntimeOptions) {
   const handlers = new Map(Object.entries(opts.services || {}));
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
   const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish };
-  const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}` };
+  const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
+    versions: new Map([...machines].map(([name, m]) => [name, m.version])) };
   const signals = new Signals(opts.pool, log);
   const stopping = new AbortController();
   const loops: Promise<void>[] = [];

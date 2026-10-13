@@ -159,6 +159,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   // strip itself opens its start path with the brief's flag (4420, 4321).
   assert.match(prompt, /If the brief has installStrip, Homeroom's "Add it to your home screen" strip\s+is dismissed on every page these browsers open/);
   assert.match(prompt, /open the start path with\s+installStrip\.param added to its query \(before any #\), on both addresses and\s+in the phone browser/);
+  // A project made on Homeroom's copies never finishes setting up there
+  // (shots-orchestrator.js MAKE_PROJECT): a change that needs one running is
+  // skipped at once, not tried in every browser (PR 4777, 2026-10-12).
+  assert.match(prompt, /If the brief has makeProject, a project made on these copies never finishes\s+setting up/);
+  assert.match(prompt, /Read makeProject\.note before a change whose\s+steps make, remix or import a project/);
+  assert.match(prompt, /a\s+change that needs a made project to run is skipped at once/);
   assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
     'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
@@ -190,6 +196,10 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // A step another account takes is taken in another persona's browser
+  // (PR 4626's reply in a topic's thread went unshot without it).
+  assert.match(prompt, /The member, read_only_admin and full_admin browsers are three different\s+accounts/);
+  assert.match(prompt, /take that\s+step in another of those browsers as the brief's secondAccount says, on both\s+addresses alike/);
   // A time-dependent change (a Thursday-evening reminder) is shot at the
   // moment its author declared, on both copies (services/preview-clock.js).
   assert.match(prompt, /If the brief has previewAt, the change only shows at certain times/);

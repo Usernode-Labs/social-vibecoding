@@ -92,6 +92,22 @@ test('a language is asked for what it is missing, what is out of date, and every
   assert.deepEqual(sync.planLanguage(root, 'es', { onlyIds: new Set(['core:terms.read']) }).map((item) => item.id), ['core:terms.read']);
 });
 
+test('a committed translation that spells a character as an escape code is asked for again (#4838)', (t) => {
+  const { root } = checkout(t, {
+    translations: {
+      es: {
+        'greeting.hello': from('Hello {{name}}', 'Hola\\u00a0{{name}}'),
+        'button.leave': from('Leave', 'Salir'),
+        'terms.read': from('Read <0>the terms</0> of Homeroom.', 'Lee <0>los términos</0> de Homeroom.'),
+        'items_one': from('{{count}} item', '{{count}} elemento'),
+        'items_many': from('{{count}} items', '{{count}} de elementos'),
+        'items_other': from('{{count}} items', '{{count}} elementos'),
+      },
+    },
+  });
+  assert.deepEqual(sync.planLanguage(root, 'es').map((item) => item.id), ['core:greeting.hello']);
+});
+
 test('a person\'s correction is left alone until the English it corrects changes', (t) => {
   const { root } = checkout(t, {
     translations: {
@@ -190,6 +206,10 @@ test('what the checks refuse', () => {
   refuses('Join Homeroom', 'Únete a Hogar', /"Homeroom" is not written as it is/, { doNotTranslate: ['Homeroom'] });
   refuses('Hi', 'x'.repeat(60), /far longer/);
   refuses('Hi', '', /empty/);
+  // #4838: "Auto\u00a0: langue de l'appareil" showed the code as written.
+  refuses('Automatic: device language', 'Auto\\u00a0: langue de l’appareil', /an escape code such as \\u00a0/);
+  ok('Automatic: device language', 'Auto\u00a0: langue de l’appareil');
+  ok('Type \\u00a0 here', 'Tapez \\u00a0 ici');
   ok('{{count}} hours ago', 'il y a une heure', { counted: true });
 });
 
@@ -205,6 +225,7 @@ test('a request carries the language, its style, its terms and the names to keep
   assert.deepEqual(first.params.system[0].cache_control, { type: 'ephemeral' });
   assert.match(first.params.system[0].text, /into Brazilian Portuguese \(pt-BR/);
   assert.match(first.params.system[0].text, /Never translate these names; write them exactly as they are: Homeroom\./);
+  assert.match(first.params.system[0].text, /^- Write every character itself, such as a no-break space, never an escape code such as \\u00a0\.$/m);
   assert.equal(first.params.output_config.format.type, 'json_schema');
   const sent = JSON.parse(first.params.messages[0].content);
   assert.deepEqual(Object.keys(sent.messages[0]).sort(), ['description', 'english', 'id']);

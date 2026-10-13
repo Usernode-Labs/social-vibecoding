@@ -621,7 +621,7 @@
   },
   "firstSession.make.rule.plays": {
     "text": "How it plays out",
-    "description": "Section label over two rows showing what the picked preset means."
+    "description": "Section label over the rows showing what the picked preset means: one row for anyone, or two, for the reader and for anyone else."
   },
   "firstSession.make.rule.close": {
     "text": "Close",
@@ -833,7 +833,47 @@
   },
   "firstSession.made.gettingReady": {
     "text": "Getting it ready…",
-    "description": "Label of the button that goes on from the screen shown right after a project is made, once it has been pressed while a ready-made app is still being set up: the screen goes on by itself as soon as the app is running. \"it\" is the project."
+    "description": "Title of the small progress card under the new project on the screen shown right after a project is made, while the project is still being set up and before the step it is on is known. The buttons that go on stay off until it is ready. \"it\" is the project."
+  },
+  "firstSession.made.setup.database": {
+    "text": "Setting up its storage…",
+    "description": "Title of the small progress card under the new project on the screen shown right after a project is made: the first of four setup steps, making the database where the app keeps its data. \"its\" is the app's."
+  },
+  "firstSession.made.setup.repository": {
+    "text": "Saving its code…",
+    "description": "Title of the small progress card under the new project on the screen shown right after a project is made: the second of four setup steps, saving the app's code where its changes will be made. \"its\" is the app's."
+  },
+  "firstSession.made.setup.build": {
+    "text": "Preparing it to run…",
+    "description": "Title of the small progress card under the new project on the screen shown right after a project is made: the third of four setup steps, turning the app's code into something that can run. \"it\" is the app."
+  },
+  "firstSession.made.setup.deploy": {
+    "text": "Starting it up…",
+    "description": "Title of the small progress card under the new project on the screen shown right after a project is made: the last of four setup steps, starting the app so people can open it. \"it\" is the app."
+  },
+  "firstSession.made.setup.ring": {
+    "text": "Step {{step}} of {{total}}",
+    "description": "Read by screen readers for the small ring on the progress card under a new project while it is set up, which shows how far the setup has got. {{step}} is the step it is on, {{total}} how many steps there are."
+  },
+  "firstSession.made.setup.usual": {
+    "text": "This usually takes about a minute.",
+    "description": "Second line of the small progress card under a new project while it is being set up: how long setting a project up usually takes. \"This\" is the setup."
+  },
+  "firstSession.made.setup.slow": {
+    "text": "It’s taking longer than usual.",
+    "description": "Second line of the small progress card under a new project, once setting it up has taken longer than the usual minute. \"It\" is the setup."
+  },
+  "firstSession.made.setup.goOn": {
+    "text": "It’s taking longer than usual. You can go on, and open it once it’s ready.",
+    "description": "Second line of the small progress card under a new project, once setting it up has taken so long that the buttons that go on are turned back on before it is ready. The first \"It\" is the setup; in \"open it once it’s ready\" both are the app."
+  },
+  "firstSession.made.setup.done": {
+    "text": "It’s running now.",
+    "description": "Second line of the small progress card under a new project once setting it up has finished: the card stays where it was and says the app is up. \"It\" is the new app."
+  },
+  "firstSession.made.setup.setUp": {
+    "text": "It’s set up.",
+    "description": "Title of the small progress card under a new project once setting it up has finished, shown when the project's picture above already says how Homeroom bot is building it. \"It\" is the new app."
   },
   "firstSession.made.goTo": {
     "text": "Go to {{community}}",
@@ -1050,6 +1090,14 @@
   "firstSession.tour.opens.text": {
     "text": "This is the app your community makes together.",
     "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title that says the app opens here."
+  },
+  "firstSession.tour.wait.title": {
+    "text": "Getting {{app}} ready…",
+    "description": "Card of the short tour a new member is walked through after making or joining a project, title shown in place of a card that points at the app while the app is still being set up or is still opening. {{app}} is the project's name."
+  },
+  "firstSession.tour.wait.text": {
+    "text": "The tour goes on as soon as it’s ready.",
+    "description": "Card of the short tour a new member is walked through, text under the title that says the app is getting ready: the tour waits and continues by itself once the app is ready. \"it\" is the app."
   },
   "firstSession.tour.menu.title": {
     "text": "Suggest an improvement",

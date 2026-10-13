@@ -626,7 +626,7 @@ test('a ready verdict waits on its run, and only for a build of the same project
   // A build's slot is not the app's: reading goes on beside it.
   assert.match(src, /const sessionTaken = running\.filter\(\(e\) => !e\.followUp && !e\.build\)\.map\(\(e\) => Number\(e\.appId\)\);/);
   // Once its session exists, restart recovery owns it.
-  assert.match(src, /SET build_session_id = \$2, live_build_waiting_at = NULL WHERE id = \$1/);
+  assert.match(src, /SET build_session_id = \$2, live_build_waiting_at = NULL,\s+build_checkpoint = \$\{CHECKPOINT_START_SQL\}\s+WHERE id = \$1/);
 });
 
 test('a live build restart recovery finishes holds its project\'s build slot until it ends', async () => {

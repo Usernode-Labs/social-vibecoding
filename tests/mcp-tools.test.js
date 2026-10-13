@@ -3208,7 +3208,7 @@ test('the platform-build fallback is described as the second choice', () => {
   const idx = SRC.indexOf("server.registerTool('start_platform_build'");
   const desc = SRC.slice(idx, idx + 1200);
   // Honest about whose money it spends, and about the better path.
-  assert.match(desc, /daily Homeroom credits/);
+  assert.match(desc, /weekly Homeroom credits/);
   assert.match(desc, /Prefer prepare_work/);
   assert.match(desc, /user explicitly chooses the platform build/,
     'missing tools never silently opt the user into platform credit spend');

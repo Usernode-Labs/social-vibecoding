@@ -27,7 +27,7 @@ const { installAppCard } = require('./helpers/app-card');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
-const { renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
 // the three sections became React (#1191); home-panels.js keeps the data and
@@ -872,4 +872,66 @@ test('staging discovery fixtures never write outside staging', async () => {
   for (const env of ['production', 'local', undefined]) {
     await stagingFeaturedSeed(env === undefined ? '' : env)({ query() { assert.fail(`seed ran in ${env}`); } });
   }
+});
+
+// ── the Add apps sheet's lists (#4669) ───────────────────────────────
+//
+// Edit mode's trailing tile opens a sheet with two lists, and the decision
+// of what goes in them lives in addSheetLists — pure, so it is read here as
+// data against a real Home from the harness above rather than through sheet
+// markup. The sheet module reads `window.Home` at call time, the way every
+// consumer outside home.js does.
+
+const SHEET_SRC = 'frontend/src/features/home/add-apps-sheet.tsx';
+const { addSheetLists } = loadTsx(SHEET_SRC, {});
+
+// The module resolves `window` against the Node global at call time; the
+// sandboxed Home is a vm object, and property reads cross realms fine.
+function withHome(Home, fn) {
+  const saved = globalThis.window;
+  globalThis.window = { Home };
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete globalThis.window;
+    else globalThis.window = saved;
+  }
+}
+
+test('the sheet lists joined-but-untiled apps first, popular second, never twice', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'tile', is_favorited: true, is_member: true }),
+    app({ slug: 'joined', is_member: true }),
+    // A collaborator who hid their tile: not "yours" as isYours reads it,
+    // not "joined" as popularApps reads it — so it reaches BOTH lists, and
+    // the sheet may show it once.
+    app({ slug: 'collab-hidden', is_collaborator: true, your_apps_hidden: true }),
+    app({ slug: 'open', active_users: 5 }),
+    app({ slug: 'demo', demo: true, active_users: 50 }),
+  ];
+  const lists = withHome(Home, () => addSheetLists(apps));
+  assert.deepEqual(lists.yours.map((a) => a.slug), ['joined', 'collab-hidden'],
+    '"Your other apps": the viewer belongs to them and keeps no tile');
+  assert.deepEqual(lists.popular.map((a) => a.slug), ['open'],
+    '"Popular" is popularApps\' answer minus the first list, and minus demo tiles');
+});
+
+test('a demo tile is offered by neither list, and no Home means no lists', () => {
+  // popularApps itself does not screen demo tiles out — the Discover rails
+  // want them — but the sheet's Add button on one would be a silent no-op:
+  // toggleAdded returns early for staging ?demo=1 tiles with no DB row.
+  const Home = makeHome();
+  const lists = withHome(Home, () => addSheetLists([app({ slug: 'demo', demo: true })]));
+  assert.deepEqual(lists, { yours: [], popular: [] });
+  // No window.Home (a sheet opened where the module never loaded): empty
+  // lists, never a throw — the empty sheet is a real state ("Nothing to add
+  // right now" and the browse link).
+  assert.deepEqual(withHome(null, () => addSheetLists([app({})])), { yours: [], popular: [] });
+  assert.deepEqual(withHome(null, () => addSheetLists('not-a-list')), { yours: [], popular: [] });
+});
+
+test('the sheet\'s Add press is the same toggleAdded(true) the rails run', () => {
+  assert.match(read(SHEET_SRC), /home\(\)\?\.toggleAdded\?\.\(slug, true\)/,
+    'one write path: flip the flag, repaint the grid, POST /favorite');
 });

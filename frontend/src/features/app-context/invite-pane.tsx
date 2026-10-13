@@ -353,7 +353,11 @@ export function InvitePane({ slug, label, unnamed = false }: { slug: string | nu
 
       <div id="app-invite-links">
         <div className={SECTION_ROW}>
-          <h4 className={SECTION}>{state.manages ? t('agent:appContext.invite.liveLinks') : t('agent:appContext.invite.yourLinks')}</h4>
+          <h4 className={SECTION}>
+            {state.manages
+              ? t('agent:appContext.invite.liveLinks')
+              : t('agent:appContext.invite.yourLinks')}
+          </h4>
           {changing ? null : (
             <button id="app-invite-change-open" type="button" className={CHANGE_LINK} onClick={() => setChanging(true)}>
               {t('agent:appContext.invite.change')}

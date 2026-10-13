@@ -949,6 +949,87 @@ test('a child app\'s brief says no browser holds a role in the app, and to skip 
   }
 });
 
+// PR 4777 (a ready-made Study timer, 2026-10-12): two of its three changes
+// were skipped because the shots member could not make a project. Now the
+// personas can, but no copy can set a project up, so Homeroom's brief says
+// what can be shot after Make it and to skip a change that needs a made
+// project running at once, never as the change failing.
+test('Homeroom\'s own brief says a project made on the copies never finishes setting up; a child app\'s says nothing', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-make-project-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'A ready-made Study timer' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['src/services/app-templates.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const own = briefFor({ selfApp: true });
+    assert.deepEqual(own.makeProject, orchestrator.MAKE_PROJECT);
+    assert.equal(own.makeProject.setupFinishes, false);
+    const { note } = own.makeProject;
+    assert.match(note, /^Make it on "What do you want to make\?" \(\/#create\) works on these copies for whoever has free app slots/);
+    assert.match(note, /availableFixtures says who/);
+    assert.match(note, /no rights to create its database, no image builder and no GitHub/);
+    assert.match(note, /"Setting it up didn’t finish" and "Setup stopped before it was running" with Try again, on both addresses alike/,
+      'in the words the screen uses, so the agent can wait for them');
+    assert.match(note, /A remix stops the same way too, and importing a GitHub repository is refused/);
+    assert.match(note, /not the change failing: never use outcome "failed" for it/);
+    assert.match(note, /can be shot once the setup has stopped on both addresses/);
+    assert.match(note, /call skip_change for it at once, saying these copies cannot set up\s+a new project/);
+    assert.match(note, /five projects an hour on each\s+address, its phone browser included/);
+    assert.doesNotMatch(note, /[—]/, 'no em dashes in model copy');
+
+    assert.equal('makeProject' in briefFor({ childApp: true }), false, 'a child app makes no projects');
+    assert.equal('makeProject' in briefFor({}), false);
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+// PR 4626's notification for a reply in a topic's thread was skipped: "it
+// needs a second account to reply to my message, and I can't sign in as
+// another account" (2026-10-09). The other signed-in browsers are that
+// account, and the brief says so, in fixed words.
+test('the brief says another persona\'s browser can be the second account a change needs', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-second-account-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Reply threads in topics' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/js/group-chat.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const own = briefFor({ selfApp: true });
+    assert.deepEqual(own.secondAccount.personas, ['member', 'read_only_admin', 'full_admin']);
+    assert.ok(own.secondAccount.personas.every((persona) => persona in own.browsers));
+    assert.match(own.secondAccount.note, /^The member, read_only_admin and full_admin browsers are three different signed-in accounts\./);
+    assert.match(own.secondAccount.note, /a reply to the member's message, a vote on\s+their change/);
+    assert.match(own.secondAccount.note, /take that step in another of these browsers, the same way on the before and the after address, then shoot in the browser screenBrowsers names/);
+    assert.match(own.secondAccount.note, /use full_admin when you can: it is a member of Homeroom's own project on these copies/);
+    assert.match(own.secondAccount.note, /The guest browser is not signed in, so it cannot be that account\.$/);
+    const child = briefFor({ childApp: true });
+    assert.match(child.secondAccount.note, /three different signed-in accounts/);
+    assert.doesNotMatch(child.secondAccount.note, /Homeroom's own project/, 'only Homeroom\'s copies make the full admin a member');
+    assert.doesNotMatch(JSON.stringify(own.secondAccount), /[—]/, 'no em dashes in model copy');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test('slow paired environment provisioning does not consume the agent budget', async () => {
   const fixture = setup();
   const preparePair = fixture.dependencies.environment.preparePair;

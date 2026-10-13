@@ -8,11 +8,13 @@
  * (./login.tsx), against the same routes:
  *
  *   email    POST /api/auth/otp/request sends a six-digit code.
- *   code     POST /api/auth/otp/verify. An account that has a password is
- *            signed straight in; a new one (or one with no password yet)
- *            moves on to
- *   account  POST /api/auth/otp/set-password: a password, and the username
- *            when the account has none, which mints the session.
+ *   code     POST /api/auth/otp/verify. An account that has a password, or
+ *            has chosen its username, is signed straight in; a new one (or
+ *            one that never chose a username) moves on to
+ *   account  POST /api/auth/otp/set-password: the username when the account
+ *            has none, which mints the session. No password (#4891): the
+ *            account signs in with an emailed code, and adds a password in
+ *            Settings if it wants one.
  *
  * Continue with Apple and Continue with Google come first when an admin has
  * set them up (`providers`, from the waitlist options). Either leaves
@@ -62,7 +64,9 @@
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
  * sent, as the sign-in screen does for the same link (./login.tsx), with
- * the same once-per-tab record of the send.
+ * the same once-per-tab record of the send. With such a link the account
+ * step is not the sheet's: it hands the account to the story (`onAccount`),
+ * which shows the full-page Welcome (./welcome-page.tsx).
  *
  * Every success ends in finishLogin(), so where the person lands is the
  * shell's decision (AuthScreens.finishLogin, then the invite link's path).
@@ -72,11 +76,18 @@
  *
  * ── The way out to "What do you want to make?" ─────────────────────────
  *
- * When a sign-in leads to the account's first session, the story hands
- * this sheet `handOff` from its `beforeFinish`. The sheet slides away while
- * the wallpaper the make screen stands on comes up behind it, and only then
- * does the shell sign in, opening that screen in the same tick
+ * When a sign-in leads to the account's first session, the story's
+ * `beforeFinish` answers true and the sheet hands off to that screen
+ * (`handOff`). It stays up first, its button busy with a spinner, until the
+ * make screen is ready to draw: the session confirmed and the page staying
+ * on its build (AuthScreens.finishLogin's `beforeShell`). Only then does it
+ * slide away while the wallpaper the make screen stands on comes up behind
+ * it, and the shell signs in, opening that screen in the same tick
  * (../first-session/index.tsx), so nothing of Home shows between the two.
+ * It used to leave before the session read, and the wallpaper alone stood
+ * there, a blank page, for as long as the read took (iPhone 17 simulator,
+ * iOS 26.5 Safari, 12 Oct 2026, #4892). The invite's "You're in" holds its
+ * frame the same way (App._followInvite, holdWelcome).
  * Transform and opacity only, with no delay, so a busy main thread cannot
  * hold the movement back on iOS; with reduced motion it is a cut.
  *
@@ -135,7 +146,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
-import { AppleIcon, GoogleIcon, XIcon } from '@/components/ui/icons';
+import { AppleIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
@@ -271,6 +282,17 @@ export const HAND_OFF_MS = 240;
 export const CLOSE_MS = 240;
 
 /**
+ * The spinner on Continue while it finishes a new account: the account is
+ * saved, and a sheet bound for the make screen then waits there, up and
+ * busy, until that screen is ready to draw (#4892). The label beside it
+ * says "Finishing…". The full-page Welcome's Continue is the same
+ * (./welcome-page.tsx).
+ */
+export function FinishingSpinner() {
+  return <SpinnerArcIcon className="mr-2 h-[18px] w-[18px] shrink-0 animate-spin" aria-hidden="true" />;
+}
+
+/**
  * Whether the sheet may put the caret in a step's field by itself. On a
  * touch screen a field focused from code raises the keyboard in the app's
  * web view, and doing that as the sheet opens (or as a step changes with
@@ -322,7 +344,8 @@ export function returnWalks(fields: readonly RefObject<HTMLInputElement | null>[
   };
 }
 
-function touchScreen(): boolean {
+/** A screen worked by touch, whose keyboard comes up over the page (the Welcome page folds for it). */
+export function touchScreen(): boolean {
   try {
     return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
   } catch {
@@ -335,7 +358,7 @@ function keyboardUp(): boolean {
   return root.contains(KB_OPEN_CLASS) || root.contains('un-kb');
 }
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   try {
     return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch {
@@ -401,6 +424,9 @@ export type ReleaseSpend = {
   next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean; suggestedUsername: string;
 };
 
+/** The account step's three facts: whose address, and its username to choose. */
+export type AccountStep = { email: string; needsUsername: boolean; suggestedUsername: string };
+
 /**
  * Spend the release mail's one-time sign-in link (src/services/release-links.js)
  * with a POST, never on the GET that opened the page, so a mail scanner's
@@ -408,14 +434,20 @@ export type ReleaseSpend = {
  * expired, used or unknown; null on anything else (offline, a server
  * error). Either way the sheet falls back to the address and a code, and a
  * refused link says why.
+ *
+ * `newAccountOnly` is the story's spend as the page opens (./landing.tsx),
+ * before any tap: the server then answers only `set-password`, and refuses
+ * an account already set up (`account_set_up`, which comes back here as
+ * null) without spending the link or making a session. The sheet, opened by
+ * Get started, never sends it.
  */
-export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'refused' | null> {
+export async function spendReleaseLink(key: string, { newAccountOnly = false }: { newAccountOnly?: boolean } = {}): Promise<ReleaseSpend | 'refused' | null> {
   try {
     const res = await fetchSessionMint('/api/auth/release-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ token: key }),
+      body: JSON.stringify(newAccountOnly ? { token: key, newAccountOnly: true } : { token: key }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.status === 422 && data.code === 'invalid_release_link') return 'refused';
@@ -430,6 +462,51 @@ export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'ref
   } catch {
     return null;
   }
+}
+
+/**
+ * The account step's request (#4891): the username when the account has
+ * none, and no password (the account signs in with an emailed code, and adds
+ * a password in Settings if it wants one; set-password takes a request with
+ * none as exactly that). It mints the session, on the person's Continue.
+ * The sheet's account step and the full-page Welcome (./welcome-page.tsx)
+ * both send it. May throw what fetchSessionMint throws.
+ */
+export async function saveAccount(handle: string | null): Promise<{ ok: true } | { ok: false; error: string; field: string | null }> {
+  const res = await fetchSessionMint('/api/auth/otp/set-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({
+      ...(handle ? { username: handle } : {}),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.user) {
+    return {
+      ok: false,
+      error: data.error || translate('auth:signInSheet.account.failed'),
+      field: typeof data.field === 'string' ? data.field : null,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Whether that one-time sign-in is being spent right now, as `onSigningIn`
+ * tells it: the open sheet on its `link` step, not on its way down, with
+ * nothing gone wrong. It stays true while a spent link that signed straight
+ * in finishes (the step is still `link`), and ends at every other outcome:
+ * Welcome (the account step), the code a refused or failed spend falls back
+ * to (the code or email step), an error that leaves the step where it was
+ * (offline, a failed send), and a session the shell could not confirm. So
+ * whatever covers the sheet for the moment is never over a step that asks
+ * for something, or over the message that says what went wrong.
+ */
+export function linkSigningIn({ open, step, closing, error, failure }: {
+  open: boolean; step: string; closing: boolean; error: string | null; failure: unknown;
+}): boolean {
+  return open && step === 'link' && !closing && !error && !failure;
 }
 
 /**
@@ -493,13 +570,38 @@ export type SignInSheetProps = {
    */
   releaseSignIn?: string | null;
   /**
+   * Told when that one-time sign-in starts and stops being spent
+   * (`linkSigningIn`), for a screen that draws its own "Signing you in…"
+   * over the sheet for that moment (./landing.tsx).
+   */
+  onSigningIn?: (signingIn: boolean) => void;
+  /**
+   * Keeps the panel and its dim down while that screen is up, so the step
+   * that follows (Welcome, or the code) comes up as the screen goes.
+   */
+  held?: boolean;
+  /**
+   * The link was refused before the sheet opened: the story spent it as the
+   * page opened and it was already used, or had expired (./landing.tsx). The
+   * code step then says why a code came instead, as it does for a link the
+   * sheet itself found used.
+   */
+  linkUsed?: boolean;
+  /**
+   * Given by a screen that shows the account step itself (the story's
+   * full-page Welcome, ./welcome-page.tsx, for a "You're in" link): where the
+   * sheet would go on to its own `account` step, after the link or a right
+   * code, it hands the account to this instead and the screen closes it.
+   */
+  onAccount?: (account: AccountStep) => void;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
-   * just set its password (in practice, one the code just made).
-   * `handOff` sends the sheet on its way to the make screen; it resolves
-   * once the sheet has gone.
+   * just set its password (in practice, one the code just made). Answers
+   * whether the sign-in leads to the make screen: the sheet then stays up,
+   * busy, until the shell is ready to draw it, and hands off to it then.
    */
-  beforeFinish?: (kind: 'existing' | 'new', handOff: () => Promise<void>) => void | Promise<void>;
+  beforeFinish?: (kind: 'existing' | 'new') => boolean | Promise<boolean>;
   onClose: () => void;
   primaryClass: string;
 };
@@ -520,7 +622,8 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, beforeFinish, onClose, primaryClass,
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, onSigningIn, held = false, linkUsed = false, onAccount,
+  beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const t = useMessages('auth');
   const otherWays: Step = providers.length ? 'choose' : 'email';
@@ -559,7 +662,6 @@ export function SignInSheet({
   const codeField = useRef<HTMLInputElement>(null);
   const usernameField = useRef<HTMLInputElement>(null);
   const providerUsernameField = useRef<HTMLInputElement>(null);
-  const passwordField = useRef<HTMLInputElement>(null);
   const nameField = useRef<HTMLInputElement>(null);
   const phoneField = useRef<HTMLInputElement>(null);
   // The phone step's two fields in order, for Return, and the name as typed.
@@ -568,9 +670,8 @@ export function SignInSheet({
   const phoneCodeField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
-  // Each multi-field step's fields in order, for Return (`returnWalks`).
+  // The password step's fields in order, for Return (`returnWalks`).
   const passwordStepFields = [identifierField, currentPasswordField];
-  const accountStepFields = [usernameField, passwordField];
   // The panel scrolls its fields; with the keyboard up they are revealed in
   // it, with the step's button, and tapped without iOS's pan. It rides the
   // keys up and down as one eased movement.
@@ -581,6 +682,12 @@ export function SignInSheet({
   // and must not send it back from the code to the first step.
   const firstStepRef = useRef(firstStep);
   firstStepRef.current = firstStep;
+  // Read when they are needed, like the first step: the link's state when
+  // the sheet opens, and the account's hand-off when a step gets there.
+  const linkUsedRef = useRef(linkUsed);
+  linkUsedRef.current = linkUsed;
+  const onAccountRef = useRef(onAccount);
+  onAccountRef.current = onAccount;
   const releaseSeen = useRef<string | null>(null);
   // The address an email code carried to the password step, for its first field.
   const identifierPrefill = useRef('');
@@ -617,7 +724,7 @@ export function SignInSheet({
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
     setWelcome(null);
-    setLinkRefused(false);
+    setLinkRefused(linkUsedRef.current);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -641,9 +748,9 @@ export function SignInSheet({
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
             : step === 'phone-code' ? phoneCodeField
-              : (needsUsername && !suggestedUsername ? usernameField : passwordField);
+              : usernameField;
     if (focus) field.current?.focus({ preventScroll: true });
-  }, [open, step, needsUsername, suggestedUsername]);
+  }, [open, step, needsUsername]);
 
   // Back from the provider's page by the browser's Back button, the page can
   // come out of the back-forward cache as it was left: busy. Undo that.
@@ -725,7 +832,17 @@ export function SignInSheet({
   //
   // While it is spent the sheet says "Signing you in…" (the `link` step),
   // not the email step with its Send code button, which the first open
-  // used to show for the length of the request.
+  // used to show for the length of the request. The story covers that step
+  // with a plain "Signing you in…" screen of its own (`onSigningIn`, `held`;
+  // ./landing.tsx SigningIn), and the step after it comes up as that goes:
+  // the code, or the story's full-page Welcome (`onAccount`).
+  //
+  // A new account's link is usually spent before this sheet opens, by the
+  // story as the page opens (Evan, 12 Oct 2026). The sheet still spends it
+  // on Get started when the story did not: an account already set up, whose
+  // link waits for that tap, and the rarer ways the page could not decide
+  // or the spend ran long. A link the story found used comes here without
+  // its one-time sign-in, and with `linkUsed`: the code, saying why.
   const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
     const seen = releaseSignIn || releaseToken;
@@ -747,6 +864,10 @@ export function SignInSheet({
         if (!spent || spent === 'refused') { prefill(); return; }
         setEmail(spent.email);
         if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
+        if (onAccountRef.current) {
+          onAccountRef.current({ email: spent.email, needsUsername: spent.needsUsername, suggestedUsername: spent.suggestedUsername });
+          return;
+        }
         setWelcome(spent.email);
         setNeedsUsername(spent.needsUsername);
         setSuggestedUsername(spent.suggestedUsername);
@@ -772,8 +893,18 @@ export function SignInSheet({
     return () => { live = false; };
   }, [open, releaseToken, releaseSignIn, requestCode]);
 
+  // Said to the screen that covers that moment (`onSigningIn`): true as it
+  // starts, false as it ends, and false if the sheet goes first.
+  const signingIn = linkSigningIn({ open, step, closing, error, failure: completion.failure });
+  useEffect(() => {
+    if (!signingIn || !onSigningIn) return undefined;
+    onSigningIn(true);
+    return () => onSigningIn(false);
+  }, [signingIn, onSigningIn]);
+
   // Away to the make screen: the panel goes down while the wallpaper comes
-  // up behind it. Resolves once that has had its time.
+  // up behind it. Resolves once that has had its time. Run by the shell's
+  // sign-in once that screen is ready to draw (`finish` below).
   const handOff = useCallback((): Promise<void> => {
     // The keys go down with the sheet (#4597): Continue kept the caret in
     // its field (HOLD_FIELD_FOCUS), and the make screen opens whole, its
@@ -786,12 +917,16 @@ export function SignInSheet({
   }, []);
 
   // Every sign-in ends here: what the screen that opened the sheet does
-  // first (`beforeFinish`), then the shell's own sign-in. A session the
-  // shell cannot confirm brings the sheet back with the notice that says so.
+  // first (`beforeFinish`), then the shell's own sign-in. Bound for the make
+  // screen, the sheet stays up, busy, through the session read and hands off
+  // only once the shell is about to draw it (`beforeShell`): leaving first
+  // left the bare wallpaper up for as long as the read took (#4892). A
+  // session the shell cannot confirm leaves the sheet where it is, with the
+  // notice that says so.
   const finish = useCallback(async (kind: 'existing' | 'new') => {
     clearConfirmation();
-    await beforeFinish?.(kind, handOff);
-    const opened = await confirmSession();
+    const toMake = (await beforeFinish?.(kind)) === true;
+    const opened = await confirmSession(toMake ? handOff : undefined);
     if (!opened) setLeaving(false);
   }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
   finishRef.current = finish;
@@ -829,8 +964,15 @@ export function SignInSheet({
         await finish('existing');
         return;
       }
+      const suggested = typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '';
+      // A "You're in" link's code (one the story found used, say): the
+      // story's full-page Welcome, not this sheet's account step.
+      if (onAccountRef.current) {
+        onAccountRef.current({ email, needsUsername: data.needsUsername === true, suggestedUsername: suggested });
+        return;
+      }
       setNeedsUsername(data.needsUsername === true);
-      setSuggestedUsername(typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '');
+      setSuggestedUsername(suggested);
       setCooldownUntil(0);
       setStep('account');
     } catch (err) {
@@ -940,35 +1082,23 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  // #4595: the password is optional. The field left empty finishes without
-  // one: the account then signs in with an email code, and can add a
-  // password in Settings. It is asked once, with no "again" field: a
-  // mistyped one is reset by email ("Forgot password?"). There is no "Skip
-  // for now" (Evan, 10 Oct 2026): beside a username that cannot be skipped
-  // it read as skipping the whole step, and "Password (optional)" with
-  // Continue already says it.
+  // #4891: the account step asks for the username and nothing else. The
+  // password was optional (#4595), and still one more decision at the very
+  // first step; the account signs in with an emailed code and adds a
+  // password in Settings if it wants one (POST /api/me/password, which sets
+  // a first password with no current one). set-password takes the request
+  // with no password in it as exactly that (`saveAccount`).
   const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError(translate('auth:signInSheet.account.usernameMissing')); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = passwordField.current?.value || '';
-    if (password && password.length < 8) { setError(translate('auth:signInSheet.account.passwordTooShort')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
-      const res = await fetchSessionMint('/api/auth/otp/set-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          ...(password ? { password } : {}),
-          ...(handle ? { username: handle } : {}),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.user) {
-        setError(data.error || translate('auth:signInSheet.account.failed'));
-        if (data.field === 'username') usernameField.current?.focus({ preventScroll: true });
+      const saved = await saveAccount(handle);
+      if (!saved.ok) {
+        setError(saved.error);
+        if (saved.field === 'username') usernameField.current?.focus({ preventScroll: true });
         return;
       }
       await finish('new');
@@ -1133,13 +1263,14 @@ export function SignInSheet({
           ? t('auth:signInSheet.password.lead')
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
-            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : t('auth:signInSheet.account.lead'));
+            : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : '');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
-  // card, it fades.
+  // card, it fades. `held`, it stays down under the screen that covers it.
+  const up = shown && !held;
   const panelState = leaving
     ? 'pointer-events-none translate-y-full md:-translate-x-1/2 md:-translate-y-1/2 md:opacity-0'
-    : shown ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
+    : up ? 'translate-y-0 md:-translate-x-1/2 md:-translate-y-1/2' : 'translate-y-full md:-translate-x-1/2 md:-translate-y-1/2';
   const close = leaving ? undefined : requestClose;
 
   return (
@@ -1149,7 +1280,7 @@ export function SignInSheet({
       <div
         aria-hidden="true"
         onClick={close}
-        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 touch-none bg-black/40 transition-opacity duration-200 motion-reduce:transition-none ${up ? 'opacity-100' : 'opacity-0'}`}
       />
       {/*
           The make screen's own ground (../first-session/make.tsx paints the
@@ -1264,7 +1395,7 @@ export function SignInSheet({
                 <input ref={providerUsernameField} id="sign-in-sheet-provider-username" autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.providerUsernamePlaceholder')} {...HANDLE_FIELD} />
               </div>
             </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.username.finishing') : t('auth:signInSheet.username.submit')}</button>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.username.finishing')}</> : t('auth:signInSheet.username.submit')}</button>
           </form>
         ) : null}
 
@@ -1311,19 +1442,17 @@ export function SignInSheet({
 
         {step === 'account' ? (
           <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void finishAccount(); }}>
-            <div className={FIELD_GROUP}>
-              {needsUsername ? (
+            {needsUsername ? (
+              <div className={FIELD_GROUP}>
                 <div className={FIELD}>
                   <label htmlFor="sign-in-sheet-username" className={LABEL}>{t('auth:signInSheet.account.usernameLabel')}</label>
-                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 0)} className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
+                  <input ref={usernameField} id="sign-in-sheet-username" defaultValue={suggestedUsername} autoComplete="username" enterKeyHint="go" className={INPUT} placeholder={t('auth:signInSheet.usernamePlaceholder')} {...HANDLE_FIELD} />
                 </div>
-              ) : null}
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>{t('auth:signInSheet.account.passwordLabel')}</label>
-                <PasswordInput ref={passwordField} id="sign-in-sheet-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" placeholder={t('auth:signInSheet.account.passwordPlaceholder')} />
               </div>
-            </div>
-            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.account.finishing') : t('auth:signInSheet.account.submit')}</button>
+            ) : null}
+            {/* No password here (#4891): how they sign in, and where a password is added. */}
+            <p data-sign-in-sheet-code-note="" className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.account.codeNote')}</p>
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? <><FinishingSpinner />{t('auth:signInSheet.account.finishing')}</> : t('auth:signInSheet.account.submit')}</button>
           </form>
         ) : null}
 

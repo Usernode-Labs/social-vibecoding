@@ -66,6 +66,10 @@ test('the initial state renders NOTHING, which is the prerendered markup', () =>
   // it before the first Home.render() would add a child the prerendered
   // #app-list does not have.
   assert.equal(INITIAL_GRID.create, null);
+  // …and edit mode (#4669) is off: the wiggle, the remove buttons and the
+  // "Done" link are a state a long press enters, never something the shipped
+  // document already shows.
+  assert.equal(INITIAL_GRID.editing, false);
 });
 
 // ── The SECOND home store ─────────────────────────────────────────────

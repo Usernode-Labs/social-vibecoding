@@ -131,9 +131,45 @@ const PASSWORD_REQUIRED_MESSAGE =
 const ADMIN_PASSWORD_REQUIRED_MESSAGE =
   'This admin account signs in with a password. Enter it below to continue.';
 
+// The refusal a release link's on-load spend gets for an account already set
+// up (continueProvenEmail `newAccountOnly`): the page then waits for a tap.
+const ACCOUNT_SET_UP_MESSAGE =
+  'This account is already set up. Tap Get started to sign in.';
+
 // How many times a colliding placeholder is replaced before the insert
 // gives up and lets the error through.
 const USERNAME_INSERT_ATTEMPTS = 3;
+
+/**
+ * Whether proving a mailbox would leave its account at the account step
+ * rather than sign it in (continueProvenEmail below): no account yet, or one
+ * that is not an admin's, has no password and has not chosen its username
+ * (the unfinished account a spent release link may reopen, #4682). Anything
+ * else is "set up": proving its mailbox signs it straight in, or is refused.
+ * `user` is a users row with those three columns, or null.
+ */
+function isUnfinishedAccount(user) {
+  return !user || (!user.is_admin && !user.password_set && user.needs_username_choice === true);
+}
+
+/**
+ * isUnfinishedAccount for the account an address would prove, read and
+ * nothing else: no row is written, locked or spent, and no session is made.
+ * The page asks it before it spends a release link on load
+ * (services/release-links.js isNewAccount). False for an address that is not
+ * one.
+ */
+async function accountIsUnfinished(pool, rawEmail) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return false;
+  const { rows } = await pool.query(
+    `SELECT is_admin, password_set, needs_username_choice
+       FROM users
+      WHERE lower(email) = lower($1)`,
+    [email]
+  );
+  return isUnfinishedAccount(rows[0] || null);
+}
 
 /**
  * Create the account an email code just proved the mailbox for (#2563).
@@ -237,8 +273,17 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
  * and hand back the continuation for the account step. Runs inside the
  * caller's transaction, after the proof has been spent, so a proof is never
  * replayable on any branch below.
+ *
+ * `newAccountOnly` is a release link spent as the page opens, before anybody
+ * has tapped anything (features/auth/landing.tsx). It signs nobody in: an
+ * account that is set up (isUnfinishedAccount false) is refused with
+ * `account_set_up` before any branch below runs, and the throw rolls the
+ * caller's transaction back, so the link stays unspent for the person's own
+ * tap and no session is made. A mail scanner or an app's own browser that
+ * runs the page can therefore only ever reach the account step, which mints
+ * no session (completePassword does, on the person's Continue).
  */
-async function continueProvenEmail(client, email, { createSession } = {}) {
+async function continueProvenEmail(client, email, { createSession, newAccountOnly = false } = {}) {
   const { rows: existingRows } = await client.query(
     `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed,
             needs_username_choice
@@ -248,6 +293,10 @@ async function continueProvenEmail(client, email, { createSession } = {}) {
     [email]
   );
   let user = existingRows[0] || null;
+
+  if (newAccountOnly && !isUnfinishedAccount(user)) {
+    throw new EmailSignupError('account_set_up', ACCOUNT_SET_UP_MESSAGE);
+  }
 
   // The code is already consumed at this point, on every branch below. A
   // correct code must never be replayable, and neither refusal is
@@ -551,6 +600,10 @@ module.exports = {
   // a code does, and continues exactly as verifyCode does from there.
   continueProvenEmail,
   finishProvenEmail,
+  // Whether that would sign the address's account in or leave it at the
+  // account step: the page's check before a release link's on-load spend.
+  isUnfinishedAccount,
+  accountIsUnfinished,
   withTransaction,
   OTP_TTL_MS,
   SIGNUP_TTL_MS,

@@ -247,8 +247,10 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     log.warn('homeroom-bot-move', 'Could not close a moved request', { app: app.slug, issueNumber: n, err: err.message });
     return { ok: false };
   }
+  // The request's own twin rows: a governance proposal that names the same
+  // number is decided by its vote (and its machine), not by a move.
   await pool.query(
-    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+    `UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND kind = 'general'`,
     [app.id, n],
   ).catch(() => {});
   await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
@@ -368,99 +370,160 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   );
 }
 
+// What became of a platform verdict's move offer (homeroom_bot_runs
+// move_offer): sent, or why it was not.
+const MOVE_OFFER_OUTCOMES = Object.freeze(['sent', 'no_requester', 'no_bot', 'repeat_held', 'already_offered', 'not_sent']);
+
 /**
- * #4239: after the bot told a requester it left their request because it is
- * about Homeroom itself (homeroom-bot-dm.js relayIssuePost), the offer to
- * move it, under its own buttons. Offered once per request and person.
- * Never throws; resolves what was sent, or null.
+ * Record on run `runId` what became of its move offer (MOVE_OFFER_OUTCOMES),
+ * for the console's Move offers line and get_homeroom_bot. Only on a run the
+ * triage flagged as about Homeroom itself. Never throws.
  */
-async function offerMove(pool, { bot, userId, app, issueNumber, title, reason = null, key = null, deps = {} }) {
+async function noteMoveOffer(pool, runId, outcome) {
+  const id = Number(runId);
+  if (!Number.isInteger(id) || id <= 0 || !MOVE_OFFER_OUTCOMES.includes(outcome)) return;
+  await pool.query('UPDATE homeroom_bot_runs SET move_offer = $2 WHERE id = $1 AND about_platform', [id, outcome])
+    .catch((err) => log.warn('homeroom-bot-move', 'Could not record a move offer\'s outcome', { runId: id, outcome, err: err.message }));
+}
+
+// How far back the console's Move offers line looks.
+const MOVE_OFFER_DAYS = 7;
+
+/**
+ * The move offers of the last MOVE_OFFER_DAYS days, for the console and
+ * get_homeroom_bot: offers sent (any source: a platform verdict's DM, or
+ * the DM chat's offer_move_request), and how each was decided: moved
+ * (Move it to Homeroom), kept (Keep it here), still open, failed. And the
+ * live `person` verdicts flagged as about Homeroom itself that sent no
+ * offer, counted by why (move_offer; `unrecorded` for a run from before it
+ * was kept, or whose DM news did not go out), with the latest few.
+ * Codes and counts, never anybody's words.
+ */
+async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
+  const { rows: [o] } = await pool.query(
+    `SELECT COUNT(*)::int AS sent,
+            COUNT(*) FILTER (WHERE status = 'done')::int AS moved,
+            COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
+            COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+       FROM homeroom_bot_dm_actions
+      WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
+    [days],
+  );
+  const { rows: missed } = await pool.query(
+    `SELECT r.id, r.issue_number, r.created_at, a.slug AS app_slug,
+            COALESCE(r.move_offer, 'unrecorded') AS why
+       FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+      WHERE r.about_platform AND r.verdict = 'person' AND r.mode = 'live'
+        AND r.created_at > NOW() - make_interval(days => $1)
+        AND r.move_offer IS DISTINCT FROM 'sent'
+        AND (r.move_offer IS NOT NULL OR NOT EXISTS (
+          SELECT 1 FROM homeroom_bot_dm_actions x
+           WHERE x.kind = 'move_request' AND x.app_id = r.app_id AND x.source_issue_number = r.issue_number))
+      ORDER BY r.id DESC`,
+    [days],
+  );
+  const byWhy = {};
+  for (const m of missed) byWhy[m.why] = (byWhy[m.why] || 0) + 1;
+  return {
+    days,
+    sent: o?.sent || 0,
+    moved: o?.moved || 0,
+    kept: o?.kept || 0,
+    open: o?.open || 0,
+    failed: o?.failed || 0,
+    notOffered: missed.length,
+    notOfferedByWhy: byWhy,
+    notOfferedRecent: missed.slice(0, 10).map((m) => ({
+      runId: Number(m.id), app: m.app_slug, issueNumber: Number(m.issue_number),
+      why: m.why, at: new Date(m.created_at).toISOString(),
+    })),
+  };
+}
+
+// One story per request: what to tap under "This looks done already", the
+// verdict and its offer in one message. Tell me what's missing quotes the
+// message in the composer, and what they write goes on the request
+// (homeroom-bot-dm.js MIRRORED_KINDS), which has the bot look again.
+const DONE_ACTIONS = Object.freeze([
+  Object.freeze({ id: 'yes', label: 'Propose to close', style: 'primary', type: 'server' }),
+  Object.freeze({ id: 'missing', label: 'Tell me what\'s missing', style: 'secondary', type: 'reply' }),
+]);
+
+/**
+ * One story per request: an offer folded into the moment that gives its
+ * reason, so one verdict is one message and rings once (homeroom-bot-dm.js
+ * relayIssuePost). `kind` is 'move_request' (about Homeroom itself: Move it
+ * to Homeroom · Keep it here) or 'close_request' (done already: Propose to
+ * close · Tell me what's missing). Records the offer, once per request and
+ * person (and, for a close, not while a close vote is open), and resolves
+ * { actionId, metadata } to send with the message, then `attach` it to the
+ * message sent (foldedOfferSent). Null when there is nothing to offer.
+ * Never throws.
+ */
+async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason = null, runId = null, deps = {} }) {
   try {
     const n = Number(issueNumber);
-    if (!bot?.id || !userId || !app?.id || !Number.isInteger(n)) return null;
-    if (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps))) return null;
+    if (!userId || !app?.id || !Number.isInteger(n)) return null;
+    const move = kind === 'move_request';
+    if (move && (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps)))) {
+      await noteMoveOffer(pool, runId, 'not_sent');
+      return null;
+    }
     const { rows: before } = await pool.query(
       `SELECT 1 FROM homeroom_bot_dm_actions
-        WHERE user_id = $1 AND app_id = $2 AND kind = 'move_request' AND source_issue_number = $3
-          AND status IN ('open', 'done')`,
-      [userId, app.id, n],
+        WHERE user_id = $1 AND app_id = $2 AND kind = $4 AND source_issue_number = $3
+          AND status IN ('open', 'done')
+       UNION ALL
+       SELECT 1 FROM issues
+        WHERE $4 = 'close_request' AND app_id = $2 AND kind = 'close_issue' AND status = 'open'
+          AND (payload->>'issueNumber')::int = $3`,
+      [userId, app.id, n, kind],
     );
-    if (before.length) return null;
-    const name = app.name || app.slug;
+    if (before.length) {
+      if (move) await noteMoveOffer(pool, runId, 'already_offered');
+      return null;
+    }
     const { rows: [action] } = await pool.query(
       `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
-       VALUES ($1, $2, 'move_request', $3, $4, $5) RETURNING id`,
-      [userId, app.id, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [userId, app.id, kind, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
     );
-    const sent = await dmModule(deps).sendDm(pool, {
-      bot, userId,
-      content: moveOfferText({ name, issueNumber: n }),
-      idempotencyKey: key ? `hrbot-move-${key}` : `hrbot-move-${action.id}`,
-      metadata: moveOfferMeta({ app, actionId: action.id }),
-    });
-    if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
-      return sent || null;
-    }
-    await pool.query(
-      'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
-      [action.id, sent.messageId, sent.conversationId],
-    );
-    return sent;
+    const actionId = Number(action.id);
+    const mayor = mayorModule();
+    const actions = move ? mayor.offerActions('move_request') : DONE_ACTIONS.map((a) => ({ ...a }));
+    return {
+      actionId, kind, runId,
+      metadata: {
+        actionId, actions, answers: actions.map((a) => a.label), status: 'open',
+      },
+    };
   } catch (err) {
-    log.warn('homeroom-bot-move', 'Could not offer to move a request', { app: app?.slug, issueNumber, err: err.message });
+    log.warn('homeroom-bot-move', 'Could not fold an offer into its message', { app: app?.slug, issueNumber, kind, err: err.message });
+    if (kind === 'move_request') await noteMoveOffer(pool, runId, 'not_sent');
     return null;
   }
 }
 
 /**
- * After the bot told a requester that what they asked for is already there
- * (a triage `done` verdict, homeroom-bot-dm.js relayIssuePost), the offer to
- * open a vote on closing it: the same Propose to close / Keep it open offer
- * the DM chat makes (homeroom-bot-mayor.js offerCloseRequest), so a tap opens
- * the request's own close vote with them as its proposer. Offered once per
- * request and person, and not while a close vote is already open. Never
- * throws; resolves what was sent, or null.
+ * The message a folded offer (foldOffer) went out in, or did not: the offer
+ * is tied to it, or dropped. Never throws.
  */
-async function offerClose(pool, { bot, userId, app, issueNumber, title, reason = null, key = null, deps = {} }) {
+async function foldedOfferSent(pool, offer, sent) {
+  if (!offer) return;
   try {
-    const n = Number(issueNumber);
-    if (!bot?.id || !userId || !app?.id || !Number.isInteger(n)) return null;
-    const { rows: before } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_dm_actions
-        WHERE user_id = $1 AND app_id = $2 AND kind = 'close_request' AND source_issue_number = $3
-          AND status IN ('open', 'done')
-       UNION ALL
-       SELECT 1 FROM issues
-        WHERE app_id = $2 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $3`,
-      [userId, app.id, n],
-    );
-    if (before.length) return null;
-    const name = app.name || app.slug;
-    const { rows: [action] } = await pool.query(
-      `INSERT INTO homeroom_bot_dm_actions (user_id, app_id, kind, title, details, source_issue_number)
-       VALUES ($1, $2, 'close_request', $3, $4, $5) RETURNING id`,
-      [userId, app.id, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
-    );
-    const mayor = mayorModule();
-    const sent = await dmModule(deps).sendDm(pool, {
-      bot, userId,
-      content: mayor.closeOfferText({ name, issueNumber: n, title: title || `Request #${n}` }),
-      idempotencyKey: key ? `hrbot-close-${key}` : `hrbot-close-${action.id}`,
-      metadata: mayor.closeOfferMeta({ app, name, actionId: action.id, issueNumber: n }),
-    });
     if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
-      return sent || null;
+      await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
+      if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, sent?.duplicate ? 'already_offered' : 'not_sent');
+      return;
     }
     await pool.query(
       'UPDATE homeroom_bot_dm_actions SET message_id = $2, conversation_id = $3 WHERE id = $1',
-      [action.id, sent.messageId, sent.conversationId],
+      [offer.actionId, sent.messageId, sent.conversationId],
     );
-    return sent;
+    if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, 'sent');
   } catch (err) {
-    log.warn('homeroom-bot-move', 'Could not offer to close a request', { app: app?.slug, issueNumber, err: err.message });
-    return null;
+    log.warn('homeroom-bot-move', 'Could not tie a folded offer to its message', { actionId: offer.actionId, err: err.message });
   }
 }
 
@@ -489,7 +552,12 @@ function moveOfferMeta({ app, actionId }) {
 }
 
 module.exports = {
-  offerClose,
+  MOVE_OFFER_OUTCOMES,
+  noteMoveOffer,
+  moveOfferSummary,
+  foldOffer,
+  foldedOfferSent,
+  DONE_ACTIONS,
   requestLink,
   movedFooter,
   moveGate,
@@ -498,7 +566,6 @@ module.exports = {
   closeNow,
   closedWords,
   decideMove,
-  offerMove,
   moveOfferText,
   moveOfferMeta,
 };

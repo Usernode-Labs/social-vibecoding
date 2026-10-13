@@ -122,6 +122,12 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The member, read_only_admin and full_admin browsers are three different
+accounts. When a change needs somebody other than its persona to act first,
+such as a reply to the member's message or a vote on their change, take that
+step in another of those browsers as the brief's secondAccount says, on both
+addresses alike, then shoot in the browser screenBrowsers names.
+
 When the brief has afterOnly, the proposal builds the app's first real
 screens and the before address still shows only the starter template's
 placeholder, which has none of the declared changes. Then there is no
@@ -157,6 +163,11 @@ is dismissed on every page these browsers open, so it stays out of the
 shots. For a change to the strip itself, open the start path with
 installStrip.param added to its query (before any #), on both addresses and
 in the phone browser, so the strip shows as it does on a member's phone.
+
+If the brief has makeProject, a project made on these copies never finishes
+setting up, on either address. Read makeProject.note before a change whose
+steps make, remix or import a project: it says what can be shot, and a
+change that needs a made project to run is skipped at once.
 
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with

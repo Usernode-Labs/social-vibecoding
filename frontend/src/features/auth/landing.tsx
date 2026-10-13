@@ -33,11 +33,11 @@
  */
 
 import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
+import { flushSync } from 'react-dom';
 
 import { alertVariants } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
-import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, LockIcon, SpinnerArcIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 import { cn } from '@/lib/utils';
 
@@ -64,10 +64,18 @@ import {
   zoomFx,
 } from './shared';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
-import { inviteEmailFromToken } from './login';
-import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
+import { type ReleaseAccount, releaseAccountFromToken } from './login';
+import {
+  type AccountStep,
+  type ReleaseSpend,
+  SignInSheet,
+  type SignInProvider,
+  type SignInResume,
+  spendReleaseLink,
+} from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
+import { WelcomePage } from './welcome-page';
 
 const LANDING_TITLE = 'Homeroom';
 
@@ -578,7 +586,8 @@ const CHIPS: readonly { line: string; dot: string }[] = [
 
 /**
  * The story's sheet, once a sign-in through it has a session and before the
- * shell takes over (its `beforeFinish`).
+ * shell takes over (its `beforeFinish`), and the full-page Welcome's the
+ * same way (./welcome-page.tsx).
  *
  * A new account made from the story is asked what to make next
  * (../first-session/make.tsx), not which communities to join: the session's
@@ -587,22 +596,103 @@ const CHIPS: readonly { line: string; dot: string }[] = [
  * yet (one an admin made, say, through the password step, or one that saw
  * it, left without answering and is signing in again); the join step opens
  * its make screen in the same tick the shell starts
- * (./communities-first-run.js). Either way the sheet hands off to that
- * screen (`handOff`) while this runs, so the two read as one movement.
- * Recording the start answers nothing: the question is asked until Make it
- * or "Look around first". Anyone else goes where they always have, with no
- * hand-off.
+ * (./communities-first-run.js). Either way this answers true and the sheet
+ * hands off to that screen, once the shell is ready to draw it (#4892), so
+ * the two read as one movement. The start is recorded before the shell
+ * starts, with the sheet still up, so the join step's own record comes
+ * second. Recording the start answers nothing: the question is asked until
+ * Make it or "Look around first". Anyone else goes where they always have,
+ * with no hand-off.
  */
-export async function startedFromStory(kind: 'existing' | 'new', handOff: () => Promise<void>): Promise<void> {
-  if (kind !== 'new') {
-    if (await firstSessionNext()) await handOff();
-    return;
-  }
+export async function startedFromStory(kind: 'existing' | 'new'): Promise<boolean> {
+  if (kind !== 'new') return firstSessionNext();
   try { sessionStorage.setItem('usernode:first-session:make', '1'); } catch { /* the make screen is then skipped */ }
-  await Promise.all([
-    fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {}),
-    handOff(),
-  ]);
+  await fetch('/api/me/first-session/started', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+  return true;
+}
+
+/**
+ * How long "Signing you in…" may stand. A spend answers in about a second;
+ * one that has not after this gives way: as the page opens, to the story and
+ * its Get started, with nothing more spent on load; under Get started, to
+ * the sheet as it is ("Signing you in from your email…" and its ✕). A
+ * stalled request never leaves a spinner with no way out.
+ */
+export const SIGNING_IN_MAX_MS = 20_000;
+
+/**
+ * A "You're in" link that may be spent as the page opens (Evan, 12 Oct
+ * 2026): a new account's (`signup`), carrying both the token that names its
+ * address, which the check reads, and its one-time sign-in. Its arrival puts
+ * "Signing you in…" up at once, before anything is known, so the story is
+ * never seen first and then taken away.
+ */
+export function straightLink(link: ReleaseLink | null | undefined): boolean {
+  return !!link && link.route === 'signup' && !!link.token && !!link.signIn;
+}
+
+/**
+ * Whether that link is spent now, before any tap. Only when the check, a GET
+ * that spends nothing and makes no session (GET /api/public/waitlist/more/
+ * :token, `new_account`), says its account is still new: none yet, or one
+ * with no username and no password. An account already set up waits for Get
+ * started, so a mail scanner or an app's own browser that runs this page
+ * can never sign it in; so does a link whose check failed, and every link
+ * while the story is switched off. The spend itself asks the server to hold
+ * the same line (`newAccountOnly`, src/services/release-links.js).
+ */
+export function spendsOnLoad({ link, account, options }: {
+  link: ReleaseLink | null | undefined;
+  account: ReleaseAccount | null;
+  options: WaitlistOptions | null;
+}): boolean {
+  return straightLink(link) && account?.newAccount === true && options?.story_landing !== false;
+}
+
+/**
+ * Where that spend leads: the full-page Welcome for the account it opened;
+ * `used`, the story, whose Get started sends a code because the link was
+ * already used or has expired; or `story`, the story with the link still
+ * unspent for Get started (the server's answer for an account set up in the
+ * meantime, or no answer at all). Nothing here signs anybody in: a
+ * `signed-in` answer, which `newAccountOnly` rules out, would be the story too.
+ */
+export function afterLoadSpend(spent: ReleaseSpend | 'refused' | null): AccountStep | 'used' | 'story' {
+  if (spent === 'refused') return 'used';
+  if (spent && spent.next === 'set-password') {
+    return { email: spent.email, needsUsername: spent.needsUsername, suggestedUsername: spent.suggestedUsername };
+  }
+  return 'story';
+}
+
+/**
+ * "SIGNING YOU IN…": while a "You're in" mail's one-time sign-in is checked
+ * and spent, a plain screen over everything: the logotype, a spinner and the
+ * one line, on the landing's own ground. As the page opens, for a new
+ * account's link (`straightLink`); and while Get started spends it (the
+ * sheet's `link` step, ./sign-in-sheet.tsx). The onboarding run of 12 Oct
+ * 2026 saw the story, with the address under "Welcome to Homeroom", stay up
+ * while the link signed in, and then the Welcome sheet over it. The address
+ * is not said here: the Welcome page that follows says it.
+ *
+ * It takes the taps while it is up (the dim under it would close the sheet),
+ * and it is up only for that moment: rendered nothing otherwise, so the
+ * interior's first commit is unchanged.
+ */
+export function SigningIn() {
+  const t = useMessages('auth');
+  return (
+    <div
+      data-landing-signing-in=""
+      role="status"
+      className="fixed inset-0 z-[60] flex touch-none flex-col items-center justify-center px-4 text-center"
+      style={{ background: 'var(--home-wallpaper)' }}
+    >
+      <Wordmark className="h-8 w-auto text-zinc-950 dark:text-white" />
+      <SpinnerArcIcon className="mt-8 h-6 w-6 animate-spin motion-reduce:animate-none text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+      <p className="mt-3 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">{t('auth:landing.signingIn')}</p>
+    </div>
+  );
 }
 
 export function LandingScreen() {
@@ -640,16 +730,79 @@ export function LandingScreen() {
   // up yet (src/services/release-links.js), rather than asking for a code.
   const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
   // The address a new account's link names, for the story to greet (Evan,
-  // 10 Oct 2026: "Welcome to Homeroom" and the email). The sign-in screen's
-  // own lookup, which the sheet uses for the same token.
+  // 10 Oct 2026: "Welcome to Homeroom" and the email).
   const [releaseEmail, setReleaseEmail] = useState<string | null>(null);
-  const releaseToken = release?.route === 'signup' ? release.token : null;
+  // A NEW ACCOUNT'S LINK, AS THE PAGE OPENS (Evan, 12 Oct 2026): no story
+  // and no Get started, but "Signing you in…" at once (`holding`) while the
+  // link is checked and spent, then the full-page Welcome (`welcome`,
+  // ./welcome-page.tsx). A link that spend found already used, or expired,
+  // gives the story back, and its Get started then sends a code rather than
+  // spending the link again (`releaseUsed`).
+  const [holding, setHolding] = useState(false);
+  const [welcome, setWelcome] = useState<AccountStep | null>(null);
+  const [releaseUsed, setReleaseUsed] = useState(false);
+  // Bumped when "Signing you in…" gives way to the story (SIGNING_IN_MAX_MS):
+  // an answer that lands after that changes nothing, and nothing more is
+  // spent on load. Get started takes it from there.
+  const straightRun = useRef(0);
   useEffect(() => {
-    if (!releaseToken) return undefined;
+    if (!holding) return undefined;
+    const timer = window.setTimeout(() => { straightRun.current += 1; setHolding(false); }, SIGNING_IN_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [holding]);
+  // The story's lookup of the address the link's token names, which also
+  // says whether its account is still new (`new_account`). A GET: it spends
+  // nothing and makes no session. A new account's link is then spent with
+  // `newAccountOnly`, which the server answers only with the account step:
+  // an account set up in the meantime is refused there, its link unspent and
+  // no session made, and gets the story like any account already set up,
+  // whose link only Get started spends (Evan, 10 Oct 2026: a link spent on
+  // load was used up by whatever loaded it, an app's own browser before it
+  // handed the link to Safari, or a mail scanner that runs the page).
+  useEffect(() => {
+    if (!release || release.route !== 'signup' || !release.token) return undefined;
+    const link = release;
+    const token = release.token;
+    const run = straightRun.current;
     let live = true;
-    void inviteEmailFromToken(releaseToken).then((email) => { if (live) setReleaseEmail(email); });
+    void Promise.all([releaseAccountFromToken(token), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
+      if (!live) return;
+      setReleaseEmail(account?.email ?? null);
+      if (run !== straightRun.current || !spendsOnLoad({ link, account, options })) {
+        setHolding(false);
+        return;
+      }
+      // From here the link is spent whatever the screen does, so its answer
+      // lands, unless the story has taken over in the meantime.
+      const next = afterLoadSpend(await spendReleaseLink(link.signIn!, { newAccountOnly: true }));
+      if (run !== straightRun.current) return;
+      if (next === 'used') setReleaseUsed(true);
+      else if (next !== 'story') setWelcome(next);
+      setHolding(false);
+    });
     return () => { live = false; };
-  }, [releaseToken]);
+  }, [release]);
+  // Where the sheet would show its own account step for such a link (after
+  // Get started spent it, or after the code a used link sends): the same
+  // full-page Welcome, in the sheet's place.
+  const toWelcome = useCallback((account: AccountStep) => {
+    setWelcome(account);
+    setSheet(null);
+    setResume(null);
+  }, []);
+  // The sheet spending that link's one-time sign-in (its `onSigningIn`):
+  // "Signing you in…" over everything (SigningIn), for that moment. Every
+  // way it ends takes the screen down with it: Welcome, the code a refused
+  // or failed spend falls back to, an error, a closed sheet. Past
+  // SIGNING_IN_MAX_MS it gives way to the sheet as it stands.
+  const [signingIn, setSigningIn] = useState(false);
+  const [signingInOverdue, setSigningInOverdue] = useState(false);
+  useEffect(() => {
+    setSigningInOverdue(false);
+    if (!signingIn) return undefined;
+    const timer = window.setTimeout(() => setSigningInOverdue(true), SIGNING_IN_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [signingIn]);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -714,6 +867,10 @@ export function LandingScreen() {
   }, []);
   const storyOn = waitlistPayload?.story_landing !== false && !onInvitePath && !session;
   const pitchHidden = madeForYou || storyOn || invitePending;
+  // As the page opens for a new account's link, or over Get started's
+  // sheet, the one that carries the link.
+  const sheetSigningIn = signingIn && !signingInOverdue && storyOn && sheet === 'start';
+  const signingInShown = holding || sheetSigningIn;
   const webProviders = useMemo(() => signInProvidersFrom(waitlistPayload), [waitlistPayload]);
   const nativeProviders = useNativeSignInProviders(waitlistPayload);
   const nativeSignIn = nativeProviders.length > 0;
@@ -736,11 +893,14 @@ export function LandingScreen() {
   // The story switched off while a release link waited for it: no sheet to
   // open, so the link goes where it always went, the sign-in screen, which
   // takes the token from here (./login.tsx).
+  // Nothing was spent on load for it (`spendsOnLoad`), and "Signing you in…"
+  // goes with the story.
   useEffect(() => {
     if (!release || waitlistPayload?.story_landing !== false) return;
     if (release.token) keepReleaseLink(release);
     setRelease(null);
     setSheet(null);
+    setHolding(false);
     location.hash = `#${release.route}`;
   }, [release, waitlistPayload]);
 
@@ -1102,20 +1262,24 @@ export function LandingScreen() {
     // would lose it; a sign-in has begun, so the shell does not swap the
     // build in under it (App.noteSignInBegun).
     //
-    // A new account's link waits for Get started (Evan, 10 Oct 2026): the
-    // story first, then the sheet, which only then spends the one-time
-    // sign-in (./sign-in-sheet.tsx, "Signing you in…" and the username). A
-    // link spent on load was used up by whatever loaded it: the phone app's
-    // own browser before it handed the link to Safari, or a mail scanner
-    // that runs the page. Nothing else changes: Get started passes the link
-    // to the sheet while `release` holds it. An existing account's link
-    // opens Sign in, as before.
+    // A new account's link (Evan, 12 Oct 2026): "Signing you in…" at once
+    // (`holding`), while the effect above checks, with a GET that spends
+    // nothing, whether the account is still new, and spends the link if it
+    // is; then the full-page Welcome. It is committed here, in flushSync,
+    // because show() reveals the screen right after this hook returns, and
+    // the story must not be seen first and then taken away. An account
+    // already set up gets the story once the check says so, and its link
+    // still waits for Get started (the 10 Oct rule): only the sheet spends
+    // it. An existing account's `?login=1` link opens Sign in, as before.
     const link = takeReleaseLink();
     if (link) {
       noteSignInBegun();
-      setRelease(link);
-      setResume(null);
-      if (link.route !== 'signup') setSheet('signin');
+      flushSync(() => {
+        setRelease(link);
+        setResume(null);
+        setHolding(straightLink(link));
+        if (link.route !== 'signup') setSheet('signin');
+      });
     }
     if (!st.appsLoaded) {
       st.appsLoaded = true;
@@ -1787,12 +1951,23 @@ export function LandingScreen() {
           returnTo="/"
           resume={resume}
           releaseToken={sheet === 'start' ? release?.token ?? null : null}
-          releaseSignIn={sheet === 'start' ? release?.signIn ?? null : null}
+          releaseSignIn={sheet === 'start' && !releaseUsed ? release?.signIn ?? null : null}
+          linkUsed={sheet === 'start' && releaseUsed}
+          onAccount={sheet === 'start' && release?.route === 'signup' ? toWelcome : undefined}
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}
+          onSigningIn={setSigningIn}
+          held={signingInShown}
         />
       ) : null}
+      {/*
+          The full-page Welcome for a "You're in" link's new account
+          (./welcome-page.tsx), over the story and in the sheet's place.
+          Rendered nothing until there is one, like the two below it.
+      */}
+      {welcome ? <WelcomePage account={welcome} beforeFinish={startedFromStory} /> : null}
+      {signingInShown ? <SigningIn /> : null}
         </>
       ) : null}
     </main>

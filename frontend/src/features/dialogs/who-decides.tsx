@@ -13,8 +13,9 @@
  *                             or Make your own: groups and rules, any one
  *                             passing is enough, starting from the one
  *                             picked.
- *   How it plays out          what the pick means for you and for someone
- *                             else in it.
+ *   How it plays out          what the pick means: for a change anyone
+ *                             makes, or (You or the group) for you and
+ *                             for anyone else.
  *   People                    who is in it and its admins, a door to the
  *                             Members dialog, where they are managed.
  *
@@ -43,7 +44,6 @@ import { Input } from '@/components/ui/input';
 
 import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
-import { t as translate } from '../../lib/i18n/runtime';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
   currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
@@ -148,16 +148,7 @@ export function WhoDecidesDialog() {
   const current = useMemo(() => currentValue(approval), [approval]);
   const nowPreset = presetOf(current);
   const creator = approval?.creator?.username || null;
-  // Read only while open: the prerender has no window, and draws nothing here.
-  const meName = typeof window !== 'undefined'
-    ? (window as unknown as { App?: { user?: { username?: string } } }).App?.user?.username || ''
-    : '';
-  const others = (community?.members || []).map((m) => m.username).filter((u) => u && u !== meName);
-  const viewer: Viewer = {
-    isCreator: !!community?.is_creator,
-    creator,
-    other: others.find((u) => u !== creator) || others[0] || translate('dialogs:whoDecides.someone'),
-  };
+  const viewer: Viewer = { isCreator: !!community?.is_creator, creator };
   const visibility = community?.visibility || null;
   const currentVis: Visibility = visibility?.view === 'public' ? 'public' : 'private';
   const buildLimited = visibility?.view === 'public' && visibility?.build === 'private';

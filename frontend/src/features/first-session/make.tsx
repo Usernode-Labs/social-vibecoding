@@ -82,6 +82,13 @@
  * only movement. In the app, whose web view ends at the keys, the band is the
  * whole screen and only the reveal does anything.
  *
+ * OVER A PAGE THAT HOLDS STILL (onboarding run, 12 Oct 2026, iPhone 17
+ * Safari, #4893): a drag the screen's own scroller did not take scrolled
+ * Home underneath, and its cards came up behind the status bar. While it is
+ * up the page is held (lib/page-lock.ts): the document does not scroll, and
+ * on the first session Home takes no tap or focus. In a phone browser on iOS
+ * its ground also runs on above it, under the status bar (app.css).
+ *
  * STARTING POINTS (Evan, 8 Oct 2026): four tiles, two by two. A tier list,
  * a game and an organizer are sentences with a blank (./examples.ts); the
  * fourth, Your own idea, is the plain description box, which is also what
@@ -109,7 +116,9 @@ import { Wordmark } from '@/components/ui/wordmark';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { useKeyboardSurface } from '../../lib/keyboard-surface';
+import { KB_OPEN_CLASS } from '../../lib/keyboard-open';
+import { revealScrollTop, useKeyboardSurface } from '../../lib/keyboard-surface';
+import { usePageLock } from '../../lib/page-lock';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { MakeRuleLine } from '../who-decides/make-rule';
 import { DEFAULT_PRESET, type PresetKey } from '../who-decides/model';
@@ -279,6 +288,11 @@ export function MakeScreen({
   const wordsFieldRef = useRef<HTMLInputElement>(null);
   const wordsBoxRef = useRef<HTMLTextAreaElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // Home holds still under it, and takes no tap or focus (lib/page-lock.ts).
+  // From Create the header and what stands above this screen stay in use, so
+  // only the scrolling stops there.
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePageLock(rootRef, { inert: !underHeader });
   // The caret for a hardware keyboard; on a phone the first tap raises the
   // keys (without iOS's pan: lib/keyboard-surface.ts takes that tap). A
   // touch screen gets no caret from code (#4597, the sign-in sheet's own
@@ -288,6 +302,41 @@ export function MakeScreen({
   // Taps on the fields without the pan, and the focused field (with Make it
   // when they fit) revealed inside the scroller once the keys are up.
   useKeyboardSurface(scrollerRef);
+  // MAKE IT IN VIEW (onboarding run two, 12 Oct 2026, iPhone 17 Safari): a
+  // starting idea fills in its sentence and chips, the form grows, and Make
+  // it went under Safari's toolbar. With the keys down, a pick brings the
+  // description and Make it into view together, as the keyboard surface does
+  // with the keys up. Safari draws this box only to the foot of its layout
+  // viewport (`innerHeight` with the keys down), whatever runs on under the
+  // toolbar (app.css), so that is where the view ends.
+  const picks = useRef(0);
+  useEffect(() => {
+    if (picks.current++ === 0) return undefined;
+    const raf = requestAnimationFrame(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || document.documentElement.classList.contains(KB_OPEN_CLASS)) return;
+      const card = scroller.querySelector('[data-make-brief]');
+      const button = scroller.querySelector('[data-make-submit]');
+      if (!card || !button) return;
+      const view = scroller.getBoundingClientRect();
+      const field = card.getBoundingClientRect();
+      const action = button.getBoundingClientRect();
+      const top = revealScrollTop({
+        scrollTop: scroller.scrollTop,
+        scrollMax: scroller.scrollHeight - scroller.clientHeight,
+        viewTop: view.top,
+        viewBottom: Math.min(view.bottom, window.innerHeight),
+        fieldTop: field.top,
+        fieldBottom: field.bottom,
+        actionTop: action.top,
+        actionBottom: action.bottom,
+      });
+      if (top === Math.round(scroller.scrollTop)) return;
+      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      scroller.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [picked, choice, written]);
   // One frame on the wallpaper alone, so the rise has a start.
   const [arrived, setArrived] = useState(false);
   useEffect(() => {
@@ -457,6 +506,7 @@ export function MakeScreen({
 
   return (
     <div
+      ref={rootRef}
       role="dialog"
       aria-labelledby="first-session-make-title"
       data-first-session-make=""
@@ -542,7 +592,7 @@ export function MakeScreen({
               <span className="text-[15px] font-[650] leading-tight">{t('onboarding:firstSession.make.ownIdea')}</span>
             </button>
           </div>
-          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+          <div data-make-brief="" className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
             <div className={FIELD}>
               {templated && template && said ? (
                 <>
@@ -681,6 +731,7 @@ export function MakeScreen({
           <div className="grow" />
           <Button
             type="submit"
+            data-make-submit=""
             disabled={busy || quotaBlocks}
             layout="full"
             variant="pillAccent"
@@ -710,6 +761,12 @@ export function MakeScreen({
               />
             </p>
           )}
+          {/* HELD WHILE IT MAKES (onboarding run two): pressed with the keys up,
+              the keys went down, the scroller grew past what it could scroll,
+              and the form snapped back to its top, "Making it…" out of sight,
+              until the made screen came. Room after the form while it makes
+              keeps the scroller where it was, so the press stays in view. */}
+          {busy ? <div aria-hidden="true" data-make-hold="" className="h-[60vh] shrink-0" /> : null}
         </form>
         )}
       </div>

@@ -261,7 +261,11 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
     made: { slug: 'groceries-1', name: 'Grocery List', emoji: '🛒', description: 'A grocery list', example: null, conversationId: null, readyMade: true },
     me: 'sam', entry: 'first-session', onContinue() {}, onOpenChat() {},
   }));
-  assert.match(html, />Setting it up…</);
+  // While it is set up, the card under it says how far it has got, in place
+  // of the plain card's "Setting it up…" (#4900, tests/first-session-started).
+  assert.match(html, /data-made-setup="started"/);
+  assert.match(html, />Getting it ready…</);
+  assert.doesNotMatch(html, /data-first-session-build=""/);
   assert.match(html, />🛒</, 'the ready-made app\'s own icon');
   assert.match(html, />Share invite<\/button>/);
   assert.doesNotMatch(html, /data-first-session-sketch/, 'a ready-made app is never sketched');
@@ -304,7 +308,7 @@ test('a setup that stopped says so on the made screen, with Try again or Set sec
   const src = read(`${DIR}/made.tsx`);
   // The same retry route the progress view pressed.
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(made\.slug\)\}\/retry`, \{ method: 'POST', credentials: 'same-origin' \}\)/);
-  assert.match(src, /if \(res\.ok\) setAppStatus\('creating'\);/);
+  assert.match(src, /if \(res\.ok\) \{\s+setAppStatus\('creating'\);/);
   // And the plan's card is not drawn over it.
   assert.match(src, /\{plan && !stalled && fromCreate \? <PlanWaitsCard/);
 });

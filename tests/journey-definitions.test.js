@@ -254,6 +254,45 @@ test('creation path: people once each, the shortest time, and an absent record b
   assert.deepEqual(journey.CREATION_TARGETS, { running: 300, first_version: 120, change_live: 600 });
 });
 
+// #4895: where the time to running went, from each project's first timed
+// creation that ran (an `app_creation_timed` event).
+test('creation timing: known fields only, per project, medians over projects made from a starter', () => {
+  const record = (totalMs, stages, extra = {}) => ({ outcome: 'running', kind: 'new_repo', totalMs, stages, ...extra });
+  const a = journey.creationTiming(record(45000, { database: 800, repository: 4000, build: 28000, rollout: 9000, bogus: 5, deploy: -1 }, {
+    starter: 'tier-list-restaurants',
+    build: { engine: 'buildkit', steps: [{ name: 'exporting cache to registry', ms: 8000 }, { name: 'x' }, { name: 'a', ms: 1 }, { name: 'b', ms: 1 }] },
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }));
+  assert.deepEqual(a, {
+    kind: 'new_repo', totalMs: 45000,
+    stages: { database: 800, repository: 4000, build: 28000, rollout: 9000 },
+    build: { engine: 'buildkit', steps: [{ name: 'exporting cache to registry', ms: 8000 }, { name: 'a', ms: 1 }, { name: 'b', ms: 1 }] },
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }, 'stages in pipeline order, unknown or negative ones dropped, at most three build steps');
+  assert.equal(journey.creationTiming(null), null);
+  assert.deepEqual(journey.creationTiming({ kind: 'existing_repo', stages: {}, pod: { scheduleMs: 1 } }),
+    { kind: 'existing_repo', totalMs: null, stages: {} }, 'a partial Pod timeline is left out');
+  const b = journey.creationTiming(record(55000, { database: 1200, repository: 5000, build: 38000, rollout: 7000 }));
+  const imported = journey.creationTiming({ ...record(200000, { build: 180000 }), kind: 'existing_repo' });
+  const summary = journey.creationTimingSummary([{ timing: a }, { timing: b }, { timing: imported }, { timing: null }]);
+  assert.deepEqual(summary, {
+    of: 2, totalMs: 50000,
+    stages: [
+      { key: 'database', medianMs: 1000 }, { key: 'repository', medianMs: 4500 },
+      { key: 'build', medianMs: 33000 }, { key: 'rollout', medianMs: 8000 },
+    ],
+    pod: { scheduleMs: 1000, startMs: 5000, readyMs: 3000 },
+  }, 'an import builds what it imported, so it is left out');
+  assert.deepEqual(journey.creationTimingSummary([]), { of: 0, totalMs: null, stages: [], pod: null });
+  const projected = journey.creationProject({
+    app_id: 1, slug: 'p', name: 'P', user_id: 1, username: 'u', created_at: '2026-10-12T15:32:00Z',
+    running_at: null, first_version_at: null, preview_at: null, change_live_at: null, timing: record(1000, { build: 900 }),
+  }, { running: null, preview: null, change_live: null });
+  assert.deepEqual(projected.timing, { kind: 'new_repo', totalMs: 1000, stages: { build: 900 } });
+  assert.match(journey.CREATION_PATH_SQL, /e\.event_type = 'app_creation_timed' AND e\.metadata->>'outcome' = 'running'/);
+  assert.match(journey.CREATION_PATH_SQL, /ORDER BY e\.app_id, e\.created_at, e\.id/, 'the first attempt that ran');
+});
+
 test('pairs: both active is the aha, and inside the 7 days a no is still open', () => {
   const now = at('2026-10-07T12:00:00Z');
   const base = { slug: 'duo', name: 'Duo', via_invite: true, host_id: 1, host: 'ana', second_id: 2, second: 'ben' };

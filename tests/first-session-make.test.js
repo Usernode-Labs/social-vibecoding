@@ -425,7 +425,7 @@ test('with the keyboard up nothing scrolls under the status bar: the bar stays, 
   // tap focuses without iOS's pan, and the focused field is revealed inside
   // the scroller with Make it under it when they fit. The scroller is what
   // the surface reveals in; the bar is above it, outside it.
-  assert.match(src, /import \{ useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
+  assert.match(src, /import \{ revealScrollTop, useKeyboardSurface \} from '\.\.\/\.\.\/lib\/keyboard-surface';/);
   assert.match(src, /useKeyboardSurface\(scrollerRef\);/);
   assert.doesNotMatch(src, /useComposerKeyboard/, 'one owner of the fields\' taps: the surface, not the kit\'s chat avoidance too');
   // #4597: the caret goes in from code only where the sign-in sheet would
@@ -604,9 +604,8 @@ test('after Make it: the build line, then one invite, and the second button says
   // The first session's second button: on to the tour (continueLabel).
   assert.equal(made.continueLabel('first-session', false, 'Page Turners'), 'Invite people later');
   assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Start the tour');
-  assert.match(src, /continueLabel\(entry, sent, made\.name\)/);
-  assert.match(src, /\{onLabel\(true\)\}/);
-  assert.match(src, /\{onLabel\(false\)\}/);
+  assert.match(src, /\{continueLabel\(entry, true, made\.name\)\}/);
+  assert.match(src, /\{continueLabel\(entry, false, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
   // Every link's default, the first one's too: a link lets somebody new
@@ -644,6 +643,24 @@ test('after Make it: the build line, then one invite, and the second button says
 // it is ready-made. One still being built opens on its build, which takes
 // its maker to the bot's chat when a plan waits for them; that chat used to
 // be the tour's last two cards.
+test('Make it stays reachable: a pick brings it into view, and pressing it holds the form where it is (onboarding run two)', () => {
+  const src = read(`${DIR}/make.tsx`);
+  // A pick with the keys down reveals the description and Make it together,
+  // with the keyboard surface's own arithmetic, to the foot of what Safari
+  // draws of a fixed box (innerHeight).
+  assert.match(src, /if \(picks\.current\+\+ === 0\) return undefined;/, 'not on opening');
+  assert.match(src, /if \(!scroller \|\| document\.documentElement\.classList\.contains\(KB_OPEN_CLASS\)\) return;/, 'the keyboard surface reveals with the keys up');
+  assert.match(src, /viewBottom: Math\.min\(view\.bottom, window\.innerHeight\),/);
+  assert.match(src, /\}, \[picked, choice, written\]\);/);
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });
+  assert.match(html, /<div data-make-brief="" class="mt-4 overflow-hidden rounded-2xl /);
+  assert.match(html, /<button type="submit" data-make-submit=""/);
+  // Room after the form only while it makes, so the keys going down leave
+  // the scroller where it was.
+  assert.doesNotMatch(html, /data-make-hold/);
+  assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
+});
+
 test('the maker\'s tour meets Homeroom bot on Home and ends on the hub, asking them to open their new app', () => {
   const { makerSteps, OPEN_APP, BOTTOM_BARS, SCREEN_HEADER } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew' });
@@ -664,6 +681,7 @@ test('the maker\'s tour meets Homeroom bot on Home and ends on the hub, asking t
     target: '#app-content',
     alongside: SCREEN_HEADER,
     endsAbove: BOTTOM_BARS,
+    waitsFor: 'hub',
     title: 'The Friday Film Crew hub',
     text: 'The discussion and the app\'s changes are here. Now open your new app.',
     place: 'bottom',

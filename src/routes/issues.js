@@ -610,8 +610,7 @@ function isStagingMockIssueNumber(number) {
 // a short spec here is how the request page could pass every check and
 // still show the raw markers on every real request.
 const MOCK_BOT_SPEC_COMMENT = [
-  '[Mock] Homeroom bot wrote a plan for this request and is building it now. The change will be linked here '
-    + 'when it\'s ready to try.',
+  '[Mock] Homeroom bot wrote a plan for this request and is building it now.',
   '',
   '<details><summary>The plan</summary>',
   '',
@@ -2510,6 +2509,18 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
+      // #4772: what Homeroom bot waits on this viewer for here (its plans
+      // waiting for their Build it, its open questions to them, and the
+      // back and forths they are in with it), for the Workshop's Waiting on
+      // you. Best-effort: services/workshop-waiting.js never throws. The
+      // staging demo shows one of each on the mock requests.
+      const workshopWaiting = require('../services/workshop-waiting');
+      const waitingOnYou = IS_STAGING && req.query.demo === '1'
+        ? workshopWaiting.demoWaiting()
+        : await workshopWaiting.waitingOnViewer(pool, {
+          appId: app.id, userId: req.user.id, botId: (await botDm.botAccount(pool).catch(() => null))?.id || null,
+        });
+
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2523,6 +2534,7 @@ function issueRoutes(config) {
         myRemaining,
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
+        waitingOnYou,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

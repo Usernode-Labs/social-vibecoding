@@ -703,7 +703,10 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/INSERT INTO chat_sessions/, [{ id: 501 }]],
@@ -746,12 +749,14 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
     assert.match(sess.sql, /'maintenance'/, 'session row marked source=maintenance');
     assert.equal(sess.params[1], 99, 'attributed to the platform user');
 
+    // Written by the driver that claimed the row, and only by it.
     const prOpen = pool.issued(/SET state = 'pr_open'/);
-    assert.deepEqual(prOpen.params, [101, 501]);
+    assert.deepEqual(prOpen.params.slice(0, 2), [101, 501]);
+    assert.match(prOpen.sql, /AND runner_id = \$3 AND state = 'running'/);
 
     // App 2 skipped with the model's reason.
     const skipped = pool.issued(/SET state = 'skipped'/);
-    assert.deepEqual(skipped.params, [102, 'No JWT here.']);
+    assert.deepEqual(skipped.params.slice(0, 2), [102, 'No JWT here.']);
 
     // Campaign closed out + completion note in the platform chat.
     assert.ok(pool.issued(/SET status = 'done'/), 'campaign marked done');
@@ -773,7 +778,10 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
+    [/FOR SHARE/, [{ '?column?': 1 }]],   // the fence: the lease is still this driver's
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'failed', n: 1 }, { state: 'skipped', n: 1 }]],
@@ -796,6 +804,64 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
     assert.equal(skipped.params[0], 102, 'second app still processed');
     assert.ok(pool.issued(/SET status = 'done'/));
   } finally { restore(); }
+});
+
+// The pull request is the step a campaign must never take twice. It is
+// opened only with the lease renewed just then, and never by a process on
+// its way out (its pool may close before the row records the PR): the row
+// stays 'running' and the next driver runs the app again.
+async function runToThePr({ renewals, shuttingDown = () => false }) {
+  let renewed = 0;
+  const pool = makePool([
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, () => {
+      const answer = renewals[renewed++];
+      if (answer instanceof Error) throw answer;
+      return answer ? [{ id: 5 }] : [];
+    }],
+    [/FOR SHARE/, [{ '?column?': 1 }]],
+    [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
+    [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, [{ row_id: 101, app_id: 9, slug: 'cool-app', name: 'Cool App', repo_url: CHILD_APP.repo_url }]],
+    [/INSERT INTO chat_sessions/, [{ id: 501 }]],
+  ]);
+  const lifecycleId = require.resolve('../src/services/lifecycle');
+  const savedLifecycle = require.cache[lifecycleId];
+  require.cache[lifecycleId] = { id: lifecycleId, filename: lifecycleId, loaded: true, paths: [],
+    exports: { ...require('../src/services/lifecycle'), isShuttingDown: shuttingDown } };
+  const { subject, spies, restore } = loadFleet({
+    files: { 'server.js': 'const s = process.env.JWT_SECRET;\n' },
+    llmScript: [
+      { toolUses: [{ id: 't1', name: 'edit_file', input: { path: 'server.js', old_string: 'JWT_SECRET', new_string: 'USERNODE_JWT_PUBLIC_KEY' } }] },
+      { toolUses: [{ id: 't2', name: 'finish', input: { summary: 'Swapped the variable.' } }] },
+    ],
+  });
+  try {
+    const out = await subject.runCampaign({ databaseUrl: 'postgres://test' }, pool, 5);
+    return { out, pool, prs: spies.ghCalls.filter((c) => c.type === 'createPR') };
+  } finally {
+    restore();
+    if (savedLifecycle) require.cache[lifecycleId] = savedLifecycle; else delete require.cache[lifecycleId];
+  }
+}
+
+test('runCampaign: a PR is opened only with the lease renewed just then', async () => {
+  const held = await runToThePr({ renewals: [true, true] });
+  assert.equal(held.prs.length, 1, 'renewed at the loop and before the PR: opened');
+  const lost = await runToThePr({ renewals: [true, false] });
+  assert.deepEqual([lost.out, lost.prs.length], [{ ran: true, paused: 'lease_lost' }, 0], 'another driver holds it: no PR');
+  assert.ok(!lost.pool.issued(/SET state = 'pr_open'/));
+  const unsure = await runToThePr({ renewals: [true, new Error('connection terminated')] });
+  assert.deepEqual([unsure.out, unsure.prs.length], [{ ran: true, paused: 'lease_lost' }, 0], 'a renewal that failed is not proof it is still held');
+});
+
+test('runCampaign: a process shutting down opens no PR, and leaves the app for the next driver', async () => {
+  // Asked at the loop's start (1) and before each of the model's two calls
+  // (2, 3): not yet. Asked before the PR (4): shutting down.
+  let asked = 0;
+  const out = await runToThePr({ renewals: [true, true], shuttingDown: () => ++asked > 3 });
+  assert.equal(out.prs.length, 0);
+  assert.deepEqual(out.out, { ran: true, paused: 'shutting_down' });
+  assert.ok(!out.pool.issued(/SET state = 'pr_open'|SET state = 'failed'/), 'the row is left running, for the next driver');
 });
 
 // ── mergeGreen + retry ────────────────────────────────────────────────────

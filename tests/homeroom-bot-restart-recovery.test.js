@@ -302,7 +302,7 @@ test('a build that finished while the server was down is recorded on its run, wi
   assert.deepEqual(devChatRows(pool), [], 'no completion card, breadcrumb or wrap-up row');
 });
 
-test('a build that pushed nothing is recorded failed, and says it finished after a restart', async () => {
+test('a build that committed nothing is recorded failed, and says it finished after a restart', async () => {
   journalTail = async () => ({ pushOk: false, ahead: 0, exitCode: 0 });
   const session = botSession();
   const pool = makePool({ session });
@@ -310,6 +310,38 @@ test('a build that pushed nothing is recorded failed, and says it finished after
   const rec = runUpdates(pool).find((c) => /SET build_ok = \$2/.test(c.sql));
   assert.equal(rec.params[1], false);
   assert.equal(rec.params[5], 'the build produced no change to propose (finished after a restart)');
+  assert.equal(workerCalls.some((c) => c[0] === 'execPushFromWorker'), false, 'nothing to push');
+});
+
+test('a build whose commit the restart kept from being pushed is pushed from its worker, then recorded built', async (t) => {
+  const real = require.cache[workerPath].exports.execPushFromWorker;
+  require.cache[workerPath].exports.execPushFromWorker = async (sessionId, branch) => {
+    workerCalls.push(['execPushFromWorker', sessionId, branch]);
+    return { sha: 'b'.repeat(40) };
+  };
+  t.after(() => { require.cache[workerPath].exports.execPushFromWorker = real; });
+  journalTail = async () => ({ pushOk: false, ahead: 1, sha: 'b'.repeat(40), exitCode: 0 });
+  const session = botSession();
+  const pool = makePool({ session });
+  await adopt(pool, session);
+  assert.ok(workerCalls.some((c) => c[0] === 'execPushFromWorker' && c[1] === 6001 && c[2] === 'dev/homeroom_bot-s6001'));
+  const rec = runUpdates(pool).find((c) => /SET build_ok = \$2/.test(c.sql));
+  assert.deepEqual(rec.params.slice(0, 6), [900, true, 'dev/homeroom_bot-s6001', 'b'.repeat(40), 1, null]);
+});
+
+test('a commit that still cannot be pushed is recorded as a push failure, never as no change', async (t) => {
+  const real = require.cache[workerPath].exports.execPushFromWorker;
+  require.cache[workerPath].exports.execPushFromWorker = async () => {
+    throw Object.assign(new Error('push proxy failed'), { code: 'push_failed' });
+  };
+  t.after(() => { require.cache[workerPath].exports.execPushFromWorker = real; });
+  journalTail = async () => ({ pushOk: false, ahead: 1, sha: 'b'.repeat(40), exitCode: 0 });
+  const session = botSession();
+  const pool = makePool({ session });
+  await adopt(pool, session);
+  const rec = runUpdates(pool).find((c) => /SET build_ok = \$2/.test(c.sql));
+  assert.equal(rec.params[1], false);
+  assert.equal(rec.params[5], 'couldn\'t push the build\'s commit (push_failed) (finished after a restart)');
 });
 
 test('the bot\'s clock carries across the restart: a turn past its budget is stopped and recorded as a time-out', async () => {

@@ -72,7 +72,7 @@
  * where nothing was asked for.
  */
 
-import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
@@ -317,6 +317,19 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
 }
 
 /**
+ * #4896: "Just you so far", the hero's words for a project nobody else has
+ * joined, said to the one person in it, with Invite beside it. A newcomer
+ * met "Just you" on the page right after the made screen said "Your new
+ * community" (onboarding run, 12 Oct 2026); "so far" says it is where the
+ * project starts, not what it is. Null for anyone else, and everywhere else
+ * the audience is named (lists, the Who can see & change it sheet) it keeps
+ * its name, audienceLine's.
+ */
+export function justYouSoFar(p: Pick<CommunityPayload, 'audience'>, member: boolean): string | null {
+  return p.audience === 'solo' && member ? translate('project:communityCard.audience.justYouSoFar') : null;
+}
+
+/**
  * The pending audience change in the hero's words. The PR's title is the
  * settings dialog's ("Make this app public"); the hero says what it means
  * for who the project is for.
@@ -385,6 +398,9 @@ export function reloadCommunity(slug: string): Promise<void> {
     if (next && next.slug === slug) {
       communities.set(slug, next);
       for (const listener of [...listeners]) listener();
+    } else if (!communities.has(slug)) {
+      // No record, but a hub that held its skeleton for one draws now.
+      for (const listener of [...listeners]) listener();
     }
   });
   inflight.set(slug, pending);
@@ -404,14 +420,31 @@ export function communityInflight(slug: string): boolean {
   return !!slug && inflight.has(slug);
 }
 
+/**
+ * ONE DRAW, NOT TWO (onboarding run two, 12 Oct 2026, iPhone 17 Safari): the
+ * hub drew once with the board's data, "For you · Nothing more to vote on ·
+ * Your work" and Open app alone at the top, then again 0.22s later when this
+ * record came, as "Just you so far · Open app · Invite" with "Share it". Its
+ * skeleton now holds while the record is on its way and none is known yet:
+ * asked for before the first paint (useCommunity's layout effect), so the
+ * draft never paints, and let go when it is answered, or refused.
+ */
+export function communityPending(slug: string): boolean {
+  return !!slug && !communities.has(slug) && inflight.has(slug);
+}
+
 export function useCommunity(slug: string): CommunityPayload | null {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     listeners.add(bump);
     return () => { listeners.delete(bump); };
   }, []);
-  useEffect(() => {
-    if (slug && !inflight.has(slug)) void reloadCommunity(slug);
+  // Before the first paint, so a hub with no record yet draws its skeleton
+  // rather than a draft of itself (ONE DRAW, NOT TWO, communityPending).
+  useLayoutEffect(() => {
+    if (!slug || inflight.has(slug)) return;
+    void reloadCommunity(slug);
+    if (!communities.has(slug)) bump();
   }, [slug]);
   return slug ? communities.get(slug) || null : null;
 }
@@ -460,7 +493,8 @@ function Seat({ bg, ink }: { bg: string; ink: string }) {
  * canvas boards Hub and People): the faces at the left, then who it is for
  * as "Private community" with its lock, and "3 people" under it.
  *
- *   Just you              the label alone: nobody else is here, and no link is out
+ *   Just you              the label alone: nobody else is here, and no link is
+ *                         out ("Just you so far" to its member, justYouSoFar)
  *   a link is out         your face between two open seats, "Private
  *                         community" and no count: the count of one person
  *                         is the seats' whole point
@@ -615,16 +649,18 @@ export function HeroActive({ activity }: { activity: CommunityPayload['activity'
 /**
  * WHAT IT IS, AND WHO IT IS FOR (the hub's head): the project's tile and
  * name, the page's one large heading, over "Public community · 266 members"
- * (Just you alone, for a project that is just yours). The tile and name are
- * the page's own record of the app (improveStore, the header chip's), else
- * the community record's name and a letter.
+ * (Just you alone, for a project that is just yours: "Just you so far" to
+ * the one person in it, justYouSoFar). The tile and name are the page's own
+ * record of the app (improveStore, the header chip's), else the community
+ * record's name and a letter.
  */
-function HeroIdentity({ slug, name, iconUrl, iconEmoji, data }: {
+function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
   slug: string;
   name: string;
   iconUrl?: string | null;
   iconEmoji?: string | null;
   data: CommunityPayload;
+  member: boolean;
 }) {
   const app = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
   const solo = data.audience === 'solo';
@@ -638,7 +674,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data }: {
         <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
         <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
           {solo || !data.audience_label ? (
-            <span className="dev-ws-hero-audience" data-ws-community-audience="">{audienceLine(data)}</span>
+            <span className="dev-ws-hero-audience" data-ws-community-audience="">{justYouSoFar(data, member) || audienceLine(data)}</span>
           ) : (
             <RichMessage
               id="project:communityCard.people.audienceMembers"
@@ -1122,7 +1158,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           week the First version card draws the tile and the name, and the
           people row says who it is for (WeekPeople, below). */}
       {week ? null : (
-        <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} />
+        <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} member={member} />
       )}
       {data.description && !week ? descLine : null}
       {/* WHO IS AROUND: this week's faces, how many, and their names. Not on
@@ -1131,22 +1167,24 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. "Make it public" and
           "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
-          project that is just yours grows from its Share it card instead
-          (ShareItCard), so its row keeps Open app and the ⋯. The ⋯ stays
-          LAST among the actions; Join is the row's, pushed to the far end. */}
+          project that is just yours offers Invite here too, beside "Just
+          you so far" (#4896): it was left to the Share it card at the foot
+          of the hub (ShareItCard), and a newcomer met "Just you" with
+          nothing beside it. The ⋯ stays LAST among the actions; Join is the
+          row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
       {week ? (
         <WeekPeople
           members={data.members}
           count={Number(data.member_count) || 0}
           audience={data.audience}
-          audienceLabel={data.audience_label}
+          audienceLabel={justYouSoFar(data, member) || data.audience_label}
           seats={seats}
         />
       ) : null}
       <div className="dev-ws-hero-actions">
         {appButton}
-        {member && !solo ? (
+        {member ? (
           <Button
             type="button"
             variant="pillNeutral"

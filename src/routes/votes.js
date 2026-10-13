@@ -1246,6 +1246,26 @@ function stagingMockProposals(viewer) {
       },
       diagram_source: 'author',
     },
+    // #4772: two changes OWNED by the viewer (ownDemoProposals), for the
+    // Workshop's sections of their work: one up for a vote with its checks
+    // passing (Yours, up for a vote), and one whose checks fail, which waits
+    // on its author for a fix (Waiting on you). Without an owner they are
+    // ordinary mocks nobody owns.
+    mk(9000493, 900493,
+      '[Mock] Your change up for a vote: show the meeting date on each book',
+      0.5, 1, 0, 0, { required: 3, windowEndsAt: null }),
+    {
+      ...mk(9000494, 900494,
+        '[Mock] Your change needs a fix: its checks are failing',
+        0.6, 0, 0, 0, { required: 3, windowEndsAt: null }),
+      check_state: 'failing',
+      test_results: [
+        {
+          name: 'Home loads', path: '/', status: 'fail', consoleErrors: [],
+          failureReason: 'Expected element "[data-mock-fix]" was not found',
+        },
+      ],
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -1302,6 +1322,17 @@ function stagingMockProposals(viewer) {
     }
     return p;
   });
+}
+
+// #4772: the two ?demo=1 mocks the viewer owns (`user`, { id, username },
+// when known), so the Workshop's sections of their work are reviewable: one
+// up for a vote, one that needs their fix. Without a user they stay mocks
+// nobody owns.
+const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494]);
+function ownDemoProposals(rows, user) {
+  if (!user || user.id == null || !user.username) return rows;
+  return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
+    ? { ...row, user_id: user.id, username: user.username } : row));
 }
 
 // The ?demo=1 merged change that waits for the platform's next release.
@@ -1796,7 +1827,7 @@ function normalizedSha(value) {
 // paths reconciling the same push cannot both post it.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
-  offline = false, announceClearedVotes = true,
+  offline = false, announceClearedVotes = true, madeBy = null,
 }) {
   const integration = require('../services/integration');
   const mirror = require('../services/repo-mirror');
@@ -2068,7 +2099,12 @@ async function reconcileNativeReviewedHead({
         ? `${label} was brought up to date with main and ${move.conflictPaths?.length || 'its'} conflicting file${move.conflictPaths?.length === 1 ? '' : 's'} were resolved automatically. The votes still stand; its checks are re-running against the merged code and it will merge on its own once they pass.`
         : move.kind === 'unknown'
           ? `${label} moved to a commit the platform could not verify (${move.reason}). Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
-          : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
+          // An update Homeroom made (the bot's, or one sent through Homeroom,
+          // `madeBy`) is said in the change's own discussion in one line, the
+          // only note about its votes: no "on GitHub", no pull request number.
+          : madeBy
+            ? 'Updated. Earlier votes were cleared, so take another look.'
+            : `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`;
     await sendSystemMessage(
       pool, session.app_id, message, 'system',
       { headChanged: true, votesKept: keepsApprovals, prNumber: session.pr_number, headSha: liveHead },
@@ -3897,7 +3933,8 @@ function voteRoutes(config) {
       // 5 Oct: whoever asked Homeroom bot for this change reads their ready
       // card again, so it says who it still waits on now. One indexed read
       // when it is not the bot's. Never throws.
-      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id);
+      // One story: a yes is said in the request's thread too (noteVoted).
+      void require('../services/homeroom-bot-dm').noteVoted(pool, session.id, { voter: req.user, vote });
 
       const voteLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
@@ -4605,7 +4642,7 @@ function voteRoutes(config) {
       const demoMode = IS_STAGING && req.query.demo === '1';
       if (demoMode) {
         const have = new Set(rows.map((r) => r.id));
-        rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
+        rows.push(...ownDemoProposals(stagingMockProposals(req.user?.username), req.user).filter((m) => !have.has(m.id)));
       }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
@@ -5371,7 +5408,7 @@ function voteRoutes(config) {
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
-          || stagingMockProposals().find((m) => m.id === id)
+          || ownDemoProposals(stagingMockProposals(), req.user).find((m) => m.id === id)
           || stagingDemoNeedsProposal(id, req.params.slug)
           || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
           || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
@@ -5625,55 +5662,10 @@ function voteRoutes(config) {
 // races against any concurrent vote-driven merge, so we won't double-
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
-// Resolve open issue bounties for a single closed issue when a PR merges.
-//
-// A bounty pledged via the Open Issues panel ("Give kudos") flips 'open' →
-// 'awarded' and credits the merged PR's author — EXCEPT a bounty whose
-// pledger IS that author, which would be self-kudos (the same thing the
-// direct PR-kudos give path refuses with a 403; see routes/kudos.js). The
-// awardee isn't known until merge, so the self-check lives here: self-pledged
-// rows are 'voided' instead — not left 'open', because the issue is now
-// closed on GitHub and no later PR will close it again, so an open row would
-// linger forever and keep inflating the issue's open-bounty count. Voided
-// rows keep awarded_session_id/awarded_at for audit but no awarded_user_id,
-// so they earn no leaderboard credit. The pledger's weekly allowance slot is
-// still forfeited (no refund) — every pledged bounty consumes a slot.
-//
-// `IS DISTINCT FROM` keeps a NULL giver (deleted pledger) and a NULL awardee
-// (deleted PR author) on the award path. Self-voiding only runs when the PR
-// has an author. Returns { awarded, voided } id arrays. Extracted from
-// checkAndMerge so the self-bounty guard is unit-testable without driving the
-// whole merge pipeline.
-async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issueNumber }) {
-  const { rows: awarded } = await pool.query(
-    `UPDATE issue_bounties
-        SET status = 'awarded',
-            awarded_session_id = $1,
-            awarded_user_id = $2,
-            awarded_at = NOW()
-      WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
-        AND giver_user_id IS DISTINCT FROM $2
-      RETURNING id`,
-    [sessionId, awardeeUserId || null, appId, issueNumber]
-  );
-
-  let voided = [];
-  if (awardeeUserId) {
-    const { rows } = await pool.query(
-      `UPDATE issue_bounties
-          SET status = 'voided',
-              awarded_session_id = $1,
-              awarded_at = NOW()
-        WHERE app_id = $2 AND github_issue_number = $3 AND status = 'open'
-          AND giver_user_id = $4
-        RETURNING id`,
-      [sessionId, appId, issueNumber, awardeeUserId]
-    );
-    voided = rows;
-  }
-
-  return { awarded, voided };
-}
+// Resolve open issue bounties for a single closed issue when a PR merges
+// (src/workflow/rules/bounties.ts, where the self-bounty rule is): the
+// merge-followups machine pays them in its transaction with the same code.
+const { resolveIssueBounty } = require('../workflow/rules/bounties.ts');
 
 // #687 Slice 4: shared post-merge finalizer. Everything AFTER the
 // irreversible github.mergePR call — rebuild production (unless self-hosted),
@@ -5685,88 +5677,9 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 // honours the `githubMerged` guard (never roll a GitHub-merged PR back to
 // 'promoted') and the merge-debug tracing. Only ever leaves the row in
 // 'merged' — a state recoverStuckMerges already understands.
-// #1688: who to name when a proposal lands.
-//   author  — the proposer.
-//   backers — everyone whose Yes counted at merge, in vote order, the author
-//             excluded (voting for your own is allowed; being thanked for it
-//             reads oddly).
-//   shapers — everyone else who took part: a No with a line on the version
-//             that merged (an objection that did not stop it), or a word in
-//             the proposal's thread before it landed. Nobody is named twice.
-// `before` bounds the thread's speakers to those who spoke before it: the
-// merge-followups machine names them when the change goes live, which can
-// be well after the merge.
-async function mergeCredits(pool, session, { before = null } = {}) {
-  const { rows: authorRows } = session.user_id
-    ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
-    : { rows: [] };
-  const author = authorRows[0]?.username || null;
-  const { rows: votes } = await pool.query(
-    `SELECT u.username, pv.vote, pv.reason
-       FROM pr_votes pv
-       JOIN users u ON u.id = pv.user_id
-       JOIN chat_sessions cs ON cs.id = pv.session_id
-      WHERE pv.session_id = $1 AND ${currentVotePredicateSql('pv', 'cs')}
-      ORDER BY pv.created_at ASC, pv.id ASC`,
-    [session.id]
-  );
-  const { rows: talkers } = await pool.query(
-    `SELECT u.username, MIN(cm.created_at) AS first_at
-       FROM chat_messages cm
-       JOIN users u ON u.id = cm.user_id
-      WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
-        AND cm.msg_type = 'message'
-        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
-      GROUP BY u.username
-      ORDER BY first_at ASC`,
-    [session.app_id, session.id, before]
-  );
-  const seen = new Set(author ? [author] : []);
-  const backers = [];
-  for (const v of votes || []) {
-    if (v.vote === 'yes' && v.username && !seen.has(v.username)) {
-      seen.add(v.username);
-      backers.push(v.username);
-    }
-  }
-  const shapers = [];
-  for (const v of votes || []) {
-    if (v.vote === 'no' && v.reason && v.username && !seen.has(v.username)) {
-      seen.add(v.username);
-      shapers.push(v.username);
-    }
-  }
-  for (const t of talkers || []) {
-    if (t.username && !seen.has(t.username)) {
-      seen.add(t.username);
-      shapers.push(t.username);
-    }
-  }
-  return { author, backers, shapers };
-}
-
-// "alice", "alice and bob", "alice, bob and carol", "… and 2 more" past
-// eight — the announcement is a sentence, not a roll call.
-function nameList(names) {
-  const list = names.slice(0, 8);
-  const rest = names.length - list.length;
-  if (rest > 0) return `${list.join(', ')} and ${rest} more`;
-  return list.length <= 1
-    ? list.join('')
-    : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
-}
-
-// "Built by evan, backed by alice and bob, shaped by carol." The author is
-// left out for the push that goes to the author. With nobody to name, the
-// wording the announcement carried before #1688.
-function creditsSentence(credits, { withAuthor = true } = {}) {
-  const parts = [];
-  if (withAuthor && credits.author) parts.push(`Built by ${credits.author}`);
-  if (credits.backers?.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(credits.backers)}`);
-  if (credits.shapers?.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(credits.shapers)}`);
-  if (!parts.length) return withAuthor ? 'Thanks to everyone who voted' : '';
-  return `${parts.join(', ')}.`;
-}
+// #1688: who to name when a proposal lands, and the sentence that names
+// them (src/workflow/rules/merge-credits.ts): author, backers, shapers.
+const { mergeCredits, creditsSentence } = require('../workflow/rules/merge-credits.ts');
 
 // On an app in DEMO MODE, the preview the checks ran against is an image of
 // the very tree the merge just squashed onto main, so production can deploy
@@ -6100,6 +6013,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
     } catch (err) {
       log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
+    }
+    // One request, one story: the request the bot built it for says it is
+    // live, its closing line ("It's live. {title} is in {project} now."),
+    // once per change. Beside the DM above; the merge of the streams can
+    // fold the two into one hook. Never a reason the merge fails.
+    try {
+      require('../services/homeroom-bot-live').announceLive(pool, { session, deps: { github } })
+        ?.catch?.((err) => log.warn('votes', 'Homeroom bot live note failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Homeroom bot live note threw', { sessionId: session.id, err: err.message });
     }
 
     // The admin Journey's change_live record: who asked for this change,
@@ -7914,9 +7837,13 @@ async function checkAndOpenRevert(config, pool, session, decider) {
             { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
           );
           if (pr.merged && pr.merge_commit_sha) {
+            // Not on a row the merge-followups machine holds while it is
+            // on: the column is the machine's (it recorded the merge as it
+            // saw it); the revert reads the sha from here all the same.
             await pool.query(
               `UPDATE chat_sessions SET merge_commit_sha = $2
-               WHERE id = $1 AND merge_commit_sha IS NULL`,
+               WHERE id = $1 AND merge_commit_sha IS NULL
+                 AND NOT wf_holds('merge-followups', 'session:' || $1::text)`,
               [session.id, pr.merge_commit_sha]
             );
             session.merge_commit_sha = pr.merge_commit_sha;

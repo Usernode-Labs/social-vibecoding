@@ -153,34 +153,18 @@ const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
      AND pending_friend.status = 'pending'
 ))`;
 
-// 5 October (Page Turners): what a "Waiting for your approval" digest
-// (services/vote-digest.js) counted that still waits on its reader: changes
-// still up for approval, put up before it was sent, in a project they have a
-// stake in (the digest's own PENDING_SQL), not theirs, not voted on by them
-// since, and not in a project they blocked. A digest that named its one
-// change counts only that one. Never more than the digest said: a project
-// pinned since it was sent is not what it counted. Reads `n` (the
-// notification) and is evaluated only for a digest's row.
-const DIGEST_WAITING_SQL = `LEAST((
-  SELECT COUNT(DISTINCT waiting.id)::int FROM chat_sessions waiting
-   WHERE waiting.status = 'promoted'
-     AND COALESCE(waiting.promoted_at, waiting.created_at) <= n.created_at
-     AND (n.session_id IS NULL OR waiting.id = n.session_id)
-     AND waiting.user_id IS DISTINCT FROM n.user_id
-     AND (EXISTS (SELECT 1 FROM app_favorites stake WHERE stake.app_id = waiting.app_id AND stake.user_id = n.user_id)
-          OR EXISTS (SELECT 1 FROM apps made WHERE made.id = waiting.app_id AND made.created_by = n.user_id))
-     AND NOT EXISTS (SELECT 1 FROM user_app_blocks waiting_block
-                      WHERE waiting_block.user_id = n.user_id AND waiting_block.app_id = waiting.app_id)
-     AND NOT EXISTS (SELECT 1 FROM pr_votes waiting_vote
-                      WHERE waiting_vote.session_id = waiting.id AND waiting_vote.user_id = n.user_id)
-), CASE WHEN n.detail ~ '^[0-9]{1,6}$' THEN n.detail::int ELSE 99 END)`;
+// How many of a "waiting for your approval" digest's changes still wait
+// on its reader (src/workflow/rules/change-notifications.ts, where the rule
+// is spelled out). Reads `n` (the notification).
+const changeNotifications = require('../workflow/rules/change-notifications.ts');
+const { DIGEST_WAITING_SQL } = changeNotifications;
 
 // 5 October (Page Turners): the asks about a change that its decision
 // answers for everybody. Nobody is asked to vote on it, to say they still
 // back it, or to revive it once it is live or closed, and a digest that
 // named it alone has nothing left to count. "Ready to try" (change_ready) is
 // settled apart, because a change that went live makes it news.
-const DECIDED_ASK_KINDS = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest']);
+const { DECIDED_ASK_KINDS } = changeNotifications;
 
 // #4778 (Page Turners): a row that asked something about a change reads as
 // read once the change is decided, whether or not settleDecidedChange got to
@@ -725,41 +709,23 @@ async function notifyIssueFiled(pool, { appId, issueNumber, authorId, text = '' 
 // #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
 // for a merge the vote carried — it rides in `detail`, which a force merge
 // uses for its own marker, so the two never meet.
-// #4787: `alsoVoters` asks for the voters' rows in the same call, so a caller
-// inside the merge workflow (which may only name the members of this module
-// it already names) tells the whole say-had crowd through the one door. The
-// author's mute of pr_merged says nothing about the voters: each side asks
-// its own preference.
-async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false, credits = null, alsoVoters = false }) {
-  const created = [];
-  if (userId && sessionId
-    && await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) {
-    const detail = forced
-      ? 'forced'
-      : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
-    const { rows } = await pool.query(
-      `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-       SELECT $1, $2, $3, NULL, 'pr_merged', $4
-        WHERE NOT EXISTS (
-          SELECT 1 FROM notifications n
-          WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
-        )
-       RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-      [userId, appId, sessionId, detail]
-    );
-    created.push(...rows);
-  }
-  if (alsoVoters && sessionId) {
+// #4787: `alsoVoters` asks for the voters' rows in the same call. The
+// workflow's copy writes both and throws on either; here, outside the
+// machine's transaction, a voter's row failing must not take the author's
+// down with it, nor the merge that is being told about: logged, and the
+// author's rows still return.
+async function createPrMergedNotification(pool, { alsoVoters = false, ...args } = {}) {
+  // The workflow's (src/workflow/rules/change-notifications.ts), with this
+  // module's fail-open preference read: a broken read must not swallow it.
+  const created = await changeNotifications.createPrMergedNotification(pool, args, notificationPreferences.allowsKind);
+  if (alsoVoters && args.sessionId) {
     try {
       created.push(...await createVotedChangeMergedNotifications(pool, {
-        appId, sessionId, authorId: userId ?? null,
+        appId: args.appId, sessionId: args.sessionId, authorId: args.userId ?? null,
       }));
     } catch (err) {
-      // A voter's row failing must not take the author's down with it, nor
-      // the merge that is being told about: logged, and the author's rows
-      // still return.
       log.warn('notifications', 'Voted-change merged notifications failed', {
-        appId, sessionId, err: err.message,
+        appId: args.appId, sessionId: args.sessionId, err: err.message,
       });
     }
   }
@@ -772,6 +738,12 @@ async function createPrMergedNotification(pool, { userId, appId, sessionId, forc
 // asks again and a resumed tail does not. The author is never asked to
 // re-confirm their own update, and a voter who muted the category is left
 // alone: the roster on the proposal's page still names them.
+//
+// "One story": `detail` is "epoch:<n>", and ":@<name>" or ":you" after it
+// when the update is one somebody asked Homeroom bot for (the newest of the
+// change's asks it took up: homeroom_bot_change_asks), so the push says
+// whose ask it was, and never "after your feedback" when it was not theirs.
+// The epoch alone is what makes a row the same (`split_part`).
 async function createRevisionRecheckNotifications(pool, { appId, sessionId, authorId, voterIds, epoch }) {
   const ids = [...new Set((voterIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== Number(authorId)))];
   if (!ids.length || !sessionId) return [];
@@ -779,12 +751,15 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
     userIds: ids, appId, categoryKey: 'revision_recheck',
   });
   if (!allowed.length) return [];
-  const detail = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const base = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const asker = await updateAsker(pool, sessionId);
   const values = [];
-  const params = [appId, sessionId, authorId || null, detail];
+  const params = [appId, sessionId, authorId || null, base];
   allowed.forEach((userId) => {
     params.push(userId);
-    values.push(`($${params.length}, $1, $2, $3, 'revision_recheck', $4)`);
+    const who = !asker ? '' : (asker.id === Number(userId) ? ':you' : (asker.username ? `:@${asker.username}` : ''));
+    params.push(`${base}${who}`);
+    values.push(`($${params.length - 1}::int, $1::int, $2::int, $3::int, 'revision_recheck'::text, $${params.length}::text)`);
   });
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
@@ -793,7 +768,8 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
          WHERE n.user_id = v.user_id AND n.session_id = v.session_id
-           AND n.kind = 'revision_recheck' AND n.detail = v.detail
+           AND n.kind = 'revision_recheck'
+           AND (n.detail = $4::text OR n.detail LIKE $4::text || ':%')
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     params
@@ -801,54 +777,33 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
   return rows;
 }
 
-// #4787: the change a person voted on went live. Until this, only its author
-// heard a merge; everybody who had a say had to stumble on the news.
-//
-// System-generated like pr_merged (source_user_id stays null: the group's
-// decision arriving, not a person doing something to you), one row per voter
-// per session, the author never double-told — their pr_merged row stays the
-// only one they get. A retried or repeated merge is stopped by the NOT
-// EXISTS on (voter, session, kind), as for its neighbours.
-async function createVotedChangeMergedNotifications(pool, { appId, sessionId, authorId }) {
-  if (!sessionId) return [];
-  // The voters are rows in pr_votes, and none of the three merge paths has
-  // their ids, so the producer reads them itself: every row, whatever its
-  // revision, yes or no — a no voter had a say too.
-  const { rows: voted } = await pool.query(
-    `SELECT DISTINCT user_id FROM pr_votes
-      WHERE session_id = $1 AND user_id IS NOT NULL`,
-    [Number(sessionId)]
-  );
-  const ids = voted
-    .map((row) => Number(row.user_id))
-    .filter((id) => Number.isFinite(id) && id !== Number(authorId));
-  if (!ids.length) return [];
-  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
-    userIds: ids, appId, categoryKey: 'voted_changes_live',
-  });
-  if (!allowed.length) return [];
-  const values = [];
-  const params = [appId, sessionId];
-  allowed.forEach((userId) => {
-    params.push(userId);
-    // Cast the columns: the VALUES row's parameters are otherwise typed
-    // text, and `n.user_id = v.user_id` in the NOT EXISTS is then an
-    // integer = text comparison Postgres refuses.
-    values.push(`($${params.length}::int, $1::int, $2::int, NULL::int, 'voted_change_merged'::text, NULL::text)`);
-  });
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.detail
-       FROM (VALUES ${values.join(', ')}) AS v (user_id, app_id, session_id, source_user_id, kind, detail)
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-         WHERE n.user_id = v.user_id AND n.session_id = v.session_id
-           AND n.kind = 'voted_change_merged'
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    params
-  );
-  return rows;
+// "One story": who asked Homeroom bot for the update to change `sessionId`
+// (the newest ask on it the bot took up), as { id, username }, or null when
+// nobody did (a person's own push, or a fix of its checks). Never throws.
+async function updateAsker(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.username
+         FROM homeroom_bot_change_asks a
+         JOIN users u ON u.id = a.asker_id
+        WHERE a.session_id = $1 AND a.status <> 'queued'
+        ORDER BY COALESCE(a.taken_at, a.created_at) DESC, a.id DESC
+        LIMIT 1`,
+      [Number(sessionId)]
+    );
+    return rows[0] ? { id: Number(rows[0].id), username: rows[0].username || null } : null;
+  } catch (err) {
+    log.warn('notifications', 'Could not read who asked for an update', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+// #4787: the change a person voted on went live: one row per voter, yes or
+// no, the author never double-told (src/workflow/rules/change-notifications.ts),
+// with this module's preference read.
+async function createVotedChangeMergedNotifications(pool, args) {
+  return changeNotifications.createVotedChangeMergedNotifications(pool, args,
+    (db, q) => notificationPreferences.filterUsersByCategory(db, q));
 }
 
 // Somebody voted on a proposal of yours.
@@ -1419,6 +1374,14 @@ async function createChangeReadyNotifications(pool, { appId, sessionId, sourceUs
         SELECT 1 FROM notifications n
          WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'change_ready' AND n.detail = $5::text
       )
+        -- "One story": one ping per update. Somebody asked "Still good?"
+        -- about this version (revision_recheck, same epoch) is not told
+        -- again that it is ready to try.
+        AND NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'revision_recheck'
+           AND (n.detail = $5::text OR n.detail LIKE $5::text || ':%')
+      )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [ids, appId, sessionId, sourceUserId || null, detail]
   );
@@ -1654,6 +1617,13 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
     params.push(kinds);
     kindClause = `AND n.kind = ANY($${params.length})`;
   }
+  // #4795: a merged change is decided, so the rows that asked you to vote on
+  // it or try it leave the list instead of staying as read entries somebody
+  // taps and finds a merged page behind. `IS NOT DISTINCT FROM` so a row
+  // with no session behind it (NULL cs.status) evaluates to false and is
+  // kept, rather than to NULL and dropped by the NOT.
+  params.push(MERGED_HIDDEN_KINDS);
+  const mergedHiddenClause = `AND NOT (n.kind = ANY($${params.length}::text[]) AND cs.status IS NOT DISTINCT FROM 'merged')`;
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
   const { rows } = await pool.query(
@@ -1692,6 +1662,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
      ${FILED_MESSAGE_JOIN_SQL}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+     ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
@@ -1751,8 +1722,11 @@ async function countUnread(pool, userId) {
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
-        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
-    [userId]
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
+              SELECT 1 FROM chat_sessions s
+               WHERE s.id = n.session_id AND s.status = 'merged'))`,
+    [userId, MERGED_HIDDEN_KINDS]
   );
   return rows[0]?.c || 0;
 }
@@ -1860,126 +1834,36 @@ async function markReadForSession(pool, userId, sessionId) {
   return markReadForAction(pool, userId, 'vote_cast', sessionId);
 }
 
-// DECIDED_ASK_KINDS and the live-read predicate built from it
-// (DECIDED_ASK_SETTLED_SQL) sit above the bell's read functions, beside the
-// other live-read SQL.
+// 5 October (Page Turners): what the bell stops asking about a decided
+// change, and the digests it was the last one waiting in
+// (src/workflow/rules/change-notifications.ts). The merge-followups machine
+// settles in its transaction and pushes what it touched itself; here,
+// `push` (the default) tells everyone whose bell changed.
+const { settleVoteDigests } = changeNotifications;
 
-/**
- * "Waiting for your approval" digests that no longer count anything
- * (DIGEST_WAITING_SQL is 0) are read: of `userIds`, or of the people with a
- * stake in `appId` (its favoriters and its creator, as the digest reads
- * them), sent since `since` when given. One of the two scopes is required,
- * so it never reads every digest on the platform. Resolves the ids of the
- * people whose bell changed.
- */
-async function settleVoteDigests(pool, { userIds = null, appId = null, since = null } = {}) {
-  const ids = Array.isArray(userIds)
-    ? [...new Set(userIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : null;
-  const app = Number.isSafeInteger(Number(appId)) && Number(appId) > 0 ? Number(appId) : null;
-  if (!(ids && ids.length) && !app) return [];
-  const { rows } = await pool.query(
-    `UPDATE notifications n SET read_at = NOW()
-      WHERE n.kind = 'vote_digest' AND n.read_at IS NULL
-        AND ($1::int[] IS NULL OR n.user_id = ANY($1::int[]))
-        AND ($2::int IS NULL OR n.user_id IN (
-              SELECT stake.user_id FROM app_favorites stake WHERE stake.app_id = $2
-              UNION
-              SELECT made.created_by FROM apps made WHERE made.id = $2 AND made.created_by IS NOT NULL))
-        AND ($3::timestamptz IS NULL OR n.created_at >= $3::timestamptz)
-        AND ${DIGEST_WAITING_SQL} = 0
-      RETURNING n.user_id`,
-    [ids && ids.length ? ids : null, app, since || null]
-  );
-  return [...new Set(rows.map((row) => Number(row.user_id)))];
-}
+// #4795: the kinds whose rows are about one change and ask something about
+// it, so once that change has MERGED the rows leave the bell's list instead
+// of lingering as read entries somebody taps and finds a merged page behind.
+// It is every ask the decision settles plus "ready to try" itself: a merged
+// change is decided, so the vote it asked for is already in. The rows that
+// say the change went live (pr_merged to its author, voted_change_merged to
+// its voters) are not asks and stay. A closed change keeps its rows in the
+// list, where "ready to try" reads Closed.
+// "One story": the requester's own "ready to try" from Homeroom bot
+// (build_ready) too, once settleDecidedChange has linked it to its change.
+const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready', 'build_ready']);
 
-/**
- * 5 October (Page Turners): change `sessionId` was decided, live
- * ('merged') or closed ('archived'), so the bell stops asking about it:
- *
- *   - the asks it answered (DECIDED_ASK_KINDS) are read;
- *   - "ready to try" rows: closed, they are read. Live, the newest one each
- *     person was sent is the news that it is live (the bell words it Live,
- *     from the change's status) and is unread again for whoever never voted
- *     on it and so did not see it go; the ones about older versions are
- *     read. #4787: a voter now hears the merge through
- *     voted_change_merged, so their newest row is left as they read it and
- *     the bell does not show two unread rows about one change.
- *     Unread again, never a new row: nothing rings twice;
- *   - digests of several changes it was the last one waiting in are read.
- *
- * Everyone whose bell changed hears `notifications_changed`, which also
- * re-badges their phone (mobile-push-badge.js). A change still up for
- * approval (or gone) is left alone. Resolves the ids of the people told.
- * Callers run it after the change's status is written: the merge
- * (routes/votes.js), a change carried by another's merge
- * (included-changes.js) and every close (session-lifecycle.js
- * finalizeArchivedSession).
- *
- * `status` stands for the row's when the caller decides it in the same
- * transaction and writes it afterwards (the merge-followups workflow
- * machine), and `push: false` leaves the push to that caller, after commit.
- */
 async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
-  const id = Number(sessionId);
-  if (!Number.isSafeInteger(id) || id <= 0) return [];
-  const { rows: [session] } = await pool.query(
-    `SELECT id, app_id, status, COALESCE(promoted_at, created_at) AS asked_from
-       FROM chat_sessions WHERE id = $1`,
-    [id]
-  );
-  if (session && status) session.status = status;
-  if (!session || (session.status !== 'merged' && session.status !== 'archived')) return [];
-  const touched = new Set();
-  const note = (rows) => { for (const row of rows) touched.add(Number(row.user_id)); };
-
-  note((await pool.query(
-    `UPDATE notifications SET read_at = NOW()
-      WHERE session_id = $1 AND read_at IS NULL AND kind = ANY($2::text[])
-      RETURNING user_id`,
-    [id, DECIDED_ASK_KINDS]
-  )).rows);
-
-  if (session.status === 'merged') {
-    // The newest "ready to try" each person was sent about it.
-    const NEWEST = `n.id = (SELECT MAX(newest.id) FROM notifications newest
-                             WHERE newest.user_id = n.user_id AND newest.session_id = n.session_id
-                               AND newest.kind = 'change_ready')`;
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NOW()
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NULL AND NOT (${NEWEST})
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-    note((await pool.query(
-      `UPDATE notifications n SET read_at = NULL
-        WHERE n.session_id = $1 AND n.kind = 'change_ready' AND n.read_at IS NOT NULL AND ${NEWEST}
-          AND NOT EXISTS (SELECT 1 FROM pr_votes voted
-                           WHERE voted.session_id = n.session_id AND voted.user_id = n.user_id)
-        RETURNING n.user_id`,
-      [id]
-    )).rows);
-  } else {
-    note((await pool.query(
-      `UPDATE notifications SET read_at = NOW()
-        WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
-        RETURNING user_id`,
-      [id]
-    )).rows);
-  }
-
-  for (const userId of await settleVoteDigests(pool, { appId: session.app_id, since: session.asked_from })) {
-    touched.add(userId);
-  }
-  if (touched.size && push) {
+  const touched = await changeNotifications.settleDecidedChange(pool, sessionId, { status });
+  if (touched.length && push) {
     try {
       const { pushNotificationToUser } = require('./ws');
       for (const userId of touched) pushNotificationToUser(userId, { type: 'notifications_changed' });
     } catch (err) {
-      log.warn('notifications', 'settled-change push failed', { sessionId: id, err: err.message });
+      log.warn('notifications', 'settled-change push failed', { sessionId, err: err.message });
     }
   }
-  return [...touched];
+  return touched;
 }
 
 /**
@@ -2292,6 +2176,7 @@ module.exports = {
   settleVoteDigests,
   refreshFiledMessage,
   DECIDED_ASK_KINDS,
+  MERGED_HIDDEN_KINDS,
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,

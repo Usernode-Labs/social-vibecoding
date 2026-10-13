@@ -162,7 +162,8 @@ test('the server’s own lines parse, in the messages the bot sends', () => {
   assert.equal(botHead(dm.dmText('question', { question: 'Which colour?' }, { ...context, issueNumber: 1, firstVersion: true }), FIRST).kind, 'project');
   // The weekly limit, Filed and already filed lead with the same line (homeroom-bot-mayor.js).
   const held = dm.overAllowanceText({ line: dm.requestLine(context), appName: 'Todo List' });
-  assert.equal(botHead(held, { ...META, kind: 'allowance' }).rest, 'You\'ve used this week\'s building time. I\'ll start it on Monday.');
+  // One request, one story (spec 3, Stream 1 item 5): the on-hold words.
+  assert.equal(botHead(held, { ...META, kind: 'allowance' }).rest, 'On hold until Monday: your building time for this week is used up.');
   const mayor = read('src/services/homeroom-bot-mayor.js');
   assert.match(mayor, /`\$\{line\}\\n\\nFiled\. \$\{builds/);
   assert.match(mayor, /requestLine\(\{ appName: name, issueNumber: n, issueTitle: action\.title \}\)\}\\n\\nI already filed that\./);
@@ -295,21 +296,21 @@ test('the two-questions card leads with the request’s card too', () => {
   assert.match(plan, /\{head \? <BotHeadWords head=\{head\} objects=\{message\.objects\} \/>\s*: meta\.lead \? <MessageMarkdown content=\{meta\.lead\} appSlug=\{meta\.appSlug\} \/> : null\}/);
 });
 
-test('the staging preview’s declared check finds the card on the demo DM’s question, followed by its words', () => {
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097:/.test(t.name));
+test('the staging preview’s declared check finds the demo DM’s news as one line each', () => {
+  // One request, one story: the request's card no longer leads a big card
+  // in the main chat; each piece of news is one line (./bot-news-line.tsx).
+  // The card still leads the message inside the request's thread, and an
+  // old message opened in place.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
   assert.ok(check, 'declared');
   assert.equal(check.path, '/?demo=1#messages/910005');
-  assert.match(check.expectSelector, /\[data-bot-request-card="12"\]:has\(> \.messages-object-card \.messages-object-icon\) \+ \.messages-markdown$/);
+  assert.match(check.expectSelector, /\[data-bot-news=proposal\] \[data-bot-news-open\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
+  assert.equal(check.expectText, 'is ready to try');
   // The fixture it reads (services/staging-messages.js ensureBotDmFixture):
-  // the question about request #12, which names no project slug.
+  // the change ready to try, a request of its own.
   const fixture = read('src/services/staging-messages.js');
-  const line = '**Staging demo app** · request #12: Staging demo, sort the list by date';
-  assert.ok(fixture.includes(`content: '${line}\\n\\n'`), 'the question opens with the request line');
-  const head = botHead(`${line}\n\nI have a question before I build this:\n\nShould the newest items show first, or the oldest?`,
-    { kind: 'question', appName: 'Staging demo app', issueNumber: 12, issueTitle: 'Staging demo, sort the list by date' });
-  assert.equal(head.title, check.expectText);
-  assert.equal(head.link, null);
+  assert.match(fixture, /kind: 'proposal', \.\.\.ready,/);
 });
 
 // ── Chat replies (homeroom-bot-mayor.js) ────────────────────────────────

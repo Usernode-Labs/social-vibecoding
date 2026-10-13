@@ -672,6 +672,9 @@ const App = {
   // cover.
   _liftFirstSessionBoot() {
     try { document.documentElement.classList.remove('first-session-boot'); } catch (err) { /* no document */ }
+    // The head's spinner for a sign-in link goes with it: the landing has
+    // drawn "Signing you in…" by now, its own spinner in the same place.
+    try { document.documentElement.classList.remove('release-signing-in'); } catch (err) { /* no document */ }
   },
 
   async enterAnonymous() {

@@ -54,35 +54,10 @@ function fullSha(value) {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
-/** "PR #3: First version of Flat 4B Chores", or "PR #3" untitled. */
-function prLabel(row) {
-  const ref = row?.pr_number ? `PR #${row.pr_number}` : `Change ${row?.id}`;
-  return row?.pr_title ? `${ref}: ${row.pr_title}` : ref;
-}
-
-/** The line its pull request is closed with. */
-// `live: false`: the carrier is merged but not live yet (the merge-followups
-// workflow machine says so later, in the thread: liveLine).
-function closingComment(carrier, { live = true } = {}) {
-  return live ? `Included in #${carrier.pr_number}, which went live.` : `Included in #${carrier.pr_number}, which merged.`;
-}
-
-/** The line in its own thread. */
-function threadLine(row, carrier, { live = true } = {}) {
-  return live
-    ? `${prLabel(row)} went live as part of ${prLabel(carrier)}, which was built on it. Its own vote is closed.`
-    : `${prLabel(row)} was merged as part of ${prLabel(carrier)}, which was built on it, and goes live with it. Its own vote is closed.`;
-}
-
-/** The line in its own thread once its carrier is live (after threadLine's `live: false`). */
-function liveLine(row, carrier) {
-  return `${prLabel(row)} is live, as part of ${prLabel(carrier)}.`;
-}
-
-/** The author's notification, under "Live". */
-function authorLine(carrier) {
-  return `Included in #${carrier.pr_number}, which went live.`;
-}
+// What is said about an included change (its closing comment, its thread's
+// lines, its author's notification): src/workflow/rules/included-lines.ts,
+// which the merge-followups machine writes with.
+const { prLabel, closingComment, threadLine, liveLine, authorLine } = require('../workflow/rules/included-lines.ts');
 
 /**
  * Pure: the candidates whose head is one of `commitShas`, the merged pull
@@ -142,10 +117,11 @@ function depsOf(deps = {}) {
     agentSessions: deps.agentSessions || require('./agent-sessions'),
     bot: deps.bot || require('./homeroom-bot'),
     dm: deps.dm || require('./homeroom-bot-dm'),
+    live: deps.live || require('./homeroom-bot-live'),
     journey: deps.journey || require('./journey-events'),
     watcher: deps.watcher || require('./issue-close-watcher'),
     isSessionBusy: deps.isSessionBusy || require('./active-workers').isSessionBusy,
-    resolveIssueBounty: deps.resolveIssueBounty || ((...args) => require('../routes/votes').resolveIssueBounty(...args)),
+    resolveIssueBounty: deps.resolveIssueBounty || require('../workflow/rules/bounties.ts').resolveIssueBounty,
   };
 }
 
@@ -281,6 +257,9 @@ async function settleIncluded({ config, pool, row, carrier, sha, deployed = true
   // Whoever asked for it hears it is live (for a first version, its
   // creator), and the journey records it going live, as on its own merge.
   await step('tell whoever asked for it', () => d.dm.noteProposalMerged(pool, row, { config, sha }));
+  // And the request the bot built it for says it is live, once (beside the
+  // DM above; the merge of the streams can fold the two into one hook).
+  await step('say on its request that it is live', () => d.live.announceLive(pool, { session: row, deps: { github: d.github, ws: d.ws } }));
   await step('record it going live', () => d.journey.recordChangeLive(pool, { config, session: row, sha }));
   return did;
 }

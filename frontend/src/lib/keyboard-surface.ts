@@ -345,9 +345,14 @@ export function attachKeyboardSurface(
   scroller.addEventListener('touchcancel', onTouchCancel, { passive: true });
   scroller.addEventListener('focusin', onFocusIn);
   // The content growing under the focused field with the keys up (a hint, an
-  // error line): its field and button revealed again.
+  // error line): its field and button revealed again. Not while a reveal is
+  // already waiting for the keys to settle (onboarding run two, 12 Oct 2026):
+  // the keys' band resizes the content as they come up, and revealing then,
+  // a frame later, scrolled the page once mid-way and again once they had
+  // settled. The settled reveal reads the content as it is by then.
   const Sizes = win.ResizeObserver;
   const sizes = typeof Sizes === 'function' ? new Sizes(() => {
+    if (settle != null || fallback != null) return;
     const active = doc.activeElement as FieldLike | null;
     if (keysUp() && active && scroller.contains(active)) schedule(active);
   }) : null;

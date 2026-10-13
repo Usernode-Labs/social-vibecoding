@@ -15,9 +15,10 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
+const { RUNNER_TEST_ENV } = require('./lib/runner-env');
 
 const {
-  startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
+  startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, PROVIDER_PREFERENCES,
 } = require('../worker/claude-openrouter-request');
 
 const ROOT = path.join(__dirname, '..');
@@ -163,6 +164,114 @@ test('images and documents become a note, because OpenRouter models run on text'
   assert.ok(!JSON.stringify(body).includes('AAAA'));
 });
 
+// OpenRouter sends a non-Anthropic model's request in OpenAI's chat format,
+// where each tool_result is a `tool` message carrying tool_call_id. One with
+// an empty id fails the request: "400 messages[N]: tool messages must include
+// a non-empty string tool_call_id" (GLM, 2026-10-04 and 2026-10-09).
+function everyResultPaired(messages) {
+  let calls = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    if (message.role === 'assistant') {
+      calls = message.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+      for (const id of calls) assert.ok(typeof id === 'string' && id.trim(), 'every tool call has an id');
+      continue;
+    }
+    for (const block of message.content.filter((b) => b.type === 'tool_result')) {
+      assert.ok(typeof block.tool_use_id === 'string' && block.tool_use_id.trim(), 'every tool result has an id');
+      assert.ok(calls.includes(block.tool_use_id), `${block.tool_use_id} answers a call just before it`);
+      calls = calls.filter((id) => id !== block.tool_use_id);
+    }
+    assert.deepEqual(calls, [], 'and every call is answered');
+    calls = [];
+  }
+}
+
+test('a tool call and result with an empty or missing id are paired by an id made for them, the same on every request', () => {
+  const conversation = () => [
+    { role: 'user', content: 'Fix the button.' },
+    { role: 'assistant', content: [
+      { type: 'text', text: 'Reading.' },
+      { type: 'tool_use', id: '', name: 'Read', input: { file_path: 'a.js' } },
+      { type: 'tool_use', name: 'Read', input: { file_path: 'b.js' } },
+    ] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: '', content: 'a' },
+      { type: 'tool_result', content: [{ type: 'text', text: 'b' }] },
+    ] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ok', name: 'Bash', input: { command: 'ls' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ok', content: 'x' }] },
+  ];
+  const body = applyTurnPolicy({ messages: conversation() }, { model: GLM, countTokens: false });
+  everyResultPaired(body.messages);
+  assert.deepEqual(body.messages[1].content.slice(1).map((b) => b.id), ['toolu_hr_1_1', 'toolu_hr_1_2']);
+  assert.deepEqual(body.messages[2].content.map((b) => b.tool_use_id), ['toolu_hr_1_1', 'toolu_hr_1_2'], 'results in order');
+  assert.equal(body.messages[2].content[1].content[0].text, 'b', 'what the result said is kept');
+  assert.equal(body.messages[3].content[0].id, 'toolu_ok', 'a good id is left alone');
+  const again = applyTurnPolicy({ messages: conversation() }, { model: GLM, countTokens: true });
+  assert.deepEqual(again.messages, body.messages, 'the same ids on the next request, so the cached prefix holds');
+});
+
+test('a tool result with no id and no call left to answer becomes text; one with an id is never touched', () => {
+  const fine = [
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+  ];
+  assert.equal(pairToolIds(fine), fine);
+  const out = pairToolIds([
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: '', content: 'lost' }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+      { type: 'tool_result', tool_use_id: 't9', content: 'stray' },
+      { type: 'tool_result', tool_use_id: ' ', content: 'extra' },
+    ] },
+  ]);
+  assert.deepEqual(out[0].content, [{ type: 'text', text: '[a tool result that answers no tool call:\nlost]' }]);
+  assert.deepEqual(out[2].content, [
+    { type: 'tool_result', tool_use_id: 't1', content: 'ok' },
+    { type: 'tool_result', tool_use_id: 't9', content: 'stray' },
+    { type: 'text', text: '[a tool result that answers no tool call:\nextra]' },
+  ]);
+  for (const message of out) {
+    for (const block of Array.isArray(message.content) ? message.content : []) {
+      if (block.type === 'tool_result') assert.ok(block.tool_use_id.trim(), 'no result is left without an id');
+    }
+  }
+});
+
+test('the adapter sends OpenRouter a request whose every tool result carries its call\'s id', async (t) => {
+  let received = null;
+  const upstream = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      received = JSON.parse(raw);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'gen-1', type: 'message', content: [] }));
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => upstream.close());
+  const adapter = await startMessagesAdapter({
+    baseUrl: `http://127.0.0.1:${upstream.address().port}/api/v1`, apiKey: KEY, model: GLM, localToken: 'local-token-0123456789',
+  });
+  t.after(() => adapter.close());
+  const res = await fetch(`${adapter.baseUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': 'local-token-0123456789' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 100, messages: [
+      { role: 'user', content: 'Go.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: '', name: 'Bash', input: { command: 'ls' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: '', content: 'a.js' }] },
+    ] }),
+  });
+  assert.equal(res.status, 200);
+  await res.text();
+  everyResultPaired(received.messages);
+  assert.equal(received.messages[2].content[0].tool_use_id, 'toolu_hr_1_0');
+});
+
 test('Claude Code gets the adapter and a local token, never the key', () => {
   const env = claudeChildEnv({
     PATH: '/bin', OPENROUTER_API_KEY: KEY, ANTHROPIC_AUTH_TOKEN: 'stale', HOMEROOM_MCP_TOKEN: 'grant',
@@ -182,21 +291,37 @@ test('Claude Code gets the adapter and a local token, never the key', () => {
   assert.ok(!Object.values(env).includes(KEY));
 });
 
-test('Claude Code compacts at the limit Codex does, or the model\'s window when smaller, and knows the real window', () => {
+test('Claude Code compacts a non-Anthropic model at 120k, or the model\'s window when smaller, and knows the real window', () => {
   const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: GLM };
   const glm = claudeChildEnv({ PATH: '/bin', AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, base);
-  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'a 1.3M window is compacted at 200k, never at 1.2M');
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'a 1.3M GLM window is compacted at 120k, never at 1.2M');
   assert.equal(glm.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1310720');
-  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '128000' }, base);
-  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '128000');
+  const small = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '100000' }, base);
+  assert.equal(small.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000');
   const unknown = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '' }, base);
-  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window: still compacted');
+  assert.equal(unknown.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'no catalog window: still compacted');
   assert.equal(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, 'and no window is made up');
   const chosen = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '90000' }, base);
   assert.equal(chosen.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '90000', 'a window already set is kept');
   const codex = fs.readFileSync(require.resolve('../worker/build-codex-model-catalog.js'), 'utf8');
   assert.match(codex, /const AUTO_COMPACT_TOKEN_LIMIT = 200_000;/, 'the same limit as Codex');
   assert.equal(require('../worker/claude-openrouter-request').AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+});
+
+test('the compaction limit is per model family: Anthropic\'s at 200k, every other provider\'s at 120k', () => {
+  const mod = require('../worker/claude-openrouter-request');
+  assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
+  for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest']) {
+    assert.equal(mod.autoCompactLimit(model), 200_000, model);
+  }
+  for (const model of [GLM, 'z-ai/glm-4.6', 'moonshotai/kimi-k2', 'openai/gpt-5', '', undefined]) {
+    assert.equal(mod.autoCompactLimit(model), 120_000, String(model));
+  }
+  const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local' };
+  const claude = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1000000' }, { ...base, model: 'anthropic/claude-sonnet-4.5' });
+  assert.equal(claude.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'Anthropic models unchanged');
+  const glm = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1310720' }, { ...base, model: GLM });
+  assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000');
 });
 
 test('redaction is literal and ignores values too short to be secrets', () => {
@@ -543,7 +668,7 @@ test('run-cc.sh runs an OpenRouter scout through the adapter with the key out of
   const env = {
     PATH: `${fx.bin}:${process.env.PATH}`,
     HOME: fx.dir,
-    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: 'scout', WORKSPACE_DIR: fx.ws,
     AGENT_PROVIDER: 'openrouter', MODEL: GLM, AGENT_MODEL: GLM,
     AGENT_MODEL_MAX_OUTPUT_TOKENS: '64000', AGENT_REASONING_EFFORT: 'xhigh',
@@ -588,7 +713,7 @@ test('run-cc.sh refuses OpenRouter modes and configs it cannot run safely', asyn
   const fx = runnerFixture();
   const base = {
     PATH: `${fx.bin}:${process.env.PATH}`, HOME: fx.dir,
-    PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
+    ...RUNNER_TEST_ENV, PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     WORKSPACE_DIR: fx.ws, WORKER_JWT: 'push', AGENT_PROVIDER: 'openrouter',
     MODEL: GLM, AGENT_MODEL: GLM, OPENROUTER_API_KEY: KEY,
   };

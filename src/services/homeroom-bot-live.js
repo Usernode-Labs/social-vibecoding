@@ -162,7 +162,7 @@ const REPLY_HINT = 'Reply here (or on the GitHub issue) and it will look again.'
 
 function lookingText() {
   return 'Homeroom bot is looking at this request. It will reply here with a question if '
-    + 'something is unclear, a note if a person needs to decide, or a proposal if it can build it.';
+    + 'something is unclear, a note if a person needs to decide, or a change to vote on if it can build it.';
 }
 
 // B6 (E5): no line saying what it would go with when nobody answers:
@@ -185,15 +185,47 @@ function questionText({ question, plan = null }) {
   return lines.join('\n');
 }
 
-function personText({ reason, platform = false }) {
+// A reason the model wrote, as a whole sentence: it ends with a full stop.
+function reasonSentence(reason) {
+  const text = clipText(reason);
+  if (!text) return 'No reason given.';
+  return /[.!?…)"']$/.test(text) ? text : `${text}.`;
+}
+
+// Who can say Go ahead on a note for a person, by name: the requester, or
+// the people who decide on the project (homeroom-bot.js whoDecides). Pure.
+function decidersPhrase(names) {
+  const list = (Array.isArray(names) ? names : []).filter(Boolean).map((n) => `@${n}`);
+  if (!list.length) return 'The person who asked for it';
+  if (list.length === 1) return list[0];
+  return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
+}
+
+function personText({ reason, platform = false, project = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
+  const name = project ? clipText(project, 80) : 'this project';
   if (platform) {
-    return `Homeroom bot thinks this is about Homeroom itself, not this project: ${clipText(reason) || 'no reason given.'}\n\n`
-      + 'Whoever asked for it, or this project\'s creator or admins, can move it to Homeroom\'s own board by asking Homeroom bot in a chat.';
+    return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
+      + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have Homeroom bot move it to Homeroom's own board.`;
   }
-  return `Homeroom bot thinks a person needs to decide this one: ${clipText(reason) || 'no reason given.'}`;
+  // GitHub never carries a platform username (#723): its copy names nobody.
+  // Homeroom's names who can say Go ahead (personHomeroomText).
+  return `Homeroom bot thinks a person needs to decide this one: ${reasonSentence(reason)} `
+    + 'Whoever decides here can say Go ahead in a chat with Homeroom bot, or reply here.';
+}
+
+/**
+ * The Homeroom copy of a note for a person: who can say Go ahead, by name.
+ * `deciders` are the people who decide on the project when the requester
+ * does not (homeroom-bot.js whoDecides); else the requester. Pure.
+ */
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [] }) {
+  if (platform) return firstPerson(personText({ reason, platform, project }));
+  const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
+  const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
+  return `I think a person needs to decide this one: ${reasonSentence(reason)} ${who} can say Go ahead in a chat with me, or reply here.`;
 }
 
 function emptyText({ reason }) {
@@ -204,9 +236,30 @@ function emptyText({ reason }) {
   ].join('\n');
 }
 
-function proposalText({ link, prNumber }) {
-  const pr = prNumber ? ` (PR #${prNumber})` : '';
-  return `Homeroom bot built this and opened a proposal for the group to vote on${pr}: ${link}`;
+// GitHub's copy links the change; Homeroom's names it by its title, and the
+// vote card under the message is the way to it (homeroom-bot.js
+// announceBuilt). No pull request number in either.
+function proposalText({ link }) {
+  return `Homeroom bot built this. It's up for a vote: ${link}`;
+}
+
+function proposalHomeroomText({ title }) {
+  const name = clipText(title, 200);
+  return name ? `I built this. It's up for a vote: ${name}` : 'I built this. It\'s up for a vote.';
+}
+
+// The request's ending (announceLive): its change is live.
+function liveText({ title }) {
+  const name = clipText(title, 200);
+  return name ? `Homeroom bot's change for this is live: ${name}.` : 'Homeroom bot\'s change for this is live.';
+}
+
+function liveHomeroomText({ title, project }) {
+  const name = clipText(title, 200);
+  const where = clipText(project, 80);
+  if (name && where) return `It's live. ${name} is in ${where} now.`;
+  if (where) return `It's live in ${where} now.`;
+  return 'It\'s live.';
 }
 
 // 5 Oct 2026, Page Turners #3: this said "Homeroom bot tried to build this
@@ -224,21 +277,27 @@ function buildFailedText(reason) {
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
+// A first version whose build did not finish is tried once more on its own,
+// from the plan its creator already said Build it to (homeroom-bot.js
+// buildLive): said on its request as the build's start is.
+function retryCommentText() {
+  return 'Homeroom bot\'s first try at building this didn\'t finish, so it is trying once more from the same plan.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
-function heldText({ cap, verdict, limit }) {
+function heldText({ cap, verdict, limit, project = null }) {
+  const name = project ? clipText(project, 80) : 'this project';
   if (cap === 'proposals_per_app') {
-    return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
-      + 'It will come back to this issue when one of them is merged or closed.';
+    return `Homeroom bot will build this when one of its ${limit} changes on ${name} is voted in or closed.`;
   }
   if (cap === 'proposals_total') {
-    return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
-      + 'It will come back to this issue when one of them is merged or closed.';
+    return `Homeroom bot will build this when one of its ${limit} changes across Homeroom is voted in or closed.`;
   }
   const what = verdict === 'question' ? 'a question about' : verdict === 'plan' ? 'a plan for' : 'a note on';
   return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
-    + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
+    + `on ${name} today. It will come back to it once some of those are a day old.`;
 }
 
 function heldKind(cap) {
@@ -511,6 +570,24 @@ function swapWording(text, pairs) {
   }, text);
 }
 
+// 12 Oct 2026: a first version's size and order. Its build gets about 40
+// minutes (homeroom-bot.js buildBudgets, FIRST_VERSION_BUILD_TIME_FACTOR),
+// took a median 36, and some ran out of time, so the spec plans for about 25
+// and ranks its work: the build does the must-haves first
+// (FIRST_VERSION_ORDER_LINES) and the rest only with time left. Nothing is
+// cut: blind comparisons favoured the complete, reviewed first versions, and
+// what decided close pairs is the must-have list below.
+const FIRST_VERSION_SIZE_LINES = Object.freeze([
+  '- Sized for the build that follows: it has about 40 minutes, so plan about 25 minutes of its work, which leaves',
+  '  it time to look at the result and fix it. This is a size to aim for, not a cut: nothing the request needs is',
+  '  dropped to fit, and what may not fit goes last in the order below.',
+  '- Ranked, so the build does what matters most first. End the technical half with a "Build order" subsection',
+  '  of two short lists. "Must-haves first": the main action working end to end; honest loading, empty and error',
+  '  states (never a blank loading screen, a made-up zero or a raw server error); the phone layout (nothing',
+  '  covering or cutting off content, the tab you are on marked); demo data that shows the app\'s core idea; and',
+  '  the signature element on the first screen. Then "Nice-to-haves": everything else, most valuable first.',
+]);
+
 /** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
 function specScopeLines(firstVersion = false, starter = null) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
@@ -526,6 +603,7 @@ function specScopeLines(firstVersion = false, starter = null) {
     '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
     '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
     '  and why. What binds you is the request itself and what its creator approved, above.',
+    ...FIRST_VERSION_SIZE_LINES,
   ];
 }
 
@@ -937,13 +1015,11 @@ function specCommentText(spec, { approved = false } = {}) {
   // #4488: a plan its requester already approved was posted when they were
   // asked: the build says it started, and does not post the plan again.
   if (approved) {
-    return 'Homeroom bot is building the plan above, as it was approved. The change will be linked here when it\'s '
-      + 'ready to try.';
+    return 'The person who asked for it said Build it, so Homeroom bot is building the plan above now.';
   }
   return [
-    // B6: no approval talk while it builds. The change is linked once it can be tried.
-    'Homeroom bot wrote a plan for this request and is building it now. The change will be linked here when it\'s '
-      + 'ready to try.',
+    // B6: no approval talk while it builds, and no promise of a link later.
+    'Homeroom bot wrote a plan for this request and is building it now.',
     '',
     '<details><summary>The plan</summary>',
     '',
@@ -951,6 +1027,15 @@ function specCommentText(spec, { approved = false } = {}) {
     '',
     '</details>',
   ].join('\n');
+}
+
+/**
+ * #4488: the Homeroom copy of a build its requester said Build it to: a
+ * short note, not a second card for the plan they were already shown.
+ * Named, never tagged (sendBotMessage writes no mention). Pure.
+ */
+function approvedBuildHomeroomText({ requester = null } = {}) {
+  return `${requester ? `@${requester}` : 'The person who asked for it'} said Build it. I'm building it now.`;
 }
 
 // #4488: how a complicated change's plan is answered where it is posted.
@@ -986,16 +1071,24 @@ function planCommentText({ spec, questions = [] }) {
  * The spec as a thread message: the same spec card a person's "Share"
  * posts (metadata.specShare), opening the version the build worked from.
  */
-function specCard({ sessionId, version, spec, bot, proposed = false, revised = false, approved = false, asking = false }) {
+function specCard({
+  sessionId, version, spec, bot, proposed = false, revised = false, asking = false, requester = null,
+}) {
   const title = specTitle(spec);
+  // One sentence, as the request page draws the row (transcript.tsx
+  // RequestEvent): "Plan v1: {title}. I'm building it now." The page reads
+  // `botNote` (and `waitingFor`) off the metadata; the content is the same
+  // words for anything that draws the message itself.
+  const head = `📋 Plan v${Number(version)}${title ? `: ${title.replace(/[.!?]+$/, '')}` : ''}`;
+  const waitingFor = asking && requester ? String(requester) : null;
   const content = proposed
-    ? revised
-      ? `📋 The plan, updated for this change (version ${Number(version)})${title ? `: "${title}"` : ''}.`
-      : `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
-    : asking ? `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}, with its before and after screens. `
-      + `It builds nothing until the person who asked says so: ${PLAN_REPLY_HINT}`
-      : approved ? `📋 Homeroom bot is building the plan that was approved${title ? `: "${title}"` : ''}.`
-        : `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}. It is building it now.`;
+    ? `${head}${revised ? ', updated for this change' : ''}.`
+    : asking
+      ? `${head}. Waiting for ${waitingFor ? `@${waitingFor}` : 'the person who asked for it'} to say Build it.`
+      // #4488: a plan its requester approved was posted when they were
+      // asked; its build says so in a note, with no second card.
+      : `${head}. I'm building it now.`;
+  const botNote = proposed ? null : asking ? 'waiting' : 'building';
   return {
     content,
     msgType: 'spec_share',
@@ -1010,6 +1103,8 @@ function specCard({ sessionId, version, spec, bot, proposed = false, revised = f
         snippet: specSnippet(spec, title),
         totalChars: String(spec || '').length,
         sharedBy: { id: bot.id, username: bot.username },
+        ...(botNote ? { botNote } : {}),
+        ...(waitingFor ? { waitingFor } : {}),
       },
     },
   };
@@ -1110,14 +1205,14 @@ function followUpPlanFormat({ config, app, locale = null }) {
 // GitHub, the Homeroom account linked to its author's GitHub login.
 
 // The kinds of post that tag people: whoever filed the issue and whoever
-// took part in its discussion (see mentionTargets). Every answer, the spec
-// and the proposal, and every follow-up on the proposal. Not "looking" (a
-// notice, before anything is known) and not a held note (nothing for them
-// to do; the bot comes back on its own).
-const TAGGING_KINDS = new Set([
-  'question', 'plan', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
-  'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
-]);
+// took part in its discussion (see mentionTargets). Only the posts that ask
+// them something: a question, a decision for a person, a question about
+// its change. A tag means the bot is asking you something; progress (the
+// plan, the change, a build that stopped, an update) is said untagged, and
+// the requester hears it in their chat with the bot. The people holding a
+// request are tagged by their own posts (homeroom-bot-holds.js), as is the
+// asker of a going-ahead.
+const TAGGING_KINDS = new Set(['question', 'person', 'followup_ask']);
 
 function tagsPoster(kind) {
   return TAGGING_KINDS.has(kind);
@@ -1350,7 +1445,7 @@ async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
-  skipIssueThread = false, skipGithub = false,
+  skipIssueThread = false, skipGithub = false, homeroomText = null,
 }) {
   // Answered where it was asked: a reply to people who wrote only in the
   // change's own discussion is said there alone, with no GitHub comment and
@@ -1426,8 +1521,10 @@ async function post({
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
   // In Homeroom the note is the bot's own bubble, so it says it in the first
-  // person (homeroom-bot-words.js); GitHub keeps it as written.
-  const own = firstPerson(text);
+  // person (homeroom-bot-words.js); GitHub keeps it as written. A note whose
+  // Homeroom words differ from GitHub's by more than the voice (a change by
+  // its title, a person by their name) brings them as `homeroomText`.
+  const own = homeroomText || firstPerson(text);
   const threadText = handles ? `${handles} ${own}` : own;
   if (!noIssueThread) {
     try {
@@ -1515,6 +1612,67 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   }
   log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
   return { postId, thread: !!message };
+}
+
+/**
+ * The request's ending: a change the bot built for it is live, said on the
+ * request (a GitHub comment and the bot's bubble in its Homeroom thread):
+ * "It's live. {title} is in {project} now." Untagged: whoever asked for it
+ * hears it in their chat with the bot (homeroom-bot-dm.js
+ * noteProposalMerged), and its voters by their own ping. Called beside that
+ * DM wherever a merged change is told to whoever asked for it
+ * (routes/votes.js finalizeMerge, included-changes.js), and said once per
+ * change (its run's `live` post). Never throws; resolves what was posted,
+ * or null.
+ */
+async function announceLive(pool, { session, deps = {} } = {}) {
+  if (!session?.id) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id AS run_id, r.app_id, r.issue_number, a.slug, a.name, a.repo_url,
+              COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title
+         FROM homeroom_bot_runs r
+         JOIN apps a ON a.id = r.app_id
+         LEFT JOIN chat_sessions cs ON cs.id = r.proposal_session_id
+        WHERE r.proposal_session_id = $1
+        ORDER BY r.id DESC LIMIT 1`,
+      [Number(session.id)],
+    );
+    const run = rows[0];
+    if (!run) return null;
+    const { rows: said } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_posts
+        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' LIMIT 1`,
+      [run.app_id, run.issue_number, run.run_id],
+    );
+    if (said.length) return null;
+    const { rows: bots } = await pool.query(
+      'SELECT id, username FROM users WHERE username = $1 AND is_synthetic = TRUE',
+      [BOT_USERNAME],
+    );
+    const bot = bots[0];
+    if (!bot) return null;
+    const title = run.title || session.pr_title || session.session_title || null;
+    const repo = require('./homeroom-bot').parseRepo(run.repo_url);
+    return await post({
+      pool,
+      github: deps.github || require('./github'),
+      ws: deps.ws || require('./ws'),
+      app: { id: run.app_id, slug: run.slug, name: run.name },
+      repo,
+      issueNumber: Number(run.issue_number),
+      kind: 'live',
+      runId: run.run_id,
+      text: liveText({ title }),
+      homeroomText: liveHomeroomText({ title, project: run.name || run.slug }),
+      sender: bot,
+      senderId: bot.id,
+      skipGithub: !repo,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not say on its request that a change is live', { sessionId: session.id, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -1793,7 +1951,14 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
-function browserLines({ readsImages = false, clocked = false } = {}) {
+//
+// A first version under a configuration with a reviewer (bot-review.js) has
+// its screens captured at both widths, in both looks, and reviewed once the
+// build turn is over. Its build checked the same things first: first versions
+// took a median 36 minutes of a 40-minute clock, and one ran out of time
+// inside a browser check. So that build boots the app and does its main thing
+// once, at one width, and leaves the sweep to the review.
+function browserLines({ readsImages = false, clocked = false, reviewed = false } = {}) {
   const look = readsImages
     ? 'take screenshots (`browser_take_screenshot`) of each changed screen'
     : 'walk each changed screen through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
@@ -1806,12 +1971,20 @@ function browserLines({ readsImages = false, clocked = false } = {}) {
     'since your working tree is committed for you, and its TESTING block\'s `path:` lines are the routes your change',
     'shows on:',
     IN_LOOP_BROWSER_GUIDANCE,
+    ...(reviewed ? [
+      '- For you, the Homeroom bot, one check is EXPECTED, not optional: boot the app and, at 390x844 only, do its main',
+      '  thing once (below), enough to know it runs and its main flow works, and fix what that shows is broken. Do not',
+      '  check other widths, both looks, or the empty and error states: a reviewer captures and checks every screen at',
+      '  both widths and in both looks once your turn is over, and you fix what it finds.',
+      '  Skip it only when the app cannot boot promptly, and then say why in your summary. ' + withinTime,
+    ] : [
     '- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will',
     '  see. Boot the app, then',
     `  ${look}`,
     '  at 390x844 and at a desktop width, in both looks (`?un-theme=light` and `?un-theme=dark`, unless the app keeps',
     '  one fixed look), and in its empty and error states. Fix what is wrong, and only then finish. Skip it only when',
     `  the app cannot boot promptly, and then say why in your summary. ${withinTime}`,
+    ]),
     '- A page that renders is not a button that works. Signed in as a person would be, do the main thing the change',
     '  is for yourself (add it, save it, mark it done), and check that it works: the screen shows the result, the',
     '  request it sends answers without an error (`browser_network_requests`), and the result is still there after a',
@@ -1853,12 +2026,16 @@ function utcClock(ms) {
  * The TIME section of a build prompt, or [] without a clock. `startedAt` is
  * when the turn starts (ms), `budgetMs` the clock it is stopped on. Pure.
  */
-function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {}) {
+function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, reviewed = false } = {}) {
   if (!Number.isFinite(startedAt) || !(Number(budgetMs) > 0)) return [];
   const minutes = (ms) => Math.round(ms / 60000);
   const stopAt = utcClock(startedAt + budgetMs);
   const soft = Number(softMs) > 0 && softMs < budgetMs;
   const softAt = soft ? utcClock(startedAt + softMs) : null;
+  // With a reviewer, the sizes, looks and empty and error states are its.
+  const rest = reviewed
+    ? 'the spec\'s other screens, and polish (the reviewer checks sizes, looks, and empty and error states).'
+    : 'the other screens, sizes and looks, the empty and error states, and polish.';
   return [
     '',
     `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
@@ -1869,10 +2046,7 @@ function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS } = {})
     '1. Build everything the spec and the plan ask for. This is never what gets cut.',
     '2. Boot the app and do its main thing once, as a person would.',
     '3. Fix what that shows is broken.',
-    soft
-      ? `4. Only then, while it is before ${softAt} UTC: the other screens, sizes and looks, the empty and error states,`
-        + ' and polish.'
-      : '4. Only then, with time to spare: the other screens, sizes and looks, the empty and error states, and polish.',
+    soft ? `4. Only then, while it is before ${softAt} UTC: ${rest}` : `4. Only then, with time to spare: ${rest}`,
     soft
       ? `After ${softAt} UTC, start no new round of testing or polish. Finish building what the spec asks for if you`
         + ' still are, finish the fix you are in, check the app still boots, and finish your turn. Say in your summary'
@@ -1958,6 +2132,14 @@ const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
   '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
 ]);
 
+// A first version's build follows its spec's "Build order"
+// (FIRST_VERSION_SIZE_LINES): the must-haves first, the rest with time left.
+const FIRST_VERSION_ORDER_LINES = Object.freeze([
+  '',
+  'Build in the order the spec\'s "Build order" gives: every must-have first, working, then the nice-to-haves, most',
+  'valuable first, only while time is left.',
+]);
+
 /**
  * A first version's design lines, for a game starter when it has one: what
  * the repository already is, and that its look, not its game, is placeholder.
@@ -1987,11 +2169,14 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // A first version whose configuration has a reviewer (bot-review.js): the
+  // review does the visual sweep, so the build checks its main flow once.
+  reviewed = false,
   // #4645: the requester's locale, for the language rule the description and
   // declared-change lines below carry.
   locale = null,
 }) {
-  const time = clock ? clockLines(clock) : [];
+  const time = clock ? clockLines({ ...clock, reviewed }) : [];
   const specBlock = spec
     ? [
       '',
@@ -2016,6 +2201,7 @@ function buildPrompt({
     ...specBlock,
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
+    ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
     ...stageGuidanceLines('build', { firstVersion, guidance }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -2027,7 +2213,7 @@ function buildPrompt({
     ...requestRulesLines(),
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
-    ...browserLines({ readsImages, clocked: time.length > 0 }),
+    ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2079,12 +2265,35 @@ async function buildSeesImages({ pool, config, userId, model }) {
  */
 function failedClaudeTurn(result) {
   if (!result || result.agentHarness !== 'claude') return null;
+  // The notice first: run-cc.sh exits 1 after a turn that ended on it, so
+  // "exited with code 1" was all the run kept of an OpenRouter 429.
+  const api = agentApiFailure(result.lastResultText);
+  if (api) return api.line ? `it ended on an API error: ${clipText(api.line, 200)}` : 'it ended on an API error';
   const exited = (code) => Number.isInteger(code) && code > 0;
   if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
   if (result.ccIsError === true) return 'the agent reported an error';
   if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
-  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
   return null;
+}
+
+/**
+ * Why a build turn failed, beyond its one-line reason: what it was last
+ * doing and its final message (redacted, clipped), for the run's
+ * build_error, which the admin console and the connector's
+ * get_homeroom_bot show. A final message that is the API error notice the
+ * reason already quotes is not repeated. '' when there is nothing. Pure.
+ */
+const FAILED_SAID_CHARS = 240;
+function failureDetail({ progress = null, result = null, reason = '' } = {}) {
+  const parts = [];
+  const activity = progress ? progress.suffix() : '';
+  if (activity) parts.push(activity);
+  const said = agentSaid(result?.lastResultText);
+  const api = said ? agentApiFailure(said) : null;
+  if (said && !(api && api.line && String(reason).includes(clipText(api.line, 200)))) {
+    parts.push(`; it last said: ${clipText(said.replace(/\s+/g, ' '), FAILED_SAID_CHARS)}`);
+  }
+  return parts.join('');
 }
 
 /**
@@ -2232,6 +2441,40 @@ function readSpecText(text) {
     : { ok: true, specMd: withoutEmDashes(specMd) };
 }
 
+/**
+ * The bot's clock stopping its turn on `sessionId`. Why is saved on the
+ * turn's record first (BOT_STOP_KEY, turn-lifecycle stampTurn), then the turn
+ * is stopped. The journal of a stopped turn ends `__USERNODE_EXIT__ 143`,
+ * which says nothing of who stopped it: a restart between the stop and the
+ * build recording it left the next server reading the 143 as the agent's
+ * own failure ("the agent exited with code 143 (finished after a
+ * restart)"). Restart recovery reads the saved stop instead (botStopOf) and
+ * records the turn as the time-out it was. Never throws: the stop goes
+ * ahead whether or not the note could be saved.
+ */
+const BOT_STOP_KEY = 'botStop';
+
+async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
+  try {
+    const turnLifecycle = require('./turn-lifecycle');
+    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (turn && turn.turnId) {
+      await turnLifecycle.stampTurn(pool, {
+        sessionId, turnId: turn.turnId, key: BOT_STOP_KEY, value: { why, at: new Date().toISOString() },
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not save why the bot stopped its turn', { sessionId, err: err.message });
+  }
+  return worker.stopTurn(sessionId);
+}
+
+/** The bot's own stop saved on a turn record (stopOnClock), or null. Pure. */
+function botStopOf(activeTurn) {
+  const stop = activeTurn && typeof activeTurn === 'object' ? activeTurn[BOT_STOP_KEY] : null;
+  return stop && typeof stop === 'object' && stop.why ? stop : null;
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2253,7 +2496,7 @@ async function draftSpec({
   let stopping = null;
   const timer = setTimeout(() => {
     stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+    stopping = stopOnClock(pool, worker, session.id).catch(() => {});
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
@@ -2586,7 +2829,7 @@ function buildTurnRunner({
     let stopping = null;
     const timer = setTimeout(() => {
       turnStopped = true;
-      stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+      stopping = stopOnClock(pool, worker, session.id).catch(() => {});
     }, budgetMs);
     if (typeof timer.unref === 'function') timer.unref();
     activeWorkers.add(session.id);
@@ -2731,6 +2974,15 @@ async function buildAndPropose({
   // for the language rule the prompts that write to people carry
   // (localeRule). The caller reads it off the request's recorded requester.
   locale = null,
+  // A live first version: a build turn that ran out of time or failed keeps
+  // the work it pushed, which its review then looks at (worker.keepPartialWork).
+  // Never a bench trial's or a later change's.
+  keepPartial = false,
+  // Each step boundary the build reaches, saved by the caller so a restart
+  // carries the build on from there (homeroom-bot-checkpoint.js), called
+  // with (step, { sessionId, ...what the step left }) and awaited. Never a
+  // reason the build stops.
+  onStep = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2839,6 +3091,10 @@ async function buildAndPropose({
   if (claimRefused) {
     return { ...(await fail(claimRefused)), skipped: claimRefused, lostClaim: true, costUsd: null };
   }
+  const step = async (name, data = {}) => {
+    if (!onStep) return;
+    try { await onStep(name, { ...data, sessionId: session.id }); } catch { /* a checkpoint never stops a build */ }
+  };
 
   let branchName;
   try {
@@ -2849,6 +3105,7 @@ async function buildAndPropose({
   } catch (err) {
     return fail(`could not create its branch: ${err.message}`);
   }
+  await step('session', { branch: branchName });
   // A later build of a project whose repository has the frontend-design
   // skill is told, at its spec and its build, to read it (the nudge alone;
   // services/design-skill.js). A first version's prompts say that, and more,
@@ -2890,6 +3147,7 @@ async function buildAndPropose({
   // session and said below, once, as a spec just written would be.
   if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   if (!presetSpec && onStage) { try { await onStage('spec'); } catch { /* a watcher never stops a build */ } }
+  if (!presetSpec) await step('spec_turn');
   spec = presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
@@ -2942,6 +3200,7 @@ async function buildAndPropose({
     };
   }
   if (spec.ok) {
+    await step('spec', { specVersion: spec.version ?? null });
     if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
@@ -2989,12 +3248,14 @@ async function buildAndPropose({
     pool, config, bot, session, model, branchName, containerName, deps,
     harness: buildHarness, telemetry, onProgress,
   });
+  await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
   // timer). A nudge runs on what is left of it.
   const turnStartedMs = Date.now();
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    reviewed: Boolean(review?.reviewer),
     locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
@@ -3097,16 +3358,54 @@ async function buildAndPropose({
   endLive();
 
   const result = (routed && routed.result) || {};
-  if (stopped) {
-    return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
+  // A turn that ran past its clock or failed, and why, with what it was last
+  // doing and its final message (failureDetail), so the run says more than
+  // "exited with code 1". A failed turn is a failed build, whatever it left
+  // behind (failedClaudeTurn), unless it is a first version's whose work so
+  // far is kept below.
+  const turnFailed = stopped || routed?.error ? null : failedClaudeTurn(result);
+  let faultReason = null;
+  if (stopped) faultReason = 'the build ran past its time limit';
+  else if (routed?.error) faultReason = `the build turn failed (${routed.error})`;
+  else if (turnFailed) faultReason = `the build turn failed (${turnFailed})`;
+  // A dispatch error ran no turn: its reason stays as it is, which
+  // homeroom-bot.js isInfraBuildError reads whole.
+  const faultError = faultReason && !routed?.error
+    ? `${faultReason}${failureDetail({ progress, result, reason: faultReason })}`
+    : faultReason;
+  // A first version's build turn that ran out of time or failed keeps the
+  // work it did: committed and pushed from its worker when it differs from
+  // main, then reviewed as any build is. The review's captures say whether it
+  // boots; a build kept this way that never booted fails as before.
+  let partial = null;
+  if (faultError && keepPartial && review?.reviewer && typeof worker.keepPartialWork === 'function') {
+    const kept = await worker.keepPartialWork(session.id, { branchName, commitMsg }).catch((err) => ({ pushed: false, reason: err.message }));
+    if (kept?.pushed && Number(kept.commits) > 0) {
+      partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
+      Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
+      // A stop aimed at the build would skip the review's fix turns.
+      worker.clearPendingStop?.(session.id);
+      log.warn('homeroom-bot', 'A first version\'s build turn did not finish; reviewing the work it pushed', {
+        app: app.slug, issueNumber, sessionId: session.id, why: faultReason, commits: partial.commits,
+      });
+    } else {
+      log.info('homeroom-bot', 'A first version\'s build turn did not finish and left nothing to keep', {
+        app: app.slug, issueNumber, sessionId: session.id, why: kept?.reason || null,
+      });
+    }
   }
-  if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
-  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
-  const turnFailed = failedClaudeTurn(result);
-  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
+  if (faultError && !partial) return { ...(await fail(faultError)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
+  // Pushed: a restart from here on proposes this work, never builds it again.
+  await step('landed', {
+    landed: {
+      sha: result.sha || null, commits: Number(result.ahead) || 0, pushOk: true,
+      text: clipText(result.lastResultText || '', 20000), partial: !!partial,
+    },
+    turnIds: buildTurnIds,
+  });
 
   // A first version under a configuration with a reviewer: its screens are
   // reviewed and fixed before anybody sees it (bot-review.js). It fails
@@ -3133,6 +3432,17 @@ async function buildAndPropose({
     if (skippedLate) return { ...(await fail(skippedLate)), skipped: skippedLate, costUsd, review: reviewed };
   }
   const reviewOut = reviewed ? { review: reviewed } : {};
+  // Work kept from a turn that did not finish goes on only if it boots, as
+  // the review's last capture (or the commit it rolled back to) saw it.
+  if (partial && reviewed?.finalCapture?.booted !== true) {
+    return { ...(await fail(`${faultError}; the work it pushed did not boot`)), costUsd, ...reviewOut };
+  }
+  const partialOut = partial ? { partial } : {};
+  if (review?.reviewer) {
+    await step('reviewed', {
+      reviewed: { finalSha: landedSha, finalCommits: landedCommits, costUsd: Number(reviewed?.costUsd) || 0 },
+    });
+  }
 
   if (!propose) {
     // Built, pushed, and put away: the session is archived exactly as a
@@ -3145,6 +3455,7 @@ async function buildAndPropose({
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
       sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(), ...noChangeOut(),
+      ...partialOut,
     };
   }
 
@@ -3180,12 +3491,13 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, ...pushed, costUsd,
       error: `the change was built but could not be proposed: ${why}`, ...specOut(), ...reviewOut, ...costsOut(),
-      ...noChangeOut(),
+      ...noChangeOut(), ...partialOut, notProposed: true,
     };
   }
+  await step('proposed', { prNumber: promoted.body.prNumber || null });
   return {
     ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut(), ...reviewOut,
-    ...costsOut(), ...noChangeOut(),
+    ...costsOut(), ...noChangeOut(), ...partialOut,
   };
 }
 
@@ -3293,6 +3605,9 @@ async function reviewLanded({
 }
 
 module.exports = {
+  BOT_STOP_KEY,
+  stopOnClock,
+  botStopOf,
   waitOutShotsRun,
   askerOf,
   creditedDescription,
@@ -3308,9 +3623,16 @@ module.exports = {
   lookingText,
   questionText,
   personText,
+  personHomeroomText,
   emptyText,
   proposalText,
+  proposalHomeroomText,
+  liveText,
+  liveHomeroomText,
+  announceLive,
+  approvedBuildHomeroomText,
   buildFailedText,
+  retryCommentText,
   heldText,
   heldKind,
   lastPostKind,
@@ -3351,6 +3673,8 @@ module.exports = {
   REQUEST_IS_DATA_LINES,
   requestRulesLines,
   teeProgress,
+  lastActivity,
+  utcClock,
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
@@ -3373,6 +3697,7 @@ module.exports = {
   RECIPE_SPEC_EFFORT,
   browserLines,
   failedClaudeTurn,
+  failureDetail,
   stampSessionModel,
   draftSpec,
   specPrompt,
@@ -3380,6 +3705,8 @@ module.exports = {
   specScopeLines,
   specDesignBrief,
   firstVersionDesignLines,
+  FIRST_VERSION_SIZE_LINES,
+  FIRST_VERSION_ORDER_LINES,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,

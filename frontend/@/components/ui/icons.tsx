@@ -421,6 +421,26 @@ export const AdjustmentsIcon = stroked('AdjustmentsIcon', [
   'M4 7h9M17 7h3M4 17h3M11 17h9',
   'M13 7a2 2 0 104 0 2 2 0 00-4 0zM7 17a2 2 0 104 0 2 2 0 00-4 0z',
 ]);
+// #4916: All items' "By category" tab, beside BoardIcon for "By stage".
+// Heroicons v1 outline tag, the set this file draws from.
+export const TagIcon = stroked(
+  'TagIcon',
+  'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+);
+// #4916: the board's two "mine" toggles, drawn as a person with a mark:
+// a check for Assigned to you, a pen for Created by you. New glyphs, so not
+// transcribed from older markup: lucide's user-check and user-pen, on the
+// same 24 grid at the same 2px stroke as UserIcon.
+export const UserCheckIcon = stroked('UserCheckIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M16 11l2 2 4-4',
+]);
+export const UserPenIcon = stroked('UserPenIcon', [
+  'M11.5 15H7a4 4 0 00-4 4v2',
+  'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
+]);
 export const SparklesIcon = stroked(
   'SparklesIcon',
   'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
