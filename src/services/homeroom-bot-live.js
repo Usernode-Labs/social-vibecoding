@@ -2166,9 +2166,27 @@ function firstVersionDesignLines(starter = null) {
   ];
 }
 
+// L2: the app's own declared checks, run before a bot build or fix turn ends
+// (worker.js writeAppCheck, build-stop-hook.js's checks gate): how the
+// turn runs them itself, and that the platform runs them too.
+function appChecksLines() {
+  const { APP_CHECK_COMMAND_PATH } = require('./worker');
+  return [
+    '',
+    'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
+    `merge. Before you finish, run \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root: it boots a fresh copy of the`,
+    'app on a port and a database of its own, signed in as the proposal\'s checks are (a plain in-loop launch is signed out,',
+    'so its pages are not what the checks see), runs every declared check and prints each result. Fix what fails, in the',
+    'app, and run it again. When you try to finish, the platform may run it too and send you back while a check fails.',
+  ];
+}
+
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // L2: the turn's runner writes the app's check command (buildTurnRunner
+  // `checksGate`), so the prompt says how to run it.
+  appChecks = false,
   // A first version whose configuration has a reviewer (bot-review.js): the
   // review does the visual sweep, so the build checks its main flow once.
   reviewed = false,
@@ -2214,6 +2232,7 @@ function buildPrompt({
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
     ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
+    ...(appChecks ? appChecksLines() : []),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2810,6 +2829,11 @@ async function waitOutShotsRun(sessionId, deps = {}) {
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
+  // L2: hold each turn to the app's own declared checks before it ends
+  // (appChecksLines; worker.js writeAppCheck and build-stop-hook.js's checks
+  // gate). Not for the platform's own repository, which the check script
+  // does not boot.
+  checksGate = false,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const runnerTelemetry = telemetry;
@@ -2819,12 +2843,27 @@ function buildTurnRunner({
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
     const telemetry = turnTelemetry || runnerTelemetry;
+    // L2: the check command, written fresh for this turn (the platform's
+    // current script); a write that fails runs the turn without the gate.
+    let gate = null;
+    if (checksGate && typeof worker.writeAppCheck === 'function') {
+      try {
+        await worker.writeAppCheck(session.id, { source: require('./bench/capture').scriptSource(), appId: session.app_id });
+        gate = { deadlineMs: null };
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not write the app\'s check command; this turn runs without the checks gate', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+    }
     // #4575: before & after shots on this session hold it from their first
     // build until their agent finishes, but write no turn record until they
     // dispatch. Let a run that is under way finish first, as the Mayor's
     // dispatch does, so this turn does not take the session from under it;
     // the wait is not charged to the turn's own clock.
     await waitOutShotsRun(session.id, deps);
+    // The gate's deadline is the turn's own clock, which starts here.
+    if (gate) gate.deadlineMs = Date.now() + budgetMs;
     let turnStopped = false;
     let stopping = null;
     const timer = setTimeout(() => {
@@ -2871,6 +2910,7 @@ function buildTurnRunner({
           // pays for another capture and review. The spec, triage and
           // follow-up turns run elsewhere and never ask for it.
           stopGuard: true,
+          ...(gate ? { checksGate: gate } : {}),
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
@@ -3246,7 +3286,7 @@ async function buildAndPropose({
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
-    harness: buildHarness, telemetry, onProgress,
+    harness: buildHarness, telemetry, onProgress, checksGate: !platformRepo,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3257,6 +3297,7 @@ async function buildAndPropose({
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
+    appChecks: !platformRepo,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -3585,7 +3626,7 @@ async function reviewLanded({
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
-        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs },
+        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: !platformRepo,
       }),
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
@@ -3695,6 +3736,7 @@ module.exports = {
   revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
   FIRST_VERSION_PROGRESS_LINES,
+  appChecksLines,
   guidanceLines,
   CONTENT_RULES_SLUG,
   REQUEST_IS_DATA_LINES,

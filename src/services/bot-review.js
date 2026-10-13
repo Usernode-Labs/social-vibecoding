@@ -280,6 +280,46 @@ function bootIssue(capture) {
   };
 }
 
+// The declared checks a round's capture found failing that become issues,
+// at most: a builder fixes the first ones, and the next capture runs them all
+// again.
+const MAX_CHECK_ISSUES = 4;
+
+/**
+ * L2: the issues a capture's failing DECLARED CHECKS make (bench/capture.js
+ * `declaredChecks`: dapp.json's own checks, run by the screenshot step on
+ * the copy it booted, signed in, as every proposal's checks run them on its
+ * staging copy). A check that fails there fails the proposal's checks and
+ * blocks its merge, so each is a blocker whatever the reviewer saw, raised
+ * by the platform with no reviewer call. In run four (12 Oct 2026) the
+ * proposal's checks failed on the very screen the review had fixed and a
+ * restart rolled back, and a checks fix redid it in eleven more minutes.
+ * Pure.
+ */
+function checkIssues(capture) {
+  const failed = Array.isArray(capture?.declaredChecks?.failed) ? capture.declaredChecks.failed : [];
+  return failed.slice(0, MAX_CHECK_ISSUES).map((f, i) => ({
+    id: issueId(`check-${f.name || f.path || i + 1}`, i),
+    severity: 'blocker',
+    screen: clip(`the declared check "${clip(f.name, 80)}" (${clip(f.path, 120)})`, 160),
+    problem: clip(`The app's own declared check fails on a fresh copy of the app, signed in, as the proposal's checks will run it, and a failing check blocks the merge: ${f.reason || 'it failed'}`, MAX_FIELD_CHARS),
+    fix: clip(`Make that screen do what the check expects: open ${clip(f.path, 120)} signed in, as the check does, and fix what it shows. Change the check only where the spec changed what it pins, and never loosen, skip or delete it.`, MAX_FIELD_CHARS),
+  }));
+}
+
+/**
+ * The reviewer's answer with the capture's failing declared checks put first
+ * (checkIssues): a `ship` with a failing check is a `fix`, and the reviewer's
+ * own issues follow, MAX_ISSUES in all. Pure.
+ */
+function withCheckIssues(answer, capture) {
+  const checks = checkIssues(capture);
+  if (!checks.length || !answer?.ok) return answer;
+  const ids = new Set(checks.map((c) => c.id));
+  const issues = [...checks, ...(answer.issues || []).filter((it) => !ids.has(it.id))].slice(0, MAX_ISSUES);
+  return { ...answer, verdict: 'fix', issues, checksFailing: checks.length };
+}
+
 // ── The fix turn's prompt ────────────────────────────────────────────────
 
 /**
@@ -355,6 +395,9 @@ function fixClockLines(clock) {
 function fixPrompt({
   seed = '', spec = '', issues = [], round = 1, maxRounds = 1, readsImages = false, platformRepo = false, locale = null,
   clock = null,
+  // L2: the runner holds the turn to the app's own declared checks
+  // (homeroom-bot-live.js appChecksLines).
+  appChecks = false,
 }) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
@@ -386,6 +429,7 @@ function fixPrompt({
     ...live.requestRulesLines(),
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
     ...fixBrowserLines({ readsImages, issues }),
+    ...(appChecks ? live.appChecksLines() : []),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
@@ -496,7 +540,8 @@ async function reviewCapture({
   if (!call.ok) return { ok: false, error: call.error, costUsd: call.costUsd ?? null, ms: call.ms };
   const parsed = parseReview(call.text);
   if (!parsed.ok) return { ok: false, error: parsed.error, costUsd: call.costUsd ?? null, ms: call.ms };
-  return { ...parsed, costUsd: call.costUsd ?? null, ms: call.ms, by: 'model' };
+  // L2: the app's own declared checks, which the reviewer cannot see fail.
+  return withCheckIssues({ ...parsed, costUsd: call.costUsd ?? null, ms: call.ms, by: 'model' }, capture);
 }
 
 // ── Storing a round's screenshots ────────────────────────────────────────
@@ -1001,6 +1046,8 @@ function reviewForm(c) {
   });
   if (c.signals && typeof c.signals === 'object') slim.signals = c.signals;
   else if (c.checks || c.tells || Array.isArray(c.primaryAction)) slim.signals = require('./bench/grading').tasteSignals(c);
+  // L2: what the app's declared checks came to (checkIssues reads it).
+  if (c.declaredChecks && typeof c.declaredChecks === 'object') slim.declaredChecks = c.declaredChecks;
   return slim;
 }
 
@@ -1048,6 +1095,9 @@ module.exports = {
   firstJsonObject,
   parseReview,
   bootIssue,
+  MAX_CHECK_ISSUES,
+  checkIssues,
+  withCheckIssues,
   fixPrompt,
   fixBrowserLines,
   callReviewer,

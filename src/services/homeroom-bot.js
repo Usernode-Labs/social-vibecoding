@@ -5607,7 +5607,7 @@ async function reviewRecoveredBuild({
     }
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
-      deps: turnDeps, harness: live.recipeHarness(model, config),
+      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: !isPlatformRepo(app, config),
     });
     log.info('homeroom-bot', resuming
       ? 'Carrying on a review a restart cut short'

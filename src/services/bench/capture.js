@@ -289,7 +289,25 @@ function summarize(output, kept = [], dropped = [], artifacts = {}) {
     primaryAction: cleanPrimaryAction(o.primaryAction),
     checks: o.checks && typeof o.checks === 'object' ? o.checks : null,
     tells: o.tells && typeof o.tells === 'object' ? o.tells : null,
+    declaredChecks: cleanDeclaredChecks(o.declaredChecks),
     ms: numOrNull(o.ms),
+  };
+}
+
+/**
+ * L2: what the app's own declared checks came to on the booted copy (the
+ * step's runDeclaredChecks), bounded: { total, ran, passed, failed: [{ name,
+ * path, reason }], cut }, or null for a capture that ran none. Pure.
+ */
+function cleanDeclaredChecks(d) {
+  if (!d || typeof d !== 'object') return null;
+  const failed = (Array.isArray(d.failed) ? d.failed : []).slice(0, 20).map((f) => ({
+    name: text(f && f.name, 120) || text(f && f.path, 120) || 'a check',
+    path: text(f && f.path, 200),
+    reason: text(f && f.reason, 300),
+  }));
+  return {
+    total: numOrNull(d.total) || 0, ran: numOrNull(d.ran) || 0, passed: numOrNull(d.passed) || 0, failed, cut: numOrNull(d.cut) || 0,
   };
 }
 
@@ -490,8 +508,11 @@ module.exports = {
   parseOutput,
   acceptShots,
   summarize,
+  cleanDeclaredChecks,
   describeActions,
   storeShots,
+  // L2: the same script, for a bot turn's check command (worker.js writeAppCheck).
+  scriptSource: script,
   DETACHED_POLL_MS,
   runDetached,
   captureTrial,

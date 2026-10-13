@@ -56,6 +56,14 @@
 #                              end a turn that has changed nothing (the
 #                              Homeroom bot's build and review-fix turns).
 #                              The result line then carries stop_hook_blocks
+#   STOP_GUARD_CHECKS          with STOP_GUARD: the platform's check command
+#                              (worker.js writeAppCheck), which the hook runs
+#                              when a turn that changed something tries to
+#                              end, sending it back (twice at most) while a
+#                              check dapp.json declares fails (L2). The result
+#                              line then carries stop_hook_check_blocks
+#   STOP_GUARD_DEADLINE        when the platform stops the turn (epoch ms):
+#                              the checks are not started with too little left
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -493,15 +501,26 @@ TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 # hook, exactly as it ran before, rather than failing it.
 STOP_GUARD_FLAGS=""
 STOP_GUARD_DIR=""
+# The checks gate (STOP_GUARD_CHECKS, L2): the same hook, with a timeout long
+# enough to boot the app and run its declared checks, when the platform wrote
+# its check command for this turn.
+STOP_GUARD_CHECKS_ON=""
+if [ -n "${STOP_GUARD_CHECKS:-}" ] && [ -f "$STOP_GUARD_CHECKS" ]; then STOP_GUARD_CHECKS_ON=1; fi
 if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
   if [ -n "$TURN_START_SHA" ] \
       && STOP_GUARD_DIR=$(mktemp -d /tmp/usernode-stop-guard.XXXXXX 2>/dev/null) \
-      && node "$(dirname "$0")/build-stop-hook.js" --settings > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
+      && node "$(dirname "$0")/build-stop-hook.js" --settings ${STOP_GUARD_CHECKS_ON:+--checks} > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
       && [ -s "$STOP_GUARD_DIR/settings.json" ]; then
     USERNODE_STOP_GUARD_START="$TURN_START_SHA"
     USERNODE_STOP_GUARD_COUNT="$STOP_GUARD_DIR/blocks"
     USERNODE_STOP_GUARD_REPO=$(pwd)
     export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO
+    if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
+      USERNODE_STOP_GUARD_CHECKS="$STOP_GUARD_CHECKS"
+      USERNODE_STOP_GUARD_CHECKS_COUNT="$STOP_GUARD_DIR/checks"
+      USERNODE_STOP_GUARD_DEADLINE="${STOP_GUARD_DEADLINE:-}"
+      export USERNODE_STOP_GUARD_CHECKS USERNODE_STOP_GUARD_CHECKS_COUNT USERNODE_STOP_GUARD_DEADLINE
+    fi
     STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
   else
     echo "__USERNODE_WARN__ the stop guard could not be set up; this build runs without it"
@@ -548,6 +567,14 @@ if [ -n "$STOP_GUARD_FLAGS" ]; then
   STOP_HOOK_BLOCKS_FIELD=" stop_hook_blocks=$STOP_HOOK_BLOCKS"
   if [ "$STOP_HOOK_BLOCKS" -gt 0 ]; then
     echo "__USERNODE_WARN__ The agent tried to end its turn having changed nothing; the stop guard sent it back to work (stop_hook_blocks=$STOP_HOOK_BLOCKS)"
+  fi
+  if [ -n "$STOP_GUARD_CHECKS_ON" ]; then
+    STOP_HOOK_CHECK_BLOCKS=$(cat "$USERNODE_STOP_GUARD_CHECKS_COUNT" 2>/dev/null || echo 0)
+    case "$STOP_HOOK_CHECK_BLOCKS" in ''|*[!0-9]*) STOP_HOOK_CHECK_BLOCKS=0 ;; esac
+    STOP_HOOK_BLOCKS_FIELD="$STOP_HOOK_BLOCKS_FIELD stop_hook_check_blocks=$STOP_HOOK_CHECK_BLOCKS"
+    if [ "$STOP_HOOK_CHECK_BLOCKS" -gt 0 ]; then
+      echo "__USERNODE_WARN__ The app's declared checks failed when the agent tried to end its turn; the checks gate sent it back to fix them (stop_hook_check_blocks=$STOP_HOOK_CHECK_BLOCKS)"
+    fi
   fi
 fi
 if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi

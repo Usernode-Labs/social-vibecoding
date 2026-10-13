@@ -1467,6 +1467,9 @@ function parseLine(line, onProgress, state) {
       // How many times the stop guard sent the agent back (run-cc.sh,
       // STOP_GUARD=1 only): telemetry_metrics.stop_hook_blocks.
       else if (k === 'stop_hook_blocks') state.stopHookBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      // L2: how many times its checks gate sent the agent back to fix a
+      // failing declared check (run-cc.sh, STOP_GUARD_CHECKS only).
+      else if (k === 'stop_hook_check_blocks') state.stopHookCheckBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -3240,6 +3243,13 @@ async function execInWorker(sessionId, {
   // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
   // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
   stopGuard = false,
+  // L2: with the stop guard, its checks gate: { deadlineMs } when the
+  // platform wrote this turn's check command (writeAppCheck) and stops the
+  // turn at `deadlineMs`. The hook then runs the app's declared checks, on
+  // a fresh copy signed in, before a turn that changed something ends, and
+  // sends it back while one fails. It reaches run-cc.sh as STOP_GUARD_CHECKS
+  // (the command's path) and STOP_GUARD_DEADLINE.
+  checksGate = null,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3640,7 +3650,14 @@ async function execInWorker(sessionId, {
   }
   // Only a Claude Code build has the hook: a scout changes nothing by design,
   // and the Codex runner has no Stop hook to install.
-  if (stopGuard === true && mode === 'build' && runsClaude) safeEnv.STOP_GUARD = '1';
+  if (stopGuard === true && mode === 'build' && runsClaude) {
+    safeEnv.STOP_GUARD = '1';
+    if (checksGate && typeof checksGate === 'object') {
+      safeEnv.STOP_GUARD_CHECKS = APP_CHECK_COMMAND_PATH;
+      const deadline = Number(checksGate.deadlineMs);
+      if (Number.isFinite(deadline) && deadline > 0) safeEnv.STOP_GUARD_DEADLINE = String(Math.round(deadline));
+    }
+  }
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -4707,6 +4724,57 @@ async function runBenchCapture(containerName, {
   return String(stdout || '');
 }
 
+// L2: THE APP'S DECLARED CHECKS, for a Homeroom bot build or fix turn to run
+// before it ends (homeroom-bot-live.js buildTurnRunner). The screenshot
+// step's own script (services/bench/capture.js), which boots a fresh copy of
+// the app on a port and a database of its own and signs a viewer in with a
+// throwaway key, as a proposal's checks sign in, runs here in its checks
+// mode: every check dapp.json declares, signed in (a plain in-loop launch is
+// signed out, and an app behind the platform's identity answers 401 on every
+// route). Written into the worker's private volume before each turn, beside
+// a two-line command that sets it up for this app; the stop guard's checks
+// gate (worker/build-stop-hook.js) runs that command, and so can the agent.
+const APP_CHECK_SCRIPT_PATH = '/home/node/.claude/usernode-app-check.js';
+const APP_CHECK_COMMAND_PATH = '/home/node/.claude/usernode-app-check';
+// Not the build turn's in-loop port (3100) or the screenshot step's (3190),
+// and not its database: the agent's own launch keeps running.
+const APP_CHECK_PORT = 3191;
+const APP_CHECK_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/inloop_checks';
+
+/** The command that runs the app's declared checks (see above), for app `appId`. Pure. */
+function buildAppCheckCommand(appId) {
+  const id = Number(appId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error(`writeAppCheck: invalid app id ${appId}`);
+  return [
+    '#!/bin/sh',
+    '# The app\'s declared checks, signed in, on a fresh copy of the app (Homeroom).',
+    '# Run from the repository root; it prints each result. Written by the platform.',
+    'cd "${1:-/home/node/workspace}" 2>/dev/null || cd /home/node/workspace || exit 2',
+    `exec env BENCH_CAPTURE_MODE=checks INLOOP_PORT=${APP_CHECK_PORT} INLOOP_DATABASE_URL=${APP_CHECK_DATABASE_URL} `
+      + `BENCH_INLOOP_DB_SCRIPT=/nonexistent BENCH_APP_ID=${id} node ${APP_CHECK_SCRIPT_PATH}`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * Write the check script and its command into a session's worker (see
+ * above). Throws when it cannot: the caller runs its turn without the gate.
+ */
+async function writeAppCheck(sessionId, { source, appId } = {}) {
+  const meta = _registryGet(sessionId);
+  if (!meta) throw new Error(`writeAppCheck: no warm worker registered for session ${sessionId}`);
+  if (typeof source !== 'string' || !source) throw new Error('writeAppCheck: no script');
+  const script = [
+    buildTurnContextFileScript(source, APP_CHECK_SCRIPT_PATH),
+    buildTurnContextFileScript(buildAppCheckCommand(appId), APP_CHECK_COMMAND_PATH),
+    `chmod 0755 ${APP_CHECK_COMMAND_PATH}`,
+    '',
+  ].join('\n');
+  if (usesKubernetesWorkers()) await execWorkerCommand(meta.containerName, ['sh', '-s'], script);
+  else await docker.execShellStdin(meta.containerName, script, { timeoutMs: 20000, label: 'writeAppCheck' });
+  return APP_CHECK_COMMAND_PATH;
+}
+
 // R5: the same step, DETACHED, for a first version's review
 // (services/bench/capture.js runDetached). Over the attached exec above the
 // screenshots come back on the exec's stdout, which dies with the platform
@@ -5480,6 +5548,12 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  APP_CHECK_SCRIPT_PATH,
+  APP_CHECK_COMMAND_PATH,
+  APP_CHECK_PORT,
+  APP_CHECK_DATABASE_URL,
+  buildAppCheckCommand,
+  writeAppCheck,
   DETACHED_CAPTURE_DIR,
   buildDetachedCaptureScript,
   buildDetachedCaptureStatusScript,
