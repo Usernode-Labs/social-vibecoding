@@ -10709,8 +10709,12 @@ async function runOnce(pool, config, deps = {}) {
     // and held a Submit's spec back 46 s. The pass's dispatch below fills
     // what is left, the slots its reads take counted after these.
     const seen = new Set();
+    const pausedBefore = budgetPausedUntil > Date.now();
     const early = await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now });
     out.liveBuilds = early.length;
+    // A pass that was not already paused says what it dispatched, even when
+    // these builds found the budget spent and it stops below.
+    if (!pausedBefore) out.dispatched = early.length;
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
       // missed it is filed here, before the refresh that queues it.
