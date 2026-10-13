@@ -106,6 +106,9 @@ const PROPOSAL_PHASES = new Set(['follow_up_queued', 'following_up', 'merging'])
 const OUTCOMES = activitySvc.OUTCOMES;
 // The endings that wait on the person: the cards' "Needs you".
 const NEEDS_YOU = new Set(['question', 'blocked', 'empty']);
+// #5009: the endings that wait on the person whatever they were waiting
+// for, so that a closed request can leave Needs you under all of them.
+const WAITS_ON_PERSON = new Set([...NEEDS_YOU, 'person', 'build_failed', 'failed']);
 // #8 (WP3): what a History entry says when none of its runs has come to
 // anything yet (the bot is switched off, or a build has gone quiet), in
 // place of an ending it has not had.
@@ -322,12 +325,15 @@ function entryOfRuns(runs) {
     lead = withProposal;
   }
   let outcome = outcomeOf(lead);
-  // #4539: the request itself was closed while its newest run still waited
-  // on its person (a plan waiting for Build it, or a question still open):
-  // the work stopped, which is History's news, not Needs you. Its earlier
-  // runs keep their own words (runOf).
-  if (newest.request_closed === true
-    && (outcome === 'question' || (!outcome && lead.awaiting_go_at))) {
+  // #4539, widened by #5009: the request itself was closed while its newest
+  // run still waited on its person (a plan waiting for Build it, a question
+  // still open, a look that found nothing to build, a build it cannot do as
+  // written, a decision it asked for, one that failed): the work stopped,
+  // which is History's news, not Needs you. Its earlier runs keep their own
+  // words (runOf).
+  const requestClosed = newest.request_closed === true;
+  if (requestClosed
+    && (WAITS_ON_PERSON.has(outcome) || (!outcome && lead.awaiting_go_at))) {
     outcome = 'stopped';
   }
   // The newest run, still going, is not one of its earlier runs either.
@@ -348,6 +354,10 @@ function entryOfRuns(runs) {
     outcome,
     doing: outcome ? null : NOT_FINISHED,
     at: atOf(lead, outcome),
+    // #5009: its request row is closed, so nothing here waits on the person
+    // however its chat reads. The strip leaves Needs you on this alone, and
+    // its old ask (still open in the DM) must not put it back.
+    ...(requestClosed ? { requestClosed: true } : {}),
     ...(proposalRow ? { proposalId: Number(proposalRow.proposal_session_id) } : {}),
     href: links.proposal || links.request || links.project,
     links,
@@ -392,10 +402,19 @@ const newestFirst = (a, b) => (Date.parse(b.at || 0) || 0) - (Date.parse(a.at ||
  * Pure: the tray's three groups, from progressFor's entries (empty while
  * the bot is off) and the person's live runs, newest first. Each request
  * appears once: in Now while the bot has it in hand, else in Needs you
- * while it waits on them, else in History.
+ * while it waits on them, else in History. Work the bot has taken back up
+ * never reaches Needs you (#5009), even past Now's limit or on hold.
  */
 function arrange(entries, rows) {
   const groups = groupRuns(rows);
+  // #5009: every request the bot has taken back up — a newer run under way
+  // or queued, or one held until later (on hold until Monday) — is its work,
+  // not a question for the person, even when it falls past Now's limit.
+  const inHand = new Set();
+  for (const item of entries) {
+    if (!item.project) continue;
+    if (progressSvc.inFlight(item) || item.stage === 'on_hold') inHand.add(keyOf(item.project, item.number));
+  }
   const items = entries.filter((item) => progressSvc.inFlight(item));
   const busy = items.filter((item) => item.busyNow);
   const now = [...busy, ...items.filter((item) => !item.busyNow)]
@@ -411,7 +430,7 @@ function arrange(entries, rows) {
   for (const item of entries) {
     if (item.waitingOn !== 'them' || !item.project) continue;
     const key = keyOf(item.project, item.number);
-    if (placed.has(key)) continue;
+    if (placed.has(key) || inHand.has(key)) continue;
     needsYou.push(needsYouOfProgress(item, groups.get(key)));
     placed.add(key);
   }
@@ -419,7 +438,14 @@ function arrange(entries, rows) {
   for (const [key, runs] of groups) {
     if (placed.has(key)) continue;
     const entry = entryOfRuns(runs);
-    (NEEDS_YOU.has(entry.outcome) ? needsYou : history).push(entry);
+    if (inHand.has(key)) {
+      // The bot is on it again; Needs you is not waiting on them, whatever
+      // its last run asked.
+      entry.inHand = true;
+      history.push(entry);
+    } else {
+      (NEEDS_YOU.has(entry.outcome) ? needsYou : history).push(entry);
+    }
   }
   return { now, needsYou: needsYou.sort(newestFirst), history: history.sort(newestFirst).slice(0, HISTORY_LIMIT) };
 }
@@ -642,7 +668,17 @@ async function withThreads(pool, userId, work) {
     const found = threadsOf(rows);
     for (const job of [...work.now, ...work.needsYou, ...work.history]) {
       const mine = found.get(job.key);
-      if (mine) Object.assign(job, mine);
+      if (!mine) continue;
+      if (job.requestClosed === true || job.inHand === true) {
+        // #5009: its request row is closed, or the bot has taken the work
+        // back up, so it is not waiting on the person — its old ask (still
+        // open in the chat) must not put it back in Needs you. The rest of
+        // its story (the card to open, whether it was answered) stays.
+        const { ask, ...rest } = mine;
+        Object.assign(job, rest);
+      } else {
+        Object.assign(job, mine);
+      }
     }
   } catch (err) {
     log.warn('homeroom-bot-tray', 'Could not read the requests\' threads', { userId, err: err.message });
