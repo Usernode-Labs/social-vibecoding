@@ -66,8 +66,8 @@ function installFrontendDependencies() {
   fs.writeFileSync(DEPENDENCY_MARKER, `${digest}\n`);
 }
 
-function runNode(script) {
-  execFileSync(process.execPath, [path.join(ROOT, script)], {
+function runNode(script, args = []) {
+  execFileSync(process.execPath, [path.join(ROOT, script), ...args], {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -103,11 +103,14 @@ if (prebuilt) {
 
 if (needsShell) {
   installFrontendDependencies();
-  runNode('frontend/scripts/build-shell.mjs');
+  // The tests read the document and never the bundle, so their preflight
+  // skips the Vite pass that builds it. A bundle already on disk keeps its
+  // old stamp, which is what makes a later runtime preflight rebuild it.
+  runNode('frontend/scripts/build-shell.mjs', htmlOnly ? ['--no-bundle'] : []);
 
   const builtHtmlStamp = readHtmlStamp(read(htmlPath) || '');
   const builtJsStamp = readJsStamp(read(jsPath) || '');
-  if (builtHtmlStamp !== stamp || builtJsStamp !== stamp) {
+  if (builtHtmlStamp !== stamp || (!htmlOnly && builtJsStamp !== stamp)) {
     throw new Error('[ensure-shell] shell build completed without the expected HTML/JS stamp');
   }
 } else {
