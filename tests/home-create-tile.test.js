@@ -351,9 +351,14 @@ test('the Show-all line carries the compact entry exactly when the tile is held 
   assert.match(entry[1], /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
   assert.doesNotMatch(entry[1], /\bhome-create-tile\b/,
     'not a tile of the grid canvas: the drag-time #app-list rules do not apply');
+  // #4936: while creation is open the entry is a filled primary button — the
+  // recipe `@/components/ui/button.tsx`'s default variant uses — not dim text.
+  assert.match(entry[1], /\bbg-violet-600\b/, 'the filled blue accent');
+  assert.match(entry[1], /\btext-white\b/, 'white ink on the filled button');
+  assert.doesNotMatch(entry[1], /border-dashed/, 'no dashed ring on the filled button');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
-  assert.match(html, /title="Start a new project"/);
+  assert.match(html, /title="Start a project: an app for you or for a community"/);
   assert.match(html, />New project</, 'the tile\'s own label');
   assert.doesNotMatch(html, /<button[^>]*\sdisabled/, 'never the disabled attribute');
 });
@@ -453,7 +458,7 @@ test('the tile draws both states, and never the disabled attribute', () => {
   assert.match(on, /id="home-create-tile"/);
   assert.match(on, />New project</, 'the create dialog\'s own title (communities, stage 4)');
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /title="Start a new project"/);
+  assert.match(on, /title="Start a project: an app for you or for a community"/);
   assert.doesNotMatch(on, /aria-label=/, 'its name is its visible label');
 
   const off = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: false } }));
