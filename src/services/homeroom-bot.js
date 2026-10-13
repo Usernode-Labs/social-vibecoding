@@ -4715,12 +4715,40 @@ function wakeBuilds() {
  * newest one), and recovery read the pause as "nobody wants this" and
  * destroyed the worker in silence. A turn record means something was
  * running: the bot follows it or hands its run back, never neither.
+ *
+ * R5: and so is a paused bot session whose live run is in its review
+ * (`bot_review_in_progress`, which server.js adoptOrphanWorker reads with
+ * the session). A review pauses its build's session between its turns, and
+ * a capture runs in the worker with no turn record; destroying that worker
+ * lost the capture, and with it the review (run four, 12 Oct 2026).
  */
 function isRecoveredBotSession(session) {
   return !!session
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
-    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
+    && (session.status === 'active'
+      || (session.status === 'paused' && (!!session.active_turn || session.bot_review_in_progress === true)));
+}
+
+// R5: whether the session `cs` is a live run's build in its review: the
+// column server.js adoptOrphanWorker reads with the session
+// (isRecoveredBotSession's `bot_review_in_progress`), written out there as a
+// static query; tests hold the two to the same text.
+const BOT_REVIEW_IN_PROGRESS_SQL = `EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+               WHERE r.build_session_id = cs.id AND r.mode = 'live'
+                 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+                 AND (r.review->>'state') IN ('reviewing', 'capturing')
+            )`;
+
+/**
+ * R5: whether restart recovery found a bot session's worker with no turn in
+ * flight while its live run is in its review: the worker is kept (a capture
+ * may be running in it) and the review carried on (server.js
+ * adoptBotOrphan). Pure.
+ */
+function isRecoveredBotReview(session) {
+  return isRecoveredBotSession(session) && !session.active_turn && session.bot_review_in_progress === true;
 }
 
 /**
@@ -5533,7 +5561,8 @@ const REVIEW_INTERRUPTED_WHY = 'the platform restarted during the review';
  * A review a restart cut short, kept where admins see it (#4210,
  * platform-incidents.js), as every other build a restart interrupts is.
  * `outcome` says what became of it: fix_kept, fix_rolled_back,
- * proposed_as_it_stood or not_open. Never counted as a resume
+ * proposed_as_it_stood, not_open, or review_carried_on (R5: the review went
+ * on from where it was cut). Never counted as a resume
  * (resumesOfRun counts 'resumed' alone). Never throws.
  */
 function noteReviewIncident(pool, { app, sessionId, plan, why, outcome }) {
@@ -5575,19 +5604,30 @@ async function checkRecoveredFix({ pool, app, repo, session, runId, reviewing, f
 // How long a review's state may go unchanged, with nothing in this process
 // running it and no turn on its session, before it counts as cut short by a
 // restart: past the longest step that saves nothing on the way (a capture).
+// R5: only for a state this process saved itself (its `leader` stamp,
+// bot-review.js PROCESS_ID), which something here should still be running.
+// A state any other process saved was left by a leader that is gone (one
+// leader runs the bot at a time, leadership.js), and is carried on at once.
 const INTERRUPTED_REVIEW_GRACE_MINUTES = 20;
+
+// The reviews finishInterruptedReviews is carrying on in this process: each
+// runs in the background (a review takes up to its budget), never inside the
+// loop's pass.
+const interruptedReviews = new Set();
 
 /**
  * First versions a restart caught in their review with no turn in flight (a
- * capture or a reviewer call: restart recovery follows only a turn): each is
- * proposed as it stands, through the same path restart recovery finishes a
- * live build by (completeRecoveredLive), its review recorded interrupted.
- * Each is finished in the background, holding its project's build slot as
- * resumeStalledLiveBuilds' do: a fix nothing saw boot is captured first
- * (checkRecoveredFix), minutes the bot's pass does not wait on. Resolves how
- * many it started. Never throws.
+ * capture or a reviewer call: restart recovery follows only a turn), or whose
+ * worker went with the restart: each is carried on from the state its review
+ * saved (R5), through the same path restart recovery finishes a live build
+ * by (completeRecoveredLive, which proposes it once the review is over, or as
+ * it stands past MAX_REVIEW_RESUMES restarts, a fix nothing saw boot captured
+ * first: checkRecoveredFix). Each runs in the background, holding its
+ * project's build slot as resumeStalledLiveBuilds' do. Resolves how many it
+ * started; with `wait`, once they are over. Nothing once shutdown has begun.
+ * Never throws.
  */
-async function finishInterruptedReviews(pool, config = {}, deps = {}) {
+async function finishInterruptedReviews(pool, config = {}, deps = {}, { wait = false } = {}) {
   // Nothing new once shutdown has begun: the next leader finds it again.
   if (refusingNew()) return 0;
   let rows = [];
@@ -5602,39 +5642,58 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}) {
           -- as long as one could plausibly be running (ABANDONED_LIVE_SQL's
           -- backstop): past a day, the review is proposed as it stands.
           AND (cs.active_turn IS NULL OR r.created_at < NOW() - INTERVAL '1 day')
-          AND COALESCE((r.review->>'updatedAt')::timestamptz, r.created_at) < NOW() - make_interval(mins => $1)
+          -- Left by another process (or one before the stamp): at once. Saved
+          -- by this one: once it has gone quiet for the grace.
+          AND (COALESCE(r.review->>'leader', '') <> $4
+            OR COALESCE((r.review->>'updatedAt')::timestamptz, r.created_at) < NOW() - make_interval(mins => $1))
           AND NOT (r.id = ANY($2::int[]))
           AND NOT (r.build_session_id = ANY($3::int[]))
         ORDER BY r.id
         LIMIT 10`,
-      [INTERRUPTED_REVIEW_GRACE_MINUTES, [...liveBuildsInFlight], [...pendingLive.keys(), ...recoveringLive]],
+      [INTERRUPTED_REVIEW_GRACE_MINUTES, [...liveBuildsInFlight], [...pendingLive.keys(), ...recoveringLive],
+        botReview().PROCESS_ID],
     ));
   } catch (err) {
     log.warn('homeroom-bot', 'Could not look for reviews a restart cut short', { err: err.message });
     return 0;
   }
   let started = 0;
+  const running = [];
   // The turn a restart cut short was the build's own (a fix turn of the
-  // review), which completeRecoveredLive proposes from what it committed.
+  // review), which completeRecoveredLive carries on from what it saved.
   const mode = 'build';
   for (const run of rows) {
+    if (refusingNew()) break;
     const sessionId = Number(run.build_session_id);
+    // Taken by restart recovery (adoptBotOrphan) since the query read it:
+    // checked and noted in one synchronous step, so neither can start it
+    // twice (completeRecoveredLive marks it recovering before it awaits).
+    if (pendingLive.has(sessionId) || recoveringLive.has(sessionId) || liveBuildsInFlight.has(Number(run.id))) continue;
     pendingLive.set(sessionId, {
       runId: Number(run.id), appId: Number(run.app_id), issueNumber: Number(run.issue_number),
       mode, lost: true, why: 'the platform restarted during its review', result: {},
     });
-    const finishing = holdLiveBuildDuringRecovery(pool, sessionId, completeRecoveredLive({ pool, config, sessionId, deps }))
-      .then((acted) => log.info('homeroom-bot', 'Finished a first version a restart caught in its review', {
-        runId: run.id, sessionId, acted,
-      }))
-      .catch((err) => log.warn('homeroom-bot', 'Could not finish a first version a restart caught in its review', {
-        runId: run.id, sessionId, err: err.message,
-      }))
-      .finally(() => stalledResumes.delete(finishing));
-    stalledResumes.add(finishing);
+    const resuming = holdLiveBuildDuringRecovery(pool, sessionId, completeRecoveredLive({ pool, config, sessionId, deps }))
+      .then((acted) => {
+        log.info('homeroom-bot', 'Finished a first version a restart caught in its review', {
+          runId: run.id, sessionId, acted,
+        });
+        return acted;
+      })
+      .catch((err) => {
+        log.warn('homeroom-bot', 'Could not finish a first version a restart caught in its review', {
+          runId: run.id, sessionId, err: err.message,
+        });
+        return null;
+      })
+      .finally(() => interruptedReviews.delete(resuming));
+    interruptedReviews.add(resuming);
+    running.push(resuming);
     started += 1;
   }
-  return started;
+  if (!wait) return started;
+  const outcomes = await Promise.all(running);
+  return outcomes.filter(Boolean).length;
 }
 
 /**
@@ -5659,25 +5718,44 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}) {
  * not start. Never throws: a review that cannot run leaves the build to be
  * proposed as it stands, as the live path's does.
  */
-async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, plan, costUsd, deps = {} }) {
+async function reviewRecoveredBuild({
+  pool, config, bot, app, repo, session, plan, costUsd, deps = {},
+  // R5: the saved state of a review a restart cut short, carried on rather
+  // than started (bot-review.js runReviewLoop's `resumeFrom`), and the fix
+  // turn restart recovery followed to its end (`recoveredFix`).
+  resumeFrom = null, recoveredFix = null,
+}) {
+  const resuming = !!resumeFrom;
   try {
     if (!repo || !session.branch_name) return null;
     const version = await runConfigVersion(pool, plan.runId);
     const recipe = version ? version.recipe : null;
-    if (!recipe || !botConfigs().reviews(recipe)) return null;
-    if (!(await isFirstVersionRequest(pool, app.id, plan.issueNumber))) return null;
+    // A review carried on is the one that started: its own reviewer and
+    // rounds (a capture-only one, or a complicated change's, included).
+    if (resuming) {
+      if (!resumeFrom.reviewer || resumeFrom.reviewer.maxRounds == null) return null;
+    } else {
+      if (!recipe || !botConfigs().reviews(recipe)) return null;
+      if (!(await isFirstVersionRequest(pool, app.id, plan.issueNumber))) return null;
+    }
     const snapshot = await snapshots.snapshotForRun(pool, plan.runId, 'build');
     const seed = snapshot && snapshot.texts ? String(snapshot.texts.seed || '') : '';
     if (!seed) {
-      log.warn('homeroom-bot', 'No build snapshot to review a first version a restart caught; proposing it as it stands', {
+      log.warn('homeroom-bot', resuming
+        ? 'No build snapshot to carry on a review a restart caught; proposing it as it stands'
+        : 'No build snapshot to review a first version a restart caught; proposing it as it stands', {
         runId: plan.runId, sessionId: session.id,
       });
       return null;
     }
-    const model = recipe.models.build;
     const settings = await readSettings(pool).catch(() => null);
     const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
-    const { turnBudgetMs } = buildBudgets(app, config, turnMs, { firstVersion: true });
+    const firstVersion = resuming ? await isFirstVersionRequest(pool, app.id, plan.issueNumber) : true;
+    const { turnBudgetMs } = buildBudgets(app, config, turnMs, { firstVersion });
+    // #4645: the requester's locale, for the review prompts' language rule,
+    // as the live path reads it.
+    const dm = deps.dm && typeof deps.dm.requesterOf === 'function' ? deps.dm : require('./homeroom-bot-dm');
+    const requester = await Promise.resolve().then(() => dm.requesterOf(pool, app.id, plan.issueNumber)).catch(() => null);
     const github = deps.github || require('./github');
     const turnDeps = {
       github,
@@ -5695,20 +5773,39 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
       [session.id],
     );
     if (!full) return null;
+    // The build's model runs its fix turns, as on the live path; a run built
+    // with no configuration (a later change's stage models) by the model its
+    // session ran.
+    const model = recipe ? recipe.models.build : (full.agent_model || null);
+    if (!model) return null;
     const readsImages = typeof deps.seesImages === 'boolean'
       ? deps.seesImages
       : await live.buildSeesImages({ pool, config, userId: bot.id, model });
-    await turnDeps.worker.ensureWorkerImage();
-    const containerName = await turnDeps.worker.ensureWorker(session.id, {
-      repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
-      temporary: true, onProgress: () => {},
-    });
+    // A review carried on makes its worker sure at its first step (a capture
+    // a restart left running is first looked for where it runs, which making
+    // the worker sure could replace); a review starting now makes it sure
+    // here, as before.
+    let containerName;
+    if (resuming) {
+      containerName = typeof turnDeps.worker.workerRuntimeName === 'function'
+        ? turnDeps.worker.workerRuntimeName(session.id) : null;
+    } else {
+      await turnDeps.worker.ensureWorkerImage();
+      containerName = await turnDeps.worker.ensureWorker(session.id, {
+        repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
+        temporary: true, onProgress: () => {},
+      });
+    }
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
-      deps: turnDeps, harness: live.recipeHarness(model, config), firstVersion: true,
+      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)),
+      firstVersion: true,
     });
-    log.info('homeroom-bot', 'Reviewing a first version a restart caught before proposing it', {
+    log.info('homeroom-bot', resuming
+      ? 'Carrying on a review a restart cut short'
+      : 'Reviewing a first version a restart caught before proposing it', {
       app: app.slug, issueNumber: plan.issueNumber, runId: plan.runId, sessionId: session.id,
+      ...(resuming ? { resumes: Number(resumeFrom.resumes) || 0, recoveredFix: !!recoveredFix } : {}),
     });
     // Under way in this process from before its first step, so the sweep
     // for lost live builds cannot take it while the slot is being held.
@@ -5718,7 +5815,7 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
         pool, config, bot, app, repo, session: full, branchName: session.branch_name, seed,
         spec: session.spec_md || null,
         review: {
-          reviewer: recipe.reviewer,
+          reviewer: resuming ? resumeFrom.reviewer : recipe.reviewer,
           owner: { botRunId: plan.runId },
           onState: (state) => recordReviewState(pool, plan.runId, state),
           budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
@@ -5728,10 +5825,16 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
           runId: plan.runId, botId: bot.id, appId: app.id, issueNumber: plan.issueNumber, github, repo,
         }),
         onProgress: null,
-        start: {
+        locale: requester?.locale || null,
+        start: resuming ? {
+          sha: resumeFrom.round0?.sha || resumeFrom.finalSha || null,
+          commits: Number(resumeFrom.round0?.commits ?? resumeFrom.finalCommits) || 0,
+          costUsd, activeMs: null, buildText: resumeFrom.buildText || null,
+        } : {
           sha: plan.result?.sha || null, commits: Number(plan.result?.ahead) || 0,
           costUsd, activeMs: null, buildText: plan.result?.lastResultText || null,
         },
+        ...(resuming ? { resumeFrom, recoveredFix } : {}),
       });
       // Handled where it is awaited below: holding the slot reads the run
       // first, and a review that fails at once must not reject unhandled
@@ -5742,7 +5845,83 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
       liveBuildsInFlight.delete(Number(plan.runId));
     }
   } catch (err) {
-    log.warn('homeroom-bot', 'Could not review a first version a restart caught; proposing it as it stands', {
+    log.warn('homeroom-bot', resuming
+      ? 'Could not carry on a review a restart cut short; proposing it as it stands'
+      : 'Could not review a first version a restart caught; proposing it as it stands', {
+      runId: plan.runId, sessionId: session.id, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * What the fix turn a review dispatched at `since` (its state's `inFlight.at`)
+ * cost and took, from the session's turn ledger: every turn started since
+ * then is that fix turn's (a review runs one turn at a time). Nulls when it
+ * cannot be read. Never throws.
+ */
+async function fixTurnUsage(pool, sessionId, since) {
+  if (!since || !Number.isFinite(Date.parse(since))) return { costUsd: null, ms: null };
+  try {
+    const { rows: [r] = [] } = await pool.query(
+      `SELECT SUM(estimated_cost_usd)::float8 AS cost,
+              (EXTRACT(EPOCH FROM MAX(COALESCE(completed_at, NOW())) - MIN(started_at)) * 1000)::float8 AS ms
+         FROM agent_turns WHERE session_id = $1 AND started_at >= $2::timestamptz`,
+      [Number(sessionId), new Date(since).toISOString()],
+    );
+    const cost = Number(r?.cost);
+    const ms = Number(r?.ms);
+    return { costUsd: Number.isFinite(cost) ? cost : null, ms: Number.isFinite(ms) ? Math.max(0, Math.round(ms)) : null };
+  } catch {
+    return { costUsd: null, ms: null };
+  }
+}
+
+/**
+ * R5: carry on a review a restart cut short, from the state it saved
+ * (bot-review.js runReviewLoop's `resumeFrom`), through the same runner a
+ * review after a restart starts with (reviewRecoveredBuild), with what
+ * recovery found for its session: the fix turn the review was waiting on,
+ * followed to its end (`recoveredFix`), or nothing (it was in a capture or a
+ * reviewer call, or its turn was lost, and the step is taken again). What
+ * recovery noted is the review's from here (cleared), so a later restart
+ * never records the same fix turn on a later round.
+ *
+ * Resolves the review's final state, or null when it is not carried on: it
+ * has been through MAX_REVIEW_RESUMES restarts already, or it could not
+ * start; the caller then proposes what is committed as it stands, as before.
+ * Never throws.
+ */
+async function resumeInterruptedReview({ pool, config, bot, app, repo, session, plan, reviewing, costUsd, deps = {} }) {
+  try {
+    const { configVersionId: _v, ...state } = reviewing || {};
+    if (!botReview().canResume(state)) {
+      log.warn('homeroom-bot', 'Restarts caught a review too many times; proposing it as it stands', {
+        runId: plan.runId, sessionId: session.id, resumes: Number(state.resumes) || 0,
+      });
+      return null;
+    }
+    // The fix turn the review was waiting on, when recovery followed one to
+    // its end: its round has a `fix` verdict and no fix yet, and the turn
+    // was dispatched (its `inFlight` says so, or a review saved before
+    // `inFlight` existed was waiting on it). Not a commit a round already
+    // recorded: that one is spent.
+    const last = Array.isArray(state.rounds) && state.rounds.length ? state.rounds[state.rounds.length - 1] : null;
+    const awaitingFix = !!last && last.verdict === 'fix' && !last.fix
+      && (state.inFlight ? state.inFlight.step === 'fix' : true);
+    const spent = new Set([state.round0?.sha, ...(state.rounds || []).map((r) => r?.fix?.sha)].filter(Boolean));
+    let recoveredFix = null;
+    if (awaitingFix && !plan.lost && plan.mode === BUILD_TURN.mode && plan.result
+      && !(plan.result.sha && spent.has(plan.result.sha))) {
+      const usage = await fixTurnUsage(pool, session.id, state.inFlight?.at || null);
+      recoveredFix = botReview().recoveredFixOf({ result: plan.result, timedOut: !!plan.timedOut, ...usage });
+    }
+    await checkpoint.clearRecovered(pool, plan.runId, session.id);
+    return await reviewRecoveredBuild({
+      pool, config, bot, app, repo, session, plan, costUsd, deps, resumeFrom: state, recoveredFix,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not carry on a review a restart cut short; proposing it as it stands', {
       runId: plan.runId, sessionId: session.id, err: err.message,
     });
     return null;
@@ -5774,6 +5953,14 @@ async function reviewRecoveredBuild({ pool, config, bot, app, repo, session, pla
  * Never throws; returns what it did, or null when nothing was noted.
  */
 async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
+  // R5: finished once. A review carried on after a restart can be reached by
+  // two paths at boot (the worker's adoption, server.js adoptBotOrphan, and
+  // the sweep finishInterruptedReviews); whichever comes second finds it
+  // under way here, and what it noted is covered by the one running.
+  if (recoveringLive.has(Number(sessionId))) {
+    pendingLive.delete(Number(sessionId));
+    return null;
+  }
   const shadow = pendingShadowNudges.get(Number(sessionId));
   if (shadow) {
     pendingShadowNudges.delete(Number(sessionId));
@@ -5817,11 +6004,13 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
     const archive = () => putAwayRecoveredSession(pool, session, { archive: true });
 
     // A first version in its review (bot-review.js) when the restart came:
-    // its build landed, so it is proposed as it stands, its last committed
-    // state (a fix nothing saw boot captured once first: checkRecoveredFix),
-    // and the review is recorded as interrupted, for the run and for admins
-    // (noteReviewIncident). A fix turn cut short left nothing (a failed turn
-    // is neither committed nor pushed).
+    // its build landed, so the review is carried on from the state it saved
+    // (R5: resumeInterruptedReview, below), and only past MAX_REVIEW_RESUMES
+    // restarts, or when it cannot be carried on, is it proposed as it stands,
+    // its last committed state (a fix nothing saw boot captured once first:
+    // checkRecoveredFix). Either way the review is recorded as interrupted,
+    // for the run and for admins (noteReviewIncident). A fix turn cut short
+    // left nothing (a failed turn is neither committed nor pushed).
     const reviewing = plan.mode !== 'scout' ? await reviewInProgress(pool, plan.runId) : null;
     // Where the build was between its steps (homeroom-bot-checkpoint.js).
     // One whose build had pushed is proposed from what it pushed (reviewed
@@ -6030,6 +6219,9 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
     // The review recovery ran itself, when the restart caught the build turn
     // rather than the review (reviewRecoveredBuild).
     let reviewedNow = null;
+    // R5: the review a restart cut short, carried on to its end
+    // (resumeInterruptedReview), or null when it was not.
+    let resumed = null;
     // A review fix a restart caught that one capture then saw boot
     // (checkRecoveredFix): what is proposed, compared with round 0.
     let keptFixCapture = null;
@@ -6051,6 +6243,23 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
       } : {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
+      // R5: a review the restart cut short carries on from its saved state,
+      // as if the restart had not come: the loop takes the step that was cut
+      // (a capture harvested or taken again, a reviewer call asked again, a
+      // fix turn recorded from what recovery followed it to, or run again),
+      // and puts the branch where it ends. Not one already up for a vote.
+      if (reviewing && !adopted) {
+        resumed = await resumeInterruptedReview({
+          pool, config, bot, app, repo, session, plan, reviewing, costUsd, deps,
+        });
+        if (resumed) {
+          if (resumed.finalSha) pushed.sha = resumed.finalSha;
+          if (Number(resumed.finalCommits) > 0) pushed.commits = Number(resumed.finalCommits);
+          await checkpoint.save(pool, plan.runId, sessionId, 'reviewed', {
+            reviewed: { finalSha: pushed.sha, finalCommits: pushed.commits, costUsd: Number(resumed.costUsd) || 0 },
+          });
+        }
+      }
       // A first version whose own build turn the restart caught is reviewed
       // now, as the live path would have reviewed it, before it is proposed
       // (reviewRecoveredBuild). The loop puts the branch where it ends and
@@ -6070,46 +6279,52 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
           });
         }
       }
-      // A fix no capture saw boot is not what is proposed unchecked
-      // (bot-review.js runReviewLoop's rule). It is captured once now
-      // (checkRecoveredFix): kept when it boots, and only otherwise, or when
-      // it cannot be captured, the branch goes back to the last commit that
-      // booted. Until 13 Oct 2026 every such fix was rolled back unlooked
-      // at: run 1746's fixed the broken form the reviewer had flagged, and
-      // its checks then failed on that same form.
-      let rolledBack = null;
-      let fixCapture = null;
-      const booted = reviewing?.lastBooted?.sha || null;
-      if (booted && pushed.sha && pushed.sha !== booted && repo) {
-        fixCapture = await checkRecoveredFix({
-          pool, app, repo, session, runId: plan.runId, reviewing, fixLanded, deps,
-        });
-        if (fixCapture.ok && fixCapture.capture?.booted === true) {
-          log.info('homeroom-bot', 'A review fix a restart caught boots; proposing it', {
-            runId: plan.runId, sessionId, sha: pushed.sha,
+      // A review that was not carried on (past MAX_REVIEW_RESUMES restarts,
+      // or it could not start) is proposed as it stands. A fix no capture saw
+      // boot is not what is proposed unchecked (bot-review.js runReviewLoop's
+      // rule). It is captured once now (checkRecoveredFix): kept when it
+      // boots, and only otherwise, or when it cannot be captured, the branch
+      // goes back to the last commit that booted. Until 13 Oct 2026 every such
+      // fix was rolled back unlooked at: run 1746's fixed the broken form the
+      // reviewer had flagged, and its checks then failed on that same form.
+      if (reviewing && !resumed) {
+        let rolledBack = null;
+        let fixCapture = null;
+        const booted = reviewing?.lastBooted?.sha || null;
+        if (booted && pushed.sha && pushed.sha !== booted && repo) {
+          fixCapture = await checkRecoveredFix({
+            pool, app, repo, session, runId: plan.runId, reviewing, fixLanded, deps,
           });
-        } else {
-          const why = fixCapture.ok ? 'did not boot after the restart' : 'could not be captured after the restart';
-          try {
-            await live.rollbackReviewBranch({ github, repo, branchName: session.branch_name, sha: booted });
-            rolledBack = { from: pushed.sha, to: booted, why };
-            pushed.sha = booted;
-            if (Number(reviewing.lastBooted.commits) > 0) pushed.commits = Number(reviewing.lastBooted.commits);
-          } catch (err) {
-            log.warn('homeroom-bot', 'Could not roll an unchecked review fix back; proposing it as it stands', {
-              runId: plan.runId, sessionId, err: err.message,
+          if (fixCapture.ok && fixCapture.capture?.booted === true) {
+            log.info('homeroom-bot', 'A review fix a restart caught boots; proposing it', {
+              runId: plan.runId, sessionId, sha: pushed.sha,
             });
+          } else {
+            const why = fixCapture.ok ? 'did not boot after the restart' : 'could not be captured after the restart';
+            try {
+              await live.rollbackReviewBranch({ github, repo, branchName: session.branch_name, sha: booted });
+              rolledBack = { from: pushed.sha, to: booted, why };
+              pushed.sha = booted;
+              if (Number(reviewing.lastBooted.commits) > 0) pushed.commits = Number(reviewing.lastBooted.commits);
+            } catch (err) {
+              log.warn('homeroom-bot', 'Could not roll an unchecked review fix back; proposing it as it stands', {
+                runId: plan.runId, sessionId, err: err.message,
+              });
+            }
           }
         }
-      }
-      const keptFix = !!fixCapture && !rolledBack && fixCapture.ok && fixCapture.capture?.booted === true;
-      if (reviewing) {
+        const keptFix = !!fixCapture && !rolledBack && fixCapture.ok && fixCapture.capture?.booted === true;
         await noteReviewInterrupted(pool, plan.runId, reviewing, pushed, rolledBack, keptFix ? fixCapture.capture : null);
         await noteReviewIncident(pool, {
           app, sessionId, plan, why: plan.why || REVIEW_INTERRUPTED_WHY,
           outcome: keptFix ? 'fix_kept' : rolledBack ? 'fix_rolled_back' : 'proposed_as_it_stood',
         });
         if (keptFix) keptFixCapture = fixCapture.capture;
+      } else if (reviewing && resumed) {
+        // Carried on to its end: still a review a restart cut short, for admins.
+        await noteReviewIncident(pool, {
+          app, sessionId, plan, why: plan.why || REVIEW_INTERRUPTED_WHY, outcome: 'review_carried_on',
+        });
       }
       // WP1 (#2): not proposed once a proposal of the bot's answers the
       // request, or it was closed, as the live path does (whyNotBuild).
@@ -6181,6 +6396,14 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
     if (reviewedNow && Number(reviewedNow.costUsd) > 0) {
       built.costUsd = (Number(built.costUsd) || 0) + Number(reviewedNow.costUsd);
     }
+    // R5: a review carried on: the session's ledger now holds every turn (the
+    // fix turn recovery followed, and those the review ran since), and its
+    // state every reviewer call, before the restart and since, each once.
+    // Debited for what the debit above did not cover (debitRecovered).
+    if (resumed) {
+      built.costUsd = (Number(await sessionCostUsd(pool, session.id)) || 0) + botReview().reviewerCost(resumed);
+      await debitRecovered(pool, session, built.costUsd, deps, plan.runId);
+    }
     // The configuration's results: the current one's from the state it was
     // proposed in (no final screenshots, so no pair to pick, unless a kept
     // fix's capture saw that state boot: checkRecoveredFix), and a derived
@@ -6197,9 +6420,10 @@ async function finishRecoveredLive({ pool, config, sessionId, plan, deps }) {
         botRunId: plan.runId, version,
         // Its real time, as a side build's is counted; to the review's last
         // step when the restart left the review with nothing running.
-        activeMs: await recoveredBuildMs(pool, sessionId, { until: plan.lost ? reviewing?.updatedAt : null }),
-        built: reviewing ? { ...built, review: { ...reviewing, finalCapture: keptFixCapture } }
-          : reviewedNow ? { ...built, review: reviewedNow } : built,
+        activeMs: await recoveredBuildMs(pool, sessionId, { until: plan.lost && !resumed ? reviewing?.updatedAt : null }),
+        built: resumed ? { ...built, review: resumed }
+          : reviewing ? { ...built, review: { ...reviewing, finalCapture: keptFixCapture } }
+            : reviewedNow ? { ...built, review: reviewedNow } : built,
       });
     }
     const acted = await announceBuilt({
@@ -10392,10 +10616,11 @@ async function runOnce(pool, config, deps = {}) {
     // cadence: it only has to be noticed, not raced.
     if (now - lastLiveSweepAt >= REFRESH_INTERVAL_MS) {
       lastLiveSweepAt = now;
-      // A first version a restart caught in its review is proposed as it
-      // stands, before anything could call its build lost.
-      const reviewsFinished = await finishInterruptedReviews(pool, config, deps);
-      if (reviewsFinished) out.reviewsFinished = reviewsFinished;
+      // A first version a restart caught in its review is carried on from
+      // where its review was (R5), in the background, before anything could
+      // call its build lost.
+      const reviewsResumed = await finishInterruptedReviews(pool, config, deps);
+      if (reviewsResumed) out.reviewsResumed = reviewsResumed;
       // And one a restart left between its other steps carries on from
       // where its checkpoint says.
       const resumedLive = await resumeStalledLiveBuilds(pool, config, deps);
@@ -11562,6 +11787,8 @@ module.exports = {
   replyFailedWhy,
   PLATFORM_BUILD_TIME_FACTOR,
   isRecoveredBotSession,
+  isRecoveredBotReview,
+  BOT_REVIEW_IN_PROGRESS_SQL,
   settleReapedTurn,
   completeRecoveredLive,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
@@ -11686,7 +11913,7 @@ module.exports = {
     liveBuildsInFlight.clear();
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
-    pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear();
+    pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear(); interruptedReviews.clear();
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);
@@ -11697,7 +11924,8 @@ module.exports = {
     await Promise.all([...buildsInFlight.values()].map((b) => b.promise));
   },
   _buildsInFlightForTests() { return [...buildsInFlight.keys()]; },
-  async _awaitStalledResumesForTests() { await Promise.all([...stalledResumes]); },
+  async _awaitStalledResumesForTests() { await Promise.all([...stalledResumes, ...interruptedReviews]); },
+  async _awaitInterruptedReviewsForTests() { await Promise.all([...interruptedReviews]); },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
   _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },

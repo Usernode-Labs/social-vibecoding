@@ -473,16 +473,17 @@ test('a restart between two steps of a bot build carries it on from where it was
     const { build_session_id: sessionId } = await runRow(runId);
     // A review round had pushed a fix (r1) and seen it boot when the restart
     // came, during the next round's capture (bot-review.js saves each round).
+    // R5: one restarts have caught as many times as a review may be carried
+    // on through (MAX_REVIEW_RESUMES) is proposed where it got to.
     const r1 = 'c'.repeat(40);
     const updatedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     await pool.query('UPDATE homeroom_bot_runs SET review = $2::jsonb WHERE id = $1', [runId, JSON.stringify({
       state: 'capturing', round: 2, finalSha: r1, finalCommits: 2, lastBooted: { sha: r1, commits: 2 },
-      buildText: SAID, updatedAt, rounds: [],
+      buildText: SAID, updatedAt, rounds: [], resumes: require('../src/services/bot-review').MAX_REVIEW_RESUMES,
     })]);
     assert.equal(await sweepLater(runId), 0, 'a review in progress is not the stalled-step sweep\'s');
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, {}), 1);
     // Finished in the background, holding its project's build slot.
-    await bot._awaitStalledResumesForTests();
+    assert.equal(await bot.finishInterruptedReviews(pool, {}, {}, { wait: true }), 1);
     const row = await runRow(runId);
     assert.equal(row.build_ok, true);
     assert.equal(row.build_sha, r1, 'where the review got to');

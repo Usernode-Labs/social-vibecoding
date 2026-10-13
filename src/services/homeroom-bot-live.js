@@ -2214,9 +2214,42 @@ function firstVersionDesignLines(starter = null) {
   ];
 }
 
+// L2: whether a bot build or fix turn is held to the app's own declared
+// checks: not in the platform's own repository, which the check script does
+// not boot, and not when HOMEROOM_BOT_CHECKS_GATE=0 (an off switch, should
+// the second copy of the app a turn boots prove too much for its worker).
+function appChecksOn(platformRepo, env = process.env) {
+  return !platformRepo && String(env.HOMEROOM_BOT_CHECKS_GATE ?? '').trim() !== '0';
+}
+
+// R5: whether a review's captures run detached in the worker (bench/capture.js
+// runDetached), unless HOMEROOM_BOT_DETACHED_CAPTURE=0 puts them back on one
+// attached exec, which a restart loses.
+function detachedCaptureOn(env = process.env) {
+  return String(env.HOMEROOM_BOT_DETACHED_CAPTURE ?? '').trim() !== '0';
+}
+
+// L2: the app's own declared checks, run before a bot build or fix turn ends
+// (worker.js writeAppCheck, build-stop-hook.js's checks gate): how the
+// turn runs them itself, and that the platform runs them too.
+function appChecksLines() {
+  const { APP_CHECK_COMMAND_PATH } = require('./worker');
+  return [
+    '',
+    'THE APP\'S OWN CHECKS. Every check dapp.json declares runs on the proposal, signed in, and a failing one blocks its',
+    `merge. Before you finish, run \`sh ${APP_CHECK_COMMAND_PATH}\` from the repository root: it boots a fresh copy of the`,
+    'app on a port and a database of its own, signed in as the proposal\'s checks are (a plain in-loop launch is signed out,',
+    'so its pages are not what the checks see), runs every declared check and prints each result. Fix what fails, in the',
+    'app, and run it again. When you try to finish, the platform may run it too and send you back while a check fails.',
+  ];
+}
+
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // L2: the turn's runner writes the app's check command (buildTurnRunner
+  // `checksGate`), so the prompt says how to run it.
+  appChecks = false,
   // A first version whose configuration has a reviewer (bot-review.js): the
   // review does the visual sweep, so the build checks its main flow once.
   reviewed = false,
@@ -2263,6 +2296,7 @@ function buildPrompt({
     ...(platformRepo ? PLATFORM_TEST_NOTE : []),
     ...time,
     ...browserLines({ readsImages, clocked: time.length > 0, reviewed }),
+    ...(appChecks ? appChecksLines() : []),
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
@@ -2909,6 +2943,11 @@ async function waitOutShotsRun(sessionId, deps = {}) {
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
+  // L2: hold each turn to the app's own declared checks before it ends
+  // (appChecksLines; worker.js writeAppCheck and build-stop-hook.js's checks
+  // gate). Not for the platform's own repository, which the check script
+  // does not boot.
+  checksGate = false,
   // A first version's build and its review fixes: the worker loads only the
   // tools one uses (worker.js execInWorker buildProfile).
   firstVersion = false,
@@ -2921,6 +2960,19 @@ function buildTurnRunner({
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
     const telemetry = turnTelemetry || runnerTelemetry;
+    // L2: the check command, written fresh for this turn (the platform's
+    // current script); a write that fails runs the turn without the gate.
+    let gate = null;
+    if (checksGate && typeof worker.writeAppCheck === 'function') {
+      try {
+        await worker.writeAppCheck(session.id, { source: require('./bench/capture').scriptSource(), appId: session.app_id });
+        gate = { deadlineMs: null };
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not write the app\'s check command; this turn runs without the checks gate', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+    }
     // #4575: before & after shots on this session hold it from their first
     // build until their agent finishes, but write no turn record until they
     // dispatch. Let a run that is under way finish first, as the Mayor's
@@ -2929,6 +2981,8 @@ function buildTurnRunner({
     await waitOutShotsRun(session.id, deps);
     let turnStopped = false;
     let stopping = null;
+    // The gate's deadline is the turn's own clock, which starts here.
+    if (gate) gate.deadlineMs = Date.now() + budgetMs;
     const timer = setTimeout(() => {
       turnStopped = true;
       stopping = stopOnClock(pool, worker, session.id).catch(() => {});
@@ -2973,6 +3027,7 @@ function buildTurnRunner({
           // pays for another capture and review. The spec, triage and
           // follow-up turns run elsewhere and never ask for it.
           stopGuard: true,
+          ...(gate ? { checksGate: gate } : {}),
           ...(firstVersion ? { buildProfile: 'first_version' } : {}),
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
@@ -3352,7 +3407,8 @@ async function buildAndPropose({
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
-    harness: buildHarness, telemetry, onProgress, firstVersion,
+    harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo),
+    firstVersion,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3363,6 +3419,7 @@ async function buildAndPropose({
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
+    appChecks: appChecksOn(platformRepo),
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -3632,21 +3689,37 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
  * ms }; a worker that will not start is the latter, and the capture step's
  * own failure is thrown, as the loop has always handled it.
  */
-async function captureBuildState({ pool, worker, repo, app, session, branchName, owner = {}, index, captureRound = null }) {
+async function captureBuildState({
+  pool, worker, repo, app, session, branchName, owner = {}, index, captureRound = null,
+  // R5: the review loop's captures run detached in the worker, the capture's
+  // id saved on the review state before it starts (`onStarted`), so a restart
+  // in the middle of it harvests it (`prior`) rather than losing it. One a
+  // restart left running is looked for where it runs before anything makes
+  // the worker sure: a new worker image would replace the worker, and the
+  // capture with it. HOMEROOM_BOT_DETACHED_CAPTURE=0 keeps them attached.
+  detached = false, prior = null, onStarted = null,
+}) {
   const t0 = Date.now();
-  let containerName;
-  try {
+  const ensure = async () => {
     await worker.ensureWorkerImage();
-    containerName = await worker.ensureWorker(session.id, {
+    return worker.ensureWorker(session.id, {
       repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
     });
-  } catch (err) {
-    return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+  };
+  const detach = detached && detachedCaptureOn();
+  let containerName = null;
+  if (!detach || !prior?.id) {
+    try {
+      containerName = await ensure();
+    } catch (err) {
+      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    }
   }
   const step = captureRound || ((args) => require('./bench/capture').captureTrial(args));
   const out = await step({
     pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
     store: (kept) => require('./bot-review').storeRoundShots(pool, { ...owner, round: index }, kept),
+    detached: detach ? { sessionId: session.id, prior, onStarted, ensure } : null,
   });
   return { ...out, ms: Date.now() - t0 };
 }
@@ -3667,22 +3740,45 @@ async function reviewLanded({
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
   // #4645: the requester's locale, for the review prompts' language rule.
   locale = null,
+  // R5: a review a restart cut short, carried on from its saved state, and
+  // the fix turn restart recovery followed to its end (bot-review.js
+  // runReviewLoop's `resumeFrom` and `recoveredFix`).
+  resumeFrom = null, recoveredFix = null,
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
-  const reviewer = review.reviewer;
+  const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
   const owner = review.owner || {};
-  const capture = (index) => captureBuildState({
+  const ensure = async () => {
+    await worker.ensureWorkerImage();
+    return worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
+    });
+  };
+  // R5: each round's capture runs detached in the build's worker
+  // (captureBuildState's `detached`), so a restart in the middle of it
+  // harvests it (`prior`) rather than losing it.
+  const capture = (index, { prior = null, onStarted = null } = {}) => captureBuildState({
     pool, worker, repo, app, session, branchName, owner, index, captureRound: deps.captureRound || null,
+    detached: true, prior, onStarted,
   });
   const fix = async ({ round, issues, budgetMs }) => {
     const t0 = Date.now();
+    // Made sure first: a review carried on after a restart may reach its
+    // fix with no capture before it in this process.
+    try {
+      await ensure();
+    } catch (err) {
+      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    }
     worker.clearPendingStop?.(session.id);
+    const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
+        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: appChecksOn(platformRepo),
       }),
-      budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
+      budgetMs: fixBudgetMs,
       resumeThreadId: null,
       commitMsg: FIX_COMMIT_MESSAGES.review(round),
       progress: lastActivity(),
@@ -3703,6 +3799,8 @@ async function reviewLanded({
     return await botReview.runReviewLoop({
       reviewer,
       start,
+      resumeFrom,
+      recoveredFix,
       capture,
       review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
         pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
@@ -3788,6 +3886,9 @@ module.exports = {
   revisionDesignText,
   FIRST_VERSION_DESIGN_LINES,
   FIRST_VERSION_PROGRESS_LINES,
+  appChecksLines,
+  appChecksOn,
+  detachedCaptureOn,
   guidanceLines,
   CONTENT_RULES_SLUG,
   REQUEST_IS_DATA_LINES,

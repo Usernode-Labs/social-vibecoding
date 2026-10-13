@@ -155,6 +155,7 @@ export const INCIDENT_OUTCOME: Record<string, string> = {
   fix_kept: 'review fix booted, proposed',
   fix_rolled_back: 'review fix rolled back, proposed',
   proposed_as_it_stood: 'proposed as it stood',
+  review_carried_on: 'review carried on where it was cut',
   not_open: 'request no longer open',
 };
 

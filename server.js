@@ -3085,6 +3085,19 @@ async function adoptBotOrphan({
     await bot.completeRecoveredLive({ pool, config, sessionId });
     return;
   }
+  // R5: a live first version in its review, between its turns (a capture,
+  // which runs detached in this worker, or a reviewer call). The worker is
+  // kept, so its capture is harvested rather than lost, and the review is
+  // carried on from the state it saved (homeroom-bot.js finishRecoveredLive).
+  if (containerState === 'running' && bot.isRecoveredBotReview(session)) {
+    log.info('server', 'Adopting a Homeroom bot worker whose first version is in its review', {
+      sessionId, containerName,
+    });
+    worker.adoptWarmWorker(sessionId, containerName);
+    await bot.abandonRecoveredTurn({ pool, session, why: 'the platform restarted during its review' });
+    await bot.completeRecoveredLive({ pool, config, sessionId });
+    return;
+  }
   if (activeTurn) {
     const cleanupArgs = turnCleanupArgs(activeTurn);
     recoveryRetry.requireDurableTurnCleanup(
@@ -3111,9 +3124,19 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // #896: app_self_hosted rides along so the recovered turn's Mayor
     // wrap-up gets the same system prompt a live turn would (the
     // self-hosted block changes what the Mayor is allowed to say).
+    // R5: and whether the session's live run is in its review, which a
+    // paused bot session's worker may be capturing for with no turn in
+    // flight (homeroom-bot.js isRecoveredBotSession; the same condition as
+    // its BOT_REVIEW_IN_PROGRESS_SQL, which tests hold this to).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
-            u.is_synthetic AS user_is_synthetic
+            u.is_synthetic AS user_is_synthetic,
+            EXISTS (
+              SELECT 1 FROM homeroom_bot_runs r
+               WHERE r.build_session_id = cs.id AND r.mode = 'live'
+                 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+                 AND (r.review->>'state') IN ('reviewing', 'capturing')
+            ) AS bot_review_in_progress
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id

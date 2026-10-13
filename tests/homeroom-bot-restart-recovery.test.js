@@ -209,6 +209,36 @@ test('a bot session paused with a turn record is the bot\'s; one paused with non
     'a person\'s paused session keeps its own rule');
 });
 
+// R5: a first version in its review pauses its build's session between its
+// turns, and its capture runs in the worker with no turn record. Recovery
+// destroyed that worker as one at rest (adoptOrphanWorker), losing the
+// capture and the review with it.
+
+test('R5: a paused bot session whose live run is in its review is the bot\'s, and its worker is kept', async () => {
+  const reviewing = botSession({ status: 'paused', active_turn: null, bot_review_in_progress: true });
+  assert.equal(bot.isRecoveredBotSession(reviewing), true);
+  assert.equal(bot.isRecoveredBotReview(reviewing), true);
+  assert.equal(bot.isRecoveredBotReview(botSession({ status: 'paused' })), false, 'a turn in flight is followed as any is');
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'paused', active_turn: null, bot_review_in_progress: false })), false);
+  assert.equal(bot.isRecoveredBotReview(botSession({ status: 'paused', active_turn: null, bot_review_in_progress: true, username: 'alice', user_is_synthetic: false })), false,
+    'a person\'s session keeps its own rule');
+
+  const pool = makePool({ session: reviewing });
+  await adopt(pool, reviewing, 'running');
+  assert.ok(workerCalls.some((c) => c[0] === 'adoptWarmWorker' && c[1] === reviewing.id), 'adopted, so its capture can be harvested');
+  assert.ok(!workerCalls.some((c) => c[0] === 'destroyWorker'), 'never destroyed');
+  assert.ok(!workerCalls.some((c) => c[0] === 'resume'), 'no journal to follow');
+  // The same session with its worker gone is handed over as before.
+  workerCalls.length = 0;
+  await adopt(makePool({ session: reviewing }), reviewing, 'exited');
+  assert.ok(workerCalls.some((c) => c[0] === 'destroyWorker'));
+  // The read of the session says whether its run is in its review, in the
+  // words homeroom-bot.js gives it.
+  const flat = (x) => x.replace(/\s+/g, ' ').trim();
+  const src = flat(require('node:fs').readFileSync(require.resolve('../server'), 'utf8'));
+  assert.ok(src.includes(`${flat(bot.BOT_REVIEW_IN_PROGRESS_SQL)} AS bot_review_in_progress`));
+});
+
 test('a build whose session was paused under it is followed and recorded, not destroyed in silence', async () => {
   journalTail = async () => ({ pushOk: true, ahead: 1, sha: 'c'.repeat(40), exitCode: 0 });
   const session = botSession({ status: 'paused' });

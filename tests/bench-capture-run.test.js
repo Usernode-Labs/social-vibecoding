@@ -86,6 +86,10 @@ test('the screenshot step boots today\'s Empty starter and takes and measures it
     fs.mkdirSync(path.dirname(path.join(dir, f.path)), { recursive: true });
     fs.writeFileSync(path.join(dir, f.path), f.content);
   }
+  // L2: one declared check, which the step runs signed in beside the screenshots.
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'dapp.json'), 'utf8'));
+  manifest.tests = [{ name: 'the starter loads', path: '/', expectSelector: 'body' }];
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify(manifest, null, 2));
   fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'), 'dir');
   for (const args of [['init', '-q'], ['add', '-A'], ['-c', 'user.email=bench@example.invalid', '-c', 'user.name=bench', 'commit', '-qm', 'starter']]) {
     spawnSync('git', args, { cwd: dir });
@@ -137,6 +141,9 @@ test('the screenshot step boots today\'s Empty starter and takes and measures it
   ]);
   for (const a of result.primaryAction) assert.match(a.skipped, /^no clear primary action: no marked control/);
   assert.equal(capture.summarize(result, kept, dropped).primaryAction.length, 3);
+  // Its declared check passed, signed in, as a proposal's would.
+  assert.deepEqual([result.declaredChecks.total, result.declaredChecks.ran, result.declaredChecks.failed.length], [1, 1, 0],
+    JSON.stringify(result.declaredChecks));
   for (const s of kept) {
     assert.deepEqual([s.width, s.height], s.viewport === 'phone' ? [390, 844] : [1280, 800], s.id);
     assert.equal(s.status, 200, `${s.id} is the app, not the "open in Homeroom" page an unsigned visit gets`);
@@ -167,6 +174,69 @@ test('the screenshot step boots today\'s Empty starter and takes and measures it
   assert.equal(result.tells.uppercaseEyebrows.count, 0);
   assert.equal(result.tells.hexColours.count, 0);
   assert.ok(Date.now() - started < 170000);
+});
+
+// L2: the app's own declared checks, run on the copy the step booted, signed
+// in, as a proposal's checks run them: in the review's captures, and alone
+// (BENCH_CAPTURE_MODE=checks) for the bot's build and fix turns' check
+// command (worker.js writeAppCheck). The starter declares none, so this
+// one declares a check it passes and one it cannot.
+test('the step runs the app\'s declared checks signed in, and alone in checks mode, with an exit code an agent can read', { timeout: 175000 }, async (t) => {
+  const pre = await prerequisites();
+  if (pre.skip) { t.skip(pre.skip); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-checks-'));
+  const db = `bench_checks_${crypto.randomBytes(5).toString('hex')}`;
+  const dbUrl = new URL(pre.dsn); dbUrl.pathname = `/${db}`;
+  const assets = await assetServer();
+  t.after(() => {
+    assets.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+    const admin = new URL(pre.dsn); admin.pathname = '/postgres';
+    spawnSync('psql', [String(admin), '-q', '-c', `DROP DATABASE IF EXISTS "${db}" WITH (FORCE)`]);
+  });
+  for (const f of getTemplateFiles('Taste Probe', 'taste-probe', '', null, {})) {
+    fs.mkdirSync(path.dirname(path.join(dir, f.path)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f.path), f.content);
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'dapp.json'), 'utf8'));
+  manifest.tests = [
+    { name: 'the starter loads', path: '/', expectSelector: 'body' },
+    { name: 'a promise it does not keep', path: '/', expectText: 'Words the starter never shows 7f3a' },
+  ];
+  fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify(manifest, null, 2));
+  fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(dir, 'node_modules'), 'dir');
+  const port = 31800 + Math.floor(Math.random() * 90);
+  const run = (mode, at) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [SCRIPT], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        INLOOP_PORT: String(at), INLOOP_DATABASE_URL: String(dbUrl), BENCH_APP_ID: '77',
+        BENCH_RUN_INLOOP: path.join(ROOT, 'worker', 'usernode-run-inloop'),
+        BENCH_INLOOP_DB_SCRIPT: path.join(dir, 'no-such-helper.sh'),
+        BENCH_PLAYWRIGHT: pre.pw,
+        PLATFORM_URL: `http://127.0.0.1:${assets.address().port}`,
+        ...(mode ? { BENCH_CAPTURE_MODE: mode } : {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (c) => { out += c; });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ code, out }));
+  });
+
+  const alone = await run('checks', port);
+  assert.equal(alone.code, 1, 'one check fails');
+  const result = capture.parseOutput(alone.out);
+  assert.equal(result.booted, true, result.error || '');
+  assert.deepEqual(result.shots, [], 'no screenshots in checks mode');
+  assert.equal(result.declaredChecks.total, 2);
+  assert.deepEqual(result.declaredChecks.failed.map((f) => f.name), ['a promise it does not keep']);
+  assert.match(result.declaredChecks.failed[0].reason, /the text "Words the starter never shows 7f3a" it expects was not on the page/);
+  assert.match(alone.out, /^Ran 2 of the 2 checks dapp\.json declares, signed in, on a fresh copy of the app:$/m);
+  assert.match(alone.out, /^ {2}FAIL {2}a promise it does not keep \(\/\): /m);
+  assert.ok(!alone.out.includes('eyJ'), 'the viewer\'s token is never printed');
 });
 
 test('the in-page measurements run under a strict Content-Security-Policy and count what they should', { timeout: 60000 }, async (t) => {
