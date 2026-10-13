@@ -25,7 +25,7 @@
  * `AppView._changeThreadView`; this only draws.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -42,6 +42,7 @@ import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { TopicBack } from './topic-back';
+import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
 
 function host(id: string): Element | null {
@@ -183,6 +184,22 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const issues = body.issues || [];
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
+  // Run four (13 Oct 2026): a door that sends someone to vote on this change
+  // ("See the change", a vote's notification) opens it at the Votes card,
+  // below the header, rather than at its title (./votes-in-view.ts).
+  const pair = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let release: (() => void) | null = null;
+    const show = () => {
+      const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+      if (!card || !takeVotesInView(id)) return;
+      release?.();
+      release = holdVotesInView(card);
+    };
+    show();
+    const off = onVotesAsked(show);
+    return () => { off(); release?.(); };
+  }, [id]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -228,7 +245,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
-          <div className="dev-change-pair">
+          <div ref={pair} className="dev-change-pair">
             <GateCard which="votes" g={v.votes} action={voteAction} id={id} />
             <GateCard which="testing" g={v.testing} action={testAction} id={id} />
           </div>

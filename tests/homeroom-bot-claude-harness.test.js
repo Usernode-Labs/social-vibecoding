@@ -214,7 +214,7 @@ const JOURNAL = [
 // reading `journal`. A shadow build by default (propose: false: the same
 // spec and build turns, nothing promoted); `propose` puts it to a stub of
 // the promote route, which records what it was asked to put up for a vote.
-async function runBotBuild(t, model, { journal = JOURNAL, propose = false } = {}) {
+async function runBotBuild(t, model, { journal = JOURNAL, propose = false, config = CONFIG } = {}) {
   const resolved = stubRuntime(t);
   const { worker, calls } = loadWorker(t, journal);
   const execs = [];
@@ -250,7 +250,7 @@ async function runBotBuild(t, model, { journal = JOURNAL, propose = false } = {}
     votesRouter: { handle(req, res) { promotions.push(req.url); res.json({ ok: true, prNumber: 88 }); } },
   };
   const out = await live.buildAndPropose({
-    pool, deps, config: CONFIG, bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' }, issueNumber: 12,
+    pool, deps, config, bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' }, issueNumber: 12,
     issue: { title: 'Pins drift' }, seed: 'Please work on GitHub issue #12: "Pins drift".', buildNote: 'Pin the markers.',
     turnBudgetMs: 60_000, model, propose,
   });
@@ -436,7 +436,7 @@ test('a bot build on GLM 5.3 Flash runs in Claude Code, and OpenRouter receives 
     { type: 'text', text: '[image 1 of the mcp__playwright__browser_take_screenshot result (toolu_shot):]' },
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoSCREENSHOT' } },
   ]);
-  assert.match(ran.out, /"images":\{"sent":1,"moved":1,"omitted":0\}/, 'and the turn\'s journal counts it');
+  assert.match(ran.out, /"images":\{"sent":1,"moved":1,"omitted":0,"pruned":0\}/, 'and the turn\'s journal counts it');
   assert.equal(upstream.seen[0].body.model, GLM);
   assert.ok(!ran.out.includes(KEY), 'the journal never carries the key');
 });
@@ -1019,4 +1019,83 @@ test('a GLM follow-up that ended on an API error with exit 0 pushes nothing, and
   assert.equal(good.code, 0, good.out);
   assert.match(good.out, /__USERNODE_PHASE__ commit/);
   assert.ok(committed(fx2).some((line) => line.startsWith('commit')), 'committed');
+});
+
+// ── Run four (13 Oct 2026): what a first version's build loads ──────────
+//
+// A 33-minute GLM first version sent 52 tool definitions with each of its 156
+// model calls. Its build and review fixes now ask the worker for the
+// first-version profile (BUILD_PROFILE=first_version: no visible_changes, the
+// Homeroom read tools narrowed to the conventions, no web or notebook tools;
+// run-cc.sh and run-codex-agent.sh), and the platform can override the hosts
+// a model's turns may use (AGENT_PROVIDER_SHORTLIST).
+
+test('run four: a first version\'s build turns ask for the first-version profile; the worker gives it to a build alone', async (t) => {
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const execs = [];
+  const session = { id: 5003, branch_name: 'dev/homeroom_bot-5003', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 };
+  worker.adoptWarmWorker(5003, 'usernode-worker-5003');
+  const runner = (firstVersion) => live.buildTurnRunner({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, session, model: GLM, branchName: session.branch_name, containerName: 'usernode-worker-5003',
+    deps: {
+      worker: { execInWorker(id, opts) { execs.push(opts); return worker.execInWorker(id, opts); }, async stopTurn() {} },
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      agentTurn,
+      activeWorkers: new Set(),
+    },
+    firstVersion,
+  });
+  const turn = { prompt: 'Build it.', budgetMs: 60_000, commitMsg: 'Homeroom bot: #1 First version', progress: { note() {} } };
+  assert.ok(!(await runner(true)(turn)).routed?.error);
+  assert.ok(!(await runner(false)(turn)).routed?.error);
+  assert.deepEqual(execs.map((o) => o.buildProfile), ['first_version', undefined]);
+  const envs = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch).map((d) => d.env);
+  assert.deepEqual(envs.map((e) => e.BUILD_PROFILE), ['first_version', undefined]);
+
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(821, { mode: 'scout', buildProfile: 'first_version' })).BUILD_PROFILE, undefined, 'a scout loads what it always did');
+  assert.equal((await dispatch(822, { mode: 'build', buildProfile: 'something_else' })).BUILD_PROFILE, undefined);
+  assert.equal((await dispatch(823, { mode: 'build', agentHarness: 'codex', buildProfile: 'first_version' })).BUILD_PROFILE, 'first_version',
+    'the Codex runner reads it too');
+});
+
+test('run four: the platform\'s host shortlist for a model reaches the turn\'s listener, checked; none sent, none set', async (t) => {
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const dispatch = async (id, opts) => {
+    worker.adoptWarmWorker(id, `usernode-worker-${id}`);
+    await worker.execInWorker(id, {
+      prompt: 'Build it.', branchName: `dev/someone-${id}`, agentBackend: 'codex_openrouter', agentHarness: 'claude',
+      agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+      turnUuid: `attempt-${id}`, logicalTurnId: `turn-${id}`, attemptNumber: 1, mode: 'build', ...opts,
+    });
+    return readDispatch(calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').at(-1)).env;
+  };
+  assert.equal((await dispatch(831, {})).AGENT_PROVIDER_SHORTLIST, '', 'the listener\'s own');
+  assert.equal((await dispatch(832, { agentProviderShortlist: 'fireworks,parasail/fp4' })).AGENT_PROVIDER_SHORTLIST, 'fireworks,parasail/fp4');
+  assert.equal((await dispatch(833, { agentProviderShortlist: 'none' })).AGENT_PROVIDER_SHORTLIST, 'none');
+  assert.equal((await dispatch(834, { agentProviderShortlist: 'fireworks; rm -rf /' })).AGENT_PROVIDER_SHORTLIST, '', 'never a value it cannot read');
+  assert.equal((await dispatch(835, { agentHarness: 'codex', agentProviderShortlist: 'together' })).AGENT_PROVIDER_SHORTLIST, 'together');
+
+  // From the platform's config, for the turn's model alone.
+  const config = require('../src/config');
+  const lists = config.openRouterProviderShortlists(JSON.stringify({
+    [GLM]: ['Fireworks', 'together', 'not a slug'], [DEEPSEEK]: 'none', 'bad model!': ['x'], [TEXT_ONLY]: 'fast',
+  }));
+  assert.deepEqual(lists, { [GLM]: 'fireworks,together', [DEEPSEEK]: 'none' });
+  assert.deepEqual(config.openRouterProviderShortlists('not json'), {});
+  assert.deepEqual(config.openRouterProviderShortlists(''), {});
+  const run = await runBotBuild(t, GLM, { config: { ...CONFIG, openrouterProviderShortlists: lists } });
+  assert.equal(run.out.ok, true, run.out.error);
+  assert.deepEqual(run.execs.map((o) => o.agentProviderShortlist), ['fireworks,together', 'fireworks,together']);
+  assert.equal(run.dispatches[1].env.AGENT_PROVIDER_SHORTLIST, 'fireworks,together');
 });

@@ -378,20 +378,35 @@ test('the routes answer the project\'s members only, as its screens do', () => {
   assert.match(src, /'Cache-Control': 'no-store'/);
 });
 
-test('firstVersionLiveFields: offered at Building it, to the maker and members, while it is on', async () => {
+test('firstVersionLiveFields: offered at Building it, to the maker and members, while it is on and has a frame to show', async () => {
   const { firstVersionLiveFields } = require('../src/routes/apps');
-  const pool = (member, setting = null) => ({
+  // N6: `live` is the newest build's first_version_live row (null: no
+  // watcher yet), read only once the rest allows Live.
+  const pool = (member, setting = null, live = { base_seq: 3, good_at: new Date(), ended_at: null }) => ({
     async query(sql) {
       if (/FROM platform_settings/.test(sql)) return { rows: setting ? [{ value: setting }] : [] };
+      if (/homeroom_bot_first_versions/.test(sql)) return { rows: [{ id: 7 }] };
+      if (/FROM first_version_live l WHERE l\.bot_run_id/.test(sql)) return { rows: live ? [live] : [] };
       return { rows: member ? [{ ok: 1, exists: true, is_member: true }] : [] };
     },
   });
   const on = pool(false);
   assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'building' }), { live: true });
-  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing' }), {});
   assert.deepEqual(await firstVersionLiveFields(on, 1, null, { mine: true, line: 'building' }), {});
   const off = pool(true, 'off');
   assert.deepEqual(await firstVersionLiveFields(off, 1, 5, { mine: true, line: 'building' }), {});
+  // N6 (a): not before the watcher has a good frame (no row, or no kept restart).
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, null), 1, 5, { mine: true, line: 'building' }), {});
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, { base_seq: null, good_at: null, ended_at: null }), 1, 5, { mine: true, line: 'building' }), {});
+  // N7: tested (or ready to try) without real screens, its last frame stays.
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing' }), { liveLast: true });
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'ready' }), { liveLast: true });
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'testing', realScreens: true }), {}, 'real screens say more');
+  assert.deepEqual(await firstVersionLiveFields(pool(false, null, null), 1, 5, { mine: true, line: 'testing' }), {});
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: true, line: 'planning' }), {});
+  // Anyone not its maker: a member only.
+  assert.deepEqual(await firstVersionLiveFields(on, 1, 5, { mine: false, line: 'building' }), {});
+  assert.deepEqual(await firstVersionLiveFields(pool(true), 1, 5, { mine: false, line: 'testing' }), { liveLast: true });
 });
 
 test('the build turn: Live starts with it and ends with it (and its nudge), never waited on', () => {

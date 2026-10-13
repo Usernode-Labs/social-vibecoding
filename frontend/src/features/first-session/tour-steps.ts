@@ -117,6 +117,14 @@ export type TourStep = {
    * pressed, and the press goes on to the control (the maker's Open app).
    */
   last?: boolean;
+  /**
+   * N1 (newcomer run four, 13 Oct 2026): the card draws the first look at
+   * the project's first version, the picture of its main screen Homeroom
+   * bot drew from the maker's answers, under its words; "Drawing your
+   * screens…" until it is there, swapped in when it arrives
+   * (./first-look.tsx). It asks for no press: Done ends the tour.
+   */
+  firstLook?: boolean;
 };
 
 /**
@@ -190,6 +198,13 @@ export type TourProject = {
   slug: string;
   name: string;
   conversationId?: number | null;
+  /**
+   * Where its first version stands as the tour starts (FirstVersionStage):
+   * one Homeroom bot is still building is said as one that will open, and
+   * the maker's tour ends on its first look rather than on Open app, which
+   * the hub does not show before it is live.
+   */
+  firstVersion?: FirstVersionStage;
 };
 
 /**
@@ -218,7 +233,10 @@ export function tileOf(slug: string): string {
   return `#app-list .app-card[data-slug="${slug}"]`;
 }
 
-function sharedSteps(slug: string, name: string): TourStep[] {
+function sharedSteps(slug: string, name: string, firstVersion: FirstVersionStage = null): TourStep[] {
+  // N8: a first version Homeroom bot is still building is not there to open:
+  // its App tab shows it being made, so the card says it will open here.
+  const building = firstVersion === 'building';
   return [
     {
       screen: 'home',
@@ -239,8 +257,12 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       target: '#app-view',
       alongside: SCREEN_HEADER,
       waitsFor: 'open',
-      title: translate('onboarding:firstSession.tour.opens.title', { app: name }),
-      text: translate('onboarding:firstSession.tour.opens.text'),
+      title: building
+        ? translate('onboarding:firstSession.tour.opensBuilding.title', { app: name })
+        : translate('onboarding:firstSession.tour.opens.title', { app: name }),
+      text: building
+        ? translate('onboarding:firstSession.tour.opensBuilding.text')
+        : translate('onboarding:firstSession.tour.opens.text'),
       saysWhereItOpens: true,
       place: 'bottom',
     },
@@ -275,9 +297,9 @@ function sharedSteps(slug: string, name: string): TourStep[] {
 }
 
 /** Joining a community: nine steps, ending in its Discussion, where the people already are. */
-export function invitedSteps({ slug, name }: TourProject): TourStep[] {
+export function invitedSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
   return [
-    ...sharedSteps(slug, name),
+    ...sharedSteps(slug, name, firstVersion),
     {
       // #4417: #general's row in the places list beside the page (a wide
       // window), or on a phone the place bar's button, which opens the list
@@ -358,9 +380,15 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
  * question waits for them (AppView._firstVersionView). That chat used to be
  * the tour's last two cards, Messages and then the plan, for a project the
  * bot builds.
+ *
+ * N1 (newcomer run four, 13 Oct 2026): a project whose first version
+ * Homeroom bot is still making has no Open app on its hub until that version
+ * is live, and the card that asked for it waited on a control that was not
+ * there. Its tour ends on one more card instead: the first look at what is
+ * being made, with Done (firstLookStep).
  */
-export function makerSteps({ slug, name }: TourProject): TourStep[] {
-  const steps = sharedSteps(slug, name);
+export function makerSteps({ slug, name, firstVersion = null }: TourProject): TourStep[] {
+  const steps = sharedSteps(slug, name, firstVersion);
   const communities = steps.findIndex((step) => step.target === '#platform-tab-workshop');
   steps.splice(communities, 0, {
     screen: 'home',
@@ -370,6 +398,11 @@ export function makerSteps({ slug, name }: TourProject): TourStep[] {
     text: translate('onboarding:firstSession.tour.maker.meetBot.text', { app: name }),
   });
   const hub = steps[steps.length - 1];
+  // N1: a first version that is not live yet has no Open app on its hub
+  // (community-card.tsx shows the first version's card instead), so the
+  // tour ends on its first look, which Done closes: no card asks for a
+  // press on a control that is not there.
+  if (firstVersion) return [...steps, firstLookStep()];
   steps[steps.length - 1] = {
     ...hub,
     press: OPEN_APP,
@@ -378,6 +411,25 @@ export function makerSteps({ slug, name }: TourProject): TourStep[] {
     last: true,
   };
   return steps;
+}
+
+/**
+ * N1: the maker's last card while Homeroom bot builds their first version:
+ * "Here's what Homeroom bot is making", over the hub, with the first look
+ * drawn in the card (TourStep.firstLook) and Done.
+ */
+export function firstLookStep(): TourStep {
+  return {
+    screen: 'hub',
+    target: '#app-content',
+    alongside: SCREEN_HEADER,
+    endsAbove: BOTTOM_BARS,
+    title: translate('onboarding:firstSession.tour.firstLook.title'),
+    text: translate('onboarding:firstSession.tour.firstLook.text'),
+    place: 'bottom',
+    firstLook: true,
+    last: true,
+  };
 }
 
 /**

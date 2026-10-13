@@ -178,20 +178,24 @@ test('the first version being built, from the records the bot leaves', { timeout
         assert.equal(res.status, 200);
         return (await res.json()).app.first_version;
       };
-      // Nobody else is in it yet: her Yes is the one it needs. Voting is a
-      // member's, so until she is one she is asked nothing.
-      assert.equal((await get()).approval.mustApprove, false);
+      // 13 Oct 2026 (D1): a project's first version goes live without a
+      // vote, whoever is in it. Run four's Club Votes waited all night on its
+      // maker's own Yes, which nothing on the App tab let them give. Nobody
+      // must approve it now, nobody is waited on, and it goes live as soon
+      // as it can (its checks passed: it is ready to try).
+      const noVote = {
+        sessionId: proposal.id, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true,
+      };
+      assert.deepEqual((await get()).approval, noVote, 'nobody else is in it yet, and she is not a member: nothing asked');
       const { rows: [{ community_id: communityId }] } = await pool.query('SELECT community_id FROM apps WHERE id = $1', [app.id]);
       await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [communityId, ada.id]);
       assert.deepEqual(await get(), {
         building: true, mine: true, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: opened.conversationId,
-        approval: {
-          sessionId: proposal.id, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false,
-        },
-      });
+        approval: noVote,
+      }, 'Just you: her own first version needs no Yes from her');
 
-      // A group of two, both active: it needs both their Yes votes.
+      // A group of two, both active: still nobody's to approve.
       await pool.query(`UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1`, [app.id]);
       for (const m of [ada, sam]) {
         await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [communityId, m.id]);
@@ -204,47 +208,40 @@ test('the first version being built, from the records the bot leaves', { timeout
         );
       }
       governance.invalidateGovernance(app.id);
-      const waits = (over) => ({
-        sessionId: proposal.id, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 2, goesLiveAt: null, soon: false, ...over,
-      });
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, waitingOn: [sam.username] }),
-        'its maker still has to approve it, and so does the other member');
+      assert.deepEqual((await get()).approval, noVote, 'its maker is not asked, and nor is the other member');
       viewer = sam;
       assert.deepEqual(await get(), {
         building: true, mine: false, step: 6, of: 7, line: 'ready', creator: ada.username,
         ready: true, question: false, conversationId: null,
-        approval: waits({ mustApprove: true, waitingOn: [ada.username] }),
-      }, 'somebody else\'s DM is never handed out; who it waits on is the same for everyone');
+        approval: noVote,
+      }, 'somebody else\'s DM is never handed out; what it waits on is the same for everyone');
 
-      // She approves: she reads whom it waits for, and the day the group's
-      // clock lets it go live anyway (the lazy-consensus window, from when
-      // it went up for approval).
+      // A Yes changes nothing: there was none to give.
       await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [proposal.id, ada.id]);
-      const { rows: [{ promoted_at: promotedAt }] } = await pool.query('SELECT promoted_at FROM chat_sessions WHERE id = $1', [proposal.id]);
-      const goesLiveAt = new Date(promotedAt.getTime() + activeUsers.lazyWindowMs(2, 1, 0)).toISOString();
       viewer = ada;
-      assert.deepEqual((await get()).approval, waits({ approved: true, waitingOn: [sam.username], missing: 1, goesLiveAt }));
-      viewer = sam;
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1, goesLiveAt }),
-        'the other member still has to, and nobody else is left to ask');
+      assert.deepEqual((await get()).approval, noVote);
 
-      // A project that names its approvers: a member who is not one is
-      // asked nothing, and her Yes is not counted as an approval.
+      // A project that names its approvers: the same.
       await pool.query(`UPDATE apps SET approver_policy = 'invited' WHERE id = $1`, [app.id]);
       await pool.query(`INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, sam.id]);
       governance.invalidateGovernance(app.id);
-      viewer = ada;
-      assert.deepEqual((await get()).approval, waits({ waitingOn: [sam.username], missing: 1 }));
       viewer = sam;
-      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1 }));
+      assert.deepEqual((await get()).approval, noVote);
       await pool.query(`UPDATE apps SET approver_policy = 'anyone' WHERE id = $1`, [app.id]);
       await pool.query('DELETE FROM app_approvers WHERE app_id = $1', [app.id]);
       governance.invalidateGovernance(app.id);
 
-      // A change to protected settings has no clock: no day is promised.
+      // A first version that changes protected settings is the one that
+      // still asks a Yes (that rule is not the vote's): whom it waits on, and
+      // no day promised, since such a change has no clock.
       await pool.query('UPDATE chat_sessions SET requires_explicit_approval = TRUE WHERE id = $1', [proposal.id]);
+      const waits = (over) => ({
+        sessionId: proposal.id, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 2, goesLiveAt: null, soon: false, noVote: false, ...over,
+      });
       viewer = ada;
       assert.deepEqual((await get()).approval, waits({ approved: true, waitingOn: [sam.username], missing: 1 }));
+      viewer = sam;
+      assert.deepEqual((await get()).approval, waits({ mustApprove: true, missing: 1 }));
       await pool.query('UPDATE chat_sessions SET requires_explicit_approval = NULL WHERE id = $1', [proposal.id]);
 
       // A read of who it waits on that fails leaves the rest of the state.

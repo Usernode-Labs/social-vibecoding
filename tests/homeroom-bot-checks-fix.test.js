@@ -122,18 +122,45 @@ test('the prompt names each failing check and what it said, as data, and offers 
 
 test('what it says has no em dashes, and the hand-off says a person takes it', () => {
   const texts = [
-    followup.checksRevisedText({ summary: 'The button now reads "Text size".', prNumber: 82, link: 'https://x' }),
+    followup.checksRevisedText({ failing: [{ name: 'The settings button reads "Text size"', path: 'tests/settings.test.js' }] }),
     followup.checksPersonText({ why: 'The check expects a step the request removed.', prNumber: 82, failingCount: 1 }),
     followup.checksPersonText({ why: '', prNumber: 82, failingCount: 3 }),
   ];
   for (const t of texts) assert.ok(!/—/.test(t), t);
-  assert.match(texts[0], /fixed the failing checks on this change: The button now reads "Text size"\./);
+  assert.match(texts[0], /^Homeroom bot fixed the check that was failing: "The settings button reads "Text size""\./);
   // One note per update: the cleared votes are the platform's line to say.
   assert.doesNotMatch(texts[0], /approvals/);
   assert.match(texts[0], /Its checks run again on the new version\./);
   for (const t of texts) assert.ok(!/PR #|proposal/.test(t), t);
   assert.match(texts[1], /1 check is still failing\. The check expects a step the request removed\. A person needs to look/);
   assert.match(texts[2], /3 checks are still failing\. A person needs to look/);
+});
+
+// Run four (13 Oct 2026): the fix round's note on Club Votes said the
+// turn's own build note ("...pass the form as contentEl and call
+// dismiss(). Rebuild list rows...") and a bare link to the page it was
+// posted on. It says what was fixed, from what failed, in plain words: the
+// checks by their names, a name that is code by how many, and no address.
+test('the fix round\'s note says what was fixed from what failed, with no code and no link', () => {
+  const said = (opts) => followup.checksRevisedText(opts);
+  assert.equal(said({ failing: [{ name: 'Creating a poll shows it in the list (#12)', path: 'tests/polls.test.js' }] }),
+    'Homeroom bot fixed the check that was failing: "Creating a poll shows it in the list". Its checks run again on the new version.');
+  assert.equal(said({ failing: [{ name: 'A poll closes' }, { name: 'Votes are counted' }] }),
+    'Homeroom bot fixed the 2 checks that were failing: "A poll closes" and "Votes are counted". Its checks run again on the new version.');
+  assert.equal(said({ failing: ['A poll closes', 'pollForm submits', 'Votes are counted', 'Ballots open'].map((name) => ({ name })) }),
+    'Homeroom bot fixed the 4 checks that were failing, among them "A poll closes" and "Votes are counted". Its checks run again on the new version.');
+  // A check named by its file or by an identifier says nothing to the group.
+  for (const name of ['tests/polls.test.js', 'pollForm submits the vote', 'submit_vote works', 'calls dismiss() after', 'unit']) {
+    assert.equal(said({ failing: [{ name }] }), 'Homeroom bot fixed the check that was failing. Its checks run again on the new version.', name);
+  }
+  // Old arguments are not read: no build note, no reply, no address.
+  const old = said({ failing: [{ name: 'A poll closes' }], summary: 'pass the form as contentEl and call dismiss()', reply: 'Rebuild list rows', link: 'https://homeroom.example/#app/club-votes/dev/proposals/7' });
+  assert.doesNotMatch(old, /contentEl|dismiss|Rebuild|https?:|#app\//);
+  assert.ok(old.split('. ').length <= 2, 'one or two sentences');
+  // The caller hands over what failed, and no link.
+  const bot = read('src/services/homeroom-bot.js');
+  assert.match(bot, /text: followup\.checksRevisedText\(\{ failing, broken, skipped \}\),/);
+  assert.doesNotMatch(bot, /checksRevisedText\(\{[^}]*link/);
 });
 
 // ── runTriage, down the checks path ──────────────────────────────────────
@@ -241,7 +268,9 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
   assert.equal(h.calls.onProposal.length, 1, 'said on the proposal, where the checks are');
   assert.equal(h.calls.onProposal[0].kind, 'checks_revise');
-  assert.match(h.calls.onProposal[0].text, /fixed the failing checks on this change/);
+  // Run four (13 Oct): what was fixed, by the failing check's own name.
+  assert.equal(h.calls.onProposal[0].text,
+    'Homeroom bot fixed the check that was failing: "Cooking mode text-size control offers all steps". Its checks run again on the new version.');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });
 
@@ -481,7 +510,8 @@ test('a change its shots show failing: one build turn fixes it, said as what did
   assert.match(commitMsg, /fix what did not work on #50/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
-  assert.match(h.calls.onProposal[0].text, /^Homeroom bot fixed what didn't work on this change: Marking a chore done records the member/);
+  assert.equal(h.calls.onProposal[0].text,
+    'Homeroom bot fixed what didn\'t work when Homeroom tried it: "Tapping "mark as done" ticks a chore off". Homeroom tries it again on the new version.');
 });
 
 test('a change its shots show failing, with no revisions left: handed to a person, and its card goes out saying what is wrong', async (t) => {
@@ -543,8 +573,9 @@ test('a skip the change can seed: one build turn adds the data, said as what the
   assert.match(commitMsg, /seed what the before and after shots of #50 need/);
   assert.equal(h.calls.reconciled.length, 1, 'a revision like any other: votes cleared, checks and shots again on the new head');
   assert.equal(insertOf(h).params[21], HEAD, 'the head is looked at once');
-  assert.match(h.calls.onProposal[0].text, /^Homeroom bot added what this change's before and after screens need: The staging seed adds/);
-  assert.match(h.calls.onProposal[0].text, /Its before and after screens are taken again on the new version/);
+  assert.match(h.calls.onProposal[0].text, /^Homeroom bot added sample data so this change's before and after screens can show "/);
+  assert.match(h.calls.onProposal[0].text, /\. They are taken again on the new version\.$/);
+  assert.doesNotMatch(h.calls.onProposal[0].text, /The staging seed adds/, 'the turn\'s own summary stays on its run');
   // Its new head's shots are taken again once; a skip there starts no second round.
   assert.match(read('src/services/homeroom-bot.js'),
     /WHERE r\.proposal_session_id = cs\.id\n\s+AND r\.verdict = 'revise' AND r\.checks_head_sha IS NOT NULL\n\s+\) AS fix_revised/);

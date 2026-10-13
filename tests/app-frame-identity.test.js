@@ -843,16 +843,18 @@ test('#15: the first-version screenshot state is self-contained, and mounts no f
   assert.equal('plan' in planned, false);
   AppView.showFirstVersionShot('plan');
   assert.equal(h.status().buildLine, 'plan', '\'plan\' is the same shot');
-  // Ready to try, as a member who still has to approve it…
+  // Ready to try, as its maker reads it: it goes live without a vote (13 Oct
+  // 2026, D1; Club Votes said "Waiting for your approval." all night)…
   AppView.showFirstVersionShot('ready');
   const waiting = h.status();
   assert.equal(bridge.frame(), null);
   assert.equal(waiting.thumb.name, 'Plant Pal');
   assert.equal(waiting.buildLine, 'ready', '"Ready to try" stays beside Try it (owner, 7 Oct)');
-  assert.deepEqual([...waiting.lines], ['Waiting for your approval.']);
+  assert.deepEqual([...waiting.lines], ['No vote needed. It goes live in a minute or two.']);
   assert.deepEqual([waiting.action.key, waiting.alt.key], ['tryChange', 'seeChange']);
   assert.equal('secondary' in waiting, false);
-  // …and as one who approved it, waiting on the other member.
+  // …and the one that still asks a Yes (it changes protected settings), as
+  // one who approved it, waiting on the other member.
   AppView.showFirstVersionShot('approved');
   const approved = h.status();
   assert.match(approved.lines[0], /^You approved it\. Waiting for @sam, or it goes live on \S+ if nobody objects\.$/);

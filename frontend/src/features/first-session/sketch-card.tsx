@@ -137,7 +137,7 @@ function glyphOf(name: string, emoji: string | null, sketched: boolean): string 
  * `children` close the card's body, under the line (the invite page's
  * invitation, #4394).
  */
-export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, titleId, heading = false, compact = false, large = false, band = null, bandCorner = null, children = null }: {
+export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, description = null, sketching: sketched = !card, line = null, lineNote = null, lineWords = null, titleId, heading = false, compact = false, large = false, band = null, bandCorner = null, children = null }: {
   name: string;
   /** Picks a colour when there is no emoji to read one from (the project's slug). */
   colorKey: string;
@@ -153,6 +153,8 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
   line?: BuildLineState | null;
   /** After the line's words: how long it usually takes (BuildLine's `note`). */
   lineNote?: string | null;
+  /** N4: the stage's own words in place of the line's (BuildLine's `words`). */
+  lineWords?: string | null;
   titleId?: string;
   /** The name as the screen's heading (the made screen's dialog is labelled by it). */
   heading?: boolean;
@@ -213,7 +215,7 @@ export function FeaturedCard({ name, colorKey, emoji, iconUrl = null, card, desc
       </div>
       {line ? (
         <div data-featured-card-line="" className="px-1">
-          <BuildLine state={line} note={lineNote} />
+          <BuildLine state={line} note={lineNote} words={lineWords} />
         </div>
       ) : null}
     </div>
@@ -305,13 +307,16 @@ export function useSketch(slug: string | null): Sketch {
  * build line only when the screen has one to say (a project Homeroom bot
  * does not build).
  */
-export function SketchCard({ made, sketch, line, note = null }: {
+export function SketchCard({ made, sketch, line, note = null, lineWords = null, lineNote = null }: {
   made: Made;
   sketch: Sketch;
   /** Where its first version is (./build-line.tsx), or none for a project Homeroom bot does not build. */
   line: BuildLineState | null;
   /** A quiet line under the card, or none. */
   note?: string | null;
+  /** N4: the stage's own words, and how long it has run, on the build line. */
+  lineWords?: string | null;
+  lineNote?: string | null;
 }) {
   const t = useMessages('onboarding');
   const card = sketch.card;
@@ -327,6 +332,8 @@ export function SketchCard({ made, sketch, line, note = null }: {
         description={made.description}
         sketching={sketched}
         line={line}
+        lineWords={lineWords}
+        lineNote={lineNote}
       />
       {note ? <p data-first-session-note="" className="px-1 pt-2.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}
     </div>

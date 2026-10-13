@@ -481,6 +481,8 @@ test('a restart between two steps of a bot build carries it on from where it was
     })]);
     assert.equal(await sweepLater(runId), 0, 'a review in progress is not the stalled-step sweep\'s');
     assert.equal(await bot.finishInterruptedReviews(pool, {}, {}), 1);
+    // Finished in the background, holding its project's build slot.
+    await bot._awaitStalledResumesForTests();
     const row = await runRow(runId);
     assert.equal(row.build_ok, true);
     assert.equal(row.build_sha, r1, 'where the review got to');

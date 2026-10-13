@@ -3,10 +3,11 @@ import { useState, type ReactNode } from 'react';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { requestKey } from './bot-request';
+import { newsIcon } from './bot-shared';
 import { ProjectTile, RequestTag, trayNow, type StripRow } from './bot-strip';
 import { useBotWork } from './bot-work';
 import { openThreadAt } from './store';
-import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
+import type { ConversationMessage, HomeroomBotMeta } from './types';
 
 /*
  * One request, one story: the bot's news in the main chat, ONE short line
@@ -171,21 +172,8 @@ export function newsThread(message: ConversationMessage): number | null {
   return meta?.kind === 'activity' && message.thread ? message.id : null;
 }
 
-/**
- * Pure: the project's icon as the strip has it. A bot message names its
- * project but carries no artwork, so a line takes the tray's, and the strip
- * and the chat show the same tile; with none it is the project's initial.
- */
-export function newsIcon(work: HomeroomBotWork | null, slug: string | null | undefined, name: string | null | undefined = null): { iconUrl: string | null; iconEmoji: string | null } {
-  if (work && (slug || name)) {
-    for (const job of [...work.needsYou, ...work.now, ...work.history]) {
-      // A project with no slug (the staging demo's) is known by its name.
-      const same = slug ? job.appSlug === slug : !job.appSlug && job.appName === name;
-      if (same && (job.iconUrl || job.iconEmoji)) return { iconUrl: job.iconUrl, iconEmoji: job.iconEmoji };
-    }
-  }
-  return { iconUrl: null, iconEmoji: null };
-}
+/** The project's icon as the strip has it (./bot-shared.ts, where the head card reads it too). */
+export { newsIcon };
 
 const NEED_INK = 'text-amber-700 dark:text-amber-400';
 

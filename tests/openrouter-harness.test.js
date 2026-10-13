@@ -628,3 +628,78 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
   assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
     'Runs on your OpenRouter key, in Claude Code');
 });
+
+// Run four (13 Oct 2026): a 33-minute first version kept only counts, and its
+// transcript went with its pod. Its ledger row now keeps what its first and
+// last requests carried, the order it called its tools in (names alone), how
+// many old screenshots its requests left out, and the host a refusal came
+// from, whatever became of the turn.
+test('run four: a turn\'s metrics keep its first and last request sizes, its tools in order, and the images left out', async () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  state.telemetryDiagnosticsEnabled = true;
+  assert.deepEqual([state.firstRequestSize, state.toolSequence, state.imagePrunedCount], [null, null, null], 'unknown until seen');
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  const start = (n, payloadBytes, inputItems) => provider({
+    kind: 'provider_request_start', requestOrdinal: n, atMs: n * 1000, payloadBytes, inputBytes: payloadBytes - 300,
+    instructionBytes: 300, inputItems, previousResponseLinked: false, maxOutputTokens: 64000,
+  });
+  start(1, 68_577, 1);
+  start(2, 90_000, 9);
+  start(3, 41_000, 3);
+  const said = (id, blocks) => worker.parseLine(JSON.stringify({ type: 'assistant', message: { id, content: blocks } }), () => {}, state);
+  said('m1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } },
+    { type: 'tool_use', id: 't2', name: 'mcp__playwright__browser_take_screenshot', input: {} }]);
+  said('m2', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm run build -- --secret-flag' } }]);
+  said('m3', [{ type: 'tool_use', id: 't3', name: 'Read', input: { file_path: '/home/node/workspace/app.js' } }]);
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok', images: { sent: 3, moved: 3, omitted: 0, pruned: 6 } });
+  assert.deepEqual(state.firstRequestSize, { payloadBytes: 68_577, inputBytes: 68_277, instructionBytes: 300, inputItems: 1 });
+  assert.deepEqual(state.lastRequestSize, { payloadBytes: 41_000, inputBytes: 40_700, instructionBytes: 300, inputItems: 3 });
+  assert.deepEqual(state.toolSequence, ['Bash', 'browser_take_screenshot', 'Read'], 'each call once, in order, by its bare name');
+  assert.equal(state.imagePrunedCount, 6);
+
+  const llmTelemetry = require('../src/services/llm-telemetry');
+  const metrics = llmTelemetry.normalizeDiagnostics(state);
+  assert.equal(metrics.first_request_payload_bytes, 68_577);
+  assert.equal(metrics.first_request_input_items, 1);
+  assert.equal(metrics.last_request_payload_bytes, 41_000);
+  assert.equal(metrics.last_request_instruction_bytes, 300);
+  assert.deepEqual(metrics.tool_sequence, ['Bash', 'browser_take_screenshot', 'Read']);
+  assert.equal(metrics.image_pruned_count, 6);
+  for (const content of ['secret-flag', 'app.js', 'playwright']) {
+    assert.equal(JSON.stringify(metrics).includes(content), false, `no ${content} in the ledger`);
+  }
+  // Only names the platform knows: a person's or a repository's own MCP
+  // server, or anything else, is `mcp` or `other`.
+  assert.deepEqual(llmTelemetry.normalizeDiagnostics({
+    toolSequence: ['Bash', 'rm -rf /', 7, 'mcp__private_server__secret_tool', 'mcp__homeroom__get_platform_conventions',
+      'mcp__visible_changes__declare_visible_changes', 'mcp__playwright__browser_navigate', 'private_tool', 'command'],
+  }).tool_sequence, ['Bash', 'other', 'other', 'mcp', 'get_platform_conventions', 'declare_visible_changes', 'browser_navigate', 'other', 'command']);
+  assert.equal(llmTelemetry.normalizeDiagnostics({ toolSequence: Array(500).fill('Bash') }).tool_sequence.length, 400);
+  // Bounded on the worker too, the rest counted.
+  const many = worker.newWatchState();
+  many.telemetryDiagnosticsEnabled = true;
+  for (let i = 0; i < 410; i += 1) {
+    worker.parseLine(JSON.stringify({ type: 'assistant', message: { id: `x${i}`, content: [{ type: 'tool_use', id: `u${i}`, name: 'Bash', input: {} }] } }), () => {}, many);
+  }
+  assert.equal(many.toolSequence.length, 400);
+  assert.equal(many.toolSequenceDropped, 10);
+});
+
+test('run four: a turn whose journal could not be read on still hands the ledger what it saw', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+  assert.match(src, /if \(consumeError\) \{[\s\S]{0,600}consumeError\.turnResult = finalizeHarnessResult\(state\);[\s\S]{0,120}throw consumeError;/);
+  const sessions = require('node:fs').readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  assert.match(sessions, /const observedResult = err\?\.turnResult \|\| null;/, 'which the attempt loop records, routed provider and all');
+});
+
+test('run four: a Codex turn records the host a refusal came from as its routed provider', () => {
+  const codex = require('../src/agents/codex-openrouter');
+  const state = {};
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 429, providerName: 'InferenceNet' } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet');
+  assert.deepEqual(state.routedProviders, ['InferenceNet']);
+  codex.normalizeCodexLine(JSON.stringify({ type: 'usernode.openrouter.request', diagnostic: { httpStatus: 200 } }), state);
+  assert.equal(state.routedProvider, 'InferenceNet', 'a line without a host leaves it');
+});

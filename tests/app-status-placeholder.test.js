@@ -548,6 +548,41 @@ test('5 Oct: "Waiting for your approval." is never said to a reader whose own Ye
   assert.equal(view(other, asked).lines[0], 'Waiting for your approval.');
 });
 
+// Club Votes, 12 to 13 Oct 2026 (D1): the first version was ready at 22:54
+// and the App tab said "Waiting for your approval." all night, with no way
+// to give it here. A first version goes live without a vote now
+// (firstVersionApproval `noVote`), and nobody reads that it waits.
+const NO_VOTE = { sessionId: 31, noVote: true, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 0, goesLiveAt: null, soon: true };
+
+test('D1: a first version that needs no vote says so, to its maker and to everyone else', () => {
+  const { AppView } = makeAppView();
+  const maker = view(AppView, firstVersionApp({}, { ...READY, approval: NO_VOTE }));
+  assert.deepEqual(maker, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'ready',
+    lines: ['No vote needed. It goes live in a minute or two.'],
+    action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
+    alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
+  });
+  const out = html(maker);
+  assert.match(out, />No vote needed\. It goes live in a minute or two\.</);
+  assert.doesNotMatch(out, /approval|approve/i);
+  // A member, or anyone else: the same words, and the change's page.
+  const theirs = view(AppView, firstVersionApp({ }, { ...READY, mine: false, conversationId: null, approval: NO_VOTE }));
+  assert.deepEqual(theirs.lines, ['No vote needed. It goes live in a minute or two.']);
+  assert.deepEqual(theirs.action, { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(theirs.alt, undefined);
+  // Not yet through its checks: when it will go live.
+  assert.equal(AppView._firstVersionWaitLine({ ...NO_VOTE, soon: false }), 'No vote needed. It goes live once it passes its checks.');
+  // A Yes this page cast changes nothing: there was none to give.
+  AppView.appData = maker;
+  AppView._noteOwnVote(31, 'yes');
+  assert.deepEqual(view(AppView, firstVersionApp({}, { ...READY, approval: NO_VOTE })).lines, ['No vote needed. It goes live in a minute or two.']);
+});
+
 test('ready: the wait line, worded for each state of the gate, in the reader\'s week', () => {
   const { AppView } = makeAppView();
   // A Monday at noon, local time, so the days below are the reader's own.
@@ -593,8 +628,13 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   assert.equal(staged[0][2], null);
   assert.deepEqual({ ...staged[0][3] }, {}, 'the app on screen, as its viewer may see it');
   assert.equal(sandbox.location.hash, '');
+  // Run four (13 Oct): See the change opens the change at its Votes card,
+  // asked of the dev board's bridge before the page opens.
+  const shown = [];
+  sandbox.UsernodeReact = { devBoard: { showVotes: (id) => shown.push([id, sandbox.location.hash]) } };
   AppView.openFirstVersionChange('plant-pal', 31);
   assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  assert.deepEqual(shown, [[31, '']], 'asked before the address changes');
   // Off its own screen, Try it goes to the change page instead.
   sandbox.location.hash = '';
   AppView.appData = { slug: 'other' };
@@ -606,6 +646,11 @@ test('ready: Try it opens the change\'s preview on this app; See the change open
   AppView.tryFirstVersion('plant-pal', null);
   AppView.openFirstVersionChange('plant-pal', 0);
   assert.equal(sandbox.location.hash, '');
+  assert.deepEqual(shown, [[31, ''], [31, '']], 'Try it off its screen lands at the same cards; no change, no ask');
+  // Without the bundle's bridge it still opens the page.
+  delete sandbox.UsernodeReact;
+  AppView.openChangeAtVotes('plant-pal', 32);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/32');
   // The card hands each opener the change's id.
   const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
   assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);

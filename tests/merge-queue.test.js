@@ -34,6 +34,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const { mergeGate: realMergeGate } = require('../src/services/active-users');
+const { applyFirstVersion: realApplyFirstVersion } = require('../src/workflow/rules/governance-gate.ts');
 
 function stub(relPath, exports) {
   const full = require.resolve(path.join(__dirname, '..', relPath));
@@ -106,7 +107,7 @@ function setup({
   overdueRuns = [],
 }) {
   const events = {
-    syncs: [], merges: [], measures: [], budget: 0, broadcasts: [], reconciles: [], spent: [],
+    syncs: [], merges: [], measures: [], budget: 0, broadcasts: [], reconciles: [], spent: [], gateOpts: [],
   };
   const forks = new Set(forkHeads);
   const overdue = new Set(overdueRuns);
@@ -169,8 +170,11 @@ function setup({
   stub('src/services/governance.js', {
     async getGovernance() { return { approverPolicy: 'anyone', approvalsRequired: null }; },
     async getElectorate() { return { active: 2, approverIds: null }; },
-    computeGate(gov, active, yes, no, openedAt, now) {
-      return realMergeGate(active, yes, no, openedAt, now || new Date(2027, 0, 1));
+    computeGate(gov, active, yes, no, openedAt, now, opts = {}) {
+      events.gateOpts.push(opts);
+      const gate = realMergeGate(active, yes, no, openedAt, now || new Date(2027, 0, 1));
+      // The real first-version rule (D1), as governance.computeGate applies it.
+      return opts.firstVersion ? realApplyFirstVersion(gate, opts) : gate;
     },
     async qualifiedCountsBatch() { return new Map(); },
   });
@@ -229,6 +233,24 @@ test('an approved proposal that merges cleanly merges as it stands: no worker tu
     assert.deepEqual(events.merges, [1]);
     assert.equal(events.budget, 0, 'and nothing was billed to the system budget');
   } finally { teardown(); }
+});
+
+// 13 Oct 2026 (D1): a project's first version goes live without a vote. The
+// line reads which candidate is one (services/first-version-rule.js) and the
+// gate waives its vote, so it merges once its checks pass with no yes at all;
+// any other change with no yes waits for the vote.
+test('D1: a first version with no votes is approved and merges; any other change waits', async () => {
+  const { queue, pool, events } = setup({
+    candidates: [candidate(1, 0, { first_version: true }), candidate(2, 0, { first_version: false })],
+  });
+  try {
+    await queue.enqueue({}, 7);
+    assert.deepEqual(events.merges, [1]);
+    assert.ok(pool.issued(/homeroom_bot_first_versions[\s\S]*AS first_version/), 'the line reads it with the shared fragment');
+    assert.deepEqual(events.gateOpts.map((o) => o.firstVersion), [true, false]);
+  } finally {
+    teardown();
+  }
 });
 
 test('every approved clean candidate is attempted in one pass, whatever its drift', async () => {

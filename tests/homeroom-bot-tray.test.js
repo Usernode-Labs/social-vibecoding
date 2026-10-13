@@ -92,6 +92,9 @@ test('#3734: Now is the bot\'s own progress, its in-flight entries drawn as step
 test('what a run came to, in the activity cards\' words', () => {
   assert.deepEqual(tray.OUTCOMES, activity.OUTCOMES, 'one vocabulary');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted' }), 'proposed');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'promoted', first_version_change: true }), 'checking',
+    'D1: a first version is being tested until it merges, never waiting for approval');
+  assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging', first_version_change: true }), 'going_live');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merging' }), 'going_live', '#4227');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'merged' }), 'live');
   assert.equal(tray.outcomeOf({ verdict: 'ready', proposal_session_id: 5, proposal_status: 'closed' }), 'closed');
