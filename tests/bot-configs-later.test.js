@@ -421,8 +421,8 @@ test('a later side build replays the run\'s plan at its commit on a bench branch
   assert.match(missing.error, /no build snapshot to replay/);
   // A restart follows its spec turn and its build turn, as a first
   // version's side build's (until 7 Oct 2026 it ran the side build again).
-  assert.equal(runner.resumableTurn('build', { mode: 'scout' }, { side: true }), true, 'its spec turn too, which a benchmark build\'s is not');
-  assert.equal(runner.resumableTurn('build', { mode: 'scout' }), false);
+  assert.equal(runner.resumableTurn('build', { mode: 'scout' }, { side: true }), true, 'its spec turn too');
+  assert.equal(runner.resumableTurn('build', { mode: 'scout' }), true, 'as a benchmark build\'s is, since 13 Oct 2026');
 });
 
 test('a later side build goes on after a restart from what its last claim kept: a spec is built from, a build is its result', async (t) => {

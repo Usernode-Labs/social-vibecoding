@@ -3018,7 +3018,8 @@ async function adoptBenchOrphan({
 }) {
   const activeTurn = session.active_turn || null;
   if (containerState !== 'running' || !activeTurn || !activeTurn.journal) return false;
-  if (session.status !== 'active') return false;
+  // Active, or paused under its turn (a build's nudge, a review's fix).
+  if (!require('./src/services/bench/runner').isRecoveredBenchSession(session)) return false;
   const lane = require('./src/services/bench/lane');
   let plan = null;
   try {
@@ -3175,9 +3176,12 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // #1006: except a Homeroom bot session paused under a turn in flight,
   // which is the bot's to follow or hand back (adoptBotOrphan below).
   // Destroying it here, in silence and with its turn record left, lost six
-  // platform builds on 10-02 and spent their attempts.
+  // platform builds on 10-02 and spent their attempts. A benchmark trial's
+  // likewise (a build's nudge, a review's fix): the lane's to follow or
+  // put back (adoptBenchOrphan, abandonOrphanBenchTurn).
   if (!['active', 'promoted'].includes(session.status)
-      && !homeroomBotRecovery().isRecoveredBotSession(session)) {
+      && !homeroomBotRecovery().isRecoveredBotSession(session)
+      && !require('./src/services/bench/runner').isRecoveredBenchSession(session)) {
     // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
@@ -4474,9 +4478,13 @@ async function resumeDetachedTurnInner({
     ).catch(() => {});
   };
 
+  // A benchmark trial's watch (bench/lane.js recoveryWatch), set below once
+  // the session is known to be one: the studio sees the replay's lines.
+  let benchWatch = null;
   const onRecoveredProgress = (text) => {
     emit('cc_progress', { text, ...recoveryAgent.metadata });
     progressLines.push(text);
+    if (benchWatch) benchWatch.note(text);
     if (!flushQueued) {
       flushQueued = true;
       setTimeout(flushProgress, 1000);
@@ -4598,6 +4606,7 @@ async function resumeDetachedTurnInner({
   // The bot's clock's deadline, for a recovered build that changed nothing:
   // it is nudged on what is left of it, as the live path nudges one.
   let botDeadline = null;
+  if (benchTurn) benchWatch = await require('./src/services/bench/lane').recoveryWatch(pool, sessionId);
   if (botTurn || benchTurn || botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
@@ -4717,6 +4726,7 @@ async function resumeDetachedTurnInner({
     // #3654: the trial goes back in the lane's queue, its spend charged;
     // nothing is said anywhere.
     if (benchTurn) {
+      if (benchWatch) await benchWatch.close();
       const benchCleanup = turnCleanupArgs(activeTurn);
       recoveryRetry.requireDurableTurnCleanup(
         await worker.finishTurn(sessionId, benchCleanup),
@@ -4902,10 +4912,14 @@ async function resumeDetachedTurnInner({
   // in the queue), then the turn record is cleared. Its writes are guarded
   // on the trial still running, so a retried clear records nothing twice.
   if (benchTurn) {
+    // Its last lines written before the lane records the trial, which then
+    // takes its skills and looks from the watch.
+    if (benchWatch) await benchWatch.close();
     await require('./src/services/bench/lane').finishRecoveredTrial({
       pool, config, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || !!handle.stopped,
       // Every line of the turn, from its start: the looks it took (progress.js).
       progress: progressLines,
+      watch: benchWatch,
     });
     const benchCleanup = turnCleanupArgs(recoveryActiveTurn);
     recoveryRetry.requireDurableTurnCleanup(

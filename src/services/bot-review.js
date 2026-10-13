@@ -1014,6 +1014,23 @@ function canResume(review, max = MAX_REVIEW_RESUMES) {
 }
 
 /**
+ * Whether a fix turn's `result` restart recovery followed is the one a
+ * review's saved state was waiting on: its last round has a `fix` verdict
+ * and no fix yet, the turn was dispatched (its `inFlight` says so, or a
+ * review saved before `inFlight` existed was waiting on it), and it is not
+ * a commit a round already recorded, which is spent. Pure.
+ */
+function awaitsFix(review, result) {
+  if (!review || typeof review !== 'object' || !result || typeof result !== 'object') return false;
+  const rounds = Array.isArray(review.rounds) ? review.rounds : [];
+  const last = rounds.length ? rounds[rounds.length - 1] : null;
+  const awaiting = !!last && last.verdict === 'fix' && !last.fix
+    && (review.inFlight ? review.inFlight.step === 'fix' : true);
+  const spent = new Set([review.round0?.sha, ...rounds.map((r) => r?.fix?.sha)].filter(Boolean));
+  return awaiting && !(result.sha && spent.has(result.sha));
+}
+
+/**
  * The result of a fix turn restart recovery followed to its end (the
  * journal's `result`), in fix()'s shape, for runReviewLoop's
  * `recoveredFix`: a turn its clock stopped is `stopped`, one that failed
@@ -1130,6 +1147,7 @@ module.exports = {
   runReviewLoop,
   canResume,
   recoveredFixOf,
+  awaitsFix,
   slimCapture,
   reviewForm,
   slimState,

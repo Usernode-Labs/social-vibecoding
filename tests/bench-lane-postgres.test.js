@@ -534,14 +534,16 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     const ss = await newSession({ activeTurn: specTurn });
     await claimAs(specOnly.id, ss, { baseSha: BASE });
     await spend(ss, 0.15);
-    assert.equal((await lane.recoveryPlan(pool, await benchSession(ss), specTurn)).resumable, false,
-      'a build\'s spec turn has the build still to run');
+    assert.equal((await lane.recoveryPlan(pool, await benchSession(ss), specTurn)).resumable, true,
+      'a build\'s spec turn is followed: the build goes on from it');
     assert.equal(await lane.finishRecoveredTrial({
-      pool, config: {}, session: await benchSession(ss), activeTurn: specTurn, result: { lastResultText: '# Spec' }, deps: rdeps,
-    }), 'released');
+      pool, config: {}, session: await benchSession(ss), activeTurn: specTurn, result: { lastResultText: '# Spec\n\nPin the markers.' }, deps: rdeps,
+    }), 'handed_back');
     row = await trialRow(specOnly.id);
     assert.equal(row.status, 'pending');
-    assert.equal(row.interrupted, 0.15);
+    assert.equal(row.interrupted, 0, 'its spec kept, nothing thrown away');
+    assert.equal((await pool.query('SELECT checkpoint FROM bench_trials WHERE id = $1', [specOnly.id])).rows[0].checkpoint.spec.specMd,
+      '# Spec\n\nPin the markers.');
 
     const nb = await newSession({ activeTurn: buildTurn });
     await claimAs(noBase.id, nb, { baseSha: null });

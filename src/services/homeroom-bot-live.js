@@ -3710,7 +3710,9 @@ async function buildAndPropose({
     if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
-        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd });
+        // Its ledger id too: a bench trial keeps it, so a restart's next claim
+        // can still name the spec turn's cost (bench/runner.js keptCosts).
+        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd, ...(spec.turnId ? { turnId: spec.turnId } : {}) });
       } catch (err) {
         log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
       }
@@ -3933,12 +3935,15 @@ async function buildAndPropose({
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
   // Pushed: a restart from here on proposes this work, never builds it again.
+  // With what its spec and build turns cost (costsOut, no review yet), so a
+  // bench trial that keeps its build here keeps its costs too.
   await step('landed', {
     landed: {
       sha: result.sha || null, commits: Number(result.ahead) || 0, pushOk: true,
       text: clipText(result.lastResultText || '', 20000), partial: !!partial,
     },
     turnIds: buildTurnIds,
+    ...costsOut(),
   });
 
   // A first version under a configuration with a reviewer: its screens are

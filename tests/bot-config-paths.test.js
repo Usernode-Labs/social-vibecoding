@@ -312,7 +312,10 @@ test('a restart follows a side build\'s turns and its next claim goes on from wh
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version', bot_config_version_id: 13 }), true);
   assert.equal(lanes.goesOnAfterRestart({ stage: 'build', bot_config_version_id: 22 }), true, 'a later change\'s');
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version' }), true, 'a studio first version, as before');
-  assert.equal(lanes.goesOnAfterRestart({ stage: 'build' }), false, 'a benchmark build is finished from its last turn instead');
+  assert.equal(lanes.goesOnAfterRestart({ stage: 'build' }), true, 'a benchmark build keeps its spec too (since 13 Oct 2026)');
+  assert.equal(lanes.handsBack({ stage: 'build' }, { mode: 'scout' }), true, 'its spec turn is kept and the trial handed back');
+  assert.equal(lanes.handsBack({ stage: 'build' }, { mode: 'build' }), false, 'its build turn, its last, is finished from the turn');
+  assert.equal(lanes.handsBack({ stage: 'build', bot_config_version_id: 22 }, { mode: 'build' }), true, 'a side build\'s is kept');
   assert.equal(lanes.goesOnAfterRestart({ stage: 'first_version', reference_label: 'cc' }), false, 'a reference build has no turns');
 
   // Which turn it is: a side build has no triage, so its one scout turn is
@@ -477,12 +480,13 @@ test('a side build that landed before its review began is reviewed now, as recov
   assert.deepEqual(out.session_ids, [6001, 7001]);
 });
 
-test('a side build whose review a restart cut short is not reviewed again: recorded interrupted, an unchecked fix captured once, put back only when it does not boot', async (t) => {
+test('a side build whose review restarts cut short too often is not reviewed again: recorded interrupted, an unchecked fix captured once, put back only when it does not boot', async (t) => {
   const realReview = live.reviewLanded;
   live.reviewLanded = async () => { throw new Error('a review cut short is not run again'); };
   t.after(() => { live.reviewLanded = realReview; });
+  // Carried through MAX_REVIEW_RESUMES restarts already (bot-review.js canResume).
   const review = {
-    state: 'reviewing', startedAt: '2026-10-07T22:00:00.000Z', reviewer: REVIEWER,
+    state: 'reviewing', startedAt: '2026-10-07T22:00:00.000Z', reviewer: REVIEWER, resumes: 3,
     round0: { sha: 'd'.repeat(40), capture: { booted: true, shots: [] } },
     rounds: [{ round: 1, verdict: 'fix', issues: [{ what: 'x' }], reviewerCostUsd: 0.3, fix: { ok: true, sha: 'e'.repeat(40), commits: 3 } }],
     stop: null, finalSha: 'e'.repeat(40), finalCommits: 3, lastBooted: { sha: 'd'.repeat(40), commits: 2 }, finalCapture: null,

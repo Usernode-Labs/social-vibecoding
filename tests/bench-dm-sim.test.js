@@ -174,3 +174,46 @@ test('a DM task with no answer yet never runs: not applicable, never the model\'
   assert.equal(scripted.status, 'ok');
   assert.equal(scripted.parsed.conversation[0].reply.text, 'Green');
 });
+
+test('a conversation a restart caught goes on from the last turn it finished: only the turn caught runs again', async (t) => {
+  const side = spySideEffects(t);
+  // The first claim: the bot asks, the person answers, and the turn after is
+  // caught by a restart. What it kept is its first turn.
+  const kept = [];
+  const first = harness([QUESTION, READY]);
+  let turns = 0;
+  const realExec = first.deps.worker.execInWorker;
+  first.deps.worker.execInWorker = async (id, opts) => {
+    turns += 1;
+    if (turns === 2) throw new Error('the platform restarted');
+    return realExec(id, opts);
+  };
+  await runner.runStage({ ...ctx(first, { true_answer: 'A dark blue please', max_turns: 3 }), onCheckpoint: async (part) => { kept.push(part); } });
+  const checkpoint = Object.assign({}, ...kept);
+  assert.equal(checkpoint.dm.turns, 1, 'its first turn, kept as it ended');
+  assert.equal(checkpoint.dm.appended.length, 2, 'with the question and the answer the next turn reads');
+  assert.deepEqual(checkpoint.dm.sessionIds, [8001]);
+
+  // The next claim runs only the turn the restart caught, on the thread as it was.
+  const h = harness([READY]);
+  h.pool.query = async (sql, params) => (/INSERT INTO chat_sessions/.test(String(sql))
+    ? { rows: [{ id: 8002, branch_name: params[2], agent_model: params[4] }] } : { rows: [], rowCount: 1 });
+  const out = await runner.runStage({ ...ctx(h, { true_answer: 'A dark blue please', max_turns: 3 }), checkpoint });
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(h.prompts.length, 1, 'one turn, not the conversation again');
+  assert.match(h.prompts[0], /Dark blue\n\n\(Answered in a chat with Homeroom bot\.\)/, 'it reads the answer the first claim gave');
+  assert.equal(out.parsed.verdict, 'ready');
+  assert.equal(out.parsed.turns, 2);
+  assert.equal(out.parsed.conversation[0].reply.text, 'Dark blue');
+  assert.deepEqual(out.session_ids, [8001, 8002], 'both claims\' sessions, each charged');
+  assert.deepEqual(side, []);
+
+  // A conversation that had ended before the restart is recorded as it ended.
+  const ended = Object.assign({}, checkpoint, { dm: { ...checkpoint.dm, turns: 2, conversation: [...checkpoint.dm.conversation, { turn: 2, verdict: 'ready' }],
+    last: { status: 'ok', error: null, parsed: { verdict: 'ready', buildNote: 'Make the header dark blue.', question: null, reason: null, questionAnswers: [] } } } });
+  const h2 = harness([QUESTION]);
+  const out2 = await runner.runStage({ ...ctx(h2, { true_answer: 'Dark blue', max_turns: 3 }), checkpoint: ended });
+  assert.equal(h2.prompts.length, 0, 'no turn runs');
+  assert.equal(out2.parsed.verdict, 'ready');
+  assert.equal(out2.parsed.turns, 2);
+});
