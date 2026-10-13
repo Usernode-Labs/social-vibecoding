@@ -93,7 +93,7 @@
   },
   "create.label": {
     "text": "New project",
-    "description": "Label under the dashed + tile at the end of Home's grid, and on the small blue New project button beside \"Show all N apps\" when the grid is folded and has no room for the tile: starts a new project (an app and the community that builds it)."
+    "description": "Label under the dashed + tile at the end of Home's grid, and on the small dashed-plus New project button beside \"Show all N apps\" when the grid is folded and has no room for the tile: starts a new project (an app and the community that builds it)."
   },
   "create.tip": {
     "text": "Start a project: an app for you or for a community",

@@ -351,11 +351,14 @@ test('the Show-all line carries the compact entry exactly when the tile is held 
   assert.match(entry[1], /\bhome-create-btn\b/, 'the focus-ring hook app.css keys');
   assert.doesNotMatch(entry[1], /\bhome-create-tile\b/,
     'not a tile of the grid canvas: the drag-time #app-list rules do not apply');
-  // #4936: while creation is open the entry is a filled primary button — the
-  // recipe `@/components/ui/button.tsx`'s default variant uses — not dim text.
-  assert.match(entry[1], /\bbg-violet-600\b/, 'the filled blue accent');
-  assert.match(entry[1], /\btext-white\b/, 'white ink on the filled button');
-  assert.doesNotMatch(entry[1], /border-dashed/, 'no dashed ring on the filled button');
+  // Not a filled button: dim ink at rest that turns violet on hover, and the
+  // tile's dashed face in front of the label.
+  assert.doesNotMatch(entry[1], /\bbg-violet-600\b/, 'not a filled blue button');
+  assert.doesNotMatch(entry[1], /\btext-white\b/, 'no white ink: dim zinc text, not filled');
+  assert.match(entry[1], /\btext-zinc-600\b/, 'dim zinc ink at rest');
+  assert.match(entry[1], /\bgroup-hover:text-violet-700\b/, 'the violet hover accent');
+  assert.match(html, /<span class="[^"]*border-dashed[^"]*group-hover:border-violet-500[^"]*"/,
+    'the entry renders its dashed face, which turns violet on hover');
   assert.match(html, /data-panel-slot="create"/);
   assert.match(html, /data-create-enabled="true"/);
   assert.match(html, /title="Start a project: an app for you or for a community"/);
