@@ -22223,6 +22223,24 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* THE PINNED PART'S EDGE (#4935): a hairline between the apps pinned from
+     My apps' top row and the recents after them, in the same colour as the
+     line above the strip. Drawn on the first non-pinned row FOLLOWING a
+     pinned one, so it appears only when both groups are present: a strip
+     that is all pins or all recents draws no line. */
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]) {
+    margin-top: 9px;
+    position: relative;
+  }
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 10px;
+    right: 10px;
+    height: 1px;
+    background: var(--app-sheet-line);
+  }
   .platform-strip-mark {
     position: relative;
     display: inline-flex;

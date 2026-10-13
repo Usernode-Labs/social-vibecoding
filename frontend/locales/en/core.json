@@ -340,8 +340,8 @@
     "description": "Error under the picture chooser of an illustration editor when the chosen picture is still over the upload limit after it was shrunk. Smaller means fewer pixels or a smaller file."
   },
   "stripApps.label": {
-    "text": "Recent apps",
-    "description": "Accessible name of the row of recently used app tiles on the side rail and the phone bar's app strip."
+    "text": "My apps and recent apps",
+    "description": "Accessible name of the desktop side strip: the apps in the top row of My apps first, then the recently used apps."
   },
   "release.sentence.waiting": {
     "text": "Merged; waiting for a release",
