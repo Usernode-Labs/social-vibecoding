@@ -56,6 +56,7 @@ const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
 const { firstVersionSql } = require('./first-version-rule');
+const notificationBookmarks = require('./notification-bookmarks');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -1612,6 +1613,47 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // keyset comparison still ride idx_notifications_user_recent on
 // (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
 // that index already produced.
+//
+// #4769: the SELECT list and joins a notification row shares across the
+// feed page (listForUser), the exact lookup (getForUser) and the drawer's
+// saved-notification section (listSavedForUser). Every renderer
+// serializes the same shape, so all three must select the same columns —
+// kept in one place so the next column added to serialize() is added here
+// once, not in three copies.
+const NOTIFICATION_ROW_COLUMNS = `SELECT n.id, n.kind,
+        CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
+             THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
+             ELSE n.read_at END AS read_at,
+        n.created_at,
+        n.app_id, a.slug AS app_slug, a.name AS app_name,
+        n.chat_message_id,
+        cm.content AS message_content,
+        cm.thread_type, cm.thread_ref,
+        ${THREAD_ROOT_COLUMNS_SQL},
+        n.session_id,
+        cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+        cs.agent_session_id,
+        n.conversation_id, c.kind AS conversation_kind,
+        c.title AS conversation_title,
+        n.conversation_message_id,
+        conversation_message.content AS conversation_message_content,
+        conversation_message.thread_root_id AS conversation_thread_root_id,
+        su.username AS source_username,
+        n.source_user_id,
+        ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
+        n.detail,
+        pv.reason AS vote_reason,
+        ${LIVE_ROW_COLUMNS_SQL}`;
+const NOTIFICATION_ROW_JOINS = `FROM notifications n
+   LEFT JOIN apps a ON a.id = n.app_id
+   LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+   LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+   LEFT JOIN conversations c ON c.id = n.conversation_id
+   LEFT JOIN conversation_messages conversation_message
+     ON conversation_message.id = n.conversation_message_id
+   LEFT JOIN users su ON su.id = n.source_user_id
+   LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+   ${FILED_MESSAGE_JOIN_SQL}`;
 async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
   const params = [userId];
   let cursorClause = '';
@@ -1635,40 +1677,10 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
   const { rows } = await pool.query(
-    `SELECT n.id, n.kind,
-            CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
-                 THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
-                 ELSE n.read_at END AS read_at,
-            n.created_at,
-            n.app_id, a.slug AS app_slug, a.name AS app_name,
-            n.chat_message_id,
-            cm.content AS message_content,
-            cm.thread_type, cm.thread_ref,
-            ${THREAD_ROOT_COLUMNS_SQL},
-            n.session_id,
-            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-            cs.agent_session_id,
-            n.conversation_id, c.kind AS conversation_kind,
-            c.title AS conversation_title,
-            n.conversation_message_id,
-            conversation_message.content AS conversation_message_content,
-            conversation_message.thread_root_id AS conversation_thread_root_id,
-            su.username AS source_username,
-            n.source_user_id,
-            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
-            n.detail,
-            pv.reason AS vote_reason,
-            ${LIVE_ROW_COLUMNS_SQL}
-     FROM notifications n
-     LEFT JOIN apps a ON a.id = n.app_id
-     LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-     LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-     LEFT JOIN conversations c ON c.id = n.conversation_id
-     LEFT JOIN conversation_messages conversation_message
-       ON conversation_message.id = n.conversation_message_id
-     LEFT JOIN users su ON su.id = n.source_user_id
-     LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-     ${FILED_MESSAGE_JOIN_SQL}
+    `${NOTIFICATION_ROW_COLUMNS},
+            EXISTS (SELECT 1 FROM notification_bookmarks nb
+                     WHERE nb.notification_id = n.id AND nb.user_id = $1) AS saved
+     ${NOTIFICATION_ROW_JOINS}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${mergedHiddenClause}
      ${cursorClause}
@@ -1685,44 +1697,49 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
 // content is resolved here after the Social web session is authenticated.
 async function getForUser(pool, userId, id) {
   const { rows } = await pool.query(
-    `SELECT n.id, n.kind,
-            CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL}
-                 THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at)
-                 ELSE n.read_at END AS read_at,
-            n.created_at,
-            n.app_id, a.slug AS app_slug, a.name AS app_name,
-            n.chat_message_id,
-            cm.content AS message_content,
-            cm.thread_type, cm.thread_ref,
-            ${THREAD_ROOT_COLUMNS_SQL},
-            n.session_id,
-            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-            cs.agent_session_id,
-            n.conversation_id, c.kind AS conversation_kind,
-            c.title AS conversation_title,
-            n.conversation_message_id,
-            conversation_message.content AS conversation_message_content,
-            conversation_message.thread_root_id AS conversation_thread_root_id,
-            su.username AS source_username,
-            n.source_user_id,
-            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
-            n.detail,
-            pv.reason AS vote_reason,
-            ${LIVE_ROW_COLUMNS_SQL}
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-       LEFT JOIN conversations c ON c.id = n.conversation_id
-       LEFT JOIN conversation_messages conversation_message
-         ON conversation_message.id = n.conversation_message_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
-       ${FILED_MESSAGE_JOIN_SQL}
+    `${NOTIFICATION_ROW_COLUMNS}
+     ${NOTIFICATION_ROW_JOINS}
       WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
+}
+
+// #4769: the drawer's Saved section — this user's saved notifications,
+// newest save first, through the same ownership and hydration boundary as
+// the feed page (same column list, same access clauses) so a saved row
+// serializes to exactly the shape the click branches already route on.
+//
+// The feed's merged-hidden clause is deliberately left OFF: a merged
+// change's ask was hidden from the FEED because the change behind it is
+// gone, but this reader saved the row on purpose — the save is the
+// instruction to keep showing it.
+async function listSavedForUser(pool, userId, { limit = notificationBookmarks.MAX_SAVED } = {}) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `${NOTIFICATION_ROW_COLUMNS},
+            TRUE AS saved,
+            nb.created_at AS saved_at
+     ${NOTIFICATION_ROW_JOINS}
+     JOIN notification_bookmarks nb ON nb.notification_id = n.id AND nb.user_id = $1
+      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+      ORDER BY nb.created_at DESC, n.id DESC
+      LIMIT $2`,
+    [userId, limit]
+  );
+  return rows;
+}
+
+// Best-effort variant for the notifications payload: the drawer's saved
+// section must never be the reason the whole dropdown 500s. Same contract
+// as messageBookmarks.listForUserSafe.
+async function listSavedForUserSafe(pool, userId, options) {
+  try {
+    return await listSavedForUser(pool, userId, options);
+  } catch (err) {
+    log.warn('notifications', 'saved notification list failed', { message: err.message });
+    return [];
+  }
 }
 
 async function countUnread(pool, userId) {
@@ -2129,6 +2146,13 @@ function serialize(row) {
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
     ...(row.kind === 'first_message' || row.kind === 'channel_message'
       ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
+    // #4769: whether this row is in the user's saved set. Only the feed
+    // page and the saved section select the flag (the exact lookup
+    // doesn't), so it is false there — a false rather than absent keeps
+    // the wire shape total. The saved section also selects WHEN the row
+    // was pinned, which orders that section; the feed page never does.
+    saved: !!row.saved,
+    ...(row.saved_at ? { savedAt: row.saved_at } : {}),
   };
 }
 
@@ -2176,6 +2200,8 @@ module.exports = {
   markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,
+  listSavedForUser,
+  listSavedForUserSafe,
   getForUser,
   countUnread,
   markRead,

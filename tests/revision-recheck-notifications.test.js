@@ -112,8 +112,14 @@ test('serialize: only the vote row carries the voter\'s line, read off their vot
   assert.equal(merged.voteReason, null, 'a join that happened to match is not a vote\'s line');
   assert.equal(merged.detail, 'Backed by alice.');
   const src = fs.readFileSync(path.join(__dirname, '../src/services/notifications.js'), 'utf8');
+  // #4769: the feed page, the exact lookup and the drawer's saved section
+  // now share one row shape (NOTIFICATION_ROW_JOINS), and the push hydration
+  // keeps its own copy — every reader of a notification row still reads the
+  // vote line live off their vote, never from a stale write.
   const joins = src.match(/LEFT JOIN pr_votes pv ON pv\.session_id = n\.session_id AND pv\.user_id = n\.source_user_id/g) || [];
-  assert.equal(joins.length, 3, 'the list, the single fetch and the push hydration all read it live');
+  assert.equal(joins.length, 2, 'the shared row shape and the push hydration both read it live');
+  assert.equal((src.match(/\$\{NOTIFICATION_ROW_JOINS\}/g) || []).length, 3,
+    'the list, the single fetch and the saved section all hydrate through the shared shape');
 });
 
 // ── 3. The bell's rows ────────────────────────────────────────────────
