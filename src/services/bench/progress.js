@@ -95,11 +95,18 @@ function skillNames(list) {
  */
 function tracker(pool, trialId, {
   now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null, skills = null, looks = null,
-  keep = null, keepEveryMs = KEEP_EVERY_MS,
+  keep = null, keepEveryMs = KEEP_EVERY_MS, seed = null,
 } = {}) {
   const iso = () => new Date(now()).toISOString();
   const seen = { invoked: skillNames(skills?.invoked), read: skillNames(skills?.read) };
   const state = { step: null, stepAt: null, lines: [], skills: seen, updatedAt: iso() };
+  // Carried on from a trial's own progress (lane.js recoveryWatch): its step
+  // and its last lines, as the restart left them.
+  if (seed && STEPS.includes(seed.step)) {
+    state.step = seed.step;
+    state.stepAt = typeof seed.stepAt === 'string' ? seed.stepAt : null;
+  }
+  if (Array.isArray(seed?.lines)) state.lines = seed.lines.map(clip).filter(Boolean).slice(-LINES_KEPT);
   state.looks = lookCounts(looks);
   let timer = null;
   let closed = false;

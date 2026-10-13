@@ -175,6 +175,20 @@ function isBenchSession(session) {
   return !!session && session.username === BENCH_USERNAME && session.user_is_synthetic === true;
 }
 
+/**
+ * Whether restart recovery may follow a benchmark session's turn: an
+ * active session's, or a paused one's with a turn in flight. A build's
+ * nudge and a review's fix turns run on a session its build turn left
+ * paused (homeroom-bot-live.js buildTurnRunner), as the live bot's do
+ * (homeroom-bot.js isRecoveredBotSession, #1006): until 13 Oct 2026 server.js
+ * destroyed such a worker in silence, its turn record left, and the trial sat
+ * running until the watchdog or releaseStale gave it back. Pure.
+ */
+function isRecoveredBenchSession(session) {
+  return isBenchSession(session)
+    && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
+}
+
 // ── Sessions, branches and turns ────────────────────────────────────────
 
 /**
@@ -1832,6 +1846,7 @@ module.exports = {
   assertBenchBranch,
   ensureBenchUser,
   isBenchSession,
+  isRecoveredBenchSession,
   branchFor,
   pinBranch,
   openSession,

@@ -1265,9 +1265,19 @@ function holdRecoveredTrial(trial, sessionId, recovery) {
 /**
  * When the trial's own clock ends a recovered turn: the turn's start plus
  * the budget the live path gave it (a build turn's for a build, a turn's
- * otherwise), or null to leave it unbounded.
+ * otherwise) and the time its restarts cost it, as the live bot's clock
+ * gives it back (homeroom-bot.js restartAllowanceMs: two minutes a restart,
+ * `activeTurn.restarts` from server.js noteRestart), or null to leave it
+ * unbounded. Until 13 Oct 2026 a trial's clock gave none back, so a turn a
+ * restart caught near its end was cut short, as a live build's had been.
  */
 async function recoveryDeadline(pool, config, session, activeTurn) {
+  const at = await turnDeadline(pool, config, session, activeTurn);
+  return at == null ? null : at + require('../homeroom-bot').restartAllowanceMs(activeTurn);
+}
+
+/** recoveryDeadline before its restarts are given back. */
+async function turnDeadline(pool, config, session, activeTurn) {
   const startedMs = Date.parse(activeTurn?.startedAt || '');
   if (!Number.isFinite(startedMs)) return null;
   const plan = await recoveryPlan(pool, session, activeTurn);
@@ -1325,6 +1335,39 @@ function fixDeadline(checkpoint, startedMs, turnEnd) {
 }
 
 /**
+ * The studio's watch of a trial whose turn restart recovery is following
+ * (server.js resumeDetachedTurnInner, its onRecoveredProgress): the trial's
+ * own progress carried on from where the restart left it, each line the
+ * replay shows noted as a live turn's is (progress.tracker). Until 13 Oct
+ * 2026 nothing wrote it, and run 189's six builds, followed for twenty
+ * minutes and more, each showed the line it was at when the platform went
+ * down. The replay shows the turn from its start, so its looks are counted
+ * on the counts its step began with (`stepLooks`), never on counts that hold
+ * some of them already. Resolves the tracker, or null for a session no
+ * running trial is on. Never throws.
+ */
+async function recoveryWatch(pool, sessionId) {
+  try {
+    const { rows: [t] } = await pool.query(
+      `SELECT id, progress, checkpoint FROM bench_trials
+        WHERE session_id = $1 AND status = 'running'
+        ORDER BY id DESC LIMIT 1`,
+      [Number(sessionId)],
+    );
+    if (!t) return null;
+    const p = t.progress && typeof t.progress === 'object' ? t.progress : {};
+    const cp = t.checkpoint && typeof t.checkpoint === 'object' ? t.checkpoint : {};
+    const looks = cp.stepLooks && cp.stepLooks.step === p.step ? cp.stepLooks : null;
+    return progress.tracker(pool, t.id, {
+      log, skills: p.skills || cp.skills || null, looks, seed: { step: p.step, stepAt: p.stepAt, lines: p.lines },
+    });
+  } catch (err) {
+    log.warn('bench', 'Could not watch a recovered trial', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+/**
  * A trial's last turn, followed to its end by restart recovery: read the
  * way the live stage reads it (runner.recoverStage) and recorded through
  * the same finisher (recordTrial). `result` is what the journal replay
@@ -1336,8 +1379,13 @@ function fixDeadline(checkpoint, startedMs, turnEnd) {
  * though recovery had abandoned it.
  */
 async function finishRecoveredTrial({
-  pool, config, session, activeTurn, result = {}, timedOut = false, progress: lines = null, deps = {},
+  pool, config, session, activeTurn, result = {}, timedOut: clockFired = false, progress: lines = null, watch = null, deps = {},
 }) {
+  // The clock re-armed past a deadline fires at once, even for a turn that
+  // had finished before the restart: one whose journal ended on its own
+  // exit 0, before the stop's 143, did its work in time (as the live bot
+  // reads it, homeroom-bot.js finishRecoveredFollowUp).
+  const timedOut = !!clockFired && Number(result?.exitCode) !== 0;
   try {
     const plan = await recoveryPlan(pool, session, activeTurn);
     if (!plan) {
@@ -1346,7 +1394,7 @@ async function finishRecoveredTrial({
     }
     const row = plan.trial;
     if (!plan.resumable) throw new Error(`a ${row.stage} trial's ${activeTurn?.mode || 'unknown'} turn is not its last`);
-    if (goesOnAfterRestart(row)) return await handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines, deps });
+    if (goesOnAfterRestart(row)) return await handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines, watch, deps });
     const d = liveDeps(deps);
     const bot = require('../homeroom-bot');
     const repo = bot.parseRepo(row.repo_url);
@@ -1362,6 +1410,16 @@ async function finishRecoveredTrial({
     if (!patch) throw new Error('nothing to finish');
     const startedMs = row.started_at ? new Date(row.started_at).getTime() : NaN;
     patch.duration_ms = Number.isFinite(startedMs) ? Math.max(Date.now() - startedMs, 0) : null;
+    // The skills it reached for and its looks, as a trial run start to end
+    // records them (executeTrial), from the watch recovery kept.
+    if (watch) {
+      const skills = watch.skills();
+      if (skills.invoked.length || skills.read.length || row.context_pack_id) patch.parsed = { ...(patch.parsed || {}), skills };
+      const looks = watch.looks();
+      if (patch.parsed?.sight || looks.screenshots || looks.snapshots || looks.navigations) {
+        patch.parsed = { ...(patch.parsed || {}), sight: { told: null, passed: null, ...(patch.parsed?.sight || {}), ...looks } };
+      }
+    }
     return await recordTrial(pool, {
       trialRow: { id: row.id, run_id: row.run_id }, row, patch, user: { id: session.user_id }, d,
       recovered: true, sessionId: session.id,
@@ -1402,7 +1460,7 @@ function recoveredLooks(checkpoint, step, lines) {
  * it costs no claim either. Resolves 'handed_back', or 'gone'
  * when the trial was no longer on this session.
  */
-async function handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines = null, deps }) {
+async function handBackTrial({ pool, row, session, activeTurn, result, timedOut, lines = null, watch = null, deps }) {
   const side = !!row.bot_config_version_id;
   const step = side
     ? runner.sideTurnOf(row.checkpoint, activeTurn)
@@ -1411,12 +1469,15 @@ async function handBackTrial({ pool, row, session, activeTurn, result, timedOut,
   // A fix turn's step began before the build turn did, so its looks cannot
   // be told from the build's: the checkpoint's are left as they are.
   const looks = recoveredLooks(row.checkpoint, step === 'fix' ? null : step, lines);
-  if (kept || looks) {
+  // And the skills its turn reached for, which the next claim's watch starts from.
+  const skills = watch ? watch.skills() : null;
+  const seenSkills = skills && (skills.invoked.length || skills.read.length) ? { skills } : {};
+  if (kept || looks || seenSkills.skills) {
     await pool.query(
       `UPDATE bench_trials SET checkpoint = COALESCE(checkpoint, '{}'::jsonb) || $3::jsonb,
               recovered_at = CASE WHEN $4::boolean THEN NOW() ELSE recovered_at END
         WHERE id = $1 AND status = 'running' AND session_id = $2`,
-      [row.id, Number(session.id), JSON.stringify({ ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}) }), !!kept],
+      [row.id, Number(session.id), JSON.stringify({ ...(kept ? kept.keep : {}), ...(looks ? { looks } : {}), ...seenSkills }), !!kept],
     );
   }
   await pool.query(
@@ -1746,6 +1807,7 @@ module.exports = {
   recoveryPlan,
   holdRecoveredTrial,
   recoveryDeadline,
+  recoveryWatch,
   finishRecoveredTrial,
   capRun,
   settleSideResults,

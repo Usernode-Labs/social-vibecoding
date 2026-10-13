@@ -177,12 +177,12 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     turnId: `turn-${crypto.randomUUID()}`, journal: '/journals/t.log', mode, phase: 'executing',
     backend: 'codex_openrouter', model: 'z-ai/glm-5.3-flash', startedAt: new Date().toISOString(), attemptNumber: 1, ...extra,
   });
-  const newSession = async (activeTurn, { specMd = '' } = {}) => (await pool.query(
+  const newSession = async (activeTurn, { specMd = '', status = 'active' } = {}) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, is_headless, linked_issues, session_title,
                                 agent_backend, agent_provider, agent_model, active_turn, spec_md)
-     VALUES ($1, $2, 'active', FALSE, '{}', 'bench', 'codex_openrouter', 'openrouter', 'z-ai/glm-5.3-flash', $3::jsonb, $4)
+     VALUES ($1, $2, $5, FALSE, '{}', 'bench', 'codex_openrouter', 'openrouter', 'z-ai/glm-5.3-flash', $3::jsonb, $4)
      RETURNING id`,
-    [app.id, user.id, activeTurn ? JSON.stringify(activeTurn) : null, specMd],
+    [app.id, user.id, activeTurn ? JSON.stringify(activeTurn) : null, specMd, status],
   )).rows[0].id;
   const spend = (sessionId, usd) => pool.query(
     `INSERT INTO agent_turns (id, session_id, user_id, backend, status, estimated_cost_usd, routed_model)
@@ -289,6 +289,18 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     const row = await trialRow(trial.id);
     assert.equal(row.status, 'timeout');
     assert.deepEqual(outward, []);
+
+    // A turn that had finished before the restart, its journal ending on its
+    // own exit 0, did its work in time, though the re-armed clock fires at
+    // once (as the live bot reads it).
+    reset();
+    const { trials: [done] } = await launch(['triage']);
+    const sid2 = await newSession(turnOf('scout', { startedAt: new Date(Date.now() - 6 * 3600 * 1000).toISOString() }));
+    await claimAs(done.id, sid2);
+    journalTail = () => new Promise((resolve) => { stopped = () => resolve({ lastResultText: VERDICT, exitCode: 0, resultSeen: true }); });
+    await adopt(sid2);
+    const row2 = await trialRow(done.id);
+    assert.equal(row2.status, 'ok', 'recorded as the turn ended, not as a time-out');
   });
 
   await t.test('a build\'s spec turn is abandoned and the trial is back in the queue at once, its spend charged', async () => {
@@ -463,6 +475,10 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('scout', { startedAt })),
       at + Math.min(budgets.firstVersion.buildMs, budgets.firstVersion.specMs), 'a spec turn: the spec\'s clock');
     assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('build', { startedAt })), at + budgets.firstVersion.buildMs);
+    // Each restart the turn has been through gives back what it cost, as the
+    // live bot's clock does (homeroom-bot.js restartAllowanceMs).
+    assert.equal(await lane.recoveryDeadline(pool, {}, session, turnOf('build', { startedAt, restarts: 2 })),
+      at + budgets.firstVersion.buildMs + 2 * bot.restartAllowanceMs({ restarts: 1 }));
     await keep(tri.id, { triageSessionId: sid, sessions: [sid] });
 
     journalTail = async () => ({ lastResultText: VERDICT, exitCode: 0, resultSeen: true });
@@ -496,6 +512,11 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
       stepLooks: { step: 'build', screenshots: 0, snapshots: 1, navigations: 1 },
       looks: { screenshots: 2, snapshots: 1, navigations: 2 },
     });
+    // What the studio's watch showed when the platform went down.
+    await pool.query('UPDATE bench_trials SET progress = $2::jsonb WHERE id = $1', [fvb.id, JSON.stringify({
+      step: 'build', stepAt: '2026-10-13T18:20:00.000Z', lines: ['OpenRouter request #3: still responding after 210s'],
+      skills: { invoked: [], read: ['frontend-design'] }, looks: { screenshots: 2, snapshots: 1, navigations: 2 },
+    })]);
     // The replay shows the turn from its start: the looks kept before the
     // restart, one the restart lost, and the ones after it.
     journalTail = async (_sid, opts) => {
@@ -515,6 +536,13 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     assert.deepEqual(row.checkpoint.sight, sight, 'what it could see is still there for the next claim');
     assert.deepEqual(row.checkpoint.looks, { screenshots: 4, snapshots: 1, navigations: 3 },
       'the step\'s counts plus the whole turn\'s: none counted twice, none lost after the restart');
+    // The studio watched the replay, not the moment of the restart.
+    const { rows: [{ progress: watched }] } = await pool.query('SELECT progress FROM bench_trials WHERE id = $1', [fvb.id]);
+    assert.equal(watched.step, 'build', 'still at its step');
+    assert.equal(watched.stepAt, '2026-10-13T18:20:00.000Z');
+    assert.equal(watched.lines[watched.lines.length - 1], 'Using mcp__playwright__browser_take_screenshot', 'its lines are the replay\'s');
+    assert.deepEqual(watched.looks, { screenshots: 4, snapshots: 1, navigations: 3 }, 'counted on the step\'s opening counts');
+    assert.deepEqual(row.checkpoint.skills, { invoked: [], read: ['frontend-design'] }, 'the skills it had reached for, kept for the next claim');
     assert.ok(row.recovered_at);
     assert.deepEqual(outward, []);
   });
@@ -762,7 +790,9 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
     reset();
     const fvf = await firstVersionTrial();
     const triSid = await newSession(null);
-    const sid = await newSession(turnOf('build'));
+    // Paused, as its build turn left it (buildTurnRunner): a fix turn runs on
+    // it so, and until 13 Oct 2026 its worker was destroyed here unfollowed.
+    const sid = await newSession(turnOf('build'), { status: 'paused' });
     await claimAs(fvf.id, sid);
     const reviewStarted = new Date(Date.now() - 18 * 60 * 1000).toISOString();
     const review = {
@@ -785,7 +815,7 @@ test('restart recovery of benchmark trials, against the full PostgreSQL schema',
       Date.parse(reviewStarted) + 20 * 60 * 1000, 'a fix never runs past the review\'s own minutes');
     journalTail = async () => ({ pushOk: true, ahead: 3, sha: 'e'.repeat(40), exitCode: 0, resultSeen: true });
     await adopt(sid);
-    assert.ok(workerCalls.some((c) => c[0] === 'resume'), 'followed to its end');
+    assert.ok(workerCalls.some((c) => c[0] === 'resume'), 'followed to its end, though its session was paused');
     const row = await fvRow(fvf.id);
     assert.equal(row.status, 'pending');
     assert.equal(row.claims, 0, 'its review was kept work: no claim spent');
