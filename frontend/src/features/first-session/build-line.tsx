@@ -68,13 +68,16 @@ export function soFarNote(since: string | null | undefined, now: number): string
 /**
  * N4: the line's words and note for a first version at `line`, with its
  * phase: the phase's own words and how long it has run while the line says
- * it is being built; else none, and the line says its own words. `caption`
+ * it is being built ("Starting the build" before a phase is named); else
+ * none, and the line says its own words. `caption`
  * (the build's "Adding the tier rows") is the note while it builds, ahead of
  * the time.
  */
 export function phaseLine(line: BuildLineState | null, value: unknown, now: number, caption: string | null = null): { words: string | null; note: string | null } {
-  const phase = line === 'building' ? (phaseOf(value) as FirstVersionPhase | null) : null;
-  if (!phase) return { words: null, note: null };
+  if (line !== 'building') return { words: null, note: null };
+  // Run five: built, with no stage named yet (a plan decided at Make it,
+  // its build not picked up), is the build starting, on every screen.
+  const phase = (phaseOf(value) as FirstVersionPhase | null) || { key: 'starting', since: null, round: null, rounds: null };
   const soFar = soFarNote(phase.since, now);
   const adding = phase.key === 'building' && caption ? caption : null;
   return {
@@ -107,7 +110,7 @@ export type ServerBuildLine = keyof typeof BUILD_LINE_WORDS;
 export type BuildLineState = ServerBuildLine | 'working';
 
 /** The same lines on a Home tile (./build-line-words.js). */
-export { BUILD_LINE_TILE_WORDS, buildLineTileClass, buildLineTileOf } from './build-line-words.js';
+export { BUILD_LINE_TILE_WORDS, PHASE_TILE_WORDS, buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, phaseKeyOf } from './build-line-words.js';
 
 /** The line in an answer (`first_version.line`), or null for none or one this shell does not know. */
 export function buildLineOf(value: unknown): ServerBuildLine | null {

@@ -53,7 +53,7 @@ import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
-import { type BuildLineState, buildLineOf } from '../../first-session/build-line';
+import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
 import { ThumbRow } from '../../first-session/sketch-card';
 import { open as openConversation, openBot } from '../../messages/store';
@@ -167,11 +167,15 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
   // no Review the plan here, only the build line saying the bot is on it.
   const touring = useTourRunning();
   const t = useMessages('project');
+  const now = useNow();
   if (!fv) return null;
   const asked = firstVersionAction(fv);
   const held = touring && asked === 'review';
   const line: BuildLineState = held ? 'working' : firstVersionLine(fv);
   const action = held ? null : asked;
+  // Run five: the stage by its own name while it is built, as the App tab
+  // and the Home tile name it ("Starting the build", "Drawing the screens").
+  const named = phaseLine(line, fv.phase, now);
   const press = () => {
     if (action === 'review' || action === 'answer') {
       if (fv.conversation_id) openConversation(fv.conversation_id);
@@ -191,6 +195,8 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           colorKey={slug}
           emoji={emoji}
           line={button ? null : line}
+          lineWords={named.words}
+          lineNote={named.note}
         />
         {action === 'see' ? (
           <button
