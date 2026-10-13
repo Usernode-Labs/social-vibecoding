@@ -4916,9 +4916,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, its number in its own colour and its title, and under them where it stands, so the question waiting on you shows in the need colour (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
+      "name": "The chat with Homeroom bot draws each request as one row: its project's tile, a badge saying where it stands, its number in its own colour and its title, so the question waiting on you wears the amber badge (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"]:has([data-request-tag]) [data-bot-news-open] [data-bot-news-words].text-amber-700",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"]:has([data-request-tag]) [data-bot-news-state=needs] [data-bot-badge=needs]",
       "expectText": "Which night should the rota start on?",
       "id": "homeroom-bot-dm-question",
       "visual": true,
@@ -4945,9 +4945,9 @@
       ]
     },
     {
-      "name": "#4097, one request, one story: in the chat with Homeroom bot each request is one row that opens its story: its earlier news folds into its newest row, which counts the updates, and the row says where the request stands now, keeping the need colour for what still waits on you: a build that stopped earlier reads \"Stopped\" without it, and a change ready for your yes says so",
+      "name": "#4097, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests in a row fold into one line with how each ended (a build that stopped, a change that went live), and a change ready for your yes says so",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-news=build_failed] [data-bot-news-words]:not(.text-amber-700)):has([data-bot-news=merged] [data-bot-thread-link]) [data-bot-news=question] [data-bot-thread-link]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-settled-badges] [data-bot-final=build_failed]):has([data-bot-settled-badges] [data-bot-final=live]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
       "expectText": "Ready for your yes"
     },
     {

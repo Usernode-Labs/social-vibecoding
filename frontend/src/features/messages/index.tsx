@@ -34,9 +34,10 @@ import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { BotWorkSync, newestBotMessageId } from './bot-work';
+import { BotWorkSync, newestBotMessageId, useBotWork } from './bot-work';
 import { BotStrip, RequestTag } from './bot-strip';
-import { BotNewsLine, foldBotNews, isBotNews } from './bot-news-line';
+import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
+import { requestKey } from './bot-request';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -1785,6 +1786,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
+  // One request, one story: where each request stands, for folding the settled ones.
+  const { work: botWork } = useBotWork();
   // #2387: the message a link pointed at, flashed once it is drawn.
   const focusId = snap.route.focusMessageId;
   const [flashId, setFlashId] = useState<number | null>(null);
@@ -1952,6 +1955,30 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // its newest piece; the earlier ones fold into that row (./bot-news-line.tsx).
   const newsFold = botDm ? foldBotNews(snap.messages, (message) => isMovedActivity(message) || plans.hidden.has(message.id)) : null;
   const byId = newsFold ? new Map(snap.messages.map((message) => [message.id, message])) : null;
+  // Settled rows in a row, waiting to be drawn as one folded line
+  // (./bot-news-line.tsx SettledRun); anything else drawn, a day or the
+  // "New" line ends the run.
+  let settledRun: SettledRunItem[] = [];
+  // A folded run opened or closed keeps its count where it was on screen:
+  // the reader is no longer following the newest line for that press.
+  const holdPlace = (el: HTMLElement) => {
+    pinned.current = false;
+    const top = el.getBoundingClientRect().top;
+    return () => {
+      const box = scroller.current;
+      const moved = el.getBoundingClientRect().top - top;
+      if (box && moved) box.scrollTop += moved;
+    };
+  };
+  const flushRun = () => {
+    if (settledRun.length === 1) {
+      const [item] = settledRun;
+      rows.push(<BotNewsLine key={item.message.clientKey || item.message.id} message={item.message} earlier={item.earlier} updates={item.updates} focused={item.focused} />);
+    } else if (settledRun.length) {
+      rows.push(<SettledRun key={`settled-${settledRun[0].message.id}`} items={settledRun} holdPlace={holdPlace} />);
+    }
+    settledRun = [];
+  };
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
@@ -1961,6 +1988,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
+    const settled = botDm && isBotNews(message) && !!newsStatusOf(message, botWork)?.settled;
+    if (!settled || (day && day !== previousDay) || (lineAt !== null && message.id >= lineAt && !lineDrawn)) flushRun();
     if (day && day !== previousDay) {
       rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
       previousDay = day;
@@ -1968,38 +1997,23 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     if (lineAt !== null && message.id >= lineAt) drawLine();
     // One request, one story: in the chat with Homeroom bot, the bot's news
     // about a request is ONE short line (./bot-news-line.tsx) whose tap opens
-    // the request's thread: its card, the moments the main stream also lists
-    // and the big cards from before threads, which open in place, whole.
+    // the request's story beside the chat: its thread, or for news from
+    // before threads its pieces, whole.
     if (botDm && isBotNews(message)) {
       const earlier = newsFold?.earlier.get(message.id) || [];
       // The story's size: its thread's replies, else the news folded in here.
       const root = message.threadRootId ? byId?.get(message.threadRootId) : message;
       const updates = root?.thread?.replyCount || (earlier.length ? earlier.length + 1 : 0);
+      const focused = flashId === message.id || earlier.some((item) => item.id === flashId);
+      previous = null;
+      if (settled) { settledRun.push({ message, earlier, updates, focused }); continue; }
       rows.push(<BotNewsLine
         key={message.clientKey || message.id}
         message={message}
         earlier={earlier}
         updates={updates}
-        focused={flashId === message.id || earlier.some((item) => item.id === flashId)}
-        full={() => (
-          <>
-            {[...earlier, message].map((item) => (
-              <MessageRow
-                key={item.clientKey || item.id}
-                message={item}
-                conversationId={conversationId}
-                channels={channels}
-                kind={kind}
-                focused={flashId === item.id}
-                planCardId={plans.cardOf.get(item.id) ?? null}
-                hidePrompts={plans.answersOpen}
-                botChat={botDm}
-              />
-            ))}
-          </>
-        )}
+        focused={focused}
       />);
-      previous = null;
       continue;
     }
     // #2387 follow-up: a thread's reply, drawn where it landed — one card for
@@ -2078,6 +2092,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       index += hidden;
     }
   }
+  flushRun();
   return (
     <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')}>
       {embedded ? null : <ThreadHeader />}
@@ -2246,6 +2261,13 @@ function ReplyThreadPanel() {
   const replies = thread?.messages || [];
   // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
   const cardId = root && isActivityMessage(root) ? root.id : null;
+  // One request, one story: a story from before threads opens on its oldest
+  // piece (./bot-request.ts storyRootIn), and the pieces after it, still in
+  // the main stream, are drawn under it, whole.
+  const storyKey = botChat && root && !cardId && isBotNews(root) ? requestKey(root.metadata?.homeroomBot || {}) : null;
+  const pieces = storyKey && root
+    ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
+    : [];
   let previous: ConversationMessage | null = null;
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
@@ -2265,6 +2287,7 @@ function ReplyThreadPanel() {
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
+        {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
         <div className="messages-reply-count" aria-hidden={!replies.length}>
           <span>{replies.length ? t('messages:replies.count', { count: replies.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
         </div>

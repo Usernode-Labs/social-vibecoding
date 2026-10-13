@@ -1014,6 +1014,29 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(await dm.threadRootFor(pool, { conversationId, userId: ada.id, replyToId: reply.message.id }), card.messageId,
       'what the bot says back goes in the same thread');
 
+    // A request from before threads has no card: the chat opens its story on
+    // its oldest message, and a reply written there is about it all the same.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 5003, $2, 'Print view')`,
+      [app.id, ada.id],
+    );
+    const old = await dm.sendDm(pool, {
+      bot, userId: ada.id, threadRootId: false, content: 'I can\'t build this as written.',
+      metadata: { kind: 'blocked', appSlug: app.slug, appName: 'Seed swap', issueNumber: 5003 },
+    });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
+       VALUES ($1, $2, $3, $4, 5003, 'blocked') ON CONFLICT (message_id) DO NOTHING`,
+      [old.messageId, ada.id, conversationId, app.id],
+    );
+    const underOld = await conversations.sendMessage(pool, viewer, conversationId, { content: 'The print screen', thread_root_id: old.messageId });
+    const aboutOld = await dm.threadRequest(pool, { userId: ada.id, conversationId, message: underOld.message });
+    assert.deepEqual([aboutOld?.issueNumber, aboutOld?.title, aboutOld?.rootId], [5003, 'Print view', old.messageId]);
+    const plain = await dm.sendDm(pool, { bot, userId: ada.id, threadRootId: false, content: 'Hello.', metadata: { kind: 'chat' } });
+    const underPlain = await conversations.sendMessage(pool, viewer, conversationId, { content: 'hi', thread_root_id: plain.messageId });
+    assert.equal(await dm.threadRequest(pool, { userId: ada.id, conversationId, message: underPlain.message }), null,
+      'a thread under words about no request is no request\'s');
+
     // People-to-people direct chats keep no threads.
     const people = await conversations.createDirect(pool, ada, sam.id);
     const peopleId = people.conversationId || people.conversation?.id;

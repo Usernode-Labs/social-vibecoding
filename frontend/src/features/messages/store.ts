@@ -1939,6 +1939,11 @@ export function openThreadAt(rootId: number | null | undefined, focusId: number 
   openThread(rootId);
 }
 
+/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+export function loadedMessages(): readonly ConversationMessage[] {
+  return state.messages;
+}
+
 /** The thread pane has shown the message it was opened at. */
 export function clearThreadFocus(): void {
   if (state.threadFocusId) publish({ threadFocusId: null });

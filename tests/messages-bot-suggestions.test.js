@@ -144,14 +144,14 @@ test('Try again replies to its message; Add detail quotes it in the composer and
   ], 'only a prompt quotes');
 });
 
-test('the staging preview’s declared check finds the demo DM’s stopped build, out of the need colour once nothing waits', () => {
+test('the staging preview’s declared check finds the demo DM’s stopped build among its finished requests, folded, saying how it ended', () => {
   // One request, one story: the stopped build is one row in the main chat;
-  // its Try again is in the request's thread, or in place once the row of a
-  // message from before threads is opened. The demo's stopped build is no
-  // longer in the person's activity, so its row says "Stopped" without the
-  // need colour, which is kept for what still waits on them.
+  // its Try again is in the request's thread, which every row opens. The
+  // demo's stopped build is no longer in the person's activity, so it is
+  // finished: folded with the finished requests beside it into one line,
+  // whose badges say how each ended (Couldn't build, Live).
   const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#4097/.test(t.name));
-  assert.match(check.expectSelector, /:has\(\[data-bot-news=build_failed\] \[data-bot-news-words\]:not\(\.text-amber-700\)\)/);
+  assert.match(check.expectSelector, /:has\(\[data-bot-settled-badges\] \[data-bot-final=build_failed\]\):has\(\[data-bot-settled-badges\] \[data-bot-final=live\]\)/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);
