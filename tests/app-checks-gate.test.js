@@ -259,7 +259,16 @@ test('the bot\'s runner writes the check before each turn and turns the gate on;
   // And the build and the review's recovery runner ask for it unless the
   // repository is the platform's own.
   const liveSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-live'), 'utf8');
-  assert.match(liveSrc, /harness: buildHarness, telemetry, onProgress, checksGate: !platformRepo,/);
+  assert.match(liveSrc, /harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn\(platformRepo\),/);
   const botSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
-  assert.match(botSrc, /checksGate: !isPlatformRepo\(app, config\)/);
+  assert.match(botSrc, /checksGate: live\.appChecksOn\(isPlatformRepo\(app, config\)\)/);
+});
+
+test('the gate and the detached capture each have an off switch', () => {
+  assert.equal(live.appChecksOn(false, {}), true);
+  assert.equal(live.appChecksOn(true, {}), false, 'never the platform\'s own repository');
+  assert.equal(live.appChecksOn(false, { HOMEROOM_BOT_CHECKS_GATE: '0' }), false);
+  assert.equal(live.appChecksOn(false, { HOMEROOM_BOT_CHECKS_GATE: '1' }), true);
+  assert.equal(live.detachedCaptureOn({}), true);
+  assert.equal(live.detachedCaptureOn({ HOMEROOM_BOT_DETACHED_CAPTURE: '0' }), false);
 });

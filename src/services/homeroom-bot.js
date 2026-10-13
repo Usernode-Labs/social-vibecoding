@@ -5469,6 +5469,9 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}, { wait = f
   }
   let started = 0;
   const running = [];
+  // The turn a restart cut short was the build's own (a fix turn of the
+  // review), which completeRecoveredLive carries on from what it saved.
+  const mode = 'build';
   for (const run of rows) {
     if (refusingNew()) break;
     const sessionId = Number(run.build_session_id);
@@ -5476,11 +5479,9 @@ async function finishInterruptedReviews(pool, config = {}, deps = {}, { wait = f
     // checked and noted in one synchronous step, so neither can start it
     // twice (completeRecoveredLive marks it recovering before it awaits).
     if (pendingLive.has(sessionId) || recoveringLive.has(sessionId) || liveBuildsInFlight.has(Number(run.id))) continue;
-    // The turn a restart cut short was the build's own (a fix turn of the
-    // review), which completeRecoveredLive carries on from what it saved.
     pendingLive.set(sessionId, {
       runId: Number(run.id), appId: Number(run.app_id), issueNumber: Number(run.issue_number),
-      mode: 'build', lost: true, why: 'the platform restarted during its review', result: {},
+      mode, lost: true, why: 'the platform restarted during its review', result: {},
     });
     const resuming = completeRecoveredLive({ pool, config, sessionId, deps })
       .then((acted) => {
@@ -5607,7 +5608,7 @@ async function reviewRecoveredBuild({
     }
     const runBuildTurn = live.buildTurnRunner({
       pool, config, bot, session: full, model, branchName: session.branch_name, containerName,
-      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: !isPlatformRepo(app, config),
+      deps: turnDeps, harness: live.recipeHarness(model, config), checksGate: live.appChecksOn(isPlatformRepo(app, config)),
     });
     log.info('homeroom-bot', resuming
       ? 'Carrying on a review a restart cut short'

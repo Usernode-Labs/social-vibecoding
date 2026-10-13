@@ -2166,6 +2166,21 @@ function firstVersionDesignLines(starter = null) {
   ];
 }
 
+// L2: whether a bot build or fix turn is held to the app's own declared
+// checks: not in the platform's own repository, which the check script does
+// not boot, and not when HOMEROOM_BOT_CHECKS_GATE=0 (an off switch, should
+// the second copy of the app a turn boots prove too much for its worker).
+function appChecksOn(platformRepo, env = process.env) {
+  return !platformRepo && String(env.HOMEROOM_BOT_CHECKS_GATE ?? '').trim() !== '0';
+}
+
+// R5: whether a review's captures run detached in the worker (bench/capture.js
+// runDetached), unless HOMEROOM_BOT_DETACHED_CAPTURE=0 puts them back on one
+// attached exec, which a restart loses.
+function detachedCaptureOn(env = process.env) {
+  return String(env.HOMEROOM_BOT_DETACHED_CAPTURE ?? '').trim() !== '0';
+}
+
 // L2: the app's own declared checks, run before a bot build or fix turn ends
 // (worker.js writeAppCheck, build-stop-hook.js's checks gate): how the
 // turn runs them itself, and that the platform runs them too.
@@ -2862,10 +2877,10 @@ function buildTurnRunner({
     // dispatch does, so this turn does not take the session from under it;
     // the wait is not charged to the turn's own clock.
     await waitOutShotsRun(session.id, deps);
-    // The gate's deadline is the turn's own clock, which starts here.
-    if (gate) gate.deadlineMs = Date.now() + budgetMs;
     let turnStopped = false;
     let stopping = null;
+    // The gate's deadline is the turn's own clock, which starts here.
+    if (gate) gate.deadlineMs = Date.now() + budgetMs;
     const timer = setTimeout(() => {
       turnStopped = true;
       stopping = stopOnClock(pool, worker, session.id).catch(() => {});
@@ -3286,7 +3301,7 @@ async function buildAndPropose({
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
-    harness: buildHarness, telemetry, onProgress, checksGate: !platformRepo,
+    harness: buildHarness, telemetry, onProgress, checksGate: appChecksOn(platformRepo),
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3297,7 +3312,7 @@ async function buildAndPropose({
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
     reviewed: Boolean(review?.reviewer),
     locale,
-    appChecks: !platformRepo,
+    appChecks: appChecksOn(platformRepo),
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -3597,7 +3612,7 @@ async function reviewLanded({
   const capture = async (index, { prior = null, onStarted = null } = {}) => {
     const t0 = Date.now();
     let containerName = null;
-    if (!prior?.id) {
+    if (!prior?.id || !detachedCaptureOn()) {
       try {
         containerName = await ensure();
       } catch (err) {
@@ -3608,7 +3623,7 @@ async function reviewLanded({
     const out = await step({
       pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
       store: (kept) => botReview.storeRoundShots(pool, { ...owner, round: index }, kept),
-      detached: { sessionId: session.id, prior, onStarted, ensure },
+      detached: detachedCaptureOn() ? { sessionId: session.id, prior, onStarted, ensure } : null,
     });
     return { ...out, ms: Date.now() - t0 };
   };
@@ -3626,7 +3641,7 @@ async function reviewLanded({
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
-        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: !platformRepo,
+        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs }, appChecks: appChecksOn(platformRepo),
       }),
       budgetMs: fixBudgetMs,
       resumeThreadId: null,
@@ -3737,6 +3752,8 @@ module.exports = {
   FIRST_VERSION_DESIGN_LINES,
   FIRST_VERSION_PROGRESS_LINES,
   appChecksLines,
+  appChecksOn,
+  detachedCaptureOn,
   guidanceLines,
   CONTENT_RULES_SLUG,
   REQUEST_IS_DATA_LINES,
