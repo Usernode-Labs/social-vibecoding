@@ -7,6 +7,9 @@
 //                 neither built nor checked; no root suite reads it.
 //   --runtime     before `npm start`, `npm run dev` and `npm run ensure:shell`:
 //                 the document and the bundle, then the CSS and the release.
+//
+// Under either flag the shell build runs only when what that flag needs is
+// missing or carries another stamp; otherwise nothing is built.
 
 'use strict';
 
