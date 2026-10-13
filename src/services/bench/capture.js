@@ -318,25 +318,109 @@ async function storeShots(pool, trialId, kept) {
   return ids;
 }
 
+// R5: how often a detached step is asked where it is.
+const DETACHED_POLL_MS = 3000;
+
+/**
+ * Run the step DETACHED in the worker (worker.js startDetachedCapture) and
+ * resolve its stdout once it is over, so a platform restart in the middle of
+ * it loses nothing: `prior` ({ id, startedAt }) is a step a restart left
+ * running, found by its id where it runs (`containerName`, else the
+ * session's worker by name) and harvested; when it is gone, or there is none,
+ * a new one starts in the worker `ensure()` makes sure of (or
+ * `containerName`), its id handed to `onStarted` and saved before it starts.
+ * The step's own time limit counts from when it first started, restarts
+ * included. Throws as runBenchCapture does when it could not be run or ran
+ * past its time.
+ */
+async function runDetached({
+  worker, containerName = null, sessionId = null, appId, timeoutMs = CAPTURE_TIMEOUT_MS,
+  prior = null, onStarted = null, ensure = null,
+  pollMs = DETACHED_POLL_MS, now = Date.now, sleep = (ms) => new Promise((r) => { setTimeout(r, ms); }),
+  // Once the platform is shutting down, the step is left running where it
+  // is, unread, for the next leader to harvest: this never resolves.
+  isStopping = () => require('../lifecycle').isShuttingDown(),
+}) {
+  const holdIfStopping = async () => {
+    let stopping = false;
+    try { stopping = !!isStopping(); } catch { stopping = false; }
+    if (stopping) await new Promise(() => {});
+  };
+  let where = containerName;
+  let id = null;
+  let startedAt = null;
+  if (prior && typeof prior.id === 'string') {
+    const at = where || (sessionId != null && typeof worker.workerRuntimeName === 'function' ? worker.workerRuntimeName(sessionId) : null);
+    const found = at ? await worker.detachedCaptureStatus(at, prior.id).catch(() => ({ state: 'gone' })) : { state: 'gone' };
+    if (found.state !== 'gone') {
+      where = at;
+      id = prior.id;
+      startedAt = Date.parse(prior.startedAt) || now();
+      log.info('bench', 'Harvesting a screenshot step a restart left running', { sessionId, id, state: found.state });
+    }
+  }
+  if (!id) {
+    await holdIfStopping();
+    if (ensure) where = await ensure();
+    if (!where) throw new Error('no worker');
+    id = crypto.randomBytes(8).toString('hex');
+    startedAt = now();
+    if (onStarted) {
+      try { await onStarted({ id, startedAt: new Date(startedAt).toISOString() }); } catch { /* a record never stops the step */ }
+    }
+    await worker.startDetachedCapture(where, {
+      id, source: script(), env: { INLOOP_PORT: CAPTURE_PORT, INLOOP_DATABASE_URL, BENCH_APP_ID: Number(appId) || 1 },
+    });
+  }
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    await holdIfStopping();
+    // eslint-disable-next-line no-await-in-loop
+    const st = await worker.detachedCaptureStatus(where, id);
+    if (st.state === 'done') {
+      // eslint-disable-next-line no-await-in-loop
+      const stdout = await worker.readDetachedCapture(where, id);
+      if (typeof worker.clearDetachedCapture === 'function') await worker.clearDetachedCapture(where, id);
+      return stdout;
+    }
+    if (st.state === 'gone') throw new Error('it stopped before it wrote a result (its worker was replaced or stopped)');
+    if (now() - startedAt > timeoutMs) {
+      if (typeof worker.stopDetachedCapture === 'function') await worker.stopDetachedCapture(where, id);
+      throw new Error(`it ran past ${Math.round(timeoutMs / 60000)} minutes`);
+    }
+    if (sessionId != null && typeof worker.touchWorker === 'function') worker.touchWorker(sessionId);
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(pollMs);
+  }
+}
+
 /**
  * Run the step on a trial's worker and store what it took. Resolves
  * { ok: true, capture } (the summary for bench_trials.capture, booted or
  * not) or { ok: false, error } when the platform could not run the step.
- * Never throws.
+ * With `detached` (a review round's: { sessionId, prior, onStarted,
+ * ensure }) and a worker that can, the step runs detached (runDetached);
+ * otherwise over one exec, as before. Never throws.
  */
 async function captureTrial({
   pool, trialId, worker, containerName, appId, timeoutMs = CAPTURE_TIMEOUT_MS,
   // Where the screenshots go when they are not a trial's own (the bot's
   // review rounds, services/bot-review.js storeRoundShots): kept => ids.
   store = null,
+  detached = null,
 }) {
   let stdout;
   try {
-    stdout = await worker.runBenchCapture(containerName, {
-      source: script(),
-      env: { INLOOP_PORT: CAPTURE_PORT, INLOOP_DATABASE_URL, BENCH_APP_ID: Number(appId) || 1 },
-      timeoutMs,
-    });
+    if (detached && typeof worker.startDetachedCapture === 'function' && typeof worker.detachedCaptureStatus === 'function') {
+      stdout = await runDetached({ worker, containerName, appId, timeoutMs, ...detached });
+    } else {
+      if (!containerName && detached?.ensure) containerName = await detached.ensure();
+      stdout = await worker.runBenchCapture(containerName, {
+        source: script(),
+        env: { INLOOP_PORT: CAPTURE_PORT, INLOOP_DATABASE_URL, BENCH_APP_ID: Number(appId) || 1 },
+        timeoutMs,
+      });
+    }
   } catch (err) {
     return { ok: false, error: `the screenshot step did not run: ${String(err.message || err).slice(0, 300)}` };
   }
@@ -408,6 +492,8 @@ module.exports = {
   summarize,
   describeActions,
   storeShots,
+  DETACHED_POLL_MS,
+  runDetached,
   captureTrial,
   pickShots,
   readArtifacts,

@@ -46,6 +46,26 @@
 // trial): the round-0 snapshot, and per round its commit, its capture's
 // artifact ids, the verdict, issues and previousFixed, and what the reviewer
 // call and the fix turn cost and took; then why it stopped.
+//
+// A REVIEW SURVIVES A RESTART (R5). Releases restart the platform many times
+// a day, and a review takes up to its budget. Each step saves the state
+// before it starts (`inFlight`: the capture's id, the round being reviewed,
+// the fix turn dispatched) and after it ends, with the process that ran it
+// (`leader`) and what the reviewer needs of the latest capture (`latest`).
+// Restart recovery (homeroom-bot.js finishRecoveredLive) hands that state
+// back as `resumeFrom`, and the loop carries on at the step that was cut:
+//   - round 0 never captured: captured now;
+//   - a capture under way: its result harvested from the worker it ran in
+//     (it runs detached, bench/capture.js), or taken again when it is gone;
+//   - a reviewer call under way: asked again for the same round, its cost
+//     recorded once, on that round;
+//   - a fix turn under way: the result restart recovery followed it to
+//     (`recoveredFix`), or the turn run again when it was lost;
+//   - then on as it would have gone, the final capture and the rollback
+//     included.
+// The time from the last step saved to the resume is given back on the
+// budget (`pausedMs`), and resumes are counted: past MAX_REVIEW_RESUMES the
+// caller proposes what is committed as it stands, as before.
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -85,6 +105,15 @@ const MAX_SPEC_CHARS = 24000;
 const MAX_REVIEW_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FIELD_CHARS = 600;
 const TELEMETRY_COMPONENT = 'homeroom_bot_review';
+// Restarts one review may carry on through. The fourth proposes what is
+// committed as it stands (homeroom-bot.js finishRecoveredLive), so a review
+// that every release keeps catching still ends.
+const MAX_REVIEW_RESUMES = 3;
+// This process, stamped on every state the loop saves (`leader`): restart
+// recovery tells a review a process that is gone left behind (any other
+// stamp) from one this process is running, without waiting for it to go
+// quiet (homeroom-bot.js finishInterruptedReviews).
+const PROCESS_ID = crypto.randomBytes(8).toString('hex');
 
 function clip(text, max) {
   const s = String(text == null ? '' : text).trim();
@@ -386,8 +415,11 @@ async function reviewCapture({
     shots.push({ caption: sh.caption, mimeType: a.content_type || 'image/png', data: data.toString('base64') });
   }
   if (!shots.length) return { ok: false, error: 'the capture\'s screenshots could not be read', costUsd: 0, ms: 0 };
+  // A capture carried over a restart (reviewForm) keeps its signals; the
+  // checks and tells they are read from stay in the private stores.
+  const signals = capture.signals && typeof capture.signals === 'object' ? capture.signals : grading.tasteSignals(capture);
   const content = reviewerContent({
-    brief: seed, spec, shots, identical: picked.identical, signals: grading.tasteSignals(capture), previousIssues, round, maxRounds,
+    brief: seed, spec, shots, identical: picked.identical, signals, previousIssues, round, maxRounds,
   });
   const call = await (deps.callReviewer || callReviewer)({
     pool, config, userId, model, system: reviewerSystemPrompt(locale), content, appId, sessionId, timeoutMs, deps,
@@ -440,8 +472,13 @@ function artifactIdsOf(capture) {
  * a model handed in, so it is the same for a live first version and a bench
  * trial (and testable without either):
  *
- *   capture(index)            → { ok, capture, ms, error }: the state after
- *                               `index` fixes (0: the first build);
+ *   capture(index, { prior, onStarted }) → { ok, capture, ms, error }: the
+ *                               state after `index` fixes (0: the first
+ *                               build). `prior` is the capture a restart
+ *                               left running ({ id, startedAt }), to harvest
+ *                               rather than take again; `onStarted(info)` is
+ *                               awaited once a new one has an id, before it
+ *                               starts, so a restart can find it;
  *   review({ round, capture, previousIssues, timeoutMs }) → reviewCapture's
  *                               answer; `timeoutMs` is what is left of the
  *                               budget and a small margin;
@@ -457,26 +494,59 @@ function artifactIdsOf(capture) {
  *                               allowed to stop the loop);
  *   onProgress(line)          → a progress line.
  *
- * `start` is the first build: { sha, commits, costUsd, activeMs }. Resolves
- * the final state ({ state: 'done', round0, rounds, stop, finalSha,
+ * `start` is the first build: { sha, commits, costUsd, activeMs }.
+ *
+ * R5: `resumeFrom` is the saved state of a review a restart cut short (see
+ * the header): the loop carries on from it instead of starting over, and
+ * `recoveredFix` is the result of the fix turn restart recovery followed to
+ * its end, in fix()'s shape, used only when that state was waiting on its
+ * round's fix. `leader` is stamped on every state saved. Once the platform
+ * is shutting down (`isStopping`), the loop starts no further step and never
+ * returns, as a bot turn that ends then is held (homeroom-bot-drain.js
+ * holdAfterTurn): its last saved state is the next leader's to carry on, and
+ * a step taken now (a fix turn, a rollback) would race it.
+ *
+ * Resolves the final state ({ state: 'done', round0, rounds, stop, finalSha,
  * finalCommits, finalCapture, lastBooted, costUsd (the review phase's own),
  * and `rolledBack` when a fix was undone }); never throws.
  */
 async function runReviewLoop({
   reviewer, start = {}, capture, review, fix, rollback = null, budgetCheck = null, skipCheck = null,
   onState = null, onProgress = null, now = Date.now,
+  resumeFrom = null, recoveredFix = null, leader = PROCESS_ID,
+  isStopping = () => require('./lifecycle').isShuttingDown(),
 }) {
-  const maxRounds = Math.max(0, Number(reviewer?.maxRounds) || 0);
-  const budgetMs = Math.max(1, Number(reviewer?.budgetMinutes) || 1) * 60 * 1000;
-  const startedAt = now();
-  const deadline = startedAt + budgetMs;
+  const prior = inProgress(resumeFrom) ? JSON.parse(JSON.stringify(resumeFrom)) : null;
+  // A review carried on keeps the shape it started with.
+  const settings = prior?.reviewer && prior.reviewer.maxRounds != null ? prior.reviewer : reviewer;
+  const maxRounds = Math.max(0, Number(settings?.maxRounds) || 0);
+  const budgetMs = Math.max(1, Number(settings?.budgetMinutes) || 1) * 60 * 1000;
+  const resumedAt = now();
+  const startedAt = prior ? (Date.parse(prior.startedAt) || resumedAt) : resumedAt;
+  // The time a restart cost, from the last step the review saved to now, is
+  // given back on its budget: the review is not cut short by a release.
+  const lostMs = prior ? Math.max(0, resumedAt - (Date.parse(prior.updatedAt) || resumedAt)) : 0;
+  const pausedMs = (prior ? Math.max(0, Number(prior.pausedMs) || 0) : 0) + lostMs;
+  const deadline = startedAt + budgetMs + pausedMs;
   const minStepMs = MIN_STEP_MINUTES * 60 * 1000;
   const left = () => deadline - now();
-  const state = {
+  const iso = () => new Date(now()).toISOString();
+  const state = prior ? {
+    ...prior,
+    state: maxRounds > 0 ? 'reviewing' : 'capturing',
+    reviewer: prior.reviewer || (settings ? { model: settings.model, maxRounds, budgetMinutes: Number(settings.budgetMinutes) || null } : null),
+    rounds: Array.isArray(prior.rounds) ? prior.rounds.filter((r) => r && typeof r === 'object') : [],
+    stop: prior.stop || null,
+    stopDetail: prior.stopDetail || null,
+    finalCapture: null,
+    resumes: (Number(prior.resumes) || 0) + 1,
+    pausedMs,
+    resumedAt: iso(),
+  } : {
     // 'capturing' when there is no round to run: the first build is only
     // captured, for the side builds it is compared with.
     state: maxRounds > 0 ? 'reviewing' : 'capturing',
-    reviewer: reviewer ? { model: reviewer.model, maxRounds, budgetMinutes: Number(reviewer.budgetMinutes) || null } : null,
+    reviewer: settings ? { model: settings.model, maxRounds, budgetMinutes: Number(settings.budgetMinutes) || null } : null,
     startedAt: new Date(startedAt).toISOString(),
     round0: null,
     rounds: [],
@@ -494,106 +564,252 @@ async function runReviewLoop({
     buildText: start.buildText ? clip(start.buildText, 6000) : null,
   };
   const save = async () => {
-    state.updatedAt = new Date(now()).toISOString();
+    state.updatedAt = iso();
+    state.leader = leader;
     if (!onState) return;
     try { await onState(JSON.parse(JSON.stringify(state))); } catch (err) {
       log.warn('bot-review', 'Could not record the review state (going on)', { err: err.message });
     }
   };
   const say = (line) => { if (onProgress) { try { onProgress(line); } catch { /* a watcher never stops a review */ } } };
+  // Shutting down: no further step (see above). Never resolves.
+  const holdIfStopping = async (next) => {
+    let stopping = false;
+    try { stopping = !!isStopping(); } catch { stopping = false; }
+    if (!stopping) return;
+    log.info('bot-review', 'Shutting down: the review stops here; the next leader carries it on', { next });
+    await new Promise(() => {});
+  };
   const stopWith = (stop, detail = null) => { state.stop = stop; state.stopDetail = detail ? clip(detail, 300) : null; };
-  const spent = (c) => { if (Number.isFinite(Number(c))) state.costUsd += Number(c); };
-  // The capture of the last commit that booted, kept whole for a rollback.
+  // What the review has spent: each round's reviewer call and fix turn, as
+  // that round records them, so a call asked again after a restart is
+  // counted once.
+  const recount = () => {
+    state.costUsd = state.rounds.reduce((sum, r) => sum + (num(r.reviewerCostUsd) || 0) + (num(r.fix?.costUsd) || 0), 0);
+  };
+  // The capture of the last commit that booted, kept for a rollback.
   let bootedCapture = null;
   const sawBoot = (sha, commits, shot) => {
     if (!sha || shot?.booted !== true) return;
     state.lastBooted = { sha, commits: num(commits) };
     bootedCapture = shot;
+    state.lastBootedCapture = slimCapture(shot);
   };
-
-  await save();
-  // The state the last capture shows, so the final state is captured once.
+  // The state the last capture shows, so the final state is captured once,
+  // and what the reviewer needs of it to be asked again after a restart.
   let capturedSha = null;
   let latest = null;
+  const setLatest = (index, sha, shot) => {
+    latest = shot;
+    capturedSha = sha || null;
+    state.latest = { index, sha: sha || null, capture: reviewForm(shot) };
+  };
   let fixes = 0;
-  try {
-    if (maxRounds > 0) say(progressLine(1, maxRounds));
-    const first = await capture(0);
-    const r0ms = num(first?.ms) || 0;
-    state.round0 = {
-      sha: start.sha || null,
-      commits: num(start.commits),
-      capture: first?.ok ? first.capture : null,
-      captureMs: r0ms,
-      captureError: first?.ok ? null : clip(first?.error || 'the capture failed', 300),
-      costUsd: num(start.costUsd),
-      activeMs: (num(start.activeMs) || 0) + r0ms,
-    };
-    if (!first?.ok) {
-      stopWith(STOPS.captureError, first?.error);
-    } else {
-      latest = first.capture;
-      capturedSha = start.sha || null;
-      sawBoot(start.sha, start.commits, first.capture);
-      if (maxRounds === 0) stopWith(STOPS.noRounds);
-    }
-    await save();
-    let previousIssues = null;
-    for (let round = 1; !state.stop && round <= maxRounds; round += 1) {
-      if (now() >= deadline) { stopWith(STOPS.time); break; }
-      const skip = skipCheck ? await skipCheck() : null;
-      if (skip) { stopWith(STOPS.skipped, skip); break; }
-      say(progressLine(round, maxRounds));
-      const entry = {
-        round, sha: state.finalSha, captureIndex: fixes, artifactIds: artifactIdsOf(latest), booted: latest?.booted === true,
-        verdict: null, issues: [], previousFixed: [], reviewedBy: null, reviewerCostUsd: null, reviewerMs: null, fix: null,
-      };
-      state.rounds.push(entry);
-      // eslint-disable-next-line no-await-in-loop
-      const rev = await review({
-        round, capture: latest, previousIssues, timeoutMs: Math.max(0, left()) + REVIEW_TIMEOUT_MARGIN_MS,
+  // A capture a restart left under way: harvested by the step that takes it.
+  const runCapture = async (index) => {
+    const was = state.inFlight;
+    const prev = was && was.step === 'capture' && Number(was.index) === index && typeof was.id === 'string'
+      ? { id: was.id, startedAt: was.startedAt || null } : null;
+    await holdIfStopping(`capture ${index}`);
+    state.inFlight = { step: 'capture', index, at: iso(), ...(prev || {}) };
+    try {
+      return await capture(index, {
+        prior: prev,
+        onStarted: async (info = {}) => {
+          state.inFlight = {
+            step: 'capture', index, at: iso(),
+            ...(typeof info.id === 'string' ? { id: info.id } : {}),
+            ...(info.startedAt ? { startedAt: String(info.startedAt) } : {}),
+          };
+          await save();
+        },
       });
-      entry.reviewerCostUsd = num(rev?.costUsd);
-      entry.reviewerMs = num(rev?.ms);
-      spent(rev?.costUsd);
-      if (!rev?.ok) {
-        entry.reviewerError = clip(rev?.error || 'the reviewer failed', 300);
-        stopWith(STOPS.reviewerError, rev?.error);
-        await save();
-        break;
+    } finally {
+      state.inFlight = null;
+    }
+  };
+  // The issues of the round before `round`, once its fix landed: what the
+  // reviewer is shown as PREVIOUS ISSUES.
+  const previousOf = (round) => {
+    const before = state.rounds.find((r) => Number(r.round) === round - 1);
+    return before && before.fix && before.fix.ok ? (before.issues || []) : null;
+  };
+
+  // Where the loop starts: round 1's review, or for a review carried on, the
+  // step its saved state was waiting on.
+  let round = 1;
+  let phase = 'review';
+  let entry = null;
+  let pendingFix = null;
+  if (prior) {
+    fixes = state.rounds.filter((r) => r.fix && r.fix.ok).length;
+    if (state.latest?.capture) {
+      latest = state.latest.capture;
+      capturedSha = state.latest.sha || null;
+    } else if (state.round0?.capture) {
+      setLatest(0, state.round0.sha || null, state.round0.capture);
+    }
+    bootedCapture = state.lastBootedCapture
+      || (state.lastBooted && state.round0?.capture && state.lastBooted.sha === state.round0.sha ? state.round0.capture : null);
+    const last = state.rounds[state.rounds.length - 1] || null;
+    if (!state.stop && state.round0 && last) {
+      if (!last.verdict && !last.reviewerError) {
+        // Its reviewer call was cut short: asked again, for the same round.
+        round = Number(last.round) || state.rounds.length;
+        entry = last;
+      } else if (last.reviewerError) {
+        stopWith(STOPS.reviewerError, last.reviewerError);
+      } else if (last.verdict === 'ship') {
+        stopWith(STOPS.ship);
+      } else if (!last.fix) {
+        // Its fix turn: the one recovery followed to its end, or run again.
+        round = Number(last.round) || state.rounds.length;
+        entry = last;
+        phase = 'fix';
+        if (recoveredFix && typeof recoveredFix === 'object') pendingFix = recoveredFix;
+      } else if (!last.fix.ok) {
+        stopWith(last.fix.stopped ? STOPS.time : STOPS.fixFailed, last.fix.error || null);
+      } else if (Number(last.round) >= maxRounds) {
+        stopWith(STOPS.rounds);
+      } else if (state.latest && Number(state.latest.index) === fixes) {
+        // Its fix was captured already: the next round is reviewed.
+        round = Number(last.round) + 1;
+      } else {
+        round = Number(last.round);
+        entry = last;
+        phase = 'capture';
       }
-      entry.verdict = rev.verdict;
-      entry.issues = rev.issues || [];
-      entry.previousFixed = rev.previousFixed || [];
-      entry.reviewedBy = rev.by || 'model';
-      await save();
-      if (rev.verdict === 'ship') { stopWith(STOPS.ship); break; }
-      if (left() < minStepMs) { stopWith(STOPS.time, `less than ${MIN_STEP_MINUTES} minutes of the review's time were left for a fix`); break; }
-      // eslint-disable-next-line no-await-in-loop
-      const over = budgetCheck ? await budgetCheck({ spentUsd: state.costUsd }) : null;
-      if (over) { stopWith(STOPS.budget, over); break; }
-      // eslint-disable-next-line no-await-in-loop
-      const fx = await fix({ round, issues: entry.issues, budgetMs: Math.max(1000, left()) });
-      entry.fix = {
-        ok: !!fx?.ok, sha: fx?.sha || null, commits: num(fx?.commits), costUsd: num(fx?.costUsd), ms: num(fx?.ms),
-        ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), 300) }),
+    }
+    log.info('bot-review', 'Carrying a review on after a restart', {
+      resumes: state.resumes, lostMs, round: state.stop ? null : round, phase: state.stop ? 'final' : (state.round0 ? phase : 'capture0'),
+    });
+  }
+
+  await save();
+  try {
+    if (!state.round0 && !state.stop) {
+      if (maxRounds > 0) say(progressLine(1, maxRounds));
+      const sha0 = start.sha || state.finalSha || null;
+      const first = await runCapture(0);
+      const r0ms = num(first?.ms) || 0;
+      state.round0 = {
+        sha: sha0,
+        commits: num(start.commits) ?? state.finalCommits ?? null,
+        capture: first?.ok ? first.capture : null,
+        captureMs: r0ms,
+        captureError: first?.ok ? null : clip(first?.error || 'the capture failed', 300),
+        costUsd: num(start.costUsd),
+        activeMs: (num(start.activeMs) || 0) + r0ms,
       };
-      spent(fx?.costUsd);
-      if (fx?.stopped) { await save(); stopWith(STOPS.time, 'the fix turn ran past the review\'s time'); break; }
-      if (!fx?.ok) { await save(); stopWith(STOPS.fixFailed, fx?.error); break; }
-      fixes += 1;
-      if (fx.sha) state.finalSha = fx.sha;
-      if (num(fx.commits) != null) state.finalCommits = num(fx.commits);
-      previousIssues = entry.issues;
+      if (!first?.ok) {
+        stopWith(STOPS.captureError, first?.error);
+      } else {
+        setLatest(0, sha0, first.capture);
+        sawBoot(sha0, state.round0.commits, first.capture);
+        if (maxRounds === 0) stopWith(STOPS.noRounds);
+      }
       await save();
-      if (round === maxRounds) { stopWith(STOPS.rounds); break; }
-      if (left() < minStepMs) { stopWith(STOPS.time, `less than ${MIN_STEP_MINUTES} minutes of the review's time were left to look again`); break; }
-      // eslint-disable-next-line no-await-in-loop
-      const next = await capture(fixes);
-      if (!next?.ok) { stopWith(STOPS.captureError, next?.error); break; }
-      latest = next.capture;
-      capturedSha = state.finalSha;
-      sawBoot(state.finalSha, state.finalCommits, next.capture);
+    }
+    for (; !state.stop && round <= maxRounds; round += 1) {
+      if (phase === 'review') {
+        if (now() >= deadline) { stopWith(STOPS.time); break; }
+        // eslint-disable-next-line no-await-in-loop
+        const skip = skipCheck ? await skipCheck() : null;
+        if (skip) { stopWith(STOPS.skipped, skip); break; }
+        say(progressLine(round, maxRounds));
+        if (!entry) {
+          entry = {
+            round, sha: state.finalSha, captureIndex: fixes, artifactIds: artifactIdsOf(latest), booted: latest?.booted === true,
+            verdict: null, issues: [], previousFixed: [], reviewedBy: null, reviewerCostUsd: null, reviewerMs: null, fix: null,
+          };
+          state.rounds.push(entry);
+        } else {
+          entry.reissued = (Number(entry.reissued) || 0) + 1;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await holdIfStopping(`review ${round}`);
+        state.inFlight = { step: 'review', round, at: iso() };
+        // eslint-disable-next-line no-await-in-loop
+        await save();
+        // eslint-disable-next-line no-await-in-loop
+        const rev = await review({
+          round, capture: latest, previousIssues: previousOf(round), timeoutMs: Math.max(0, left()) + REVIEW_TIMEOUT_MARGIN_MS,
+        });
+        state.inFlight = null;
+        // Assigned, never added: a call asked again after a restart is the
+        // round's one call.
+        entry.reviewerCostUsd = num(rev?.costUsd);
+        entry.reviewerMs = num(rev?.ms);
+        recount();
+        if (!rev?.ok) {
+          entry.reviewerError = clip(rev?.error || 'the reviewer failed', 300);
+          stopWith(STOPS.reviewerError, rev?.error);
+          // eslint-disable-next-line no-await-in-loop
+          await save();
+          break;
+        }
+        entry.verdict = rev.verdict;
+        entry.issues = rev.issues || [];
+        entry.previousFixed = rev.previousFixed || [];
+        entry.reviewedBy = rev.by || 'model';
+        // eslint-disable-next-line no-await-in-loop
+        await save();
+        if (rev.verdict === 'ship') { stopWith(STOPS.ship); break; }
+        phase = 'fix';
+      }
+      if (phase === 'fix') {
+        let fx;
+        let recovered = false;
+        if (pendingFix) {
+          fx = pendingFix;
+          pendingFix = null;
+          recovered = true;
+        } else {
+          if (left() < minStepMs) { stopWith(STOPS.time, `less than ${MIN_STEP_MINUTES} minutes of the review's time were left for a fix`); break; }
+          // eslint-disable-next-line no-await-in-loop
+          const over = budgetCheck ? await budgetCheck({ spentUsd: state.costUsd }) : null;
+          if (over) { stopWith(STOPS.budget, over); break; }
+          // eslint-disable-next-line no-await-in-loop
+          await holdIfStopping(`fix ${round}`);
+          state.inFlight = { step: 'fix', round, at: iso() };
+          // eslint-disable-next-line no-await-in-loop
+          await save();
+          // eslint-disable-next-line no-await-in-loop
+          fx = await fix({ round, issues: entry.issues, budgetMs: Math.max(1000, left()) });
+          state.inFlight = null;
+        }
+        entry.fix = {
+          ok: !!fx?.ok, sha: fx?.sha || null, commits: num(fx?.commits), costUsd: num(fx?.costUsd), ms: num(fx?.ms),
+          ...(fx?.ok ? {} : { error: clip(fx?.error || (fx?.stopped ? 'ran past the review\'s time' : 'the fix turn failed'), 300) }),
+          ...(fx?.stopped ? { stopped: true } : {}),
+          ...(recovered ? { recovered: true } : {}),
+        };
+        recount();
+        // eslint-disable-next-line no-await-in-loop
+        if (fx?.stopped) { await save(); stopWith(STOPS.time, 'the fix turn ran past the review\'s time'); break; }
+        // eslint-disable-next-line no-await-in-loop
+        if (!fx?.ok) { await save(); stopWith(STOPS.fixFailed, fx?.error); break; }
+        fixes += 1;
+        if (fx.sha) state.finalSha = fx.sha;
+        if (num(fx.commits) != null) state.finalCommits = num(fx.commits);
+        // eslint-disable-next-line no-await-in-loop
+        await save();
+        phase = 'capture';
+      }
+      if (phase === 'capture') {
+        if (round === maxRounds) { stopWith(STOPS.rounds); break; }
+        if (left() < minStepMs) { stopWith(STOPS.time, `less than ${MIN_STEP_MINUTES} minutes of the review's time were left to look again`); break; }
+        // eslint-disable-next-line no-await-in-loop
+        const next = await runCapture(fixes);
+        if (!next?.ok) { stopWith(STOPS.captureError, next?.error); break; }
+        setLatest(fixes, state.finalSha, next.capture);
+        sawBoot(state.finalSha, state.finalCommits, next.capture);
+        // Saved, so a restart before the next review does not take it again.
+        // eslint-disable-next-line no-await-in-loop
+        await save();
+      }
+      phase = 'review';
+      entry = null;
     }
   } catch (err) {
     log.warn('bot-review', 'The review loop failed; what is built goes on', { err: err.message });
@@ -609,7 +825,7 @@ async function runReviewLoop({
       if (latest && capturedSha === state.finalSha) {
         final = latest;
       } else if (state.round0?.capture || fixes > 0) {
-        const last = await capture(fixes);
+        const last = await runCapture(fixes);
         if (last?.ok) {
           final = last.capture;
           sawBoot(state.finalSha, state.finalCommits, last.capture);
@@ -623,6 +839,7 @@ async function runReviewLoop({
       if (state.lastBooted && state.lastBooted.sha !== state.finalSha && final?.booted !== true) {
         const from = state.finalSha;
         const why = final ? 'did not boot' : 'could not be captured';
+        await holdIfStopping('rollback');
         try {
           if (!rollback) throw new Error('no way to move the branch');
           await rollback({ sha: state.lastBooted.sha, from });
@@ -643,10 +860,40 @@ async function runReviewLoop({
   }
   if (!state.stop) stopWith(STOPS.rounds);
   state.state = 'done';
-  state.finishedAt = new Date(now()).toISOString();
+  state.inFlight = null;
+  state.finishedAt = iso();
   state.roundsUsed = state.rounds.filter((r) => r.verdict).length;
   await save();
   return state;
+}
+
+/**
+ * Whether restart recovery should carry a review on (runReviewLoop's
+ * `resumeFrom`) rather than propose what is committed as it stands: it is
+ * still in its loop and has not been carried through MAX_REVIEW_RESUMES
+ * restarts already. Pure.
+ */
+function canResume(review, max = MAX_REVIEW_RESUMES) {
+  return inProgress(review) && (Number(review.resumes) || 0) < max;
+}
+
+/**
+ * The result of a fix turn restart recovery followed to its end (the
+ * journal's `result`), in fix()'s shape, for runReviewLoop's
+ * `recoveredFix`: a turn its clock stopped is `stopped`, one that failed
+ * (homeroom-bot-live.js failedClaudeTurn) is an error, and anything else
+ * landed, with the commit it pushed. `costUsd` and `ms` are the caller's,
+ * read from the turn ledger. Pure apart from the shared failure reader.
+ */
+function recoveredFixOf({ result = {}, timedOut = false, costUsd = null, ms = null } = {}) {
+  const r = result && typeof result === 'object' ? result : {};
+  if (timedOut) return { ok: false, stopped: true, costUsd: num(costUsd), ms: num(ms) };
+  const failed = require('./homeroom-bot-live').failedClaudeTurn(r);
+  if (failed) return { ok: false, error: `the fix turn failed (${failed})`, costUsd: num(costUsd), ms: num(ms) };
+  return {
+    ok: true, sha: r.pushOk ? (r.sha || null) : null, commits: Number(r.ahead) > 0 ? Number(r.ahead) : null,
+    costUsd: num(costUsd), ms: num(ms),
+  };
 }
 
 /**
@@ -665,6 +912,27 @@ function slimCapture(c) {
       id: sh.id, viewport: sh.viewport, look: sh.look, state: sh.state, sha256: sh.sha256 || null, artifactId: sh.artifactId || null,
     })),
   };
+}
+
+/**
+ * The latest capture as a review keeps it to be carried on after a restart
+ * (runReviewLoop's `latest`): the slim capture, the control each result
+ * screenshot tapped (its caption names it), and the reviewer's SIGNALS, read
+ * once from the checks and the tells (bench/grading.js tasteSignals), so a
+ * reviewer call asked again sees what the first one would have. Never the raw
+ * checks or the boot log. One already in this form keeps its signals. Pure.
+ */
+function reviewForm(c) {
+  const slim = slimCapture(c);
+  if (!slim) return null;
+  const byId = new Map((Array.isArray(c.shots) ? c.shots : []).map((sh) => [sh.id, sh]));
+  slim.shots = slim.shots.map((sh) => {
+    const action = sh.state === 'result' ? byId.get(sh.id)?.action : null;
+    return action ? { ...sh, action } : sh;
+  });
+  if (c.signals && typeof c.signals === 'object') slim.signals = c.signals;
+  else if (c.checks || c.tells || Array.isArray(c.primaryAction)) slim.signals = require('./bench/grading').tasteSignals(c);
+  return slim;
 }
 
 /** A review state as a live run keeps it: its captures slimmed (slimCapture). Pure. */
@@ -703,6 +971,8 @@ module.exports = {
   REVIEW_TIMEOUT_MS,
   REVIEW_TIMEOUT_MARGIN_MS,
   TELEMETRY_COMPONENT,
+  MAX_REVIEW_RESUMES,
+  PROCESS_ID,
   progressLine,
   reviewerSystemPrompt,
   reviewerContent,
@@ -715,7 +985,10 @@ module.exports = {
   storeRoundShots,
   artifactIdsOf,
   runReviewLoop,
+  canResume,
+  recoveredFixOf,
   slimCapture,
+  reviewForm,
   slimState,
   inProgress,
   summaryOf,

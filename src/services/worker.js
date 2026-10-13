@@ -4707,6 +4707,127 @@ async function runBenchCapture(containerName, {
   return String(stdout || '');
 }
 
+// R5: the same step, DETACHED, for a first version's review
+// (services/bench/capture.js runDetached). Over the attached exec above the
+// screenshots come back on the exec's stdout, which dies with the platform
+// process: a release in the middle of a review's capture lost it, and the
+// review with it (run four, 12 Oct 2026). Here the step runs in the
+// background in the worker, as a turn does, its stdout written to a file of
+// its own and its exit code to another once it is over; the platform polls
+// for that file and reads the result back. A platform that restarts meanwhile
+// finds the step by its id (saved on the review state before it starts) and
+// harvests it, or, when the worker went with the restart, takes it again.
+// Under /tmp in the worker: the step's result is only worth the worker it
+// was taken in, and a new worker starts with none, so an id is never read
+// back from a different worker's leftovers.
+const DETACHED_CAPTURE_DIR = '/tmp/usernode-capture';
+const DETACHED_CAPTURE_ID_RE = /^[0-9a-f]{16,32}$/;
+
+function detachedCapturePath(id, ext) {
+  if (!DETACHED_CAPTURE_ID_RE.test(String(id || ''))) throw new Error(`detached capture: invalid id ${id}`);
+  return `${DETACHED_CAPTURE_DIR}/${id}.${ext}`;
+}
+
+/** The shell script that starts the step in the background and records its pid. Pure. */
+function buildDetachedCaptureScript({ id, env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH } = {}) {
+  const run = buildBenchCaptureCommand(env, scriptPath)[2];
+  const out = detachedCapturePath(id, 'out');
+  const err = detachedCapturePath(id, 'err');
+  const exit = detachedCapturePath(id, 'exit');
+  const pid = detachedCapturePath(id, 'pid');
+  // The exit code is written to a temporary name and moved into place, so a
+  // poll never reads a half-written one; the stdout is complete before it.
+  const body = `sh -c ${shellQuote(run)} > ${out} 2> ${err}; echo $? > ${exit}.tmp; mv ${exit}.tmp ${exit}`;
+  return [
+    'set -e',
+    `mkdir -p ${DETACHED_CAPTURE_DIR}`,
+    `rm -f ${out} ${err} ${exit} ${exit}.tmp ${pid}`,
+    `nohup sh -c ${shellQuote(body)} > /dev/null 2>&1 &`,
+    `echo $! > ${pid}`,
+  ].join('\n') + '\n';
+}
+
+/** The shell script that says where the step is: `exit <code>`, `running` or `gone`. Pure. */
+function buildDetachedCaptureStatusScript(id) {
+  const exit = detachedCapturePath(id, 'exit');
+  const pid = detachedCapturePath(id, 'pid');
+  return `if [ -f ${exit} ]; then echo "exit $(cat ${exit})"; `
+    + `elif [ -f ${pid} ] && kill -0 "$(cat ${pid})" 2>/dev/null; then echo running; else echo gone; fi`;
+}
+
+/** What a status script printed: { state: 'done', code } | { state: 'running' } | { state: 'gone' }. Pure. */
+function parseDetachedCaptureStatus(stdout) {
+  const s = String(stdout || '').trim().split('\n').pop() || '';
+  const done = /^exit\s+(-?\d+)\s*$/.exec(s);
+  if (done) return { state: 'done', code: Number(done[1]) };
+  if (s === 'running') return { state: 'running' };
+  return { state: 'gone' };
+}
+
+/**
+ * Start the step in the background (see above). Resolves once it is
+ * running; the script is written first, as runBenchCapture writes it.
+ */
+async function startDetachedCapture(containerName, {
+  id, source, env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
+  if (!containerName) throw new Error('startDetachedCapture: no worker');
+  if (typeof source !== 'string' || !source) throw new Error('startDetachedCapture: no script');
+  const start = buildDetachedCaptureScript({ id, env, scriptPath });
+  const write = buildTurnContextFileScript(source, scriptPath);
+  if (usesKubernetesWorkers()) {
+    await execWorkerCommand(containerName, ['sh', '-s'], write);
+    await execWorkerCommand(containerName, ['sh', '-s'], start, { timeoutMs: 30000 });
+  } else {
+    await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'startDetachedCapture' });
+    // `docker exec -d`, as a detached turn is dispatched: the step must not
+    // belong to an exec this process holds open.
+    await docker.execFileAsync('docker', ['exec', '-d', containerName, 'sh', '-c', start], { timeout: 30000 });
+  }
+}
+
+/** Where a detached step is (parseDetachedCaptureStatus). Throws when the worker cannot be reached. */
+async function detachedCaptureStatus(containerName, id) {
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', buildDetachedCaptureStatusScript(id)], null, { timeoutMs: 15000 });
+  return parseDetachedCaptureStatus(stdout);
+}
+
+/** A finished step's stdout, read back as runBenchCapture would have had it. */
+async function readDetachedCapture(containerName, id, { maxBuffer = 96 * 1024 * 1024, timeoutMs = 120000 } = {}) {
+  const { stdout } = await execWorkerCommand(containerName, ['cat', detachedCapturePath(id, 'out')], null, { timeoutMs, maxBuffer });
+  return String(stdout || '');
+}
+
+/** Stop a step that ran too long, and remove what it left. Never throws. */
+async function stopDetachedCapture(containerName, id) {
+  try {
+    const pid = detachedCapturePath(id, 'pid');
+    await execWorkerCommand(containerName, ['sh', '-c',
+      `if [ -f ${pid} ]; then P=$(cat ${pid}); pkill -TERM -P "$P" 2>/dev/null; kill -TERM "$P" 2>/dev/null; fi; true`,
+    ], null, { timeoutMs: 15000 });
+  } catch { /* the worker is gone, and the step with it */ }
+  await clearDetachedCapture(containerName, id);
+}
+
+/** Remove a step's files once its result is read. Never throws. */
+async function clearDetachedCapture(containerName, id) {
+  try {
+    detachedCapturePath(id, 'out');
+    await execWorkerCommand(containerName, ['sh', '-c', `rm -f ${DETACHED_CAPTURE_DIR}/${id}.*`], null, { timeoutMs: 15000 });
+  } catch { /* left for the worker's end */ }
+}
+
+/**
+ * Keep a warm worker from the idle sweeper while a detached step runs in it:
+ * no turn is in flight, so nothing else marks it used. A worker this process
+ * has not registered is left alone.
+ */
+function touchWorker(sessionId) {
+  for (const key of [sessionId, Number(sessionId)]) {
+    if (_warmRegistry.has(key)) { _registryUpsert(key, { lastUsedMs: Date.now() }); return; }
+  }
+}
+
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
@@ -5359,6 +5480,16 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  DETACHED_CAPTURE_DIR,
+  buildDetachedCaptureScript,
+  buildDetachedCaptureStatusScript,
+  parseDetachedCaptureStatus,
+  startDetachedCapture,
+  detachedCaptureStatus,
+  readDetachedCapture,
+  stopDetachedCapture,
+  clearDetachedCapture,
+  touchWorker,
   // #4449: Live's watcher, beside a first version's build turn
   runLiveScript,
   BENCH_CAPTURE_SCRIPT_PATH,

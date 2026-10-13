@@ -468,6 +468,9 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
       round0: { sha: 'r0sha', commits: 1, capture: { booted: true, shots: [] }, costUsd: 0.9, activeMs: 1_000_000 },
       rounds: [{ round: 1, sha: 'r0sha', verdict: 'fix', issues: [] }], finalSha: 'r1sha', finalCommits: 2, buildText: 'Built.\n==== DESCRIPTION ====\nIt logs plants.\n==== END DESCRIPTION ====',
       updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      // R5: carried through as many restarts as a review may be; the next
+      // one proposes it as it stands.
+      resumes: require('../src/services/bot-review').MAX_REVIEW_RESUMES,
     };
     await bot.recordReviewState(pool, id, state);
     const { rows: [saved] } = await pool.query('SELECT review_rounds, review_stop, review->>\'state\' AS st FROM homeroom_bot_runs WHERE id = $1', [id]);
@@ -478,7 +481,7 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
     assert.equal(settled, 0);
 
     // No turn on its session, nothing in this process: the review was cut short.
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1);
+    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps, { wait: true }), 1);
     assert.deepEqual(promoted, [s.id], 'proposed as it stands');
     const { rows: [after] } = await pool.query(
       `SELECT build_ok, build_sha, proposal_session_id, review_stop, review->>'state' AS st FROM homeroom_bot_runs WHERE id = $1`, [id],
@@ -618,10 +621,11 @@ test('bot configurations against the full PostgreSQL schema', { timeout: 180000 
       // The fix landed (r1sha); the restart came before its capture.
       finalSha: 'r1sha', finalCommits: 2, lastBooted: { sha: 'r0sha', commits: 1 }, buildText: 'Built.',
       updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      resumes: require('../src/services/bot-review').MAX_REVIEW_RESUMES,
     });
     // Its build began two hours ago; its review last moved an hour ago.
     await pool.query("UPDATE chat_sessions SET created_at = NOW() - INTERVAL '2 hours' WHERE id = $1", [s.id]);
-    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps), 1, 'found despite the turn on its session');
+    assert.equal(await bot.finishInterruptedReviews(pool, {}, deps, { wait: true }), 1, 'found despite the turn on its session');
     assert.deepEqual(moved, [['usernode-bot', 'plant-log', 'dev/homeroom_bot-y', 'r0sha']], 'its own branch, back to the build that booted');
     assert.deepEqual(promoted, [s.id]);
     const { rows: [after] } = await pool.query(

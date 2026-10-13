@@ -3532,31 +3532,54 @@ async function reviewLanded({
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
   // #4645: the requester's locale, for the review prompts' language rule.
   locale = null,
+  // R5: a review a restart cut short, carried on from its saved state, and
+  // the fix turn restart recovery followed to its end (bot-review.js
+  // runReviewLoop's `resumeFrom` and `recoveredFix`).
+  resumeFrom = null, recoveredFix = null,
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
-  const reviewer = review.reviewer;
+  const reviewer = (resumeFrom && resumeFrom.reviewer && resumeFrom.reviewer.maxRounds != null) ? resumeFrom.reviewer : review.reviewer;
   const owner = review.owner || {};
-  const capture = async (index) => {
+  const ensure = async () => {
+    await worker.ensureWorkerImage();
+    return worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
+    });
+  };
+  // R5: each round's capture runs detached in the build's worker, its id
+  // saved on the review state before it starts (`onStarted`), so a restart
+  // in the middle of it harvests it (`prior`) rather than losing it. One a
+  // restart left running is looked for where it runs before anything makes
+  // the worker sure: a new worker image would replace the worker, and the
+  // capture with it.
+  const capture = async (index, { prior = null, onStarted = null } = {}) => {
     const t0 = Date.now();
-    let containerName;
-    try {
-      await worker.ensureWorkerImage();
-      containerName = await worker.ensureWorker(session.id, {
-        repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
-      });
-    } catch (err) {
-      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    let containerName = null;
+    if (!prior?.id) {
+      try {
+        containerName = await ensure();
+      } catch (err) {
+        return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+      }
     }
     const step = deps.captureRound || ((args) => require('./bench/capture').captureTrial(args));
     const out = await step({
       pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
       store: (kept) => botReview.storeRoundShots(pool, { ...owner, round: index }, kept),
+      detached: { sessionId: session.id, prior, onStarted, ensure },
     });
     return { ...out, ms: Date.now() - t0 };
   };
   const fix = async ({ round, issues, budgetMs }) => {
     const t0 = Date.now();
+    // Made sure first: a review carried on after a restart may reach its
+    // fix with no capture before it in this process.
+    try {
+      await ensure();
+    } catch (err) {
+      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+    }
     worker.clearPendingStop?.(session.id);
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
@@ -3583,6 +3606,8 @@ async function reviewLanded({
     return await botReview.runReviewLoop({
       reviewer,
       start,
+      resumeFrom,
+      recoveredFix,
       capture,
       review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
         pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
