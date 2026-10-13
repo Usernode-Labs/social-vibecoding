@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
 
 import {
-  ArrowPathIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, EllipsisHorizontalIcon, EyeIcon, HandRaisedIcon, InfoCircleIcon,
-  KeyIcon, ListLinesIcon, NoSymbolIcon, PencilSquareIcon, PlayIcon, SpinnerArcIcon, WarningTriangleIcon, XIcon,
+  ArrowPathIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, EllipsisHorizontalIcon, EyeIcon, InfoCircleIcon,
+  KeyIcon, ListLinesIcon, NoSymbolIcon, PencilSquareIcon, PlayIcon, SpinnerArcIcon, UserIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -386,14 +386,14 @@ interface Ending { key: string; tone: EndingTone; icon: Glyph; stroke?: string }
  * cards' tones, ./bot-activity.tsx): made it in (a green check), ended
  * without a change (grey), or went wrong (red). `person` is the bot stepping
  * back (homeroom-bot.js handOff): a call for a person to make, a change it
- * may revise no further, failures it cannot fix safely; a raised hand.
+ * may revise no further, failures it cannot fix safely; a person.
  * Endings that still wait on somebody are never settled, so they are not here.
  */
 const ENDINGS: Record<string, Ending> = {
   live: { key: 'messages:bot.final.live', tone: 'good', icon: CheckIcon },
   going_live: { key: 'messages:bot.final.goingLive', tone: 'good', icon: CheckIcon },
   closed: { key: 'messages:bot.final.closed', tone: 'ended', icon: XIcon },
-  person: { key: 'messages:bot.final.person', tone: 'ended', icon: HandRaisedIcon, stroke: '1.75' },
+  person: { key: 'messages:bot.final.person', tone: 'ended', icon: UserIcon, stroke: '1.75' },
   held: { key: 'messages:bot.final.held', tone: 'ended', icon: ClockIcon },
   stopped: { key: 'messages:bot.final.stopped', tone: 'ended', icon: NoSymbolIcon },
   build_failed: { key: 'messages:bot.final.failed', tone: 'trouble', icon: WarningTriangleIcon },
@@ -452,7 +452,7 @@ export function FinalState({ outcome, fallback }: { outcome: string | null | und
 const NEED_GLYPHS: Record<string, { icon: Glyph; stroke?: string }> = {
   question: { icon: ChatIcon, stroke: '2' }, followup_ask: { icon: ChatIcon, stroke: '2' },
   plan: { icon: ListLinesIcon },
-  person: { icon: HandRaisedIcon, stroke: '1.75' },
+  person: { icon: UserIcon, stroke: '1.75' },
   blocked: { icon: PencilSquareIcon, stroke: '2' }, empty: { icon: PencilSquareIcon, stroke: '2' },
   build_failed: { icon: ArrowPathIcon, stroke: '2' }, first_version_failed: { icon: ArrowPathIcon, stroke: '2' },
   failed: { icon: ArrowPathIcon, stroke: '2' }, stopped: { icon: ArrowPathIcon, stroke: '2' },
@@ -463,7 +463,7 @@ const NEED_GLYPHS: Record<string, { icon: Glyph; stroke?: string }> = {
 /**
  * Where an open request stands, as the same small square its ending will be:
  * amber with what to do while it waits on the person (a bubble to answer, a
- * pencil to add detail, a raised hand to decide, a loop to try again), blue
+ * pencil to add detail, a person to decide, a loop to try again), blue
  * with a play mark while it is ready to try, grey and turning while the bot
  * works on it. Decorative: the row's second line says it in words.
  */
