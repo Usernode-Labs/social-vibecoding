@@ -308,6 +308,22 @@ function checkIssues(capture) {
 }
 
 /**
+ * What a capture's declared checks came to, as counts alone ({ total, ran,
+ * passed, failed }), or null for a capture that ran none. Round 0 keeps them
+ * beside its slim capture (slimCapture drops the checks), so whether a first
+ * build passed its own checks before any fix can be read back from a stored
+ * review (bench/speed.js reviewOutcomeOf). Pure.
+ */
+function checkCounts(capture) {
+  const d = capture?.declaredChecks;
+  if (!d || typeof d !== 'object') return null;
+  const ran = num(d.ran) || 0;
+  const passed = num(d.passed) || 0;
+  const listed = Array.isArray(d.failed) ? d.failed.length : 0;
+  return { total: num(d.total) || 0, ran, passed, failed: Math.max(listed, ran - passed) };
+}
+
+/**
  * The reviewer's answer with the capture's failing declared checks put first
  * (checkIssues): a `ship` with a failing check is a `fix`, and the reviewer's
  * own issues follow, MAX_ISSUES in all. Pure.
@@ -809,6 +825,7 @@ async function runReviewLoop({
       const sha0 = start.sha || state.finalSha || null;
       const first = await runCapture(0);
       const r0ms = num(first?.ms) || 0;
+      const r0checks = first?.ok ? checkCounts(first.capture) : null;
       state.round0 = {
         sha: sha0,
         commits: num(start.commits) ?? state.finalCommits ?? null,
@@ -817,6 +834,8 @@ async function runReviewLoop({
         captureError: first?.ok ? null : clip(first?.error || 'the capture failed', 300),
         costUsd: num(start.costUsd),
         activeMs: (num(start.activeMs) || 0) + r0ms,
+        // Whether the first build passed its own declared checks (checkCounts).
+        ...(r0checks ? { declaredChecks: r0checks } : {}),
       };
       if (!first?.ok) {
         stopWith(STOPS.captureError, first?.error);
@@ -1099,6 +1118,7 @@ module.exports = {
   parseReview,
   bootIssue,
   MAX_CHECK_ISSUES,
+  checkCounts,
   checkIssues,
   withCheckIssues,
   fixPrompt,
