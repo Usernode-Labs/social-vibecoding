@@ -26132,6 +26132,21 @@ const AppView = {
     // header's eye/pencil pair and the session strip's Preview chip. The
     // matching false is closeStagingOverlay's.
     window.Improve?.setPreviewActive?.(true);
+    // What the preview is showing, for the comment files (#4918): the change
+    // (its session id), the app it shows and whether that app is self-hosted.
+    // The name: the session's own, else the open app's when it is this app.
+    if (app && slug) {
+      const sameApp = !!(AppView.appData && AppView.appData.slug === slug);
+      const name = app.name || (sameApp ? AppView.appData.name : null) || null;
+      AppView._stagingPreview = {
+        sessionId,
+        slug,
+        name,
+        self_hosted: sameApp ? !!AppView.appData.self_hosted : !!app.self_hosted,
+      };
+    } else {
+      AppView._stagingPreview = null;
+    }
 
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
@@ -26845,6 +26860,12 @@ const AppView = {
   // swapToStaging and cleared on close.
   _stagingTesting: null,
 
+  // What the open staging preview is showing (#4918): { sessionId, slug,
+  // name, self_hosted } — the change and the app its frames show — set by
+  // ensureStaging and cleared on close. Comment mode reads it to file a
+  // request on the previewed app and name the change in its where line.
+  _stagingPreview: null,
+
   // #127: show/hide + wire the overlay's "Test this change" button and the
   // collapsible "How to test" panel for the current preview. `jump` is true
   // only when the preview was entered via an explicit "Test this change"
@@ -27235,6 +27256,7 @@ const AppView = {
     // The "seeing" half of the doing↔seeing loop ends here — see the
     // matching publish in ensureStaging.
     window.Improve?.setPreviewActive?.(false);
+    AppView._stagingPreview = null;
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to
