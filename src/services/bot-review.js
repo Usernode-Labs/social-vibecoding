@@ -283,31 +283,100 @@ function bootIssue(capture) {
 // ── The fix turn's prompt ────────────────────────────────────────────────
 
 /**
+ * One issue as a fix turn reads it: a line, its fix on the next. Pure.
+ */
+function issueLine(it, i) {
+  return `${i + 1}. [${it.severity}] ${it.screen}: ${it.problem}\n   Fix: ${it.fix}`;
+}
+
+/**
+ * The in-loop check a fix turn makes (L1): the in-loop browser as every build
+ * has it (how to boot the app, what a blank page means, the declared checks),
+ * then a check scoped to the issues alone. The build's own visual sweep
+ * (live.browserLines: both widths, both looks, the empty and error states)
+ * and a first version's look-and-fix rounds (design-skill.js
+ * FIRST_VERSION_LOOP) are not a fix turn's: the reviewer captures every
+ * screen again once the turn is over. In run four (12 Oct 2026) a fix turn
+ * for six issues took twelve minutes, told to re-read the repository and to
+ * make the build's whole visual sweep again. Pure.
+ */
+function fixBrowserLines({ readsImages = false, issues = [] } = {}) {
+  const live = require('./homeroom-bot-live');
+  const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
+  const look = readsImages
+    ? 'take a screenshot (`browser_take_screenshot`)'
+    : 'walk it through its accessibility snapshot (`browser_snapshot`; you read text, not images)';
+  const tapped = issues.some((it) => /after (tapping|clicking)/i.test(`${it.screen} ${it.problem}`));
+  const dragged = issues.some((it) => /\bdrag/i.test(`${it.screen} ${it.problem} ${it.fix}`));
+  return [
+    '',
+    'The in-loop browser, as the platform\'s dev chat describes it. For you, "commit" in it means finishing your turn,',
+    'since your working tree is committed for you:',
+    IN_LOOP_BROWSER_GUIDANCE,
+    '- For you, in this fix turn, check ONLY what the issues name. Once your fixes are in, boot the app once and, for',
+    `  each issue, open its screen at the size, look and state it names and ${look}. Fix what is still wrong there.`,
+    '  Do not check other widths, looks or states, and do not run rounds of looking and polishing: the reviewer',
+    '  captures every screen again once your turn is over, and you fix what it finds then.',
+    ...(tapped ? [
+      '- An issue on an "after tapping ..." screen is about what the main action does: signed in as a person would be,',
+      '  do that action yourself, and check that the screen shows the result and its request answers without an error',
+      '  (`browser_network_requests`).',
+    ] : []),
+    ...(dragged ? live.DRAG_TEST_LINES : []),
+  ];
+}
+
+/**
+ * The fix turn's time (L1): when the platform stops it, and that the fixes
+ * and their one check are all it is for. Empty without a clock. Pure.
+ */
+function fixClockLines(clock) {
+  if (!clock || !Number.isFinite(clock.startedAt) || !(Number(clock.budgetMs) > 0)) return [];
+  const live = require('./homeroom-bot-live');
+  const minutes = Math.max(1, Math.round(Number(clock.budgetMs) / 60000));
+  return [
+    '',
+    `TIME. This fix turn started at ${live.utcClock(clock.startedAt)} UTC, and the platform stops it at`
+      + ` ${live.utcClock(clock.startedAt + Number(clock.budgetMs))} UTC (${minutes} minutes). Make the fixes, check each`
+      + ' issue\'s screen once, and finish: what you leave unfinished is looked at again, what you break is rolled back.',
+  ];
+}
+
+/**
  * What the build's model is asked in a review round's fix turn. The turn
  * starts a fresh thread (the build's conversation, with every screenshot its
  * look-and-fix loop took, is not sent again), so this stands alone: the
  * request, the issues, the spec, where the app's look is recorded, and the
- * in-loop check to run. Pure apart from the shared rule text.
+ * in-loop check to run, scoped to the issues (fixBrowserLines). It never
+ * carries a first version's look-and-fix rounds. `clock` ({ startedAt,
+ * budgetMs }) says when the turn is stopped. Pure apart from the shared rule
+ * text.
  */
-function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1, readsImages = false, platformRepo = false, locale = null }) {
+function fixPrompt({
+  seed = '', spec = '', issues = [], round = 1, maxRounds = 1, readsImages = false, platformRepo = false, locale = null,
+  clock = null,
+}) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
-  const list = issues.map((it, i) => `${i + 1}. [${it.severity}] ${it.screen}: ${it.problem}\n   Fix: ${it.fix}`).join('\n');
+  const list = issues.map(issueLine).join('\n');
   return [
     seed ? clip(seed, MAX_BRIEF_CHARS) : '',
     '',
     `You are the Homeroom bot. You built this app's FIRST VERSION, and a design reviewer has looked at it (review round ${round} of ${maxRounds}):`,
     'screenshots of every screen at a phone and a desktop width, in the light and the dark look, populated, empty, error and loading,',
     'and after the screen\'s primary action was tapped once ("after tapping ..."), judged against the request and the spec.',
-    'The code you committed is in this working tree; this is a new session, so read what you need of it before you change it.',
+    'The code you committed is in this working tree, and this is a new session. Do not explore the repository: run',
+    '`git diff --stat origin/main...HEAD` once to see the files the first version wrote, and read only what these issues need.',
     'Make these fixes, most important first:',
     '',
     list || '(none)',
     '',
     'Fix exactly these, within the spec\'s scope: add no feature, screen or setting the spec does not describe, do not rewrite what',
     'already works, and keep the app\'s look as its CLAUDE.md "## Design" section records it (use its colour tokens and the design kit).',
-    'After each fix, boot the app and look at the screen it was on in the in-loop browser, at the size, look and state the issue names.',
+    'After your fixes, boot the app and look at the screen each issue was on in the in-loop browser, at the size, look and state the',
+    'issue names, and nowhere else.',
     'An issue on an "after tapping ..." screen is about what the main action does: do it yourself in the in-loop browser and check the result.',
+    ...fixClockLines(clock),
     spec ? '' : null,
     spec ? '==== SPEC (what the first version is; authoritative for scope) ====' : null,
     spec ? clip(spec, MAX_SPEC_CHARS) : null,
@@ -316,7 +385,7 @@ function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1
     buildContract.buildContractBlock({ heading: 'Make exactly these fixes, and nothing else:', commits: 'harness' }),
     ...live.requestRulesLines(),
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
-    ...live.browserLines({ readsImages }),
+    ...fixBrowserLines({ readsImages, issues }),
     '',
     `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
@@ -980,6 +1049,7 @@ module.exports = {
   parseReview,
   bootIssue,
   fixPrompt,
+  fixBrowserLines,
   callReviewer,
   reviewCapture,
   storeRoundShots,

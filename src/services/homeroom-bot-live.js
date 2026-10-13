@@ -3581,11 +3581,13 @@ async function reviewLanded({
       return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
     }
     worker.clearPendingStop?.(session.id);
+    const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
         seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
+        clock: { startedAt: Date.now(), budgetMs: fixBudgetMs },
       }),
-      budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
+      budgetMs: fixBudgetMs,
       resumeThreadId: null,
       commitMsg: `Homeroom bot: review fixes, round ${round}`,
       progress: lastActivity(),
