@@ -122,6 +122,22 @@ async function patOctokit(pat) {
 // directly on GitHub.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
+// One issue read on its own (fetchPublicIssue), for an issue the open-issues
+// list does not hold: a closed one, mostly, whose card a chat draws. Its
+// answer is kept as long as the list's, and a failure for a minute, so a page
+// of cards (and the next person to open it) does not ask GitHub again. A
+// `fresh` read always asks, and refreshes what is kept.
+const singleIssueCache = new Map();
+const singleIssueReads = new Map();
+const SINGLE_ISSUE_TTL_MS = ISSUES_CACHE_TTL_MS;
+const SINGLE_ISSUE_FAILURE_TTL_MS = 60 * 1000;
+const SINGLE_ISSUE_CACHE_MAX = 2000;
+function keepSingleIssue(key, result) {
+  const failed = !result.issue && (result.note === 'fetch failed' || result.note === 'rate limited');
+  if (singleIssueCache.size >= SINGLE_ISSUE_CACHE_MAX) singleIssueCache.delete(singleIssueCache.keys().next().value);
+  singleIssueCache.set(key, { result, expiresAt: Date.now() + (failed ? SINGLE_ISSUE_FAILURE_TTL_MS : SINGLE_ISSUE_TTL_MS) });
+  return result;
+}
 // #2261: a cache entry outlives its TTL as the FALLBACK. An expired entry
 // (or one invalidateIssuesCache has expired on purpose) is refetched on the
 // next read, and when that refetch cannot get a list out of GitHub — rate
@@ -2585,6 +2601,25 @@ async function fetchPublicIssue(owner, repo, number, { fresh = false } = {}) {
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 
+  // Asked a moment ago: the same answer, unless it said open and the merge
+  // path has since recorded it closed.
+  const singleKey = `${cacheKey.toLowerCase()}#${n}`;
+  const kept = fresh ? null : singleIssueCache.get(singleKey);
+  if (kept && kept.expiresAt > Date.now() && !(knownClosed && kept.result.issue && kept.result.issue.state !== 'closed')) {
+    return kept.result;
+  }
+  // Asked twice at once (a story's card and its replies' read side by
+  // side): one read answers both.
+  if (!fresh && singleIssueReads.has(singleKey)) return singleIssueReads.get(singleKey);
+  const read = readSingleIssue(owner, repo, n, { cacheKey, fresh })
+    .then((result) => keepSingleIssue(singleKey, result))
+    .finally(() => { if (singleIssueReads.get(singleKey) === read) singleIssueReads.delete(singleKey); });
+  singleIssueReads.set(singleKey, read);
+  return read;
+}
+
+/** fetchPublicIssue's GitHub read itself. Never throws. */
+async function readSingleIssue(owner, repo, n, { cacheKey, fresh }) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
@@ -2756,6 +2791,9 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
 function invalidateIssuesCache(owner, repo) {
   if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
+  // Single reads of the repo's issues go too: the merge that closed them is
+  // exactly when a card's state changes.
+  for (const key of [...singleIssueCache.keys()]) if (key.startsWith(`${target}#`)) singleIssueCache.delete(key);
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase() === target) {
       // Expire, don't delete (#2261). The entry doubles as the fallback a
@@ -2897,6 +2935,7 @@ module.exports = {
   _instrumentForTests: instrument,
   fetchPublicIssues,
   fetchPublicIssue,
+  _resetSingleIssueCache: () => singleIssueCache.clear(),
   fetchIssueComments,
   clipIssueComments,
   refreshPublicIssues,

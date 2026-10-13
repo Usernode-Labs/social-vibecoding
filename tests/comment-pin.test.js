@@ -21,6 +21,9 @@
 //      own origin (platform.json, https only), answers that origin alone,
 //      draws what is on screen at its scroll position, and puts the app's
 //      own `window.snapdom` back.
+//   3b. THE PANEL'S PICTURE (#4975). The side panel's document draws itself,
+//      and takeBase lays its picture in at the frame's rectangle, beside the
+//      app's.
 //   4. THE SEAMS. The dialog takes a handed-over comment; the drawing
 //      library is the pinned, recorded copy, byte for byte.
 
@@ -701,6 +704,74 @@ test('takeBase checks the pin\'s element and retakes at most once, with a clean 
   // The app's picture is laid into the retake too, so a pin beside the frame
   // keeps it.
   assert.match(src, /if \(frameRect\) await layInApp\(again, retaken, frameRect, picture\);/);
+});
+
+// ── 3b. The side panel's picture (#4975) ──────────────────────────────
+
+test('takeBase asks the side panel for its picture with the others, and lays it in on the first picture and the retake', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // The panel's frame is found by id, measured and visibility-checked, like
+  // any other frame the picture fills in.
+  assert.match(src, /getElementById\('side-panel-frame'\)/);
+  assert.match(src, /export function panelFrame\(\): \{ frame: HTMLIFrameElement; rect: Rect \} \| null \{/);
+  // Asked once, in the same Promise.all as the shell and the app's picture,
+  // so the slowest of the three bounds the wait.
+  assert.match(src, /Promise\.all\(\[shell, app, panelPicture\]\)/);
+  // Laid in at the frame's rectangle times the picture's real scale, on the
+  // first canvas and on the retake (the same blob, asked once).
+  assert.match(src, /await layInPanel\(canvas, actual, panel\?\.rect, panelBlob\);/);
+  assert.match(src, /await layInPanel\(again, retaken, panel\?\.rect, panelBlob\);/);
+  // No plate when it did not answer: the frame's rectangle keeps whatever
+  // the shell drew there, at worst the empty body the bug described.
+  const lay = src.match(/async function layInPanel[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInPanel exists beside layInApp');
+  assert.doesNotMatch(lay[0], /fillStyle|fillText/);
+  // The flow's own overlays keep the treatment they had: the panel is not
+  // one of them, and the kit's touch-header drawer (.un-panel) stays.
+  assert.deepEqual(picture.PAGE_EXCLUDES, [
+    '#feedback-modal',
+    '#apps-switcher-sheet',
+    '#apps-switcher-overlay',
+    '.overlay-scrim',
+    '.un-modal',
+    '.un-sheet',
+    '.un-panel',
+    '.un-action-sheet',
+    '.un-backdrop',
+  ]);
+});
+
+test('drawDocument is the panel drawing its own page, with the shell\'s exclusions and none laid in', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Frames are hidden in place (no panel page runs an app the picture could
+  // ask), the flow's overlays are cut out, scrollers are flattened for
+  // WebKit's first paint.
+  assert.match(src, /exclude: \['iframe'\],\s*\n\s*excludeMode: 'hide',\s*\n\s*filter: \(el: Element\) => !isPageOverlay\(el\),\s*\n\s*filterMode: 'remove',\s*\n\s*plugins: \[FLAT_SCROLLERS\],/,
+    'the same exclusions as drawShell, over the panel document\'s own body');
+  // It hands back a PNG blob, and null on any failure.
+  assert.match(src, /return await toBlob\(canvas, 'image\/png'\);/);
+  const draw = src.match(/export async function drawDocument[\s\S]*?\n\}\n\nexport interface Base/);
+  assert.ok(draw, 'drawDocument is exported beside drawShell');
+  assert.match(draw[0], /catch \{\s*\n\s*return null;/, 'any failure is null, never a rejection');
+});
+
+test('requestPanelPicture: no runtime, a throwing draw, a slow draw, a real answer', async () => {
+  const blob = new Blob(['png'], { type: 'image/png' });
+  const frame = (embed) => ({
+    contentWindow: embed ? { UsernodeReact: { sidePanelEmbed: embed } } : {},
+  });
+  // The panel still booting or gone: no runtime, nothing to lay in.
+  assert.equal(await picture.requestPanelPicture(frame(null), 1, 50), null);
+  // A draw that throws resolves null, never a rejection.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => { throw new Error('gone'); } }), 1, 50), null);
+  // One that never answers is cut off by the timeout.
+  assert.equal(await picture.requestPanelPicture(
+    frame({ picture: () => new Promise(() => {}) }), 1, 20), null);
+  // One that answers is passed through as it said.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => blob }), 1, 50), blob);
+  // Something that is not a picture is not drawn.
+  assert.equal(await picture.requestPanelPicture(frame({ picture: async () => 'png' }), 1, 50), null);
 });
 
 // ── 2. Posting ────────────────────────────────────────────────────────

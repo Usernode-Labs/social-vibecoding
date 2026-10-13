@@ -58,6 +58,30 @@ test('the reply is read as a triage verdict\'s plan is: bullets, at most two que
   assert.deepEqual(none.questions, []);
 });
 
+test('run five: the shapes a model sends for "a few lines" are forgiven; a missing field is not', () => {
+  // The plan as one string: a bullet a line, numbered or not.
+  for (const plan of ['- Make a poll\n- Everyone votes once\n\n- See who won', '1. Make a poll\r\n2) Everyone votes once\n3. See who won']) {
+    assert.deepEqual(fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, plan })).bullets,
+      ['Make a poll', 'Everyone votes once', 'See who won'], plan);
+  }
+  // The build note as a list of lines, the ones that are not text left out.
+  const lines = fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, build_note: ['One screen: the open polls.', 7, 'Its primary action is New poll.'] }));
+  assert.match(lines.buildNote, /^One screen: the open polls\.\nIts primary action is New poll\.\n\nAssumptions:\n- Votes are anonymous$/);
+  for (const field of ['plan', 'build_note']) {
+    assert.equal(fvPlan.parsePlanReply(JSON.stringify({ ...REPLY, [field]: undefined })), null, `no ${field}`);
+    assert.equal(fvPlan.usableAnswer({ ...REPLY, [field]: undefined }), false, `no ${field}`);
+  }
+  assert.equal(fvPlan.usableAnswer(REPLY), true);
+  assert.equal(fvPlan.usableAnswer({ ...REPLY, plan: 'Make a poll' }), true, 'one line is a plan of one');
+  // GLM is asked for three lines and a real note; Haiku's structured output
+  // is sent the schema without the bounds (tests/helper-model.test.js).
+  assert.equal(fvPlan.PLAN_SCHEMA.properties.plan.minItems, 3);
+  assert.equal(fvPlan.PLAN_SCHEMA.properties.build_note.minLength, 40);
+  // What a refused reply looked like, never what it said.
+  assert.deepEqual(fvPlan.replyShape(JSON.stringify({ plan: 'Polls for the club', build_note: [] })), { plan: 'string(18)', build_note: 'array(0)' });
+  assert.deepEqual(fvPlan.replyShape('sorry'), { reply: 'no JSON object, 5 characters' });
+});
+
 test('the prompt: the description, its creator, its real people, a game starter and the language, with the triage\'s rules', () => {
   const prompt = fvPlan.planUserPrompt({
     name: 'Club Votes', brief: 'Polls for our running club', maker: { username: 'evan' }, locale: 'es',
@@ -100,6 +124,7 @@ test('the plan is asked of the configuration\'s triage model through the helper 
   assert.equal(made.plan.questions.length, 2);
   assert.equal(calls[0].model, fvPlan.PLAN_MODEL);
   assert.equal(calls[0].schema, fvPlan.PLAN_SCHEMA);
+  assert.equal(calls[0].validate, fvPlan.usableAnswer, 'a GLM answer the parse refuses goes to Haiku');
   assert.deepEqual(spent, [[7, 0.4]]);
   // Too slow: no plan, and the triage plans it.
   const slow = await fvPlan.makePlan(pool, {
@@ -112,6 +137,7 @@ test('the plan is asked of the configuration\'s triage model through the helper 
     deps: { ...deps, llm: { ...deps.llm, async generateFirstVersionPlan() { return { text: 'sorry', usage: null }; } } },
   });
   assert.deepEqual([unusable.plan, unusable.error], [null, 'unusable_reply']);
+  assert.deepEqual(unusable.shape, { reply: 'no JSON object, 5 characters' }, 'kept for the log, not the row');
   // A configuration whose triage is not a helper model still asks the helper model.
   assert.equal(await fvPlan.planModel(pool, { botConfigs: { async currentVersion() { return { recipe: { models: { triage: 'anthropic/claude-opus-5.5' } } }; } } }), fvPlan.PLAN_MODEL);
   // The helper is registered as the sketch's is (llm.js helperMessage; tests/helper-model.test.js).
