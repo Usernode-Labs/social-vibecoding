@@ -534,7 +534,86 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
   const shown = entries.filter((item) => allowed.has(item.project));
   const work = withIcons(arrange(shown, rows.filter((row) => allowed.has(row.slug))), allowed);
   await withReleases(pool, work, shown);
+  await withThreads(pool, userId, work);
   return work;
+}
+
+// The kinds of the bot's messages about a request that wait on the person
+// while their buttons are open: what the strip's Needs you row acts on.
+const ASK_KINDS = new Set([
+  'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
+]);
+
+/**
+ * Pure (one story): what an entry's request has in its person's chat with
+ * the bot, from that chat's records (newest first): `cardId`, the request's
+ * card, the root of its thread; `ask`, its newest message still waiting on
+ * them (a question, a plan, a stop with its button), with the question's
+ * words; `ready`, its newest "ready to try" card, with what its buttons do.
+ * The strip above the chat draws its rows from these (messages/bot-strip.tsx).
+ */
+function threadsOf(rows) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = keyOf(row.slug, row.issue_number);
+    if (!byKey.has(key)) byKey.set(key, {});
+    const found = byKey.get(key);
+    const meta = row.meta && typeof row.meta === 'object' ? row.meta : {};
+    const id = Number(row.message_id);
+    if (row.kind === 'activity') {
+      if (!found.cardId && !row.thread_root_id) found.cardId = id;
+    } else if (row.kind === 'proposal') {
+      if (!found.ready) {
+        const actions = Array.isArray(meta.actions) ? meta.actions : [];
+        found.ready = {
+          messageId: id,
+          sessionId: Number(meta.sessionId) || null,
+          epoch: Number(meta.epoch) || 0,
+          open: meta.status === 'open',
+          approve: meta.status === 'open' && actions.some((a) => a && a.id === 'approve'),
+          waiting: typeof meta.waiting === 'string' ? meta.waiting
+            : (Array.isArray(meta.ready?.waitingOn) && meta.ready.waitingOn.length
+              ? meta.ready.waitingOn.map((name) => `@${String(name).replace(/^@/, '')}`).join(', ') : null),
+        };
+      }
+    } else if (!found.ask && ASK_KINDS.has(row.kind) && (meta.status === 'open' || row.question_status === 'open')) {
+      found.ask = {
+        messageId: id,
+        kind: row.kind,
+        ...(meta.said ? { said: String(meta.said) } : {}),
+        ...(typeof meta.question === 'string' && meta.question ? { question: meta.question.slice(0, 300) } : {}),
+      };
+    }
+  }
+  return byKey;
+}
+
+/**
+ * One story: every entry of `work` with where its request is in this
+ * person's chat with the bot (threadsOf). One read of their own records;
+ * a read that fails leaves the entries as they were.
+ */
+async function withThreads(pool, userId, work) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT d.message_id, d.kind, d.issue_number, d.question_status, a.slug,
+              m.thread_root_id, m.metadata->'homeroomBot' AS meta
+         FROM homeroom_bot_dm_messages d
+         JOIN apps a ON a.id = d.app_id
+         JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+        WHERE d.user_id = $1
+        ORDER BY d.message_id DESC
+        LIMIT 400`,
+      [userId],
+    );
+    const found = threadsOf(rows);
+    for (const job of [...work.now, ...work.needsYou, ...work.history]) {
+      const mine = found.get(job.key);
+      if (mine) Object.assign(job, mine);
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-tray', 'Could not read the requests\' threads', { userId, err: err.message });
+  }
 }
 
 /**
@@ -584,56 +663,96 @@ function noteWorkChanged(userId, deps = {}) {
 
 /**
  * The staging demo's tray (`?demo=1`, beside the bot DM fixture in
- * staging-messages.js): one request being built (the step its activity card
- * in the fixture shows), one whose plan was begun before it had a card (the
- * card opening the DM gives it), a change asked for on one of its proposals waiting
- * its turn (#3734), a question waiting on the viewer, and a few things done
- * before, one of them a request the bot came back to. A staging copy never
- * runs the bot, so without it the tray could not be seen there. Times are
+ * staging-messages.js), drawn as the strip above the chat: one request that
+ * needs the viewer (#18, its question open in its thread), two ready to try
+ * (one waiting for their yes, one for @ada's), two in progress (one being
+ * built, one being planned, the second the card opening the DM gives it),
+ * and one done today (a first version gone live). A staging copy never runs
+ * the bot, so without it the strip could not be seen there. Times are
  * relative to `now` so it always reads fresh. No project stands behind it
  * (as behind the fixture's own messages), so it links nowhere: `href` and
- * every link are null and the tray draws tiles without links. Its app has
- * an emoji for an icon, so History draws its icon lead (#4201).
+ * every link are null. `ids` are the fixture's messages (demoWorkFor), so a
+ * row opens its thread and its buttons act on its own message; without
+ * them the rows still draw. Its app has an emoji for an icon.
  */
-function demoWork(now = Date.now()) {
+function demoWork(now = Date.now(), ids = {}) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
   const app = { appSlug: null, appName: 'Staging demo app', iconUrl: null, iconEmoji: '🧪' };
   const nowhere = { href: null, links: { request: null, proposal: null, project: null } };
   const request = (issueNumber, title) => ({ key: `demo#${issueNumber}`, ...app, issueNumber, title, firstVersion: false });
+  const card = (id) => (id ? { cardId: id } : {});
   return {
     now: [{
       ...request(14, 'Staging demo, show a total under the list'),
-      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Build it', doing: 'building it',
-      since: ago(4), ...nowhere, earlier: [],
+      phase: 'building', stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
+      since: ago(4), ...nowhere, earlier: [], ...card(ids.working),
     }, {
       // Begun before it had a card in the DM: opening the demo DM gives it
       // one (staging-messages.js ensureDemoUnderWayCard).
       ...request(15, 'Staging demo, add a search box'),
-      phase: 'building', stage: 'planning', step: 2, of: 6, stepName: 'Write a plan', doing: 'writing the plan for the build',
-      since: ago(7), ...nowhere, earlier: [],
-    }, {
-      ...request(9, 'Staging demo, show item counts'),
-      phase: 'follow_up_queued', stage: 'followup_queued', step: 5, of: 6, stepName: 'Approval',
-      doing: 'waiting in the queue (number 1) to follow up on the newest replies on the change',
-      since: ago(1), ...nowhere, earlier: [{ id: 2, outcome: 'proposed', at: ago(60 * 26) }],
+      phase: 'building', stage: 'planning', step: 2, of: 6, stepName: 'Planning', doing: 'writing the plan for the build',
+      since: ago(7), ...nowhere, earlier: [], ...card(ids.underWay),
     }],
     needsYou: [{
-      ...request(12, 'Staging demo, sort the list by date'),
-      id: 4, outcome: 'question', doing: null, at: ago(35), ...nowhere, earlier: [],
+      ...request(18, 'Staging demo, a weekly dinner rota'),
+      id: 4, outcome: 'question', doing: null, at: ago(3), ...nowhere, earlier: [], ...card(ids.story),
+      ask: {
+        messageId: ids.storyQuestion || null, kind: 'question', said: 'question',
+        question: 'Which night should the rota start on?',
+      },
     }],
     history: [{
-      ...request(6, 'Staging demo, add a dark theme'),
-      id: 3, outcome: 'answer', doing: null, at: ago(60 * 20), ...nowhere,
-      earlier: [{ id: 5, outcome: 'revise', at: ago(60 * 21) }, { id: 6, outcome: 'proposed', at: ago(60 * 30) }],
+      ...request(11, 'Staging demo, grey out finished items'),
+      id: 7, outcome: 'proposed', doing: null, at: ago(20), ...nowhere, earlier: [],
+      ready: { messageId: ids.ready || null, sessionId: 990901, epoch: 0, open: true, approve: true, waiting: null },
     }, {
-      key: 'demo#first', ...app, issueNumber: 1, title: null, firstVersion: true,
-      id: 1, outcome: 'live', doing: null, at: ago(60 * 24 * 3), ...nowhere, earlier: [],
+      key: 'demo#first', ...app, appName: 'Staging demo plants', issueNumber: 1, title: null, firstVersion: true,
+      id: 1, outcome: 'live', doing: null, at: ago(50), ...nowhere, earlier: [],
+    }, {
+      ...request(9, 'Staging demo, show item counts'),
+      id: 2, outcome: 'proposed', doing: null, at: ago(60 * 2), ...nowhere, ...card(ids.done),
+      earlier: [{ id: 5, outcome: 'revise', at: ago(60 * 3) }],
+      ready: { messageId: null, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' },
     }],
   };
 }
 
+// The fixture's messages the demo strip's rows point at, by the keys
+// staging-messages.js sends them with.
+const DEMO_MESSAGE_KEYS = Object.freeze({
+  story: 'staging-hrbot-activity-thread',
+  storyQuestion: 'staging-hrbot-story-question',
+  ready: 'staging-hrbot-ready',
+  working: 'staging-hrbot-activity-working',
+  underWay: 'staging-hrbot-activity-under-way',
+  done: 'staging-hrbot-activity-done',
+});
+
+/** The demo strip for `user`'s own fixture (demoWork, with its message ids). Never throws. */
+async function demoWorkFor(pool, user, now = Date.now()) {
+  const ids = {};
+  try {
+    if (user?.id) {
+      const { rows } = await pool.query(
+        `SELECT m.id, m.idempotency_key FROM conversation_messages m
+           JOIN users b ON b.id = m.sender_id AND b.username = 'homeroom_bot' AND b.is_synthetic = TRUE
+           JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1 AND cm.status = 'member'
+          WHERE m.idempotency_key = ANY($2::text[])`,
+        [user.id, Object.values(DEMO_MESSAGE_KEYS)],
+      );
+      for (const [name, key] of Object.entries(DEMO_MESSAGE_KEYS)) {
+        const row = rows.find((r) => r.idempotency_key === key);
+        if (row) ids[name] = Number(row.id);
+      }
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-tray', 'Could not read the demo strip\'s messages', { err: err.message });
+  }
+  return demoWork(now, ids);
+}
+
 module.exports = {
-  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, iconOf, withIcons,
+  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, demoWorkFor, iconOf, withIcons, threadsOf, ASK_KINDS,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
 };

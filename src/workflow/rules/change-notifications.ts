@@ -33,6 +33,12 @@ const DIGEST_WAITING_TAIL = `     AND COALESCE(waiting.promoted_at, waiting.crea
                       WHERE waiting_block.user_id = n.user_id AND waiting_block.app_id = waiting.app_id)
      AND NOT EXISTS (SELECT 1 FROM pr_votes waiting_vote
                       WHERE waiting_vote.session_id = waiting.id AND waiting_vote.user_id = n.user_id)
+     -- "One story": as vote-digest.js counts, not a change Homeroom bot
+     -- built for a request this reader asked for.
+     AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs waiting_run
+                       JOIN homeroom_bot_requesters waiting_asker
+                         ON waiting_asker.app_id = waiting_run.app_id AND waiting_asker.issue_number = waiting_run.issue_number
+                      WHERE waiting_run.proposal_session_id = waiting.id AND waiting_asker.user_id = n.user_id)
 ), CASE WHEN n.detail ~ '^[0-9]{1,6}$' THEN n.detail::int ELSE 99 END)`;
 export const DIGEST_WAITING_SQL = `${DIGEST_WAITING_HEAD}${DIGEST_WAITING_TAIL}`;
 const DIGEST_WAITING_BUT_DECIDED_SQL = `${DIGEST_WAITING_HEAD}     AND waiting.id IS DISTINCT FROM $4::int
@@ -95,15 +101,19 @@ export async function createVotedChangeMergedNotifications(
   if (!sessionId) return [];
   // The voters are rows in pr_votes, and none of the three merge paths has
   // their ids, so the producer reads them itself: every row, whatever its
-  // revision, yes or no; a no voter had a say too.
+  // revision, yes or no; a no voter had a say too. "One story": not whoever
+  // asked Homeroom bot for the change, whom the bot's own message tells it
+  // is live (homeroom-bot-dm.js); one ping per person.
   const { rows: voted } = await pool.query(
-    `SELECT DISTINCT user_id FROM pr_votes
-      WHERE session_id = $1 AND user_id IS NOT NULL`,
+    `SELECT v.user_id, v.vote FROM pr_votes v
+      WHERE v.session_id = $1 AND v.user_id IS NOT NULL
+        AND v.user_id NOT IN (${BOT_REQUESTERS_SQL})`,
     [Number(sessionId)]
   );
-  const ids = voted
+  const yes = new Set(voted.filter((row: { vote: unknown }) => row.vote === 'yes').map((row: { user_id: unknown }) => Number(row.user_id)));
+  const ids = [...new Set<number>(voted
     .map((row: { user_id: unknown }) => Number(row.user_id))
-    .filter((id: number) => Number.isFinite(id) && id !== Number(authorId));
+    .filter((id: number) => Number.isFinite(id) && id !== Number(authorId)))];
   if (!ids.length) return [];
   const allowed = await filter(pool, {
     userIds: ids, appId, categoryKey: 'voted_changes_live',
@@ -115,8 +125,10 @@ export async function createVotedChangeMergedNotifications(
     params.push(userId);
     // Cast the columns: the VALUES row's parameters are otherwise typed
     // text, and `n.user_id = v.user_id` in the NOT EXISTS is then an
-    // integer = text comparison Postgres refuses.
-    values.push(`($${params.length}::int, $1::int, $2::int, NULL::int, 'voted_change_merged'::text, NULL::text)`);
+    // integer = text comparison Postgres refuses. `detail` is 'yes' when
+    // their vote was ("It's live. You voted yes.").
+    const detail = yes.has(Number(userId)) ? "'yes'::text" : 'NULL::text';
+    values.push(`($${params.length}::int, $1::int, $2::int, NULL::int, 'voted_change_merged'::text, ${detail})`);
   });
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
@@ -132,6 +144,14 @@ export async function createVotedChangeMergedNotifications(
   );
   return rows;
 }
+
+// "One story": who asked Homeroom bot for the change `$1` it built (its
+// requester). The bot tells them about it itself, in their chat with it, so
+// the platform does not ping them a second time.
+export const BOT_REQUESTERS_SQL = `SELECT q.user_id
+     FROM homeroom_bot_runs r
+     JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+    WHERE r.proposal_session_id = $1`;
 
 // 5 October (Page Turners): the asks about a change that its decision
 // answers for everybody. Nobody is asked to vote on it, to say they still
@@ -228,6 +248,24 @@ export async function settleDecidedChange(pool: Queryable, sessionId: unknown, {
     `UPDATE notifications SET read_at = NOW()
       WHERE session_id = $1 AND kind = 'change_ready' AND read_at IS NULL
       RETURNING user_id`,
+    [id]
+  )).rows);
+
+  // "One story": the requester's own "ready to try" from Homeroom bot. It is
+  // a row of their chat with the bot, which knows its change only through
+  // the message it rang for (metadata.homeroomBot.sessionId), so it is
+  // linked to the change here, and read: hidden on a merge
+  // (MERGED_HIDDEN_KINDS), kept on a close. Found through the change's
+  // requester, whose rows the per-user index holds.
+  note((await pool.query(
+    `UPDATE notifications n SET session_id = $1, read_at = COALESCE(n.read_at, NOW())
+       FROM conversation_messages m
+      WHERE n.user_id IN (${BOT_REQUESTERS_SQL})
+        AND n.kind = 'build_ready'
+        AND (n.session_id IS NULL OR (n.session_id = $1 AND n.read_at IS NULL))
+        AND m.id = n.conversation_message_id
+        AND m.metadata->'homeroomBot'->>'sessionId' = $1::text
+      RETURNING n.user_id`,
     [id]
   )).rows);
 

@@ -712,6 +712,12 @@ async function createPrMergedNotification(pool, { alsoVoters = false, ...args } 
 // asks again and a resumed tail does not. The author is never asked to
 // re-confirm their own update, and a voter who muted the category is left
 // alone: the roster on the proposal's page still names them.
+//
+// "One story": `detail` is "epoch:<n>", and ":@<name>" or ":you" after it
+// when the update is one somebody asked Homeroom bot for (the newest of the
+// change's asks it took up: homeroom_bot_change_asks), so the push says
+// whose ask it was, and never "after your feedback" when it was not theirs.
+// The epoch alone is what makes a row the same (`split_part`).
 async function createRevisionRecheckNotifications(pool, { appId, sessionId, authorId, voterIds, epoch }) {
   const ids = [...new Set((voterIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== Number(authorId)))];
   if (!ids.length || !sessionId) return [];
@@ -719,12 +725,15 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
     userIds: ids, appId, categoryKey: 'revision_recheck',
   });
   if (!allowed.length) return [];
-  const detail = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const base = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const asker = await updateAsker(pool, sessionId);
   const values = [];
-  const params = [appId, sessionId, authorId || null, detail];
+  const params = [appId, sessionId, authorId || null, base];
   allowed.forEach((userId) => {
     params.push(userId);
-    values.push(`($${params.length}, $1, $2, $3, 'revision_recheck', $4)`);
+    const who = !asker ? '' : (asker.id === Number(userId) ? ':you' : (asker.username ? `:@${asker.username}` : ''));
+    params.push(`${base}${who}`);
+    values.push(`($${params.length - 1}::int, $1::int, $2::int, $3::int, 'revision_recheck'::text, $${params.length}::text)`);
   });
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
@@ -733,12 +742,34 @@ async function createRevisionRecheckNotifications(pool, { appId, sessionId, auth
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
          WHERE n.user_id = v.user_id AND n.session_id = v.session_id
-           AND n.kind = 'revision_recheck' AND n.detail = v.detail
+           AND n.kind = 'revision_recheck'
+           AND (n.detail = $4::text OR n.detail LIKE $4::text || ':%')
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     params
   );
   return rows;
+}
+
+// "One story": who asked Homeroom bot for the update to change `sessionId`
+// (the newest ask on it the bot took up), as { id, username }, or null when
+// nobody did (a person's own push, or a fix of its checks). Never throws.
+async function updateAsker(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.username
+         FROM homeroom_bot_change_asks a
+         JOIN users u ON u.id = a.asker_id
+        WHERE a.session_id = $1 AND a.status <> 'queued'
+        ORDER BY COALESCE(a.taken_at, a.created_at) DESC, a.id DESC
+        LIMIT 1`,
+      [Number(sessionId)]
+    );
+    return rows[0] ? { id: Number(rows[0].id), username: rows[0].username || null } : null;
+  } catch (err) {
+    log.warn('notifications', 'Could not read who asked for an update', { sessionId, err: err.message });
+    return null;
+  }
 }
 
 // #4787: the change a person voted on went live: one row per voter, yes or
@@ -1313,6 +1344,14 @@ async function createChangeReadyNotifications(pool, { appId, sessionId, sourceUs
         SELECT 1 FROM notifications n
          WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'change_ready' AND n.detail = $5::text
       )
+        -- "One story": one ping per update. Somebody asked "Still good?"
+        -- about this version (revision_recheck, same epoch) is not told
+        -- again that it is ready to try.
+        AND NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'revision_recheck'
+           AND (n.detail = $5::text OR n.detail LIKE $5::text || ':%')
+      )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [ids, appId, sessionId, sourceUserId || null, detail]
   );
@@ -1771,7 +1810,9 @@ const { DECIDED_ASK_KINDS, settleVoteDigests } = changeNotifications;
 // say the change went live (pr_merged to its author, voted_change_merged to
 // its voters) are not asks and stay. A closed change keeps its rows in the
 // list, where "ready to try" reads Closed.
-const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready']);
+// "One story": the requester's own "ready to try" from Homeroom bot
+// (build_ready) too, once settleDecidedChange has linked it to its change.
+const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready', 'build_ready']);
 
 async function settleDecidedChange(pool, sessionId, { status = null, push = true } = {}) {
   const touched = await changeNotifications.settleDecidedChange(pool, sessionId, { status });

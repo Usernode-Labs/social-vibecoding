@@ -4910,10 +4910,10 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624), and quotes the message it answers (#3707)",
+      "name": "The chat with Homeroom bot draws its news about a request as one short line, its project's tile, the request's title and a few words, and a question waiting on you reads \"needs your answer\" in the need colour (its answers are in the request's thread); beside it, a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) [data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
-      "expectText": "public discussion",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-bot-news[data-bot-news=\"question\"] [data-bot-news-open] [data-bot-news-words].text-amber-700",
+      "expectText": "needs your answer",
       "id": "homeroom-bot-dm-question",
       "visual": true,
       "impact": [
@@ -4923,10 +4923,10 @@
       ]
     },
     {
-      "name": "The Homeroom bot's DM says under its name what the bot is working on for you, and its Activity button beside the conversation's actions opens its activity panel at any time (#3692, #3770); in the transcript, each piece of its work is one activity card where it started, with its step of the request's steps while it goes (#3736); and work it already had under way without a card gets one when the DM opens",
+      "name": "The chat with Homeroom bot says under its name what it is for, and pins \"Your requests\" under its header (one request, one story): a summary line with Hide, then what needs you with one button that opens the request's thread at the question, what is ready to try with Try it and Approve, and one line of what is in progress; it replaced the Activity disc and its panel (#3692, #3770)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane:has([aria-label=\"Step 3 of 6: Build it\"]):has([aria-label=\"Step 2 of 6: Write a plan\"]) > .messages-thread-header [data-bot-work-toggle][aria-expanded=false]:has([data-bot-work-status=working])",
-      "expectText": "Working on 3",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header + [data-bot-strip=open]:has([data-bot-strip-group=needs] [data-bot-strip-act=open]):has([data-bot-strip-group=ready] [data-bot-strip-act=approve]) [data-bot-strip-group=progress]",
+      "expectText": "1 needs you",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,
       "impact": [
@@ -4939,10 +4939,10 @@
       ]
     },
     {
-      "name": "#4097: the Homeroom bot's news about a request leads with the request's card in its DM, in place of the line naming it, and its words follow the card; a build that did not finish offers Try again",
+      "name": "#4097, one request, one story: in the chat with Homeroom bot each piece of news about a request is one line that opens its thread: a request's card says how many updates its thread holds, a build that stopped reads \"stopped\" in the need colour, a first version gone live \"is live\", and a change ready to try \"is ready to try\"",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has(.messages-message button.messages-bot-primary[data-bot-prompt]) .messages-message [data-bot-request-card=\"12\"]:has(> .messages-object-card .messages-object-icon) + .messages-markdown",
-      "expectText": "Staging demo, sort the list by date"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-news=activity] [data-bot-thread-link]):has([data-bot-news=build_failed] .text-amber-700):has([data-bot-news=merged]) [data-bot-news=proposal] [data-bot-news-open]",
+      "expectText": "is ready to try"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

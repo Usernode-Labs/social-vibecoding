@@ -372,7 +372,8 @@ test('what the bot says about it is plain, and never about checks that passed', 
   assert.equal(person, 'Homeroom bot can\'t get this change working on its own: "Tapping "mark as done" ticks a chore off and offers undo." didn\'t work when Homeroom tried it. The route needs a schema change I may not make. A person needs to look at it from here.');
   const revised = followup.checksRevisedText({ summary: 'Mark as done records the member, not the account.', broken: true, failing: false });
   assert.match(revised, /^Homeroom bot fixed what didn't work on this change: Mark as done records the member/);
-  assert.match(revised, /it is tried again on the new version/);
+  // One note per update: the cleared votes are the platform's line.
+  assert.match(revised, /\n\nHomeroom tries it again on the new version\.$/);
   assert.match(followup.checksPersonText({ why: '', failingCount: 2, broken: due.broken }),
     /2 checks are still failing, and one thing it says it does didn't work when Homeroom tried it\./);
   for (const t of [person, revised]) assert.ok(!/—|PR #|proposal/.test(t), t);
@@ -485,10 +486,12 @@ test('the card and its message say what does not work instead of "ready to try"'
 
 test('a ready card for a change that does not fully work rings as such, not as "ready to try"', async () => {
   const pool = { async query() { return { rows: [{ members: 2 }] }; } };
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } }),
-    'hrbot:ready_broken:Flat 4B Chores');
-  assert.equal(await dm.notificationDetail(pool, 'ready', { kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } }),
-    'hrbot:ready:Flat 4B Chores');
+  const { botMomentCopy } = require('../src/services/homeroom-bot-notify-copy');
+  const said = async (metadata) => botMomentCopy(await dm.notificationDetail(pool, 'ready', metadata));
+  const broken = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: ['x'] } });
+  assert.deepEqual([broken.said, broken.body], ['ready_broken', 'Built, but one thing isn\'t working yet. Try it to see.']);
+  const ready = await said({ kind: 'proposal', appName: 'Flat 4B Chores', appSlug: 'f', firstVersion: true, ready: { broken: [] } });
+  assert.deepEqual([ready.said, ready.body], ['ready_first', 'Your first version is ready to try.']);
 });
 
 test('the bot\'s builds are asked to try the main action, not just look at the page', () => {
@@ -530,10 +533,11 @@ test('with no phone to push to, the email says it is built but not everything wo
   const templates = require('../src/services/mail/templates');
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?u=7&t=abc';
   const mail = templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x/#messages/12', unsubscribeUrl, notWorking: true });
-  assert.equal(mail.subject, 'Flat 4B Chores is built, but not everything works yet');
-  assert.match(mail.text, /Homeroom bot built what you asked for in Flat 4B Chores, but not everything works yet\. Open it to see what\./);
+  // "One story": the push's words (homeroom-bot-notify-copy.js), never "ready to try" alone.
+  assert.equal(mail.subject, 'Flat 4B Chores: Built, but something isn\'t working yet');
+  assert.match(mail.text, /^Built, but something isn't working yet\. Try it to see\./);
   assert.match(mail.text, /To stop these emails/);
   assert.equal(templates.buildMessage('build_ready', { appName: 'Flat 4B Chores', url: 'https://x', unsubscribeUrl }).subject,
-    'Flat 4B Chores is ready to try');
+    'Flat 4B Chores: Ready to try');
   assert.match(read('src/services/homeroom-bot-dm.js'), /metadata\.ready\.broken\.length \? \{ notWorking: true \} : \{\}/);
 });
