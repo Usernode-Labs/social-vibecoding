@@ -118,6 +118,7 @@ const SAMPLE_ARGS = {
   list_requests: { slug: 'recipe-box' },
   get_request: { slug: 'recipe-box', number: 12 },
   get_discussion: { slug: 'recipe-box', threadType: 'issue', ref: 12 },
+  get_message: { slug: 'recipe-box', threadType: 'issue', ref: 12, messageId: 40 },
   get_proposal: { proposalId: 50 },
   get_change: { changeId: 50 },
   get_platform_conventions: {},

@@ -170,7 +170,7 @@ const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 // offer_request and the person's tap.
 const PLATFORM_TOOLS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
-  'get_discussion', 'get_proposal', 'list_my_proposals', 'get_change',
+  'get_discussion', 'get_message', 'get_proposal', 'list_my_proposals', 'get_change',
 ]);
 const PLATFORM_GRANT_SECONDS = 300;
 
