@@ -781,7 +781,7 @@ function notificationsRoutes(config) {
   // caller as its user, so there is nothing to hide behind an
   // authorization check. Per-user rate limit (the message-bookmark
   // bucket's twin) and no caching, like every route here.
-  router.put('/api/notifications/:id/save', sameOriginBrowserOnly, notificationBookmarkLimiter, async (req, res) => {
+  router.put('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const rawId = String(req.params.id || '');
@@ -807,7 +807,7 @@ function notificationsRoutes(config) {
   // Unsave one. Idempotent from the client's point of view: an id that was
   // never saved (or was already unsaved) answers 200 with removed: 0, so
   // a double-tap or a stale row cannot error.
-  router.delete('/api/notifications/:id/save', sameOriginBrowserOnly, notificationBookmarkLimiter, async (req, res) => {
+  router.delete('/api/notifications/:id/save', notificationBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const rawId = String(req.params.id || '');

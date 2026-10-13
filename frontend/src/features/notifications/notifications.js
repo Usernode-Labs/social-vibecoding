@@ -873,9 +873,7 @@ const Notifications = {
   },
 
   _onItemClick(id) {
-    // #4769: a SAVED notification row's tap opens the same destination as
-    // the feed row's — the pinned section keeps the full row data, so the
-    // same routing runs off it. The save itself is not touched.
+    // #4769: saved rows route the same.
     const item = Notifications.items.find((n) => n.id === id)
       || Notifications.savedNotifications.find((n) => n.id === id);
     if (!item) return false;

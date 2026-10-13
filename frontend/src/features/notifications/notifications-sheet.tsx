@@ -549,7 +549,7 @@ function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
     >
       {view.saved
         ? <BookmarkSolidIcon aria-hidden="true" className="h-5 w-5 text-violet-700 dark:text-violet-400" />
-        : <BookmarkIcon aria-hidden="true" className="h-5 w-5 text-zinc-400" />}
+        : <BookmarkIcon aria-hidden="true" className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />}
     </button>
   );
   // On touch the bookmark is INSIDE the swipe host, so a swipe translates
