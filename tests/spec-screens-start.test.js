@@ -291,6 +291,12 @@ test('the build prompt says the screens are in place, only when they are', () =>
   assert.ok(text.includes('<template data-spec-screen="2">'));
   assert.ok(text.includes('including the tokens the drawing added (--ballot)'));
   assert.ok(!text.includes('--accent)'), 'a kit token is not listed as added');
+  // Run 189: a drawn count ("Open questions, 5") and a drawn status line
+  // shipped in the markup, so the loading and error states showed them.
+  const flat = text.replace(/\s+/g, ' ');
+  assert.ok(flat.includes('Every value drawn there is sample data, not only the rows: a count in a heading ("Open questions, 5")'));
+  assert.ok(flat.includes('Empty each in the markup, keeping its element, and set it from real data'));
+  assert.ok(flat.includes('The loading, empty and error states never show a drawn value.'));
   assert.ok(!live.buildPrompt(base).includes('SCREENS ARE IN PLACE'));
   assert.ok(!live.buildPrompt({ ...base, firstVersion: false, startingScreens: placed }).includes('SCREENS ARE IN PLACE'));
   const one = live.buildPrompt({ ...base, startingScreens: { screens: [1], tokens: [], skipped: [{ n: 2, why: 'x' }] } });

@@ -590,8 +590,48 @@ const FIRST_VERSION_SIZE_LINES = Object.freeze([
   '  the signature element on the first screen. Then "Nice-to-haves": everything else, most valuable first.',
 ]);
 
-/** What the spec's scope is: a later change's, as small as the request; a first version's, complete, and its design the spec's own. Pure. */
-function specScopeLines(firstVersion = false, starter = null) {
+// Build speed, the plan (13 Oct 2026): run 189's six first-version plans
+// were 39,000 to 45,000 characters, each drew two tall screens, and about
+// 30 to 40% of each build went to what neither the request nor the platform
+// asked for: its builds built 23 of the plans' 26 nice-to-haves, partly
+// because the user-facing half already described them. A configuration's
+// `lean_plan` tweak (bot-configs.js TWEAKS) asks the spec for a focused
+// first version instead: the request done well, the platform's own
+// minimums, nothing else, and what it left out named so the build leaves it
+// out too (LEAN_PLAN_ORDER_LINES). These replace the complete-first-version,
+// design and size lines below; everything else a first version's spec is
+// told stays as it is.
+const LEAN_PLAN_SCOPE_LINES = Object.freeze([
+  '- A focused first version: what the request asks for, done well, and nothing it does not name. Done well means',
+  '  its own flow works end to end, with honest loading, empty and error states (never a blank loading screen, a',
+  '  made-up zero or a raw server error), the phone layout (nothing covering or cutting off content), the populated',
+  '  demo and the signature element. It never means more features: the group asks for more once they have used it.',
+  '- The platform\'s own minimums are in scope whether the request names them or not: the populated `?demo=1`, the',
+  '  shutdown handler, two or three dapp.json checks, a way to report a post wherever people post (a Report that',
+  '  records the report, with no thresholds or automatic hiding of its own), `staging:private` on tables of',
+  '  personal data, and a guard on any server fetch of an address a person typed.',
+  '- No product policy or lifecycle that the request and what its creator approved do not name: no moderation',
+  '  thresholds or automatic hiding, no closing, archiving or deciding, no undo or bulk actions, no caps, quotas or',
+  '  retention windows, no polling or live refresh, no saved preferences or local storage, no discovery or import,',
+  '  no sharing or notifications. Where one seems needed, leave it out and name it under "Not in this version".',
+  '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep it unless it has a',
+  '  defect you can name, and say under Assumptions what you replaced and why. What binds you is the request',
+  '  itself and what its creator approved, above.',
+  '- Short, so the build starts sooner and builds only this: about 15,000 characters in all, the drawn screens',
+  '  included. The technical half is about 4,000 characters: the files, each table\'s columns, one line per route.',
+  '  Leave the implementation to the build: no SQL, no catalogue of error messages, no unit-test suite (a first',
+  '  version\'s checks are its dapp.json checks), and no server route for the demo of an app that stores nothing.',
+  '  At most five assumptions.',
+  '- Within the platform\'s checks: one clear primary action on the main screen, a filled button (small on a screen',
+  '  for reading), tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included.',
+  '- Ranked. End the technical half with a "Build order" subsection of two short lists. "Must-haves", in order: the',
+  '  main action working end to end, the loading, empty and error states, the phone layout, the populated demo and',
+  '  the signature element. Then "Not in this version": each idea you left out, one line each. The build does not',
+  '  implement them, and the user-facing half does not describe them.',
+]);
+
+/** What the spec's scope is: a later change's, as small as the request; a first version's, complete (or, under `lean_plan`, focused), and its design the spec's own. Pure. */
+function specScopeLines(firstVersion = false, starter = null, { leanPlan = false } = {}) {
   if (!firstVersion) return ['- As small as the request: the plan above, no refactoring or extra features.'];
   const s = starterOf(starter);
   return [
@@ -600,13 +640,39 @@ function specScopeLines(firstVersion = false, starter = null) {
       `  ${s.bot.build} Its CLAUDE.md "Starter template" section says where everything is. In "Technical`,
       '  implementation", name which of its files change and what is kept; never plan to start over.',
     ] : []),
-    '- A complete first version of what the request asks for, done fully and well, including the small touches that',
-    '  make it feel finished. Not a new feature, screen or setting the request does not imply.',
-    '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
-    '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
-    '  and why. What binds you is the request itself and what its creator approved, above.',
-    ...FIRST_VERSION_SIZE_LINES,
+    ...(leanPlan ? LEAN_PLAN_SCOPE_LINES : [
+      '- A complete first version of what the request asks for, done fully and well, including the small touches that',
+      '  make it feel finished. Not a new feature, screen or setting the request does not imply.',
+      '- Yours to design. The plan\'s look, layout and scope are the triage\'s first sketch: keep what is good in it,',
+      '  replace what a careful senior product designer would do better, and say under Assumptions what you replaced',
+      '  and why. What binds you is the request itself and what its creator approved, above.',
+      ...FIRST_VERSION_SIZE_LINES,
+    ]),
   ];
+}
+
+// Under `lean_plan`: one drawn screen, shorter, with a few rows, and a
+// second only when it is another layout (run 189's Bread Bot plans drew the
+// same screen twice, the second after one tap, with its own style block).
+const LEAN_PLAN_SCREENS_SWAP = Object.freeze([
+  ['draws UP TO TWO screens of the finished first version, in full, as faithful mocks',
+    'draws ONE screen of the finished first version, in full, as a faithful mock (a second only when the app has a second layout that matters)'],
+  ['the second, if you draw one, is whatever best shows the app at work, such as an item opened or the main screen in the middle of its key interaction.',
+    'the second, only when the app has one, is that other layout, such as an item opened, and never the main screen again in another state.'],
+  ['with data-height set to the screen\'s real scroll length, at most 2400,',
+    'with data-height set to the screen\'s real scroll length, at most 1400,'],
+  ['stays within about 20,000 characters', 'stays within about 10,000 characters'],
+  ['Draw repeated rows with identical structure.',
+    'Draw three or four repeated rows, with identical structure: they show the pattern, and the demo fills the rest.'],
+]);
+// And the drawn screen already shows the layout, the rows and the controls.
+const LEAN_PLAN_DESIGN_LINE = 'With the screen drawn, keep the "### Design" subsection to a few short paragraphs: the dark look\'s '
+  + 'values, what the demo holds and the words it uses. What the drawing shows (the layout, the rows, the controls) is '
+  + 'not described again.';
+
+/** A first version's screens brief, as `lean_plan` words it when it is on. Pure. */
+function firstVersionScreensBrief({ leanPlan = false } = {}) {
+  return leanPlan ? swapWording(FIRST_VERSION_SCREENS_BRIEF, LEAN_PLAN_SCREENS_SWAP) : FIRST_VERSION_SCREENS_BRIEF;
 }
 
 /** The spec's design brief: a first version's, worded for a game starter when it has one. Pure. */
@@ -664,8 +730,12 @@ function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
   // #4645: the requester's locale, for the language rule below.
   locale = null,
+  // A first version's configuration's tweaks (bot-configs.js TWEAKS): only
+  // `lean_plan` changes the spec; [] is the spec as it always was.
+  tweaks = [],
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale, tweaks });
+  const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
     '',
@@ -687,7 +757,7 @@ function specPrompt({
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    ...specScopeLines(firstVersion, starter),
+    ...specScopeLines(firstVersion, starter, { leanPlan }),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${localeRule(locale)}`,
@@ -719,7 +789,8 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null, tweaks = [] }) {
+  const leanPlan = firstVersion && Array.isArray(tweaks) && tweaks.includes('lean_plan');
   return [
     seed,
     '',
@@ -746,16 +817,17 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
     '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
     '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
-    ...specScopeLines(firstVersion, starter),
+    ...specScopeLines(firstVersion, starter, { leanPlan }),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
     `- ${localeRule(locale)}`,
     `- ${specDesignBrief(firstVersion, starter)}`,
+    ...(leanPlan ? [`- ${LEAN_PLAN_DESIGN_LINE}`] : []),
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
-    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF] : []),
+    ...(firstVersion ? ['', firstVersionScreensBrief({ leanPlan })] : []),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "user" section with an <h3>Assumptions</h3>',
@@ -2281,6 +2353,16 @@ const FIRST_VERSION_ORDER_LINES = Object.freeze([
   'valuable first, only while time is left.',
 ]);
 
+// Under `lean_plan` (LEAN_PLAN_SCOPE_LINES): the spec's "Not in this
+// version" is left out, whatever time is left, and so is a unit-test suite
+// it did not ask for (four of run 189's six builds wrote one, 650 lines).
+const LEAN_PLAN_ORDER_LINES = Object.freeze([
+  '',
+  'Build the must-haves in the order the spec\'s "Build order" gives, and nothing it lists under "Not in this',
+  'version", even with time left: that time goes to checking and finishing what is there. Write no unit-test suite',
+  'unless the spec\'s technical half asks for one: a first version\'s checks are its dapp.json checks.',
+]);
+
 // Newcomer run five, item 8: a first version's build starts from the
 // screens its spec drew, written into the repository before its turn
 // (services/spec-screens-start.js). Run four's build spent about half its
@@ -2309,7 +2391,11 @@ function startingScreensLines(placed) {
     'Do not draw, restyle or rewrite them: no second copy of the markup, no new styles for what is drawn, no redesign.',
     'Change them only where behaviour needs it: render the drawn rows from data with the same markup (the drawn rows',
     'are the populated demo, so make `?demo=1` show rows like them), give elements the ids and hooks your script needs,',
-    'wire every action, and add the loading, empty and error states with the kit\'s components. Set the dark look\'s',
+    'wire every action, and add the loading, empty and error states with the kit\'s components. Every value drawn',
+    'there is sample data, not only the rows: a count in a heading ("Open questions, 5"), a status line ("9 unread',
+    'from 5 feeds"), a date, a total. Empty each in the markup, keeping its element, and set it from real data; take',
+    'the drawn rows out before the first request goes out (keep one as the row to copy if you render from it). The',
+    'loading, empty and error states never show a drawn value. Set the dark look\'s',
     'value of each token (the `.dark` block) from the spec\'s Design subsection'
       + (added.length ? `, including the tokens the drawing added (${added.map((t) => `--${t}`).join(', ')}).` : '.'),
     'Your look-and-fix rounds compare the running app with the drawing and fix what differs, not what you would draw',
@@ -2579,7 +2665,7 @@ function buildPrompt({
     ...(firstVersion ? firstVersionDesignLines(starter, { oneLook }) : []),
     ...(firstVersion ? startingScreensLines(startingScreens) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
-    ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
+    ...(firstVersion ? (on('lean_plan') ? LEAN_PLAN_ORDER_LINES : FIRST_VERSION_ORDER_LINES) : []),
     ...(on('one_go') ? ONE_GO_LINES : []),
     ...BATCH_STEPS_LINES,
     ...stageGuidanceLines('build', { firstVersion, guidance, reviewed }),
@@ -2937,6 +3023,9 @@ async function draftSpec({
   // 13 Oct 2026: a first version's screen, saved by the spec as soon as it
   // is drawn (FIRST_VERSION_SCREENS_FIRST): ({ n, markup, containerName }).
   onScreen = null,
+  // A first version's configuration's tweaks (bot-configs.js TWEAKS), of
+  // which `lean_plan` is the spec's (specPrompt).
+  tweaks = [],
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -2961,7 +3050,7 @@ async function draftSpec({
   activeWorkers.add(session.id);
   const startedAt = Date.now();
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter, locale,
+    seed, buildNote, firstVersion, guidance, starter, locale, tweaks,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -3665,7 +3754,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
-      locale, onScreen,
+      locale, onScreen, tweaks: buildTweaks,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -4332,6 +4421,10 @@ module.exports = {
   firstVersionDesignLines,
   FIRST_VERSION_SIZE_LINES,
   FIRST_VERSION_ORDER_LINES,
+  LEAN_PLAN_SCOPE_LINES,
+  LEAN_PLAN_ORDER_LINES,
+  LEAN_PLAN_DESIGN_LINE,
+  firstVersionScreensBrief,
   splitApprovedPlan,
   planNoteText,
   APPROVED_PLAN_HEAD,

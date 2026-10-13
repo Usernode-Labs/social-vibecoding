@@ -13,7 +13,11 @@
 //                   starterLines);
 //   lean_turns      the declared checks are left to the gate, and stale
 //                   browser and shell output is cut from each model call
-//                   (claude-openrouter-request.js pruneStaleToolOutput).
+//                   (claude-openrouter-request.js pruneStaleToolOutput);
+//   lean_plan       the spec plans a focused first version, shorter, with
+//                   one drawn screen and "Not in this version" in place of
+//                   nice-to-haves, which the build leaves out
+//                   (homeroom-bot-live.js LEAN_PLAN_SCOPE_LINES).
 //
 // Today's recipes, and every build that names no tweak, are pinned to be
 // exactly as they were.
@@ -343,4 +347,111 @@ test('lean_turns: what a turn cut, and what its tool definitions weigh, reach it
   // A turn without the tweak reports nothing new.
   const plain = worker.newWatchState();
   assert.equal(llmTelemetry.normalizeDiagnostics(plain).tool_output_pruned_count ?? null, null);
+});
+
+// ── lean_plan: the plan, and what the build makes of it ─────────────────
+
+const SPEC_ARGS = { seed: 'Build issue #1: Club Votes', buildNote: 'The plan.', firstVersion: true, html: true, platformStyles: false };
+
+test('lean_plan: a recipe may name it, and a spec or build that does not reads exactly as before', () => {
+  const v = configs.validateRecipe({ ...REVIEWED, tweaks: ['lean_plan', 'one_look'] });
+  assert.equal(v.ok, true, v.error);
+  assert.deepEqual(v.recipe.tweaks, ['one_look', 'lean_plan']);
+  assert.equal(configs.validateRecipe({ ...REVIEWED, reviewer: null, tweaks: ['lean_plan'] }).ok, true, 'no reviewer needed');
+  for (const html of [true, false]) {
+    const args = { ...SPEC_ARGS, html };
+    const before = live.specPrompt(args);
+    assert.equal(live.specPrompt({ ...args, tweaks: [] }), before);
+    assert.equal(live.specPrompt({ ...args, tweaks: ['one_look', 'starter_inline', 'lean_turns', 'one_go'] }), before,
+      'the build tweaks leave the spec alone');
+    const later = { ...args, firstVersion: false };
+    assert.equal(live.specPrompt({ ...later, tweaks: ['lean_plan'] }), live.specPrompt(later), 'a later change is as small as asked already');
+  }
+  assert.equal(live.buildPrompt({ ...BASE, tweaks: ['lean_plan'], firstVersion: false, reviewed: false }),
+    live.buildPrompt({ ...BASE, firstVersion: false, reviewed: false }));
+});
+
+test('lean_plan: the spec plans the request done well, the platform\'s minimums, and nothing else, in a third of the length', () => {
+  const before = flat(live.specPrompt(SPEC_ARGS));
+  const prompt = flat(live.specPrompt({ ...SPEC_ARGS, tweaks: ['lean_plan'] }));
+  assert.match(prompt, /A focused first version: what the request asks for, done well, and nothing it does not name\./);
+  assert.match(prompt, /It never means more features/);
+  // The platform's own minimums, named, so leaving out the rest cuts none of them.
+  for (const minimum of [/populated `\?demo=1`/, /shutdown handler/, /two or three dapp\.json checks/, /a way to report a post wherever people post/,
+    /`staging:private`/, /a guard on any server fetch of an address a person typed/]) assert.match(prompt, minimum);
+  // Run 189's plans invented these.
+  assert.match(prompt, /No product policy or lifecycle that the request and what its creator approved do not name: no moderation thresholds or automatic hiding, no closing, archiving or deciding/);
+  assert.match(prompt, /about 15,000 characters in all, the drawn screens included/);
+  assert.match(prompt, /no SQL, no catalogue of error messages, no unit-test suite/);
+  assert.match(prompt, /At most five assumptions\./);
+  assert.match(prompt, /keep it unless it has a defect you can name/);
+  assert.match(prompt, /tap targets at least 44px tall, and icons as inline SVG, never emoji, the favicon included/);
+  assert.match(prompt, /"Not in this version": each idea you left out, one line each\. The build does not implement them, and the user-facing half does not describe them\./);
+  assert.ok(!/Nice-to-haves/.test(prompt) && /Nice-to-haves/.test(before), 'no nice-to-haves list');
+  assert.ok(!/including the small touches that make it feel finished/.test(prompt) && /including the small touches/.test(before));
+  // One drawn screen, shorter, a few rows; the Design subsection does not describe it again.
+  assert.match(prompt, /draws ONE screen of the finished first version, in full, as a faithful mock \(a second only when the app has a second layout that matters\)/);
+  assert.match(prompt, /never the main screen again in another state/);
+  assert.match(prompt, /at most 1400/);
+  assert.match(prompt, /stays within about 10,000 characters/);
+  assert.match(prompt, /Draw three or four repeated rows/);
+  assert.match(prompt, /What the drawing shows \(the layout, the rows, the controls\) is not described again\./);
+  assert.ok(!/UP TO TWO screens/.test(prompt) && /UP TO TWO screens/.test(before));
+  // The rest of a first version's spec is as it was.
+  for (const kept of ['DRAW THE MAIN SCREEN FIRST', 'HTML SPEC FORMAT', 'DESIGN BRIEF (FIRST VERSION)', 'Before you finish, read the two halves against each other']) {
+    assert.ok(prompt.includes(kept) && before.includes(kept), kept);
+  }
+  // The markdown spec, which draws no screen, gets the scope and not the screen lines.
+  const md = flat(live.specPrompt({ ...SPEC_ARGS, html: false, tweaks: ['lean_plan'] }));
+  assert.match(md, /A focused first version/);
+  assert.ok(!/With the screen drawn/.test(md));
+  for (const line of [...live.LEAN_PLAN_SCOPE_LINES, ...live.LEAN_PLAN_ORDER_LINES, live.LEAN_PLAN_DESIGN_LINE]) assert.ok(!/—/.test(line), line);
+  // A game starter keeps its own lines.
+  assert.match(flat(live.specScopeLines(true, 'game-blocks', { leanPlan: true }).join('\n')), /Built ON the repository's .* A focused first version/);
+});
+
+test('lean_plan: the build does the must-haves and nothing under "Not in this version", and writes no unit-test suite it was not asked for', () => {
+  const prompt = flat(live.buildPrompt({ ...BASE, tweaks: ['lean_plan'] }));
+  assert.match(prompt, /Build the must-haves in the order the spec's "Build order" gives, and nothing it lists under "Not in this version", even with time left/);
+  assert.match(prompt, /Write no unit-test suite unless the spec's technical half asks for one/);
+  assert.ok(!/then the nice-to-haves/.test(prompt));
+  assert.match(flat(live.buildPrompt(BASE)), /then the nice-to-haves, most valuable first, only while time is left/, 'as before without it');
+});
+
+test('lean_plan: a first version\'s build hands it to its spec turn', async () => {
+  const run = async (tweaks) => {
+    const prompts = [];
+    const pool = { async query(sql) { return /INSERT INTO chat_sessions/.test(sql) ? { rows: [{ id: 5001, app_id: 1, user_id: 2 }] } : { rows: [] }; } };
+    const deps = {
+      worker: {
+        async ensureWorkerImage() {},
+        async ensureWorker() { return 'w-5001'; },
+        async execInWorker(_id, opts) {
+          prompts.push(opts);
+          return opts.mode === 'scout' ? { lastResultText: '' } : { pushOk: true, ahead: 0 };
+        },
+        stopTurn() { return Promise.resolve(); },
+        async runLiveScript() { return ''; },
+      },
+      sessions: {
+        async runCodexAttemptLoop(args) { return { result: await args.dispatchOnce({}), error: null, estimatedCostUsd: null }; },
+        async persistScoutPublication() { return { specVersion: 1 }; },
+      },
+      agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
+      sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `b${sessionId}` }; } },
+      activeWorkers: new Set(),
+    };
+    await live.buildAndPropose({
+      pool, deps, config: {}, bot: { id: 2, username: 'bot' }, app: { id: 1, slug: 'club-votes' }, repo: { owner: 'o', repo: 'r' },
+      issueNumber: 1, issue: { title: 'Club Votes' }, seed: 'seed', buildNote: 'note', turnBudgetMs: 600000, model: GLM,
+      firstVersion: true, propose: false, tweaks,
+    });
+    return prompts;
+  };
+  const lean = await run(['lean_plan']);
+  assert.equal(lean[0].mode, 'scout');
+  assert.match(lean[0].prompt, /A focused first version/);
+  assert.match(flat(lean[1].prompt), /nothing it lists under "Not in this version"/);
+  const plain = await run([]);
+  assert.ok(!/A focused first version/.test(plain[0].prompt));
 });

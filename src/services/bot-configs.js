@@ -39,7 +39,7 @@
 //             the triage's, the spec's and the build's prompts the way the
 //             studio adds it. Its FILES apply only in the studio, whose first
 //             commit carries them: a live project's repository already exists.
-//   tweaks    optional: named changes to how a first version's build works
+//   tweaks    optional: named changes to how a first version's plan or build works
 //             (TWEAKS), each one benched as a configuration of its own before
 //             it is anyone's default. Left out, or empty, is the build as
 //             every first version has it, and a recipe without tweaks is
@@ -117,7 +117,13 @@ const MAX_LABEL_CHARS = 80;
 //                   (as starter_inline), before anything is booted; the agent
 //                   loop after it only fixes. The agent-loop form of the
 //                   plan's L3, the biggest saving and the biggest risk.
-const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go']);
+//   lean_plan       the plan (the spec) asks for a focused first version:
+//                   the request done well, the platform's own minimums and
+//                   nothing else, in about a third of the length, one drawn
+//                   screen, and "Not in this version" in place of the
+//                   nice-to-haves, which the build then leaves out. Run 189's
+//                   builds built 23 of their plans' 26 nice-to-haves.
+const TWEAKS = Object.freeze(['one_look', 'starter_inline', 'lean_turns', 'one_go', 'lean_plan']);
 const MAX_NOTES_CHARS = 1000;
 // The side builds' own weekly spend, real dollars on the App bench lane's
 // key, in cents: a platform setting, $25 unless an admin sets another.
