@@ -308,6 +308,96 @@ test('the plan at Make it: a good GLM answer, or one in a shape the parse forgiv
   }
 });
 
+// The 13 Oct replay of the plan at Make it (30 calls, production's prompt,
+// schema and settings): usable answers took 268 to 705 output tokens; one
+// ran away to the 3,500 ceiling and failed after 19 s; one wrote 1,533
+// characters of its answer as text beside its tool call.
+const glmReply = (over) => () => ({
+  servedModel: 'z-ai/glm-5.3-flash',
+  provider: 'Together',
+  finishReason: 'tool_calls',
+  content: '',
+  toolCalls: [],
+  usage: { inputTokens: 900, outputTokens: 320, reasoningTokens: 40, costUsd: 0.0002 },
+  ...over,
+});
+const toolCall = (args) => [{ type: 'function', function: { name: 'answer', arguments: args } }];
+
+test('the plan at Make it: GLM may write about 1,000 tokens, so a runaway fails in seconds; other helpers keep theirs', async () => {
+  assert.equal(llm.HELPER_OUTPUT_LIMIT.first_version_plan, 1200);
+  await withHelpers({ reply: PLAN }, async ({ openrouter, client }) => {
+    await askPlan();
+    assert.equal(openrouter.calls[0].maxOutputTokens, 1200, 'was 2,000 + 1,500 = 3,500');
+    assert.equal(client.calls.length, 0);
+  });
+  await withHelpers({ reply: Object.assign(new Error('cut off'), { code: 'output_limit' }), haikuText: JSON.stringify(PLAN) }, async ({ client }) => {
+    const out = await askPlan();
+    assert.equal(out.model, 'claude-haiku-5-5', 'a runaway still goes to Haiku');
+    assert.equal(client.calls[0].max_tokens, 2000, 'Haiku keeps the plan\'s own ceiling');
+  });
+  await withHelpers({ reply: { title: 'x' } }, async ({ openrouter }) => {
+    await llm.generateSessionTitle({ requests: ['x'] });
+    assert.equal(openrouter.calls[0].maxOutputTokens, 64 + 1500, 'a helper with no limit of its own is as it was');
+  });
+});
+
+test('the plan at Make it: a near-empty tool call gives way to the plan written in the text', async () => {
+  const log = require('../src/services/logger');
+  const shapes = {
+    'an empty tool call': { toolCalls: toolCall('{}') },
+    'no tool call at all': { toolCalls: [] },
+    'a tool call that is not JSON': { toolCalls: toolCall('{"plan": [') },
+  };
+  for (const [shape, over] of Object.entries(shapes)) {
+    const reply = glmReply({ ...over, content: `Here is the plan.\n\`\`\`json\n${JSON.stringify(PLAN)}\n\`\`\`` });
+    await withHelpers({ reply }, async ({ client, events }) => {
+      const out = await askPlan();
+      assert.equal(client.calls.length, 0, `${shape}: no second call`);
+      assert.equal(out.model, 'z-ai/glm-5.3-flash', shape);
+      assert.deepEqual(JSON.parse(out.text), PLAN, shape);
+      assert.equal(events[0].outcome, 'success', shape);
+    });
+  }
+  const line = log.tail(20).find((e) => e.message === 'Helper model answered in its text, not its tool call');
+  assert.deepEqual(line.data, { helper: 'first_version_plan', toolShape: null }, 'the last case had no tool answer');
+  // The text is no better: Haiku, and the shape of what GLM did send.
+  const bad = glmReply({ toolCalls: toolCall('{}'), content: JSON.stringify({ ...PLAN, plan: [] }) });
+  await withHelpers({ reply: bad, haikuText: JSON.stringify(PLAN) }, async ({ client }) => {
+    const out = await askPlan();
+    assert.equal(client.calls.length, 1);
+    assert.equal(out.model, 'claude-haiku-5-5');
+  });
+  const refused = log.tail(20).find((e) => e.message === 'Helper model\'s answer was unusable; asking Haiku');
+  assert.deepEqual(refused.data, { helper: 'first_version_plan', shape: {} });
+});
+
+test('a helper with no validate never takes JSON from the text: nothing would check it', async () => {
+  const reply = glmReply({ toolCalls: [], content: '{"title":"From the text"}' });
+  await withHelpers({ reply, haikuText: '{"title":"From Haiku"}' }, async ({ client }) => {
+    const out = await llm.generateSessionTitle({ requests: ['x'] });
+    assert.equal(out.title, 'From Haiku');
+    assert.equal(client.calls.length, 1);
+  });
+  assert.deepEqual(llm.helperTextAnswer('no json'), null);
+  assert.deepEqual(llm.helperTextAnswer('a [1, 2] list'), null);
+  assert.deepEqual(llm.helperTextAnswer('so: {"a": 1} done'), { a: 1 });
+  assert.equal(llm.helperTextAnswer(null), null);
+});
+
+test('the routed host is recorded on each GLM attempt, answered or failed (run five\'s was unknown)', async () => {
+  await withHelpers({ reply: glmReply({ toolCalls: toolCall(JSON.stringify(PLAN)) }) }, async ({ events }) => {
+    await askPlan();
+    assert.equal(events[0].provider, 'openrouter');
+    assert.equal(events[0].served_provider, 'Together');
+  });
+  const failed = Object.assign(new Error('rate limited'), { code: 'rate_limited', provider: 'Modal' });
+  await withHelpers({ reply: failed, haikuText: JSON.stringify(PLAN) }, async ({ events }) => {
+    await askPlan();
+    assert.equal(events[0].served_provider, 'Modal');
+    assert.equal(Object.hasOwn(events[1], 'served_provider'), false, 'Haiku\'s attempt names no host');
+  });
+});
+
 test('a validate that throws refuses the answer; a helper with no validate takes any object, as before', async () => {
   const params = { max_tokens: 64, messages: [{ role: 'user', content: 'x' }] };
   const defaults = { backend: 'helper', component: 'session_title' };

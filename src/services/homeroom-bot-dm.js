@@ -4692,7 +4692,11 @@ async function firstVersionState(pool, appId, deps = {}) {
       ? await firstLookAtOf(pool, found.row.run_id).catch(() => null)
       : null;
     const phase = !replanning && !ready ? progress.firstVersionPhase({ ...found.state, stage }, found.row, { firstLookAt }) : null;
-    const listed = ready ? {} : steps(phase, {
+    // Run five (13 Oct 2026, fix 7): merged and not live yet, its steps
+    // stay done and Live is under way. With no phase they were drawn from
+    // the start ("Plan written: now") for the half minute until live_at.
+    const goingLive = found.state.stage === 'merging';
+    const listed = ready ? {} : steps(goingLive ? progress.GOING_LIVE : phase, {
       decided: row.answered_at || (phase ? found.row.build_started_at : null),
       firstLook: firstLookAt,
       spec: found.row.spec_at,
@@ -4727,7 +4731,7 @@ async function firstVersionState(pool, appId, deps = {}) {
 }
 
 // N4: the stages from its spec turn on, when a first look may be drawn.
-const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing']);
+const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing', 'merging']);
 
 /** N4: when a first version's run had its first look drawn, or null. */
 async function firstLookAtOf(pool, runId) {
