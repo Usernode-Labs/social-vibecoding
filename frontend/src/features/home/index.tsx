@@ -91,6 +91,7 @@ import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
+import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -253,38 +254,48 @@ export function HomeScreen() {
         */}
         <section id="home-apps-section" className="px-3">
           {/*
-              NO LABEL since #4759: the tiles explain themselves, and the
-              welcome tour names the area. The set is still "My apps"
-              everywhere else (the tile menus' "Add to My apps", the browse
-              screen's badge).
+              The area's label, in the same treatment the two below it use —
+              see ./panels/ui.tsx's SectionHeading for why every area on this
+              screen is now "grey label, then the thing". It was "Your apps",
+              then "Shortcuts" once the UI overhaul gave your communities
+              (every project you are in) the Communities tab, which left this
+              set as what it always was: the apps you keep a tile for. It is
+              "My apps" since #4187, in the sentence case of Recents and
+              Discover. The rest of the product names the set the same way
+              (the tile menus' "Add to My apps", the browse screen's badge),
+              because two names for one collection is worse than either.
           */}
-          {grid.editing ? (
-            /* The screen's one job while the tiles wiggle is arranging them,
-               and "Done" is its primary action. The treatment is BrowseLink's
-               own: 14px semibold in the accent. With the heading gone (#4759)
-               the actions sit alone at the row's right end. "Add apps" rides
-               beside it (#4669): the mode's second entry, opening the same
-               sheet the tile menu's "Add to My apps" opens, so growing the
-               shelf does not cost the trailing tile its place. */
-            <div className="flex items-center justify-end gap-4 px-1 pb-1">
-              <button
-                type="button"
-                className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-                aria-label={t('home:edit.addTile')}
-                onClick={() => { openAddAppsSheet(); }}
-              >
-                <span className="whitespace-nowrap">{t('home:edit.addTile')}</span>
-              </button>
-              <button
-                type="button"
-                className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-                aria-label={t('home:edit.done')}
-                onClick={() => { (window as any).Home?.setEditing?.(false); }}
-              >
-                <span className="whitespace-nowrap">{t('home:edit.done')}</span>
-              </button>
-            </div>
-          ) : null}
+          <SectionHeading
+            action={grid.editing ? (
+              /* The screen's one job while the tiles wiggle is arranging them,
+                 and "Done" is its primary action. The treatment is BrowseLink's
+                 own: 14px semibold in the accent, riding the heading row the way
+                 Discover's link does. "Add apps" rides beside it (#4669): the
+                 mode's second entry, opening the same sheet the tile menu's
+                 "Add to My apps" opens, so growing the shelf does not cost the
+                 trailing tile its place. */
+              <span className="flex items-center gap-4">
+                <button
+                  type="button"
+                  className="home-edit-add shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  aria-label={t('home:edit.addTile')}
+                  onClick={() => { openAddAppsSheet(); }}
+                >
+                  <span className="whitespace-nowrap">{t('home:edit.addTile')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="home-edit-done shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  aria-label={t('home:edit.done')}
+                  onClick={() => { (window as any).Home?.setEditing?.(false); }}
+                >
+                  <span className="whitespace-nowrap">{t('home:edit.done')}</span>
+                </button>
+              </span>
+            ) : null}
+          >
+            {t('home:grid.heading')}
+          </SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
