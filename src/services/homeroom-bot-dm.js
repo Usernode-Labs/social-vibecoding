@@ -3415,6 +3415,120 @@ function mirroredText(content, { question = false } = {}) {
 }
 
 /**
+ * #4974: close the bot's asks on a request that a reply on the request's
+ * discussion has answered — the question still open in the DM, and a
+ * blocked/empty/person note still showing its buttons. Only asks recorded
+ * before the reply (`before`) settle, so news the bot sends after it stays
+ * open. A question reads answered; the others closed, with `answeredOnRequest`
+ * saying where the answer went. Resolves the rows settled (newest first),
+ * each with its message's thread root for the line noteRequestReply writes.
+ * Never throws.
+ */
+async function settleMirroredAsks(pool, { userId, appId, issueNumber, before = null, ws = null }) {
+  const appIdNum = Number(appId);
+  const n = Number(issueNumber);
+  try {
+    if (!userId || !appIdNum || !n) return [];
+    const { rows } = await pool.query(
+      `SELECT d.message_id, d.conversation_id, d.kind, d.question_status, m.thread_root_id
+         FROM homeroom_bot_dm_messages d
+         JOIN conversation_messages m ON m.id = d.message_id AND m.deleted_at IS NULL
+        WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = $3
+          AND d.kind = ANY($4::text[])
+          AND ($5::timestamptz IS NULL OR d.created_at < $5)
+          AND (d.question_status = 'open'
+            OR (d.question_status IS NULL AND m.metadata->'homeroomBot'->>'status' = 'open'))
+        ORDER BY d.message_id DESC`,
+      [userId, appIdNum, n, [...MIRRORED_KINDS], before],
+    );
+    for (const row of rows) {
+      const question = QUESTION_KINDS.has(row.kind);
+      if (question) {
+        await pool.query(
+          `UPDATE homeroom_bot_dm_messages
+              SET question_status = 'answered', answered_at = COALESCE(answered_at, NOW())
+            WHERE message_id = $1 AND question_status IS DISTINCT FROM 'answered'`,
+          [row.message_id],
+        );
+      } else {
+        await pool.query(
+          `UPDATE homeroom_bot_dm_messages
+              SET answered_at = COALESCE(answered_at, NOW())
+            WHERE message_id = $1 AND answered_at IS NULL`,
+          [row.message_id],
+        );
+      }
+      await setQuestionState(pool, row.message_id,
+        question ? { status: 'answered', answeredOnRequest: true } : { status: 'closed', answeredOnRequest: true },
+        { ws, conversationId: row.conversation_id, userId });
+    }
+    return rows;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not settle the asks a request reply answers', { issueNumber: n, err: err.message });
+    return [];
+  }
+}
+
+/**
+ * #4974: a person's reply landed on a request's discussion (ws, once the
+ * message is in): the bot's asks on it stop waiting on the requester, and
+ * their DM's thread for the request says so with one quiet line. Whoever
+ * replied, the requester is whose DM carries the news; the bot's own and
+ * other synthetic posts never get here (ws skips them, and so does this).
+ * The line is written only when an ask was settled, so of two replies before
+ * the bot looks again the first alone says it. Resolves
+ * { settled, line } — the rows settled and the line written — or null when
+ * the request has no requester. Never throws.
+ */
+async function noteRequestReply(pool, { appId, issueNumber, userId, chatMessageId, content, createdAt = null, deps = {} }) {
+  const appIdNum = Number(appId);
+  const n = Number(issueNumber);
+  const authorId = Number(userId);
+  try {
+    if (!appIdNum || !n || !authorId) return null;
+    const { rows: authors } = await pool.query(
+      'SELECT id, username, is_synthetic FROM users WHERE id = $1', [authorId],
+    );
+    // A synthetic account's post is the bot's or the platform's own, never
+    // a person's answer.
+    if (!authors.length || authors[0].is_synthetic) return null;
+    const requester = await requesterOf(pool, appIdNum, n).catch(() => null);
+    if (!requester) return null;
+    const ws = deps.ws || null;
+    const settled = await settleMirroredAsks(pool, {
+      userId: requester.userId, appId: appIdNum, issueNumber: n, before: createdAt, ws,
+    });
+    if (!settled.length) return { settled, line: null };
+    try {
+      require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
+    } catch { /* the tray re-reads on its own */ }
+    // One quiet line, in the request's thread: theirs if they wrote it, else
+    // who did. The thread hangs off the card, else off the ask it settled.
+    const mine = Number(requester.userId) === authorId;
+    const author = mine ? null
+      : (await pool.query('SELECT username FROM users WHERE id = $1', [authorId])).rows[0]?.username || null;
+    const said = clip(content, 140);
+    const card = await cardShown(pool, requester.userId, appIdNum, n).catch(() => null);
+    const line = await stepLine(pool, {
+      bot: await botAccount(pool),
+      userId: requester.userId,
+      app: (await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [appIdNum])).rows[0] || null,
+      issueNumber: n,
+      card: { messageId: card?.messageId || settled[0].thread_root_id || settled[0].message_id },
+      step: 'replied',
+      key: chatMessageId ? `hrbot-replied-${Number(chatMessageId)}` : null,
+      content: mine
+        ? `You replied on the request's discussion: “${said}”`
+        : `@${author || 'someone'} replied on the request's discussion: “${said}”`,
+    });
+    return { settled, line };
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not note a reply on a request', { issueNumber: n, err: err.message });
+    return null;
+  }
+}
+
+/**
  * Post a person's words on a request's discussion, as their own message:
  * an answer to the bot's open question there, or a reply about the request.
  * That is what wakes the bot, and the request goes to the front of its
@@ -3433,7 +3547,7 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
   const content = prepared ? clip(text, 3900) : mirroredText(text, { question });
   const posted = await ws.handleMessage(
     pool,
-    { user, appId: app.id, appSlug: app.slug, postedVia: null },
+    { user, appId: app.id, appSlug: app.slug, postedVia: null, viaBotDm: true },
     { type: 'chat', content, thread: { type: 'issue', ref: Number(target.issue_number) } },
   ).catch((err) => ({ ok: false, code: err.message }));
   if (!posted?.ok) {
@@ -3455,7 +3569,29 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
     await setQuestionState(pool, target.message_id, { status: 'answered', answer: clip(text, 300) }, {
       ws, conversationId: target.conversation_id, userId: user.id,
     });
+  } else if (MIRRORED_KINDS.has(target.kind)) {
+    // #4974: a non-question ask (a stop with its buttons) is answered by the
+    // same DM answer: its buttons go, and the tray stops calling it Needs you.
+    const { rows: open } = await pool.query(
+      `SELECT 1 FROM conversation_messages
+        WHERE id = $1 AND deleted_at IS NULL AND metadata->'homeroomBot'->>'status' = 'open'`,
+      [target.message_id],
+    );
+    if (open.length) {
+      await pool.query(
+        `UPDATE homeroom_bot_dm_messages
+            SET answered_at = COALESCE(answered_at, NOW())
+          WHERE message_id = $1 AND answered_at IS NULL`,
+        [target.message_id],
+      );
+      await setQuestionState(pool, target.message_id, { status: 'closed', answeredOnRequest: true }, {
+        ws, conversationId: target.conversation_id, userId: user.id,
+      });
+    }
   }
+  try {
+    require('./homeroom-bot-tray').noteWorkChanged(user.id, deps);
+  } catch { /* the tray re-reads on its own */ }
   try {
     await settingsModule().enqueueFront(pool, {
       appId: app.id, issueNumber: Number(target.issue_number), userId: user.id, reason,
@@ -4935,6 +5071,8 @@ module.exports = {
   newestOpenQuestion,
   postOnRequest,
   postOnProposal,
+  settleMirroredAsks,
+  noteRequestReply,
   voteLineFor,
   voteLineTarget,
   handVoteLine,
