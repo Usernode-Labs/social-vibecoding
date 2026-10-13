@@ -2345,6 +2345,24 @@ const BATCH_STEPS_LINES = Object.freeze([
   'need at once, and make the edits a plan point needs together.',
 ]);
 
+// App bench run 190 (13 Oct 2026): a build's final message came nine and a
+// half minutes before its turn ended, because the server it had started as
+// a background task held the turn open until it timed out; five of six
+// builds wrote loops to kill a launch still holding the port; a review's fix
+// turn left its server on the checks' own port; and builds spent minutes
+// reading the platform's tools rather than the app. usernode-run-inloop now
+// replaces its earlier launch on the same port and stops it with --stop, and
+// the stop hook stops what is left (worker/build-stop-hook.js); these lines
+// say how to use them. Every bot build and review fix has them.
+const APP_SERVER_LINES = Object.freeze([
+  '',
+  'THE APP YOU BOOT: start it with `usernode-run-inloop node server.js &` (or the entry dapp.json declares), never with your',
+  'shell tool\'s run_in_background. Launching it again stops the launch before it on the same port, so there is never a',
+  'process to find and kill by hand. Before your final message, run `usernode-run-inloop --stop`: a server left running can',
+  'hold the turn open long after you finish. The platform\'s own commands (`usernode-run-inloop`, `usernode-run-checks`, the checks',
+  'command it names, the stop hook) are tools to run, not code to read: run them and act on what they print.',
+]);
+
 // A first version's build follows its spec's "Build order"
 // (FIRST_VERSION_SIZE_LINES): the must-haves first, the rest with time left.
 const FIRST_VERSION_ORDER_LINES = Object.freeze([
@@ -2668,6 +2686,7 @@ function buildPrompt({
     ...(firstVersion ? (on('lean_plan') ? LEAN_PLAN_ORDER_LINES : FIRST_VERSION_ORDER_LINES) : []),
     ...(on('one_go') ? ONE_GO_LINES : []),
     ...BATCH_STEPS_LINES,
+    ...APP_SERVER_LINES,
     ...stageGuidanceLines('build', { firstVersion, guidance, reviewed }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
@@ -4431,6 +4450,7 @@ module.exports = {
   firstVersionDesignLines,
   FIRST_VERSION_SIZE_LINES,
   FIRST_VERSION_ORDER_LINES,
+  APP_SERVER_LINES,
   LEAN_PLAN_SCOPE_LINES,
   LEAN_PLAN_ORDER_LINES,
   LEAN_PLAN_DESIGN_LINE,
