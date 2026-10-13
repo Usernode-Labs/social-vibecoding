@@ -440,7 +440,7 @@ test('every row wears a badge: amber with what to do, blue when ready, grey and 
   const source = read(STRIP);
   assert.match(source, /question: \{ icon: ChatIcon, stroke: '2' \}/);
   assert.match(source, /blocked: \{ icon: PencilSquareIcon, stroke: '2' \}, empty: \{ icon: PencilSquareIcon, stroke: '2' \}/);
-  assert.match(source, /person: \{ icon: HandRaisedIcon, stroke: '1\.75' \}/);
+  assert.match(source, /person: \{ icon: UserIcon, stroke: '1\.75' \}/);
   assert.match(source, /build_failed: \{ icon: ArrowPathIcon, stroke: '2' \}/);
   // The same badge leads a drawer row and a chat row.
   assert.match(source, /<span className="flex min-w-0 items-center gap-1\.5">\s*<OpenState row=\{row\} \/>/);
@@ -462,7 +462,7 @@ test('a finished request says how it ended: a grey square, its glyph in colour, 
     assert.match(html, new RegExp(`<span class="sr-only">${words}</span>`), outcome);
   }
   assert.match(ended(null), /title="Asked you a question"/, 'no record of how it ended: the words it last said');
-  assert.match(read(STRIP), /person: \{ key: 'messages:bot\.final\.person', tone: 'ended', icon: HandRaisedIcon, stroke: '1\.75' \}/, 'the bot stepped back: a raised hand');
+  assert.match(read(STRIP), /person: \{ key: 'messages:bot\.final\.person', tone: 'ended', icon: UserIcon, stroke: '1\.75' \}/, 'the bot stepped back: a person');
 });
 
 test('a finished request is ONE line: the project\'s small tile, how it ended, its number and title', () => {
