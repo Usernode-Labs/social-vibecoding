@@ -5556,22 +5556,17 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     inset: 0.5rem 0.75rem 0.75rem;
     gap: 0.5rem;      /* sm:gap-2 */
   }
-  /* THE MY APPS BLOCK'S WIDTH (#4738): four columns across a 1024px
-     .home-column put a 56px icon in a ~250px cell, so a few apps read as a
-     sparse scatter. Softened in review of the first cut (evan found 36rem
-     too tight and left-hugging): the whole area — heading, grid and Show
-     all — is capped at 48rem, a quarter off the column, and centred, so a
-     few apps group a little closer without hugging one edge. The tiles'
-     own padding and gaps are untouched, so the overlay's inset below still
-     mirrors them. The cap is on the AREA box, so the absolutely positioned
-     drag overlay (inside #app-list) and Home's cell measurements still
-     line up with zero arithmetic. A search hands the column back: while
-     data-view="search" the area keeps the full width the results list
-     always had. */
-  #home-apps-section:not(:has(#app-list[data-view="search"])) {
-    max-width: 48rem;
-    margin-inline: auto;
-  }
+  /* THE MY APPS BLOCK'S WIDTH (#4861): the area spans the full column
+     again. #4738 had capped it at 48rem and centred it, so a few apps
+     grouped closer — but on review of that softening the narrower block
+     read as odder than wide spacing: the grid sat inside a box narrower
+     than the search bar above it and the sections below (evan, on #4861),
+     so the cap is gone and everything on Home lines up at the same edges
+     again. Tile padding and gaps are untouched, so the overlay's inset
+     below still mirrors #app-list, and the cap being on no box at all means
+     the absolutely positioned drag overlay (inside #app-list) and Home's
+     cell measurements still line up with zero arithmetic. Search keeps the
+     full width it always had. */
 }
 
 /* App tiles sit at the TOP of their row rather than stretching to fill it.
