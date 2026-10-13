@@ -136,11 +136,12 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /phone && draft\.active == null \?/);
   assert.match(src, /nextPinRow\n          \) : \(/);
   // The close-up at the top of the sheet draws the pin's area of the picture
-  // the pin is on: the comment's own once drawn, the view picture while it
+  // the pin is on: the comment's own once drawn — which is the cropped
+  // picture (#4977) when the screenshot was cut — the view picture while it
   // still shows the same view, and nothing (never a stretched thumbnail)
   // otherwise.
   assert.match(src, /<CloseUp\s+view=\{closeUpSrc\}/);
-  assert.match(src, /const closeUpSrc = activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
+  assert.match(src, /const closeUpSrc = activePicture\?\.cut\?\.url \|\| activePicture\?\.url \|\| \(viewDiffers \? '' : viewShot\?\.url \|\| ''\);/);
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
   assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
@@ -369,7 +370,9 @@ test('"Screenshot" leads the bar above the picture, never over the picture (#477
   const bar = src.slice(src.indexOf('role="toolbar"'));
   const label = bar.indexOf("{t('devchat:commentPin.view.chip')}");
   assert.ok(label > 0, 'the word renders inside the toolbar');
-  assert.ok(label < bar.indexOf('{confirm ? ('), 'it leads the bar, before either of its states');
+  // It leads every state of the bar — the crop frame's (#4977) first, then
+  // the question, then the usual one.
+  assert.ok(label < bar.indexOf('{cropping && cropView ? ('), 'it leads the bar, before each of its states');
   assert.equal(src.split("t('devchat:commentPin.view.chip')").length - 1, 1, 'rendered once, in the bar');
   assert.match(bar, /\{shotLabel \? \(\s*<>\s*\{\/\*[\s\S]*?\*\/\}\s*<span\s+aria-hidden="true"\s+className=\{`comment-shot-label-in min-w-0 truncate pl-1\.5 text-\[13px\] font-semibold text-zinc-500 dark:text-zinc-400\$\{confirm \? ' hidden sm:inline' : ''\}`\}/,
     'a muted label that truncates first, and stays while the bar asks its question on a computer: the picture is still there');
@@ -490,10 +493,131 @@ test('a preview crop slides to the pins and puts them where the crop drew them',
   assert.equal(wide.height, 42);
   assert.ok(Math.abs(wide.x - (64 - wide.width)) < 1e-9);
   // The chip draws the crop and its pins with it, never as fractions of the box.
+  // A cropped picture is shown at its own size, and only its pins that stay
+  // inside the crop are drawn (#4977).
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, pic\.size \|\| size, focus\);/);
-  assert.match(src, /style=\{\{ left: crop\.x \+ c\.pin\.x \* crop\.width, top: crop\.y \+ c\.pin\.y \* crop\.height \}\}/);
+  assert.match(src, /const shown = pic\.cut\?\.size \|\| pic\.size \|\| size;/);
+  assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, shown, focus\);/);
+  assert.match(src, /style=\{\{ left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\}/);
   assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
+});
+
+// ── 1d. Cropping a screenshot by dragging its corners and edges (#4977) ─
+
+test('dragCrop moves only the sides the handle names, inward only, and never below the minimum', () => {
+  // Fractions of a picture add up to noise past the twelfth decimal; the
+  // frame's geometry is what is pinned, not the last bits of the sum.
+  const rounded = (r) => ({ x: +r.x.toFixed(10), y: +r.y.toFixed(10), width: +r.width.toFixed(10), height: +r.height.toFixed(10) });
+  const is = (actual, expected, note) => assert.deepEqual(rounded(actual), expected, note);
+  const full = { x: 0, y: 0, width: 1, height: 1 };
+  // A corner moves exactly its two sides; the opposite ones stay put.
+  is(picture.dragCrop(full, 'nw', { x: 0.25, y: 0.1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.25, y: 0.1, width: 0.75, height: 0.9 });
+  is(picture.dragCrop(full, 'se', { x: -0.2, y: -0.3 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0, width: 0.8, height: 0.7 });
+  is(picture.dragCrop(full, 'ne', { x: -0.1, y: 0.2 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.9, height: 0.8 });
+  is(picture.dragCrop(full, 'sw', { x: 0.15, y: -0.25 }, { width: 0.05, height: 0.05 }),
+    { x: 0.15, y: 0, width: 0.85, height: 0.75 });
+  // An edge moves only its one side.
+  const part = { x: 0.2, y: 0.2, width: 0.5, height: 0.5 };
+  is(picture.dragCrop(part, 'e', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.6, height: 0.5 }, 'east grows to the picture\'s edge, height untouched');
+  is(picture.dragCrop(part, 'w', { x: 0.1, y: 0.4 }, { width: 0.05, height: 0.05 }),
+    { x: 0.3, y: 0.2, width: 0.4, height: 0.5 }, 'west moves the left side only');
+  is(picture.dragCrop(part, 'n', { x: 0.4, y: -0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.05, width: 0.5, height: 0.65 }, 'north moves the top side only');
+  is(picture.dragCrop(part, 's', { x: 0.4, y: 0.15 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.65 }, 'south grows the bottom only');
+  // Inward only: a drag past the picture's edge clamps there.
+  is(picture.dragCrop(part, 'e', { x: 1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.8, height: 0.5 });
+  is(picture.dragCrop(part, 'w', { x: -1, y: 0 }, { width: 0.05, height: 0.05 }),
+    { x: 0, y: 0.2, width: 0.7, height: 0.5 });
+  is(picture.dragCrop(part, 'n', { x: 0, y: -1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0, width: 0.5, height: 0.7 });
+  is(picture.dragCrop(part, 's', { x: 0, y: 1 }, { width: 0.05, height: 0.05 }),
+    { x: 0.2, y: 0.2, width: 0.5, height: 0.8 });
+  // Crossing sides stops at the minimum, never inverting the frame: a west
+  // or north handle dragged far inward stops a minimum short of its
+  // opposite side.
+  const thin = { x: 0.1, y: 0.1, width: 0.3, height: 0.3 };
+  is(picture.dragCrop(thin, 'w', { x: 0.5, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.3, y: 0.1, width: 0.1, height: 0.3 }, 'west stops a minimum short of the right side');
+  is(picture.dragCrop(thin, 'n', { x: 0, y: 0.5 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.3, width: 0.3, height: 0.1 }, 'north stops a minimum short of the bottom');
+  is(picture.dragCrop(thin, 'e', { x: 0.9, y: 0 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.3 }, 'east stops at the picture\'s right edge');
+  is(picture.dragCrop(thin, 'se', { x: 0.9, y: 0.9 }, { width: 0.1, height: 0.1 }),
+    { x: 0.1, y: 0.1, width: 0.9, height: 0.9 }, 'a corner clamps on both sides at once');
+});
+
+test('pinInCrop maps a pin into the crop, and nulls the ones the crop cuts away', () => {
+  // No crop: every pin comes back unchanged.
+  assert.deepEqual(picture.pinInCrop({ x: 0.3, y: 0.7 }, null), { x: 0.3, y: 0.7 });
+  const crop = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
+  assert.deepEqual(picture.pinInCrop({ x: 0.5, y: 0.5 }, crop), { x: 0.5, y: 0.5 }, 'the crop\'s middle stays the middle');
+  assert.deepEqual(picture.pinInCrop({ x: 0.25, y: 0.75 }, crop), { x: 0, y: 1 }, 'the crop\'s corner maps to the frame\'s');
+  assert.equal(picture.pinInCrop({ x: 0.1, y: 0.5 }, crop), null, 'left of the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.9 }, crop), null, 'below the frame is gone');
+  assert.equal(picture.pinInCrop({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5, width: 0, height: 0.5 }), null, 'a flat frame keeps nothing');
+  assert.deepEqual(picture.pinInCrop({ x: 0.8, y: 0.8 }, picture.FULL_CROP), { x: 0.8, y: 0.8 }, 'the full crop keeps everything, unchanged');
+});
+
+test('cropPixels rounds a crop to whole pixels inside the picture, and isFullCrop says when nothing was cut', () => {
+  const size = { width: 1000, height: 500 };
+  assert.deepEqual(picture.cropPixels(size, { x: 0.1, y: 0.2, width: 0.5, height: 0.4 }),
+    { x: 100, y: 100, width: 500, height: 200 });
+  assert.deepEqual(picture.cropPixels(size, picture.FULL_CROP), { x: 0, y: 0, width: 1000, height: 500 });
+  // Rounding never leaves the picture or collapses to nothing.
+  assert.deepEqual(picture.cropPixels(size, { x: 0.9995, y: 0, width: 0.001, height: 1 }),
+    { x: 999, y: 0, width: 1, height: 500 });
+  assert.deepEqual(picture.cropPixels({ width: 10, height: 10 }, { x: 0.95, y: 0.95, width: 0.05, height: 0.05 }),
+    { x: 9, y: 9, width: 1, height: 1 });
+  assert.equal(picture.isFullCrop(picture.FULL_CROP), true);
+  assert.equal(picture.isFullCrop({ x: 0, y: 0, width: 1, height: 1 }), true);
+  assert.equal(picture.isFullCrop(null), true, 'no crop is the whole picture');
+  assert.equal(picture.isFullCrop({ x: 0.0005, y: 0, width: 0.9998, height: 1 }), true, 'a hair off full is still full');
+  assert.equal(picture.isFullCrop({ x: 0.01, y: 0, width: 0.99, height: 1 }), false);
+});
+
+test('a cropped picture posts cropped: the frame is cut off the canvas and its pins remapped', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The posted pins go through pinInCrop, and a pin the crop cuts away does
+  // not post — the part of the picture it was on is gone.
+  assert.match(src, /const pins = live\.map\(\(c, i\) => \(\{ c, i, at: pinInCrop\(c\.pin, pic\.cut\?\.rect \?\? null\) \}\)\)/,
+    'every comment\'s pin maps through pinInCrop');
+  assert.match(src, /\.filter\(\(\{ c, at \}\) => c\.picture === pic\.key && at\)/,
+    'a pin outside the crop does not post');
+  assert.match(src, /const canvas = pic\.cut \? cropCanvas\(base\.canvas, pic\.cut\.rect\) : base\.canvas;/,
+    'the posted picture is the crop cut off the full canvas');
+  assert.match(src, /const blob = await encodeUnder\(canvas\);/,
+    'the cropped canvas is what is encoded');
+  // Applying the crop: comments outside go, with a toast saying how many.
+  assert.match(src, /const dropped = onPic\.filter\(\(c\) => pinInCrop\(c\.pin, crop\.rect\) === null\);/);
+  assert.match(src, /t\('devchat:commentPin\.crop\.removed', \{ count: dropped\.length \}\)/);
+  // Crop opens at the saved rect, or the whole picture when there is none.
+  assert.match(src, /setCropping\(\{ picture: pic\.key, rect: pic\.cut\?\.rect \?\? FULL_CROP \}\)/);
+});
+
+test('the crop frame reads its words from the catalog, and the thumbnail gains a Crop button', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.shot\.cropLabel'\)\}/,
+    'the thumbnail\'s crop button is named for screen readers');
+  assert.match(src, /t\('devchat:commentPin\.crop\.title'\)/, 'the bar names the drag');
+  assert.match(src, /t\('devchat:commentPin\.crop\.keepOne'\)/, 'the bar says why Apply is off');
+  assert.match(src, /t\('devchat:commentPin\.crop\.dropping', \{ count: cropView\.dropped \}\)/,
+    'the bar counts what applying would remove');
+  assert.equal(message('devchat:commentPin.shot.crop'), 'Crop');
+  assert.equal(message('devchat:commentPin.shot.cropLabel'), 'Crop the screenshot');
+  assert.equal(message('devchat:commentPin.crop.title'), 'Drag the corners or edges to crop');
+  assert.equal(message('devchat:commentPin.crop.reset'), 'Reset');
+  assert.equal(message('devchat:commentPin.crop.apply'), 'Apply');
+  assert.equal(message('devchat:commentPin.crop.keepOne'), 'Keep at least one pin inside');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 1 }), '1 comment outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.dropping', { count: 3 }), '3 comments outside will be removed');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 1 }), 'Removed 1 comment outside the crop.');
+  assert.equal(message('devchat:commentPin.crop.removed', { count: 2 }), 'Removed 2 comments outside the crop.');
 });
 
 // ── 1c. The retake when the picture lost what the pin is on (#4773) ────
@@ -998,11 +1122,15 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /id="comment-pin-box"\s+role="dialog"/);
   // Each picture is drawn without the layer: no marker is ever in one.
   assert.match(src, /const promise = takeBase\(\{\s*host,/);
-  // Posted clean, each picture's pins beside it, numbered when there are several.
-  assert.match(src, /\.map\(\(\{ c, i \}\) => \(\{ x: c\.pin\.x, y: c\.pin\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
+  // Posted clean, each picture's pins beside it, numbered when there are
+  // several. A cropped picture's pins map into the crop first (#4977), and a
+  // pin the crop cut away does not post.
+  assert.match(src, /\.map\(\(\{ c, i, at \}\) => \(\{ x: at!\.x, y: at!\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
   assert.match(src, /if \(blob\) shots\.push\(\{ blob, pins \}\);/);
-  // A comment on the same view shares the earlier picture; another view is another picture, while there is room.
-  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\) && pic\.base !== null\);/);
+  // A comment on the same view shares the earlier picture; another view is
+  // another picture, while there is room. A cropped picture is shared only
+  // when the new pin's spot survived the crop (#4977).
+  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\)\s*&& pic\.base !== null && \(!pic\.cut \|\| pinInCrop\(pin, pic\.cut\.rect\) !== null\)\);/);
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />\{t\('devchat:commentPin\.kudos\.label'\)\}</);

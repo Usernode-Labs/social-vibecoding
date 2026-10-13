@@ -53,6 +53,17 @@
  * and only for a pin on something with words: a page that really draws flat
  * never loops, and a pin on the running app's frame or on empty background
  * never asks for one.
+ *
+ * ── Crop (#4977) ──────────────────────────────────────────────────────
+ *
+ * A screenshot of the whole screen is often wider than the thing the person
+ * is pointing at, so comment mode can crop one: a frame over the picture
+ * whose corner and edge handles drag in (never out past the original
+ * capture). The crop lives as `Rect` fractions of the full picture, so it
+ * survives a resize and a device-pixel scale change. A comment's pin stays
+ * a fraction of the FULL picture; every reader maps it through `pinInCrop`
+ * into the crop's own fractions, and a pin outside the crop is null — the
+ * comment it belongs to goes with the part that was cut away.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -258,6 +269,93 @@ export function closeUpView(input: {
     zoom,
     pan: { x: offset.x - wanted.x, y: offset.y - wanted.y },
   };
+}
+
+// ── Crop (#4977) ───────────────────────────────────────────────────────
+
+/** A crop frame's handle: two named sides, or one. */
+export type CropHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+/** No crop: the whole picture. */
+export const FULL_CROP: Rect = { x: 0, y: 0, width: 1, height: 1 };
+
+/**
+ * A drag on one handle, as fractions of the picture: only the sides the
+ * handle names move, nothing passes the picture's edges, and a side never
+ * crosses its opposite — the two stop `min` apart, so the frame keeps the
+ * smallest size the caller allows (the pins must stay pointable). Inward
+ * only: the caller never widens the picture, only this could, and it
+ * clamps instead.
+ */
+export function dragCrop(crop: Rect, handle: CropHandle, delta: Point, min: Size): Rect {
+  const c = { ...crop };
+  const minW = Math.max(0, min.width);
+  const minH = Math.max(0, min.height);
+  const east = handle.includes('e');
+  const west = handle.includes('w');
+  const north = handle.includes('n');
+  const south = handle.includes('s');
+  if (east) c.width = clamp(c.width + delta.x, minW, 1 - c.x);
+  if (west) {
+    const right = c.x + c.width;
+    c.x = clamp(c.x + delta.x, 0, right - minW);
+    c.width = right - c.x;
+  }
+  if (south) c.height = clamp(c.height + delta.y, minH, 1 - c.y);
+  if (north) {
+    const bottom = c.y + c.height;
+    c.y = clamp(c.y + delta.y, 0, bottom - minH);
+    c.height = bottom - c.y;
+  }
+  return c;
+}
+
+/**
+ * A pin (a fraction of the full picture) as a fraction of the crop, or null
+ * when it falls outside the part kept. A null crop means no crop: the pin
+ * comes back unchanged.
+ */
+export function pinInCrop(pin: Point, crop: Rect | null): Point | null {
+  if (!crop) return { ...pin };
+  if (!crop.width || !crop.height) return null;
+  const x = (pin.x - crop.x) / crop.width;
+  const y = (pin.y - crop.y) / crop.height;
+  return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+}
+
+/** A crop as pixels on a canvas of `size`, rounded, never smaller than a point. */
+export function cropPixels(size: Size, crop: Rect): Rect {
+  const x = clamp(Math.round(crop.x * size.width), 0, Math.max(0, size.width - 1));
+  const y = clamp(Math.round(crop.y * size.height), 0, Math.max(0, size.height - 1));
+  const width = clamp(Math.round(crop.width * size.width), 1, size.width - x);
+  const height = clamp(Math.round(crop.height * size.height), 1, size.height - y);
+  return { x, y, width, height };
+}
+
+/** Whether a crop keeps the whole picture (the frame was reset or never moved). */
+export function isFullCrop(crop: Rect | null): boolean {
+  if (!crop) return true;
+  const eps = 0.001;
+  return (
+    Math.abs(crop.x) < eps &&
+    Math.abs(crop.y) < eps &&
+    Math.abs(crop.width - 1) < eps &&
+    Math.abs(crop.height - 1) < eps
+  );
+}
+
+/** A new canvas holding just the crop, drawn from the picture's own pixels. */
+export function cropCanvas(canvas: HTMLCanvasElement, crop: Rect): HTMLCanvasElement {
+  const part = cropPixels({ width: canvas.width, height: canvas.height }, crop);
+  const out = document.createElement('canvas');
+  out.width = part.width;
+  out.height = part.height;
+  out.getContext('2d')?.drawImage(
+    canvas,
+    part.x, part.y, part.width, part.height,
+    0, 0, part.width, part.height,
+  );
+  return out;
 }
 
 /**
