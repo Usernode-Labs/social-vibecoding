@@ -885,7 +885,7 @@
   },
   "bot.final.person": {
     "text": "Handed to a person",
-    "description": "How a finished request ended, on its one-line row in the chat with Homeroom bot (a raised hand; read out and shown on hover): the bot stepped back and left it for a person, a decision it should not make or a change it could take no further."
+    "description": "How a finished request ended, on its one-line row in the chat with Homeroom bot (a person icon; read out and shown on hover): the bot stepped back and left it for a person, a decision it should not make or a change it could take no further."
   },
   "bot.final.held": {
     "text": "Held back",

@@ -249,6 +249,14 @@ const EVENT_TYPES = Object.freeze({
   //   bot_build_nudged     a nudge, once it ended; adds { committed }
   BOT_BUILD_NO_CHANGE: 'bot_build_no_change',
   BOT_BUILD_NUDGED: 'bot_build_nudged',
+  // A first version's spec turn, once it ends (homeroom-bot-live.js
+  // draftSpec, newcomer run five): how many screens it saved with
+  // `usernode-screen` while it ran, and how long into the turn the first
+  // one was read, so a weekly query can read how often the first look comes
+  // early and how early. { saved, firstSavedMs (null when none was),
+  // specMs, ok, stopped, model }. A spec that saved none is also logged as
+  // a warning.
+  BOT_SPEC_SCREENS: 'bot_spec_screens',
   // #4449: Live, the new app shown taking shape while its first version is
   // built (services/first-version-live.js). Written to compare build times
   // with and without the watcher, and to see how often Live showed nothing.

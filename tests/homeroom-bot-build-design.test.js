@@ -277,6 +277,8 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   // The record: the starter's "## Design" section, which a starter other
   // than Empty does not have yet.
   assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the typefaces, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
+  // Run five (13 Oct 2026, fix 7): the header's mark is the project's icon, or none.
+  assert.match(flat, /If the app's header shows its own mark, show the project's icon there \(the emoji in `dapp\.json`'s `icon` block\), or leave the mark out: never an empty tile, and never `brand\/icon\.png`, which the app does not serve\./);
   assert.doesNotMatch(flat, /zinc|violet|`Design:` note/, 'nothing left of the old starter\'s palette or note');
   for (const line of live.FIRST_VERSION_DESIGN_LINES) assert.ok(!/—/.test(line), line);
 

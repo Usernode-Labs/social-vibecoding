@@ -149,7 +149,10 @@ Re-theme by changing the token values there, keeping every text pair at
   what failed, what still works, and offers Retry.
 - Seed obviously fake staging demo data so the populated screen can be seen
   ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- A header that shows the app's own mark shows the project's icon there
+  (the emoji in \`dapp.json\`'s \`icon\` block) or no mark at all: never an
+  empty tile, and never \`brand/icon.png\`, which the app does not serve.`;
 
 // The design kit's half of styles/tailwind-input.css, after the three
 // @tailwind lines. Part of the Tailwind build every new app shares (a
