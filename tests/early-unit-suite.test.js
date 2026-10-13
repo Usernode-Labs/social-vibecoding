@@ -157,6 +157,27 @@ test('the checks run takes it over once, hears its progress, and stops it when c
   assert.equal(await taken.promise, null, 'an aborted run settles to no row');
 });
 
+// A release restarts the platform, and shutting down cancels the checks run.
+// The run it took over is in that run's manifest and the next process's
+// harvest reads its Jobs: deleting them threw away #4996's finished red
+// suite and #4973's running one (13 Oct 2026), both then passed without it.
+test('on the way out, a run a checks run took over keeps its Jobs for the harvest; one nobody took does not', async (t) => {
+  const lifecycle = require('../src/services/lifecycle');
+  t.mock.method(lifecycle, 'isShuttingDown', () => true);
+  const { started, deleted, deps } = setup(t);
+  const taken = await early.maybeStart(config, { session, app, commitHash: SHA, pool: poolFor(), deps });
+  const controller = new AbortController();
+  early.adopt(config, 7652, SHA, SHA, { signal: controller.signal });
+  controller.abort(new Error('shutting down'));
+  assert.equal(started[0].signal.aborted, true, 'this process stops watching it');
+  assert.deepEqual(deleted, [], 'its Jobs are left on the cluster');
+  assert.equal(early._runs.size, 0);
+  const lone = await early.maybeStart(config, { session: { ...session, id: 7653 }, app, commitHash: SHA, pool: poolFor({ id: 7653 }), deps });
+  early.cancel(config, 7653, 'shutting down', { commitHash: SHA });
+  assert.deepEqual(deleted, [early.jobName(7653, lone.runId)], 'a run in no manifest has nobody to read it');
+  assert.notEqual(taken.runId, lone.runId);
+});
+
 test('a run taken over resolves to the suite\'s outcome, and leaves its Job for the run to release', async (t) => {
   const { deleted, resolvers, deps } = setup(t);
   await early.maybeStart(config, { session, app, commitHash: SHA, pool: poolFor(), deps });

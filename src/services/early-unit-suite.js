@@ -33,9 +33,12 @@
 //
 // In-process: the build and the checks run that follows it run in the same
 // process. A run in another process, or after a restart, finds nothing here
-// and runs its own suite.
+// and runs its own suite. A run a checks run took over is the exception on
+// the way out: it is in that run's manifest, and the next process's harvest
+// reads its Jobs (services/check-harvest.js), so a shutdown leaves them.
 
 const crypto = require('crypto');
+const lifecycle = require('./lifecycle');
 const log = require('./logger');
 
 const JOB_NAME_PREFIX = 'sv-unit-early';
@@ -56,12 +59,25 @@ function jobName(sessionId, runId) {
 }
 
 // Stop an early run: its Job, its entry. Never throws.
+//
+// Except on the way out (a release restarts the platform): a run a checks
+// run took over is named in that run's manifest (unitRunId), and the next
+// process's harvest reads its Jobs, finished or still running. Deleting
+// them here, as a shutdown cancels the checks run, threw away #4996's
+// finished red suite and #4973's running one on 13 Oct 2026; both runs
+// were harvested without a suite, settled green, merged and turned main red.
 function abandon(config, entry, why) {
   if (!entry || entry.abandoned) return;
   entry.abandoned = true;
   clearTimeout(entry.expiry);
   if (runs.get(entry.sessionId) === entry) runs.delete(entry.sessionId);
   try { entry.controller.abort(new Error(why)); } catch { /* already aborted */ }
+  if (entry.adopted && lifecycle.isShuttingDown()) {
+    log.info('early-unit-suite', 'Left an early unit suite for the next process to read', {
+      sessionId: entry.sessionId, commitHash: entry.commitHash, why,
+    });
+    return;
+  }
   log.info('early-unit-suite', 'Stopped an early unit suite', {
     sessionId: entry.sessionId, commitHash: entry.commitHash, why, adopted: entry.adopted,
   });

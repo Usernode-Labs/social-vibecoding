@@ -354,4 +354,8 @@ test('the harvest joins a run\'s unit shards, and a missing shard is no suite at
   assert.equal(red.exitCode, 1);
   assert.equal(checkHarvest.joinUnitResults([ok('/tmp/tmp.A'), ok('/tmp/tmp.B')], 3), null, 'part of a suite is not the suite');
   assert.equal(checkHarvest.joinUnitResults([ok('/tmp/tmp.A'), { state: 'gone', stdout: '' }], 2).state, 'gone');
+  // A red shard is a red suite: a missing or vanished one cannot make it pass.
+  const redShard = { state: 'failed', stdout: shardOutput('/tmp/tmp.B', { failures: [['x', 'tests/x.test.js']] }), stderr: '', exitCode: 1 };
+  assert.equal(checkHarvest.joinUnitResults([ok('/tmp/tmp.A'), redShard], 3).state, 'failed', 'a shard missing beside a red one');
+  assert.equal(checkHarvest.joinUnitResults([redShard, { state: 'gone', stdout: '' }], 2).state, 'failed', 'a shard gone beside a red one');
 });

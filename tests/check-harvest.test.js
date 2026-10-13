@@ -22,6 +22,7 @@ const visuals = require('../src/services/visuals');
 const kubernetes = require('../src/services/kubernetes');
 const unitSuite = require('../src/services/unit-suite');
 const stagingRecovery = require('../src/services/staging-recovery');
+const appManifest = require('../src/services/app-manifest');
 const ws = require('../src/services/ws');
 
 const config = { captureRuntime: 'kubernetes', kubernetes: { workerNamespace: 'workers', appNamespace: 'apps' } };
@@ -471,6 +472,80 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
   assert.deepEqual(pool.deleted, ['run-1']);
   assert.deepEqual(releasedJobs, [{ sessionId: 42, previewRunId: 'run-1' }], 'an error verdict is settled too');
+});
+
+// 13 Oct 2026: a release deleted #4996's finished red suite and stopped
+// #4973's, their runs were harvested without a unit suite, settled green and
+// merged, and main went red twice. A suite that blocks merges is never
+// passed over: read in full, red in a shard it has, or a fresh run.
+function graduatedUnit(sql) {
+  if (/SELECT check_key FROM app_check_history/.test(sql)) {
+    return { rows: [{ check_key: appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH) }], rowCount: 1 };
+  }
+  return null;
+}
+const capturePassed = { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
+
+test('a blocking unit suite whose Jobs are gone is re-driven, never settled without its row', async (t) => {
+  quietBroadcast(t);
+  const pool = makePool({ orphans: [orphanRow({ manifest: { ...orphanRow().manifest, unitRunId: 'early-1' } })], session: sessionRow(), answer: graduatedUnit });
+  const redrives = [];
+  let settled = false;
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
+    collectCheckJob: async () => capturePassed,
+  });
+  stub(t, visuals, { settleCaptureRun: async () => { settled = true; return { traceStatus: 'passing', result: { state: 'passing' } }; }, scheduleShots: () => {} });
+  stub(t, stagingRecovery, { recheckSessionChecks: async (args) => { redrives.push(args.reason); } });
+  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
+  assert.deepEqual([result.outcome, result.why], ['redriven', 'unit-suite Job not found']);
+  assert.equal(settled, false, 'no verdict without the suite');
+  assert.deepEqual(redrives, ['orphaned-run']);
+});
+
+test('an advisory unit suite whose Jobs are gone settles without its row, as before', async (t) => {
+  quietBroadcast(t);
+  const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
+  let settledWith = null;
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
+    collectCheckJob: async () => capturePassed,
+  });
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; }, scheduleShots: () => {} });
+  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
+  assert.equal(result.outcome, 'settled');
+  assert.equal(settledWith.unitOutcome, null, 'its row would block nothing');
+});
+
+test('a red shard settles the suite red though another shard is gone, and a Job past its deadline is a red row', async (t) => {
+  quietBroadcast(t);
+  const red = 'TAP version 13\nnot ok 1 - the plan\n  ---\n  error: boom\n  ...\n# tests 4\n# pass 3\n# fail 1\n';
+  const cases = [
+    { why: 'a red shard', unitShards: 3,
+      jobs: [{ name: 'sv-unit-early-s42-early-1', state: 'failed' }, { name: 'sv-unit-early-s42-early-1-u2', state: 'running' }],
+      outputs: { 'sv-unit-early-s42-early-1': { state: 'failed', stdout: red, stderr: '', exitCode: 1, timedOut: false },
+        'sv-unit-early-s42-early-1-u2': { state: 'gone', stdout: '', stderr: '', exitCode: null, timedOut: false } } },
+    { why: 'past its deadline', unitShards: 1,
+      jobs: [{ name: 'sv-unit-early-s42-early-1', state: 'running' }],
+      outputs: { 'sv-unit-early-s42-early-1': { state: 'timeout', stdout: `${unitSuite.SETUP_DONE_SENTINEL}\nok 1 - a\n`, stderr: 'DeadlineExceeded', exitCode: null, timedOut: true } } },
+  ];
+  let current = null;
+  let settledWith = null;
+  stub(t, kubernetes, {
+    findCheckJobs: async (_c, { previewRunId }) => (previewRunId === 'early-1'
+      ? { unitSuite: current.jobs[0], unitSuites: current.jobs, unitShards: current.unitShards }
+      : { capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
+    collectCheckJob: async (_c, { name, kind }) => (kind === 'capture' ? capturePassed : current.outputs[name]),
+  });
+  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'failing', result: { state: 'failing' } }; }, scheduleShots: () => {} });
+  for (const c of cases) {
+    current = c;
+    settledWith = null;
+    const pool = makePool({ orphans: [orphanRow({ manifest: { ...orphanRow().manifest, unitRunId: 'early-1' } })], session: sessionRow(), answer: graduatedUnit });
+    const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
+    assert.equal(result.outcome, 'settled', c.why);
+    assert.equal(settledWith.unitOutcome.row.status, 'fail', c.why);
+  }
 });
 
 test('a sweep outside the Kubernetes capture runtime is a no-op', async () => {
