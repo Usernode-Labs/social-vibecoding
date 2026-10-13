@@ -253,7 +253,14 @@ const FIRST_VERSION_STEP_KEYS = Object.freeze(['plan', 'screens', 'build', 'chec
 
 const PHASE_STEP = Object.freeze({
   drawing: 'screens', writing: 'build', building: 'build', built: 'check', checking: 'check', testing: 'test',
+  // Run five (13 Oct 2026, fix 7): merged and not live yet (stage
+  // 'merging'). Never a phase a screen names: only the step list's place,
+  // so every step before Live stays done while it goes live.
+  live: 'live',
 });
+
+/** The step list's place while a first version goes live (firstVersionSteps). */
+const GOING_LIVE = Object.freeze({ key: 'live', since: null });
 
 /**
  * Pure: the App tab's step list for a first version still on its way:
@@ -264,7 +271,8 @@ const PHASE_STEP = Object.freeze({
  * `times` are when things happened: `made` (Make it), `decided` (its plan
  * went ahead), `firstLook`, `spec` (the plan for the build posted),
  * `review` (the review began) and `proposal`. `phase` is firstVersionPhase,
- * null while the plan is not decided yet.
+ * null while the plan is not decided yet, or GOING_LIVE once it merged and
+ * is not live yet: every step before Live done, Live under way.
  */
 function firstVersionSteps(phase, times = {}) {
   const at = phase ? FIRST_VERSION_STEP_KEYS.indexOf(PHASE_STEP[phase.key]) : 0;
@@ -1335,6 +1343,7 @@ module.exports = {
   FIRST_VERSION_STEP_KEYS,
   firstVersionPhase,
   firstVersionSteps,
+  GOING_LIVE,
   SETUP_PARTS,
   BUSY_STAGES,
   IN_FLIGHT_STAGES,
