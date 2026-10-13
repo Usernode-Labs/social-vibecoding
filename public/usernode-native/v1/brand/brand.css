@@ -1,0 +1,66 @@
+/* Homeroom brand: the typefaces and the palette, centrally hosted.
+ *
+ *   <link rel="stylesheet" href="/usernode-native/v1/brand/brand.css">
+ *
+ * Every new app's starter links this (src/services/template.js), so a new
+ * app starts in Homeroom's look: cream ground, black ink, Source Serif 4
+ * headlines and Geist for everything else. An app that chooses another look
+ * just stops using what is defined here; nothing in this file styles an
+ * element by itself, so linking it changes no screen until the app's own
+ * stylesheet names the families or the variables.
+ *
+ * The source of these rules is the brand kit in the platform repository,
+ * .agents/skills/homeroom-brand/ (SKILL.md, DESIGN.md). The fonts and the
+ * logo files beside this stylesheet are copies of its assets/, kept
+ * identical by tests/homeroom-brand-kit.test.js.
+ *
+ * Both typefaces are variable fonts under the SIL Open Font License 1.1:
+ * Geist (Vercel, weights 100 to 900) and Source Serif 4 (Adobe, weights
+ * 200 to 900, Latin). Text outside their character sets falls back to the
+ * system families named in each stack.
+ *
+ * Same rules as the rest of /usernode-native/v1/: never vendor this file,
+ * load it by relative path, and expect additive changes in place.
+ */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('fonts/geist.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('fonts/source-serif-4.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* The palette. Core: cream, yellow, blue, green. Secondary: white, pale
+     yellow, black, grey. Text on cream, yellow, blue and green is black;
+     text on black is cream. Grey is for lines and quiet fills, never for
+     text on a light ground. */
+  --hr-cream: #FFFEEA;
+  --hr-yellow: #FFEE6F;
+  --hr-blue: #3090E1;
+  --hr-green: #A9CF97;
+  --hr-white: #FFFFFF;
+  --hr-pale-yellow: #FCFAB3;
+  --hr-black: #000000;
+  --hr-grey: #B9B9B9;
+
+  /* The type. Headlines: Source Serif 4 at weight 460, tight tracking,
+     short lines. Body, labels and controls: Geist (400, 500 for labels and
+     buttons). */
+  --hr-font-display: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+  --hr-font-body: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --hr-display-weight: 460;
+  --hr-display-tracking: -0.035em;
+  --hr-display-leading: 1.04;
+  --hr-body-tracking: -0.01em;
+  --hr-body-leading: 1.5;
+}

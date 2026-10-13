@@ -807,7 +807,8 @@ test('a first version made from a game starter is specced and built on it; witho
     const lines = live.firstVersionDesignLines(id).join('\n');
     assert.ok(lines.includes(`This repository starts as Homeroom's ${s.title}`), `${id}: the build is told`);
     assert.match(lines, /never by deleting it to start over/);
-    assert.doesNotMatch(lines, /the starter's screen and default colours are placeholder/);
+    assert.doesNotMatch(lines, /The starter's screen is placeholder, but its colours/);
+    assert.match(lines, /The game starter's screens work, but their look is the example game's, not a look to copy\./);
     assert.match(lines, /keeps its look in `public\/scene\.css`/, `${id}: the scene is restyled, not replaced`);
     const spec = live.specPrompt({ seed: 'seed', buildNote: 'plan', firstVersion: true, starter: id });
     assert.ok(spec.includes(scope) && spec.includes(brief));

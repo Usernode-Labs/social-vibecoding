@@ -126,6 +126,11 @@ Use the matching skill whenever its description fits:
   with its supplied tool, and leaves push, PR, and staging to the harness.
 - `react-shell-migration` — convert a legacy-owned shell region to React.
 - `mobile-push-testing` — verify push delivery through a real phone.
+- `homeroom-brand` — Homeroom's brand kit (palette, type, logo, voice,
+  pictures): anything made for Homeroom, and the default look, icon style
+  and featured illustrations new apps start from. Its fonts and logos are
+  served to apps from `public/usernode-native/v1/brand/`; the shell keeps
+  its own palette (below) until it moves onto the brand on purpose.
 
 `CLAUDE.md` imports this file for the always-on repository rules below.
 Claude Code, Codex, and OpenCode load the full workflow bodies only when a task

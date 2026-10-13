@@ -2124,14 +2124,15 @@ function revisionDesignText({ readsImages = false } = {}) {
 const FIRST_VERSION_DESIGN_LINES = Object.freeze([
   '',
   'This is the app\'s FIRST VERSION, so its look is not set yet: the spec\'s "### Design" subsection (or, without a',
-  'spec, the plan) sets it, and the starter\'s screen and default colours are placeholder, not a look to copy. Build',
-  'it with the starter\'s design kit (`styles/tailwind-input.css`): set its colour tokens to this app\'s palette (its',
-  'neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no',
-  'name for), a light and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more.',
+  'spec, the plan) sets it. The starter\'s screen is placeholder, but its colours and typefaces are Homeroom\'s own.',
+  'Build it with the starter\'s design kit (`styles/tailwind-input.css`): keep its colour tokens, the Homeroom look',
+  'every new app starts in, unless the spec chooses another palette, and then set them to it (its neutrals and its',
+  'action colour). Either way add a token for each colour its subject uses that the kit has no name for, a light',
+  'and a dark value each, unless the app keeps one fixed look; every text pair at 4.5:1 or more.',
   'Use only those tokens and the kit\'s components, its loading, empty and error states included: the design',
   'guidance\'s "no new colours" means none beyond them, and every token the spec defines is one of them. Then fill',
-  'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the signature',
-  'element, the type scale, and the one fixed look if the app keeps one. Every later change follows it.',
+  'in the "## Design" section of the app\'s `CLAUDE.md` (add it if it is missing): the palette by name, the typefaces,',
+  'the signature element, the type scale, and the one fixed look if the app keeps one. Every later change follows it.',
   // The first session's card (services/app-sketch.js). Until 5 October 2026
   // it was a mock of the main screen, and this said to build that screen.
   'If the repository has `design/sketch.json`, it is the featured card its creator was shown while the app was made',
@@ -2197,8 +2198,8 @@ function firstVersionDesignLines(starter = null) {
   const s = starterOf(starter);
   if (!s) return FIRST_VERSION_DESIGN_LINES;
   const lines = swapWording(FIRST_VERSION_DESIGN_LINES.join('\n'), [[
-    'the starter\'s screen and default colours are placeholder, not a look to copy.',
-    'the game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
+    'The starter\'s screen is placeholder, but its colours and typefaces are Homeroom\'s own.',
+    'The game starter\'s screens work, but their look is the example game\'s, not a look to copy.',
   ]]).split('\n');
   return [
     '',

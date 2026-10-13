@@ -116,8 +116,13 @@ const DESIGN_CLAUDE_SECTION = `## Design
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
+- **Palette:** Homeroom's, the default: cream page, black text and
+  actions, yellow highlight, blue focus ring; in the dark look a black page,
+  cream text and yellow actions. _(Keep it unless this app's request or its
+  builders choose another look; then name the new accent, any second colour
+  and the neutrals here.)_
+- **Typefaces:** Homeroom's: Source Serif 4 for titles and headings, Geist
+  for the rest. _(Name the app's own here if it chooses them.)_
 - **Signature element:** _(the one thing on screen drawn from this app's
   subject, which no other app would have)_
 - **Type scale:** \`text-title\`, \`text-heading\`, \`text-body\`, \`text-small\`
@@ -164,45 +169,62 @@ const DESIGN_KIT_CSS = `
  * which the theme script in public/index.html sets on <html>, the dark one.
  *
  * Re-theme the app HERE: change the values, keep the names. The defaults
- * (warm greys, one teal accent) are a quiet starting point, not a look.
- * Keep every text pair at 4.5:1 or more in both looks: fg and muted on
- * ground, surface and raised; accent and danger on ground and surface;
- * on-accent on accent; on-danger on danger.
+ * are Homeroom's brand palette (cream, black, yellow and blue; the kit is
+ * .agents/skills/homeroom-brand/ in the platform repository), the look a
+ * new app keeps unless its request or its builders choose another. Keep
+ * every text pair at 4.5:1 or more in both looks: fg and muted on ground,
+ * surface and raised; accent and danger on ground and surface; on-accent on
+ * accent; on-highlight on highlight; on-danger on danger.
  *
  * Adopting the native UI kit later? Point its --un-accent and
  * --un-accent-contrast at the accent and on-accent tokens.
  */
 @layer base {
   :root {
-    --ground: 250 250 249;    /* the page */
-    --surface: 255 255 255;   /* lists, cards, fields */
-    --raised: 245 245 244;    /* hovers, badges */
-    --fg: 28 25 23;           /* text */
-    --muted: 87 83 78;        /* secondary text */
-    --line: 231 229 228;      /* borders, dividers, skeletons */
-    --accent: 15 118 110;     /* the one accent */
-    --on-accent: 255 255 255; /* text on the accent */
+    --ground: 255 254 234;     /* the page: brand cream */
+    --surface: 255 255 255;    /* lists, cards, fields: white */
+    --raised: 252 250 179;     /* hovers, badges: pale yellow */
+    --fg: 0 0 0;               /* text: black */
+    --muted: 92 92 84;         /* secondary text */
+    --line: 185 185 185;       /* borders, dividers, skeletons: grey */
+    --accent: 0 0 0;           /* the one accent: black */
+    --on-accent: 255 254 234;  /* text on the accent: cream */
+    --highlight: 255 238 111;  /* what to notice: yellow */
+    --on-highlight: 0 0 0;     /* text on the highlight */
     --danger: 185 28 28;
     --on-danger: 255 255 255;
-    --focus: 13 148 136;      /* the keyboard focus ring */
+    --focus: 48 144 225;       /* the keyboard focus ring: blue */
   }
   .dark {
-    --ground: 12 10 9;
-    --surface: 28 25 23;
-    --raised: 41 37 36;
-    --fg: 245 245 244;
-    --muted: 168 162 158;
-    --line: 68 64 60;
-    --accent: 45 212 191;
-    --on-accent: 4 47 46;
+    --ground: 0 0 0;
+    --surface: 26 26 23;
+    --raised: 44 44 38;
+    --fg: 255 254 234;
+    --muted: 185 185 185;
+    --line: 70 70 62;
+    --accent: 255 238 111;
+    --on-accent: 0 0 0;
+    --highlight: 255 238 111;
+    --on-highlight: 0 0 0;
     --danger: 248 113 113;
     --on-danger: 69 10 10;
-    --focus: 94 234 212;
+    --focus: 48 144 225;
   }
   /* el.hidden = true hides an element even when a class gives it a display
      (flex, the components below). */
   [hidden]:where(:not([hidden="until-found"])) {
     display: none !important;
+  }
+}
+
+/* The two type sizes people read as headlines are set in the display face
+   (Source Serif 4, tailwind.config.js fontFamily.display); everything else
+   is in the body face, Geist, which preflight puts on <html>. Both come
+   from the platform's brand stylesheet that public/index.html links. */
+@layer utilities {
+  .text-title,
+  .text-heading {
+    font-family: theme('fontFamily.display');
   }
 }
 
@@ -890,16 +912,27 @@ module.exports = {
         line: token('line'), // borders, dividers, skeletons
         accent: token('accent'), // the one accent: the primary action
         'on-accent': token('on-accent'), // text on the accent
+        highlight: token('highlight'), // what to notice: a badge, a marker, a selection
+        'on-highlight': token('on-highlight'), // text on the highlight
         danger: token('danger'),
         'on-danger': token('on-danger'),
         focus: token('focus'), // the keyboard focus ring
       },
-      // The type scale: four sizes, and nothing in between.
+      // Homeroom's two typefaces, served by the platform's brand stylesheet
+      // (/usernode-native/v1/brand/brand.css, linked in public/index.html):
+      // Geist for the body, labels and controls, Source Serif 4 for the
+      // title and heading sizes. Each falls back to a system family.
+      fontFamily: {
+        sans: ['Geist', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        display: ['"Source Serif 4"', 'ui-serif', 'Georgia', 'Times New Roman', 'serif'],
+      },
+      // The type scale: four sizes, and nothing in between. Headlines are
+      // weight 460 with tight tracking, as the brand sets them.
       fontSize: {
-        small: ['0.875rem', { lineHeight: '1.25rem' }],
-        body: ['1rem', { lineHeight: '1.5rem' }],
-        heading: ['1.25rem', { lineHeight: '1.75rem', fontWeight: '600' }],
-        title: ['1.75rem', { lineHeight: '2.25rem', fontWeight: '700' }],
+        small: ['0.875rem', { lineHeight: '1.25rem', letterSpacing: '-0.01em' }],
+        body: ['1rem', { lineHeight: '1.5rem', letterSpacing: '-0.01em' }],
+        heading: ['1.375rem', { lineHeight: '1.75rem', letterSpacing: '-0.02em', fontWeight: '460' }],
+        title: ['2rem', { lineHeight: '2.25rem', letterSpacing: '-0.035em', fontWeight: '460' }],
       },
     },
   },
@@ -1221,7 +1254,12 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${DEV_CONSOLE_FORWARDER}
   <title>${escapeHtml(appName)}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='black'/><circle cx='50' cy='50' r='20' fill='%23FFFEEA'/></svg>">
+  <!-- Homeroom's typefaces and palette (Geist, Source Serif 4), centrally
+       hosted beside the native UI kit and loaded by relative path like the
+       bridge below. tailwind.config.js names the families; drop this link
+       only if the app chooses typefaces of its own. -->
+  <link rel="stylesheet" href="/usernode-native/v1/brand/brand.css">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
        moved to tailwind.config.js in the repo root; npm run build compiles

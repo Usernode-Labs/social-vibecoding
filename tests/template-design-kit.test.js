@@ -50,7 +50,7 @@ const stripComments = (s) => s.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\
 
 // ── 1. Colour tokens ─────────────────────────────────────────────────────
 
-const TOKENS = ['ground', 'surface', 'raised', 'fg', 'muted', 'line', 'accent', 'on-accent', 'danger', 'on-danger', 'focus'];
+const TOKENS = ['ground', 'surface', 'raised', 'fg', 'muted', 'line', 'accent', 'on-accent', 'highlight', 'on-highlight', 'danger', 'on-danger', 'focus'];
 
 /** { light: { name: {r,g,b,a} }, dark: {...} } from the stylesheet's :root and .dark blocks. */
 function tokensOf(css) {
@@ -78,7 +78,7 @@ const PAIRS = [
   ['muted', 'ground', 4.5], ['muted', 'surface', 4.5], ['muted', 'raised', 4.5],
   ['accent', 'ground', 4.5], ['accent', 'surface', 4.5],
   ['danger', 'ground', 4.5], ['danger', 'surface', 4.5],
-  ['on-accent', 'accent', 4.5], ['on-danger', 'danger', 4.5],
+  ['on-accent', 'accent', 4.5], ['on-highlight', 'highlight', 4.5], ['on-danger', 'danger', 4.5],
   ['focus', 'ground', 3], ['focus', 'surface', 3],
 ];
 
@@ -197,10 +197,13 @@ test('the kit compiles: tokens in both looks, components only when used', (t) =>
   require('node:child_process').execFileSync(process.execPath,
     [cli, '-c', 'tailwind.config.js', '-i', 'styles/tailwind-input.css', '-o', 'out.css'], { cwd: dir, stdio: 'ignore' });
   const out = fs.readFileSync(path.join(dir, 'out.css'), 'utf8');
-  assert.match(out, /:root \{\s*--ground: 250 250 249;/);
-  assert.match(out, /\.dark \{\s*--ground: 12 10 9;/);
+  // Homeroom's brand palette is the default (.agents/skills/homeroom-brand).
+  assert.match(out, /:root \{\s*--ground: 255 254 234;/);
+  assert.match(out, /\.dark \{\s*--ground: 0 0 0;/);
   assert.match(out, /\.bg-ground \{\s*--tw-bg-opacity: 1;\s*background-color: rgb\(var\(--ground\) \/ var\(--tw-bg-opacity, 1\)\);/);
-  assert.match(out, /\.text-title \{\s*font-size: 1\.75rem;/);
+  assert.match(out, /\.text-title \{\s*font-size: 2rem;/);
+  // The title is set in the brand's display face.
+  assert.match(out, /\.text-title,\s*\.text-heading \{\s*font-family: "Source Serif 4", ui-serif/);
   // #4047: the starter screen shows the card alone, so the build ships only
   // it; the rest of the kit stays in the input stylesheet (pinned above) and
   // compiles when the real app's screens use those components.
@@ -264,7 +267,9 @@ test('the starter\'s CLAUDE.md has a short "## Design" section the first build f
   const section = claude.slice(start, claude.indexOf('## App-specific conventions'));
   const flat = section.replace(/\s+/g, ' ');
   // The slots.
-  assert.match(flat, /\*\*Palette:\*\* _\(name the accent, any second colour and the neutrals/);
+  assert.match(flat, /\*\*Palette:\*\* Homeroom's, the default: cream page, black text and actions/);
+  assert.match(flat, /_\(Keep it unless this app's request or its builders choose another look; then name the new accent, any second colour and the neutrals here\.\)_/);
+  assert.match(flat, /\*\*Typefaces:\*\* Homeroom's: Source Serif 4 for titles and headings, Geist for the rest\./);
   assert.match(flat, /\*\*Signature element:\*\* _\(/);
   assert.match(flat, /\*\*Type scale:\*\* `text-title`, `text-heading`, `text-body`, `text-small`/);
   assert.match(flat, /\*\*One fixed look:\*\* _\(only for an app drawn as its own scene/);

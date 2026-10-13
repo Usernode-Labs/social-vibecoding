@@ -6,7 +6,7 @@ license: Complete terms in LICENSE.txt
 
 # Frontend Design
 
-_Adapted from Anthropic's `frontend-design` skill (Apache License 2.0, see LICENSE.txt). Changed so that every choice it asks for is made inside this app's design kit: palette as kit tokens, system typefaces, no landing-page hero, motion only in answer to an action, and no one to confirm with._
+_Adapted from Anthropic's `frontend-design` skill (Apache License 2.0, see LICENSE.txt). Changed so that every choice it asks for is made inside this app's design kit: palette as kit tokens, Homeroom's typefaces unless the app chooses system ones, no landing-page hero, motion only in answer to an action, and no one to confirm with._
 
 Approach this as the design lead at a design studio known for giving every client a distinct visual identity that is not mistaken for anyone else's. This client has already rejected proposals that felt cliché or templated, and is paying for a distinctive point of view: make deliberate, opinionated choices about palette, typography, and layout that are specific to this brief, and take aesthetic risk if justified.
 
@@ -15,10 +15,14 @@ Approach this as the design lead at a design studio known for giving every clien
 Every choice below is made with the kit the app already has, so it is the app's own look rather than something bolted on:
 
 - **Palette** lives in `styles/tailwind-input.css` as colour tokens, each an `R G B` triple (no `#`), with one value for the light look (`:root`) and one for the dark look (`.dark`). `tailwind.config.js` names them (`bg-ground`, `bg-surface`, `text-fg`, `text-muted`, `border-line`, `bg-accent` with `text-on-accent`, …). Re-theme by changing the values. A colour the kit has no name for (a second colour, say) is a new token added in both files, with both looks. In markup, use only token classes: never a hex value, a stock palette class such as `bg-blue-500`, or an arbitrary value such as `w-[37px]`.
-- **Type** is the kit's four sizes (`text-title`, `text-heading`, `text-body`, `text-small`). You may change their sizes, weights and line heights in `tailwind.config.js`, never their number. Typefaces are system families only, set once in `tailwind.config.js` (`fontFamily`): for example `ui-serif`, `ui-rounded`, `ui-monospace` or `system-ui`, each with a fallback stack. Download no fonts.
+- **Type** is the kit's four sizes (`text-title`, `text-heading`, `text-body`, `text-small`). You may change their sizes, weights and line heights in `tailwind.config.js`, never their number. Typefaces are set once in `tailwind.config.js` (`fontFamily`): Homeroom's Source Serif 4 and Geist, which the platform serves (`/usernode-native/v1/brand/brand.css`, linked in `public/index.html`), or, when the app chooses its own, system families such as `ui-serif`, `ui-rounded`, `ui-monospace` or `system-ui`, each with a fallback stack. Download no other fonts.
 - **Components** (`btn-primary`, `btn-secondary`, `field`, `list` and `list-row`, `card`, `section-label`, `skeleton`, `state-empty`, `state-error`) are restyled in `styles/tailwind-input.css`, where every use picks the change up, rather than copied and restyled by hand.
 - **Both looks**: every choice is made for the light and the dark look, with every text pair at 4.5:1 or more in each.
 - The result is written down in the `## Design` section of `CLAUDE.md` (palette, signature element, type), which every later change follows.
+
+## Homeroom's look is where the app starts
+
+The kit's defaults are Homeroom's brand: a cream page, black text and actions, a yellow highlight and a blue focus ring (a black page, cream text and yellow actions in the dark look), Source Serif 4 for titles and headings and Geist for everything else. That is the visual direction of every brief here unless the request or the app's builders ask for another look. Keep those tokens and typefaces, and make the app its own inside them: its signature element, the subject's own colours added as tokens, its layout and its details. When the request asks for another look, choose it as the rest of this skill says, and write the change in `## Design`.
 
 ## Ground your designs in the subject matter
 
@@ -32,7 +36,7 @@ This is an app, not a landing page: its first screen is the app at work, with no
 
 Typography carries the personality of the page. You don't need a different typeface for display or headline text and body content: use one family or two, and if two, make them clearly distinct.
 
-Choose your system typefaces deliberately, not the default family you would reach for on any other project, and set the kit's four sizes as a clear type scale following the default guidance of The Elements of Typographic Style with intentional weights, widths, and spacing. When type is used as a headline or visual element, use the type treatment itself as an active part of the design, not a neutral delivery vehicle for the content.
+Keep Homeroom's typefaces unless the app chooses another look; then choose system typefaces deliberately, not the default family you would reach for on any other project, and set the kit's four sizes as a clear type scale following the default guidance of The Elements of Typographic Style with intentional weights, widths, and spacing. When type is used as a headline or visual element, use the type treatment itself as an active part of the design, not a neutral delivery vehicle for the content.
 
 Default to line lengths of less than 80 characters. Serif typefaces can have slightly longer line lengths; give serif body text slightly more line-height than a sans-serif.
 
@@ -56,11 +60,11 @@ For calibration, AI-generated design right now clusters around some traits:
 4. the SaaS-card kit: content chopped into identical rounded cards, one border-radius on everything regardless of hierarchy, the same soft grey shadow (rgba(0,0,0,.1)) under each, and gradient washes as decoration;
 5. template chrome that appears whatever the subject: a tracked-out ALL-CAPS eyebrow label above every heading; meta strings joined with middle dots ('A · B · C'); labels built as 'WORD — fragment' with a spaced em dash; tinted near-black (#0B0B0B, #111) standing in for black; a monospace face for small data labels; a '→' appended to link and button text.
 
-All traits are legitimate for some briefs, but they are defaults rather than choices, and they appear regardless of subject. A trait is a default only when the subject does not call for it. Where the brief pins down a visual direction, follow it exactly — the brief's own words always win, including when it asks for one of these looks. A subject's own vernacular (the colours, materials and forms people already read in its world) pins that axis down too. Where the brief and the subject leave an axis free, don't spend that freedom on one of these defaults. As with a hired human designer, there's often a careful balance between doing what you're good at and taking each project as a chance to experiment and learn.
+Homeroom's own look (a cream page, black ink, Source Serif 4 headlines) resembles the first, but it is not a default you reached for: it is the direction every brief here starts with, as said above. All traits are legitimate for some briefs, but they are defaults rather than choices, and they appear regardless of subject. A trait is a default only when the subject does not call for it. Where the brief pins down a visual direction, follow it exactly — the brief's own words always win, including when it asks for one of these looks. A subject's own vernacular (the colours, materials and forms people already read in its world) pins that axis down too. Where the brief and the subject leave an axis free, don't spend that freedom on one of these defaults. As with a hired human designer, there's often a careful balance between doing what you're good at and taking each project as a chance to experiment and learn.
 
 Work in two passes. First, brainstorm a short design plan based on the client's design brief: create a compact token system with color, type, layout, and principles.
 - Color: the kit's tokens as named colours, as many as the subject needs: the neutrals, one action colour, and any set of colours the subject itself uses, each with its light and dark `R G B` value, and the text pairs checked at 4.5:1.
-- Type: the system typefaces and their roles, and the four sizes.
+- Type: the typefaces and their roles (Homeroom's, unless the app chooses its own), and the four sizes.
 - Layout: a layout concept, using one-sentence prose descriptions and ASCII wireframes to ideate and compare. Include alignment guidance; should the content be left aligned, center aligned, justified?
 - Principles: the high-level guidance for what makes this app unique, including its signature element and the details that carry it.
 

@@ -65,9 +65,28 @@ const LANGUAGE_EDITS = [
   ['states. Consider Chanel\'s advice: before leaving the house, take a look in the mirror and remove one accessory. Human creatives',
     'states. Human creatives'],
 ];
-const LIVE_EDITS = [...COLOUR_EDITS, ...LANGUAGE_EDITS];
-const LIVE_SHA = '8fc6f2b344386dfaf474d3f28a306eb5b69e04e48b6aff645fde849f8f50bdb8';
-const LIVE_PACK_2_SHA = 'cfe11e58b071e25f36374b5075ada6c27ce2ac7170849bf6dfc9092dbd781a76';
+// And six about Homeroom's brand (13 October 2026): the kit's default
+// tokens and typefaces are Homeroom's own look (.agents/skills/homeroom-brand
+// in this repository), the direction every brief starts with unless its
+// request or its builders ask for another, so the skill keeps them and makes
+// the app distinct inside them. Undone first, they give the edits above back.
+const BRAND_EDITS = [
+  ['palette as kit tokens, system typefaces, no landing-page hero',
+    'palette as kit tokens, Homeroom\'s typefaces unless the app chooses system ones, no landing-page hero'],
+  ['Typefaces are system families only, set once in `tailwind.config.js` (`fontFamily`): for example `ui-serif`, `ui-rounded`, `ui-monospace` or `system-ui`, each with a fallback stack. Download no fonts.',
+    'Typefaces are set once in `tailwind.config.js` (`fontFamily`): Homeroom\'s Source Serif 4 and Geist, which the platform serves (`/usernode-native/v1/brand/brand.css`, linked in `public/index.html`), or, when the app chooses its own, system families such as `ui-serif`, `ui-rounded`, `ui-monospace` or `system-ui`, each with a fallback stack. Download no other fonts.'],
+  ['- The result is written down in the `## Design` section of `CLAUDE.md` (palette, signature element, type), which every later change follows.\n',
+    '- The result is written down in the `## Design` section of `CLAUDE.md` (palette, signature element, type), which every later change follows.\n\n## Homeroom\'s look is where the app starts\n\nThe kit\'s defaults are Homeroom\'s brand: a cream page, black text and actions, a yellow highlight and a blue focus ring (a black page, cream text and yellow actions in the dark look), Source Serif 4 for titles and headings and Geist for everything else. That is the visual direction of every brief here unless the request or the app\'s builders ask for another look. Keep those tokens and typefaces, and make the app its own inside them: its signature element, the subject\'s own colours added as tokens, its layout and its details. When the request asks for another look, choose it as the rest of this skill says, and write the change in `## Design`.\n'],
+  ['Choose your system typefaces deliberately, not the default family',
+    'Keep Homeroom\'s typefaces unless the app chooses another look; then choose system typefaces deliberately, not the default family'],
+  ['All traits are legitimate for some briefs, but they are defaults rather than choices,',
+    'Homeroom\'s own look (a cream page, black ink, Source Serif 4 headlines) resembles the first, but it is not a default you reached for: it is the direction every brief here starts with, as said above. All traits are legitimate for some briefs, but they are defaults rather than choices,'],
+  ['- Type: the system typefaces and their roles, and the four sizes.',
+    '- Type: the typefaces and their roles (Homeroom\'s, unless the app chooses its own), and the four sizes.'],
+];
+const LIVE_EDITS = [...BRAND_EDITS, ...COLOUR_EDITS, ...LANGUAGE_EDITS];
+const LIVE_SHA = 'bc2ad6548fadb7d5b514131e6de22a2468e8cf362a7f8ab1b578bdb9a4305c41';
+const LIVE_PACK_2_SHA = '1d9069ff702f4323ff9b692e5265a7b27d4fcf595a1bd5e56b5ed7b02fc711d4';
 
 const { NUDGE, FIRST_VERSION_LOOP, SKILL_PATH } = designSkill;
 const FIRST = { spec: designSkill.stageGuidance('spec', { firstVersion: true }), build: designSkill.stageGuidance('build', { firstVersion: true }) };

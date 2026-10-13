@@ -446,11 +446,11 @@ const FIRST_VERSION_NOTE = [
   'point, such as a game drawn as its own scene, keeps a single look. Say which in `build_note`, list a single look',
   'under `assumptions` when you choose one, and never ask about it.',
   'Sketch a look of its own, too: the starter\'s screen is placeholder, so there is no existing screen for it to look',
-  'like. Say in `build_note` the screen\'s one job and its one primary action, its colours (neutrals, an action colour',
-  'and any set of colours the subject itself uses, each working in both looks; not the starter\'s default palette,',
-  'unless chosen on purpose), ONE signature element drawn from the app\'s subject, something no other app would have,',
-  'and a rough layout. It is a first sketch: the spec that follows settles the look, the layout and the scope, and may',
-  'replace any of it. Never ask about them.',
+  'like. Say in `build_note` the screen\'s one job and its one primary action, its colours (Homeroom\'s own palette',
+  'and typefaces, the starter\'s default, unless the description asks for another look, and any set of colours the',
+  'subject itself uses, each working in both looks), ONE signature element drawn from the app\'s subject, something',
+  'no other app would have, and a rough layout. It is a first sketch: the spec that follows settles the look, the',
+  'layout and the scope, and may replace any of it. Never ask about them.',
   // The first session's card (services/app-sketch.js): when the request
   // quotes it, its creator has seen a summary of the idea, never a screen.
   // Until 5 October 2026 it was a mock of the main screen, and this said to

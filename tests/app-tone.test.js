@@ -402,7 +402,8 @@ test('the scaffold\'s own page colour resolves to the viewer\'s tone, light or d
     return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
   };
   const grounds = [['light', groundIn(':root')], ['dark', groundIn('.dark')]];
-  assert.deepEqual(grounds, [['light', '#fafaf9'], ['dark', '#0c0a09']]);
+  // Homeroom's brand: a cream page, and a black one in the dark look.
+  assert.deepEqual(grounds, [['light', '#fffeea'], ['dark', '#000000']]);
   for (const [theme, ground] of grounds) {
     assert.equal(toneOf(ground), theme, `the scaffold's ${theme} page is a ${theme} page`);
     // End to end through the real store shape and the real publisher.

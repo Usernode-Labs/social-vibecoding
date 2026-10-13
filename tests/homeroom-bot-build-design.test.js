@@ -115,7 +115,7 @@ test('a first version\'s triage sketches a look of its own, which the spec settl
   const other = flat(bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 }));
   assert.match(first, /Sketch a look of its own, too: the starter's screen is placeholder, so there is no existing screen for it to look like\./);
   assert.match(first, /Say in `build_note` the screen's one job and its one primary action/);
-  assert.match(first, /its colours \(neutrals, an action colour and any set of colours the subject itself uses, each working in both looks; not the starter's default palette, unless chosen on purpose\)/);
+  assert.match(first, /its colours \(Homeroom's own palette and typefaces, the starter's default, unless the description asks for another look, and any set of colours the subject itself uses, each working in both looks\)/);
   assert.match(first, /ONE signature element drawn from the app's subject, something no other app would have, and a rough layout\./);
   assert.match(first, /It is a first sketch: the spec that follows settles the look, the layout and the scope, and may replace any of it\. Never ask about them\./);
   assert.ok(first.indexOf('Sketch a look of its own') > first.indexOf('never ask about it.'), 'after the light and dark rule');
@@ -132,8 +132,10 @@ test('a first version\'s spec decides its colours, signature element, layout and
   // A screen for doing has its one primary action; one for reading keeps its actions quiet.
   assert.match(brief, /the main screen's one job, and what a person does most on it: when that is an action \(adding, logging, calculating\), its one primary action; when it is reading, browsing or comparing, say so, keep the actions quiet and give the content the room \(a screen for reading needs no big filled button\);/);
   // (e) Its colours: neutrals, an action colour and the subject's own set.
-  assert.match(brief, /its colours, chosen for this app and each a kit token with a light and a dark value: the neutrals, one action colour for the primary action \(ink is fine when the subject's own colours carry the screen\), and any set of colours the subject itself uses/);
-  assert.match(brief, /which fit the subject rather than being a cliché to avoid \(not the starter's default palette, unless you choose it on purpose and say why\)/);
+  // Homeroom's brand look is the default; another is chosen only on request.
+  assert.match(brief, /its colours, each a kit token with a light and a dark value: the starter's default is Homeroom's own palette and typefaces \(a cream page, black text and actions, a yellow highlight, a blue focus ring, Source Serif 4 headlines and Geist text; in the dark look a black page, cream text and yellow actions\), which this app keeps unless the request or its creator asks for another look, and then the neutrals and one action colour for the primary action chosen for this app \(ink is fine when the subject's own colours carry the screen\); either way, any set of colours the subject itself uses/);
+  assert.match(brief, /which fit the subject rather than being a cliché to avoid;/);
+  assert.doesNotMatch(brief, /not the starter's default palette/);
   assert.match(brief, /a visual language drawn from the app's subject: its signature element \(something a generic app would not have\) and the consistent details that carry the subject through the whole screen, such as a small drawn icon for each kind of thing, the subject's own colours and materials, or a typeface that suits it;/);
   assert.doesNotMatch(brief, /ONE signature element/);
   assert.match(brief, /a sketch of the main screen's layout at phone width, a few plain lines from top to bottom, and how dense it is there/);
@@ -258,7 +260,9 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   const flat = lines.replace(/\s+/g, ' ');
   // #3737 Rec2: the kit every new app's stylesheet carries
   // (tests/template-design-kit.test.js), re-pointed rather than reinvented.
-  assert.match(flat, /Build it with the starter's design kit \(`styles\/tailwind-input\.css`\): set its colour tokens to this app's palette \(its neutrals, its action colour and any set of colours its subject uses, adding a token for a colour the kit has no name for\), a light and a dark value each, unless the app keeps one fixed look; every text pair at 4\.5:1 or more\./);
+  // The kit's default tokens are Homeroom's brand look, which a first
+  // version keeps unless its spec chooses another palette.
+  assert.match(flat, /The starter's screen is placeholder, but its colours and typefaces are Homeroom's own\. Build it with the starter's design kit \(`styles\/tailwind-input\.css`\): keep its colour tokens, the Homeroom look every new app starts in, unless the spec chooses another palette, and then set them to it \(its neutrals and its action colour\)\. Either way add a token for each colour its subject uses that the kit has no name for, a light and a dark value each, unless the app keeps one fixed look; every text pair at 4\.5:1 or more\./);
   assert.match(flat, /Use only those tokens and the kit's components, its loading, empty and error states included/);
   assert.match(flat, /the design guidance's "no new colours" means none beyond them, and every token the spec defines is one of them\./,
     'the colours it defines are the app\'s own palette, not the kind the guidance bans');
@@ -272,7 +276,7 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
   assert.doesNotMatch(flat, BENCH_SUBJECTS);
   // The record: the starter's "## Design" section, which a starter other
   // than Empty does not have yet.
-  assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
+  assert.match(flat, /Then fill in the "## Design" section of the app's `CLAUDE\.md` \(add it if it is missing\): the palette by name, the typefaces, the signature element, the type scale, and the one fixed look if the app keeps one\. Every later change follows it\./);
   assert.doesNotMatch(flat, /zinc|violet|`Design:` note/, 'nothing left of the old starter\'s palette or note');
   for (const line of live.FIRST_VERSION_DESIGN_LINES) assert.ok(!/—/.test(line), line);
 

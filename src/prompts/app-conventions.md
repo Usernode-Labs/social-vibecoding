@@ -1288,11 +1288,15 @@ Rules:
   from its own `dapp.json` (icon, name and colour). The path exists only
   in the shots, not in a preview or in production.
 
-#### Icon style: one set on the home screen
+#### Icon style: Homeroom's set on the home screen
 
 When you give an app an icon, draw it in this style unless the group
-has chosen its own artwork. Every app's tile then reads as part of one
-set instead of a mix of emoji, letters and one-off logos.
+has chosen its own artwork. It is Homeroom's brand (the kit is in the
+platform repository, `.agents/skills/homeroom-brand/`) applied to the
+tile, so every app's icon reads as part of one set with the platform
+instead of a mix of emoji, letters and one-off logos. Icons already drawn
+in the earlier style (a gradient with a white glyph) stay as they are;
+redraw one only when a request asks for it.
 
 - **Where the file goes.** Commit it as `brand/icon.png`, declare
   `{ "icon": { "image": "brand/icon.png" } }`, and add a short
@@ -1303,72 +1307,78 @@ set instead of a mix of emoji, letters and one-off logos.
   icon-only proposal there cannot declare `shots` impact
   `none`.
 - **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
-  tile rounds and crops it), no text or letters. A render in this style
-  is 50–80 KB, well under the 256 KB limit. SVG is not accepted, so
+  tile rounds and crops it), no text or letters. A flat render in this
+  style is a few KB, well under the 256 KB limit. SVG is not accepted, so
   render the template below to PNG (for example
   `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`).
-- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in
-  white, with Lucide's own 2px round strokes on its 24-unit grid,
-  scaled × 12 into the middle 288 px (112 px of margin on each side)
-  over a soft drop shadow. Pick the object the app is about (a chef hat
-  for recipes, a dumbbell for a gym log), not an abstract mark. When
-  Lucide has nothing that fits, draw one on the same grid with the same
-  strokes; never mix in a filled, multicolour or emoji glyph.
-- **Colour.** A diagonal two-stop gradient, top left to bottom right,
-  from this palette, under a faint white highlight at the top left.
-  Choose by what the app is for:
+- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in the
+  tile's ink, with Lucide's own 2px round strokes on its 24-unit grid,
+  scaled × 12 into the middle 288 px (112 px of margin on each side). Pick
+  the object the app is about (a chef hat for recipes, a dumbbell for a
+  gym log), not an abstract mark. When Lucide has nothing that fits, draw
+  one on the same grid with the same strokes; never mix in a filled,
+  multicolour or emoji glyph. Never use the Homeroom mark or wordmark:
+  they are the platform's own, not an app's.
+- **Colour.** One flat colour from Homeroom's palette fills the tile, with
+  no gradient, highlight or shadow, and the glyph in the ink that goes
+  with it. Choose by what the app is for:
 
-  | Hue | From | To | For |
+  | Tile | Fill | Glyph | For |
   |---|---|---|---|
-  | orange | `#FFA552` | `#E05A12` | food, making, building |
-  | amber | `#FBB43C` | `#C9570A` | pets, notes, farming, time |
-  | brown | `#C98C5E` | `#6E3F22` | coffee, crafts |
-  | red | `#FF7163` | `#D1321F` | sport, video, voting, places |
-  | magenta | `#FF6AB8` | `#CF1F74` | social, art, people, personal pages |
-  | violet | `#B574FF` | `#7327DB` | games, quests, rankings |
-  | indigo | `#8577FF` | `#4432D1` | lists, work, markets, security |
-  | blue | `#5B9BFF` | `#1F57E6` | tools, lists, language, weather |
-  | teal | `#34D3C3` | `#0B7D84` | kids, drawing, surveys |
-  | green | `#3DD68A` | `#0E8A4C` | money, growth, luck |
-  | slate | `#6A7B93` | `#27313F` | utilities, tests, diagnostics, spooky |
+  | yellow | `#FFEE6F` | `#000000` | games, play, quests, social, people |
+  | blue | `#3090E1` | `#000000` | tools, lists, work, language, weather |
+  | green | `#A9CF97` | `#000000` | food, money, growth, sport, outdoors |
+  | cream | `#FFFEEA` | `#000000` | notes, reading, writing, personal pages |
+  | pale yellow | `#FCFAB3` | `#000000` | kids, drawing, surveys, time |
+  | black | `#000000` | `#FFFEEA` | utilities, tests, diagnostics, night, spooky |
 
-  A fork keeps its parent's glyph on a different hue, so the two tiles
-  can be told apart.
+  A fork keeps its parent's glyph on a different tile colour, so the two
+  tiles can be told apart.
 - **Keep the emoji** beside the image when the app had one
   (`{ "image": "brand/icon.png", "emoji": "🍳" }`): it is what the tile
   shows if the image ever fails validation.
 
-The template, with the orange pair filled in and one Lucide glyph's
-`<path>`/`<circle>` elements pasted into the inner group:
+The template, with the yellow tile filled in and one Lucide glyph's
+`<path>`/`<circle>` elements pasted into the group:
 
 ```svg
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#FFA552"/><stop offset="1" stop-color="#E05A12"/>
-    </linearGradient>
-    <radialGradient id="gloss" cx="0.25" cy="0.12" r="0.8">
-      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.22"/>
-    </filter>
-  </defs>
-  <rect width="512" height="512" fill="url(#bg)"/>
-  <rect width="512" height="512" fill="url(#gloss)"/>
-  <g filter="url(#shadow)">
-    <g transform="translate(112 112) scale(12)" fill="none" stroke="#fff"
-       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <!-- the glyph's elements, copied from its Lucide SVG -->
-    </g>
+  <rect width="512" height="512" fill="#FFEE6F"/>
+  <g transform="translate(112 112) scale(12)" fill="none" stroke="#000000"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- the glyph's elements, copied from its Lucide SVG -->
   </g>
 </svg>
 ```
 
-Keep the shadow filter on the outer, unscaled group: on the scaled
-group its offset and blur are multiplied by 12 and leave a visible
-box on the tile.
+For the black tile, swap the two colours: `fill="#000000"` on the
+rectangle and `stroke="#FFFEEA"` on the group.
+
+#### Featured illustration: the Discover card
+
+An app's featured illustration is the picture its Discover card shows in
+place of its icon. It is not in `dapp.json`: an app manager uploads it
+from the app's page ("Featured illustration"), and it changes the card
+once the group's vote passes. When you are asked to make one, make it in
+Homeroom's look unless the group has chosen its own art, and hand the file
+to the person to upload, since only an app manager can propose it.
+
+- **Format.** PNG, JPEG or WebP, at most 1 MB, wider than it is tall (the
+  editor frames it on the card). A second version for the dark look is
+  optional.
+- **Style.** Flat shapes in Homeroom's palette (cream `#FFFEEA`, yellow
+  `#FFEE6F`, blue `#3090E1`, green `#A9CF97`, pale yellow `#FCFAB3`,
+  black, grey `#B9B9B9`) with black lines, showing the app's own subject
+  large: the same object as its icon, or the thing people do in it. No
+  text, no logo, no gradients or glow, none of the stock "AI" looks
+  (robots, circuit boards, sparkles), and no invented people or products.
+  Homeroom's own brand photographs are for Homeroom's material, not for an
+  app's card.
+- **Card colour.** Pick the editor's tone that sits with the palette:
+  cream, yellow, blue, sage or gray.
+- **Keep the source.** Commit it beside the icon (`brand/featured.svg`
+  and the rendered file) and mention it in `brand/ICON.md`, so the next
+  person can redraw it.
 
 Per-field rules:
 
@@ -2539,6 +2549,48 @@ above, and every starter template (Empty included) already ships it in its
 - **Existing apps keep what they have.** An app built with one look before
   this rule stays that way until a request asks for light and dark. Do not
   convert it as a drive-by.
+
+### New apps: Homeroom's look, unless the group chooses another
+
+Every new app starts in Homeroom's own look, from the brand kit the
+platform keeps in `.agents/skills/homeroom-brand/`. The starter's design
+kit already carries it, so a first version keeps it by building with the
+kit:
+
+- **Palette.** A cream page (`#FFFEEA`), black text and primary actions,
+  yellow (`#FFEE6F`) for what to notice, a blue (`#3090E1`) focus ring,
+  white surfaces, pale yellow (`#FCFAB3`) hovers and grey (`#B9B9B9`)
+  lines. In the dark look: a black page, cream text and yellow actions.
+  In the starter these are the colour tokens in
+  `styles/tailwind-input.css` (`ground`, `fg`, `accent`, `highlight`,
+  `focus`, …), each with a light and a dark value; the app's markup uses
+  the tokens, never the hex values.
+- **Type.** Source Serif 4 at weight 460 with tight tracking for titles
+  and headings, Geist for body text, labels and controls. Both are served
+  by the platform, beside the native UI kit:
+
+  ```html
+  <link rel="stylesheet" href="/usernode-native/v1/brand/brand.css">
+  ```
+
+  It defines the two typefaces and the palette as `--hr-*` variables and
+  styles nothing by itself; the starter links it and names the families in
+  `tailwind.config.js`. Load it by relative path and never vendor it, and
+  load no font from a third-party host.
+- **Keep it unless asked.** The brand is the app's direction unless its
+  request or its builders choose another look. An app is still its own
+  inside it: its signature element, the colours its subject already has
+  (added as tokens), its layout and its details. When another look is
+  chosen, re-point the tokens and the families, and write the change in
+  the "## Design" section of the app's `CLAUDE.md`.
+- **Homeroom's logo is the platform's.** An app never wears the Homeroom
+  mark or wordmark as its own logo or icon; the platform's frame already
+  shows it. The logo files at `/usernode-native/v1/brand/` are for showing
+  Homeroom itself, such as a "Built on Homeroom" line, unchanged and
+  never recoloured outside the palette.
+- **Existing apps keep what they have.** An app built before this rule
+  keeps its look until a request asks for Homeroom's. Do not convert it as
+  a drive-by.
 
 ## Staying loaded in the background
 
