@@ -150,24 +150,60 @@ interface AppTarget { slug: string; name: string }
 function appTarget(): AppTarget | null {
   const w = window as unknown as {
     App?: { currentApp?: string | null; currentTab?: string };
-    AppView?: { appData?: { repo_url?: string; self_hosted?: boolean; name?: string } | null };
+    AppView?: {
+      appData?: { repo_url?: string; self_hosted?: boolean; name?: string; slug?: string } | null;
+      _stagingPreview?: { sessionId?: number; slug?: string; name?: string; self_hosted?: boolean } | null;
+    };
   };
   const slug = w.App?.currentApp;
   const data = w.AppView?.appData;
+
+  // A change's preview over the app: the request goes to the app the preview
+  // is showing. When that is the app under the tab, the usual repo checks
+  // decide, without the tab check (the preview may be open from a chat or a
+  // message). A different app is filable whatever tab is open; a self-hosted
+  // one never is (there is no repo to file against).
+  if (visibleFrame()?.preview) {
+    const pv = w.AppView?._stagingPreview || null;
+    if (pv?.slug) {
+      const sameApp = !!(data && data.slug === pv.slug);
+      if (sameApp) {
+        if (!slug || !data) return null;
+        if (!/github\.com\/[^/]+\/[^/]+/.test(data.repo_url || '') || data.self_hosted) return null;
+        return { slug, name: data.name || slug };
+      }
+      if (pv.self_hosted) return null;
+      return { slug: pv.slug, name: pv.name || pv.slug };
+    }
+  }
+
   if (!slug || !data) return null;
   if (w.App?.currentTab !== 'app' && w.App?.currentTab !== 'dev') return null;
   if (!/github\.com\/[^/]+\/[^/]+/.test(data.repo_url || '') || data.self_hosted) return null;
   return { slug, name: data.name || slug };
 }
 
-/** The running app's frame, when it is on screen. */
-function visibleAppFrame(): { frame: HTMLIFrameElement; rect: Rect } | null {
-  const frame = document.getElementById('app-iframe') as HTMLIFrameElement | null;
-  if (!frame || !frame.src) return null;
-  const r = frame.getBoundingClientRect();
-  if (r.width < 1 || r.height < 1) return null;
-  if (typeof frame.checkVisibility === 'function' && !frame.checkVisibility()) return null;
-  return { frame, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+/**
+ * The frame comment mode takes its pins over, when it is on screen: the
+ * change preview's frame first (it sits over the app), then the running
+ * app's. `preview` is the previewed change's id, or null in the app frame.
+ */
+function visibleFrame(): { frame: HTMLIFrameElement; rect: Rect; preview: number | null } | null {
+  for (const [id, preview] of [['staging-iframe', AppViewStagingPreviewId()], ['app-iframe', null]] as const) {
+    const frame = document.getElementById(id) as HTMLIFrameElement | null;
+    if (!frame || !frame.src) continue;
+    const r = frame.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    if (typeof frame.checkVisibility === 'function' && !frame.checkVisibility()) continue;
+    return { frame, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, preview };
+  }
+  return null;
+}
+
+/** The change a staging preview is showing (`AppView._stagingPreview`), or null. */
+function AppViewStagingPreviewId(): number | null {
+  const pv = (window as unknown as { AppView?: { _stagingPreview?: { sessionId?: unknown } | null } }).AppView?._stagingPreview;
+  return pv && typeof pv.sessionId === 'number' ? pv.sessionId : null;
 }
 
 /** The page's own element under a point, looking through this layer. */
@@ -292,6 +328,8 @@ interface Comment {
   key: number;
   anchor: Anchor;
   inApp: boolean;
+  /** The change the preview was showing, when the pin went in a preview. */
+  preview: number | null;
   /** The route the page was on, for the where line. */
   screen: string;
   /** The picture its pin is on, when it has one. */
@@ -523,7 +561,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // When the picture cannot be taken, the mode renders as it always did,
   // over the live page, so a comment can always be left.
   const takeViewShot = useCallback(() => {
-    const shown = visibleAppFrame();
+    const shown = visibleFrame();
     const key = ++viewShotKeys.current;
     const at = view.current;
     setViewShot((s) => ({ url: s?.url || '', view: at, state: 'drawing' }));
@@ -633,7 +671,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   /** Start drawing the page with a pin at `p`; the box shows it when it lands. */
   const drawPicture = useCallback((draftKey: number, p: Point, askedFor: number): Picture => {
-    const shown = visibleAppFrame();
+    const shown = visibleFrame();
     const key = ++keys.current;
     const page = sizeRef.current;
     const promise = takeBase({
@@ -696,7 +734,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     }
     const p = clampToViewport(where, size);
     const anchor = anchorAt(p, host);
-    const inApp = inRect(p, visibleAppFrame()?.rect);
+    const shown = visibleFrame();
+    const inApp = inRect(p, shown?.rect);
+    const preview = inApp ? (shown?.preview ?? null) : null;
     const screen = routeOf();
     const pin = { x: p.x / Math.max(1, size.width), y: p.y / Math.max(1, size.height) };
     setConfirm(null);
@@ -708,7 +748,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         // A click elsewhere moves the open comment's pin; its words stay.
         const got = pictureFor(draft, p, current.key);
         const comments = draft.comments.map((c) => (c.key === current.key
-          ? { ...c, anchor, inApp, screen, picture: got.picture, pin } : c));
+          ? { ...c, anchor, inApp, preview, screen, picture: got.picture, pin } : c));
         const pictures = prune(got.pictures, comments).map((pic) => (pic.key === got.picture && pic.askedFor === current.key && pic.key === current.picture
           ? { ...pic, askedFor: null } : pic));
         setDraft({ ...draft, comments, pictures, error: '' });
@@ -721,7 +761,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       setDraft({
         ...draft,
         pictures: got.pictures,
-        comments: [...draft.comments, { key, anchor, inApp, screen, picture: got.picture, pin, text: '' }],
+        comments: [...draft.comments, { key, anchor, inApp, preview, screen, picture: got.picture, pin, text: '' }],
         active: key,
         error: '',
       });
@@ -757,7 +797,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     setDraft({
       ...empty,
       pictures: got.pictures,
-      comments: [{ key, anchor, inApp, screen, picture: got.picture, pin, text: c?.text || '' }],
+      comments: [{ key, anchor, inApp, preview, screen, picture: got.picture, pin, text: c?.text || '' }],
       active: key,
     });
   }, [open, host, draft, carry, pictureFor, inset, viewShot, size]);
@@ -856,7 +896,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       let at: ElementInfo | null;
       if (c.inApp) at = pic && pic.askedFor === c.key ? base?.app?.at ?? null : null;
       else at = c.anchor.el && c.anchor.el.isConnected ? describeElement(c.anchor.el) : null;
-      return { inApp: c.inApp, screen: c.inApp ? (base?.app?.path || '') : c.screen, at };
+      return { inApp: c.inApp, preview: c.inApp ? c.preview : null, screen: c.inApp ? (base?.app?.path || '') : c.screen, at };
     });
     const shots: CommentShot[] = [];
     if (d.keepShot) {
@@ -881,7 +921,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
       bounty: d.kudos && budget.remaining !== 0,
-      where: live.length ? whereLines(spots) : '',
+      where: live.length ? whereLines(spots, app?.slug ?? null) : '',
     };
   }, [app, budget.remaining]);
 
@@ -2010,7 +2050,7 @@ export function prepareCommentView(): void {
       observer.observe(document.body, { subtree: true, childList: true, characterData: true, characterDataOldValue: true });
       document.addEventListener('scroll', onScroll, true);
       window.addEventListener('resize', onResize);
-      const shown = visibleAppFrame();
+      const shown = visibleFrame();
       takeBase({
         host: document.createElement('div'),
         scale: pictureScale(window.devicePixelRatio, size),

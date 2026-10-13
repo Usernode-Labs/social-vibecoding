@@ -150,6 +150,15 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
     'the point under the fingers stays under them as the zoom changes');
 });
 
+test('the pins can land in a change\'s staging preview, not only the running app', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The frame looked up first is the staging preview's: it sits over the app
+  // when both are up, so a pin inside it is a pin in the preview.
+  assert.match(src, /\['staging-iframe'[\s\S]{0,120}'app-iframe'/,
+    'the staging frame is looked up before the app frame');
+  assert.match(src, /_stagingPreview/, 'the previewed change comes from AppView._stagingPreview');
+});
+
 test('on a phone the bar sits under the status bar, where a finger can reach it', () => {
   // iPhone 17 simulator, the Homeroom app, 12 Oct 2026: the bar sat in the
   // status bar's strip, under the clock and the Dynamic Island, and a tap
@@ -578,6 +587,11 @@ test('the request says where the comment was pinned, in words', () => {
   assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' } }),
     'Pinned with C in the app at /lists/42, on div "Buy milk".');
   assert.equal(post.whereLine({ inApp: true, screen: '', at: null }), 'Pinned with C in the app at /.');
+  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: { tag: 'div', id: '', text: 'Buy milk' }, preview: 4223 }, 'milkdrop'),
+    'Pinned with C in the preview of change 4223 at /lists/42, on div "Buy milk". Change: #app/milkdrop/dev/sessions/4223');
+  assert.equal(post.whereLine({ inApp: true, screen: '/lists/42', at: null, preview: 4223 }, null),
+    'Pinned with C in the preview of change 4223 at /lists/42.', 'no slug, no link');
+  assert.equal(post.whereLine({ inApp: false, screen: '#home', at: null, preview: null }), 'Pinned with C on Homeroom at #home.');
   assert.equal(post.descriptionFor('  Make it bigger  ', 'Pinned.'), 'Make it bigger\n\nPinned.');
 });
 
@@ -694,6 +708,19 @@ test('a request of several comments numbers them, and each picture carries its o
     { inApp: false, screen: '#home', at: { tag: 'h1', id: 'hi', text: 'Home' } },
   ]), 'Pinned with C: 1 in the app at /runs, on button "Join"; 2 on Homeroom at #home, on h1 "Home" (#hi).');
   assert.equal(post.whereLines([{ inApp: false, screen: '#x', at: null }]), 'Pinned with C on Homeroom at #x.');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: false, screen: '#home', at: null },
+  ], 'milkdrop'), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home. Change: #app/milkdrop/dev/sessions/4223',
+  'each comment names its place; the change link comes once, at the end');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: false, screen: '#home', at: null },
+  ]), 'Pinned with C: 1 in the preview of change 4223 at /lists; 2 on Homeroom at #home.', 'no slug, no link');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+    { inApp: true, screen: '/lists', at: null, preview: 4223 },
+  ], 'milkdrop'), 'Pinned with C in the preview of change 4223 at /lists: 1 on the page; 2 on the page. Change: #app/milkdrop/dev/sessions/4223');
 
   const shotB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 2])], { type: 'image/png' });
   await post.postComment({

@@ -71,6 +71,7 @@ function keyEvent(init = {}) {
 
 function shellHarness({
   enabled = true, fine = true, signedIn = true, panel = false, dialogs = [], active = body,
+  staging = false,
 } = {}) {
   const listeners = {};
   const timers = [];
@@ -79,13 +80,18 @@ function shellHarness({
     contentWindow: frameWin,
     getBoundingClientRect: () => ({ left: 200, top: 56, width: 800, height: 600 }),
   };
+  const stagingFrameWin = { name: 'staging frame' };
+  const stagingFrame = {
+    contentWindow: stagingFrameWin,
+    getBoundingClientRect: () => ({ left: 40, top: 20, width: 900, height: 700 }),
+  };
   let selection = '';
   let opened = 0;
   const points = [];
   const doc = {
-    activeElement: active === 'frame' ? frame : active,
+    activeElement: active === 'frame' ? frame : active === 'staging' ? stagingFrame : active,
     documentElement: { classList: { contains: (c) => panel && c === 'in-side-panel' } },
-    getElementById: (id) => (id === 'app-iframe' ? frame : null),
+    getElementById: (id) => (id === 'app-iframe' ? frame : id === 'staging-iframe' ? (staging ? stagingFrame : null) : null),
     querySelectorAll: () => dialogs,
   };
   const win = {
@@ -99,7 +105,7 @@ function shellHarness({
     win, doc, storage, open: (p) => { opened += 1; points.push(p); }, signedIn: () => signedIn,
   });
   return {
-    doc, frame, frameWin, storage, points,
+    doc, frame, frameWin, stagingFrame, stagingFrameWin, storage, points,
     select(text) { selection = text; },
     move(x, y) { listeners.pointermove({ clientX: x, clientY: y }); },
     // Press, let any later listener act on the event, then run the task.
@@ -240,6 +246,22 @@ test('the shell takes the bridge\'s C only from its app frame, while that frame 
   assert.equal(shellHarness({ active: 'frame' }).message({ [shortcut.SHORTCUT_MESSAGE_KEY]: 'other' }), 0);
   assert.equal(shellHarness({ active: 'frame' }).message(null), 0);
   assert.equal(shellHarness({ active: 'frame' }).message('suggest'), 0);
+});
+
+test('the shell takes the bridge\'s C from the staging preview\'s frame too, only while it has focus', () => {
+  const msg = { [shortcut.SHORTCUT_MESSAGE_KEY]: 'suggest' };
+  const h = shellHarness({ active: 'staging', staging: true });
+  assert.equal(h.message({ [shortcut.SHORTCUT_MESSAGE_KEY]: 'suggest', x: 100, y: 50 }, h.stagingFrameWin), 1, 'a C in the preview opens the comment');
+  assert.deepEqual(h.points[0], { x: 140, y: 70 }, 'placed by the staging frame\'s rectangle');
+  const afterStaging = h.opened;
+  h.message(msg);
+  assert.equal(h.opened, afterStaging, 'the app frame\'s message while the preview has focus: no');
+  assert.equal(shellHarness({ active: 'frame', staging: true }).message(msg, h.stagingFrameWin), 0, 'the preview\'s message while the app frame has focus: no');
+  assert.equal(shellHarness({ active: body, staging: true }).message(msg, h.stagingFrameWin), 0, 'no focus in the preview: no');
+  assert.equal(shellHarness({ active: 'staging', staging: true, enabled: false }).message(msg, h.stagingFrameWin), 0, 'the switch');
+  assert.equal(shellHarness({ active: 'staging', staging: true, signedIn: false }).message(msg, h.stagingFrameWin), 0, 'signed out');
+  // No staging frame on screen (the harness answers none): its message finds no frame.
+  assert.equal(shellHarness({ active: body }).message(msg, h.stagingFrameWin), 0, 'no staging frame, no open');
 });
 
 test('the bridge forwards an unused C to the shell and never touches the app\'s keys', () => {

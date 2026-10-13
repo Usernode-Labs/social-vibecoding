@@ -27,15 +27,16 @@
  * after the key, so every handler on the page has run by then, wherever and
  * whenever it was registered.
  *
- * ── From inside an app ──────────────────────────────────────────────────
+ * ── From inside an app or a preview ─────────────────────────────────────
  *
  * While a person works in an app, its document has the keyboard and the shell
- * never sees the key. The bridge every app loads watches for the same unused
- * C in there and tells the shell (`__usernode_shortcut`, the
+ * never sees the key. The bridge every app and preview loads watches for the
+ * same unused C in there and tells the shell (`__usernode_shortcut`, the
  * __USERNODE_SHORTCUTS_ block of public/usernode-bridge/v1/bridge.js). The
- * shell takes that message only from the running app's own frame, and only
- * while that frame holds focus: a frame without focus cannot have had a key
- * pressed in it, so a message from one is not a person pressing C.
+ * shell takes that message only from the running app's own frame or the
+ * change preview's frame (`#staging-iframe`), and only while that frame holds
+ * focus: a frame without focus cannot have had a key pressed in it, so a
+ * message from one is not a person pressing C.
  *
  * ── Where the pointer is ────────────────────────────────────────────────
  *
@@ -263,11 +264,19 @@ export function installSuggestShortcut(deps: SuggestShortcutDeps): void {
   win.addEventListener('message', (e: { data?: unknown; source?: unknown }) => {
     const data = (e ? e.data : null) as Record<string, unknown> | null | undefined;
     if (!data || typeof data !== 'object' || data[SHORTCUT_MESSAGE_KEY] !== 'suggest') return;
-    const frame = doc.getElementById('app-iframe') as {
+    // The app's frame and the change preview's frame both carry the bridge.
+    // The message counts only from the one that is on screen, checked
+    // staging first: it sits over the app, so when both are up it is the
+    // one showing.
+    const frames = [
+      doc.getElementById('staging-iframe'),
+      doc.getElementById('app-iframe'),
+    ] as Array<{
       contentWindow?: unknown;
       getBoundingClientRect?: () => { left: number; top: number; width: number; height: number };
-    } | null;
-    if (!frame || !e.source || e.source !== frame.contentWindow) return;
+    } | null>;
+    const frame = frames.find((f) => f && e.source && f.contentWindow === e.source) || null;
+    if (!frame) return;
     if (doc.activeElement !== frame) return;
     if (!ready()) return;
     open(framePoint(frame, finitePoint(data.x, data.y)));
