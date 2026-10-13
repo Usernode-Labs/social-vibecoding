@@ -120,7 +120,8 @@ test('a ready verdict that was never built says where it got to and why; a run s
   assert.deepEqual(out.runs.map((r) => r.readReason), ['changed:github', 'new', 'retry_failed', null, null, null],
     'fixed-shape reasons only');
   assert.deepEqual(out.buildLane, {
-    queued: 2, building: 1, live: { building: 1, waiting: 2 },
+    // No live loop's pass in the payload: the Pod that answered runs none.
+    queued: 2, building: 1, live: { building: 1, waiting: 2, lastPass: null, passRunningSince: null },
     lastPass: { at: '2026-10-09T10:00:00Z', started: 0, inFlight: 2, paused: 'budget', detail: 'weekly limit reached' },
     fault: null,
   });

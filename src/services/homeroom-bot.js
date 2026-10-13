@@ -564,7 +564,11 @@ let refreshAllRequested = false;
 let wakeRequested = false;
 // What the last pass did, for the dashboard: a loop that is on but idle
 // on budget or on a worker fault should say so rather than show nothing.
+// `startedAt` and `ms` say how long it took, and `passStartedAt` is the one
+// running now: the live loop's own, not the shadow build lane's
+// (lastBuildDrain), which run five (13 Oct 2026) first read it as.
 let lastPass = null;
+let passStartedAt = null;
 
 // Failures the platform, not the model, produced: the worker could not be
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
@@ -8934,8 +8938,12 @@ async function goAhead(pool, { runId, answers = [] }) {
   // anywhere else, and the build waited for the leader's next idle pass (up
   // to IDLE_PASS_DELAY_MS; 43 s in run four, 13 Oct 2026). The bus wake
   // reaches the leader, as an issue event's does (noteIssueActivity).
+  // Run five (13 Oct 2026): the wake only queued a pass, and a pass started
+  // builds after its refresh (46 s from Submit to the spec). The build is
+  // started on its own wake now, on the leader, even while a pass runs.
   wake({ appId: Number(went.app_id) });
-  publishWake({ appId: Number(went.app_id) });
+  wakeLiveBuilds();
+  publishWake({ appId: Number(went.app_id), buildRunId: Number(runId) });
   log.info('homeroom-bot', 'Build it: a first version\'s plan goes ahead', {
     appId: Number(went.app_id), issueNumber: Number(went.issue_number), runId, choices: chosen.length,
   });
@@ -9930,8 +9938,13 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
       ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
       : null,
   };
+  // How long it waited its turn since its go-ahead (a ready verdict, or
+  // Build it under a plan): live_build_waiting_at is cleared once the build
+  // links its session, so the time is kept here (run five, 13 Oct 2026).
+  const waitingSince = run.live_build_waiting_at ? new Date(run.live_build_waiting_at).getTime() : NaN;
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
+    waitedMs: Number.isFinite(waitingSince) ? Math.max(0, Date.now() - waitingSince) : null,
   });
   try {
     const acted = await buildLive(args);
@@ -10220,24 +10233,113 @@ function track(pool, slot, entry, work) {
   })();
 }
 
+// ── Live builds, started as soon as they may ────────────────────────────
+//
+// A live build waiting its turn (a ready verdict, or a plan its creator
+// tapped Build it under) used to be started only inside a pass's dispatch,
+// after the pass's refresh, and every REFRESH_INTERVAL_MS that refresh is
+// the full sweep of every app. A wake cannot cut into a running pass, so
+// run five's Submit (13 Oct 2026) waited 46 s for its spec to begin. Now a
+// pass starts them first, before its refresh and sweeps, and Build it's
+// wake (goAhead, onBusMessage) starts them on the leader at once, even
+// while a pass runs. One dispatch at a time in this process
+// (liveDispatchRunning): a call that finds one running asks it to look
+// again rather than reading the same waiting rows beside it, so a run is
+// never started twice from the two paths; across processes only the leader
+// runs the loop, as before.
+
+// Whether a dispatch is under way in this process (set before its first
+// await), whether another call asked it to look again, and a promise that
+// settles when it ends, for those calls to wait on.
+let liveDispatchRunning = false;
+let liveDispatchAgain = false;
+let liveDispatchDone = Promise.resolve();
+// The dispatch Build it's wake started, for a test to wait on.
+let liveKick = null;
+// Test seams for the wake's dispatch: the pool and deps it uses.
+let liveKickSeams = {};
+
 /**
- * Fill the free slots, live first. Returns the promises of the work it
- * started (each resolves to its outcome). `seen` keeps one drain from
- * starting the same row twice.
+ * Start the live builds waiting their turn that have a slot, and return
+ * the promises of the work started. Guarded like drainBuilds: a call that
+ * finds a dispatch under way asks it to look again, waits for it (so what
+ * it started is in its slots before the caller counts them), and returns
+ * []. Never throws.
  */
-async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
-  if (refusingNew() || settings.mode === 'off') return [];
-  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+async function dispatchLiveBuilds(pool, config, { settings = null, bot = null, deps = {}, seen = new Set(), now = null } = {}) {
+  if (liveDispatchRunning) {
+    liveDispatchAgain = true;
+    await liveDispatchDone;
+    return [];
+  }
+  liveDispatchRunning = true;
+  let done;
+  liveDispatchDone = new Promise((resolve) => { done = resolve; });
+  const started = [];
+  try {
+    let given = settings;
+    do {
+      liveDispatchAgain = false;
+      if (refusingNew()) break;
+      const at = now ?? (deps.now ? deps.now() : Date.now());
+      // eslint-disable-next-line no-await-in-loop
+      const s = given || await readSettings(pool);
+      given = null;
+      if (s.mode === 'off' || faultBackoff(at) || budgetPausedUntil > Date.now()) break;
+      // A build reads GitHub: held, as a pass is, while its hourly budget
+      // is nearly used up (runOnce checks this before its own call).
+      if (githubBudget.backgroundHold({ now: at })) break;
+      // eslint-disable-next-line no-await-in-loop
+      const b = bot || await ensureBotUser(pool, config);
+      // eslint-disable-next-line no-await-in-loop
+      started.push(...await startLiveBuilds(pool, config, { settings: s, bot: b, deps, seen }));
+    } while (liveDispatchAgain);
+  } catch (err) {
+    log.error('homeroom-bot', 'Live build dispatch failed', { err: err.message });
+  } finally {
+    // In the same turn as the last look-again check: a call that arrives
+    // after it starts a dispatch of its own.
+    liveDispatchAgain = false;
+    liveDispatchRunning = false;
+    done();
+  }
+  return started;
+}
+
+/**
+ * Build it was tapped (goAhead here, or its bus message from another Pod):
+ * where the loop runs, start the build now rather than at the next pass.
+ * Returns whether a dispatch was started. Never throws.
+ */
+function wakeLiveBuilds() {
+  const running = timer !== null || passInFlight;
+  if (stopped || !running || !loopConfig) return false;
+  const config = loopConfig;
+  let pool;
+  try {
+    pool = liveKickSeams.pool || require('../db/pool').getPool(config);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not start a live build on its wake', { err: err.message });
+    return false;
+  }
+  liveKick = dispatchLiveBuilds(pool, config, { deps: liveKickSeams.deps || {} })
+    .then((started) => {
+      if (started.length) log.info('homeroom-bot', 'Live builds started on Build it\'s wake', { started: started.length });
+      return started;
+    });
+  return true;
+}
+
+/** One dispatch of live builds; dispatchLiveBuilds holds the guard. */
+async function startLiveBuilds(pool, config, { settings, bot, deps = {}, seen }) {
   const started = [];
   // A staging copy never acts (live.liveScope), so there every app is the
   // background lane's.
   const scope = live.liveScope(settings);
   const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
   const perPerson = settings.perPerson || DEFAULTS.perPerson;
-
-  // Live builds waiting their turn first: they are further along than
-  // anything still to be read. Up to BUILDS_PER_PROJECT per project, each in
-  // a slot of its own, so the project's read slot stays free (buildLive).
+  // Up to BUILDS_PER_PROJECT per project, each in a slot of its own, so the
+  // project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
@@ -10312,6 +10414,27 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
       }
     }
   }
+
+  return started;
+}
+
+/**
+ * Fill the free slots, live first. Returns the promises of the work it
+ * started (each resolves to its outcome). `seen` keeps one drain from
+ * starting the same row twice.
+ */
+async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}, seen = new Set(), now = Date.now() }) {
+  if (refusingNew() || settings.mode === 'off') return [];
+  if (faultBackoff(now) || budgetPausedUntil > Date.now()) return [];
+  const started = [];
+  // A staging copy never acts (live.liveScope), so there every app is the
+  // background lane's.
+  const scope = live.liveScope(settings);
+  const liveAtOnce = settings.liveAtOnce || DEFAULTS.liveAtOnce;
+
+  // Live builds waiting their turn first: they are further along than
+  // anything still to be read.
+  started.push(...await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now }));
 
   const running = [...inFlight.values()];
   const liveActive = running.filter((e) => e.lane === 'live');
@@ -10537,6 +10660,7 @@ async function buildsNow(pool) {
  */
 async function runOnce(pool, config, deps = {}) {
   const out = { mode: null, busy: false, refreshed: false, processed: 0, paused: null };
+  const startedAt = Date.now();
   let client;
   let locked = false;
   try {
@@ -10546,6 +10670,7 @@ async function runOnce(pool, config, deps = {}) {
     );
     if (lock.rows[0]?.acquired !== true) { out.busy = true; return out; }
     locked = true;
+    passStartedAt = new Date(startedAt).toISOString();
 
     const settings = await readSettings(pool);
     out.mode = settings.mode;
@@ -10579,6 +10704,13 @@ async function runOnce(pool, config, deps = {}) {
     // Before the refresh: on a live app it asks how much room the caps have
     // for the bot's held issues (#3152).
     const bot = await ensureBotUser(pool, config);
+    // Run five (13 Oct 2026): a build waiting its turn starts before the
+    // refresh and the sweeps, which every REFRESH_INTERVAL_MS read every app
+    // and held a Submit's spec back 46 s. The pass's dispatch below fills
+    // what is left, the slots its reads take counted after these.
+    const seen = new Set();
+    const early = await dispatchLiveBuilds(pool, config, { settings, bot, deps, seen, now });
+    out.liveBuilds = early.length;
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
       // missed it is filed here, before the refresh that queues it.
@@ -10672,8 +10804,7 @@ async function runOnce(pool, config, deps = {}) {
     // #3624 stage 2: fill the free slots and, unless a test asks to drain,
     // return without waiting for the work (see "How much at once").
     const drain = deps.drain !== false;
-    const seen = new Set();
-    let started = await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now });
+    let started = [...early, ...await dispatch(pool, config, { settings, bot, backedOff, deps, seen, out, now })];
     out.dispatched = started.length;
     if (!drain) {
       out.inFlight = inFlight.size;
@@ -10708,7 +10839,10 @@ async function runOnce(pool, config, deps = {}) {
     log.error('homeroom-bot', 'Pass failed', { err: err.message });
     return out;
   } finally {
-    lastPass = { at: new Date().toISOString(), ...out };
+    // `at` is when it ended, as before; `startedAt` and `ms` say how long
+    // the live loop's pass took (a lock another process held is no pass).
+    if (locked) passStartedAt = null;
+    lastPass = { at: new Date().toISOString(), startedAt: new Date(startedAt).toISOString(), ms: Date.now() - startedAt, ...out };
     if (client) {
       if (locked) {
         await client.query('SELECT pg_advisory_unlock($1, $2)', [HOMEROOM_BOT_LOCK, 0]).catch(() => {});
@@ -10904,7 +11038,10 @@ function onBusMessage(data) {
   if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
   const woke = wake({ appId: data.appId, all: !!data.all });
   if (woke && SETTLE_REASONS.has(data.reason)) wakeAfterSettle(Number(data.appId));
-  return woke;
+  // Build it on another Pod (goAhead): its build starts now, not at the
+  // next pass's dispatch.
+  const built = data.buildRunId != null && wakeLiveBuilds();
+  return woke || built;
 }
 
 // ── The dashboard's read and writes ─────────────────────────────────────
@@ -11332,6 +11469,8 @@ async function adminPayload(pool, config, {
       ...lastPass,
       refusals: lastRefusals.filter((r) => !r.appId || backoffFor(r.appId))
         .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
+      // The pass running now, if one is: a long one is a sweep.
+      runningSince: passStartedAt,
     } : lastPass,
     totals,
     queue: { ...queue, buildsWaiting: builds.waiting },
@@ -11898,6 +12037,8 @@ module.exports = {
   workingNow,
   dmChatSummary,
   dispatch,
+  dispatchLiveBuilds,
+  wakeLiveBuilds,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -11911,6 +12052,8 @@ module.exports = {
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     readsInFlight.clear(); lastReads.clear();
     liveBuildsInFlight.clear();
+    passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();
+    liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
     pendingLive.clear(); pendingShadowNudges.clear(); recoveringLive.clear(); interruptedReviews.clear();
@@ -11928,7 +12071,12 @@ module.exports = {
   async _awaitInterruptedReviewsForTests() { await Promise.all([...interruptedReviews]); },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
-  _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },
+  // `seams` gives Build it's wake (wakeLiveBuilds) its pool and deps.
+  _armForTests(config, seams = {}) {
+    stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref();
+    liveKickSeams = seams;
+  },
+  async _awaitLiveKickForTests() { return liveKick ? liveKick : []; },
   _setPassInFlightForTests(v) { passInFlight = !!v; },
   _inFlightForTests() { return [...inFlight.values()].map((e) => ({ ...e })); },
 };
