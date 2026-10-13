@@ -187,6 +187,116 @@ function buildLineOf(stage, { forCreator = false, question = false } = {}) {
   return (key && BUILD_LINE_OF_STEP[key]) || null;
 }
 
+// N4 (newcomer run four, 12-13 October 2026): every stage of a first
+// version's build named for what is happening, with when it began, so a
+// screen can say "Drawing the screens · 2 min so far". The build line
+// (buildLineOf) still says `building` for all of them, which Live and the
+// thumbnail's screens key on; this is the finer name its words come from
+// (frontend/src/features/first-session/build-line-words.js PHASE_WORDS).
+// Until this the spec turn, the build and each review round all read as
+// "Building it", and the build agent's last phrase ("Adding the ballot
+// bar") stayed up through 36 minutes of review.
+//
+//   drawing    its build waits its turn, starts, and its spec turn draws
+//              the screens (the first look is drawn first: the spec saves
+//              its main screen before it writes the rest, live.js
+//              FIRST_VERSION_SCREENS_FIRST)
+//   writing    the spec turn writes the rest of the plan, once the first
+//              look is drawn
+//   building   the build turn
+//   built      the build landed and its screens are captured for review
+//   checking   a review round, `round` of `rounds`
+//   testing    proposed, and its checks run (or are fixed)
+const FIRST_VERSION_PHASES = Object.freeze(['drawing', 'writing', 'building', 'built', 'checking', 'testing']);
+
+/**
+ * Pure: the phase of a first version whose plan is decided, from its stage
+ * (stageOf), its request row (requestRows) and when its first look was
+ * drawn: `{ key, since, round?, rounds? }`, or null for a stage before or
+ * after the build (setting up, reading, the plan waiting, ready to try).
+ */
+function firstVersionPhase(state, row = {}, { firstLookAt = null } = {}) {
+  const stage = state && state.stage;
+  const since = (value) => iso(value);
+  switch (stage) {
+    case 'build_queued':
+    case 'starting':
+      return { key: 'drawing', since: since(state.since || row.build_waiting_at || row.run_at) };
+    case 'planning':
+      return firstLookAt
+        ? { key: 'writing', since: since(firstLookAt) }
+        : { key: 'drawing', since: since(row.build_started_at || state.since) };
+    case 'building':
+      return { key: 'building', since: since(state.since) };
+    case 'reviewing': {
+      const rounds = Math.max(1, Number(row.review_max_rounds) || 1);
+      const round = Math.min(Number(row.review_round) || 0, rounds);
+      return round > 0
+        ? { key: 'checking', since: since(row.review_started_at || state.since), round, rounds }
+        : { key: 'built', since: since(row.review_started_at || state.since) };
+    }
+    case 'proposing':
+    case 'checks':
+    case 'checks_failed':
+    case 'fix_queued':
+    case 'fixing':
+      return { key: 'testing', since: since(row.proposal_at || state.since) };
+    default:
+      return null;
+  }
+}
+
+// The App tab's step list (N4), in order, by key: Plan written, Screens
+// drawn, Building, Checking the screens, Testing, Live (the words are the
+// browser's: build-line-words.js STEP_WORDS).
+const FIRST_VERSION_STEP_KEYS = Object.freeze(['plan', 'screens', 'build', 'check', 'test', 'live']);
+
+const PHASE_STEP = Object.freeze({
+  drawing: 'screens', writing: 'build', building: 'build', built: 'check', checking: 'check', testing: 'test',
+});
+
+/**
+ * Pure: the App tab's step list for a first version still on its way:
+ * one row per FIRST_VERSION_STEP_KEYS, `state` 'done', 'now', 'next' or
+ * 'skipped' (no review ran: the row is left out). A done row carries the
+ * whole minutes it took when both its ends are known; the row being worked
+ * on carries when it began (`since`), which the browser counts on from.
+ * `times` are when things happened: `made` (Make it), `decided` (its plan
+ * went ahead), `firstLook`, `spec` (the plan for the build posted),
+ * `review` (the review began) and `proposal`. `phase` is firstVersionPhase,
+ * null while the plan is not decided yet.
+ */
+function firstVersionSteps(phase, times = {}) {
+  const at = phase ? FIRST_VERSION_STEP_KEYS.indexOf(PHASE_STEP[phase.key]) : 0;
+  const t = (value) => {
+    const ms = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const screensEnd = t(times.firstLook) ?? t(times.spec);
+  const bounds = {
+    plan: [t(times.made), t(times.decided)],
+    screens: [t(times.decided), screensEnd],
+    build: [screensEnd, t(times.review) ?? t(times.proposal)],
+    check: [t(times.review), t(times.proposal)],
+    test: [t(times.proposal), null],
+    live: [null, null],
+  };
+  return FIRST_VERSION_STEP_KEYS.map((key, i) => {
+    if (i < at) {
+      if (key === 'check' && !times.review) return { key, state: 'skipped' };
+      const [from, to] = bounds[key];
+      const minutes = from != null && to != null && to >= from ? Math.floor((to - from) / MINUTE_MS) : null;
+      return { key, state: 'done', ...(minutes != null ? { minutes } : {}) };
+    }
+    if (i === at) {
+      // From when the step began, else from when its phase did.
+      const since = bounds[key][0] ?? t(phase?.since);
+      return { key, state: 'now', ...(since != null ? { since: new Date(since).toISOString() } : {}) };
+    }
+    return { key, state: 'next' };
+  });
+}
+
 function iso(value) {
   if (!value) return null;
   const d = new Date(value);
@@ -264,6 +374,38 @@ function leftOverQueue(row) {
 }
 
 /**
+ * Pure (N5): whether a proposal's check verdict is about the head up for
+ * approval: its reviewed head (an imported pull request's own head), from a
+ * requestRows row. True when either is not recorded, as before this was
+ * read. The merge gate asks the same (merge-queue.js effortOf).
+ */
+function checksOnHead(row) {
+  const head = row?.proposal_source === 'imported' ? row?.imported_pr_head_sha : row?.reviewed_head_sha;
+  const checked = row?.checks_sha;
+  if (typeof head !== 'string' || !head || typeof checked !== 'string' || !checked) return true;
+  return head.toLowerCase() === checked.toLowerCase();
+}
+
+// N5: a proposal's stages on the vote step that are not ready to try: a
+// follow-up waiting its turn or running changes the change.
+const FOLLOW_UP_STAGES = new Set(['followup_queued', 'revising']);
+
+/**
+ * Pure (N5): the stage a first version's App tab is drawn at, from its
+ * stage (stageOf) and whether it is ready to try (`ready`:
+ * homeroom-bot-dm.changeReadiness, the rule its ready card goes out on: its
+ * checks passed on its head and its before & after shots settled). Ready to
+ * try ('vote') only then; a vote that is not ready yet, and a follow-up
+ * queued or running on it, are its checks ('checks': Testing it). Any other
+ * stage is itself.
+ */
+function firstVersionStage(stage, { ready = false } = {}) {
+  if (stage === 'vote') return ready ? 'vote' : 'checks';
+  if (FOLLOW_UP_STAGES.has(stage)) return 'checks';
+  return stage;
+}
+
+/**
  * Pure: the stage of one of the person's requests, from one row of
  * requestRows below, or null when nothing about it is in progress.
  * `{ stage, since, doing, waitingOn?, limit? }`, where `limit` names which
@@ -297,14 +439,29 @@ function stageOf(input, { now = new Date() } = {}) {
     if (row.proposal_status === 'merging') {
       return { stage: 'merging', since: null, doing: 'approved; making it live now' };
     }
+    // N5: a verdict about another commit than the one up for approval says
+    // nothing about it: its own checks are still to come (Club Votes, 12
+    // October 2026, read "Ready to try" off a pass of a fix the restart
+    // recovery had rolled back, and its own head then failed).
+    if (!checksOnHead(row)) {
+      const checks = checksWords({ ...row, check_state: 'pending', check_phase: null });
+      return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests are ${checks}` };
+    }
     const checks = checksWords({ ...row, failed_checks: row.failed_checks ?? failedCount(row.test_results) });
+    // 13 Oct 2026, D1: a project's first version goes live without a vote
+    // once its tests pass (governance-gate.ts applyFirstVersion), so it
+    // waits on nobody's approval.
+    const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
+      return first
+        ? { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' }
+        : { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
+    const waiting = first ? 'it goes live without a vote once its tests pass' : 'it\'s waiting for approval';
     if (row.check_state === 'failing' || row.check_state === 'error' || row.check_state === 'unknown') {
-      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests ${checks}` };
+      return { stage: 'checks_failed', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests ${checks}` };
     }
-    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `it's waiting for approval, and its tests are ${checks}` };
+    return { stage: 'checks', since: row.checks_at || row.proposal_at, doing: `${waiting}, and its tests are ${checks}` };
   }
   if (row.started_at) {
     return { stage: 'reading', since: row.started_at, doing: `reading ${it} to decide whether to ask a question or build it`, limit: 'reading' };
@@ -489,6 +646,10 @@ async function requestRows(pool, userId) {
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             cs.check_state, cs.check_phase,
             cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
+            -- N5: which commit the verdict is about, and the head up for
+            -- approval (checksOnHead).
+            cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
+            cs.source AS proposal_source,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
             -- #4539: the request's own state, newest row by id (issues is not
             -- unique on (app_id, github_issue_number), so a join could
@@ -922,19 +1083,25 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
   const s = rows[0];
   if (!s) return null;
   let needed = null;
+  // 13 Oct 2026, D1: a project's first version goes live without a vote.
+  const first = s.status === 'promoted'
+    ? await require('./first-version-rule').isFirstVersion(pool, s.id)
+    : false;
   if (s.status === 'promoted') {
     try {
       const governance = require('./governance');
       const gov = await governance.getGovernance(pool, s.app_id);
       const electorate = await governance.getElectorate(pool, s.app_id, gov);
-      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at).required;
+      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at, undefined, { firstVersion: first }).required;
     } catch { needed = null; }
   }
   const link = links(domain, { slug: s.slug, proposal: s.id, pr: s.pr_number }).proposal;
   return {
     proposal: Number(s.id),
     title: s.session_title || s.pr_title || null,
-    status: { promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status,
+    status: first
+      ? 'the project\'s first version: it goes live without a vote once its tests pass'
+      : ({ promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status),
     checks: checksWords({ ...s, failed_checks: failedCount(s.test_results) }),
     yesVotes: s.yes,
     noVotes: s.no,
@@ -1163,12 +1330,19 @@ module.exports = {
   REQUEST_STEPS,
   BUILD_LINE_STATES,
   buildLineOf,
+  // N4: a first version's stages by name, and its App tab's step list.
+  FIRST_VERSION_PHASES,
+  FIRST_VERSION_STEP_KEYS,
+  firstVersionPhase,
+  firstVersionSteps,
   SETUP_PARTS,
   BUSY_STAGES,
   IN_FLIGHT_STAGES,
   START_GRACE_MS,
   inFlight,
   stageOf,
+  checksOnHead,
+  firstVersionStage,
   buildUnderWay,
   attemptOutcome,
   attachAttempts,

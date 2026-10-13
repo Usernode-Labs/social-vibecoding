@@ -2929,6 +2929,21 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/first-version/answers",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.first.version.answers.962e23c0",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "GET",
       "path": "/api/apps/:slug/first-version/live",
       "expression": null,

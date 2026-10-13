@@ -1172,6 +1172,11 @@ function requestNews(kind, dm, context) {
           ? `${line}\n\nIt's built, but ${what}. Try it, and approve it only if you're happy with it as it is.`
           : `${line}\n\nIt's built, but ${what}. Try it to see.`;
       }
+      // D1 (13 Oct 2026): a project's first version needs nobody's
+      // approval; it is ready because its checks passed, and goes live now.
+      if (dm.card && dm.card.noVote) {
+        return `${line}\n\nIt's ready to try. As the first version, it goes live without a vote in a minute or two.`;
+      }
       if (dm.card) {
         return dm.card.approve
           ? `${line}\n\nIt's ready to try. Approve it when you're happy with it${dm.card.last ? ', and it goes live' : ''}.`
@@ -1812,7 +1817,7 @@ async function planCards(pool, { userId, appId, issueNumber }) {
  * nobody to send it to (`no_requester`, or `no_bot`: the requester is no
  * longer someone the bot works for); or null when the send failed.
  */
-async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = null }) {
+async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = null, quiet = false }) {
   if (!bot?.id || !app?.id || !runId || !plan?.bullets?.length) return null;
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
@@ -1844,6 +1849,9 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
       actionId: Number(action.id), status: 'open',
     },
     ...(complicated ? { objects: cardsFor(PLAN_KIND, {}, app, issueNumber) } : {}),
+    // 13 Oct 2026: a plan its maker already decided on the made screen
+    // (homeroom-bot.js planFromEarly) rings nothing: it is built at once.
+    ...(quiet ? { moment: null } : {}),
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
   if (!sent?.messageId) {
@@ -1965,6 +1973,11 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   await setQuestionState(pool, Number(action.message_id), {
     status: 'answered', chosen: 'build', answer: BUILD_IT, choices: went.chosen.map((c) => c.answer),
   }, { ws: deps.ws || null, conversationId: card.conversation_id, userId: user.id }).catch(() => {});
+  // A first version's plan is decided now, wherever it was: when, for the
+  // steps its App tab lists (first-version-plan.js noteDecided).
+  await require('./first-version-plan').noteDecided(pool, {
+    appId: went.appId, issueNumber: went.issueNumber, answers: went.chosen.map((c) => c.answer),
+  });
   // The build's progress shows under the plan, where they tapped: the
   // request's card moves here (homeroom-bot-activity.js cardUnderPlan), as
   // the bot's thanks for answering (#4392).
@@ -1983,6 +1996,83 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
   }
   try { require('./homeroom-bot-tray').noteWorkChanged(user.id, deps); } catch { /* the tray re-reads on its own */ }
   return { ok: true, choice: 'build', label: BUILD_IT };
+}
+
+/**
+ * 13 Oct 2026: a first version's plan its maker decided before they were
+ * asked in the chat (the made screen's Submit, or a plan from Make it that
+ * asks nothing: homeroom-bot.js goAheadIfDecided), gone ahead with as Build
+ * it is: through its chat card when it has an open one (decidePlanTap, so
+ * the card says it is being built, with the answers it went with), else
+ * straight on (goAhead: a card that could not be sent). Resolves what
+ * decidePlanTap or goAhead did, or null when nothing waits.
+ */
+async function buildFromAnswers(pool, { appId, issueNumber, runId = null, userId, answers = [], deps = {} }) {
+  const { rows: [run] } = await pool.query(
+    `SELECT id FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND awaiting_go_at IS NOT NULL
+        AND build_ok IS NULL AND build_session_id IS NULL
+        AND ($3::int IS NULL OR id = $3::int)
+      ORDER BY id DESC LIMIT 1`,
+    [appId, issueNumber, runId],
+  );
+  if (!run) return null;
+  const { rows: [action] } = await pool.query(
+    `SELECT a.* FROM homeroom_bot_dm_messages d
+       JOIN homeroom_bot_dm_actions a ON a.message_id = d.message_id
+      WHERE d.run_id = $1 AND d.kind = $2 AND d.user_id = $3 AND a.kind = 'build_plan' AND a.status = 'open'
+      ORDER BY d.message_id DESC LIMIT 1`,
+    [run.id, PLAN_KIND, userId],
+  );
+  const picks = Array.isArray(answers) ? answers.slice(0, 2).map((a) => (typeof a === 'string' ? a : null)) : [];
+  if (action) return decidePlanTap(pool, { user: { id: userId }, action, choice: 'build', answers: picks, deps });
+  const went = await (deps.botSvc || settingsModule()).goAhead(pool, { runId: Number(run.id), answers: picks });
+  if (went.ok) {
+    await require('./first-version-plan').noteDecided(pool, {
+      appId: went.appId, issueNumber: went.issueNumber, answers: went.chosen.map((c) => c.answer),
+    });
+  }
+  return went;
+}
+
+/**
+ * 13 Oct 2026: the made screen's Submit (POST /api/apps/:slug/first-version
+ * /answers): its maker's answers to their first version's questions. Only
+ * its maker answers. The questions answered are the plan's that waits for
+ * Build it when there is one (the chat's card, the same plan), else the
+ * plan from Make it (first-version-plan.js). The answers are kept once
+ * (recordAnswers); a plan waiting for them goes ahead now
+ * (buildFromAnswers), and one not made yet goes ahead with them the moment
+ * it is (homeroom-bot.js planFromEarly). Idempotent: a second Submit
+ * changes nothing. Resolves { ok: true, building, answers } or
+ * { ok: false, status, error }.
+ */
+async function answerFirstVersion(pool, { user, appId, answers = [], deps = {} }) {
+  const fvPlan = require('./first-version-plan');
+  const row = await fvPlan.readEarlyPlan(pool, appId);
+  if (!row || row.bot_builds === false) return { ok: false, status: 404, error: 'no_first_version' };
+  if (Number(row.user_id) !== Number(user?.id)) return { ok: false, status: 403, error: 'not_the_maker' };
+  const waiting = row.issue_number
+    ? await waitingPlan(pool, { userId: user.id, appId, issueNumber: row.issue_number }).catch(() => null)
+    : null;
+  const early = fvPlan.planOf(row);
+  const questions = waiting ? waiting.questions : early ? early.questions : null;
+  if (!questions) return { ok: false, status: 409, error: 'no_plan' };
+  const kept = await fvPlan.recordAnswers(pool, { appId, userId: user.id, questions, answers });
+  let building = false;
+  if (row.issue_number) {
+    const went = await buildFromAnswers(pool, {
+      appId, issueNumber: Number(row.issue_number), userId: user.id, answers: kept.answers, deps,
+    }).catch((err) => {
+      log.warn('homeroom-bot-dm', 'Could not go ahead with a first version\'s answers', { appId, err: err.message });
+      return null;
+    });
+    building = !!went?.ok;
+  }
+  log.info('homeroom-bot-dm', 'A first version\'s questions were answered on the made screen', {
+    appId, userId: user.id, recorded: kept.recorded, building,
+  });
+  return { ok: true, building, answers: kept.answers };
 }
 
 /**
@@ -2194,8 +2284,14 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const row = rows[0];
   if (!row) return null;
   const shotsState = require('./shots-state');
-  const head = require('./pr-vote-revision').visualHeadForSession(row);
-  const checked = row.status === 'promoted' && READY_CHECKS.has(row.check_state);
+  const revision = require('./pr-vote-revision');
+  const head = revision.visualHeadForSession(row);
+  // N5: and its verdict is about the head up for approval. One about
+  // another commit (a fix the restart recovery rolled back, Club Votes, 12
+  // October 2026) is not its own: its checks are still to come.
+  const reviewed = revision.reviewedHeadForSession(row);
+  const onHead = !reviewed || !row.checks_commit_sha || revision.sameSha(row.checks_commit_sha, reviewed);
+  const checked = row.status === 'promoted' && READY_CHECKS.has(row.check_state) && onHead;
   const waitingOnShots = checked && shotsState.holdsReady(row, head, { now });
   return {
     ready: checked && !waitingOnShots,
@@ -2286,7 +2382,10 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
       log.warn('homeroom-bot-dm', 'Could not read who approves a change (sending its card without Approve)', { sessionId: id, err: err.message });
       return null;
     });
-    const waiting = approval
+    // A first version goes live without a vote (D1): nobody is waited on,
+    // and the card offers Try it and Change something, never Approve.
+    const noVote = !!approval?.firstVersion;
+    const waiting = approval && !noVote
       ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
       : [];
     const told = await relayIssuePost({
@@ -2296,7 +2395,9 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
         link, sessionId: id, epoch: state.epoch,
         ...(state.title ? { title: state.title } : {}),
         card: {
-          approve: !!(approval?.counts && !approval.already),
+          approve: !noVote && !!(approval?.counts && !approval.already),
+          // D1: a project's first version goes live without a vote.
+          ...(noVote ? { noVote: true } : {}),
           last: !!approval?.last,
           // Nobody else is asked on a project of one; and never a long list.
           waitingOn: waiting.slice(0, 3),
@@ -2312,6 +2413,8 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
     // Nobody else is asked to approve a change part of which does not work:
     // its requester's card says what, and the bot's hand-off said so where
     // the group talks about it.
+    // Nor is anybody asked to approve a first version (D1): it needs no Yes,
+    // so needsYesFrom names nobody and nothing is sent.
     if (approval && !broken.length) await noteApproversReady(pool, { sessionId: id, epoch: state.epoch, requesterId: requester?.userId || null, state: approval });
     // B9: and the chat message it was asked in, if it was, says Try it.
     await require('./homeroom-bot-chat').noteRequestStatus(pool, {
@@ -2382,6 +2485,11 @@ async function sweepHeldReady(pool, deps = {}) {
  * (governance.governedGate, with the change's own explicit-approval flag,
  * so no clock is promised to a change that has none). Null for no such
  * change.
+ *
+ * `firstVersion` (13 Oct 2026, D1): it is its project's first version, which
+ * goes live without a vote once it passes its checks. Nobody's Yes is asked
+ * for, so none is missing, none would be the last, and the card offers no
+ * Approve.
  */
 async function approvalState(pool, { sessionId, userId = null }) {
   const id = Number(sessionId);
@@ -2414,14 +2522,16 @@ async function approvalState(pool, { sessionId, userId = null }) {
   const who = Number(userId) || null;
   const counts = !!who && (electorate.approverIds == null || electorate.approverIds.map(Number).includes(who));
   const already = !!who && yesIds.has(who);
-  const needed = Math.max(Number(gate.required ?? gate.approvalsRequired ?? 1) || 1, 1);
+  const firstVersion = gate.firstVersion === true;
+  const needed = firstVersion ? 0 : Math.max(Number(gate.required ?? gate.approvalsRequired ?? 1) || 1, 1);
   const have = Math.max(Number(gate.qualifiedYes) || 0, 0);
   const missing = gate.thresholdMet ? 0 : Math.max(needed - have, 1);
   return {
     session, gov, electorate, gate, yesIds, needed, have, missing,
     counts, already,
-    last: counts && !already && have + 1 >= needed,
+    last: !firstVersion && counts && !already && have + 1 >= needed,
     audience: session.audience,
+    firstVersion,
   };
 }
 
@@ -2432,10 +2542,12 @@ async function approvalState(pool, { sessionId, userId = null }) {
  * active on it (or, when nobody is yet, its members). A public community
  * tells nobody this way (decided: everybody there could vote), unless it
  * names its approvers. Never the bot, a test account, whoever proposed it,
- * anybody whose Yes is in, or `except`. Resolves user ids.
+ * anybody whose Yes is in, or `except`. Nobody at all for a project's first
+ * version, which goes live without a vote (approvalState `firstVersion`).
+ * Resolves user ids.
  */
 async function needsYesFrom(pool, state, { except = [] } = {}) {
-  if (!state?.session) return [];
+  if (!state?.session || state.firstVersion) return [];
   const appId = Number(state.session.app_id);
   let ids;
   if (state.gov.approverPolicy === 'invited') {
@@ -4137,7 +4249,11 @@ function normalizeBrief(raw) {
  * for anybody else the request is filed and left to the group, with no DM.
  * Resolves { conversationId } when the bot builds it and said so, else null.
  */
-async function startFirstVersion(pool, config, { app, user, brief }) {
+// `earlyPlan` (13 Oct 2026): made from a door that lands on the made screen
+// (routes/apps.js MAKE_ORIGINS), so its plan is written now, while the
+// project is set up, for its maker to answer there
+// (services/first-version-plan.js).
+async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
@@ -4148,6 +4264,7 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
      ON CONFLICT (app_id) DO NOTHING`,
     [app.id, user.id, text, !!bot],
   );
+  if (bot && earlyPlan) await require('./first-version-plan').startEarlyPlan(pool, { app, user, brief: text });
   if (!bot) {
     log.info('homeroom-bot-dm', 'Project will file its description as its first request', { app: app.slug, userId: user.id });
     return null;
@@ -4357,6 +4474,13 @@ async function sweepFirstVersions(pool, config, deps = {}) {
  *                for approval. Null when no clock runs (an "at least N"
  *                project, a change to protected settings, no Yes yet).
  *   soon         nothing more is needed: it goes live in a minute or two
+ *   noVote       it goes live without a vote (13 Oct 2026, D1: a project's
+ *                first version needs nobody's Yes once it passes its checks;
+ *                governance-gate.ts applyFirstVersion). Then nobody must
+ *                approve it, nobody has, and nobody is waited on: the App tab
+ *                says it goes live without a vote. False only for a first
+ *                version that changes protected settings, whose rule still
+ *                asks for a Yes.
  *
  * The gate is the change's real one, counted with its explicit-approval
  * flag so no clock is promised to a change that has none. Null for no such
@@ -4380,6 +4504,19 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
       explicitApproval: flags?.explicit_approval === true, authorId: state.session.user_id ?? null,
     });
   }
+  if (gate.firstVersion === true) {
+    return {
+      sessionId: id,
+      noVote: true,
+      mustApprove: false,
+      approved: false,
+      waitingOn: [],
+      more: 0,
+      missing: 0,
+      goesLiveAt: null,
+      soon: !!gate.mergeable,
+    };
+  }
   const missing = gate.thresholdMet
     ? 0
     : Math.max((Number(gate.required) || 1) - (Number(gate.qualifiedYes) || 0), 1);
@@ -4400,6 +4537,7 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
     missing,
     goesLiveAt: clock && Number.isFinite(clock.getTime()) ? clock.toISOString() : null,
     soon: !!gate.mergeable,
+    noVote: false,
   };
 }
 
@@ -4422,7 +4560,9 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * homeroom-bot-progress.js's FIRST_VERSION_STEPS, the build line its
  * thumbnail shows to whoever reads it (`deps.viewerId`; buildLineOf, #4053),
  * whether the bot waits on an answer from them, and whether its proposal is
- * up for the vote (ready to try). While it is ready, `approval` is where
+ * ready to try (N5: up for the vote by the rule its ready card goes out on,
+ * changeReadiness, with no follow-up queued or running on it; until then it
+ * is on the step before, Testing it). While it is ready, `approval` is where
  * approval of it stands for that reader (firstVersionApproval above), when
  * that could be read. While it is built and tested, `chosenPlan` is the plan
  * its maker chose (chosenPlanOf, #4396). GET /api/apps/:slug reads it
@@ -4432,6 +4572,7 @@ async function firstVersionState(pool, appId, deps = {}) {
   if (!appId) return null;
   const { rows } = await pool.query(
     `SELECT f.app_id, f.user_id, f.status, f.issue_number, f.created_at,
+            f.early_plan, f.early_plan_status, f.answers, f.answered_at,
             a.slug, a.name, a.status AS app_status, a.created_at AS app_created_at,
             u.username,
             EXISTS (
@@ -4457,19 +4598,47 @@ async function firstVersionState(pool, appId, deps = {}) {
   const row = rows[0];
   if (!row || !['waiting', 'filing', 'filed'].includes(row.status) || row.merged) return null;
   const progress = deps.progress || require('./homeroom-bot-progress');
+  const fvPlan = require('./first-version-plan');
   const forCreator = deps.viewerId != null && Number(deps.viewerId) === Number(row.user_id);
+  // 13 Oct 2026: its plan from Make it (first-version-plan.js), once its
+  // maker answered it or when it asks nothing: decided, so it is being
+  // built from here, not planned, whatever the setup and the request's
+  // first look are doing.
+  const decidedEarly = fvPlan.decided(row);
   // The step, for Homeroom bot's chat, and the build line its thumbnail
   // shows this reader (#4053): "Your plan is ready to review" to the person
   // who started it, "Planning it" to everyone else, while the plan waits.
-  const at = (stage, { question = false } = {}) => ({
-    step: progress.stepNumber(stage, true),
-    of: progress.FIRST_VERSION_STEPS.length,
-    line: progress.buildLineOf(stage, { forCreator, question }),
+  const at = (stage, { question = false } = {}) => {
+    const line = progress.buildLineOf(stage, { forCreator, question });
+    return {
+      step: progress.stepNumber(stage, true),
+      of: progress.FIRST_VERSION_STEPS.length,
+      line: decidedEarly && line === 'planning' ? 'building' : line,
+    };
+  };
+  // Its maker's own: the plan from Make it while it is written, and once it
+  // is, its lines and questions, for the made screen to ask them.
+  const earlyStatus = fvPlan.planStatus(row);
+  const earlyPlan = fvPlan.planOf(row);
+  const early = forCreator && (earlyStatus === 'pending' || (earlyStatus === 'ready' && earlyPlan))
+    ? {
+      early: earlyStatus === 'pending'
+        ? { status: 'pending' }
+        : { status: 'ready', bullets: earlyPlan.bullets, questions: earlyPlan.questions, answered: !!row.answered_at },
+    }
+    : {};
+  // N4: the step list from the start, while nothing is built yet: a plan
+  // decided at Make it is done, and its screens are next in hand.
+  const steps = (phase, times = {}) => ({
+    steps: progress.firstVersionSteps(
+      phase || (decidedEarly ? { key: 'drawing', since: row.answered_at ? new Date(row.answered_at).toISOString() : null } : null),
+      { made: row.created_at, decided: row.answered_at, ...times },
+    ),
   });
   const base = { userId: Number(row.user_id), creator: row.username || null, conversationId: Number(row.conversation_id) || null };
   if (row.status !== 'filed') {
     if (progress.setupOf(row).outcome) return null;
-    return { ...base, ...at('setting_up'), question: false, ready: false };
+    return { ...base, ...at('setting_up'), question: false, ready: false, ...early, ...steps(null) };
   }
   const states = await progress.requestStates(pool, { userId: row.user_id });
   const found = states.find((s) => Number(s.row.app_id) === Number(row.app_id)
@@ -4486,7 +4655,21 @@ async function firstVersionState(pool, appId, deps = {}) {
     const replanning = found.row?.queue_reason === 'plan_change'
       && (found.state.stage === 'queued' || found.state.stage === 'reading');
     const question = found.state.stage === 'question' && found.state.waitingOn === 'them';
-    const ready = found.state.stage === 'vote';
+    // N5: ready to try by the rule its ready card goes out on
+    // (changeReadiness: its checks passed on its head, and its before &
+    // after shots settled), never off the vote step alone: a follow-up
+    // queued or running on it (a fix of its failing checks, say) is not
+    // ready, and neither is a pass its shots still hold back. A read that
+    // fails is not ready.
+    const proposalId = Number(found.row?.proposal_session_id) || null;
+    const readiness = found.state.stage === 'vote' && proposalId
+      ? await (deps.readiness || changeReadiness)(pool, proposalId).catch((err) => {
+        log.warn('homeroom-bot-dm', 'Could not read whether a first version is ready to try', { appId: row.app_id, err: err.message });
+        return null;
+      })
+      : null;
+    const ready = found.state.stage === 'vote' && readiness?.ready === true;
+    const stage = progress.firstVersionStage(found.state.stage, { ready });
     // Ready to try: who it waits on, for the App tab to say. A read that
     // fails leaves the screen as it was before it said so.
     const approval = ready && found.row?.proposal_session_id
@@ -4495,7 +4678,19 @@ async function firstVersionState(pool, appId, deps = {}) {
         return null;
       })
       : null;
-    const where = replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(found.state.stage, { question });
+    const where = replanning ? { ...at('reading'), step: progress.stepNumber('plan', true) } : at(stage, { question });
+    // N4: the stage named, with when it began, and the App tab's steps.
+    const firstLookAt = found.row?.run_id && !ready && LOOKED_STAGES.has(found.state.stage)
+      ? await firstLookAtOf(pool, found.row.run_id).catch(() => null)
+      : null;
+    const phase = !replanning && !ready ? progress.firstVersionPhase({ ...found.state, stage }, found.row, { firstLookAt }) : null;
+    const listed = ready ? {} : steps(phase, {
+      decided: row.answered_at || (phase ? found.row.build_started_at : null),
+      firstLook: firstLookAt,
+      spec: found.row.spec_at,
+      review: found.row.review_started_at,
+      proposal: found.row.proposal_at,
+    });
     // #4396: the plan its maker chose, while it is built and tested, for
     // the members waiting on it (routes/apps.js sharedPlan cuts it). Build
     // it (homeroom-bot.js goAhead) keeps the plan on its run and marks it
@@ -4512,12 +4707,27 @@ async function firstVersionState(pool, appId, deps = {}) {
       ...(plan ? { plan } : {}),
       ...(chosenPlan ? { chosenPlan } : {}),
       ...(approval ? { approval } : {}),
+      ...(phase ? { phase } : {}),
+      ...listed,
+      ...(plan ? {} : early),
     };
   }
   // Filed, and nothing in progress: either it came to something, or the bot
   // has not picked it up yet (filing wakes it, and it reads it next).
   if (found && progress.outcomeOf(found.row)) return null;
-  return { ...base, ...at('queued'), question: false, ready: false };
+  return { ...base, ...at('queued'), question: false, ready: false, ...early, ...steps(null) };
+}
+
+// N4: the stages from its spec turn on, when a first look may be drawn.
+const LOOKED_STAGES = new Set(['planning', 'building', 'reviewing', 'proposing', 'checks', 'checks_failed', 'fix_queued', 'fixing']);
+
+/** N4: when a first version's run had its first look drawn, or null. */
+async function firstLookAtOf(pool, runId) {
+  const { rows: [r] } = await pool.query(
+    `SELECT MIN(created_at) AS at FROM first_version_screens WHERE bot_run_id = $1 AND kind = 'first_look'`,
+    [Number(runId)],
+  );
+  return r && r.at ? r.at : null;
 }
 
 /**
@@ -4683,6 +4893,9 @@ module.exports = {
   markPlanBuilt,
   isPlanGoWord,
   waitingPlan,
+  // 13 Oct 2026: a first version's plan answered on the made screen.
+  buildFromAnswers,
+  answerFirstVersion,
   dmRecipient,
   untaggedRequester,
   requestLine,

@@ -61,6 +61,7 @@
 // stays exactly one implementation of "put a change up for a vote".
 
 const { firstPerson } = require('./homeroom-bot-words');
+const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -441,8 +442,8 @@ function guidanceLines(guidance) {
 // version's nudge and look-and-fix loop, App bench context pack 4 made live),
 // then a bench pack's, less any paragraph the first already says. A later
 // build's nudge arrives in `guidance` (buildAndPropose).
-function stageGuidanceLines(stage, { firstVersion = false, guidance = null } = {}) {
-  return guidanceLines(designSkill.guidanceWith(designSkill.stageGuidance(stage, { firstVersion }), guidance));
+function stageGuidanceLines(stage, { firstVersion = false, guidance = null, reviewed = false } = {}) {
+  return guidanceLines(designSkill.guidanceWith(designSkill.stageGuidance(stage, { firstVersion, reviewed }), guidance));
 }
 
 /*
@@ -617,6 +618,37 @@ function specDesignBrief(firstVersion = false, starter = null) {
   ]]);
 }
 
+/*
+ * THE MAIN SCREEN FIRST (newcomer run four, 13 October 2026). A first
+ * version's spec drew its two screens inside a spec of 40,000 characters
+ * that took five and a half minutes, and its maker saw the first look
+ * only once all of it was in. Now the spec draws the main screen before it
+ * writes anything else and saves it with `usernode-screen` (worker/
+ * usernode-screen: it writes the screen outside the repository, the one
+ * thing a spec turn writes); the platform draws the first look from it at
+ * once while the spec goes on, and puts the saved screens into the spec's
+ * figure once it is in, so nothing is written twice
+ * (services/first-version-screens.js). A screen the command did not save
+ * is drawn in the figure in full, as before.
+ */
+const FIRST_VERSION_SCREENS_FIRST = [
+  'DRAW THE MAIN SCREEN FIRST. The people who asked for this app are waiting to see it. Read only what you need to',
+  'draw it (the starter\'s main screen and the design kit, a few reads), then, BEFORE you write anything else of the',
+  'spec, draw the main screen and save it with this command, the screen\'s whole <template data-screen> element',
+  'exactly as the screens figure would hold it, its <style> included:',
+  '',
+  'usernode-screen 1 <<\'SCREEN\'',
+  '<template data-screen data-size="phone" data-height="...">...</template>',
+  'SCREEN',
+  '',
+  'Save the second screen, if you draw one, the same way with `usernode-screen 2`, then read and write the rest. The',
+  'command only saves the screen outside the repository, for the people waiting; it is the one thing this run may',
+  'write. When it answers "Saved screen N", do not draw that screen again: in the screens figure write an empty',
+  'placeholder where it goes, <template data-screen data-from="N"></template>, and the screen you saved is put there',
+  'when the spec is in. To change a saved screen, save it again with the same number. If the command is missing or',
+  'does not answer "Saved screen N", draw that screen in the figure in full instead.',
+].join('\n');
+
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
   // #4645: the requester's locale, for the language rule below.
@@ -706,7 +738,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...requestRulesLines(),
     '',
     specHtmlContract(platformStyles),
-    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF] : []),
+    ...(firstVersion ? ['', FIRST_VERSION_SCREENS_BRIEF, '', FIRST_VERSION_SCREENS_FIRST] : []),
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
     'Where something is open, make the sensible choice yourself. End the "user" section with an <h3>Assumptions</h3>',
@@ -2041,7 +2073,10 @@ function clockLines({ startedAt, budgetMs, softMs = BUILD_SOFT_BUDGET_MS, review
     `TIME. This build started at ${utcClock(startedAt)} UTC. The platform stops it at ${stopAt} UTC`
       + ` (${minutes(budgetMs)} minutes), and a build it stops is thrown away: nothing is proposed.`,
     ...(soft ? [`Aim to be finished by ${softAt} UTC (${minutes(softMs)} minutes).`] : []),
-    'Read the time with `date -u +%H:%M` whenever you are about to start another round of testing or polish.',
+    // Run four (13 Oct 2026): every step is a model call, about 12 s each
+    // on that build, and a `date` on its own is one more of them.
+    'Read the time whenever you are about to start another round of testing or polish, but never as a step of its own:',
+    'put `date -u +%H:%M;` in front of a command you are running anyway, for example `date -u +%H:%M; npm run build`.',
     'Spend the time in this order:',
     '1. Build everything the spec and the plan ask for. This is never what gets cut.',
     '2. Boot the app and do its main thing once, as a person would.',
@@ -2125,11 +2160,24 @@ const FIRST_VERSION_DESIGN_LINES = Object.freeze([
 // as its build line's note ("Building it · Adding the tier rows"): the
 // phrase is read off this command in the turn's stream
 // (services/first-version-screens.js captionOf).
+// Run four (13 Oct 2026): run on its own, each note was one more model call
+// (about 12 s on that build), so it rides on the next real command.
 const FIRST_VERSION_PROGRESS_LINES = Object.freeze([
   '',
   'The people waiting for this app can see what you are working on. As you start each point of the approved plan, run',
   '`usernode-progress "Adding <what>"` once, with a short phrase in plain words that starts with "Adding" and is at most',
-  '40 characters, for example `usernode-progress "Adding the tier rows"`. It only shows them the phrase.',
+  '40 characters. Never as a step of its own: chain it in front of the next command you run anyway, for example',
+  '`usernode-progress "Adding the tier rows" && npm run build`. It only shows them the phrase, and answers with the time.',
+]);
+
+// Run four (13 Oct 2026): 156 model calls in a 33-minute build, at 12 s
+// each, were 31 of its minutes; a read, a search or an edit made alone is a
+// call of its own.
+const BATCH_STEPS_LINES = Object.freeze([
+  '',
+  'Every step you take is a model call of about ten seconds. When reads, searches or edits do not depend on each',
+  'other, make them together, as several tool calls in one message, rather than one per step: read the files you',
+  'need at once, and make the edits a plan point needs together.',
 ]);
 
 // A first version's build follows its spec's "Build order"
@@ -2202,7 +2250,8 @@ function buildPrompt({
     ...(firstVersion ? firstVersionDesignLines(starter) : []),
     ...(firstVersion ? FIRST_VERSION_PROGRESS_LINES : []),
     ...(firstVersion ? FIRST_VERSION_ORDER_LINES : []),
-    ...stageGuidanceLines('build', { firstVersion, guidance }),
+    ...BATCH_STEPS_LINES,
+    ...stageGuidanceLines('build', { firstVersion, guidance, reviewed }),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
     // this bot's own list, which the dev chat now shares.
@@ -2475,6 +2524,39 @@ function botStopOf(activeTurn) {
   return stop && typeof stop === 'object' && stop.why ? stop : null;
 }
 
+/**
+ * 13 Oct 2026: a first version's spec whose figure holds placeholders for
+ * the screens it saved (FIRST_VERSION_SCREENS_FIRST): each is replaced by
+ * its screen, read off the worker (first-version-screens.js
+ * spliceSavedScreens). `result` as the turn returned it, its final message
+ * and its parts filled. A placeholder whose screen cannot be read is left,
+ * an empty screen. Never throws.
+ */
+async function fillSavedScreens({ fvScreens, screens, worker, containerName, result }) {
+  try {
+    const text = String(result?.lastResultText || '');
+    const parts = Array.isArray(result?.answerParts) ? result.answerParts : null;
+    if (!/data-from\s*=/.test(text) && !(parts || []).some((p) => /data-from\s*=/.test(String(p || '')))) return result;
+    if (screens) await screens.idle();
+    const saved = screens ? screens.saved() : new Map();
+    for (const n of [1, 2]) {
+      if (saved.has(n)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const markup = await fvScreens.readSavedScreen(worker, containerName, n);
+      if (markup) saved.set(n, markup);
+    }
+    if (!saved.size) return result;
+    return {
+      ...result,
+      lastResultText: fvScreens.spliceSavedScreens(text, saved),
+      ...(parts ? { answerParts: parts.map((p) => (typeof p === 'string' ? fvScreens.spliceSavedScreens(p, saved) : p)) } : {}),
+    };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not put the saved screens into the spec', { err: err.message });
+    return result;
+  }
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec', firstVersion = false,
@@ -2488,10 +2570,23 @@ async function draftSpec({
   starter = null,
   // #4645: the requester's locale, for the spec's language rule.
   locale = null,
+  // 13 Oct 2026: a first version's screen, saved by the spec as soon as it
+  // is drawn (FIRST_VERSION_SCREENS_FIRST): ({ n, markup, containerName }).
+  onScreen = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
   const progress = lastActivity();
+  // A first version's saved screens, read off the worker as the stream
+  // shows them saved, for its first look now and its figure at the end.
+  const fvScreens = firstVersion ? require('./first-version-screens') : null;
+  const savedScreens = fvScreens ? fvScreens.screenWatcher({
+    read: (n) => fvScreens.readSavedScreen(worker, containerName, n),
+    onScreen: onScreen ? ({ n, markup }) => onScreen({ n, markup, containerName }) : null,
+  }) : null;
+  const watching = savedScreens
+    ? (line) => { savedScreens(line); if (typeof onProgress === 'function') onProgress(line); }
+    : onProgress;
   let stopped = false;
   let stopping = null;
   const timer = setTimeout(() => {
@@ -2528,7 +2623,7 @@ async function draftSpec({
         branchName: session.branch_name,
         ...(ctx || {}),
         telemetryComponent,
-        onProgress: teeProgress(progress, onProgress),
+        onProgress: teeProgress(progress, watching),
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -2550,7 +2645,11 @@ async function draftSpec({
   if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
   if (routed.error) return { ok: false, costUsd, ...turn, error: `the spec turn failed (${routed.error})` };
-  const read = readSpec(routed.result?.lastResultText, { parts: routed.result?.answerParts });
+  // Its saved screens go where the figure holds their placeholders.
+  const filled = fvScreens
+    ? await fillSavedScreens({ fvScreens, screens: savedScreens, worker, containerName, result: routed.result })
+    : routed.result;
+  const read = readSpec(filled?.lastResultText, { parts: filled?.answerParts });
   if (!read.ok) {
     if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
     return { ...read, costUsd, ...turn };
@@ -2810,6 +2909,9 @@ async function waitOutShotsRun(sessionId, deps = {}) {
 function buildTurnRunner({
   pool, config, bot, session, model, branchName, containerName, deps,
   harness = 'auto', telemetry = null, onProgress = null,
+  // A first version's build and its review fixes: the worker loads only the
+  // tools one uses (worker.js execInWorker buildProfile).
+  firstVersion = false,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const runnerTelemetry = telemetry;
@@ -2871,6 +2973,7 @@ function buildTurnRunner({
           // pays for another capture and review. The spec, triage and
           // follow-up turns run elsewhere and never ask for it.
           stopGuard: true,
+          ...(firstVersion ? { buildProfile: 'first_version' } : {}),
           ...(ctx || {}),
           telemetryComponent: telemetry || 'homeroom_bot_build',
           onProgress: teeProgress(turnProgress, onProgress),
@@ -2954,6 +3057,9 @@ async function buildAndPropose({
   // worker it can be drawn in once the spec is written ({ specHtml,
   // containerName }). Started, never waited on: the build goes straight on.
   onFirstLook = null,
+  // 13 Oct 2026: a screen the spec saved as soon as it was drawn
+  // (draftSpec `onScreen`), for its first look before the spec is in.
+  onScreen = null,
   // #4449: a first version's Live (services/first-version-live.js), handed
   // the worker as its build turn starts ({ containerName }) and answering
   // { end({ buildTurnMs, turnsMs, nudged }) }, called once the build turn
@@ -3159,7 +3265,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
-      locale,
+      locale, onScreen,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -3246,7 +3352,7 @@ async function buildAndPropose({
   const buildHarness = harnessOf ? harnessOf(model, config) : 'auto';
   const runBuildTurn = buildTurnRunner({
     pool, config, bot, session, model, branchName, containerName, deps,
-    harness: buildHarness, telemetry, onProgress,
+    harness: buildHarness, telemetry, onProgress, firstVersion,
   });
   await step('build_turn', { budgetMs: turnBudgetMs });
   // The build's clock, from about when its turn starts (runBuildTurn's
@@ -3517,6 +3623,35 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
 }
 
 /**
+ * One capture of what a first version's branch holds now, in the build's own
+ * worker, its screenshots stored as round `index` of the run's (or the
+ * trial's) review (bot-review.js storeRoundShots): the review loop's
+ * `capture` (reviewLanded), and the one look restart recovery takes at a
+ * review fix that landed before anything saw it boot (homeroom-bot.js
+ * finishRecoveredLive). Resolves { ok, capture, ms } or { ok: false, error,
+ * ms }; a worker that will not start is the latter, and the capture step's
+ * own failure is thrown, as the loop has always handled it.
+ */
+async function captureBuildState({ pool, worker, repo, app, session, branchName, owner = {}, index, captureRound = null }) {
+  const t0 = Date.now();
+  let containerName;
+  try {
+    await worker.ensureWorkerImage();
+    containerName = await worker.ensureWorker(session.id, {
+      repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
+    });
+  } catch (err) {
+    return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
+  }
+  const step = captureRound || ((args) => require('./bench/capture').captureTrial(args));
+  const out = await step({
+    pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
+    store: (kept) => require('./bot-review').storeRoundShots(pool, { ...owner, round: index }, kept),
+  });
+  return { ...out, ms: Date.now() - t0 };
+}
+
+/**
  * The review of a first version that landed (services/bot-review.js
  * runReviewLoop), wired to this build: captures in the build's own worker,
  * stored as the run's or the trial's round screenshots; the reviewer called
@@ -3537,24 +3672,9 @@ async function reviewLanded({
   const { worker } = deps;
   const reviewer = review.reviewer;
   const owner = review.owner || {};
-  const capture = async (index) => {
-    const t0 = Date.now();
-    let containerName;
-    try {
-      await worker.ensureWorkerImage();
-      containerName = await worker.ensureWorker(session.id, {
-        repoOwner: repo.owner, repoName: repo.repo, branchName, temporary: true, onProgress: () => {},
-      });
-    } catch (err) {
-      return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
-    }
-    const step = deps.captureRound || ((args) => require('./bench/capture').captureTrial(args));
-    const out = await step({
-      pool, trialId: owner.trialId ?? null, worker, containerName, appId: app.id,
-      store: (kept) => botReview.storeRoundShots(pool, { ...owner, round: index }, kept),
-    });
-    return { ...out, ms: Date.now() - t0 };
-  };
+  const capture = (index) => captureBuildState({
+    pool, worker, repo, app, session, branchName, owner, index, captureRound: deps.captureRound || null,
+  });
   const fix = async ({ round, issues, budgetMs }) => {
     const t0 = Date.now();
     worker.clearPendingStop?.(session.id);
@@ -3564,7 +3684,7 @@ async function reviewLanded({
       }),
       budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
       resumeThreadId: null,
-      commitMsg: `Homeroom bot: review fixes, round ${round}`,
+      commitMsg: FIX_COMMIT_MESSAGES.review(round),
       progress: lastActivity(),
     });
     const r = (turn.routed && turn.routed.result) || {};
@@ -3692,6 +3812,8 @@ module.exports = {
   AGENT_SAID_CHARS,
   reviewLanded,
   rollbackReviewBranch,
+  captureBuildState,
+  BATCH_STEPS_LINES,
   recipeHarness,
   recipeSpecEffort,
   RECIPE_SPEC_EFFORT,
@@ -3700,6 +3822,8 @@ module.exports = {
   failureDetail,
   stampSessionModel,
   draftSpec,
+  fillSavedScreens,
+  FIRST_VERSION_SCREENS_FIRST,
   specPrompt,
   specPlanLines,
   specScopeLines,

@@ -57,6 +57,8 @@ const COMPONENTS = new Set([
   // helperMessage), each named so its speed and fallback rate read on their own.
   'short_description',
   'app_sketch',
+  // A first version's plan at Make it (services/first-version-plan.js).
+  'first_version_plan',
   'challenge_grade',
   'challenge_grade_feedback',
   'challenge_grade_proposal',
@@ -207,7 +209,9 @@ function normalizeEvent(event = {}) {
 }
 
 // Complete content-free diagnostic contract. Every value below is either a
-// bounded number, a strict enum, a model/region slug, or a boolean. Free-form
+// bounded number, a strict enum, a model/region slug, a boolean, or (one
+// field, tool_sequence) a bounded list of names from a closed set
+// (toolSequenceName). Free-form
 // request/response/error data is never accepted, and unknown optional values
 // are omitted so old/new provider shapes remain distinguishable from zero.
 // Exported for agent_turns, whose OpenRouter rows are the authoritative ledger
@@ -307,6 +311,7 @@ function normalizeDiagnostics(event = {}) {
     image_sent_count: tokenCount(event.imageSentCount),
     image_moved_count: tokenCount(event.imageMovedCount),
     image_omitted_count: tokenCount(event.imageOmittedCount),
+    image_pruned_count: tokenCount(event.imagePrunedCount),
     // Where an OpenRouter coding turn's time went (worker.js
     // noteCodingRequestClock): the time a model request was open, the time
     // between requests split by the kind of tool that ran in it, and when
@@ -327,7 +332,65 @@ function normalizeDiagnostics(event = {}) {
     // tried to end a turn that had changed nothing. Absent without the guard.
     stop_hook_blocks: tokenCount(event.stopHookBlocks),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
+    // What a coding turn's first and last model requests carried, in bytes of
+    // the wire request, as its request listener measured them (worker.js
+    // noteRequestSize): the whole payload, the conversation, the
+    // instructions, and how many conversation items. Sizes only.
+    ...requestSizeFields('first_request', event.firstRequestSize),
+    ...requestSizeFields('last_request', event.lastRequestSize),
+    // The tools a coding turn called, in order, by name alone (worker.js
+    // noteToolSequence), and how many past its bound were not kept.
+    tool_sequence: toolSequence(event.toolSequence),
+    tool_sequence_dropped: tokenCount(event.toolSequenceDropped),
   });
+}
+
+function requestSizeFields(prefix, size) {
+  if (!size || typeof size !== 'object') return {};
+  return {
+    [`${prefix}_payload_bytes`]: tokenCount(size.payloadBytes),
+    [`${prefix}_input_bytes`]: tokenCount(size.inputBytes),
+    [`${prefix}_instruction_bytes`]: tokenCount(size.instructionBytes),
+    [`${prefix}_input_items`]: tokenCount(size.inputItems),
+  };
+}
+
+// A tool-name list, at most TOOL_SEQUENCE_MAX of them, each one the
+// platform knows (toolSequenceName); null for none.
+const TOOL_SEQUENCE_MAX = 400;
+function toolSequence(value) {
+  if (!Array.isArray(value) || !value.length) return null;
+  return value.slice(0, TOOL_SEQUENCE_MAX).map(toolSequenceName);
+}
+
+// The names a tool sequence may hold: the coding agents' own tools, and the
+// tools of the MCP servers the platform itself gives a turn (the in-loop
+// browser's browser_*, the Homeroom read tools, visible_changes), each by its
+// bare tool name. Anything else, a repository's or a person's own MCP server
+// above all, is `mcp` or `other`: its name is theirs, and this ledger is
+// content-free (no server name, no path, no command).
+const SEQUENCE_TOOL_NAMES = new Set([
+  'Bash', 'BashOutput', 'KillShell', 'KillBash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'LS',
+  'NotebookEdit', 'NotebookRead', 'TodoWrite', 'Task', 'Agent', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch',
+  'ExitPlanMode',
+  // Codex's own items (src/agents/codex-openrouter.js).
+  'command', 'file_change', 'file_read',
+  'get_platform_conventions', 'get_app', 'list_requests', 'get_request', 'get_proposal', 'get_change',
+  'declare_visible_changes', 'declare_diagram',
+  'mcp', 'other',
+]);
+const PLATFORM_MCP_SERVER_RE = /^(?:playwright|homeroom|visible_changes|browser_[a-z_]{1,40})$/;
+const PLATFORM_BROWSER_TOOL_RE = /^browser_[a-z_]{1,40}$/;
+function toolSequenceName(name) {
+  const n = typeof name === 'string' ? name : '';
+  const known = (t) => SEQUENCE_TOOL_NAMES.has(t) || PLATFORM_BROWSER_TOOL_RE.test(t);
+  if (n.startsWith('mcp__')) {
+    const at = n.lastIndexOf('__');
+    const server = n.slice(5, at);
+    const tool = n.slice(at + 2);
+    return PLATFORM_MCP_SERVER_RE.test(server) && known(tool) ? tool : 'mcp';
+  }
+  return known(n) ? n : 'other';
 }
 
 function resolvePool(poolOrConfig) {
@@ -1081,6 +1144,7 @@ function collectionComponent(value, fallback = null) {
 }
 
 module.exports = {
+  toolSequenceName,
   EVENT_TYPE,
   MAX_REPORT_DAYS,
   init,

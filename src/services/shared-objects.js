@@ -90,6 +90,17 @@ function changeStateWords(status, { yours = false } = {}) {
   return Object.prototype.hasOwnProperty.call(CHANGE_STATE_WORDS, status) ? CHANGE_STATE_WORDS[status] : (status || null);
 }
 
+// An app's own icon on its card and its community's (run four, 13 Oct 2026:
+// the bot's card for a new app read "◆"): its image at the platform's own
+// address, else its emoji, as its Home tile draws it. Only what it has, so a
+// card with neither draws the glyph (frontend messages/format.tsx ObjectIcon).
+function appIcon(app) {
+  return {
+    ...(app.icon_image_id ? { iconUrl: `/app-icons/${app.icon_image_id}` } : {}),
+    ...(app.icon_emoji ? { iconEmoji: String(app.icon_emoji) } : {}),
+  };
+}
+
 function unavailable(ref) {
   return {
     type: publicType(ref?.object_type || ref?.type || 'app'),
@@ -183,7 +194,7 @@ async function hydrateOne(pool, user, ref) {
       appId: app.id, appSlug: app.slug, subtitle: app.name,
     };
     if (ref.object_type === 'app') {
-      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app` };
+      return { ...base, title: app.name, state: app.status, href: `#app/${encodeURIComponent(app.slug)}/app`, ...appIcon(app) };
     }
     if (ref.object_type === 'github_issue') {
       const repo = parseRepo(app.repo_url);
@@ -392,6 +403,7 @@ async function hydrateLink(pool, user, raw) {
         type: link.type, available: true, appId: app.id, appSlug: app.slug,
         title: app.name, subtitle: null,
         href: link.type === 'hub' ? `#app/${slug}/workshop` : `#app/${slug}/dev/chat`,
+        ...(link.type === 'hub' ? appIcon(app) : {}),
       };
     } catch (_) {
       return { type: link.type, available: false };

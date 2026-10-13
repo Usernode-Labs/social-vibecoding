@@ -16,12 +16,28 @@
 // `/?demo=1` in the worker's headless Chromium at 390×760, and records it
 // with rrweb.
 //
-// RESTARTS. When the workspace changes, at most once every 30 seconds, and
-// at each `usernode-progress` marker (the platform touches LIVE.dir/progress
-// when it reads one), the app is copied, rebooted and opened again. A
-// restart is KEPT only when the page loaded cleanly: no `pageerror`, some
-// text in the body, more than one event. Otherwise the last good recording
-// stays what people see, and the failure is reported.
+// RESTARTS. When the app's own files change (what git would commit: build
+// outputs and ignored files never count), once they have been quiet for a
+// few seconds and at most once every 30 seconds, and at each
+// `usernode-progress` marker (the platform touches LIVE.dir/progress when it
+// reads one) when they changed since the last restart, the app is copied,
+// rebooted and opened again. The old app is gone, and its port free, before
+// the new one boots. (Club Votes, 12 October 2026: 19 restarts in one build,
+// 10 not kept. Every marker restarted at once whether or not anything had
+// changed, any file the agent's own runs wrote counted as a change, a
+// restart could copy a change half written, and a new boot could find the
+// old app still answering on the port.)
+//
+// A GOOD FRAME. A restart is KEPT only when the page settled cleanly: it
+// loaded, no `pageerror`, none of its own fetch/XHR requests failed or
+// answered an error, nothing changed and no request of its own was pending
+// for STABLE_MS (or SETTLE_LIMIT_MS passed with nothing changing, for an app
+// that holds a request open), some text in the body, more than one event.
+// Its recording then starts from a snapshot taken at that moment, so what
+// people see first is the settled page, never its loading or error state
+// (the first frame Club Votes showed was "Couldn't load the decisions").
+// Otherwise the last good recording stays what people see, and the failure
+// is reported with why.
 //
 // OUTPUT. One JSON object per line, appended to LIVE.dir/stream.ndjson,
 // which the platform reads as it grows:
@@ -65,6 +81,16 @@ const HEARTBEAT_MS = 2 * 60 * 1000;
 const BOOT_TIMEOUT_MS = 4 * 60 * 1000;
 const LOAD_TIMEOUT_MS = 45 * 1000;
 const SETTLE_MS = 1500;
+// A good frame: nothing changed, and nothing of its own pending, this long…
+const STABLE_MS = Number(CONFIG.stableMs) || 2000;
+// …within this long of the page's load.
+const SETTLE_LIMIT_MS = Number(CONFIG.settleLimitMs) || 15000;
+// The app's files quiet this long before a restart copies them…
+const QUIET_MS = Number(CONFIG.quietMs) || 8000;
+// …unless they have kept changing for this long.
+const MAX_PENDING_MS = Number(CONFIG.maxPendingMs) || 2 * 60 * 1000;
+// A marker restarts no sooner than this after the last restart.
+const MARKER_MIN_MS = Number(CONFIG.markerMinMs) || 10000;
 const TICK_MS = 1000;
 const SCAN_MS = 5000;
 const MAX_SCAN_FILES = 5000;
@@ -74,8 +100,12 @@ let written = 0;
 let stopping = false;
 let browser = null;
 let app = null;
+// Settles once the last app stopped has exited (stopApp).
+let appGone = Promise.resolve();
 let context = null;
-let current = null; // { good, events: [], bytes }
+let current = null; // { good, events: [], errors, failed, inflight, lastAt }
+// The fingerprint of the app's files the newest restart copied.
+let copiedSig = null;
 const startedAt = Date.now();
 
 function line(obj) {
@@ -144,8 +174,39 @@ function roomFor(threshold, read) {
 
 // ── The workspace ────────────────────────────────────────────────────────
 
-/** A cheap fingerprint of the checkout: its files' paths, sizes and times. */
-function workspaceSignature(dir = WORKSPACE) {
+/**
+ * The app's own files, as git would commit them: tracked, and untracked but
+ * not ignored (the app's .gitignore, and the build outputs
+ * usernode-run-inloop lists in .git/info/exclude). Null outside a git
+ * checkout, or when git cannot say. Reads only: no index refresh, no lock.
+ */
+function appFiles(dir = WORKSPACE, run = spawnSync) {
+  let out;
+  try {
+    out = run('git', ['-C', dir, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      encoding: 'utf8', timeout: 10000, maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    });
+  } catch { return null; }
+  if (!out || out.status !== 0 || typeof out.stdout !== 'string') return null;
+  return [...new Set(out.stdout.split('\0').filter(Boolean))].slice(0, MAX_SCAN_FILES);
+}
+
+/**
+ * A cheap fingerprint of the app's files: their paths, sizes and times. Of
+ * what git would commit (appFiles); else of the whole checkout but
+ * node_modules and .git.
+ */
+function workspaceSignature(dir = WORKSPACE, files = appFiles(dir)) {
+  if (Array.isArray(files)) {
+    let acc = 0;
+    for (const rel of files) {
+      let st = null;
+      try { st = fs.statSync(path.join(dir, rel)); } catch { st = null; }
+      acc = (acc + (st ? st.size * 31 + Math.floor(st.mtimeMs) : 7) + rel.length * 131) % 1e15;
+    }
+    return `${files.length}:${acc}`;
+  }
   let n = 0;
   let acc = 0;
   const stack = [dir];
@@ -213,12 +274,37 @@ function probe() {
   });
 }
 
+/**
+ * Stop the app (its whole process group): SIGTERM, then SIGKILL after 3 s.
+ * Resolves once it has exited (or 6 s, at most), so the next boot never
+ * finds the old app still answering on the port, or still holding it.
+ */
 function stopApp() {
   const child = app;
   app = null;
-  if (!child || child.exitCode != null) return;
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { /* gone */ }
-  setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, 3000).unref();
+  if (!child || child.exitCode != null || child.signalCode != null) return appGone;
+  appGone = new Promise((resolve) => {
+    let kill = null;
+    let cap = null;
+    const done = () => { clearTimeout(kill); clearTimeout(cap); resolve(); };
+    child.once('exit', done);
+    try { process.kill(-child.pid, 'SIGTERM'); } catch { done(); return; }
+    kill = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, 3000);
+    cap = setTimeout(done, 6000);
+  });
+  return appGone;
+}
+
+/** Wait (up to `ms`) until nothing answers on the port. */
+async function portFree(ms = 5000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await probe())) return true;
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(250);
+  }
+  return false;
 }
 
 async function bootApp(lib, identity) {
@@ -274,6 +360,11 @@ function initScript(rrwebSource) {
     '    });',
     '  } catch (err) {}',
     '});',
+    // A fresh snapshot of the settled page, for the watcher (restart):
+    // asked for by an event, so nothing new is put on `window`.
+    "document.addEventListener('__usernode_live_checkout', function () {",
+    '  try { rr.record.takeFullSnapshot(true); } catch (err) {}',
+    '});',
     '})(); }',
   ].join('\n');
 }
@@ -305,21 +396,121 @@ async function closePage() {
   if (ctx) await ctx.close().catch(() => {});
 }
 
-async function restart(lib, identity, rrwebSource) {
+// What the launcher passes to the platform, as production's edge does
+// (usernode-run-inloop PLATFORM_ASSET_PREFIXES): not the app's own.
+const PLATFORM_PATHS = /^\/usernode-(?:bridge|native|tailwind)\//;
+
+/** Whether a request is one of the page's own fetch/XHR requests, to `origin` (the app, not the platform's assets). */
+function ownRequest(request, origin) {
+  try {
+    const type = typeof request.resourceType === 'function' ? request.resourceType() : '';
+    if (type !== 'fetch' && type !== 'xhr') return false;
+    const url = new URL(request.url());
+    return url.origin === origin && !PLATFORM_PATHS.test(url.pathname);
+  } catch { return false; }
+}
+
+/**
+ * Pure: whether a page has settled at `now`: nothing recorded and no request
+ * of its own started or ended for STABLE_MS, with none pending. At the limit
+ * (`limitReached`), quiet with a request still pending (an app that holds
+ * one open), or changing with none pending (an app that animates), is
+ * settled too; changing with one pending is still loading.
+ */
+function settledNow(rec, now, { limitReached = false } = {}) {
+  const quiet = now - rec.lastAt >= STABLE_MS;
+  if (quiet && rec.inflight <= 0) return true;
+  return limitReached && (quiet || rec.inflight <= 0);
+}
+
+/**
+ * Pure: why a page is not a good frame, or null. `rec` as restart keeps it;
+ * `settled` from settledNow, `text` its body's text length, `size` its
+ * recording's bytes.
+ */
+function frameProblem(rec, { settled, text, size }) {
+  if (rec.errors) return 'the page threw an error';
+  if (rec.failed) return 'a request of the page failed';
+  if (!settled) return 'the page was still loading';
+  if (!text) return 'the page was empty';
+  if (rec.events.length < 2) return 'nothing was recorded';
+  if (size > MAX_FULL_BYTES) return 'the page was too large to stream';
+  return null;
+}
+
+/** Wait for the page to settle (settledNow), or for an error. Resolves whether it settled. */
+async function settle(rec, loadedAt) {
+  await sleep(SETTLE_MS);
+  for (;;) {
+    const now = Date.now();
+    if (rec.errors || rec.failed) return false;
+    if (settledNow(rec, now)) return true;
+    if (now - loadedAt >= SETTLE_LIMIT_MS) return settledNow(rec, now, { limitReached: true });
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(250);
+  }
+}
+
+function eventType(json) {
+  const m = /^\{"type":(\d+)/.exec(json);
+  if (m) return Number(m[1]);
+  try { return Number(JSON.parse(json).type); } catch { return -1; }
+}
+
+/**
+ * Pure: where the newest snapshot at or after `from` starts in `events`
+ * (rrweb events as JSON): the Meta event before its FullSnapshot, or -1.
+ */
+function checkoutStart(events, from = 0) {
+  let full = -1;
+  for (let i = events.length - 1; i >= from; i -= 1) {
+    if (eventType(events[i]) === 2) { full = i; break; }
+  }
+  for (let i = full - 1; full >= 0 && i >= from; i -= 1) {
+    if (eventType(events[i]) === 4) return i;
+  }
+  return -1;
+}
+
+/**
+ * Take a fresh snapshot of the settled page (initScript's checkout event)
+ * and drop what was recorded before it, so the recording people see starts
+ * from the settled page, its stylesheets loaded and inlined. False, and the
+ * recording as it was, when none came.
+ */
+async function checkout(page, rec) {
+  const from = rec.events.length;
+  const asked = await page.evaluate(() => { document.dispatchEvent(new Event('__usernode_live_checkout')); return true; })
+    .catch(() => false);
+  if (!asked) return false;
+  const until = Date.now() + 3000;
+  while (Date.now() < until) {
+    const at = checkoutStart(rec.events, from);
+    if (at >= 0) { rec.events.splice(0, at); return true; }
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(50);
+  }
+  return false;
+}
+
+async function restart(lib, identity, rrwebSource, cause = 'change') {
   await closePage();
-  stopApp();
+  // The old app gone, and its port free, before anything boots on it.
+  await stopApp();
+  await portFree();
   const room = roomFor(START_HEADROOM);
   if (room.mem) line({ t: 'mem', headroomMb: Math.round(room.mem.headroom / 1048576) });
   if (!room.ok) return stop('memory');
   const t0 = Date.now();
-  try { snapshot(); } catch (err) { return line({ t: 'fail', why: `copy: ${String(err.message).slice(0, 120)}` }); }
+  copiedSig = workspaceSignature();
+  try { snapshot(); } catch (err) { return line({ t: 'fail', why: `copy: ${String(err.message).slice(0, 120)}`, cause }); }
   // An app that needs no database boots without one; one that does fails
   // to boot, and says so below.
   const db = freshDatabase();
   const bootError = await bootApp(lib, identity);
   if (stopping) return undefined;
-  if (bootError) { stopApp(); return line({ t: 'fail', why: db ? bootError : `${bootError} (no local database)` }); }
-  const rec = { good: false, events: [], errors: 0 };
+  if (bootError) { await stopApp(); return line({ t: 'fail', why: db ? bootError : `${bootError} (no local database)`, cause }); }
+  const rec = { good: false, events: [], errors: 0, failed: 0, inflight: 0, lastAt: Date.now() };
   current = rec;
   context = await browser.newContext({
     viewport: VIEWPORT, deviceScaleFactor: 1, isMobile: true, hasTouch: true,
@@ -330,36 +521,63 @@ async function restart(lib, identity, rrwebSource) {
     // Only the top frame records (initScript), and only that frame's events are kept.
     if (source && source.frame && source.page && source.frame !== source.page.mainFrame()) return;
     rec.events.push(json);
+    rec.lastAt = Date.now();
   });
   await context.addInitScript({ content: initScript(rrwebSource) });
   const page = await context.newPage();
+  const origin = `http://localhost:${PORT}`;
   page.on('pageerror', () => { rec.errors += 1; });
+  page.on('request', (r) => { if (ownRequest(r, origin)) { rec.inflight += 1; rec.lastAt = Date.now(); } });
+  page.on('response', (r) => { if (ownRequest(r.request(), origin) && r.status() >= 400) rec.failed += 1; });
+  page.on('requestfinished', (r) => { if (ownRequest(r, origin)) { rec.inflight -= 1; rec.lastAt = Date.now(); } });
+  page.on('requestfailed', (r) => {
+    if (!ownRequest(r, origin)) return;
+    rec.inflight -= 1;
+    rec.lastAt = Date.now();
+    // One the page called off itself (a navigation, an AbortController) is no failure.
+    const why = (typeof r.failure === 'function' && r.failure()?.errorText) || '';
+    if (!/ERR_ABORTED/i.test(why)) rec.failed += 1;
+  });
   try {
-    await page.goto(lib.shotUrl(`http://localhost:${PORT}`, { look: 'light', state: 'populated' }, identity.token), {
+    await page.goto(lib.shotUrl(origin, { look: 'light', state: 'populated' }, identity.token), {
       waitUntil: 'load', timeout: LOAD_TIMEOUT_MS,
     });
-    await sleep(SETTLE_MS);
+    const settled = await settle(rec, Date.now());
     const text = await page.evaluate(() => (document.body ? document.body.innerText : '').trim().length).catch(() => 0);
-    const size = rec.events.reduce((n, e) => n + e.length, 0);
-    let why = null;
-    if (rec.errors) why = 'the page threw an error';
-    else if (!text) why = 'the page was empty';
-    else if (rec.events.length < 2) why = 'nothing was recorded';
-    else if (size > MAX_FULL_BYTES) why = 'the page was too large to stream';
+    let why = frameProblem(rec, { settled, text, size: 0 });
+    if (!why) {
+      await checkout(page, rec);
+      why = frameProblem(rec, { settled, text, size: rec.events.reduce((n, e) => n + e.length, 0) });
+    }
     if (why) {
       await closePage();
-      stopApp();
-      return line({ t: 'fail', why });
+      await stopApp();
+      return line({ t: 'fail', why, cause });
     }
     if (current !== rec) return undefined;
     rec.good = true;
-    line({ t: 'full', events: rec.events.splice(0).map((s) => JSON.parse(s)), ms: Date.now() - t0 });
+    line({ t: 'full', events: rec.events.splice(0).map((e) => JSON.parse(e)), ms: Date.now() - t0, cause });
   } catch (err) {
     await closePage();
-    stopApp();
-    return line({ t: 'fail', why: `the page did not load: ${String(err.message).split('\n')[0].slice(0, 120)}` });
+    await stopApp();
+    return line({ t: 'fail', why: `the page did not load: ${String(err.message).split('\n')[0].slice(0, 120)}`, cause });
   }
   return undefined;
+}
+
+/**
+ * Pure: whether the app restarts now, and why ('first', 'marker',
+ * 'change'), or null. `changed`: its files differ from what the newest
+ * restart copied; `changedAt`: when they last changed; `pendingSince`: since
+ * when they have differed; `marker`: a progress marker not acted on yet.
+ */
+function restartDue({ first = false, now, changed = false, changedAt = 0, pendingSince = 0, lastRestart = 0, marker = false }) {
+  if (first) return 'first';
+  if (!changed) return null;
+  if (marker && now - lastRestart >= MARKER_MIN_MS) return 'marker';
+  if (now - lastRestart < MIN_RESTART_MS) return null;
+  if (now - changedAt >= QUIET_MS || now - pendingSince >= MAX_PENDING_MS) return 'change';
+  return null;
 }
 
 // ── Running ──────────────────────────────────────────────────────────────
@@ -398,8 +616,10 @@ async function main() {
   const identity = lib.throwawayIdentity(CONFIG.appId);
   let lastRestart = 0;
   let lastScan = 0;
-  let signature = null;
-  let pending = true; // the first boot
+  let scanned = null; // the app's files as last scanned
+  let changedAt = 0; // when they last changed
+  let pendingSince = 0; // since when they have differed from what the app runs
+  let firstBoot = true;
   let progressSeen = mtimeOf(path.join(DIR, 'progress'));
   while (!stopping) {
     const now = Date.now();
@@ -411,19 +631,24 @@ async function main() {
     if (now - lastScan >= SCAN_MS) {
       lastScan = now;
       const sig = workspaceSignature();
-      if (signature !== null && sig !== signature) pending = true;
-      signature = sig;
+      if (sig !== scanned) { scanned = sig; changedAt = now; }
     }
+    const changed = scanned !== null && copiedSig !== null && scanned !== copiedSig;
+    if (!changed) pendingSince = 0;
+    else if (!pendingSince) pendingSince = now;
     const progress = mtimeOf(path.join(DIR, 'progress'));
-    const marker = progress && progress !== progressSeen;
-    if (marker || (pending && now - lastRestart >= MIN_RESTART_MS)) {
-      progressSeen = progress;
-      pending = false;
+    const marker = !!progress && progress !== progressSeen;
+    // A marker with nothing new to show is passed over.
+    if (marker && !changed && !firstBoot) progressSeen = progress;
+    const cause = restartDue({ first: firstBoot, now, changed, changedAt, pendingSince, lastRestart, marker });
+    if (cause) {
+      if (marker) progressSeen = progress;
+      firstBoot = false;
       lastRestart = now;
       // eslint-disable-next-line no-await-in-loop
-      await restart(lib, identity, rrwebSource);
+      await restart(lib, identity, rrwebSource, cause);
       lastRestart = Date.now();
-      signature = workspaceSignature();
+      pendingSince = 0;
     }
     flush();
     // eslint-disable-next-line no-await-in-loop
@@ -444,4 +669,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { memoryHeadroom, roomFor, workspaceSignature, initScript, statValue };
+module.exports = {
+  memoryHeadroom, roomFor, workspaceSignature, appFiles, initScript, statValue,
+  settledNow, frameProblem, checkoutStart, restartDue, ownRequest,
+  STABLE_MS, SETTLE_LIMIT_MS, QUIET_MS, MAX_PENDING_MS, MARKER_MIN_MS, MIN_RESTART_MS,
+};

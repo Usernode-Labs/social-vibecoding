@@ -519,7 +519,7 @@ function sameChip(have, want) {
 /**
  * Who still has to approve change `sessionId`, for `viewer`'s card: the same
  * reading as the DM's ready card (homeroom-bot-dm.js approvalState,
- * needsYesFrom). { youApprove, waitingOn, more, missing, needed }: `missing`
+ * needsYesFrom). { youApprove, waitingOn, more, missing, needed, noVote? }: `missing`
  * is how many more approvals it needs (0 once it has them) and `needed` how
  * many in all, so a change that needs two of three people says any of them
  * will do (frontend/src/features/messages/approval-words.ts). A public
@@ -537,11 +537,14 @@ async function approvalOf(pool, { sessionId, viewer, deps = {} }) {
     : { rows: [] };
   const names = rows.map((r) => r.username).filter(Boolean);
   return {
-    youApprove: !open && !!(state.counts && !state.already),
+    // A project's first version asks nobody's Yes (13 Oct 2026, D1).
+    youApprove: !open && !state.firstVersion && !!(state.counts && !state.already),
     waitingOn: names.slice(0, 3),
     more: Math.max(names.length - 3, 0),
     missing: state.missing,
     needed: state.needed,
+    // 13 Oct 2026, D1: a project's first version goes live without a vote.
+    ...(state.firstVersion ? { noVote: true } : {}),
   };
 }
 

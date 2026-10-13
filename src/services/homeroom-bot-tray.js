@@ -69,6 +69,7 @@ const appAccess = require('./app-access');
 const progressSvc = require('./homeroom-bot-progress');
 const activitySvc = require('./homeroom-bot-activity');
 const { changeHref } = require('./change-destination');
+const { firstVersionSql } = require('./first-version-rule');
 
 // The most requests History lists.
 const HISTORY_LIMIT = 30;
@@ -213,7 +214,10 @@ function outcomeOf(row) {
         // #4227: merged, not running in production yet (pastRuns).
         if (row.proposal_status === 'merging') return 'going_live';
         if (CLOSED_PROPOSAL.has(row.proposal_status)) return 'closed';
-        return 'proposed';
+        // D1: a project's first version goes live without a vote once its
+        // checks pass: it is being tested until it merges, never waiting
+        // for anyone's approval.
+        return row.first_version_change === true ? 'checking' : 'proposed';
       }
       if (row.build_ok === true) return 'proposed';
       if (row.build_ok === false) {
@@ -232,7 +236,7 @@ function outcomeOf(row) {
 /** Pure: when what a run came to happened: a proposal's own moments, else the run. */
 function atOf(row, outcome) {
   if (outcome === 'live') return iso(row.merged_at) || iso(row.proposal_at) || iso(row.created_at);
-  if (outcome === 'proposed' || outcome === 'going_live' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
+  if (outcome === 'proposed' || outcome === 'checking' || outcome === 'going_live' || outcome === 'closed') return iso(row.proposal_at) || iso(row.created_at);
   return iso(row.created_at);
 }
 
@@ -460,7 +464,9 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
             -- Merged but not live yet (live_at) reads as merging: going live.
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
-            a.slug, a.name, q.issue_title, q.first_version
+            a.slug, a.name, q.issue_title, q.first_version,
+            -- D1: the project's first version, which merges without a vote.
+            CASE WHEN cs.id IS NOT NULL THEN ${firstVersionSql('cs')} ELSE FALSE END AS first_version_change
        FROM homeroom_bot_requesters q
        JOIN homeroom_bot_runs r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
        JOIN apps a ON a.id = r.app_id

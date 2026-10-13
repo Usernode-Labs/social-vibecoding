@@ -80,10 +80,18 @@ function skillFiles() {
  * first version's spec the nudge, its build the nudge and the look-and-fix
  * loop; a later spec or build the nudge, when the repository has the skill;
  * anything else nothing. Pure; '' for nothing.
+ *
+ * `reviewed`: a first version whose configuration has a reviewer
+ * (bot-review.js) is captured at both widths, in both looks, and reviewed
+ * once its build turn is over, and its build is told to check its main flow
+ * once and leave that sweep to the review (homeroom-bot-live.js
+ * browserLines). The loop asked the opposite (five rounds of the same
+ * sweep), so it is said only to a build no reviewer follows: run four's
+ * 33-minute GLM build (13 Oct 2026) took 30 screenshots under both.
  */
-function stageGuidance(stage, { firstVersion = false, hasSkill = false } = {}) {
+function stageGuidance(stage, { firstVersion = false, hasSkill = false, reviewed = false } = {}) {
   if (stage !== 'spec' && stage !== 'build') return '';
-  if (firstVersion) return stage === 'build' ? `${NUDGE}\n\n${FIRST_VERSION_LOOP}` : NUDGE;
+  if (firstVersion) return stage === 'build' && !reviewed ? `${NUDGE}\n\n${FIRST_VERSION_LOOP}` : NUDGE;
   return hasSkill ? NUDGE : '';
 }
 

@@ -55,6 +55,7 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
+const { firstVersionSql } = require('./first-version-rule');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -1338,6 +1339,8 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 
   // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
   // de-dupe is atomic (no read-then-write race on concurrent promotes).
+  // 13 Oct 2026, D1: and nobody is asked to vote on a project's first
+  // version, which goes live without one (services/first-version-rule.js).
   const ids = [...recipientIds];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
@@ -1347,6 +1350,9 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
       )
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_sessions cs WHERE cs.id = $3 AND ${firstVersionSql('cs')}
+        )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [ids, appId, sessionId, proposerId || null]
   );

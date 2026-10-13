@@ -29,7 +29,7 @@
 // Env: OPENROUTER_API_KEY, AGENT_MODEL (required); OPENROUTER_API_BASE,
 // AGENT_MODEL_MAX_OUTPUT_TOKENS, AGENT_MODEL_CONTEXT_WINDOW,
 // AGENT_REASONING_EFFORT, HOMEROOM_MCP_TOKEN, AGENT_MODEL_SUPPORTS_IMAGES,
-// AGENT_MODEL_SUPPORTS_FILES, MODE (optional).
+// AGENT_MODEL_SUPPORTS_FILES, AGENT_PROVIDER_SHORTLIST, MODE (optional).
 
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -259,10 +259,74 @@ function textOnly(blocks, { images = false, documents = false, counts = null } =
 // Every request carries the whole conversation, so an early screenshot is
 // moved again on each later request, the same way each time: this is a pure
 // function of the messages, and the prefix a provider caches stays the same
-// from one request to the next. Old images are not pruned for the same
-// reason: dropping one would rewrite an earlier message, and every request
-// after it would miss the cache from there on.
+// from one request to the next.
 const ANTHROPIC_MODEL = /^~?anthropic\//;
+
+// Old images are dropped (13 Oct 2026). Until then every screenshot a turn
+// took was sent again on every later request, on the argument that dropping
+// one rewrites an earlier message and every request after it misses the
+// cache from there on. Run four's first-version build carried 30 of them on
+// each of its last requests and compacted four times at about 90k tokens. So
+// only the latest few go to the model, each older one replaced by a line
+// saying so (a fresh screenshot is one tool call away).
+//
+// The caching trade-off, kept small on purpose: which images are dropped is a
+// pure function of the conversation (the count of images in it), and the cut
+// moves only every PRUNE_STEP_IMAGES new images, not on each one. So the
+// prefix stays byte for byte the same between cuts, and each cut costs one
+// cache miss from the image it drops onwards, rewritten once and cached again,
+// instead of resending every old image on every request forever. Between
+// KEEP_LATEST_IMAGES and KEEP_LATEST_IMAGES + PRUNE_STEP_IMAGES - 1 images
+// are sent.
+const KEEP_LATEST_IMAGES = 3;
+const PRUNE_STEP_IMAGES = 3;
+const PRUNED_IMAGE_NOTE = '[an earlier image, left out to keep the request small: take a new screenshot to look again]';
+
+function countImages(blocks) {
+  if (!Array.isArray(blocks)) return 0;
+  let n = 0;
+  for (const block of blocks) {
+    if (block?.type === 'image') n += 1;
+    else if (block?.type === 'tool_result' && Array.isArray(block.content)) n += countImages(block.content);
+  }
+  return n;
+}
+
+// Replace every image before the cut with the note, in conversation order
+// (messages, then blocks, then a tool result's parts). Messages with nothing
+// to drop are returned as they came. `counts.pruned` counts what was dropped.
+function pruneOldImages(messages, { keep = KEEP_LATEST_IMAGES, step = PRUNE_STEP_IMAGES, counts = null } = {}) {
+  if (!Array.isArray(messages)) return messages;
+  const total = messages.reduce((n, m) => n + (m && Array.isArray(m.content) ? countImages(m.content) : 0), 0);
+  const cut = total > keep ? Math.floor((total - keep) / step) * step : 0;
+  if (cut <= 0) return messages;
+  let seen = 0;
+  const prune = (blocks) => {
+    let changed = false;
+    const out = blocks.map((block) => {
+      if (block?.type === 'image') {
+        seen += 1;
+        if (seen > cut) return block;
+        changed = true;
+        if (counts) counts.pruned = (counts.pruned || 0) + 1;
+        return { type: 'text', text: PRUNED_IMAGE_NOTE };
+      }
+      if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+        const inner = prune(block.content);
+        if (inner === block.content) return block;
+        changed = true;
+        return { ...block, content: inner };
+      }
+      return block;
+    });
+    return changed ? out : blocks;
+  };
+  return messages.map((message) => {
+    if (seen >= cut || !message || !Array.isArray(message.content)) return message;
+    const content = prune(message.content);
+    return content === message.content ? message : { ...message, content };
+  });
+}
 
 function toolUseNames(messages) {
   const names = new Map();
@@ -431,6 +495,75 @@ const PROVIDER_PREFERENCES = Object.freeze({
   preferred_min_throughput: Object.freeze({ p50: 30 }),
 });
 
+// Which hosts a model's coding turns may use, per model (13 Oct 2026). The
+// preferences above only reorder, and OpenRouter's default then weighs the
+// rest by 1/price², so GLM 5.3 Flash builds mostly landed on its cheapest
+// host: run four's 33-minute first version spent 31 of them waiting on
+// InferenceNet at 12 s a call. Over the 14 days to 13 Oct, seconds per model
+// call on GLM build-sized turns were Relace 1.6, Fireworks 2.7, Parasail 3.1,
+// Together 3.2 and Baseten 4.4, against InferenceNet's 6.6; Wafer and
+// GMICloud finished only 70% and 78% of their builds. So a GLM turn names
+// that shortlist (`only`, OpenRouter's base slugs, each matching every one
+// of the host's endpoints: `parasail` is parasail/fp4 and parasail/fast,
+// `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
+// turns off price balancing), and may fall back within it. Every other model
+// is routed as before.
+//
+// The shortlist can never leave a request with no host: it is not sent with
+// a request that brings routing of its own (`only`, `order`, `ignore`,
+// `sort` or `require_parameters`, whose filter it could intersect to nothing,
+// the parallel_tool_calls trap of tests/openrouter-parallel-tool-calls.test.js),
+// and a request it refuses (no host left: 404, or every host on it busy or
+// failing: 429, 502, 503) is sent once more with the plain preferences above,
+// to every host (sendRouted). AGENT_PROVIDER_SHORTLIST, set per turn by the
+// platform (config.openrouterProviderShortlists, env
+// OPENROUTER_PROVIDER_SHORTLISTS), replaces the list for the turn's model, and
+// `none` turns it off. Kept in step with the other OpenRouter listener (tests
+// pin it).
+const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
+  'z-ai/glm-5.3-flash': Object.freeze({
+    only: Object.freeze(['relace', 'fireworks', 'parasail', 'together', 'baseten']),
+    sort: 'throughput',
+  }),
+});
+const PROVIDER_SLUG = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MAX_SHORTLIST = 16;
+const ROUTING_FIELDS = ['only', 'order', 'ignore', 'sort', 'require_parameters'];
+const SHORTLIST_FALLBACK_STATUSES = new Set([404, 429, 502, 503]);
+
+// The shortlist override as the platform sent it: a list of slugs, [] for
+// `none`, or null for none sent (or one that names no valid slug).
+function parseShortlist(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.trim().toLowerCase() === 'none') return [];
+  const slugs = [...new Set(value.split(',').map(s => s.trim().toLowerCase()).filter(s => PROVIDER_SLUG.test(s)))];
+  return slugs.length ? slugs.slice(0, MAX_SHORTLIST) : null;
+}
+
+// What a request asks of OpenRouter's routing: the preferences above, the
+// model's shortlist when it has one and the request brings no routing of its
+// own, then the request's own preferences. Pure. `shortlist` is
+// parseShortlist's answer for the turn.
+function providerRoutingFor(model, asked = {}, { shortlist = null } = {}) {
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  const base = PROVIDER_ROUTING_BY_MODEL[String(model || '')] || null;
+  const only = shortlist != null ? shortlist : (base ? [...base.only] : []);
+  const brings = ROUTING_FIELDS.some(field => own[field] != null);
+  const routed = only.length && !brings
+    ? { only: [...only], sort: base?.sort || 'throughput', allow_fallbacks: true }
+    : {};
+  return { ...PROVIDER_PREFERENCES, ...routed, ...own };
+}
+
+// The same request without the shortlist: the plain preferences and the
+// request's own, for every host. Null when there was no shortlist to drop.
+function withoutShortlist(provider, asked = {}) {
+  if (!provider || !Array.isArray(provider.only)) return null;
+  const own = asked && typeof asked === 'object' && !Array.isArray(asked) ? asked : {};
+  if (own.only != null) return null;
+  return { ...PROVIDER_PREFERENCES, ...own };
+}
+
 // Pair every tool result with its call, pin the model, cap the reply, keep
 // the input text, set the thinking level, prefer hosts that answer
 // promptly, and route web search to OpenRouter.
@@ -438,13 +571,16 @@ const PROVIDER_PREFERENCES = Object.freeze({
 // filled with what the request did with its images.
 function applyTurnPolicy(body, {
   model, maxOutputTokens, countTokens, reasoningEffort = null, imageInput = false, documentInput = false,
-  imageCounts = null,
+  imageCounts = null, providerShortlist = null,
 }) {
   body.model = model;
   if (Array.isArray(body.messages)) body.messages = pairToolIds(body.messages);
   if (Array.isArray(body.messages)) {
     const images = imageInput === true;
     const counts = imageCounts || { sent: 0, moved: 0, omitted: 0 };
+    // Only the latest few images reach the model (pruneOldImages). For a
+    // text-only model they become a note below anyway.
+    if (images) body.messages = pruneOldImages(body.messages, { counts });
     const moveImages = images && !ANTHROPIC_MODEL.test(String(model));
     const toolNames = moveImages ? toolUseNames(body.messages) : null;
     body.messages = body.messages.map((message) => {
@@ -457,9 +593,10 @@ function applyTurnPolicy(body, {
     });
   }
   if (countTokens) return body;
-  // Any preference the request already carries is kept.
+  // Any preference the request already carries is kept, and the model's
+  // shortlist added when it brings no routing of its own.
   const asked = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider) ? body.provider : {};
-  body.provider = { ...PROVIDER_PREFERENCES, ...asked };
+  body.provider = providerRoutingFor(model, asked, { shortlist: providerShortlist });
   if (Array.isArray(body.tools)) {
     body.tools = body.tools.map((tool) => (tool && typeof tool.type === 'string' && ANTHROPIC_WEB_SEARCH.test(tool.type)
       ? openRouterWebSearch(tool)
@@ -493,9 +630,24 @@ function applyTurnPolicy(body, {
   return body;
 }
 
+// One request upstream, with the shortlist's safety net (PROVIDER_ROUTING_BY_MODEL):
+// a request the shortlist refuses (no host left on it, or every one busy or
+// failing) is sent once more without it, to every host. Resolves the
+// response to forward and whether the second send was needed.
+async function sendRouted({ fetchImpl, url, headers, body, serializedBody, askedProvider, signal, countTokens = false }) {
+  const send = (payload) => fetchImpl(url, { method: 'POST', headers, body: payload, redirect: 'error', signal });
+  const response = await send(serializedBody);
+  const plain = countTokens ? null : withoutShortlist(body.provider, askedProvider);
+  if (!plain || !SHORTLIST_FALLBACK_STATUSES.has(response.status)) return { response, shortlistFallback: false };
+  try { await response.body?.cancel(); } catch { /* the refusal is not forwarded */ }
+  body.provider = plain;
+  return { response: await send(JSON.stringify(body)), shortlistFallback: true };
+}
+
 async function startMessagesAdapter({
   baseUrl, apiKey, model, maxOutputTokens = null, reasoningEffort = null, localToken,
   onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch, imageInput = false, documentInput = false,
+  providerShortlist = null,
 }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
@@ -552,10 +704,12 @@ async function startMessagesAdapter({
         replyError(res, 400, 'invalid_request_error', 'Invalid OpenRouter request body');
         return;
       }
-      const images = { sent: 0, moved: 0, omitted: 0 };
+      const images = { sent: 0, moved: 0, omitted: 0, pruned: 0 };
+      const askedProvider = body.provider && typeof body.provider === 'object' && !Array.isArray(body.provider)
+        ? { ...body.provider } : {};
       applyTurnPolicy(body, {
         model, maxOutputTokens, countTokens, reasoningEffort, imageInput, documentInput,
-        imageCounts: images,
+        imageCounts: images, providerShortlist,
       });
       const serializedBody = JSON.stringify(body);
       if (onTiming && !countTokens) {
@@ -591,8 +745,9 @@ async function startMessagesAdapter({
       for (const name of FORWARDED_REQUEST_HEADERS) {
         if (typeof req.headers[name] === 'string') headers[name] = req.headers[name];
       }
-      const response = await fetchImpl(`${upstreamBase}${upstreamPath}`, {
-        method: 'POST', headers, body: serializedBody, redirect: 'error', signal: controller.signal,
+      const { response, shortlistFallback } = await sendRouted({
+        fetchImpl, url: `${upstreamBase}${upstreamPath}`, headers, body, serializedBody, askedProvider,
+        signal: controller.signal, countTokens,
       });
       if (timing) {
         timing.status = response.status;
@@ -605,6 +760,7 @@ async function startMessagesAdapter({
       if (timing) {
         timing.result = {
           requestId: safeId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
+          ...(shortlistFallback ? { shortlistFallback: true } : {}),
         };
       }
       const responseHeaders = {};
@@ -716,10 +872,11 @@ function makeRedactor(secrets) {
 // time doing it (one, at $5.77, was on its 317th request, of 540 KB).
 const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 
-// Any other provider's model (GLM among them) compacts sooner. Its images are
-// sent again on every request (imagesAfterToolResults, never pruned) and
-// first-version builds that failed on their clock carried 600 to 870 KB
-// requests, so it compacts at 120k. Anthropic's models keep the limit above.
+// Any other provider's model (GLM among them) compacts sooner. Its images
+// were sent again on every request (only the latest few are now:
+// pruneOldImages) and first-version builds that failed on their clock carried
+// 600 to 870 KB requests, so it compacts at 120k. Anthropic's models keep the
+// limit above.
 const NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT = 120_000;
 
 function autoCompactLimit(model) {
@@ -738,6 +895,25 @@ function compactionEnv(env, model) {
   };
   if (known) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
   for (const name of Object.keys(out)) if (env[name]) delete out[name];
+  return out;
+}
+
+// How much of one tool's output reaches the model (13 Oct 2026). Claude Code
+// keeps a Bash command's output up to BASH_MAX_OUTPUT_LENGTH characters
+// (30,000 by default) and an MCP tool's up to MAX_MCP_OUTPUT_TOKENS tokens
+// (25,000), and every later request in the turn carries it again: a long
+// build log or a whole page's accessibility snapshot rode along on each of
+// run four's 156 requests. These keep the head and tail that matter (Claude
+// Code says what it cut) at about half that. A value already in the
+// environment is kept.
+const TOOL_OUTPUT_LIMITS = Object.freeze({
+  BASH_MAX_OUTPUT_LENGTH: '15000',
+  MAX_MCP_OUTPUT_TOKENS: '12000',
+});
+
+function toolOutputEnv(env) {
+  const out = {};
+  for (const [name, value] of Object.entries(TOOL_OUTPUT_LIMITS)) if (!env[name]) out[name] = value;
   return out;
 }
 
@@ -760,6 +936,7 @@ function claudeChildEnv(env, { baseUrl, localToken, model }) {
     // the usual reason a gateway rejects a Claude Code request.
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
     ...compactionEnv(env, model),
+    ...toolOutputEnv(env),
   });
   return child;
 }
@@ -776,6 +953,7 @@ async function runClaude(args, env = process.env) {
     reasoningEffort: env.AGENT_REASONING_EFFORT || null,
     imageInput: env.AGENT_MODEL_SUPPORTS_IMAGES === '1',
     documentInput: env.AGENT_MODEL_SUPPORTS_FILES === '1',
+    providerShortlist: parseShortlist(env.AGENT_PROVIDER_SHORTLIST),
     localToken,
     // The same content-free request timing a Codex turn reports, so a quiet
     // model call shows in the owner's progress log either way.
@@ -824,4 +1002,6 @@ if (require.main === module) {
 module.exports = {
   startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
   AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
+  pruneOldImages, KEEP_LATEST_IMAGES, PRUNE_STEP_IMAGES, PRUNED_IMAGE_NOTE, TOOL_OUTPUT_LIMITS,
+  PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist, parseShortlist, SHORTLIST_FALLBACK_STATUSES,
 };

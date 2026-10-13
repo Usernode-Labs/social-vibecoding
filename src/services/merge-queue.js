@@ -75,6 +75,7 @@ const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
 const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { firstVersionSql } = require('./first-version-rule');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -154,7 +155,10 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
                 WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                   AND pv.user_id IS DISTINCT FROM cs.user_id
                   AND ${countedVotePredicateSql('pv', 'cs')})
-            END AS other_yes_count
+            END AS other_yes_count,
+            -- 13 Oct 2026, D1: a project's first version goes live without
+            -- a vote (governance-gate.ts applyFirstVersion).
+            ${firstVersionSql('cs')} AS first_version
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2`,
@@ -179,6 +183,7 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
       {
         explicitApproval: !!r.requires_explicit_approval, otherYes: q.otherYes, memberCount,
         ...(rulesCtx ? governance.rulesGateOpts(rulesCtx, r.id, r.user_id, r.explicit_approval_reason || null) : {}),
+        firstVersion: r.first_version === true,
       }
     ).mergeable;
     return { ...r, approved };

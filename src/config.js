@@ -216,6 +216,37 @@ function canonicalNativeSessionV2Network(value) {
   }
 }
 
+// Per-model overrides of the hosts an OpenRouter coding turn may use (run
+// four, 13 Oct 2026). The default shortlists live with the worker's request
+// listeners (worker/*-openrouter-request.js PROVIDER_ROUTING_BY_MODEL: GLM 5.3
+// Flash on relace, fireworks, parasail, together and baseten); this replaces
+// one model's for every turn the platform dispatches, through the turn's
+// AGENT_PROVIDER_SHORTLIST. OPENROUTER_PROVIDER_SHORTLISTS is a JSON object of
+// model slug to a list of OpenRouter provider slugs, or "none" to send that
+// model's turns to every host by OpenRouter's own weighting, for example
+// {"z-ai/glm-5.3-flash":["fireworks","together"]}. Unset, or anything that is
+// not such an object, is no override.
+const PROVIDER_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,40}(?:\/[a-z0-9._-]{1,40})?$/;
+const MODEL_SLUG_RE = /^[a-z0-9~][a-z0-9._:/-]{0,120}$/i;
+function openRouterProviderShortlists(value) {
+  if (typeof value !== 'string' || !value.trim()) return {};
+  let parsed;
+  try { parsed = JSON.parse(value); } catch {
+    console.log('[config] [warn] OPENROUTER_PROVIDER_SHORTLISTS is not JSON; ignored');
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out = {};
+  for (const [model, list] of Object.entries(parsed)) {
+    if (!MODEL_SLUG_RE.test(model)) continue;
+    if (list === 'none') { out[model] = 'none'; continue; }
+    if (!Array.isArray(list)) continue;
+    const slugs = [...new Set(list.map((s) => String(s).trim().toLowerCase()).filter((s) => PROVIDER_SLUG_RE.test(s)))].slice(0, 16);
+    if (slugs.length) out[model] = slugs.join(',');
+  }
+  return out;
+}
+
 function load() {
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
@@ -436,6 +467,9 @@ function load() {
       return configured.split(',').map((s) => s.trim()).filter(Boolean);
     })(),
     openrouterApiBase,
+    // Per-model host shortlists for coding turns (openRouterProviderShortlists
+    // above): { model: 'slug,slug' | 'none' }, empty for the listeners' own.
+    openrouterProviderShortlists: openRouterProviderShortlists(process.env.OPENROUTER_PROVIDER_SHORTLISTS),
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // Management credentials stay in the platform process only. They create
@@ -1099,6 +1133,7 @@ module.exports = {
   runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  openRouterProviderShortlists,
   canonicalNativeSessionV2Network,
   isLoopbackOrigin,
   phoneTestCodeFrom,

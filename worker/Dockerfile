@@ -241,6 +241,11 @@ COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
 # adding now ("Adding the tier rows"). It only echoes: the platform reads
 # the phrase off the command in the turn's stream.
 COPY usernode-progress /usr/local/bin/usernode-progress
+# usernode-screen (13 Oct 2026): a first version's spec saves its main
+# screen first, and the platform draws the app's first look from it while
+# the spec goes on (services/first-version-screens.js). It only writes the
+# screen under /tmp/usernode-screens; nothing is sent from it.
+COPY usernode-screen /usr/local/bin/usernode-screen
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -272,6 +277,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
               /usr/local/bin/usernode-progress \
+              /usr/local/bin/usernode-screen \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
