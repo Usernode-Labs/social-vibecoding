@@ -676,17 +676,57 @@ test('the strip learns each request\'s card, what waits on its person, and its r
       status: 'open', sessionId: 5, epoch: 1, actions: [{ id: 'try' }, { id: 'approve' }], waiting: 'you and @ada',
     } },
     { message_id: 80, kind: 'question', slug: 'a', issue_number: 3, meta: { status: 'open', question: 'Which night?', said: 'question' } },
-    { message_id: 70, kind: 'question', slug: 'a', issue_number: 4, meta: { status: 'answered', question: 'Old?' } },
+    { message_id: 70, kind: 'question', slug: 'a', issue_number: 4, answered_at: 1, meta: { status: 'answered', question: 'Old?' } },
     { message_id: 60, kind: 'activity', slug: 'a', issue_number: 3, thread_root_id: null, meta: {} },
     { message_id: 55, kind: 'proposal', slug: 'a', issue_number: 2, meta: { status: 'closed', sessionId: 4 } },
     { message_id: 50, kind: 'activity', slug: 'a', issue_number: 2, thread_root_id: null, meta: {} },
     { message_id: 40, kind: 'build_failed', slug: 'a', issue_number: 5, meta: { status: 'open', said: 'build_time' } },
   ];
   const found = tray.threadsOf(rows);
-  assert.deepEqual(found.get(tray.keyOf('a', 3)), { ask: { messageId: 80, kind: 'question', said: 'question', question: 'Which night?' }, cardId: 60 });
+  assert.deepEqual(found.get(tray.keyOf('a', 3)), { answered: false, ask: { messageId: 80, kind: 'question', said: 'question', question: 'Which night?' }, cardId: 60 });
   assert.deepEqual(found.get(tray.keyOf('a', 2)), {
     ready: { messageId: 90, sessionId: 5, epoch: 1, open: true, approve: true, waiting: 'you and @ada' }, cardId: 50,
   }, 'the newest ready card, and its approve only while open');
-  assert.equal(found.get(tray.keyOf('a', 4)).ask, undefined, 'an answered question waits on nobody');
+  const answeredQuestion = found.get(tray.keyOf('a', 4));
+  assert.equal(answeredQuestion.ask, undefined, 'an answered question waits on nobody');
+  assert.equal(answeredQuestion.answered, true, '#4974: its ask row says it was answered');
+  assert.equal(found.get(tray.keyOf('a', 5)).answered, false, '#4974: an ask still open says so');
   assert.deepEqual(found.get(tray.keyOf('a', 5)).ask, { messageId: 40, kind: 'build_failed', said: 'build_time' });
+});
+
+// #4974: once a reply on the request's discussion settles a need, the tray
+// stops calling it Needs you: the entry folds into History like any finished
+// one. A need that still waits on its person — its ask open, or not yet
+// answered — stays put, as does anything that was never Needs you.
+test('settleAnswered folds an answered need into History and leaves the rest alone', () => {
+  const at = (h) => new Date(Date.UTC(2026, 9, 13, h)).toISOString();
+  const entry = (over) => ({
+    key: 'ear trainer#12', appSlug: 'ear trainer', issueNumber: 12, title: 'Sort by date',
+    phase: 'waiting', outcome: 'question', at: at(9),
+    ...over,
+  });
+  const answeredAsk = entry({ key: 'ear trainer#12', outcome: 'question', answered: true });
+  const stillWaiting = entry({ key: 'ear trainer#13', issueNumber: 13, outcome: 'question', ask: { messageId: 40, kind: 'question', question: 'Which night?' } });
+  const unanswered = entry({ key: 'ear trainer#14', issueNumber: 14, outcome: 'blocked' });
+  const built = entry({ key: 'ear trainer#15', issueNumber: 15, outcome: 'ready', answered: true });
+  const work = tray.settleAnswered({
+    now: [],
+    needsYou: [answeredAsk, stillWaiting, unanswered, built],
+    history: [entry({ key: 'ear trainer#11', issueNumber: 11, outcome: 'built', at: at(8) })],
+  });
+  assert.deepEqual(work.needsYou.map((j) => j.key), ['ear trainer#13', 'ear trainer#14', 'ear trainer#15'],
+    'an open ask, no answer yet, or a need that is not a question for its person, still waits');
+  assert.deepEqual(work.history.map((j) => j.key), ['ear trainer#12', 'ear trainer#11'],
+    'the answered one is newest in History');
+  assert.deepEqual(tray.settleAnswered({ now: [], needsYou: [unanswered], history: [] }).needsYou.map((j) => j.key),
+    ['ear trainer#14'], 'nothing answered, nothing moves');
+  // History keeps its cap: the oldest answered entries fall off first.
+  const many = [];
+  for (let i = 0; i < tray.HISTORY_LIMIT + 5; i += 1) {
+    many.push(entry({ key: `ear trainer#${100 + i}`, issueNumber: 100 + i, outcome: 'blocked', answered: true, at: at(9 - (i % 9)) }));
+  }
+  const capped = tray.settleAnswered({ now: [], needsYou: many, history: [] });
+  assert.equal(capped.history.length, tray.HISTORY_LIMIT, 'History keeps its limit');
+  assert.ok(!capped.history.some((j) => j.key === `ear trainer#${100 + tray.HISTORY_LIMIT + 4}`),
+    'the oldest of the answered ones fell off');
 });

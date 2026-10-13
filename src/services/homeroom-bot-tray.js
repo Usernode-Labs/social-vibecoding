@@ -541,7 +541,28 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
   const work = withIcons(arrange(shown, rows.filter((row) => allowed.has(row.slug))), allowed);
   await withReleases(pool, work, shown);
   await withThreads(pool, userId, work);
-  return work;
+  return settleAnswered(work);
+}
+
+/**
+ * Pure (#4974): a needs-you entry whose ask the person has already answered —
+ * a reply on the request's discussion settled it (its row says answered_at)
+ * and no newer one is open — moves to history, newest first, until the bot's
+ * next look says what it made of the reply. Entries that never asked for
+ * them stay put.
+ */
+function settleAnswered(work) {
+  const needsYou = [];
+  const answered = [];
+  for (const job of work.needsYou) {
+    (NEEDS_YOU.has(job.outcome) && job.answered && !job.ask ? answered : needsYou).push(job);
+  }
+  if (!answered.length) return work;
+  return {
+    ...work,
+    needsYou,
+    history: [...answered, ...work.history].sort(newestFirst).slice(0, HISTORY_LIMIT),
+  };
 }
 
 // The kinds of the bot's messages about a request that wait on the person
@@ -582,13 +603,19 @@ function threadsOf(rows) {
               ? meta.ready.waitingOn.map((name) => `@${String(name).replace(/^@/, '')}`).join(', ') : null),
         };
       }
-    } else if (!found.ask && ASK_KINDS.has(row.kind) && (meta.status === 'open' || row.question_status === 'open')) {
-      found.ask = {
-        messageId: id,
-        kind: row.kind,
-        ...(meta.said ? { said: String(meta.said) } : {}),
-        ...(typeof meta.question === 'string' && meta.question ? { question: meta.question.slice(0, 300) } : {}),
-      };
+    } else if (ASK_KINDS.has(row.kind)) {
+      // #4974: whether the newest thing that asked for them has been answered
+      // already — a reply on the request's discussion settled it (its row
+      // says answered_at), or an answer came from the DM itself.
+      if (found.answered === undefined) found.answered = !!row.answered_at;
+      if (!found.ask && (meta.status === 'open' || row.question_status === 'open')) {
+        found.ask = {
+          messageId: id,
+          kind: row.kind,
+          ...(meta.said ? { said: String(meta.said) } : {}),
+          ...(typeof meta.question === 'string' && meta.question ? { question: meta.question.slice(0, 300) } : {}),
+        };
+      }
     }
   }
   return byKey;
@@ -602,7 +629,7 @@ function threadsOf(rows) {
 async function withThreads(pool, userId, work) {
   try {
     const { rows } = await pool.query(
-      `SELECT d.message_id, d.kind, d.issue_number, d.question_status, a.slug,
+      `SELECT d.message_id, d.kind, d.issue_number, d.question_status, d.answered_at, a.slug,
               m.thread_root_id, m.metadata->'homeroomBot' AS meta
          FROM homeroom_bot_dm_messages d
          JOIN apps a ON a.id = d.app_id
@@ -761,4 +788,5 @@ module.exports = {
   workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, demoWorkFor, iconOf, withIcons, threadsOf, ASK_KINDS,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
+  settleAnswered,
 };
