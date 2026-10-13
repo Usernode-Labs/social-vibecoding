@@ -8116,6 +8116,14 @@ const AppView = {
       const item = AppView._findTopicItem();
       const closed = item && ['active', 'paused'].includes(item.status) && !item.shared_at
         ? PlatformI18n.t('changes:page.thread.onlyYou') : null;
+      // #5007: a change built for a request points its thread at that
+      // request — its conversation lives there, before the change is shared
+      // and after. linked[0] is the same request the head's Built for row
+      // names first; the href is the same in-app one the head's chip opens.
+      const linked = AppView._sanitizeIssueNumbers(Array.isArray(item && item.linked_issues) ? item.linked_issues : []);
+      const issue = linked.length
+        ? { n: linked[0], href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${linked[0]}` }
+        : null;
       GroupChat.mountThread({
         type: 'session',
         ref: t.id,
@@ -8125,7 +8133,15 @@ const AppView = {
         language: 'change',
         placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder'),
         readOnly: AppView.readOnly || !!closed,
-        ...(closed ? { closed, notice: PlatformI18n.t('changes:page.thread.shareToDiscuss') } : {}),
+        ...(issue ? { issue } : {}),
+        ...(closed ? {
+          closed: issue
+            ? PlatformI18n.t('changes:page.thread.onlyYouLinked')
+            : PlatformI18n.t('changes:page.thread.onlyYou'),
+          notice: issue
+            ? PlatformI18n.t('changes:page.thread.shareToDiscussLinked')
+            : PlatformI18n.t('changes:page.thread.shareToDiscuss'),
+        } : {}),
         ...(AppView.readOnly && !closed
           ? { notice: PlatformI18n.t('changes:discussion.readOnlyNotice') }
           : {}),

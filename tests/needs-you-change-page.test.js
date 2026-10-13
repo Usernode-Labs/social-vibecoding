@@ -119,8 +119,8 @@ test('the root post: who put it up and when, the title, the summary as a quote, 
   assert.match(page, /<h1 class="dev-request-title" data-change-title="4090">Authenticate previews<\/h1>/);
   // The summary is the request page's quote.
   assert.match(page, /<div class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4" data-request-words="">[\s\S]{0,120}Previews wait for sign-in\./);
-  // One row under it: "Addresses", the request's chip, the thanks.
-  assert.match(page, /<span class="dev-change-chips-lead">Addresses<\/span><span class="dev-change-chips-first"><a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"><b>#1993<\/b><span>Wait for authentication before opening previews<\/span><\/a><\/span>/);
+  // One row under it: "Built for", the request's chip, the thanks.
+  assert.match(page, /<span class="dev-change-chips-lead">Built for<\/span><span class="dev-change-chips-first"><a href="[^"]*\/dev\/issues\/1993" class="dev-ws-chip dev-ws-chip-info dev-topic-issue" data-issue-ref="1993"><b>#1993<\/b><span>Wait for authentication before opening previews<\/span><\/a><\/span>/);
   assert.doesNotMatch(page, /data-kudos-host/, 'no Kudos on this page: no thanks');
   const thanked = render(context({ id: 42, username: 'Builder' }, KUDOS), PR).page;
   assert.match(thanked, /<\/a><\/span><span class="contents" data-kudos-host="4090" data-kudos-face="thread"><\/span><\/div>/, 'the thanks closes the row');
@@ -277,7 +277,7 @@ test('a change Homeroom bot built: the plain lead first, its Design brief one ta
 
   // The request is named once, in words, under the summary: no "Closes #1" tag.
   assert.doesNotMatch(page, /data-issue-chip|Closes #/);
-  assert.match(page, /<span class="dev-change-chips-lead">Addresses<\/span><span class="dev-change-chips-first"><a [^>]*data-issue-ref="1"><b>#1<\/b><span>First version of Flat 4B Chores<\/span><\/a>/);
+  assert.match(page, /<span class="dev-change-chips-lead">Built for<\/span><span class="dev-change-chips-first"><a [^>]*data-issue-ref="1"><b>#1<\/b><span>First version of Flat 4B Chores<\/span><\/a>/);
 
   // No kudos: they would thank the bot's account. Not on the post, not in ⋯.
   assert.equal(v.body.thread.thanks, false);
