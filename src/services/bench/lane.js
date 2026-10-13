@@ -812,6 +812,8 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
     watch = progress.tracker(pool, row.id, {
       log, skills: resumes ? row.checkpoint?.skills : null, looks: resumes ? row.checkpoint?.looks : null,
       ...(resumes ? { keep: keepOnTrial } : {}),
+      // Its whole transcript too (bench_trial_lines), every claim's.
+      transcript: {},
     });
     const cancelled = () => !!inFlight.get(row.id)?.cancelled;
     patch = await runner.runStage({
@@ -1393,7 +1395,7 @@ function fixDeadline(checkpoint, startedMs, turnEnd) {
  * some of them already. Resolves the tracker, or null for a session no
  * running trial is on. Never throws.
  */
-async function recoveryWatch(pool, sessionId) {
+async function recoveryWatch(pool, sessionId, activeTurn = null) {
   try {
     const { rows: [t] } = await pool.query(
       `SELECT id, progress, checkpoint FROM bench_trials
@@ -1405,8 +1407,19 @@ async function recoveryWatch(pool, sessionId) {
     const p = t.progress && typeof t.progress === 'object' ? t.progress : {};
     const cp = t.checkpoint && typeof t.checkpoint === 'object' ? t.checkpoint : {};
     const looks = cp.stepLooks && cp.stepLooks.step === p.step ? cp.stepLooks : null;
+    // The replay shows the turn from its start: the lines its transcript got
+    // before the restart (an earlier replay's included) are not written
+    // again, and the rest (the last few seconds' and everything since) are
+    // marked replayed.
+    const startedAt = activeTurn?.startedAt && Number.isFinite(Date.parse(activeTurn.startedAt)) ? activeTurn.startedAt : null;
+    const skip = startedAt ? Number((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM bench_trial_lines
+        WHERE trial_id = $1 AND kind = 'line' AND at >= $2::timestamptz`,
+      [Number(t.id), startedAt],
+    )).rows[0]?.n) || 0 : 0;
     return progress.tracker(pool, t.id, {
       log, skills: p.skills || cp.skills || null, looks, seed: { step: p.step, stepAt: p.stepAt, lines: p.lines },
+      transcript: { replayed: true, skip },
     });
   } catch (err) {
     log.warn('bench', 'Could not watch a recovered trial', { sessionId, err: err.message });

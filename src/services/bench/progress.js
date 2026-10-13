@@ -31,8 +31,16 @@
 // those, never to counts that already hold some of them (lane.js
 // recoveredLooks).
 
-const STEPS = Object.freeze(['scaffold', 'triage', 'plan', 'spec', 'build', 'capture']);
+const STEPS = Object.freeze(['scaffold', 'triage', 'plan', 'spec', 'build', 'review', 'capture']);
 const LINES_KEPT = 4;
+// The transcript (bench_trial_lines): each line at up to this length, and at
+// most this many lines a tracker writes (a build's turns report a few
+// thousand; the cap is a guard against a turn that loops).
+const TRANSCRIPT_LINE_CHARS = 2000;
+const MAX_TRANSCRIPT_LINES = 20000;
+const TRANSCRIPT_SQL = `INSERT INTO bench_trial_lines (trial_id, at, step, kind, line, replayed)
+  SELECT $1, u.at, u.step, u.kind, u.line, u.replayed
+    FROM unnest($2::timestamptz[], $3::text[], $4::text[], $5::text[], $6::boolean[]) AS u(at, step, kind, line, replayed)`;
 const LINE_CHARS = 200;
 const WRITE_EVERY_MS = 5000;
 const KEEP_EVERY_MS = 15000;
@@ -61,6 +69,12 @@ function lookIn(line) {
 function clip(line) {
   const text = String(line || '').replace(/\s+/g, ' ').trim();
   return text.length > LINE_CHARS ? `${text.slice(0, LINE_CHARS - 1)}…` : text;
+}
+
+/** A line as the transcript keeps it: its own line breaks, longer. Pure. */
+function transcriptLine(line) {
+  const text = String(line || '').replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').trim();
+  return text.length > TRANSCRIPT_LINE_CHARS ? `${text.slice(0, TRANSCRIPT_LINE_CHARS - 1)}…` : text;
 }
 
 /** Look counts, every kind present and none negative: from a record, or all zero. Pure. */
@@ -92,10 +106,14 @@ function skillNames(list) {
  * `keep(part)`, when given, keeps them on the trial's checkpoint (the caller
  * adds them to `part`): at each new step, with `stepLooks`, and after a new
  * look or skill at most every `keepEveryMs`. A keep that fails is logged.
+ * `transcript`, when given, also writes every line and each step's start to
+ * the trial's transcript (bench_trial_lines) with the progress, the same few
+ * seconds apart; `{ replayed: true, skip }` for restart recovery's replay,
+ * whose first `skip` lines the transcript holds already (lane.recoveryWatch).
  */
 function tracker(pool, trialId, {
   now = () => Date.now(), writeEveryMs = WRITE_EVERY_MS, log = null, skills = null, looks = null,
-  keep = null, keepEveryMs = KEEP_EVERY_MS, seed = null,
+  keep = null, keepEveryMs = KEEP_EVERY_MS, seed = null, transcript = null,
 } = {}) {
   const iso = () => new Date(now()).toISOString();
   const seen = { invoked: skillNames(skills?.invoked), read: skillNames(skills?.read) };
@@ -111,6 +129,20 @@ function tracker(pool, trialId, {
   let timer = null;
   let closed = false;
   let chain = Promise.resolve();
+  // The transcript's rows not yet written, and how many this tracker queued.
+  const pending = transcript ? [] : null;
+  let queued = 0;
+  let skip = Math.max(Number(transcript?.skip) || 0, 0);
+  const queueLine = (kind, text) => {
+    if (!pending || queued >= MAX_TRANSCRIPT_LINES) return false;
+    // A replay's first lines are the ones written before the restart.
+    if (kind === 'line' && skip > 0) { skip -= 1; return false; }
+    const line = kind === 'step' ? String(text) : transcriptLine(text);
+    if (!line) return false;
+    queued += 1;
+    pending.push({ at: iso(), step: state.step, kind, line, replayed: kind === 'line' && transcript?.replayed === true });
+    return true;
+  };
   // Keeping them on the checkpoint: when a change last did, and the keep
   // waiting for the rest of its interval.
   let keptAt = -Infinity;
@@ -137,6 +169,13 @@ function tracker(pool, trialId, {
     const body = JSON.stringify(state);
     chain = chain.then(() => pool.query('UPDATE bench_trials SET progress = $2::jsonb WHERE id = $1', [Number(trialId), body]))
       .catch((err) => { if (log) log.warn('bench', 'Could not record a trial\'s progress', { trialId, err: err.message }); });
+    if (pending && pending.length) {
+      const rows = pending.splice(0);
+      chain = chain.then(() => pool.query(TRANSCRIPT_SQL, [
+        Number(trialId), rows.map((r) => r.at), rows.map((r) => r.step), rows.map((r) => r.kind),
+        rows.map((r) => r.line), rows.map((r) => r.replayed),
+      ])).catch((err) => { if (log) log.warn('bench', 'Could not record a trial\'s transcript', { trialId, lines: rows.length, err: err.message }); });
+    }
     return chain;
   };
   const later = () => {
@@ -149,6 +188,7 @@ function tracker(pool, trialId, {
       if (closed || !STEPS.includes(name) || state.step === name) return chain;
       state.step = name;
       state.stepAt = iso();
+      queueLine('step', name);
       if (timer) { clearTimeout(timer); timer = null; }
       const wrote = write();
       if (!keep) return wrote;
@@ -157,6 +197,8 @@ function tracker(pool, trialId, {
     },
     note(line) {
       if (closed) return;
+      // Every line, repeats too, goes to the transcript.
+      if (queueLine('line', line)) later();
       const text = clip(line);
       if (!text) return;
       const skill = skillIn(text);
@@ -202,6 +244,9 @@ function tracker(pool, trialId, {
 module.exports = {
   STEPS,
   LINES_KEPT,
+  TRANSCRIPT_LINE_CHARS,
+  MAX_TRANSCRIPT_LINES,
+  transcriptLine,
   WRITE_EVERY_MS,
   KEEP_EVERY_MS,
   skillIn,

@@ -3953,6 +3953,7 @@ async function buildAndPropose({
   let landedSha = result.sha || null;
   let landedCommits = Number(result.ahead) || 0;
   if (review?.reviewer) {
+    if (onStage) { try { await onStage('review'); } catch { /* a watcher never stops a build */ } }
     reviewed = await reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,

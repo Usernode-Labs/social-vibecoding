@@ -4606,7 +4606,7 @@ async function resumeDetachedTurnInner({
   // The bot's clock's deadline, for a recovered build that changed nothing:
   // it is nudged on what is left of it, as the live path nudges one.
   let botDeadline = null;
-  if (benchTurn) benchWatch = await require('./src/services/bench/lane').recoveryWatch(pool, sessionId);
+  if (benchTurn) benchWatch = await require('./src/services/bench/lane').recoveryWatch(pool, sessionId, activeTurn);
   if (botTurn || benchTurn || botFollowUp) {
     const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
     const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;

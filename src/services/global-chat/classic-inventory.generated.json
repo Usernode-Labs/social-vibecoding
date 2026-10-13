@@ -4391,6 +4391,21 @@
     {
       "source": "src/routes/bench-studio.js",
       "method": "GET",
+      "path": "/api/bot-studio/trials/:id/transcript",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.bot.studio.trials.item.transcript.4fc5f12d",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/bench-studio.js",
+      "method": "GET",
       "path": "/api/bot-studio/bot",
       "expression": null,
       "status": "mapped",
