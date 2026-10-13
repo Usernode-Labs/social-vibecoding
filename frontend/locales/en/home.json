@@ -601,19 +601,47 @@
   },
   "discover.card.addTip": {
     "text": "Add to My apps",
-    "description": "Tooltip of the round + button on an app's card in Home's Discover Communities rail: puts a tile for the app in My apps."
+    "description": "Tooltip of the labelled pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps: puts a tile for the app in My apps."
   },
   "discover.card.addedTip": {
     "text": "Added. Tap to remove from My apps",
     "description": "Tooltip of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps."
   },
-  "discover.card.addNamed": {
-    "text": "Add {{app}} to My apps",
-    "description": "Accessible name of the round + button on an app's card in Home's Discover Communities rail. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
-  },
   "discover.card.removeNamed": {
     "text": "Remove {{app}} from My apps",
     "description": "Accessible name of the round check button on an app's card in Home's Discover Communities rail when the app is already in My apps. {{app}} is the app's name."
+  },
+  "discover.card.join": {
+    "text": "Join",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer has not joined the app's community. Tapping it joins that community and puts a tile for the app in My apps."
+  },
+  "discover.card.joined": {
+    "text": "Joined",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is a member and the app is in My apps. Tapping it asks whether to leave the community."
+  },
+  "discover.card.add": {
+    "text": "Add",
+    "description": "Label of the pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member but the app is not in My apps. Tapping it puts a tile for the app in My apps."
+  },
+  "discover.card.joinNamed": {
+    "text": "Join {{app}}",
+    "description": "Accessible name of the Join pill on an app's card in Home's Discover Communities rail. {{app}} is the app's name."
+  },
+  "discover.card.joinedNamed": {
+    "text": "Joined {{app}}",
+    "description": "Accessible name of the pill on an app's card in Home's Discover Communities rail when the viewer is a member and the app is in My apps; tapping it asks whether to leave. {{app}} is the app's name."
+  },
+  "discover.card.joinTip": {
+    "text": "Join this community. It also goes on My apps",
+    "description": "Tooltip of the Join pill in the corner of an app's card in Home's Discover Communities rail. \"My apps\" is the name of the grid on Home."
+  },
+  "discover.card.joinedTip": {
+    "text": "You're a member. Tap to leave",
+    "description": "Tooltip of the Joined pill in the corner of an app's card in Home's Discover Communities rail; tapping it opens the leave confirmation."
+  },
+  "discover.card.addNamed": {
+    "text": "Add {{app}} to My apps",
+    "description": "Accessible name of the Add pill in the corner of an app's card in Home's Discover Communities rail, shown when the viewer is already a member. {{app}} is the app's name; \"My apps\" is the name of the grid on Home."
   },
   "discover.card.contributors_one": {
     "text": "{{count}} contributor",

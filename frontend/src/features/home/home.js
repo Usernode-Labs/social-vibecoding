@@ -355,6 +355,26 @@ const Home = {
     return !!(app && app.is_member);
   },
 
+  // The Discover card's fallback facts line — "12 users · Updated 3d ago" —
+  // for an app whose manifest declares no description. The same pair the
+  // directory's rows draw (browse.js metaLine's recommended variant), so the
+  // two surfaces say the same thing about the same app in the same words:
+  // who is using it and how recently it changed. Pure: no fetch, no state,
+  // and a null from formatRelativeTime drops that half rather than printing
+  // "Updated —".
+  discoverMetaLine(app) {
+    if (!app) return null;
+    const users = message('discover:row.meta.users', {
+      count: parseInt(app.active_users || 0, 10) || 0,
+    });
+    const when = formatRelativeTime(app.last_deploy_at || app.created_at);
+    const facts = [users, when ? message('discover:row.meta.updated', { when }) : null]
+      .filter(Boolean);
+    if (!facts.length) return null;
+    return facts.reduce((first, second) =>
+      message('discover:row.meta.pair', { first, second }));
+  },
+
   // Split the full list into { yours, rest }. Personal ordering
   // (issue #128) inside "Your apps": explicit favorite_order first
   // (ascending), NULLs after. Array.prototype.sort is stable, so
@@ -588,13 +608,14 @@ const Home = {
   // it was also the ceiling, so a tall desktop window drew two rows of tiles,
   // a "Show all" button, and then a lot of nothing before the next section.
   //
-  // The rule now: the launcher may fill the first two-thirds of the screen,
-  // and never less than the two-row contract. The bottom third is what keeps
-  // the section under the grid visible without scrolling, which is the whole
-  // point of capping the launcher at all — so the cap is stated as the thing
-  // it is protecting rather than as a row count that only happened to protect
-  // it at one viewport.
-  APPS_VIEWPORT_FRACTION: 2 / 3,
+  // The rule now: the launcher may fill the first half of the screen, and
+  // never less than the two-row contract. Discover moved up beside it
+  // (#4937) — the section under the grid is the rail of community cards now,
+  // and the bottom half is what keeps it peeking without scrolling, which is
+  // the whole point of capping the launcher at all — so the cap is stated as
+  // the thing it is protecting rather than as a row count that only happened
+  // to protect it at one viewport.
+  APPS_VIEWPORT_FRACTION: 1 / 2,
 
   // The row count that fraction buys, measured rather than assumed.
   //
@@ -1104,8 +1125,10 @@ const Home = {
 
     // Every leg bails WITHOUT stamping. A half-finished round trip must not
     // read as a passing one, and the check's selector is the final stamp.
+    // The corner control is a pill now, and the state it acts on is
+    // data-join: "join" for a card the viewer has neither joined nor added.
     const badge = await until(() => document.querySelector(
-      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-added="false"]',
+      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-join="join"]',
     ), 8000);
     if (!badge) return;
     const slug = badge.dataset.slug;
@@ -1121,18 +1144,15 @@ const Home = {
     if (!tile) return;
     document.body.dataset.shotAdd = 'added';
 
-    // The card stayed put in the rail (that is _discoverKeep) with its badge
-    // ticked, so the same finger can undo it.
+    // The card stayed put in the rail (that is _discoverKeep) with its pill
+    // now saying "Joined", so the same finger can undo it. A click would open
+    // the leave confirm — a person's path — so the undo here is the call the
+    // confirm's own accept makes, quiet, as befits the fixture's finger.
     const ticked = await until(() => document.querySelector(
-      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
+      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-join="joined"]`,
     ), 8000);
     if (!ticked) return;
-    // The unpin below is the fixture's, not a person's: no "Leave too?" for
-    // it (see _offerLeaveAfterUnpin). Left set for the rest of this page
-    // load, which is the shot's: the offer runs after the unpin's request
-    // lands, which can be after `gone` below has already been seen.
-    Home._quietLeaveOffer = true;
-    ticked.click();
+    Home.setMembership(slug, false, undefined, { confirmed: true });
 
     const gone = await until(
       () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
@@ -2212,7 +2232,26 @@ const Home = {
       btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
+        // The pill is one control with three jobs, stamped by data-join: a
+        // real join (which also pins the card to My apps), the quiet "Joined"
+        // that taps through to the leave confirm, and a plain pin for a
+        // member whose community is not on Home yet. data-added is still
+        // stamped for the existing readers (the shot state and the checks).
+        const slug = btn.dataset.slug;
+        const join = btn.dataset.join;
+        if (!slug || !join) return;
+        if (join === 'join') {
+          // A join repaints the rail (setMembership's optimistic flip ends in
+          // Home.render), and popularApps drops joined apps from Discover —
+          // so the card has to be kept the way an add keeps it, or it
+          // vanishes the moment the join lands.
+          Home._discoverKeep.add(slug);
+          Home.setMembership(slug, true, onChange);
+        } else if (join === 'joined') {
+          Home.setMembership(slug, false, onChange);
+        } else {
+          Home.toggleAdded(slug, true, onChange);
+        }
       });
     });
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {

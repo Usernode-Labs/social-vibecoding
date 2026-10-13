@@ -2498,6 +2498,68 @@ test('discoverTileView.added follows the cached flags, with no refetch (#1567)',
   assert.equal(fetches, 0);
 });
 
+// ── #4937: the pill follows what the viewer already is ───────────────
+//
+// The corner control is one labelled pill with three jobs, picked by what the
+// viewer already is: not a member, the real join; a member with the app on
+// Home, the quiet "Joined"; a member whose app is not on Home yet, a plain
+// "Add". `joined` is read from the same cached flags `added` is, through
+// Home.isJoined, and the facts line fills in only where the app declares no
+// description of its own.
+test('the Discover card carries data-join, the three pill states and the fallback facts line (#4937)', () => {
+  const alpha = { slug: 'alpha', name: 'Alpha', featured: true, active_users: 12 };
+  const beta = { slug: 'beta', name: 'Beta', featured: true, manifest_snapshot: { description: 'Its own sentence.' } };
+  const gamma = { slug: 'gamma', name: 'Gamma', featured: true, is_member: true, is_favorited: true };
+  const delta = { slug: 'delta', name: 'Delta', featured: true, is_member: true };
+  const html = renderDiscover({
+    featuredApps: () => [alpha, beta, gamma, delta],
+    popularApps: () => [],
+    isYours: (a) => !!a.is_favorited,
+    isJoined: (a) => !!a.is_member,
+    // The real line, spelled out. What composes it is unit-tested in
+    // home-find-more.test.js against the real Home.discoverMetaLine.
+    discoverMetaLine: (a) => (a.slug === 'alpha' ? '12 users · Updated 3d ago' : null),
+  });
+
+  // Not a member: the real join, offered by name.
+  assert.match(html, /class="card-add-btn [^"]*" data-slug="alpha" data-added="false" data-join="join"/);
+  assert.match(html, /aria-label="Join Alpha"/);
+  assert.match(html, />Join<\/span>/);
+  assert.match(html, /home-discover-facts[^>]*>12 users · Updated 3d ago</,
+    'the facts line stands in where the app declares no description');
+
+  // A description wins: the facts line does not repeat under it.
+  assert.match(html, />Its own sentence.</);
+  assert.equal((html.match(/home-discover-facts/g) || []).length, 1,
+    'exactly one card drew the facts line');
+
+  // A member whose app is on Home: the quiet "Joined", pressed, in grey.
+  assert.match(html, /data-slug="gamma" data-added="true" data-join="joined" aria-pressed="true"/);
+  assert.match(html, /aria-label="Joined Gamma"/);
+  assert.match(html, />Joined<\/span>/);
+  assert.match(html, /class="card-add-btn [^"]*border-transparent[^"]*" data-slug="gamma"/,
+    'the joined pill is the quiet grey, not the violet action');
+
+  // A member whose app is NOT on Home yet: a plain pin to My apps.
+  assert.match(html, /data-slug="delta" data-added="false" data-join="add"/);
+  assert.match(html, /aria-label="Add Delta to My apps"/);
+  assert.match(html, />Add<\/span>/);
+
+  // The pill's own name is still a pill's; the card keeps its own.
+  assert.match(html, /class="home-discover-name /);
+  assert.doesNotMatch(html, /home-discover-name[^>]*\btruncate\b/,
+    'the name wraps to two lines instead of cutting mid-word');
+
+  // The two-line clamp and the repointed preview overrides live in app.css.
+  const rule = CSS.match(/\.home-discover-name \{[^}]*\}/)[0];
+  assert.match(rule, /-webkit-line-clamp:\s*2/, 'the name ellipsises at two lines');
+  assert.match(rule, /overflow-wrap:\s*anywhere/, 'a run without spaces wraps instead of overflowing');
+  assert.match(CSS, /\.card-add-btn:not\(\[data-join="joined"\]\)/,
+    'the preview themes recolour the join and add pill, not the quiet joined one');
+  assert.doesNotMatch(CSS, /card-add-btn\[data-added="false"\]/,
+    'the old added-only override is gone with the round badge');
+});
+
 // ── Discover: ONE shape, at every width ───────────────────────────────
 //
 // It used to be two (#949). The widget's grid footprint was asymmetric — 4x1

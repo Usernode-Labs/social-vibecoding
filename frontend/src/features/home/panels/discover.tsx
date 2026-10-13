@@ -160,7 +160,13 @@ export function activateOnKey(e: KeyboardEvent<HTMLDivElement>) {
 }
 
 export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: DiscoverTileView; preview?: boolean; previewTheme?: 'light' | 'dark' }) {
-  const { added } = tile;
+  // The corner control is one pill with three jobs, picked by what the viewer
+  // already is: neither joined nor pinned, it is the real join; a member
+  // already, it is either the quiet "Joined" (and a tap asks the leave
+  // confirm) or a plain pin to My apps for the member whose community is not
+  // on Home yet. data-added stays stamped either way — the shot state and
+  // the checks read it — but the pill's own state machine is data-join.
+  const join = !tile.joined ? 'join' : tile.added ? 'joined' : 'add';
   const t = useMessages('home');
   return (
     <div
@@ -189,38 +195,57 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           type="button"
           disabled={preview}
           tabIndex={preview ? -1 : undefined}
-          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors un-touch-target ${
-            added
-              ? 'bg-emerald-500 border-emerald-500 text-white'
+          className={`card-add-btn absolute top-1.5 right-1.5 inline-flex items-center gap-1 h-7 px-2.5 rounded-full border shadow-sm transition-colors un-touch-target ${
+            join === 'joined'
+              ? 'bg-white dark:bg-zinc-800 border-transparent text-zinc-600 dark:text-zinc-300'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
           }`}
           data-slug={tile.slug}
-          data-added={String(added)}
-          title={added ? t('home:discover.card.addedTip') : t('home:discover.card.addTip')}
-          aria-label={added
-            ? t('home:discover.card.removeNamed', { app: tile.name })
-            : t('home:discover.card.addNamed', { app: tile.name })}
-          aria-pressed={added}
+          data-added={String(tile.added)}
+          data-join={join}
+          aria-pressed={join === 'joined'}
+          title={join === 'join'
+            ? t('home:discover.card.joinTip')
+            : join === 'joined'
+              ? t('home:discover.card.joinedTip')
+              : t('home:discover.card.addTip')}
+          aria-label={join === 'join'
+            ? t('home:discover.card.joinNamed', { app: tile.name })
+            : join === 'joined'
+              ? t('home:discover.card.joinedNamed', { app: tile.name })
+              : t('home:discover.card.addNamed', { app: tile.name })}
         >
-          {added
-            ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
+          {join === 'joined'
+            ? <CheckIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="3" aria-hidden="true" />
+            : <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="3" aria-hidden="true" />}
+          <span aria-hidden="true">
+            {join === 'join'
+              ? t('home:discover.card.join')
+              : join === 'joined'
+                ? t('home:discover.card.joined')
+                : t('home:discover.card.add')}
+          </span>
         </button>
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
         {/*
-            ONE LINE, truncated. The two-line clamp this name used to carry
-            was for a 55px grid track, where a single line rendered most of
-            them as "Opinio…"; a card is 152px and gives a real name the room
-            to be read, so a second line would only ever be spent on the
-            longest few.
+            UP TO TWO LINES, then "…". The single line this name carried was
+            for a 55px grid track, and its `truncate whitespace-nowrap` still
+            cut long community names mid-word on a 152px card ("Community
+            Tier …"). The clamp in `.home-discover-name` gives a long name a
+            second line before it gives up, and `overflow-wrap: anywhere`
+            keeps a run-without-spaces name from overflowing the card.
         */}
-        <span className="home-discover-name truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+        <span className="home-discover-name text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
           {tile.name}
         </span>
         {tile.blurb ? (
           <span className="home-discover-blurb text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
             {tile.blurb}
+          </span>
+        ) : tile.meta ? (
+          <span className="home-discover-facts truncate text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
+            {tile.meta}
           </span>
         ) : null}
         {/* zinc-600, the blurb's ink (QA 2026-09-24 Q20): zinc-500 is under
@@ -261,7 +286,7 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
     // fill. Calling it here as well is the fix: this effect already runs on
     // every tile change, and the state is repeatable by design.
     home()?._maybeShowShotIncoming?.();
-  }, [tiles.map((t) => `${t.slug}:${t.added}`).join(',')]);
+  }, [tiles.map((t) => `${t.slug}:${t.added}:${t.joined}`).join(',')]);
 
   // The drag-to-add recognizer (#1763), and the screenshot state that stands
   // in for it (?shot=discover-drag). ONCE PER LANE, not once per tile change:

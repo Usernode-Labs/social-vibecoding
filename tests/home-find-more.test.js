@@ -244,51 +244,96 @@ test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
   assert.equal(Home.featuredApps(apps).length, 0);
 });
 
+// ── discoverMetaLine: the card's fallback facts line (#4937) ─────────
+//
+// A card with no manifest description still says more than "N contributors":
+// who is using the app and how recently it changed, in the SAME WORDS the
+// Discover directory's rows use (discover:row.meta.*), so the two surfaces
+// never disagree about one app. Pure: no fetch, no state.
+test('discoverMetaLine composes the facts line from the words the Discover rows use', () => {
+  const Home = makeHome();
+  const threeDaysAgo = new Date(Date.now() - 3 * 86400 * 1000).toISOString();
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 12, last_deploy_at: threeDaysAgo }),
+    '12 users · Updated 3d ago',
+  );
+  // A singular count, and created_at standing in while nothing has shipped.
+  assert.equal(
+    Home.discoverMetaLine({ active_users: 1, created_at: threeDaysAgo }),
+    '1 user · Updated 3d ago',
+  );
+  // The count is printed even at zero, exactly as the directory's own rows
+  // print it (browse.js metaLine pushes the users bit unconditionally); with
+  // no date to add the line is the count alone. No app at all: null.
+  assert.equal(Home.discoverMetaLine({}), '0 users');
+  assert.equal(Home.discoverMetaLine(null), null);
+});
+
 test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
   const Home = makeHome();
-  let toggles = 0;
-  Home.toggleAdded = () => { toggles += 1; };
-  // BY TYPE, since #1763: the badge carries two listeners now — its click,
-  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
-  // drag recognizer. Both are bound through the same WeakSet, so both are the
-  // claim this test makes.
-  const mkBtn = (cls, slug) => {
+  const calls = { joins: [], leaves: [], toggles: [] };
+  Home.setMembership = (slug, desired) => { calls[desired ? 'joins' : 'leaves'].push(slug); };
+  Home.toggleAdded = (slug, desired) => { calls.toggles.push([slug, desired]); };
+  // BY TYPE, since #1763: the pill carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on it from arming the
+  // lane's drag recognizer. Both are bound through the same WeakSet, so both
+  // are the claim this test makes.
+  const mkBtn = (cls, slug, join) => {
     const handlers = {};
     return {
       className: cls,
-      dataset: { slug, added: 'false' },
+      dataset: { slug, added: 'false', join },
       addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
       handlers,
     };
   };
-  const badge = mkBtn('card-add-btn', 'fresh');
-  const card = {
-    dataset: { slug: 'fresh', status: 'running' },
-    addEventListener: () => {},
+  const laneFor = (badge) => {
+    const card = {
+      dataset: { slug: badge.dataset.slug, status: 'running' },
+      addEventListener: () => {},
+    };
+    return {
+      querySelectorAll: (sel) => {
+        if (sel === '.app-card') return [card];
+        if (sel === '.card-add-btn') return [badge];
+        return [];
+      },
+    };
   };
-  const lane = {
-    querySelectorAll: (sel) => {
-      if (sel === '.app-card') return [card];
-      if (sel === '.card-add-btn') return [badge];
-      return [];
-    },
-  };
-  // Twice, which is what really happens now: the badge flipping to "added"
+  const badge = mkBtn('card-add-btn', 'fresh', 'join');
+  const lane = laneFor(badge);
+  // Twice, which is what really happens now: the pill flipping to "joined"
   // changes the effect's key while React keeps the very same element.
   Home._wireDiscoveryCards(lane);
   Home._wireDiscoveryCards(lane);
   assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
   assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+
+  // JOIN: the real membership write, and the slug lands in _discoverKeep or
+  // the rail repaints without the card (popularApps drops joined apps).
   badge.handlers.click[0]({ stopPropagation: () => {} });
-  assert.equal(toggles, 1, 'so one tap is one toggle');
+  assert.deepEqual(calls.joins, ['fresh'], 'one tap is one join');
+  assert.ok(Home._discoverKeep.has('fresh'), 'the joined card keeps its place in the rail');
+
+  // JOINED: the tap asks the leave confirm and then writes the leave.
+  const joined = mkBtn('card-add-btn', 'fresh', 'joined');
+  Home._wireDiscoveryCards(laneFor(joined));
+  joined.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.leaves, ['fresh']);
+
+  // ADD: a member whose community is not on Home yet is pinned, not joined.
+  const add = mkBtn('card-add-btn', 'fresh', 'add');
+  Home._wireDiscoveryCards(laneFor(add));
+  add.handlers.click[0]({ stopPropagation: () => {} });
+  assert.deepEqual(calls.toggles, [['fresh', true]]);
 
   // The guard's whole job: the kit's recognizer listens for pointerdown on the
   // LANE and takes the first card that contains the target, so a press on the
-  // badge is a press on the card unless the event stops here (#1763). On
+  // pill is a press on the card unless the event stops here (#1763). On
   // desktop it arms after 6px, which is inside the slop of an ordinary click.
   let stopped = 0;
   badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
-  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
+  assert.equal(stopped, 1, 'a press on the pill never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {

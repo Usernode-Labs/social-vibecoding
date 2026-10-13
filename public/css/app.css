@@ -5422,6 +5422,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   line-clamp: 2;
   overflow: hidden;
 }
+/* The same two lines for the NAME (#4937): the single `truncate` it carried
+   cut long community names mid-word on a card wide enough to read them.
+   `overflow-wrap: anywhere` keeps a name with no spaces in it from
+   overflowing the card instead of wrapping. */
+.home-discover-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 
 /* ── Challenges: a flat column of cards ─────────────────────
    The block was one white card of divided rows, then a translucent PLATE
@@ -20788,11 +20800,11 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .home-discover-card[data-preview-theme="dark"] .illustration-light { display: none; }
 .home-discover-card[data-preview-theme="dark"] .illustration-dark { display: block; }
 .home-discover-card[data-preview-theme="light"] .home-discover-name { color: #1c1c1e; }
-.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta) { color: #48484a; }
+.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta, .home-discover-facts) { color: #48484a; }
 .home-discover-card[data-preview-theme="dark"] .home-discover-name { color: #eaeaea; }
-.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
-.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
-.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
+.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta, .home-discover-facts) { color: #8e8e93; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn:not([data-join="joined"]) { background: white; color: #0062cc; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn:not([data-join="joined"]) { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
 
 /* ═══════════════════════════════════════════════════════════════════
    #platform-tabs — the shell's five sections, as a permanent bar
