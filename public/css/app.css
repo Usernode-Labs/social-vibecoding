@@ -23471,10 +23471,10 @@ html.in-side-panel body {
   .dev-kanban-step-name, .dev-kanban-step-n { font-size: 14px; }
   .dev-kanban-step-arrow { display: none; }
   .dev-kanban-card { padding: 2px 12px 6px; }
-  /* The head: the way back and the name, then the search, the switch and
-     the filters a line each. */
+  /* The head: the way back and the name, then the search on its own line,
+     and the switch and the filters sharing the line under it (#5029). */
   .dev-ws-allbar #dev-kanban-search { flex-basis: 100%; max-width: none; min-width: 0; }
-  .dev-ws-allbar #dev-filter-chips { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {
