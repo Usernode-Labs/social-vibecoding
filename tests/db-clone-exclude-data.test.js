@@ -266,7 +266,7 @@ test('truncate + scrub still run after the copy, and still reset identities', as
   const { dbManager, calls, restore } = loadDbManager({
     discovery: ['public.chat_sessions'],
     truncateDiscovery: ['public.chat_sessions'],
-    columnDiscovery: ['public.users|password_hash|f|'],
+    columnDiscovery: ['public.users|password_hash|f||f'],
   });
   try {
     await dbManager.cloneDatabase('app_demo', 'app_demo_staging_x_abc123');

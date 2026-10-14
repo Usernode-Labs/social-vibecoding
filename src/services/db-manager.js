@@ -2292,13 +2292,17 @@ async function scrubPrivateColumns(targetDb, execute = execInTarget) {
   // obj_description. attnum > 0 filters out system columns; attisdropped
   // skips logically-removed columns that pg keeps as zombies. The
   // information_schema.columns join adds character_maximum_length so we
-  // can size the per-row placeholder to fit (e.g. VARCHAR(64)). Output is
-  // pipe-separated quadruples: <schema.table>|<column>|<not_null t/f>|<max_length or empty>.
+  // can size the per-row placeholder to fit (e.g. VARCHAR(64)).
+  // row_security_active says whether row-level security applies to this
+  // session's role on the table: then an UPDATE, and any check after it,
+  // would see only the rows a policy lets through. Output is pipe-separated:
+  // <schema.table>|<column>|<not_null t/f>|<max_length or empty>|<rls t/f>.
   const discoverySql = `
 SELECT n.nspname || '.' || c.relname,
        a.attname,
        a.attnotnull,
-       COALESCE(ic.character_maximum_length::text, '')
+       COALESCE(ic.character_maximum_length::text, ''),
+       row_security_active(c.oid)
   FROM pg_attribute a
   JOIN pg_class    c ON c.oid = a.attrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2330,13 +2334,13 @@ SELECT n.nspname || '.' || c.relname,
     .map((s) => s.trim())
     .filter(Boolean)
     .map((line) => {
-      // psql -At with the default field separator '|'. Four fields;
-      // the third is exactly 't' or 'f' from a bool column, the fourth
-      // is a character_maximum_length integer or '' when unbounded
+      // psql -At with the default field separator '|'. Five fields;
+      // the third and fifth are exactly 't' or 'f' from a bool column, the
+      // fourth is a character_maximum_length integer or '' when unbounded
       // (e.g. TEXT).
-      const [qualified, column, notNullRaw, maxLengthRaw] = line.split('|');
+      const [qualified, column, notNullRaw, maxLengthRaw, rlsRaw] = line.split('|');
       const maxLength = maxLengthRaw ? Number(maxLengthRaw) : null;
-      return { qualified, column, notNull: notNullRaw === 't', maxLength };
+      return { qualified, column, notNull: notNullRaw === 't', maxLength, rlsRaw };
     });
 
   if (targets.length === 0) {
@@ -2354,13 +2358,28 @@ SELECT n.nspname || '.' || c.relname,
   // into SQL, and it still fails the pass after the others are scrubbed.
   const failures = [];
   const columns = [];
-  for (const { qualified, column, notNull, maxLength } of targets) {
+  for (const { qualified, column, notNull, maxLength, rlsRaw } of targets) {
     const target = `${qualified}.${column}`;
     if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
       });
       failures.push({ target, error: 'unsafe identifier' });
+      continue;
+    }
+    if (rlsRaw !== 'f') {
+      // Row-level security would hide rows from the UPDATE and from every
+      // check after it, so the column cannot be shown to be scrubbed. Fail
+      // closed (an unreadable flag too) and leave the column out of SQL.
+      log.error('db-manager', 'staging:private column is behind row-level security', {
+        targetDb, qualified, column, rls: rlsRaw,
+      });
+      failures.push({
+        target,
+        error: rlsRaw === 't'
+          ? 'row-level security applies to this role, so rows could be hidden from the scrub'
+          : `unreadable row-level security flag ${JSON.stringify(rlsRaw)}`,
+      });
       continue;
     }
     if (!notNull) {
@@ -2398,14 +2417,25 @@ SELECT n.nspname || '.' || c.relname,
     // All of them in ONE statement first: one round trip instead of one or
     // two per column. Through psql (template build, direct copy) that is
     // one process instead of one per statement.
+    const oneStatement = scrubInOneStatementSql(columns.map((c) => ({
+      ...c, prefix: c.placeholder ? newRedactionPrefix(c.placeholder) : null,
+    })));
     let batchError = null;
-    try {
-      await execute(targetDb, scrubInOneStatementSql(columns.map((c) => ({
-        ...c, prefix: c.placeholder ? newRedactionPrefix(c.placeholder) : null,
-      }))));
-      scrubbed = columns.map((c) => c.target);
-    } catch (err) {
-      batchError = err;
+    let tooLong = false;
+    if (Buffer.byteLength(oneStatement) > MAX_SCRUB_STATEMENT_BYTES) {
+      // Hundreds of columns: psql takes the statement as one argument, which
+      // Linux caps at 128 KiB, so it is never sent; column by column instead.
+      tooLong = true;
+      log.warn('db-manager', 'Too many staging:private columns for one statement; scrubbing column by column', {
+        targetDb, count: columns.length, bytes: Buffer.byteLength(oneStatement),
+      });
+    } else {
+      try {
+        await execute(targetDb, oneStatement);
+        scrubbed = columns.map((c) => c.target);
+      } catch (err) {
+        batchError = err;
+      }
     }
     if (batchError && !databaseAnsweredWithError(batchError)) {
       // No answer, a lost connection, or psql stopped at its deadline: the
@@ -2422,14 +2452,17 @@ SELECT n.nspname || '.' || c.relname,
         `the column-by-column pass was not tried: ${briefError(batchError)}`
       );
     }
-    if (batchError) {
+    if (batchError || tooLong) {
       // The database refused the statement, so it rolled back and changed
-      // nothing. Today's column-by-column pass then scrubs every column it
-      // can and names each one it cannot; a check afterwards names any
-      // column a trigger or rule left unscrubbed.
-      log.warn('db-manager', 'One-statement column scrub failed; scrubbing column by column', {
-        targetDb, count: columns.length, err: briefError(batchError),
-      });
+      // nothing (or it was never sent). Today's column-by-column pass then
+      // scrubs every column it can and names each one it cannot; a check
+      // afterwards names any column a trigger or rule left unscrubbed. Each
+      // statement commits on its own, so deferred triggers have run by then.
+      if (batchError) {
+        log.warn('db-manager', 'One-statement column scrub failed; scrubbing column by column', {
+          targetDb, count: columns.length, err: briefError(batchError),
+        });
+      }
       const byColumn = await scrubColumnByColumn(targetDb, columns, execute);
       failures.push(...byColumn.failures);
       scrubbed = byColumn.scrubbed;
@@ -2466,11 +2499,20 @@ function newRedactionPrefix({ marker, nonceBytes }) {
 
 // What a column holds once scrubbed: NULL, or its placeholder namespace.
 // Names were validated and prefixes are [~_a-z0-9:], so both splice as text.
+// IS DISTINCT FROM NULL, not IS NOT NULL: for a composite value IS NOT NULL
+// asks whether every field is non-null, so ROW('secret', NULL) would pass.
 function unscrubbedRowSql({ column, prefix }) {
   return prefix
     ? `left(${column}::text, ${prefix.length}) IS DISTINCT FROM '${prefix}'`
-    : `${column} IS NOT NULL`;
+    : `${column} IS DISTINCT FROM NULL`;
 }
+
+// Above this the one statement is not sent, and the check after the
+// column-by-column pass is split into queries below it: psql receives a
+// statement as one command-line argument, and Linux refuses an argument over
+// 128 KiB (spawn E2BIG) before the database sees anything. About 400
+// columns fit.
+const MAX_SCRUB_STATEMENT_BYTES = 96 * 1024;
 
 // The whole column pass as one statement. A DO block runs as one statement,
 // so it commits or rolls back as a whole, and an error inside it reaches the
@@ -2483,6 +2525,15 @@ function unscrubbedRowSql({ column, prefix }) {
 // and could, for instance, copy an old private value into another private
 // column that a later per-column UPDATE would have cleared. Any of the three
 // raises, the block rolls back, and the caller scrubs column by column.
+// Two settings make step 3 see what will be committed:
+//   - SET CONSTRAINTS ALL IMMEDIATE: a DEFERRABLE INITIALLY DEFERRED
+//     constraint trigger would otherwise fire at commit, after step 3, and
+//     could write a private value back. Set first, so such triggers run at
+//     the end of each UPDATE, and again before step 3 in case one of them
+//     deferred anything again.
+//   - SET LOCAL row_security = off: a query that row-level security would
+//     filter raises instead of silently skipping rows. Discovery already
+//     refuses tables where it applies; this keeps the block fail-closed too.
 function scrubInOneStatementSql(columns) {
   const reserve = columns.filter((c) => c.prefix).map((c) =>
     `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE left(${c.column}::text, ${c.prefix.length}) = '${c.prefix}') THEN\n` +
@@ -2498,7 +2549,11 @@ function scrubInOneStatementSql(columns) {
     `  IF EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)}) THEN\n` +
     `    RAISE EXCEPTION 'staging:private scrub: % still holds a value after its UPDATE', '${c.target}';\n` +
     '  END IF;');
-  return ['DO $staging_scrub$', 'BEGIN', ...reserve, ...updates, ...verify, 'END', '$staging_scrub$'].join('\n');
+  return ['DO $staging_scrub$', 'BEGIN',
+    '  SET LOCAL row_security = off;', '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...reserve, ...updates,
+    '  SET CONSTRAINTS ALL IMMEDIATE;',
+    ...verify, 'END', '$staging_scrub$'].join('\n');
 }
 
 // The one statement is long (a few kB for the platform's own database), and
@@ -2575,11 +2630,28 @@ async function scrubColumnByColumn(targetDb, columns, execute) {
 // column-by-column pass). If the query itself fails, the caller counts that
 // as a failure: nothing is confirmed.
 async function columnsNotScrubbed(targetDb, columns, execute) {
-  if (columns.length === 0) return [];
-  const out = await execute(targetDb, columns.map((c) =>
-    `SELECT '${c.target}' WHERE EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`).join(' UNION ALL '),
-  { tuplesOnly: true });
-  return String(out || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  // As few queries as fit under MAX_SCRUB_STATEMENT_BYTES (one for any
+  // ordinary schema).
+  const queries = [];
+  let parts = [];
+  let bytes = 0;
+  for (const c of columns) {
+    const part = `SELECT '${c.target}' WHERE EXISTS (SELECT 1 FROM ${c.qualified} WHERE ${unscrubbedRowSql(c)})`;
+    if (parts.length > 0 && bytes + part.length + 11 > MAX_SCRUB_STATEMENT_BYTES) {
+      queries.push(parts.join(' UNION ALL '));
+      parts = [];
+      bytes = 0;
+    }
+    parts.push(part);
+    bytes += part.length + 11;
+  }
+  if (parts.length > 0) queries.push(parts.join(' UNION ALL '));
+  const found = [];
+  for (const sql of queries) {
+    const out = await execute(targetDb, sql, { tuplesOnly: true });
+    found.push(...String(out || '').split('\n').map((s) => s.trim()).filter(Boolean));
+  }
+  return found;
 }
 
 // ─── Per-app database storage cap (#2253) ───────────────────────────────

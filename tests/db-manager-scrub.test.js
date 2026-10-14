@@ -92,11 +92,11 @@ const DB = 'app_demo_staging_x_abc123';
 
 test('every private column goes out in one statement: one UPDATE per table, between the two checks', async () => {
   const f = loadDbManager([
-    'public.onchain_accounts|registration_code|t|64',
-    'public.onchain_accounts|secret_key|t|64',
-    'public.users|anthropic_key_enc|f|',
-    'public.users|password|t|255',
-    'public.users|wallet_link_token|f|64',
+    'public.onchain_accounts|registration_code|t|64|f',
+    'public.onchain_accounts|secret_key|t|64|f',
+    'public.users|anthropic_key_enc|f||f',
+    'public.users|password|t|255|f',
+    'public.users|wallet_link_token|f|64|f',
   ]);
   try {
     const result = await f.dbManager.scrubPrivateColumns(DB);
@@ -124,7 +124,7 @@ test('every private column goes out in one statement: one UPDATE per table, betw
     // After the UPDATEs, each of the five columns is checked.
     const after = lines.slice(firstUpdate).join('\n');
     assert.equal((after.match(/still holds a value after its UPDATE/g) || []).length, 5);
-    assert.match(after, /FROM public\.users WHERE anthropic_key_enc IS NOT NULL\) THEN/);
+    assert.match(after, /FROM public\.users WHERE anthropic_key_enc IS DISTINCT FROM NULL\) THEN/);
     assert.match(after, /FROM public\.users WHERE left\(password::text, 37\) IS DISTINCT FROM '__staging_redacted__[0-9a-f]{16}:'\) THEN/);
     assert.deepEqual(result.scrubbed, [
       'public.onchain_accounts.registration_code', 'public.onchain_accounts.secret_key',
@@ -136,7 +136,7 @@ test('every private column goes out in one statement: one UPDATE per table, betw
 });
 
 test('each scrub picks fresh namespaces, so a second scrub never reuses the first one\'s values', async () => {
-  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64']);
+  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64|f']);
   try {
     await f.dbManager.scrubPrivateColumns(DB);
     await f.dbManager.scrubPrivateColumns(DB);
@@ -149,7 +149,7 @@ test('each scrub picks fresh namespaces, so a second scrub never reuses the firs
 });
 
 test('an unbounded NOT NULL column gets the full marker, and the ctid suffix is never truncated', async () => {
-  const f = loadDbManager(['public.some_table|some_col|t|']);
+  const f = loadDbManager(['public.some_table|some_col|t||f']);
   try {
     await f.dbManager.scrubPrivateColumns(DB);
     assert.match(f.blocks()[0], /UPDATE public\.some_table SET some_col = '__staging_redacted__[0-9a-f]{16}:' \|\| ctid::text;/);
@@ -160,7 +160,7 @@ test('an unbounded NOT NULL column gets the full marker, and the ctid suffix is 
 });
 
 test('a VARCHAR(32) private code uses a compact, still unique namespace', async () => {
-  const f = loadDbManager(['public.short_codes|code|t|32']);
+  const f = loadDbManager(['public.short_codes|code|t|32|f']);
   try {
     await f.dbManager.scrubPrivateColumns(DB);
     const prefix = /SET code = '(~[0-9a-f]{8}:)' \|\| ctid::text;/.exec(f.blocks()[0])[1];
@@ -171,7 +171,7 @@ test('a VARCHAR(32) private code uses a compact, still unique namespace', async 
 });
 
 test('a short NOT NULL column fails closed and stays out of the statement; the others are still scrubbed', async () => {
-  const f = loadDbManager(['public.short_codes|code|t|20', 'public.users|secret|f|']);
+  const f = loadDbManager(['public.short_codes|code|t|20|f', 'public.users|secret|f||f']);
   try {
     await assert.rejects(f.dbManager.scrubPrivateColumns(DB),
       (err) => /Failed to scrub 1 staging:private column\(s\)/.test(err.message)
@@ -186,8 +186,8 @@ test('a short NOT NULL column fails closed and stays out of the statement; the o
 
 test('an unsafe identifier is never put into SQL and still fails the pass', async () => {
   const f = loadDbManager([
-    'public.users|bad"; DROP TABLE users; --|f|',
-    'public.users|secret|f|',
+    'public.users|bad"; DROP TABLE users; --|f||f',
+    'public.users|secret|f||f',
   ]);
   try {
     await assert.rejects(f.dbManager.scrubPrivateColumns(DB),
@@ -200,7 +200,7 @@ test('an unsafe identifier is never put into SQL and still fails the pass', asyn
 });
 
 test('nullable columns are set to NULL, with no namespace to reserve', async () => {
-  const f = loadDbManager(['public.users|email_confirmation_token|f|255']);
+  const f = loadDbManager(['public.users|email_confirmation_token|f|255|f']);
   try {
     await f.dbManager.scrubPrivateColumns(DB);
     const block = f.blocks()[0];
@@ -223,9 +223,9 @@ test('no private columns: no statement at all', async () => {
 
 test('a statement the database refuses falls back to column by column, which names the failing column', async () => {
   const f = loadDbManager([
-    'public.onchain_accounts|registration_code|t|64',
-    'public.users|password|t|255',
-    'public.users|secret|f|',
+    'public.onchain_accounts|registration_code|t|64|f',
+    'public.users|password|t|255|f',
+    'public.users|secret|f||f',
   ], {
     batch: () => { throw psqlError('value too long for type character varying(64)'); },
     update: (sql) => { if (/^UPDATE public\.users SET password/.test(sql)) throw psqlError('refused by a trigger'); },
@@ -248,7 +248,7 @@ test('a statement the database refuses falls back to column by column, which nam
 });
 
 test('a refused statement whose columns all scrub one by one is not a failure, once the check confirms them', async () => {
-  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64', 'public.users|secret|f|'], {
+  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64|f', 'public.users|secret|f||f'], {
     batch: () => { throw psqlError('staging:private scrub: public.users.secret still holds a value after its UPDATE'); },
   });
   try {
@@ -258,14 +258,14 @@ test('a refused statement whose columns all scrub one by one is not a failure, o
     const prefix = /registration_code = '([^']+)'/.exec(f.updates()[0])[1];
     assert.equal(f.checks()[0],
       `SELECT 'public.onchain_accounts.registration_code' WHERE EXISTS (SELECT 1 FROM public.onchain_accounts WHERE left(registration_code::text, ${prefix.length}) IS DISTINCT FROM '${prefix}')`
-      + " UNION ALL SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS NOT NULL)");
+      + " UNION ALL SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)");
   } finally {
     f.restore();
   }
 });
 
 test('a column still holding a value after the column-by-column pass fails it, by name', async () => {
-  const f = loadDbManager(['public.users|secret|f|', 'public.users|token|f|'], {
+  const f = loadDbManager(['public.users|secret|f||f', 'public.users|token|f||f'], {
     batch: () => { throw psqlError('staging:private scrub: public.users.token still holds a value after its UPDATE'); },
     unscrubbed: ['public.users.token'],
   });
@@ -279,7 +279,7 @@ test('a column still holding a value after the column-by-column pass fails it, b
 });
 
 test('an occupied namespace in the column-by-column pass is rejected before updating the column', async () => {
-  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64'], {
+  const f = loadDbManager(['public.onchain_accounts|registration_code|t|64|f'], {
     occupiedAnswers: ['t', 'f'],
     batch: () => { throw psqlError('staging:private scrub: placeholder namespace is taken in public.onchain_accounts.registration_code'); },
   });
@@ -297,7 +297,7 @@ test('an occupied namespace in the column-by-column pass is rejected before upda
 });
 
 test('no answer to the statement: nothing more is sent, and the pass fails', async () => {
-  const f = loadDbManager(['public.users|secret|f|', 'public.users|token|t|64'], {
+  const f = loadDbManager(['public.users|secret|f||f', 'public.users|token|t|64|f'], {
     batch: () => { throw psqlTimedOut(); },
   });
   try {
@@ -319,7 +319,7 @@ test('the error a node-postgres connection gives decides the same way', async ()
     const sent = [];
     const execute = async (db, sql) => {
       sent.push(sql);
-      if (/col_description/.test(sql)) return 'public.users|secret|f|';
+      if (/col_description/.test(sql)) return 'public.users|secret|f||f';
       if (/^DO /.test(sql)) throw batchError;
       return '';
     };
@@ -328,7 +328,7 @@ test('the error a node-postgres connection gives decides the same way', async ()
   const refused = run(Object.assign(new Error('deadlock detected'), { severity: 'ERROR', code: '40P01' }));
   assert.equal(await refused.done, 'ok');
   assert.deepEqual(refused.sent.slice(2), ['UPDATE public.users SET secret = NULL',
-    "SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS NOT NULL)"]);
+    "SELECT 'public.users.secret' WHERE EXISTS (SELECT 1 FROM public.users WHERE secret IS DISTINCT FROM NULL)"]);
   for (const err of [new Error('Query read timeout'), new Error('Connection terminated unexpectedly'),
     Object.assign(new Error('terminating connection due to administrator command'), { severity: 'FATAL', code: '57P01' })]) {
     const lost = run(err);
@@ -343,6 +343,55 @@ test('discovery failure is fatal before any UPDATE', async () => {
   const execute = async (db, sql) => { sent.push(sql); throw new Error('down'); };
   await assert.rejects(scrubPrivateColumns(DB, execute), /Failed to discover staging:private columns/);
   assert.equal(sent.length, 1);
+});
+
+test('the statement flushes deferred triggers before its check and makes row-level security raise', async () => {
+  const f = loadDbManager(['public.users|secret|f||f']);
+  try {
+    await f.dbManager.scrubPrivateColumns(DB);
+    const lines = f.blocks()[0].split('\n');
+    assert.deepEqual(lines.slice(2, 4), ['  SET LOCAL row_security = off;', '  SET CONSTRAINTS ALL IMMEDIATE;']);
+    const update = lines.findIndex((l) => /^ {2}UPDATE /.test(l));
+    const check = lines.findIndex((l) => /still holds a value/.test(l)) - 1;
+    assert.equal(lines[check - 1], '  SET CONSTRAINTS ALL IMMEDIATE;', 'deferred triggers run again right before the check');
+    assert.ok(update < check - 1);
+  } finally {
+    f.restore();
+  }
+});
+
+test('a column behind row-level security for this role is refused and left out of SQL', async () => {
+  const f = loadDbManager([
+    'public.guarded|secret|f||t',
+    'public.odd|secret|f|',
+    'public.users|secret|f||f',
+  ]);
+  try {
+    await assert.rejects(f.dbManager.scrubPrivateColumns(DB),
+      (err) => /Failed to scrub 2 staging:private column\(s\)/.test(err.message)
+        && /public\.guarded\.secret \(row-level security applies to this role/.test(err.message)
+        && /public\.odd\.secret \(unreadable row-level security flag/.test(err.message));
+    assert.ok(f.calls.slice(1).every((sql) => !/guarded|odd/.test(sql)));
+    assert.match(f.blocks()[0], /UPDATE public\.users SET secret = NULL;/);
+  } finally {
+    f.restore();
+  }
+});
+
+test('too many columns for one psql argument: column by column, with the check split to fit', async () => {
+  const rows = Array.from({ length: 800 }, (_, i) => `public.wide|private_${String(i).padStart(3, '0')}|f||f`);
+  const f = loadDbManager(rows);
+  try {
+    const result = await f.dbManager.scrubPrivateColumns(DB);
+    assert.equal(result.scrubbed.length, 800);
+    assert.deepEqual(f.blocks(), [], 'the one statement is never sent');
+    assert.equal(f.updates().length, 800);
+    assert.ok(f.checks().length >= 2, 'the check is split');
+    assert.ok(f.checks().every((sql) => Buffer.byteLength(sql) <= 96 * 1024));
+    assert.equal(f.checks().join(' UNION ALL ').split(' UNION ALL ').length, 800, 'every column is checked once');
+  } finally {
+    f.restore();
+  }
 });
 
 // ── against a real server ───────────────────────────────────────────────
@@ -363,17 +412,31 @@ async function scratchDatabase(t, prefix) {
   }
   const fresh = () => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
   const created = [];
-  const open = new Map();
+  const roles = [];
+  const open = [];
   t.after(async () => {
-    for (const client of open.values()) await client.end().catch(() => {});
+    for (const { client } of open) await client.end().catch(() => {});
     for (const db of created.reverse()) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
+    for (const role of roles) await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
     await admin.end().catch(() => {});
   });
-  const connect = async (name) => {
+  // A login role that is neither superuser nor allowed to bypass RLS.
+  const ordinaryRole = async () => {
+    const role = fresh();
+    const password = crypto.randomBytes(12).toString('hex');
+    await admin.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${password}'`);
+    roles.push(role);
+    return { role, password };
+  };
+  const urlFor = (name, login) => {
     const url = new URL(DSN); url.pathname = `/${name}`;
-    const client = new Client({ connectionString: String(url) });
+    if (login) { url.username = login.role; url.password = login.password; }
+    return url;
+  };
+  const connect = async (name, login = null) => {
+    const client = new Client({ connectionString: String(urlFor(name, login)) });
     await client.connect();
-    open.set(name, client);
+    open.push({ name, client });
     const statements = [];
     const execute = async (db, sql, opts = {}) => {
       assert.equal(db, name);
@@ -385,9 +448,10 @@ async function scratchDatabase(t, prefix) {
     return { name, client, statements, execute };
   };
   const close = async (name) => {
-    const client = open.get(name);
-    open.delete(name);
-    if (client) await client.end();
+    for (const entry of open.filter((e) => e.name === name)) {
+      open.splice(open.indexOf(entry), 1);
+      await entry.client.end();
+    }
   };
   const copy = async (from) => {
     await close(from);
@@ -399,7 +463,7 @@ async function scratchDatabase(t, prefix) {
   const name = fresh();
   await admin.query(`CREATE DATABASE ${name}`);
   created.push(name);
-  return { ...(await connect(name)), copy, close };
+  return { ...(await connect(name)), copy, close, connect, ordinaryRole, urlFor };
 }
 
 test('real server: one statement scrubs every column, and repeated scrubs of copies keep placeholders unique', { timeout: 60000 }, async (t) => {
@@ -542,4 +606,111 @@ test('real server, through psql: a refused statement falls back; the platform sc
   const third = await s.copy(again.name);
   await scrubPrivateColumns(third.name, third.execute);
   assert.equal(third.statements.length, 2, 'discovery and the one statement');
+});
+
+test('real server: a deferred constraint trigger that writes a private value back is caught; column by column clears it', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'scrub_defer');
+  if (!s) return;
+  // Fires at commit unless made immediate: after the statement's own check.
+  await s.client.query(`
+    CREATE TABLE secrets (id int PRIMARY KEY, api_key text, previous_key text);
+    INSERT INTO secrets VALUES (1, 'original-private', NULL);
+    COMMENT ON COLUMN secrets.api_key IS 'staging:private';
+    COMMENT ON COLUMN secrets.previous_key IS 'staging:private';
+    CREATE FUNCTION keep_previous() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.api_key IS DISTINCT FROM OLD.api_key THEN UPDATE secrets SET previous_key = OLD.api_key WHERE id = NEW.id; END IF;
+      RETURN NULL; END $$;
+    CREATE CONSTRAINT TRIGGER keep_previous AFTER UPDATE ON secrets DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION keep_previous();
+  `);
+  const { scrubPrivateColumns } = require('../src/services/db-manager');
+  await scrubPrivateColumns(s.name, s.execute);
+  assert.equal(s.statements.filter((sql) => /^UPDATE /.test(sql)).length, 2, 'fell back to one UPDATE per column');
+  const rows = (await s.client.query('SELECT api_key, previous_key FROM secrets')).rows;
+  assert.deepEqual(rows, [{ api_key: null, previous_key: null }]);
+});
+
+test('real server: a composite value with a NULL field counts as a value, not as NULL', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'scrub_comp');
+  if (!s) return;
+  await s.client.query(`
+    CREATE TYPE private_pair AS (secret text, unused text);
+    CREATE TABLE secrets (id int, api_key private_pair, previous_key private_pair);
+    INSERT INTO secrets VALUES (1, ROW('original-private', NULL)::private_pair, NULL);
+    COMMENT ON COLUMN secrets.api_key IS 'staging:private';
+    COMMENT ON COLUMN secrets.previous_key IS 'staging:private';
+    CREATE FUNCTION keep_previous() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.api_key IS DISTINCT FROM OLD.api_key THEN NEW.previous_key = OLD.api_key; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER keep_previous BEFORE UPDATE ON secrets FOR EACH ROW EXECUTE FUNCTION keep_previous();
+  `);
+  const { scrubPrivateColumns } = require('../src/services/db-manager');
+  await scrubPrivateColumns(s.name, s.execute);
+  assert.equal(s.statements.filter((sql) => /^UPDATE /.test(sql)).length, 2, 'the one statement caught (original-private,)');
+  const rows = (await s.client.query('SELECT api_key IS NULL AS a, previous_key IS NULL AS p FROM secrets')).rows;
+  assert.deepEqual(rows, [{ a: true, p: true }]);
+});
+
+test('real server: row-level security that hides rows from this role fails the pass, on both executors', { timeout: 60000 }, async (t) => {
+  const s = await scratchDatabase(t, 'scrub_rls');
+  if (!s) return;
+  const login = await s.ordinaryRole();
+  await s.client.query(`
+    GRANT ALL ON SCHEMA public TO ${login.role};
+    CREATE TABLE secrets (id int, secret text);
+    INSERT INTO secrets VALUES (1, 'visible-private'), (2, 'hidden-private');
+    COMMENT ON COLUMN secrets.secret IS 'staging:private';
+    ALTER TABLE secrets OWNER TO ${login.role};
+    ALTER TABLE secrets ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE secrets FORCE ROW LEVEL SECURITY;
+    CREATE POLICY visible ON secrets USING (id = 1) WITH CHECK (id = 1);
+    CREATE TABLE refuses (id serial PRIMARY KEY, code text NOT NULL CHECK (code ~ '^[0-9]+$'), other text);
+    INSERT INTO refuses (code, other) VALUES ('1', 'other-private');
+    COMMENT ON COLUMN refuses.other IS 'staging:private';
+    ALTER TABLE refuses OWNER TO ${login.role};
+  `);
+  const { scrubPrivateColumns } = require('../src/services/db-manager');
+  const asRole = await s.connect(s.name, login);
+  await assert.rejects(scrubPrivateColumns(s.name, asRole.execute),
+    (err) => /Failed to scrub 1 staging:private column\(s\)/.test(err.message)
+      && /public\.secrets\.secret \(row-level security applies to this role/.test(err.message));
+  assert.ok(asRole.statements.slice(1).every((sql) => !/secrets/.test(sql)), 'the table is never updated or checked');
+  assert.match(asRole.statements[1], /UPDATE public\.refuses SET other = NULL;/, 'the other columns are still scrubbed');
+
+  // The column-by-column pass, forced by a column the database refuses,
+  // through psql (a fresh session per statement) as the same role.
+  await s.client.query(`COMMENT ON COLUMN refuses.code IS 'staging:private'`);
+  try { execFileSync('psql', ['--version']); } catch { return; }
+  await s.close(s.name);
+  const saved = process.env.DB_ADMIN_URL;
+  process.env.DB_ADMIN_URL = String(s.urlFor('usernode', login));
+  t.after(() => { if (saved === undefined) delete process.env.DB_ADMIN_URL; else process.env.DB_ADMIN_URL = saved; });
+  await assert.rejects(scrubPrivateColumns(s.name),
+    (err) => /Failed to scrub 2 staging:private column\(s\)/.test(err.message)
+      && /public\.secrets\.secret \(row-level security applies to this role/.test(err.message)
+      && /public\.refuses\.code \(/.test(err.message));
+  const owner = await s.connect(s.name);
+  const hidden = (await owner.client.query('SELECT secret FROM secrets WHERE id = 2')).rows[0];
+  assert.equal(hidden.secret, 'hidden-private', 'nothing claims the column is scrubbed: the pass failed');
+});
+
+test('real server, through psql: too many columns for one argument are scrubbed column by column', { timeout: 180000 }, async (t) => {
+  try { execFileSync('psql', ['--version']); } catch { t.skip('psql not installed'); return; }
+  const s = await scratchDatabase(t, 'scrub_wide');
+  if (!s) return;
+  const count = 600;
+  const columns = Array.from({ length: count }, (_, i) => `private_${i}`);
+  await s.client.query(`CREATE TABLE wide (id int, ${columns.map((c) => `${c} text`).join(', ')})`);
+  await s.client.query(`INSERT INTO wide VALUES (1, ${columns.map((c, i) => `'s${i}'`).join(', ')})`);
+  await s.client.query(columns.map((c) => `COMMENT ON COLUMN wide.${c} IS 'staging:private';`).join('\n'));
+  await s.close(s.name);
+  const saved = process.env.DB_ADMIN_URL;
+  const adminUrl = new URL(DSN); adminUrl.pathname = '/usernode';
+  process.env.DB_ADMIN_URL = String(adminUrl);
+  t.after(() => { if (saved === undefined) delete process.env.DB_ADMIN_URL; else process.env.DB_ADMIN_URL = saved; });
+  const { scrubPrivateColumns } = require('../src/services/db-manager');
+  const result = await scrubPrivateColumns(s.name);
+  assert.equal(result.scrubbed.length, count);
+  const check = await s.connect(s.name);
+  const row = (await check.client.query('SELECT * FROM wide')).rows[0];
+  assert.ok(columns.every((c) => row[c] === null));
 });

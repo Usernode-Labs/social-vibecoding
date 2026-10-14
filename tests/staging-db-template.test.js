@@ -365,7 +365,7 @@ test('the preview build asks for the template and records how the clone went', (
 test('template clone uses two bounded connections for 101 redactions and closes both', async () => {
   const fixture = loadDbManager({ templateComment: fresh(),
     privateTables: Array.from({ length: 82 }, (_, i) => `public.private_${i}`),
-    privateColumns: Array.from({ length: 19 }, (_, i) => `public.users|secret_${i}|f|`),
+    privateColumns: Array.from({ length: 19 }, (_, i) => `public.users|secret_${i}|f||f`),
   });
   try {
     const result = await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
@@ -389,7 +389,7 @@ test('template clone uses two bounded connections for 101 redactions and closes 
 
 test('reused connection preserves bool/null discovery and unique private-column redaction', async () => {
   const fixture = loadDbManager({ templateComment: fresh(), privateColumns: [
-    'public.users|token|t|64', 'public.users|password|f|',
+    'public.users|token|t|64|f', 'public.users|password|f||f',
   ] });
   try {
     await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
