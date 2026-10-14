@@ -219,6 +219,63 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
 });
 
+test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
+  // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
+  // the page he was still looking at, the sheet's ✕ was hard to find and to
+  // hit, and its arrows ("Open in the form") read as "make this bigger" and
+  // left comment mode. Now a tap leaves the pin and a small box beside it,
+  // with no field and so no keyboard; a tap on the box opens the sheet with
+  // the keys, in the same gesture; the pin and the box drag; ✕ closes it.
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /const small = phone && !expanded && !!draft && draft\.active != null;/);
+  assert.match(src, /\{draft && target && smallComment \? \(/);
+  assert.match(src, /id="comment-pin-small"/);
+  // No keyboard until the sheet: on a phone the focus effect waits for it.
+  assert.match(src, /const writing = !phone \|\| expanded;/);
+  assert.match(src, /if \(!t \|\| !writing\) return;/);
+  // The field opens the sheet inside the tap: drawn first (flushSync), then
+  // focused, or iOS would not raise the keys.
+  assert.match(src, /flushSync\(\(\) => setExpanded\(true\)\);\s*const field = textRef\.current;\s*if \(!field\) return;\s*field\.focus\(\{ preventScroll: true \}\);/);
+  assert.match(src, /onClick=\{expand\}/);
+  // A new comment, the request's first or its next, starts small.
+  assert.equal((src.match(/setExpanded\(false\);\n\s+setDraft\(\{/g) || []).length, 2);
+  // A drag on the box or on the open pin moves the pin; a lift without one is a tap.
+  assert.match(src, /if \(Math\.hypot\(dx, dy\) <= 8\) return;/);
+  assert.match(src, /place\(onPicture\(\{ x: d\.from\.x \+ e\.clientX - d\.start\.x, y: d\.from\.y \+ e\.clientY - d\.start\.y \}\)\);/);
+  assert.match(src, /performance\.now\(\) - draggedAt\.current < 400/, 'the click a drag ends with is not a tap');
+  assert.match(src, /const handle = on && small;/);
+  assert.match(src, /onPointerDown=\{\(e\) => e\.stopPropagation\(\)\}\s*onClick=\{closeSmall\}/, 'its ✕ never starts a drag');
+  // With the sheet open, a press on the page above it folds it; the pin stays.
+  assert.match(src, /if \(phone && expanded && draft && draft\.active != null\) \{\s*if \(!draft\.sending\) setExpanded\(false\);\s*return;\s*\}/);
+  // The sheet's head: Minimize folds it, ✕ is a disc in a 44px target, and
+  // on a phone nothing in it hands over to the form (the bar's Form does).
+  assert.match(src, /const PHONE_TOOL = 'grid h-11 w-11 /);
+  assert.match(src, /onClick=\{collapse\}\s*className=\{PHONE_TOOL\}/);
+  assert.match(src, /onClick=\{requestDiscard\}\s*className=\{PHONE_TOOL\}/);
+  const head = src.slice(src.indexOf('const head = draft && target ? ('), src.indexOf('const small = phone'));
+  const phoneHead = head.slice(head.indexOf('{phone ? ('), head.indexOf(') : (\n        <>'));
+  assert.ok(phoneHead.includes('ChevronDownIcon'), 'the phone head is found');
+  assert.doesNotMatch(phoneHead, /toForm/);
+  assert.match(src, /<div className="comment-sheet-head">\s*<div aria-hidden="true" className="comment-sheet-grabber" \/>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-head \{\s*position: sticky;\s*top: -0\.75rem;/,
+    'the head stays at the top while the sheet scrolls under it');
+  assert.match(css, /\.comment-small-in \{ animation: comment-small-in 160ms ease-out; \}/);
+  assert.equal(message('devchat:commentPin.box.minimize'), 'Minimize');
+  assert.equal(message('devchat:commentPin.box.write'), 'Write your comment');
+  // The box keeps above the home indicator.
+  assert.match(src, /style=\{\{ height: 'var\(--platform-safe-bottom, 0px\)' \}\}/);
+  assert.match(src, /size\.height - \(inset \|\| barAt \? 0 : BAR_SPACE\) - safeBottom/);
+});
+
+test('the preview draws only the pins that fall inside it', () => {
+  // Two pins far apart on a phone's tall picture do not both fit the
+  // preview's 64x42 slice, and the one outside was drawn over the Title and
+  // Kudos rows (iPhone 17 Pro simulator, 14 Oct 2026).
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /\.filter\(\(\{ left, top \}\) => left >= 0 && left <= 64 && top >= 0 && top <= 42\)/);
+});
+
 test('the close-up always zooms a full picture about its own pin', () => {
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   // The stretched-thumbnail fallback, and its pin placed as a fraction of
@@ -519,7 +576,7 @@ test('a preview crop slides to the pins and puts them where the crop drew them',
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
   assert.match(src, /const shown = pic\.size \|\| size;/);
   assert.match(src, /const crop = coverCrop\(\{ width: 64, height: 42 \}, shown, focus\);/);
-  assert.match(src, /style=\{\{ left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\}/);
+  assert.match(src, /\(\{ c, left: crop\.x \+ at\.x \* crop\.width, top: crop\.y \+ at\.y \* crop\.height \}\)/);
   assert.doesNotMatch(src, /left: `\$\{c\.pin\.x \* 100\}%`/);
   assert.match(src, /<img\s+src=\{pic\.thumb\}/,
     'the chip draws the full picture, never the crop\'s own thumb');

@@ -438,7 +438,8 @@ async function createDatabase(dbName) {
 // Where: an app's own database is on the main server. A preview-side one
 // (isPreviewSideDb) is dropped on EVERY configured server, the preview
 // server first, because nothing records which one it was made on and
-// DROP … IF EXISTS costs nothing where it is absent. `server` narrows that
+// DROP … IF EXISTS is harmless where it is absent. A build asks first instead
+// (dropOldTarget), because there the time counts. `server` narrows that
 // to one server (the orphan sweep, which decided per server); `execute` is a
 // caller's own session and is used as it is.
 async function dropDatabase(dbName, { strict = false, execute = null, retry = {}, server = null } = {}) {
@@ -450,7 +451,8 @@ async function dropDatabase(dbName, { strict = false, execute = null, retry = {}
     return;
   }
 
-  if (execute) return dropDatabaseWith(dbName, { strict, execute, retry });
+  // `server` with `execute` only names, in the log, the server that session is on.
+  if (execute) return dropDatabaseWith(dbName, { strict, execute, retry, server: server ? serverKey(server) : PRIMARY_SERVER });
   const servers = server ? [serverKey(server)] : serversHolding(dbName);
   let firstError = null;
   for (const key of servers) {
@@ -938,16 +940,45 @@ async function cloneDatabaseOn(server, sourceDb, targetDb, { viaTemplate }) {
 // dropping it is tidying, and its failure (that server being down, most
 // likely while it is being drained) must not stop a build that does not use
 // it. It stays for the orphan sweep.
+//
+// The other server is asked first, in one statement, whether it holds
+// anything of this name; the four-statement drop runs only when it does. The
+// drop used to run every time, on the build's critical path, and nearly
+// every build finds nothing there. An answer other than a plain "no" drops
+// as before. The question goes through the same runner as the drop (one psql
+// process), so it reaches the same server with the same identity, TLS
+// settings and connect deadline that the drop does.
 async function dropOldTarget(targetDb, server, { ownServer = true } = {}) {
   for (const other of serversHolding(targetDb)) {
     if (other === serverKey(server)) continue;
-    await dropDatabase(targetDb, { strict: true, server: other }).catch((err) => {
+    try {
+      if (await holdsNothingOfName(targetDb, adminExecutor(other))) {
+        log.debug('db-manager', 'No old database or role of this name on the other server', { dbName: targetDb, server: other });
+        continue;
+      }
+      await dropDatabase(targetDb, { strict: true, server: other });
+    } catch (err) {
       log.warn('db-manager', 'Could not drop an old database of this name on the other server; leaving it for the sweep', {
         dbName: targetDb, server: other, err: err.message,
       });
-    });
+    }
   }
   if (ownServer) await dropDatabase(targetDb, { strict: true, server: serverKey(server) });
+}
+
+// True only when the server `execute` runs on positively answers that it has
+// neither a database named `dbName` nor that database's owner role (a role
+// can outlive its database when a drop stopped half way). Throws when the
+// server cannot be asked. pg_database and pg_roles are shared catalogs, so
+// the maintenance database sees every database and role on the server.
+async function holdsNothingOfName(dbName, execute) {
+  const role = ownerRoleName(dbName);
+  if (!SAFE_IDENT.test(dbName) || !SAFE_IDENT.test(role)) return false;
+  const out = await execute(
+    `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${dbName}') OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}')`,
+    { tuplesOnly: true },
+  );
+  return String(out).trim() === 'f';
 }
 
 async function cloneDatabaseDirect(sourceDb, targetDb, { server = PRIMARY_SERVER } = {}) {
@@ -1391,7 +1422,7 @@ async function cloneFromTemplate(templateDb, targetDb, {
   await withDatabaseConnection(maintenanceDb, async (execute) => {
     const admin = singleConnection((sql, opts) => execute(maintenanceDb, sql, opts));
     onProgress?.('drop_target');
-    await dropDatabase(targetDb, { strict: true, execute: admin });
+    await dropDatabase(targetDb, { strict: true, execute: admin, server });
     onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
     onProgress?.('copy_template');

@@ -2311,6 +2311,14 @@
     "text": "Discard this request",
     "description": "Accessible name of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away without posting it."
   },
+  "commentPin.box.minimize": {
+    "text": "Minimize",
+    "description": "Tooltip and accessible name of a button at the top of the comment sheet on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot): folds the sheet back to the small box beside the comment's pin, so the page is in sight again. Nothing written is lost."
+  },
+  "commentPin.box.write": {
+    "text": "Write your comment",
+    "description": "Accessible name of the small box beside a new comment's pin on a phone in comment mode (a layer over the page where a tap leaves a comment pinned to that spot), while nothing is written yet: tapping it opens the comment sheet with the keyboard."
+  },
   "commentPin.textLabelNumbered": {
     "text": "Comment {{number}}",
     "description": "Accessible name of a comment's text box in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has several comments. {{number}} is the comment's number within the request."
