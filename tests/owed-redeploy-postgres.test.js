@@ -153,6 +153,38 @@ test('an owed redeploy survives a restart, against the full schema', { timeout: 
     assert.equal((await read(a.id)).redeploy_owed_at, null);
   });
 
+  await t.test('with app delivery on, the vote asks the machine and owes nothing the sweep would deploy beside it', async () => {
+    const a = await app();
+    const { rows: [issue] } = await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by)
+       VALUES ($1, 'Set API_KEY', 'secret_change', $2, $3) RETURNING *`,
+      [a.id, JSON.stringify({ key: 'API_KEY', action: 'set', valueEnc: encrypt('delivered', DATA_KEY), valueLast4: 'ered' }), author.id]);
+    // issues.js reads the workflow module at call time.
+    const id = require.resolve('../src/workflow/platform.ts');
+    const real = require.cache[id];
+    const requested = [];
+    require.cache[id] = { id, filename: id, loaded: true, paths: [], exports: {
+      deliveryEnabled: () => true,
+      requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+    } };
+    rebuildImpl = async () => { throw new Error('deployed beside the machine'); };
+    try {
+      const applied = await maybeApplySecretChangeProposal(config, pool,
+        { ...issue, app_slug: a.slug }, { force: true, forceBy: { id: author.id, username: 'author' } });
+      assert.equal(applied.applied, true, JSON.stringify(applied));
+      await until(() => requested.length === 1, { label: 'the request' });
+    } finally {
+      if (real) require.cache[id] = real; else delete require.cache[id];
+    }
+    assert.deepEqual(requested, [[a.id, 'secret_change']]);
+    const after = await read(a.id);
+    assert.equal(after.redeploy_owed_at, null, 'nothing owed: the machine keeps the request');
+    assert.equal(after.redeploy_owner, null);
+    // However long the leader waits, there is nothing for its sweep.
+    const swept = await owed.sweep(config, pool, { rebuild: async () => { throw new Error('a second deploy'); } });
+    assert.ok(!swept.kicked.includes(a.id));
+  });
+
   await t.test('a change applied while a rebuild runs stays owed until its own rebuild lands', async () => {
     const a = await app();
     await owed.owe(pool, a.id, 'secret_change');
