@@ -251,6 +251,21 @@ test('a record whose turn never started is released, and the turn is started', a
   assert.ok(worker.calls.some((c) => c[0] === 'finish' && c[2] === 't-6'), 'the never-dispatched record goes');
 });
 
+test('a followed turn that left nothing before its worker went is started again, not read as an empty answer', async () => {
+  const w = item({ 'turn:spec': { phase: 'started', mode: 'scout', deadlineAt: Date.now() + 60000, headBefore: null, record: { turnId: 't-8', journal: '/j/8' } } });
+  const turn = { turnId: 't-8', journal: '/j/8', mode: 'scout', phase: 'executing' };
+  const worker = fakeWorker({ rawStdout: '', exitCode: -1, markerlessCause: 'container_gone' });
+  let dispatched = 0;
+  const out = await durableTurn.runTurn(w.steps, 'spec', {
+    pool: pool(turn), session: SESSION, mode: 'scout', budgetMs: 60000,
+    dispatch: async () => { dispatched += 1; return { result: { lastResultText: 'the plan' } }; },
+    deps: { worker, agentTurn },
+  });
+  assert.equal(dispatched, 1);
+  assert.equal(out.routed.result.lastResultText, 'the plan');
+  assert.ok(worker.calls.some((c) => c[0] === 'finish' && c[2] === 't-8'), 'the dead turn\'s record goes');
+});
+
 test('a dispatch that fails is the step\'s result: the next attempt reads the same failure instead of starting the turn again', async () => {
   const w = item();
   const out = await durableTurn.runTurn(w.steps, 'build', {

@@ -123,8 +123,13 @@ async function followTurn({ pool, session, activeTurn, onProgress = null, deps =
     await worker.markTurnTail(session.id, { sha: result.sha || null, pushOk: result.pushOk === true },
       turnLifecycle.cleanupArgs(activeTurn));
   }
-  // A record its process wrote and never dispatched: no journal, no turn.
-  if (phase === turnLifecycle.PHASE_DISPATCH_PENDING && result.providerDispatched !== true && !result.execExitSeen) {
+  // A record its process wrote and never dispatched: no journal, no turn. So
+  // is one whose agent left nothing at all before its process went (the
+  // worker replaced, or the turn's process gone, before it ran): read as a
+  // turn that returned nothing, it failed a plan or a build that never ran.
+  const leftNothing = !String(result.rawStdout || '').trim() && !result.execExitSeen
+    && GONE_BEFORE_IT_RAN.has(result.markerlessCause);
+  if ((phase === turnLifecycle.PHASE_DISPATCH_PENDING && result.providerDispatched !== true && !result.execExitSeen) || leftNothing) {
     if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
       await agentTurn.completeCodexAttempt({
         pool, turnUuid: activeTurn.turnUuid, status: 'failed', errorCode: 'not_dispatched',
@@ -166,6 +171,10 @@ async function followTurn({ pool, session, activeTurn, onProgress = null, deps =
     followed: true,
   };
 }
+
+// How a turn's process went with no exit marker (worker.js markerlessCause)
+// that, with no output at all, means it never ran.
+const GONE_BEFORE_IT_RAN = new Set(['container_gone', 'turn_process_gone']);
 
 function failedTurn(result) {
   return !!(result?.fatalError || result?.ccIsError
